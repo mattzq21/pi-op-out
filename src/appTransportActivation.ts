@@ -1,3 +1,4 @@
+import { required } from "./lib/required";
 import { createMemo, onCleanup, type Accessor, type Setter } from "solid-js";
 import { hasVisibleText } from "./lib/content";
 import type { NativeTransport } from "./lib/nativeTransport";
@@ -8,6 +9,7 @@ import type { SessionSummary } from "./types";
 
 export function createConversationViewKey<T>(transport: Accessor<T>, conversationKey: Accessor<string>, submission: Accessor<object | undefined> = () => undefined) {
   let previous: { owner: T; key: string; identity: object; submission?: object } | undefined;
+
   return createMemo(() => {
     const owner = transport();
     const key = conversationKey();
@@ -15,24 +17,31 @@ export function createConversationViewKey<T>(transport: Accessor<T>, conversatio
     const canonicalizingDraft = previous?.key.includes(":draft-") && !key.includes(":draft-");
     const continuingSubmission = pending !== undefined && pending === previous?.submission;
     const reuse = continuingSubmission || previous?.owner === owner && (previous.key === key || canonicalizingDraft);
-    const identity = reuse ? previous!.identity : {};
+    const identity = reuse ? required(previous).identity : {};
     previous = { owner, key, identity, submission: pending };
+
     return identity;
   });
 }
 
 export function useWorkspaceDisconnect(hasDrafts: () => boolean, pool: () => SessionRuntimePool, terminalIds: () => string[], owner: () => NativeTransport) {
   const beforeDisconnect = (event: Event) => {
-    if (hasDrafts() && !window.confirm("Discard unsaved settings, messages, and attachments and disconnect?")) { event.preventDefault(); return; }
+    if (hasDrafts() && !window.confirm("Discard unsaved settings, messages, and attachments and disconnect?")) { event.preventDefault();
+
+    return; }
+
     const close = async () => {
       await Promise.all(terminalIds().map(id => owner().closeTerminal(id)));
       await pool().disconnectAll(true);
     };
+
     (event as CustomEvent<{ waitUntil: (task: Promise<unknown>) => void }>).detail.waitUntil(close());
   };
+
   window.addEventListener("piop-mobile-before-disconnect", beforeDisconnect);
   onCleanup(() => {
     window.removeEventListener("piop-mobile-before-disconnect", beforeDisconnect);
+
     for (const id of terminalIds()) void owner().closeTerminal(id).catch(() => undefined);
     void pool().disconnectAll();
   });
@@ -57,29 +66,38 @@ export function createTransportActivation(context: ActivationContext) {
   const { transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, discardDraft, forgetTerminals } = context;
   const savedConversation = () => context.savedSessions().some(session => !session.isDraft && session.messageCount > 0 && (session.hostId ?? "local") === transport().currentHostId() && session.path === transport().currentSessionPath());
   const emptyConversation = () => !savedConversation() && chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
+
   const retainDraft = (previousTransport: NativeTransport, previousKey: string) => {
       const hostId = previousTransport.currentHostId(); const id = previousKey.slice(hostId.length + 1); const draft = composerDrafts()[previousKey] ?? ""; const cwd = previousTransport.currentCwd() ?? "";
       runtimePool().bind(hostId, id, previousTransport);
       runtimePool().setLiveSession(previousTransport, { id, hostId, isDraft: transportHasDraft(previousTransport, previousKey), path: previousTransport.currentSessionPath() ?? "", cwd, project: cwd.split("/").filter(Boolean).at(-1) ?? "Workspace", name: hasVisibleText(draft) ? draft.slice(0, 60) : "Unsent draft", preview: draft, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0 });
   };
+
   const discardTransport = (previousTransport: NativeTransport, previousKey: string | undefined) => {
       discardDraft(previousTransport, previousKey);
+
       if (previousKey) {
         const terminalIds = conversationTerminalIds(previousKey);
+
         if (terminalIds.length) void Promise.allSettled(terminalIds.map((id) => previousTransport.closeTerminal(id)));
         forgetTerminals(previousKey);
       }
+
       void runtimePool().release(previousTransport).finally(() => transportConversationKeys.current.delete(previousTransport));
   };
+
   const shouldDiscard = (previous: NativeTransport, next: NativeTransport, hasUnsentWork: boolean) => previous !== next && !runtimePool().isRetained(previous) && !chatSession().state.isStreaming && emptyConversation() && !hasUnsentWork;
   const hasDraftWork = (owner: NativeTransport, key: string | undefined) => transportHasDraft(owner, key) || owner.hasTerminalActivity() || Boolean(key && conversationTerminalIds(key).length);
+
   return (nextTransport: NativeTransport) => {
     const previousTransport = transport();
     const previousKey = transportConversationKeys.current.get(previousTransport);
     const hasUnsentWork = hasDraftWork(previousTransport, previousKey);
+
     if (previousTransport !== nextTransport && previousKey && hasUnsentWork && !runtimePool().isRetained(previousTransport) && emptyConversation()) retainDraft(previousTransport, previousKey);
     const discardPrevious = shouldDiscard(previousTransport, nextTransport, hasUnsentWork);
     activeTransportRef.current = nextTransport; runtimePool().activate(nextTransport); setTransport(nextTransport);
+
     if (discardPrevious) discardTransport(previousTransport, previousKey);
   };
 }

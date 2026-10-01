@@ -18,6 +18,7 @@ export function parseFastCommand(
   }
 
   if (normalized === "on") return true;
+
   if (normalized === "off") return false;
 
   throw new FastCommandUsageError();
@@ -27,7 +28,7 @@ export function getFastCommandCompletions(
   argumentPrefix: string,
 ): { value: string; label: string }[] {
   const prefix = argumentPrefix.trim().toLowerCase();
+
   return ["on", "off", "toggle"]
-    .filter((option) => option.startsWith(prefix))
-    .map((value) => ({ value, label: value }));
+    .flatMap((value) => value.startsWith(prefix) ? [{ value, label: value }] : []);
 }

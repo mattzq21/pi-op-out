@@ -1,3 +1,4 @@
+import { required } from "../lib/required";
 import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -60,32 +61,42 @@ interface Props {
 }
 
 const COMPOSER_MAX_HEIGHT = 130;
+
 function commandMatches(commands: SlashCommand[], query: string) {
   const exact: SlashCommand[] = [];
   const matches: SlashCommand[] = [];
+
   for (const command of commands) {
     const name = command.name.toLowerCase();
+
     if (name === query) exact.push(command);
     else if (matches.length < 7 && name.includes(query)) matches.push(command);
+
     if (exact.length === 7) break;
   }
+
   return [...exact, ...matches].slice(0, 7);
 }
 
 function skillMatches(commands: SlashCommand[], query: string) {
   const matches: SlashCommand[] = [];
+
   for (const command of commands) {
     if (skillName(command)?.toLowerCase().includes(query)) matches.push(command);
+
     if (matches.length === 7) break;
   }
+
   return matches;
 }
+
 function composerDefaults({ streaming, compacting = false, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
   return { streaming, compacting, paused, pausing, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
 }
 
 function composerControlState(controlsDisabled: boolean, action: "pause" | "resume" | undefined, pausing: boolean, stopping: boolean) {
   const controlPending = Boolean(action) || pausing || stopping;
+
   return { controlPending, inputDisabled: controlsDisabled || controlPending, stopDisabled: controlsDisabled || stopping || action === "resume" };
 }
 
@@ -99,13 +110,17 @@ function pendingControlsDisabled(controlsDisabled: boolean, changingPending: boo
 
 function pendingQueuePositions(messages: PendingMessage[]) {
   const queues = new Map<PendingMessage["behavior"], { length: number; positions: Map<string, number> }>();
+
   for (const message of messages) {
     if (!message || message.retry) continue;
     let queue = queues.get(message.behavior);
+
     if (!queue) queues.set(message.behavior, queue = { length: 0, positions: new Map() });
+
     if (!queue.positions.has(message.id)) queue.positions.set(message.id, queue.length);
     queue.length++;
   }
+
   return queues;
 }
 
@@ -137,7 +152,8 @@ export function Composer(props: Props) {
   const fastModeSupported = createMemo(() => (fastModeEnabled() || composer().fastModeStatus === "Fast mode off"));
   const [togglingFastMode, setTogglingFastMode] = createSignal(false);
   const togglingFastModeRef = createRef(false);
-  const setValue = (next: string) => { if (composer().onDraftChange) (composer().onDraftChange)!(next); else setLocalValue(next); };
+  const setValue = (next: string) => { if (composer().onDraftChange) required((composer().onDraftChange))(next); else setLocalValue(next); };
+
   const attachments = useComposerAttachments(composer);
   const { uploads, updateUploads, uploadError, setUploadError, readingUploads, imageInputError, setImageInputError, addFiles, addPaths } = attachments;
   const [sending, setSending] = createSignal(false);
@@ -146,50 +162,69 @@ export function Composer(props: Props) {
   const [stopping, setStopping] = createSignal(false);
   const stoppingRef = createRef(false);
   const [controlError, setControlError] = createSignal<string>();
+
   const toggleFastMode = async () => { const capturedComposer = { ...composer() };
+
     if (togglingFastModeRef.current || capturedComposer.controlsDisabled) return;
     togglingFastModeRef.current = true; setTogglingFastMode(true); setControlError(undefined);
+
     try { await capturedComposer.onToggleFastMode(); }
     catch (reason) { setControlError(`Could not toggle Fast mode: ${reason instanceof Error ? reason.message : String(reason)}`); }
     finally { togglingFastModeRef.current = false; setTogglingFastMode(false); }
   };
+
   const controlActionRef = createRef(false);
-  const controls = createMemo(() => { const state = composerControlState(composer().controlsDisabled, controlAction(), composer().pausing, stopping()); return { ...state, inputDisabled: state.inputDisabled || composer().compacting }; });
+
+  const controls = createMemo(() => { const state = composerControlState(composer().controlsDisabled, controlAction(), composer().pausing, stopping());
+
+  return { ...state, inputDisabled: state.inputDisabled || composer().compacting }; });
+
   const [selectedMatch, setSelectedMatch] = createSignal(0);
   const [paletteDismissed, setPaletteDismissed] = createSignal(false);
   const [selection, setSelection] = createSignal<{ start: number; end: number }>();
   const ref = createRef<HTMLTextAreaElement>(null);
   const focusOwnedEditor = () => { if (!props.ownershipRequired) ref.current?.focus(); };
+
   const composerRef = createRef<HTMLDivElement>(null);
   const selectedCommandRef = createRef<HTMLButtonElement>(null);
   const [draggingFiles, setDraggingFiles] = createSignal(false);
   const dragDepth = createRef(0);
   const restoredDraftId = createRef<string | undefined>(undefined);
+
   const reference = createMemo(() => {
     const caret = selection();
+
     if (caret && caret.start !== caret.end) return undefined;
+
     return composerReference(value(), caret?.start ?? value().length);
   });
+
   const commandQuery = createMemo(() => reference()?.marker === "/" ? reference()?.query : undefined);
   const skillQuery = createMemo(() => reference()?.marker === "$" ? reference()?.query : undefined);
+
   const visibleCommands = createMemo(() => {
     const agent = composer().agents.find(agent => agent.name === composer().activeAgent);
     const goalEnabled = !composer().agentUnavailable && ["get_goal", "create_goal", "update_goal"].every(tool => agent?.tools.includes(tool));
+
     return composer().commands.filter(command => (command.name !== "goal" || goalEnabled) && (!reference()?.start || isPromptCommand(command)));
   });
+
   const matches = createMemo(() => paletteDismissed() ? [] : commandQuery() !== undefined
-    ? commandMatches(visibleCommands(), commandQuery()!)
+    ? commandMatches(visibleCommands(), required(commandQuery()))
     : skillQuery() !== undefined
-      ? skillMatches(composer().commands, skillQuery()!)
+      ? skillMatches(composer().commands, required(skillQuery()))
       : []);
-  createDependencyEffect(() => setSelectedMatch(0), () => [commandQuery(), skillQuery(), matches().length]);
+
+  createDependencyEffect(() => { setSelectedMatch(0); }, () => [commandQuery(), skillQuery(), matches().length]);
   createDependencyEffect(() => {
     composerRef.current?.querySelector<HTMLElement>('.command-palette [aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, () => [selectedMatch(), matches()]);
-  createDependencyEffect(() => setPaletteDismissed(false), () => [value()]);
+  createDependencyEffect(() => { setPaletteDismissed(false); }, () => [value()]);
   createDependencyEffect(() => {
     const dismissOutside = (event: PointerEvent) => { if (!composerRef.current?.contains(event.target as Node)) setPaletteDismissed(true); };
+
     document.addEventListener("pointerdown", dismissOutside);
+
     return () => document.removeEventListener("pointerdown", dismissOutside);
   }, () => []);
 
@@ -197,12 +232,15 @@ export function Composer(props: Props) {
     const preventFileNavigation = (event: DragEvent) => {
       if (event.dataTransfer?.types.includes("Files") || (isTauri() && event.dataTransfer?.types.includes("text/uri-list"))) event.preventDefault();
     };
+
     const clearDrag = () => { dragDepth.current = 0; setDraggingFiles(false); };
+
     window.addEventListener("dragover", preventFileNavigation);
     window.addEventListener("drop", preventFileNavigation);
     window.addEventListener("drop", clearDrag);
     window.addEventListener("dragend", clearDrag);
     window.addEventListener("blur", clearDrag);
+
     return () => {
       window.removeEventListener("dragover", preventFileNavigation);
       window.removeEventListener("drop", preventFileNavigation);
@@ -213,30 +251,42 @@ export function Composer(props: Props) {
   }, () => []);
 
   const resizeEditor = () => {
-    const editor = ref.current; if (!editor) return;
+    const editor = ref.current;
+
+    if (!editor) return;
     editor.style.height = "auto";
     const contentHeight = Math.max(editor.scrollHeight, 31);
     editor.style.height = `${Math.min(contentHeight, COMPOSER_MAX_HEIGHT)}px`;
     editor.style.overflowY = contentHeight > COMPOSER_MAX_HEIGHT ? "auto" : "hidden";
   };
+
   createDependencyEffect(resizeEditor, () => [value()]);
 
   createDependencyEffect(() => {
     const resize = () => resizeEditor();
     window.addEventListener("resize", resize);
+
     return () => window.removeEventListener("resize", resize);
   }, () => []);
   let handledFocusRequest: number | undefined;
   createDependencyEffect(() => {
     const request = composer().focusRequest ?? 0;
-    if (props.ownershipRequired) { handledFocusRequest = request; return; }
+
+    if (props.ownershipRequired) { handledFocusRequest = request;
+
+    return; }
+
     if (composer().controlsDisabled || handledFocusRequest === request) return;
+
     const frame = requestAnimationFrame(() => {
       const editor = ref.current;
+
       if (!editor?.isConnected || editor.disabled || props.ownershipRequired || document.querySelector("dialog[open]")) return;
       editor.focus({ preventScroll: true });
+
       if (document.activeElement === editor) handledFocusRequest = request;
     });
+
     return () => cancelAnimationFrame(frame);
   }, () => [composer().focusRequest, composer().controlsDisabled, props.ownershipRequired]);
   createDependencyEffect(() => {
@@ -244,7 +294,10 @@ export function Composer(props: Props) {
   }, () => [props.ownershipRequired]);
   createDependencyEffect(() => {
     const capturedComposer = { ...composer() }; const capturedValue = value();
- if (capturedComposer.restoredDraft && (capturedComposer.restoredDraft)!.id !== restoredDraftId.current) { restoredDraftId.current = (capturedComposer.restoredDraft)!.id; if (!capturedValue) setValue((capturedComposer.restoredDraft)!.value); } }, () => [composer().restoredDraft]);
+
+ if (capturedComposer.restoredDraft && (capturedComposer.restoredDraft).id !== restoredDraftId.current) { restoredDraftId.current = (capturedComposer.restoredDraft).id;
+
+ if (!capturedValue) setValue((capturedComposer.restoredDraft).value); } }, () => [composer().restoredDraft]);
 
   const nativeDropRef = createRef({ inputDisabled: controls().inputDisabled, addPaths });
   createDependencyEffect(() => {
@@ -256,72 +309,97 @@ export function Composer(props: Props) {
     let unlisten: (() => void) | undefined;
     void getCurrentWebview().onDragDropEvent(({ payload }) => {
       if (disposed) return;
-      if (payload.type === "leave") { setDraggingFiles(false); return; }
+
+      if (payload.type === "leave") { setDraggingFiles(false);
+
+      return; }
+
       const bounds = composerRef.current?.getBoundingClientRect();
       const x = payload.position.x / window.devicePixelRatio;
       const y = payload.position.y / window.devicePixelRatio;
       const inside = insideBounds(bounds, x, y);
       const enabled = inside && !nativeDropRef.current.inputDisabled;
       setDraggingFiles(payload.type !== "drop" && enabled);
+
       if (payload.type !== "drop" || !enabled) return;
       void nativeDropRef.current.addPaths(payload.paths, () => disposed).catch((reason) => { if (!disposed) setUploadError(String(reason)); });
       focusOwnedEditor();
     }).then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; })
       .catch((reason) => { if (!disposed) setUploadError(`Could not enable file drops: ${String(reason)}`); });
+
     return () => { disposed = true; unlisten?.(); };
   }, () => []);
 
   const [expandedPending, setExpandedPending] = createSignal<string>();
   const [changingPending, setChangingPending] = createSignal(false);
+
   const changePending = (id: string, action: import("../types").PendingMessageAction) => {
     if (!composer().onChangePending) return;
     setChangingPending(true); setControlError(undefined);
-    void (composer().onChangePending)!(id, action).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false));
+    void required((composer().onChangePending))(id, action).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false));
   };
+
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().pausing, composer().onChangePending)), () => (changePending));
   const controlsBlocked = () => composer().controlsDisabled || composer().compacting || composer().pausing || controlActionRef.current || stoppingRef.current;
+
   const canSubmit = (message: string, images: ImageAttachment[]) => {
     if (!attachments.acceptsImages(images.length)) return false;
+
     return Boolean((hasVisibleText(message) || images.length) && !sendingRef.current && !readingUploads());
   };
-  const restoreSubmission = (submittedValue: string, submittedUploads: ComposerUpload[], reason: unknown, changeDraft: (value: StateUpdate<string>) => void, changeUploads: (value: StateUpdate<ComposerUpload[]>) => void) => {
+
+  const restoreSubmission = (submittedValue: string, submittedUploads: ComposerUpload[], cause: unknown, changeDraft: (value: StateUpdate<string>) => void, changeUploads: (value: StateUpdate<ComposerUpload[]>) => void) => {
     changeDraft((newerDraft) => newerDraft && newerDraft !== submittedValue ? `${submittedValue}\n\n${newerDraft}` : submittedValue);
     changeUploads((current) => [...submittedUploads.filter((item) => !current.some((other) => other.id === item.id)), ...current]);
-    setUploadError(reason instanceof Error ? reason.message : String(reason));
+    setUploadError(cause instanceof Error ? cause.message : String(cause));
   };
+
   const submit = async (behavior: "steer" | "followUp" = "followUp") => { const capturedUploads = uploads(); const capturedValue = value(); const capturedComposer = { ...composer() };
+
     if (controlsBlocked()) return;
     const { message, images } = buildComposerPrompt(capturedValue, capturedUploads, capturedComposer.commands);
+
     if (!canSubmit(message, images)) return;
     sendingRef.current = true; setSending(true); setUploadError(undefined);
     const submittedValue = capturedValue; const submittedUploads = capturedUploads;
     const changeDraft = capturedComposer.onDraftChange ?? setLocalValue;
     const changeUploads = attachments.captureUploadWriter();
     setValue(""); updateUploads([]);
+
     try {
       const accepted = await capturedComposer.onSend(message, capturedComposer.streaming ? behavior : undefined, images);
+
       if (accepted === false) throw new Error("Message was not submitted");
     } catch (reason) {
       restoreSubmission(submittedValue, submittedUploads, reason, changeDraft, changeUploads);
     } finally { sendingRef.current = false; setSending(false); }
   };
+
   const abort = async () => { const capturedComposer = { ...composer() }; const capturedControlAction = controlAction();
+
     if (capturedComposer.controlsDisabled || stoppingRef.current || capturedControlAction === "resume") return;
     stoppingRef.current = true; setStopping(true); setControlError(undefined);
+
     try { await capturedComposer.onAbort(); }
     catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
     finally { stoppingRef.current = false; setStopping(false); }
   };
+
   const control = async (action: "pause" | "resume" | "abort") => { const capturedComposer = { ...composer() };
+
     if (action === "abort") return abort();
+
     if (controlsBlocked()) return;
     controlActionRef.current = true; setControlAction(action); setControlError(undefined);
+
     try { await (action === "pause" ? capturedComposer.onPause() : capturedComposer.onResume()); }
     catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
     finally { controlActionRef.current = false; setControlAction(undefined); }
   };
+
   const chooseCommand = (command: SlashCommand) => {
     const token = reference();
+
     if (!token) return;
     const name = skillName(command);
     const replacement = name && (token.marker === "$" || token.start > 0) ? `$${name} ` : `/${command.name} `;
@@ -331,14 +409,27 @@ export function Composer(props: Props) {
     focusOwnedEditor();
     ref.current?.setSelectionRange(caret, caret);
   };
+
   const handlePaletteKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) return false;
-    if (event.key === "Escape" && matches().length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); return true; }
-    if (matches().length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches().length) % matches().length); return true; }
-    if (canPickCommand(event) && matches()[selectedMatch()]) { event.preventDefault(); chooseCommand(matches()[selectedMatch()]); return true; }
+
+    if (event.key === "Escape" && matches().length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true);
+
+    return true; }
+
+    if (matches().length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches().length) % matches().length);
+
+    return true; }
+
+    if (canPickCommand(event) && matches()[selectedMatch()]) { event.preventDefault(); chooseCommand(matches()[selectedMatch()]);
+
+    return true; }
+
     return false;
   };
+
   let pasteRevision = 0;
+
   const pasteWithoutEvent = () => {
     if (controls().inputDisabled || props.ownershipRequired) return;
     const revision = pasteRevision;
@@ -349,48 +440,71 @@ export function Composer(props: Props) {
       void readClipboardImages().then(files => addFiles(files, [], commit)).catch(reason => setUploadError(String(reason)));
     }, 0);
   };
+
   createDependencyEffect(() => {
     const handle = (event: Event) => {
       if (event.target !== ref.current || controls().inputDisabled || props.ownershipRequired) return;
       const detail = (event as CustomEvent<{ data?: string; mimeType?: string; error?: string }>).detail;
-      if (detail.error) { setUploadError(detail.error); return; }
+
+      if (detail.error) { setUploadError(detail.error);
+
+      return; }
+
       if (detail.data) void addFiles([clipboardImageFile(detail.data, detail.mimeType)]).catch(reason => setUploadError(String(reason)));
     };
+
     document.addEventListener("piop-native-image-paste", handle);
+
     return () => document.removeEventListener("piop-native-image-paste", handle);
   }, () => []);
+
   const handleEditorKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (pasteShortcut(event)) pasteWithoutEvent();
+
     if (props.ownershipRequired) return;
+
     if (event.isComposing || handlePaletteKey(event)) return;
+
     if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); }
   };
 
   const renderStreamBanner = () => {
     const renderStreamStatus = () => (<span class="stream-status" role="status">{composer().paused ? <Pause size={11} /> : <span class="pulse" />}{stopping() ? "Stopping…" : controlAction() === "resume" ? "Resuming…" : composer().pausing || controlAction() === "pause" ? "Pausing…" : composer().compacting ? "Compacting context…" : composer().paused ? "Paused · Completed turns saved" : "piop is working"}{composer().queued > 0 && ` · ${composer().queued} queued`}</span>);
+
     return (<Show when={composer().streaming || composer().compacting || composer().paused || composer().pausing}><div class={`stream-banner${composer().paused ? " paused" : ""}`}>
       {renderStreamStatus()}
     </div></Show>);
   };
+
   const ComposerBody = () => {
     const renderComposerDropHint = () => (draggingFiles() && !controls().inputDisabled && <div class="composer-drop-hint" role="status">Drop files to attach</div>);
     const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div></Show>);
+
     const renderComposerEditor = () => (<div class="composer-editor">
         <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} disabled={composer().controlsDisabled && !props.ownershipRequired} placeholder={props.ownershipRequired ? "" : composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
+
     const ComposerBar = () => {
-      const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`}>Cache {cache().rate}%</span>}</Show></div>);
+      const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`}>Cache {cache().rate}%</span>}</Show></div>);
+
       const renderComposerActions = () => {
         const agentSelectionDisabled = () => composer().agentLocked || composer().streaming || controls().inputDisabled;
         const changeAgent = (name: string) => { if (!agentSelectionDisabled()) composer().onAgent(name); };
+
         const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : composer().activeAgent ?? "general"} value={composer().activeAgent ?? "general"} disabled={agentSelectionDisabled()} menuMinWidth={130} centered compact options={agentOptions()} onChange={changeAgent} />);
-        const renderFastModeIndicator = () => (fastModeSupported() && <button type="button" class={`fast-mode-indicator${fastModeEnabled() ? " active" : ""}`} aria-label="Fast mode" aria-description={(composer().fastModeStatus)!} aria-pressed={fastModeEnabled()} aria-busy={togglingFastMode()} disabled={controls().inputDisabled || togglingFastMode()} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button>);
-        const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName((composer().model)!) : undefined} value={composer().model ? `${(composer().model)!.provider}/${(composer().model)!.id}` : ""} disabled={controls().inputDisabled} options={modelOptions()} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value); if (next) composer().onModel(next); }} />);
+        const renderFastModeIndicator = () => (fastModeSupported() && <button type="button" class={`fast-mode-indicator${fastModeEnabled() ? " active" : ""}`} aria-label="Fast mode" aria-description={(composer().fastModeStatus)} aria-pressed={fastModeEnabled()} aria-busy={togglingFastMode()} disabled={controls().inputDisabled || togglingFastMode()} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button>);
+
+        const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName(required((composer().model))) : undefined} value={composer().model ? `${required((composer().model)).provider}/${required((composer().model)).id}` : ""} disabled={controls().inputDisabled} options={modelOptions()} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value);
+
+        if (next) composer().onModel(next); }} />);
+
         const renderStopButton = () => (<Show when={composer().streaming || composer().compacting || composer().paused || composer().pausing}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton></Show>);
         const showPauseResume = () => (composer().streaming || composer().paused) && !(hasVisibleText(value()) || uploads().length) || composer().pausing;
+
         const renderSend = () => <Show when={showPauseResume()} fallback={<IconButton title="" label="Send message" class="send" disabled={controls().inputDisabled || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
           <IconButton title="" label={composer().paused ? "Resume piop" : "Pause piop"} class="send" disabled={controls().inputDisabled} onClick={() => void control(composer().paused ? "resume" : "pause")}>{composer().paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
         </Show>;
+
         return (<div class="composer-actions">
           <ComposerSettingsMenu agent={composer().activeAgent ?? "general"}>
             <div class="composer-settings-row"><span>Agent</span>{renderAgentPicker()}</div>
@@ -403,15 +517,19 @@ export function Composer(props: Props) {
           {renderSend()}
         </div>);
       };
+
       return (<div class="composer-bar"><ComposerTools />
         {renderComposerActions()}
       </div>);
     };
+
     return (<div ref={element => { composerRef.current = element; }} class={`composer${draggingFiles() && !controls().inputDisabled ? " dragging-files" : ""}`}
       onPaste={(event) => {
         pasteRevision += 1;
+
         if (!event.clipboardData || controls().inputDisabled) return;
         const files = pastedFiles(event.clipboardData);
+
         if (!files.length && event.clipboardData.getData("text/plain")) return;
         event.preventDefault();
         const commitUploads = attachments.captureUploadWriter();
@@ -428,19 +546,24 @@ export function Composer(props: Props) {
       }}
       onDragLeave={() => {
         dragDepth.current = Math.max(0, dragDepth.current - 1);
+
         if (!dragDepth.current) setDraggingFiles(false);
       }}
       onDrop={(event) => {
         if (!event.dataTransfer || (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list")))) return;
         event.preventDefault(); dragDepth.current = 0; setDraggingFiles(false);
+
         if (controls().inputDisabled) return;
         const files = Array.from(event.dataTransfer?.files ?? []);
+
         const paths = event.dataTransfer.getData("text/uri-list").split(/\r?\n/).flatMap((line) => {
           try {
             const url = new URL(line);
+
             return url.protocol === "file:" && (!url.hostname || url.hostname === "localhost") ? [decodeURIComponent(url.pathname)] : [];
           } catch { return []; }
         });
+
         void (async () => {
           if (files.length) await addFiles(files);
           else await nativeDropRef.current.addPaths(paths);
@@ -450,12 +573,13 @@ export function Composer(props: Props) {
       {renderComposerDropHint()}
       {renderCommandPalette()}
       {uploads().length > 0 && <div class="attachments">{<Key each={uploads()} by={(upload) => upload.id}>{(upload, _index) => <span >{upload().kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload().name}</b><button aria-label={`Remove ${upload().name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload().id)); setUploadError(undefined); }}><X size={11} /></button></span>}</Key>}</div>}
-      {uploadError() && <div class="upload-error" role="alert">{(uploadError())!}</div>}
-      {controlError() && <div class="upload-error" role="alert">{(controlError())!}</div>}
+      {uploadError() && <div class="upload-error" role="alert">{(uploadError())}</div>}
+      {controlError() && <div class="upload-error" role="alert">{(controlError())}</div>}
       {renderComposerEditor()}
       <ComposerBar />
     </div>);
   };
+
   return <div class="composer-wrap">
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
@@ -467,9 +591,11 @@ export function Composer(props: Props) {
       const queue = createMemo(() => pendingQueues().get(message().behavior));
       const peerCount = createMemo(() => queue()?.length ?? 0);
       const position = createMemo(() => queue()?.positions.get(message().id) ?? -1);
+
       const renderPendingDragHandle = () => (<button type="button" class="pending-icon-button pending-drag-handle" disabled={disabled() || message().retry || !composer().onChangePending || peerCount() < 2} aria-label={`Drag to reorder queued message: ${text()}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
           if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
         }} onPointerDown={(event) => pendingDrag.begin(event, message().id)}><MoveVertical size={16} /></button>);
+
       const renderPendingMessageActions = () => (composer().onChangePending && <div class="pending-message-actions">
           <div class="pending-order-actions">
             <button type="button" class="pending-icon-button" disabled={disabled() || position() <= 0} aria-label={`Move queued message up: ${text()}`} title="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
@@ -478,6 +604,7 @@ export function Composer(props: Props) {
           <button type="button" disabled={disabled()} title={message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button>
           <button type="button" class="pending-icon-button" disabled={disabled()} aria-label={`Remove queued message: ${text()}`} title="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button>
         </div>);
+
       return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} >
         {renderPendingDragHandle()}
         <span class="pending-message-text" title={text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().retry && <small>Not sent · </small>}{text()}</span>
@@ -510,15 +637,21 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
   const close = () => setMenuStyle(undefined);
   createDependencyEffect(() => {
     const capturedPicker = { ...picker() };
+
  if (capturedPicker.disabled) close(); }, () => [picker().disabled]);
+
   const menuEdges = () => {
     const pane = root.current?.closest(".chat-shell")?.getBoundingClientRect();
+
     return { leftEdge: Math.max(8, (pane?.left ?? 0) + 8), rightEdge: Math.min(window.innerWidth - 8, (pane?.right ?? window.innerWidth) - 8) };
   };
+
   const toggle = () => {
     if (menuStyle()) return close();
     optionChosenRef.current = false;
-    const rect = trigger.current?.getBoundingClientRect(); if (!rect) return;
+    const rect = trigger.current?.getBoundingClientRect();
+
+    if (!rect) return;
     const { leftEdge, rightEdge } = menuEdges();
     const width = Math.max(0, Math.min(props.menuMinWidth ?? picker().menuWidth, rightEdge - leftEdge));
     const right = window.innerWidth - Math.min(rightEdge, Math.max(rect.right, leftEdge + width));
@@ -534,29 +667,40 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
     });
     requestAnimationFrame(() => optionRefs.current[index]?.focus());
   };
+
   createDependencyEffect(() => { const capturedMenuStyle = menuStyle();
+
     if (!capturedMenuStyle) return;
     const dismiss = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) close(); };
+
     document.addEventListener("pointerdown", dismiss); window.addEventListener("resize", close);
+
     return () => { document.removeEventListener("pointerdown", dismiss); window.removeEventListener("resize", close); };
   }, () => [menuStyle()]);
+
   const move = (direction: 1 | -1) => {
     if (!picker().options.some((option) => !option.disabled)) return;
     let next = activeIndex();
-    for (let count = 0; count < picker().options.length; count += 1) { next = (next + direction + picker().options.length) % picker().options.length; if (!picker().options[next].disabled) break; }
+
+    for (let count = 0; count < picker().options.length; count += 1) { next = (next + direction + picker().options.length) % picker().options.length;
+
+    if (!picker().options[next].disabled) break; }
+
     setActiveIndex(next); optionRefs.current[next]?.focus();
   };
+
   return <div ref={element => { root.current = element; }} class="composer-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); trigger.current?.focus(); } else if (menuStyle() && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
     <button ref={element => { trigger.current = element; }} type="button" class="select-control composer-picker-trigger" aria-label={picker().label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle())} data-value={picker().value} data-options={picker().options.map((option) => option.value).join(" ")} disabled={picker().disabled} onClick={toggle}>{picker().selectedLabel ?? selectedOption()?.label ?? picker().label}</button>
-    {menuStyle() && <div class={`composer-picker-menu${picker().centered ? " centered" : ""}${picker().compact ? " compact" : ""}`} role="listbox" aria-label={`${picker().label} options`} style={(menuStyle())!}>{picker().options.length === 0 && <div class="empty-small">No options available</div>}{<Key each={picker().options} by={(option) => `${option.detail ?? picker().label}:${option.value}`}>{(option, index) => <button ref={(element) => { optionRefs.current[index()] = element; }}  type="button" role="option" aria-selected={option().value === picker().value} tabIndex={isActive(index()) ? 0 : -1} data-value={option().value} disabled={picker().disabled || option().disabled} onFocus={() => setActiveIndex(index())} onClick={() => { if (picker().disabled || optionChosenRef.current) return; optionChosenRef.current = true; picker().onChange(option().value); close(); trigger.current?.focus(); }}><span>{option().label}</span>{option().detail && <small>{option().detail}</small>}</button>}</Key>}</div>}
+    {menuStyle() && <div class={`composer-picker-menu${picker().centered ? " centered" : ""}${picker().compact ? " compact" : ""}`} role="listbox" aria-label={`${picker().label} options`} style={(menuStyle())}>{picker().options.length === 0 && <div class="empty-small">No options available</div>}{<Key each={picker().options} by={(option) => `${option.detail ?? picker().label}:${option.value}`}>{(option, index) => <button ref={(element) => { optionRefs.current[index()] = element; }}  type="button" role="option" aria-selected={option().value === picker().value} tabIndex={isActive(index()) ? 0 : -1} data-value={option().value} disabled={picker().disabled || option().disabled} onFocus={() => setActiveIndex(index())} onClick={() => { if (picker().disabled || optionChosenRef.current) return; optionChosenRef.current = true; picker().onChange(option().value); close(); trigger.current?.focus(); }}><span>{option().label}</span>{option().detail && <small>{option().detail}</small>}</button>}</Key>}</div>}
   </div>;
 }
 
 function ContextWheel(componentProps: { usage: ContextUsage }) {
   const rawPercent = createMemo(() => (componentProps.usage.percent ?? (componentProps.usage.tokens === null ? null : componentProps.usage.tokens / componentProps.usage.contextWindow * 100)));
-  const percent = createMemo(() => (rawPercent() === null ? null : Math.max(0, Math.min(100, (rawPercent())!))));
-  const tooltip = createMemo(() => (`${percent() === null ? "—" : `${Math.round((percent())!)}%`} of ${componentProps.usage.contextWindow.toLocaleString()}`));
-  const label = createMemo(() => (percent() === null ? `Context usage unavailable; window is ${componentProps.usage.contextWindow.toLocaleString()} tokens` : `${Math.round((percent())!)}% of ${componentProps.usage.contextWindow.toLocaleString()} context tokens used`));
+  const percent = createMemo(() => (rawPercent() === null ? null : Math.max(0, Math.min(100, required((rawPercent()))))));
+  const tooltip = createMemo(() => (`${percent() === null ? "—" : `${Math.round(required((percent())))}%`} of ${componentProps.usage.contextWindow.toLocaleString()}`));
+  const label = createMemo(() => (percent() === null ? `Context usage unavailable; window is ${componentProps.usage.contextWindow.toLocaleString()} tokens` : `${Math.round(required((percent())))}% of ${componentProps.usage.contextWindow.toLocaleString()} context tokens used`));
+
   return <span class="context-wheel" data-tooltip={tooltip()} aria-label={label()} tabIndex={0}>
     <svg viewBox="0 0 20 20" aria-hidden="true"><circle class="context-wheel-track" cx="10" cy="10" r="7.5" /><circle class="context-wheel-value" cx="10" cy="10" r="7.5" pathLength="100" style={{ "stroke-dasharray": `${percent() ?? 0} 100` }} /></svg>
   </span>;

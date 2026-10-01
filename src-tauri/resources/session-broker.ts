@@ -11,10 +11,15 @@ import { registerGoals } from "./session-broker/goals.ts";
 import { registerReview } from "./session-broker/review.ts";
 
 export { desktopPauseContext, registerPauseControl, type PauseController } from "./session-broker/pause.ts";
+
 export { registerFastModeStatus } from "./session-broker/fast-mode.ts";
+
 export { registerCatchUp } from "./session-broker/catch-up.ts";
+
 export { forkConversation } from "./session-broker/fork.ts";
+
 export { registerSessionOperations } from "./session-broker/operations.ts";
+
 export { registerSubagents } from "./session-broker/subagents.ts";
 
 export default function sessionBroker(pi: ExtensionAPI) {

@@ -15,7 +15,9 @@ describe("Conversation acceptance", () => {
   it("renders a failed tool with its diagnostic output", async () => {
     await startTemporaryConversation({ load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high", debugMode: true } });
     await emitPiEvent({ type: "session_switched" });
-    const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
+    const enableDebug = $('button[aria-label="Enable debug mode"]');
+
+    if (await enableDebug.isExisting()) await enableDebug.click();
     await expect($('button[aria-label="Disable debug mode"]')).toBeEnabled();
     await emitPiEvent({ type: "agent_start" });
     await emitPiEvent({ type: "tool_execution_start", toolCallId: "acceptance-failed-tool", toolName: "write", args: { path: "protected.txt" } });
@@ -31,6 +33,7 @@ describe("Conversation acceptance", () => {
 
   it("tracks queued steering and follow-up messages from backend events", async () => {
     await startTemporaryConversation({});
+
     try {
       await emitPiEvent({ type: "agent_start" });
       await emitPiEvent({ type: "queue_update", steering: [{}, {}], followUp: [{}] });
@@ -47,6 +50,7 @@ describe("Conversation acceptance", () => {
 
   it("updates the thinking selector when piop changes effort", async () => {
     await mockBackend(connectedSessionResponses("thinking-event-session"));
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await expect(app.thinkingLevelPicker).toHaveText("High");
@@ -62,6 +66,7 @@ describe("Conversation acceptance", () => {
       ...connectedSessionResponses("context-session"),
       "pi_command:get_session_stats": { contextUsage: { tokens: 42_000, contextWindow: 100_000, percent: null } },
     });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       const wheel = $(".context-wheel");
@@ -79,6 +84,7 @@ describe("Conversation acceptance", () => {
 
   it("shows cache reuse for both a response and the whole session", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high", debugMode: true };
+
     const history = {
       entries: [
         { type: "message", id: "cache-user", parentId: null, message: { role: "user", content: "Reuse the cached context", timestamp: 1 } },
@@ -86,10 +92,14 @@ describe("Conversation acceptance", () => {
       ],
       leafId: "cache-assistant",
     };
+
     await mockBackend({ ...connectedSessionResponses("cache-session"), "pi_command:get_entries": history, load_app_settings: settings });
+
     try {
       await emitPiEvent({ type: "session_switched" });
-      const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
+      const enableDebug = $('button[aria-label="Enable debug mode"]');
+
+      if (await enableDebug.isExisting()) await enableDebug.click();
       await expect($(".cache-hit-rate")).toHaveAttribute("aria-label", "Cache 75%, 3000/4000");
       await expect($(".session-cache-hit")).toHaveText("Cache 75%");
     } finally {
@@ -101,6 +111,7 @@ describe("Conversation acceptance", () => {
 
   it("renders terminal output and reports when the process exits", async () => {
     await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await expect(app.openTerminalButton).toBeEnabled();
@@ -126,6 +137,7 @@ describe("Conversation acceptance", () => {
   it("shows a terminal startup failure inside the terminal", async () => {
     await resetApp();
     await startTemporaryConversation({ start_terminal: { error: "Terminal launch rejected" }, resize_terminal: {}, close_terminal: {} });
+
     try {
       await app.openTerminalButton.click();
       await browser.waitUntil(async () => String(await browser.execute(() => document.querySelector(".xterm-rows")?.textContent)).includes("Could not start terminal: Error: Terminal launch rejected"));
@@ -140,6 +152,7 @@ describe("Conversation acceptance", () => {
   it("shows terminal input failures inside the active terminal", async () => {
     await resetApp();
     await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, write_terminal: { error: "Terminal input channel closed" }, close_terminal: {} });
+
     try {
       await app.openTerminalButton.click();
       await expect(app.terminalPanel).toBeDisplayed();
@@ -156,6 +169,7 @@ describe("Conversation acceptance", () => {
 
   it("copies a completed response and its code block", async () => {
     const response = "Here is the answer:\n\n```ts\nconst answer = 42;\n```";
+
     const history = {
       entries: [
         { type: "message", id: "copy-user", parentId: null, message: { role: "user", content: "Show the answer", timestamp: 1 } },
@@ -163,7 +177,9 @@ describe("Conversation acceptance", () => {
       ],
       leafId: "copy-assistant",
     };
+
     await mockBackend({ ...connectedSessionResponses("copy-session"), "pi_command:get_entries": history });
+
     try {
       await browser.execute(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { (window as unknown as { __e2eClipboard?: string }).__e2eClipboard = text; } } }));
       await emitPiEvent({ type: "session_switched" });
@@ -181,7 +197,10 @@ describe("Conversation acceptance", () => {
   });
 
   it("presents skill references and compacts repeated intermediate work", async () => {
-    const disableDebug = $('button[aria-label="Disable debug mode"]'); if (await disableDebug.isExisting()) await disableDebug.click();
+    const disableDebug = $('button[aria-label="Disable debug mode"]');
+
+    if (await disableDebug.isExisting()) await disableDebug.click();
+
     const history = {
       entries: [
         { type: "message", id: "work-user", parentId: null, message: { role: "user", content: '<skill name="ponytail" location="/tmp/ponytail/SKILL.md">\nReferences are relative to /tmp/ponytail.\n\nhidden skill instructions</skill>\n\nReview the implementation', timestamp: 1_000 } },
@@ -192,7 +211,9 @@ describe("Conversation acceptance", () => {
       ],
       leafId: "work-final",
     };
+
     await mockBackend({ ...connectedSessionResponses("work-session"), "pi_command:get_entries": history });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await expect($(".skill-reference")).toHaveText("$ponytail");
@@ -207,12 +228,14 @@ describe("Conversation acceptance", () => {
       await $('button[aria-label="Enable debug mode"]').click();
       await expect(work.$$(".tool-event")).toBeElementsArrayOfSize(2);
       let index = 0;
+
       for (const summary of await work.$$(".tool-event summary")) {
         const content = ["First file inspected", "Second file inspected"][index++];
         await updateBackendResponse("pi_command:get_tool_payload", { chunk: JSON.stringify({ content }), length: 0, revision: "tool" });
         await summary.click();
         await expect(work).toHaveText(expect.stringContaining(content));
       }
+
       await expect(work).toHaveText(expect.stringContaining("First file inspected"));
       await expect(work).toHaveText(expect.stringContaining("Second file inspected"));
       await expect($('//article[contains(@class,"assistant-message")][contains(.,"The implementation satisfies the acceptance behavior.")]')).toBeDisplayed();
@@ -229,12 +252,14 @@ describe("Conversation acceptance", () => {
       ],
       leafId: "branch-assistant",
     };
+
     await mockBackend({
       ...connectedSessionResponses("branch-session"),
       "pi_command:get_state": { ...connectedSessionResponses("branch-session")["pi_command:get_state"], sessionFile: "/tmp/branch-session.jsonl" },
       "pi_command:get_entries": history,
       "pi_command:fork_after": {},
     });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       const branch = $(".assistant-message").$('button[aria-label^="Branch from assistant response"]');
@@ -252,6 +277,7 @@ describe("Conversation acceptance", () => {
 
   it("steers a live response immediately", async () => {
     await startTemporaryConversation({ "pi_command:steer": {} });
+
     try {
       await emitPiEvent({ type: "agent_start" });
       await app.prepareMessage("Focus on the acceptance criteria");
@@ -272,6 +298,7 @@ describe("Conversation acceptance", () => {
   it("queues a follow-up and can stop a streaming response", async () => {
     const pending = { id: "follow-up", message: "Check this after the current response", behavior: "followUp" };
     await startTemporaryConversation({ "pi_command:follow_up": {}, "pi_command:abort": {}, "pi_command:change_pending": {}, "pi_command:clear_queue": { steering: [], followUp: [pending.message] } });
+
     try {
       await emitPiEvent({ type: "agent_start" });
       await app.prepareMessage("Check this after the current response");
@@ -296,6 +323,7 @@ describe("Conversation acceptance", () => {
 
   it("returns extension input through the piop event bridge", async () => {
     await mockBackend({ "pi_command:extension_ui_response": {} });
+
     try {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-input", method: "input", title: "Choose a release name", placeholder: "Release name", prefill: "alpha" });
       const input = $('input[aria-label="Release name"]');
@@ -313,6 +341,7 @@ describe("Conversation acceptance", () => {
 
   it("submits extension input from the keyboard and supports negative confirmation", async () => {
     await mockBackend({ "pi_command:extension_ui_response": {} });
+
     try {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-enter-input", method: "input", title: "Release tag", placeholder: "Release tag", prefill: "alpha" });
       const input = $('input[aria-label="Release tag"]');

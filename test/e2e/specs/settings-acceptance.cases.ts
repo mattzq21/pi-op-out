@@ -26,6 +26,7 @@ describe("Settings acceptance", () => {
     });
     await emitPiEvent({ type: "session_switched" });
     await enableAgents();
+
     try {
       await app.openSettings();
       await app.automaticRetryToggle.click();
@@ -173,9 +174,11 @@ describe("Settings acceptance", () => {
       ["Focus composer shortcut", "Ctrl+E"],
       ["Open settings shortcut", "Ctrl+,"],
     ];
+
     for (const [label, shortcut] of defaults) {
       await expect($(`input[aria-label="${label}"]`)).toHaveValue(shortcut);
     }
+
     await app.openConversations();
   });
 

@@ -9,10 +9,18 @@ describe('settings panels', () => {
   let dom, views, calls, responses;
   beforeEach(() => {
     dom = installDom(); views = []; calls = []; responses = new Map();
-    mockIPC(async (command, args) => { calls.push({ command, args }); const value = responses.get(command); if (value instanceof Error) throw value; return typeof value === 'function' ? value(args) : value; });
+    mockIPC(async (command, args) => { calls.push({ command, args }); const value = responses.get(command);
+
+    if (value instanceof Error) throw value;
+
+    return typeof value === 'function' ? value(args) : value; });
   });
   afterEach(async () => { for (const view of views) await view.unmount(); clearMocks(); dom.restore(); });
-  async function render(Component, props) { const view = await renderComponent(Component, props); views.push(view); return view; }
+
+  async function render(Component, props) { const view = await renderComponent(Component, props); views.push(view);
+
+  return view; }
+
   const button = text => [...document.querySelectorAll('button')].find(button => button.textContent === text);
   const click = async element => act(async () => element.click());
   const archive = (name, extra = {}) => ({ name, path: `/${name}.jsonl`, cwd: '/repo', byteSize: 42, modifiedAt: 100, deletable: true, ...extra });
@@ -27,6 +35,7 @@ describe('settings panels', () => {
     const categories = [{ id: 'active-conversations', byteSize: 500, itemCount: 1 }, { id: 'archived-conversations', byteSize: 2048, itemCount: 2 }, { id: 'project-checkpoints', byteSize: 1024 ** 2, itemCount: 1, estimated: true }, { id: 'git-diff-snapshots', byteSize: 12 * 1024 ** 3, itemCount: 3 }, { id: 'temporary-chats', byteSize: 1024 ** 4, itemCount: 1 }];
     await act(async () => pending.resolve({ hosts: [host({ categories, warnings: ['Repository missing'] }), host({ hostId: 'remote', hostName: 'Remote', error: 'offline' })] }));
     const text = document.body.textContent;
+
     for (const expected of ['About ', '500 B', '2.00 KiB', '1.00 MiB', '12.0 GiB', '1.00 TiB', '1 conversation', '2 conversations', '1 checkpoint location', 'Storage unavailable', 'offline']) assert.ok(text.includes(expected), expected);
     assert.equal(document.querySelector('.storage-warning').title, 'Repository missing');
     assert.equal(button('Refresh').disabled, false);
@@ -34,7 +43,10 @@ describe('settings panels', () => {
 
   test('single archive deletion requires confirmation and refreshes the host report', async () => {
     const item = archive('Old chat'); responses.set('storage_report', { hosts: [host({ archives: [item] })] });
-    const confirmations = []; window.confirm = text => { confirmations.push(text); return false; };
+    const confirmations = []; window.confirm = text => { confirmations.push(text);
+
+    return false; };
+
     await render(StorageSettings);
     const remove = document.querySelector('[aria-label="Permanently delete Old chat"]'); await click(remove);
     assert.equal(calls.filter(call => call.command === 'delete_archived_session').length, 0);
@@ -50,7 +62,10 @@ describe('settings panels', () => {
     const items = [archive('good'), archive('failed'), archive('unsafe', { deletable: false, deleteError: 'invalid data' })];
     responses.set('storage_report', { hosts: [host({ archives: items })] });
     responses.set('delete_archived_session', args => { if (args.sessionPath === '/failed.jsonl') throw new Error('locked'); });
-    const confirmations = []; window.confirm = text => { confirmations.push(text); return true; };
+    const confirmations = []; window.confirm = text => { confirmations.push(text);
+
+    return true; };
+
     await render(StorageSettings);
     assert.equal(document.querySelector('[aria-label^="Cannot safely delete"]').disabled, true);
     responses.set('storage_report', { hosts: [host({ archives: items.slice(1) })] });
@@ -65,7 +80,10 @@ describe('settings panels', () => {
     responses.set('storage_report', new Error('scan failed')); await render(StorageSettings);
     assert.equal(document.querySelector('[role=alert]').textContent, 'scan failed');
     responses.set('storage_report', { hosts: [host({ archives: [archive('one'), archive('two')] })] }); await click(button('Refresh'));
-    let prompt; window.confirm = text => { prompt = text; return false; };
+    let prompt; window.confirm = text => { prompt = text;
+
+    return false; };
+
     await click(button('Delete all')); assert.match(prompt, /all 2 archived conversations on Local/);
     assert.equal(calls.filter(call => call.command === 'delete_archived_session').length, 0);
   });
@@ -74,12 +92,15 @@ describe('settings panels', () => {
     const context = { tokens: { system: 1, instructions: 1, tools: 1, skills: 0 }, systemPrompt: 'System content', instructions: [{ path: '/AGENTS.md', content: 'Instructions content' }], tools: [{ name: 'read', description: 'Read file', parameters: { type: 'object' } }], skills: [{ name: 'skill', description: 'Skill description', filePath: '/SKILL.md' }] };
     const view = await render(PromptContextBar, { context });
     assert.deepEqual([...document.querySelectorAll('button small')].map(node => node.textContent), ['34%', '33%', '33%', '0%']);
+
     for (const [section, content] of [['system', 'System content'], ['instructions', '/AGENTS.md'], ['tools', 'Read file'], ['skills', '/SKILL.md']]) {
       const control = document.querySelector(`button.${section}`); await click(control); assert.equal(control.getAttribute('aria-expanded'), 'true'); assert.match(document.querySelector('.prompt-context-content').textContent, new RegExp(content));
       await click(control); assert.equal(document.querySelector('.prompt-context-content'), null);
     }
+
     await view.rerender({ context: { tokens: { system: 0, instructions: 0, tools: 0, skills: 0 }, systemPrompt: '', instructions: [], tools: [], skills: [] } });
     assert.ok([...document.querySelectorAll('button small')].every(node => node.textContent === '0%'));
+
     for (const [section, text] of [['system', 'No system prompt'], ['instructions', 'No project instructions'], ['tools', 'No active tools'], ['skills', 'Defined 0%Invoked 0%Tax 0%No defined skills']]) { await click(document.querySelector(`button.${section}`)); assert.equal(document.querySelector('.prompt-context-content').textContent, text); }
   });
 });

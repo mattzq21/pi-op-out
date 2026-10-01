@@ -22,6 +22,7 @@ const compiled = await build({
     ` }));
   } }],
 });
+
 const { NativeTransport, calls, setCommands } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 
 for (const packageName of ['piop-openai-fast-mode', 'pi-openai-fast-mode-piop', 'pi-openai-fast-mode']) {

@@ -4,6 +4,7 @@ import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
+
 const developmentBranch = (() => {
   try {
     return execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: projectRoot, encoding: "utf8" }).trim();

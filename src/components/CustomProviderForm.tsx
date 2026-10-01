@@ -3,6 +3,7 @@ import { createSignal } from "solid-js";
 import type { CustomProviderInput } from "../lib/providerAuth";
 
 const blankProvider = (): CustomProviderInput => ({ providerId: "", name: "", baseUrl: "", api: "openai-completions", apiKey: "", noKey: false, sessionAffinity: false });
+
 const brokerProvider = (): CustomProviderInput => ({
   providerId: "opencode-go-broker", name: "OpenCode Go broker", baseUrl: "http://127.0.0.1:8787/v1", api: "openai-responses", apiKey: "", noKey: false, sessionAffinity: true,
 });
@@ -11,8 +12,10 @@ export function CustomProviderForm(componentProps: { working: boolean; save: (in
   const [input, setInput] = createSignal((blankProvider)());
   const [saved, setSaved] = createSignal(false);
   const update = (patch: Partial<CustomProviderInput>) => setInput((previous) => ({ ...previous, ...patch }));
+
   const submit = async () => {
     const capturedInput = input(); const capturedSave0 = componentProps.save;
+
  if (await capturedSave0(capturedInput)) { setInput(blankProvider()); setSaved(true); } };
 
   return <>{saved() ? (<div class="provider-login-panel" role="status"><strong>Custom provider added</strong><p>Enable its models in Settings → Models to use them in a conversation.</p><button onClick={componentProps.close}>Done</button></div>) : (<form class="provider-login-panel custom-provider-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>

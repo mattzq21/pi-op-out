@@ -4,6 +4,7 @@ import { keybindingsError } from "./keybindings";
 import type { NativeCall } from "./nativeCall";
 
 type SettingsTarget = { cwd?: string; sessionPath?: string; sessionId?: string; hostId: string };
+
 type SettingsConnection = {
   target: () => SettingsTarget;
   selectTarget: (target: SettingsTarget) => void;
@@ -28,7 +29,9 @@ export class NativeSettings {
 
   async loadHost() {
     const hostId = this.connection.target().hostId;
+
     if (hostId === "local") return this.call<AppSettings>("load_app_settings");
+
     try { return await this.call<AppSettings>("load_host_settings", { hostId }); }
     catch (reason) {
       if (String(reason).includes("Command is not available on the daemon: load_host_settings")) throw new Error("The connected or selected remote Piop daemon is older than this client. Update the daemon to access remote settings.");
@@ -38,6 +41,7 @@ export class NativeSettings {
 
   async saveHost(settings: AppSettings, agentsChanged = false) {
     const hostId = this.connection.target().hostId;
+
     try { return await this.call<SettingsChange>("save_host_settings", { hostId, settings, agentsChanged }); }
     catch (reason) {
       if (String(reason).includes("Command is not available on the daemon: save_host_settings")) throw new Error("The connected or selected remote Piop daemon needs updating before it can save remote settings.");
@@ -49,11 +53,13 @@ export class NativeSettings {
     const save = () => this.saveNow(settings, reconnect, agentHostId, scope);
     const result = this.lifecycle.then(save, save);
     this.lifecycle = result.then(() => undefined, () => undefined);
+
     return result;
   }
 
   private async saveNow(settings: AppSettings, reconnect: boolean, agentHostId: string | undefined, scope: "all" | "client") {
     const shortcutError = keybindingsError(settings.keybindings);
+
     if (shortcutError) throw new Error(shortcutError);
     const previous = await this.call<AppSettings>("load_app_settings");
     const target = this.connection.target();
@@ -62,12 +68,15 @@ export class NativeSettings {
     const change = daemonChanged ? await this.call<SettingsChange>("save_app_settings", { settings: daemonSettings, agentHostId }) : { settings: previous };
     await saveClientSettings(settings);
     change.settings = await withClientSettings(change.settings);
+
     if (reconnect && daemonChanged) await this.reconnectAfterSave(settings, previous, target);
+
     return change;
   }
 
   private selectAvailableHost(settings: AppSettings, fresh: boolean) {
     const { hostId } = this.connection.target();
+
     if (hostId !== "local" && !settings.hosts.some(host => host.enabled !== false && host.id === hostId)) this.connection.resetToLocal(fresh);
   }
 
@@ -79,7 +88,9 @@ export class NativeSettings {
     } catch (reason) {
       await this.call<void>("save_app_settings", { settings: previous });
       this.connection.selectTarget(target);
+
       try { await this.connection.disconnect(); await this.connection.connect(); } catch { }
+
       throw reason;
     }
   }
@@ -87,6 +98,7 @@ export class NativeSettings {
   async reconnect(settings: AppSettings) {
     await this.connection.disconnect();
     this.selectAvailableHost(settings, true);
+
     try { await this.connection.connect(); }
     catch (reason) { this.connection.emit({ type: "disconnected" }); throw reason; }
   }
@@ -103,6 +115,7 @@ export class NativeSettings {
 
   receive(event: RpcEvent) {
     if (event.type === "settings_pending" && typeof event.pending === "boolean") this.daemonPending = event.pending;
+
     if (event.type === "disconnected") this.daemonPending = false;
   }
 
@@ -116,6 +129,7 @@ export class NativeSettings {
       while (this.pending && !this.connection.closed()) {
         const update = this.pending;
         await this.reconnect(update.settings);
+
         if (this.pending === update) this.pending = undefined;
         this.connection.emit({ type: "settings_applied" });
       }
@@ -131,6 +145,7 @@ export class NativeSettings {
   async runCommand<T>(command: () => Promise<T>): Promise<T> {
     if (this.applying) await this.applying;
     this.activeCommands += 1;
+
     try { return await command(); }
     finally { this.activeCommands -= 1; this.applyPending(); }
   }

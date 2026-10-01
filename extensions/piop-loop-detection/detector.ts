@@ -1,24 +1,36 @@
 import { digest, type Observation, type Outcome } from "./observations.ts";
 
 export const LIMIT = 32;
+
 const MAX_AGE = 15 * 60 * 1000;
+
 const MAX_GAP = 24;
+
 export type Config = { enabled: boolean; threshold: number; cooldownSeconds: number };
+
 type Evidence = { key: string; result: string; count: number; seq: number; at: number; warned: boolean };
+
 type EditEvidence = { key: string; before: string; after: string; count: number; seq: number; at: number; warned: boolean };
+
 type Warning = { text: string; remaining: number };
+
 export type Snapshot = {
   version: 1; config: Config; scope: string; profile: string; seq: number;
   attempts: Evidence[]; edits: EditEvidence[]; information: string[];
   lastWarningAt: number; lastWarningSeq: number; warning?: Warning;
 };
+
 export type FileChange = { path: string; before: string; after: string };
+
 export const defaults = (): Config => ({ enabled: false, threshold: 4, cooldownSeconds: 120 });
+
 const integer = (value: unknown, min: number, max: number): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
+
 const hash = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 
 export function validConfig(value: unknown): value is Config {
   const config = value as Config | undefined;
+
   return !!config && typeof config.enabled === "boolean" && integer(config.threshold, 3, 10) && integer(config.cooldownSeconds, 30, 3600);
 }
 
@@ -53,13 +65,17 @@ export class LoopDetector {
   restore(value: unknown, now: number) {
     if (!value || typeof value !== "object") return;
     const saved = value as Snapshot;
+
     if (!validSnapshot(saved) || !validLists(saved)) return;
     this.state.config = { ...saved.config };
+
     if (saved.scope !== this.state.scope || saved.profile !== this.state.profile) return;
     this.state = structuredClone(saved);
     this.state.lastWarningSeq = Math.min(this.state.seq, this.state.lastWarningSeq);
+
     if (this.state.lastWarningAt > now) this.state.lastWarningAt = 0;
     this.prune(now);
+
     if (now - saved.lastWarningAt > MAX_AGE || saved.lastWarningAt > now) this.state.warning = undefined;
   }
 
@@ -71,6 +87,7 @@ export class LoopDetector {
     const fresh = (item: Evidence | EditEvidence) => item.at <= now && now - item.at <= MAX_AGE && item.seq <= this.state.seq && this.state.seq - item.seq <= MAX_GAP;
     this.state.attempts = this.state.attempts.filter(fresh).slice(-LIMIT);
     this.state.edits = this.state.edits.filter(fresh).slice(-LIMIT);
+
     if (now - this.state.lastWarningAt > MAX_AGE) this.state.warning = undefined;
   }
 
@@ -91,20 +108,28 @@ export class LoopDetector {
 
   private warn(item: Evidence | EditEvidence, text: string, now: number): string | undefined {
     const state = this.state;
+
     if (item.warned || now - state.lastWarningAt < state.config.cooldownSeconds * 1000 || state.seq - state.lastWarningSeq < 12) return;
     item.warned = true; state.lastWarningAt = now; state.lastWarningSeq = state.seq;
     state.warning = { text: text.slice(0, 512), remaining: 3 };
+
     return state.warning.text;
   }
 
   observe(action: Observation, result: Outcome, now: number): string | undefined {
     if (!this.state.config.enabled) return;
     const previous = this.state.attempts.find(item => item.key === action.key);
+
     if (!result.failed && action.kind === "command") {
       if (previous) this.progress();
+
       return;
     }
-    if (action.kind === "read") { if (!result.failed) this.learn(result.fingerprint); return; }
+
+    if (action.kind === "read") { if (!result.failed) this.learn(result.fingerprint);
+
+    return; }
+
     return this.repeat(action, result, previous, now);
   }
 
@@ -113,17 +138,23 @@ export class LoopDetector {
     const count = previous?.result === result.fingerprint ? Math.min(1000, previous.count + 1) : 1;
     const item: Evidence = { key: action.key, result: result.fingerprint, count, seq: this.state.seq, at: now, warned: previous?.result === result.fingerprint && previous.warned === true };
     this.state.attempts = [...this.state.attempts.filter(entry => entry.key !== action.key), item].slice(-LIMIT);
+
     if (count < this.state.config.threshold) return;
     const issue = result.failed ? "has failed with the same result" : "has repeated with no new information";
+
     return this.warn(item, `${action.label} ${issue} ${count} times.`, now);
   }
 
   change(change: FileChange, now: number): string | undefined {
     if (!this.state.config.enabled || change.before === change.after) return;
+
     if (!hash(change.before) || !hash(change.after) || typeof change.path !== "string") return;
     const item = this.recordEdit(change, now);
+
     if (item.count === 1) this.progress();
+
     if (item.count < Math.max(4, this.state.config.threshold)) return;
+
     return this.warn(item, `File ${JSON.stringify(change.path.slice(-160))} has alternated between the same two contents across ${item.count} edits.`, now);
   }
 
@@ -133,6 +164,7 @@ export class LoopDetector {
     const reversal = previous?.after === change.before && previous.before === change.after;
     const item: EditEvidence = { key, before: change.before, after: change.after, count: reversal ? Math.min(1000, previous.count + 1) : 1, at: now, seq: this.state.seq, warned: reversal && previous.warned };
     this.state.edits = [...this.state.edits.filter(entry => entry.key !== key), item].slice(-LIMIT);
+
     return item;
   }
 }

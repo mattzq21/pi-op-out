@@ -14,6 +14,7 @@ describe("Conversation acceptance", () => {
 
   it("opens, adds, deletes, and closes an ephemeral terminal", async () => {
     await mockBackend({ start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+
     try {
       await app.openTerminalButton.click();
       await expect(app.terminalPanel).toBeDisplayed();
@@ -35,6 +36,7 @@ describe("Conversation acceptance", () => {
 
   it("sends the composed prompt to piop and clears the accepted draft", async () => {
     await mockBackend({ "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:fork": {}, "pi_command:prompt": {} });
+
     try {
       await app.prepareMessage("Explain the failing build");
       await app.sendMessageButton.click();
@@ -51,6 +53,7 @@ describe("Conversation acceptance", () => {
 
   it("does not submit Shift+Enter and submits with Enter", async () => {
     await mockBackend({ "pi_command:prompt": {} });
+
     try {
       await app.prepareMessage("First line");
       await browser.execute(() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message piop"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true })));
@@ -71,6 +74,7 @@ describe("Conversation acceptance", () => {
 
   it("discovers and selects a slash command supplied by piop", async () => {
     await mockBackend({ ...connectedSessionResponses("command-session"), "pi_command:get_commands": { commands: [{ name: "review", description: "Review the current changes", source: "extension", sourceInfo: { source: "acceptance" } }] } });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("/rev");
@@ -95,6 +99,7 @@ describe("Conversation acceptance", () => {
         ]
       },
     });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("/");
@@ -118,6 +123,7 @@ describe("Conversation acceptance", () => {
       ],
       leafId: "retry-assistant",
     };
+
     await mockBackend({
       ...connectedSessionResponses("retry-session"),
       "pi_command:get_state": { ...connectedSessionResponses("retry-session")["pi_command:get_state"], sessionFile: "/tmp/retry-session.jsonl" },
@@ -127,6 +133,7 @@ describe("Conversation acceptance", () => {
       delete_session: {},
       list_sessions: [],
     });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       const retry = $('//div[@role="status"]//button[normalize-space(.)="Retry"]');
@@ -148,6 +155,7 @@ describe("Conversation acceptance", () => {
 
   it("includes an attached text file in the submitted prompt", async () => {
     await mockBackend({ "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:fork": {}, "pi_command:prompt": {} });
+
     try {
       await browser.execute(() => {
         const composer = document.querySelector(".composer")!;
@@ -169,6 +177,7 @@ describe("Conversation acceptance", () => {
 
   it("escapes quotes in attached filenames before submitting them", async () => {
     await mockBackend({ "pi_command:prompt": {} });
+
     try {
       await browser.execute(() => {
         const composer = document.querySelector(".composer")!;
@@ -189,6 +198,7 @@ describe("Conversation acceptance", () => {
     await browser.execute(() => {
       const composer = document.querySelector(".composer")!;
       const transfer = new DataTransfer();
+
       for (let index = 1; index <= 13; index += 1) transfer.items.add(new File([`fixture ${index}`], `fixture-${index}.txt`, { type: "text/plain", lastModified: index }));
       composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
     });
@@ -228,6 +238,7 @@ describe("Conversation acceptance", () => {
   it("submits an attached image with its encoded payload", async () => {
     const model = { provider: "e2e", id: "vision", name: "Vision model", input: ["text", "image"] };
     await mockBackend({ ...connectedSessionResponses("image-session"), "pi_command:get_state": { ...connectedSessionResponses("image-session")["pi_command:get_state"], model }, "pi_command:get_available_models": { models: [model] }, "pi_command:fork": {}, "pi_command:prompt": {} });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await expect(app.modelPicker).toHaveAttribute("data-value", "e2e/vision");
@@ -251,6 +262,7 @@ describe("Conversation acceptance", () => {
 
   it("renders live assistant activity delivered through Tauri events", async () => {
     await startTemporaryConversation({});
+
     try {
       await emitPiEvent({ type: "agent_start" });
       await expect($(".stream-banner")).toHaveText(expect.stringContaining("piop is working"));
@@ -273,7 +285,9 @@ describe("Conversation acceptance", () => {
       entries: [{ type: "message", id: "incremental-final", parentId: null, message: { role: "assistant", content: "Incremental answer", timestamp: 200 } }],
       leafId: "incremental-final",
     };
+
     await mockBackend({ ...connectedSessionResponses("incremental-session"), "pi_command:get_entries": finalHistory });
+
     try {
       await emitPiEvent({ type: "agent_start" });
       await emitPiEvent({ type: "message_start", message: { role: "assistant", content: "", timestamp: 100 } });
@@ -301,7 +315,9 @@ describe("Conversation acceptance", () => {
       ],
       leafId: "error-assistant",
     };
+
     await mockBackend({ ...connectedSessionResponses("error-session"), "pi_command:get_entries": history });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       const failure = $(".message-failure");
@@ -313,7 +329,9 @@ describe("Conversation acceptance", () => {
   });
 
   it("renders a tool call from running through completion", async () => {
-    const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
+    const enableDebug = $('button[aria-label="Enable debug mode"]');
+
+    if (await enableDebug.isExisting()) await enableDebug.click();
     await expect($('button[aria-label="Disable debug mode"]')).toBeEnabled();
     await emitPiEvent({ type: "agent_start" });
     await emitPiEvent({ type: "tool_execution_start", toolCallId: "acceptance-tool", toolName: "acceptance_tool", args: { path: "README.md" } });

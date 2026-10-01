@@ -8,7 +8,11 @@ import { execFileSync } from 'node:child_process';
 test('relocation retains the repository of old prompt checkpoints across multiple moves', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'piop-checkpoint-relocation-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const roots = await Promise.all(['one', 'two', 'three'].map(async name => { const root = join(dir, name); await mkdir(root); return root; }));
+
+  const roots = await Promise.all(['one', 'two', 'three'].map(async name => { const root = join(dir, name); await mkdir(root);
+
+  return root; }));
+
   const file = join(dir, 'session.jsonl');
   const entry = { type: 'custom', customType: 'pi-project-prompt-checkpoint', data: { key: 'old', owner: 'session', commit: 'a'.repeat(40), base: null } };
   await writeFile(file, [ { type: 'session', id: 'session', cwd: roots[0] }, entry ].map(JSON.stringify).join('\n') + '\n');
@@ -38,6 +42,7 @@ test('archive preservation tolerates deleted ancestor refs while preserving chil
   git('worktree', 'add', '-b', 'child', child);
   const owned = 'refs/pi-session-snapshots/chats/child/baseline';
   git('update-ref', owned, second);
+
   const entries = [
     { type: 'session', id: 'child', cwd: child },
     { type: 'message', id: 'old', parentId: null, message: { role: 'assistant' } },
@@ -45,6 +50,7 @@ test('archive preservation tolerates deleted ancestor refs while preserving chil
     { type: 'message', id: 'latest', parentId: 'old-snapshot', message: { role: 'assistant' } },
     { type: 'custom', id: 'baseline', parentId: 'latest', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: child, ref: owned, commit: second, responseEntryIds: ['latest'] } },
   ];
+
   const file = join(archive, 'child.jsonl');
   await writeFile(file, entries.map(JSON.stringify).join('\n') + '\n');
   const script = await readFile(new URL('../../src-tauri/resources/preserve-archive-checkpoints.cjs', import.meta.url), 'utf8');

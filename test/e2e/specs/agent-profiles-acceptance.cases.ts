@@ -104,6 +104,7 @@ describe("Agent profiles acceptance", () => {
   it("persists a GUI-created agent through a real native save", async () => {
     const originalConfig = readFileSync(installedAgentConfigPath);
     const agentName = "e2e-persisted-agent";
+
     try {
       writeFileSync(installedAgentConfigPath, JSON.stringify(acceptanceAgents().config, null, 2));
       await resetBackend();
@@ -128,8 +129,10 @@ describe("Agent profiles acceptance", () => {
 
       await browser.waitUntil(async () => {
         const error = $('.settings-save [role="alert"]');
+
         if (await error.isExisting()) throw new Error(await error.getText());
         const saved = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as AgentConfig;
+
         return saved.agents.some((agent) => agent.name === agentName);
       }, { timeout: 30_000, timeoutMsg: "The GUI-created agent was not written to the installed agent config" });
       await expect(app.saveSettingsButton).toHaveText("Saved");

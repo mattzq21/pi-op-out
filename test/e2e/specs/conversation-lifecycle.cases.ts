@@ -13,6 +13,7 @@ describe("Conversation lifecycle", () => {
     const target = { id: "1d26ae02-2dfe-48df-a5d3-b8c77fd764b4", path: "/tmp/draft-target.jsonl", name: "Draft target conversation", project: "Draft project", cwd: "/tmp", preview: "Target draft", messageCount: 0, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
     await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await updateBackendResponse("pi_command:get_state", state(current.id));
@@ -49,6 +50,7 @@ describe("Conversation lifecycle", () => {
   it("keeps split-pane drafts separate from the main conversation", async () => {
     const indexed = { id: "draft-split", path: "/tmp/draft-split.jsonl", name: "Draft split conversation", project: "Draft project", cwd: "/tmp", preview: "Split draft", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
+
     const openSplit = async () => {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
@@ -56,8 +58,10 @@ describe("Conversation lifecycle", () => {
       await $('//div[@role="menu"]//button[normalize-space(.)="Split pane"]').click();
       const split = $(`section[aria-label="Split conversation: ${indexed.name}"]`);
       await expect(split).toBeDisplayed();
+
       return split;
     };
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("Main conversation draft");
@@ -73,6 +77,7 @@ describe("Conversation lifecycle", () => {
       await app.clearMessage();
     } finally {
       const split = $(`section[aria-label="Split conversation: ${indexed.name}"]`);
+
       if (await split.isExisting()) await split.$('button[aria-label="Close split pane"]').click();
       await app.conversationSearch.clearValue();
       await app.clearMessage();
@@ -86,6 +91,7 @@ describe("Conversation lifecycle", () => {
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, sessionFile: `/tmp/${sessionId}.jsonl`, messageCount: 1, pendingMessageCount: 0 });
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, ...connectedSessionResponses("terminal-bootstrap"), "pi_command:set_model": {}, load_app_settings: settings, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+
     try {
       await browser.execute(() => {
         document.querySelectorAll<HTMLButtonElement>('.error-toast button[aria-label^="Dismiss"]').forEach((button) => button.click());
@@ -126,6 +132,7 @@ describe("Conversation lifecycle", () => {
     const indexed = { id: "archive-active", path: "/tmp/archive-active.jsonl", name: "Active archive conversation", project: "Archive project", cwd: "/tmp", preview: "Active archive", messageCount: 2, hostId: "local" };
     const replacementState = { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId: "archive-replacement", messageCount: 0, pendingMessageCount: 0 };
     await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {}, "pi_command:new_session": {}, archive_session: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await updateBackendResponse("pi_command:get_state", { ...replacementState, sessionId: indexed.id });
@@ -142,7 +149,9 @@ describe("Conversation lifecycle", () => {
 
       await expect(app.terminalPanel).not.toBeExisting();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));
-      await browser.waitUntil(async () => { const calls = await backendCalls(); const archived = calls.findIndex(({ command }) => command === "archive_session"); return calls.slice(archived + 1).some(({ command, args }) => command === "start_pi" && !args.sessionPath); }, { timeoutMsg: "Archiving did not start a fresh runtime" });
+      await browser.waitUntil(async () => { const calls = await backendCalls(); const archived = calls.findIndex(({ command }) => command === "archive_session");
+
+      return calls.slice(archived + 1).some(({ command, args }) => command === "start_pi" && !args.sessionPath); }, { timeoutMsg: "Archiving did not start a fresh runtime" });
       const calls = await backendCalls();
       const terminalId = calls.find(({ command }) => command === "start_terminal")?.args.terminalId;
       expect(calls.find(({ command }) => command === "archive_session")?.args.terminalIds).toEqual([terminalId]);
@@ -156,6 +165,7 @@ describe("Conversation lifecycle", () => {
   it("starts a fresh conversation in the selected project from the keyboard", async () => {
     const selected = { id: "keyboard-session", path: "/tmp/keyboard-session.jsonl", name: "Keyboard conversation", project: "Keyboard project", cwd: "/tmp", preview: "Keyboard", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [selected], stop_pi: {}, start_pi: {}, ...connectedSessionResponses("") });
+
     try {
       await app.openConversations();
       await emitPiEvent({ type: "session_switched" });

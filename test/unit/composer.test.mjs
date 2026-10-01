@@ -9,26 +9,43 @@ describe('composer interactions', () => {
   let dom, view, props, sent, globals;
   beforeEach(() => {
     dom = installDom(); HTMLElement.prototype.scrollIntoView = () => {};
+
     sent = []; globals = new Map();
     props = { streaming: false, queued: 0, commands: [], agents: [], models: [], model: null, thinkingLevel: 'off', thinkingLevels: ['off', 'high'], onSend: async (...args) => { sent.push(args); }, onPause: async () => {}, onResume: async () => {}, onAbort: async () => {}, onAgent: () => {}, onModel: () => {}, onThinking: () => {}, onToggleFastMode: async () => {} };
   });
   afterEach(async () => {
     if (view) await view.unmount(); view = undefined;
     clearMocks();
+
     for (const [name, descriptor] of globals) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else delete globalThis[name]; }
+
     dom.restore();
   });
+
   function global(name, value) { globals.set(name, Object.getOwnPropertyDescriptor(globalThis, name)); Object.defineProperty(globalThis, name, { configurable: true, writable: true, value }); }
-  async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(Composer, props); }
+
+  async function render(extra = {}) { props = { ...props, ...extra };
+
+  if (view) await view.rerender(props); else view = await renderComponent(Composer, props); }
+
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const editor = () => control('Message piop');
   const click = async element => act(async () => element.click());
-  const key = async (key, extra = {}, element = editor()) => { const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }); await act(async () => element.dispatchEvent(event)); return event; };
-  const paste = async files => { const event = new Event('paste', { bubbles: true, cancelable: true }); Object.defineProperty(event, 'clipboardData', { value: { files, items: [], getData: () => files.length ? '' : 'plain text' } }); await act(async () => editor().dispatchEvent(event)); return event; };
+
+  const key = async (key, extra = {}, element = editor()) => { const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }); await act(async () => element.dispatchEvent(event));
+
+  return event; };
+
+  const paste = async files => { const event = new Event('paste', { bubbles: true, cancelable: true }); Object.defineProperty(event, 'clipboardData', { value: { files, items: [], getData: () => files.length ? '' : 'plain text' } }); await act(async () => editor().dispatchEvent(event));
+
+  return event; };
+
   const drag = async (type, data = {}, target = document.querySelector('.composer')) => {
     const transfer = { types: ['Files'], files: [], getData: () => '', ...data };
     const event = new Event(type, { bubbles: true, cancelable: true }); Object.defineProperty(event, 'dataTransfer', { value: transfer });
-    await act(async () => target.dispatchEvent(event)); return { event, transfer };
+    await act(async () => target.dispatchEvent(event));
+
+    return { event, transfer };
   };
 
   test('submission trims text, ignores blank and composed input, and respects newline and delivery shortcuts', async () => {
@@ -56,7 +73,9 @@ describe('composer interactions', () => {
 
   test('in-flight submission is deduplicated and failed sends preserve newer typing', async () => {
     const pending = Promise.withResolvers();
-    await render({ onSend: (...args) => { sent.push(args); return pending.promise; } });
+    await render({ onSend: (...args) => { sent.push(args);
+
+    return pending.promise; } });
     await enterText(editor(), 'Original'); await key('Enter');
     assert.equal(control('Send message').disabled, true); assert.equal(editor().value, '');
     await enterText(editor(), 'New thought'); await key('Enter'); assert.equal(sent.length, 1);
@@ -81,7 +100,9 @@ describe('composer interactions', () => {
 
   test('pause, stop and resume serialize pending actions and expose failures', async () => {
     const pending = Promise.withResolvers(); let pauses = 0, stops = 0, resumes = 0;
-    await render({ streaming: true, onPause: () => { pauses++; return pending.promise; }, onAbort: async () => { stops++; throw 'cannot stop'; } });
+    await render({ streaming: true, onPause: () => { pauses++;
+
+    return pending.promise; }, onAbort: async () => { stops++; throw 'cannot stop'; } });
     await act(async () => { control('Pause piop').click(); control('Pause piop').click(); }); assert.equal(pauses, 1);
     assert.match(document.querySelector('.stream-status').textContent, /Pausing/);
     await enterText(editor(), 'Hold'); await key('Enter'); assert.deepEqual(sent, []);
@@ -89,7 +110,9 @@ describe('composer interactions', () => {
     await act(async () => pending.reject(new Error('cannot pause'))); assert.equal(document.querySelector('[role=alert]').textContent, 'cannot pause');
     const resuming = Promise.withResolvers();
     await enterText(editor(), '');
-    await render({ streaming: false, paused: true, onResume: () => { resumes++; return resuming.promise; } });
+    await render({ streaming: false, paused: true, onResume: () => { resumes++;
+
+    return resuming.promise; } });
     await click(control('Resume piop')); assert.equal(control('Stop piop').disabled, true); assert.match(document.querySelector('.stream-status').textContent, /Resuming/);
     await act(async () => resuming.resolve()); assert.equal(resumes, 1); assert.equal(control('Resume piop').disabled, false);
     await render({ controlsDisabled: true }); assert.equal(editor().disabled, true); assert.equal(control('Resume piop').disabled, true);
@@ -118,7 +141,9 @@ describe('composer interactions', () => {
   test('fast mode prevents repeated requests and reports failures while preserving server state', async () => {
     const pending = Promise.withResolvers(); let toggles = 0;
     await render(); assert.equal(control('Fast mode'), null);
-    await render({ fastModeStatus: 'Fast mode off', onToggleFastMode: () => { toggles++; return pending.promise; } });
+    await render({ fastModeStatus: 'Fast mode off', onToggleFastMode: () => { toggles++;
+
+    return pending.promise; } });
     await act(async () => { control('Fast mode').click(); control('Fast mode').click(); }); assert.equal(toggles, 1); assert.equal(control('Fast mode').getAttribute('aria-busy'), 'true');
     await act(async () => pending.reject(new Error('offline'))); assert.equal(document.querySelector('[role=alert]').textContent, 'Could not toggle Fast mode: offline'); assert.equal(control('Fast mode').getAttribute('aria-pressed'), 'false');
     await render({ fastModeStatus: 'Fast mode on', onToggleFastMode: async () => {} }); await click(control('Fast mode')); assert.equal(document.querySelector('[role=alert]'), null); assert.equal(control('Fast mode').getAttribute('aria-pressed'), 'true');
@@ -137,6 +162,7 @@ describe('composer interactions', () => {
     await render({ contextUsage: { tokens: 50, contextWindow: 200 }, onOpenTerminal: () => terminals++, sessionCache: { rate: 20, low: true } });
     assert.ok(control('25% of 200 context tokens used')); assert.match(document.querySelector('.session-cache-hit.low').textContent, /20%/); await click(control('Open terminal')); assert.equal(terminals, 1);
     await render({ contextUsage: { tokens: null, contextWindow: 200 } }); assert.ok(control('Context usage unavailable; window is 200 tokens'));
+
     for (const [percent, expected] of [[-3, 0], [130, 100]]) { await render({ contextUsage: { percent, tokens: 50, contextWindow: 200 } }); assert.ok(control(`${expected}% of 200 context tokens used`)); }
   });
 
@@ -182,7 +208,9 @@ describe('composer interactions', () => {
 
   test('queued messages enforce ordering boundaries, change delivery, and recover from action failures', async () => {
     const changes = [], pending = Promise.withResolvers();
-    await render({ pendingMessages: [{ id: 'a', message: 'First', behavior: 'followUp' }, { id: 'b', message: 'Second', behavior: 'followUp' }, { id: 'c', message: 'Retry me', behavior: 'steer', retry: true }], onChangePending: (id, action) => { changes.push([id, action]); return pending.promise; } });
+    await render({ pendingMessages: [{ id: 'a', message: 'First', behavior: 'followUp' }, { id: 'b', message: 'Second', behavior: 'followUp' }, { id: 'c', message: 'Retry me', behavior: 'steer', retry: true }], onChangePending: (id, action) => { changes.push([id, action]);
+
+    return pending.promise; } });
     assert.equal(control('Move queued message up: First').disabled, true); assert.equal(control('Move queued message down: Second').disabled, true); assert.equal(control('Drag to reorder queued message: Retry me').disabled, true);
     await click(control('Move queued message down: First')); assert.deepEqual(changes, [['a', 'moveDown']]); assert.equal(control('Remove queued message: Second').disabled, true);
     await act(async () => pending.reject(new Error('queue changed'))); assert.equal(document.querySelector('[role=alert]').textContent, 'queue changed');
@@ -230,7 +258,9 @@ describe('composer interactions', () => {
     global('FileReader', class {
       readAsDataURL(file) { file.arrayBuffer().then(buffer => { this.result = `data:${file.type};base64,${Buffer.from(buffer).toString('base64')}`; this.onload(); }); }
     });
-    global('Image', class { decode() { decoded.push(this.src); return decodeResult; } });
+    global('Image', class { decode() { decoded.push(this.src);
+
+    return decodeResult; } });
     await render({ model: { id: 'v', provider: 'p', input: ['image'] } });
     await paste([new File(['bytes'], 'image.png', { type: 'image/png' })]);
     assert.deepEqual(decoded, ['data:image/png;base64,Ynl0ZXM=']); assert.ok(control('Remove image.png'));
@@ -245,7 +275,11 @@ describe('composer interactions', () => {
 
   test('native file drops use scaled bounds, reject outside positions and clean up subscriptions', async () => {
     global('isTauri', true); const reads = [];
-    mockWindows('main'); mockIPC(async (command, args) => { assert.equal(command, 'read_dropped_file'); reads.push(args.path); if (args.path === '/bad') throw new Error('unreadable'); return { name: 'native.txt', data: [111, 107] }; }, { shouldMockEvents: true });
+    mockWindows('main'); mockIPC(async (command, args) => { assert.equal(command, 'read_dropped_file'); reads.push(args.path);
+
+    if (args.path === '/bad') throw new Error('unreadable');
+
+    return { name: 'native.txt', data: [111, 107] }; }, { shouldMockEvents: true });
     await render();
     Object.defineProperty(window, 'devicePixelRatio', { value: 2 });
     document.querySelector('.composer').getBoundingClientRect = () => ({ left: 10, top: 10, right: 100, bottom: 100 });
@@ -262,7 +296,9 @@ describe('composer interactions', () => {
 
   test('URI drops read only local file URLs and cap native file batches', async () => {
     const reads = [];
-    mockIPC(async (command, args) => { assert.equal(command, 'read_dropped_file'); reads.push(args.path); return { name: `${reads.length}.txt`, data: [120] }; });
+    mockIPC(async (command, args) => { assert.equal(command, 'read_dropped_file'); reads.push(args.path);
+
+    return { name: `${reads.length}.txt`, data: [120] }; });
     await render();
     await drag('drop', { getData: () => '#comment\nhttps://example.com/file\nfile://remote/secret\nfile:///local%20file\nfile://localhost/second\nfile:///%ZZ' });
     assert.deepEqual(reads, ['/local file', '/second']); assert.equal(document.querySelectorAll('.attachments b').length, 2);

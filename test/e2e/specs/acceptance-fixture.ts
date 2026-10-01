@@ -9,6 +9,7 @@ export type BackendCall = { command: string; args: Record<string, unknown>; mock
 
 export const isUserPrompt = (value: unknown) => {
   const command = value as { type?: string; message?: string } | undefined;
+
   return command?.type === "prompt" && !/^\/(?:fast|pi-desktop-fast-status|pi-define-agents-use)(?:\s|$)/.test(command.message ?? "");
 };
 
@@ -27,24 +28,32 @@ const withKnownModels = (responses: Record<string, unknown>) => {
   responses = { ...responses };
   const models = (responses["pi_command:get_available_models"] as { models?: Array<{ provider: string; id: string }> })?.models ?? [];
   const known = (settings: AppSettings) => ({ ...settings, knownModels: [...new Set([...(settings.knownModels ?? []), ...models.map(model => `${model.provider}/${model.id}`)])] });
+
   if (responses.load_app_settings && !(responses.load_app_settings as { error?: unknown }).error) responses.load_app_settings = known(responses.load_app_settings as AppSettings);
   const saved = responses.save_app_settings as { settings?: AppSettings } | undefined;
+
   if (saved?.settings) responses.save_app_settings = { ...saved, settings: known(saved.settings) };
+
   return responses;
 };
 
 export const withSessionSnapshot = (responses: Record<string, unknown>) => {
   responses = withKnownModels(responses);
+
   if (responses.start_pi && agentEvent) responses.start_pi = { ...responses.start_pi as object, events: [agentEvent] };
   const state = responses["pi_command:get_state"];
+
   if (!state) return responses;
+
   return { ...responses, "pi_command:get_session_revision": { revision: "changed" }, "pi_command:get_snapshot": { revision: "snapshot", state, history: responses["pi_command:get_entries"] ?? { entries: [], leafId: null }, queue: { pendingMessages: [] }, liveTools: [], sequence: 0, epoch: "e2e" } };
 };
 
 export const mockBackend = async (responses: Record<string, unknown>) => {
   const models = (responses["pi_command:get_available_models"] as { models?: Array<{ provider: string; id: string }> })?.models;
+
   if (models) await browser.execute((ids) => {
     const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: <T>(command: string, args?: unknown) => Promise<T> } }).__TAURI_INTERNALS__;
+
     return tauri.invoke<Record<string, unknown>>("load_client_settings").then(async stored => {
       const preferences = stored ?? {};
       preferences.knownModels = [...new Set([...(preferences.knownModels as string[] ?? []), ...ids])];
@@ -54,6 +63,7 @@ export const mockBackend = async (responses: Record<string, unknown>) => {
   }, models.map(model => `${model.provider}/${model.id}`));
   await callBridge().setValue("[]");
   await responseBridge().setValue(JSON.stringify(withSessionSnapshot({ ...isolatedUsageResponses, ...responses })));
+
   if (responses.list_sessions) await browser.execute(async () => {
     const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
     await tauri.invoke("plugin:event|emit", { event: "pi://sessions-changed", payload: {} });
@@ -64,8 +74,10 @@ export const withClientSettingsWriteFailure = async (action: () => Promise<void>
   const path = join(process.env.PIOP_TEST_HOME!, ".piop", "client-settings.json");
   const backup = `${path}.e2e-backup`;
   renameSync(path, backup);
+
   try {
     mkdirSync(path);
+
     try { await action(); } finally { rmdirSync(path); }
   } finally { renameSync(backup, path); }
 };
@@ -83,6 +95,7 @@ export const updateBackendResponse = async (command: string, response: unknown) 
 
 export const resetBackend = async () => {
   const prompts = (await backendCalls()).filter(call => call.mocked && isUserPrompt(call.args.command));
+
   for (const prompt of prompts) await emitPiEvent({ type: "message_start", message: { role: "user", content: (prompt.args.command as { message: string }).message, timestamp: Date.now() } });
   agentEvent = undefined;
   await callBridge().setValue("[]");
@@ -92,10 +105,13 @@ export const resetBackend = async () => {
 export const resetApp = async () => {
   try { await resetBackend(); }
   catch (cause) { throw new Error(`Backend reset failed: ${await $("body").getText()}`, { cause }); }
+
   await browser.execute(() => { for (const key of Object.keys(localStorage)) if (key.startsWith("piop-last-session:")) localStorage.removeItem(key); });
   await app.refreshForReset();
+
   try { await app.root.waitForDisplayed({ timeout: 10_000 }); }
   catch (cause) { throw new Error(`App reset failed: ${await $("body").getText()}`, { cause }); }
+
   if (await app.conversationsButton.isExisting()) await app.conversationsButton.click();
   await app.waitUntilReady();
   await app.composer.waitForEnabled();
@@ -105,6 +121,7 @@ export const emitPiEvent = async (payload: Record<string, unknown>) => {
   await browser.execute(async (event) => {
     const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
     await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: event });
+
     if (event.type === "agent_end") await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: { type: "agent_settled" } });
   }, payload);
   await browser.execute(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -115,6 +132,7 @@ export let defaultSettings: AppSettings;
 before(async () => {
   defaultSettings = await browser.execute(async () => {
     const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: <T>(command: string, args?: unknown) => Promise<T> } }).__TAURI_INTERNALS__;
+
     return tauri.invoke<AppSettings>("daemon_invoke", { command: "load_app_settings", args: { clientId: "desktop:e2e-settings" } });
   });
 });
@@ -133,6 +151,7 @@ export const acceptanceAgents = (): DefinedAgentsCapability => ({
 export const installedAgents = (): DefinedAgentsCapability => {
   const config = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as Partial<AgentConfig>;
   const agents = config.agents ?? [];
+
   return {
     version: 1,
     active: agents.some((agent) => agent.name === "general") ? "general" : agents[0]?.name ?? "general",
@@ -147,6 +166,7 @@ let agentEvent: Record<string, unknown> | undefined;
 export const enableAgents = async (capability = acceptanceAgents()) => {
   agentEvent = { type: "extension_ui_request", id: "acceptance-agents", method: "setStatus", statusKey: "pi-define-agents", statusText: `json:${encodeAgentValue(capability)}` };
   const responses = JSON.parse(await responseBridge().getValue() || "{}");
+
   if (responses.start_pi) await updateBackendResponse("start_pi", { ...responses.start_pi, events: [agentEvent] });
   await emitPiEvent(agentEvent);
 };

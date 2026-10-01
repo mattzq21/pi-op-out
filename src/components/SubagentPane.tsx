@@ -19,11 +19,14 @@ export function SubagentPane(props: { target: SubagentTarget; onClose: () => voi
     let timer: ReturnType<typeof setTimeout> | undefined;
     const unsubscribe = transport.subscribe(session.handleEvent);
     transport.setVisible(true);
+
     const refresh = async () => {
       try {
         await transport.connect();
+
         if (closed) return;
         await session.refresh();
+
         if (!closed) { setLoaded(true); setError(undefined); }
       } catch (reason) {
         if (!closed) setError(reason instanceof Error ? reason.message : String(reason));
@@ -31,10 +34,13 @@ export function SubagentPane(props: { target: SubagentTarget; onClose: () => voi
         if (!closed) timer = setTimeout(() => void refresh(), 1000);
       }
     };
+
     void refresh();
+
     return () => { closed = true; clearTimeout(timer); unsubscribe(); transport.setVisible(false); };
   }, () => [retry()]);
   createDependencyEffect(() => () => { void transport.dispose().catch(() => undefined); }, () => []);
+
   return <section class="split-chat subagent-pane" aria-label={`Subagent conversation: ${props.target.name}`} oncapture:focus={props.onActivate} oncapture:pointerdown={props.onActivate}>
     <header class="split-pane-header"><span><strong>{props.target.name}</strong><small>Subagent conversation · Read-only</small></span><button type="button" class="split-pane-close" aria-label="Close subagent conversation" onClick={props.onClose}><X size={15} /></button></header>
     {error() && <div class="subagent-pane-error" role="alert">{error()} <button type="button" onClick={() => setRetry((value) => value + 1)}>Retry</button></div>}

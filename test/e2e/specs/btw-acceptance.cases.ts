@@ -11,10 +11,12 @@ describe("/review acceptance", () => {
     title: "__pi_desktop_review__",
     placeholder: JSON.stringify(payload),
   });
+
   const runtimeResponses = () => ({
     start_pi: {}, stop_pi: {}, ...connectedSessionResponses("btw-runtime"),
     "pi_command:prompt": {}, "pi_command:extension_ui_response": {},
   });
+
   before(async () => {
     await resetApp();
   });
@@ -23,7 +25,9 @@ describe("/review acceptance", () => {
   });
   afterEach(async () => {
     const split = $('section[aria-label="Split conversation: Code review"]');
+
     if (await split.isExisting()) await split.$('button[aria-label="Close split pane"]').click();
+
     if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
     await resetBackend();
   });

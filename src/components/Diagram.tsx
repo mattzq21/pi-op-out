@@ -32,6 +32,7 @@ export function Diagram(props: { source: string; complete: boolean }) {
     const version = ++revision;
     setError("");
     setSvg("");
+
     if (!complete) return;
     const current = () => revision === version;
     void renderDiagram(source, theme, current).then(result => {
@@ -40,31 +41,38 @@ export function Diagram(props: { source: string; complete: boolean }) {
       if (current()) setError(reason instanceof Error ? reason.message : "Could not render this diagram.");
     });
   });
+
   const notify = (message: string) => {
     clearTimeout(timer); setFeedback(message);
     timer = setTimeout(() => setFeedback(""), 1800);
   };
+
   const copy = async () => {
     try { await navigator.clipboard.writeText(props.source); notify("Source copied"); }
     catch { notify("Could not copy source"); }
   };
+
   const reset = () => { setZoom(1); viewport?.scrollTo(0, 0); };
+
   const wheel = (event: WheelEvent) => {
     if (!event.ctrlKey || !event.deltaY || !(event.target instanceof Node) || !viewport?.contains(event.target)) return;
     event.preventDefault();
     event.stopPropagation();
     setZoom(value => Math.max(0.5, Math.min(4, value - Math.sign(event.deltaY) * 0.25)));
   };
+
   const pointerDown = (event: PointerEvent) => {
     if (event.button !== 0 || event.pointerType === "touch") return;
     drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
     viewport.setPointerCapture(event.pointerId);
   };
+
   const pointerMove = (event: PointerEvent) => {
     if (!drag) return;
     viewport.scrollLeft = drag.left + drag.x - event.clientX;
     viewport.scrollTop = drag.top + drag.y - event.clientY;
   };
+
   return <section ref={root} class="diagram" classList={{ "diagram-expanded": expanded() }} aria-label="Mermaid diagram">
     <div class="diagram-toolbar" role="group" aria-label="Diagram controls">
       <span class="diagram-label">Diagram</span>

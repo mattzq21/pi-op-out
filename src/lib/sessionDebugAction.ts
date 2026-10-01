@@ -3,6 +3,7 @@ import { openRolloutFile } from "./nativeTransport";
 
 export async function sessionDebugAction(session: SessionSummary, action: string, notify: (notice: { title: string; message: string }) => void) {
   const opening = action === "open-rollout";
+
   try {
     if (opening) await openRolloutFile(session.path, session.hostId ?? "local");
     else await navigator.clipboard.writeText(session.id);

@@ -196,6 +196,7 @@ pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
     atomic_write_private(&extension_path, include_str!("../../../extensions/piop-diff-watch/index.ts").as_bytes())?;
+    atomic_write_private(&dir.join("git.ts"), include_str!("../../../extensions/piop-diff-watch/git.ts").as_bytes())?;
     remove_legacy_diff_assets(&dir)?;
     Ok(extension_path)
 }
@@ -235,6 +236,7 @@ pub(super) fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
     for (name, source) in [
         ("mcp-config.ts", include_str!("../../../extensions/piop-define-agents/mcp-config.ts")),
         ("extension-loader.ts", include_str!("../../../extensions/piop-define-agents/extension-loader.ts")),
+        ("prompts.ts", include_str!("../../../extensions/piop-define-agents/prompts.ts")),
         ("../piop-diagrams.ts", include_str!("../../../extensions/piop-diagrams/index.ts")),
         ("index.ts", include_str!("../../../extensions/piop-define-agents/index.ts")),
     ] { atomic_write_private(&dir.join(name), source.as_bytes())?; }

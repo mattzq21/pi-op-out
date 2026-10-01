@@ -6,12 +6,19 @@ import { useSessionProjects } from "./sessionProjects";
 import { createDependencyEffect } from "./solid";
 
 export interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
+
 const COLLAPSED_PROJECTS_KEY = "pi-desktop-collapsed-projects";
+
 const SESSION_ORDERS_KEY = "pi-desktop-session-orders";
+
 const SIDEBAR_ORDER_KEY = "pi-desktop-sidebar-order";
+
 export const RECENT_KEY = "__pi-desktop-ungrouped__";
+
 const RECENT_LABEL = "Recent";
+
 export const isFixedGroup = (key: string) => key === RECENT_KEY || key === DIRLESS_KEY;
+
 const sidebarCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 function stableSessionOrder(left: SessionSummary, right: SessionSummary) {
@@ -23,37 +30,53 @@ function recentSessionOrder(left: SessionSummary, right: SessionSummary) {
 }
 
 function savedGroupKeys(storageKey: string) {
-  try { const value = JSON.parse(localStorage.getItem(storageKey) || "[]"); return new Set<string>(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); }
+  try { const value = JSON.parse(localStorage.getItem(storageKey) || "[]");
+
+  return new Set<string>(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); }
   catch { return new Set<string>(); }
 }
 
 function savedSessionOrders() {
   try {
     const value = JSON.parse(localStorage.getItem(SESSION_ORDERS_KEY) || "{}");
+
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
     return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].every((item) => typeof item === "string")));
   } catch { return {}; }
 }
 
 function savedSidebarOrder() {
-  try { const value = JSON.parse(localStorage.getItem(SIDEBAR_ORDER_KEY) || "[]"); return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }
+  try { const value = JSON.parse(localStorage.getItem(SIDEBAR_ORDER_KEY) || "[]");
+
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }
   catch { return []; }
 }
 
 export function sessionKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.id}`; }
+
 function projectName(session: SessionSummary) { return session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project; }
+
 export function sessionLayoutToken(key: string) { return `session:${key}`; }
+
 export function groupLayoutToken(key: string) { return `group:${key}`; }
+
 function orderedSessions(projectKey: string, sessions: SessionSummary[], orders: Record<string, string[]>) {
   const customOrder = orders[projectKey];
   const defaultOrder = projectKey === RECENT_KEY ? recentSessionOrder : stableSessionOrder;
+
   if (!customOrder) return sessions.sort(defaultOrder);
   const positions = new Map(customOrder.map((key, index) => [key, index]));
+
   return sessions.sort((left, right) => {
     const leftPosition = positions.get(sessionKey(left)); const rightPosition = positions.get(sessionKey(right));
+
     if (leftPosition !== undefined && rightPosition !== undefined) return leftPosition - rightPosition;
+
     if (leftPosition !== undefined) return projectKey === RECENT_KEY ? 1 : -1;
+
     if (rightPosition !== undefined) return projectKey === RECENT_KEY ? -1 : 1;
+
     return defaultOrder(left, right);
   });
 }
@@ -63,8 +86,10 @@ export type SidebarState = ReturnType<typeof createSidebarState>;
 export function createSidebarState(source: Accessor<SessionSummary[]>, query: Accessor<string>, projects?: ReturnType<typeof useSessionGroups>) {
   const sessions = createMemo(() => {
     const parents = new Set(source().map(session => `${session.hostId ?? "local"}:${session.id}`));
+
     return source().filter(session => !session.isDraft && (!session.subagentParentId || !parents.has(`${session.hostId ?? "local"}:${session.subagentParentId}`)));
   });
+
   const storedGroups = projects ?? useSessionProjects(sessions);
   const savedGroups = createMemo(() => storedGroups.state?.groups ?? []);
   const savedGroupsById = createMemo(() => new Map(savedGroups().map(group => [group.id, group] as const).reverse()));
@@ -73,119 +98,178 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const [sessionOrders, setSessionOrders] = createSignal<Record<string, string[]>>(savedSessionOrders());
   const [sidebarOrder, setSidebarOrder] = createSignal<string[]>(savedSidebarOrder());
   const groupNameTaken = (name: string, excludedId?: string) => name.trim().toLowerCase() === "dirless" || sidebarCollator.compare(RECENT_LABEL, name.trim()) === 0 || storedGroups.state?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
+
   const validateGroupName = (name: string, excludedId?: string) => {
     if (!name || !hasVisibleText(name)) return "Enter a group name.";
+
     if (name.length > 80) return "Keep the group name under 80 characters.";
+
     if (groupNameTaken(name, excludedId)) return "A project or group already uses that name.";
   };
+
   const removeGroup = async (projectKey: string) => { const capturedSessions = sessions(); const capturedSessionOrders = sessionOrders();
     const releasedSessions = orderedSessions(projectKey, capturedSessions.filter((session) => visualProjectKey(session) === projectKey), capturedSessionOrders);
     const releasedTokens = releasedSessions.map((session) => sessionLayoutToken(sessionKey(session)));
     await storedGroups.change({ type: "remove", id: projectKey });
-    setSessionOrders((current) => { const next = { ...current }; delete next[projectKey]; try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { } return next; });
-    setCollapsedProjects((current) => { const next = new Set(current); next.delete(projectKey); try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { } return next; });
+    setSessionOrders((current) => { const next = { ...current }; delete next[projectKey];
+
+    try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { }
+
+    return next; });
+    setCollapsedProjects((current) => { const next = new Set(current); next.delete(projectKey);
+
+    try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { }
+
+    return next; });
     setSidebarOrder((current) => {
       const token = groupLayoutToken(projectKey);
       const next = current.filter((entry) => !releasedTokens.includes(entry));
       const index = next.indexOf(token);
       next.splice(index < 0 ? next.length : index, index < 0 ? 0 : 1, ...releasedTokens);
+
       try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { }
+
       return next;
     });
   };
+
   const toggleProject = (projectKey: string) => setCollapsedProjects((current) => {
-    const next = new Set(current); if (next.has(projectKey)) next.delete(projectKey); else next.add(projectKey);
+    const next = new Set(current);
+
+    if (next.has(projectKey)) next.delete(projectKey); else next.add(projectKey);
+
     try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { }
+
     return next;
   });
+
   const expandProject = (projectKey: string) => {
     setCollapsedProjects((current) => {
       if (!current.has(projectKey)) return current;
       const next = new Set(current); next.delete(projectKey);
+
       try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { }
+
       return next;
     });
   };
+
   const moveSession = (drag: DraggedSession, destinationKey: string, targetKey?: string, edge: "before" | "after" = "after") => {
     const destinationSessions = displayedSessions().get(destinationKey);
+
     if (!destinationSessions) return;
+
     if (drag.projectKey === destinationKey && drag.sessionKey === targetKey) return;
     const nextOrder = destinationSessions.map(sessionKey).filter((key) => key !== drag.sessionKey);
     const targetIndex = targetKey ? nextOrder.indexOf(targetKey) : -1;
     nextOrder.splice(targetIndex < 0 ? nextOrder.length : targetIndex + (edge === "after" ? 1 : 0), 0, drag.sessionKey);
     setSessionOrders((current) => {
       const next = { ...current, [destinationKey]: nextOrder };
+
       try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { }
+
       return next;
     });
+
     return storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
   };
+
   const placeSidebarEntry = (token: string, beforeToken: string | null) => {
     if ([RECENT_KEY, DIRLESS_KEY].some(key => token === groupLayoutToken(key))) return;
     const currentEntries = sidebarEntries();
+
     if (beforeToken === token) return;
     const next = currentEntries.filter((entry) => entry !== token);
     const targetIndex = next.indexOf(beforeToken ?? groupLayoutToken(RECENT_KEY));
     next.splice(targetIndex < 0 ? next.length : targetIndex, 0, token);
     setSidebarOrder(next);
+
     try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { }
   };
+
   const branchGroupDetails = createMemo(() => {
     const details = new Map<string, SessionSummary>();
+
     for (const session of sessions()) {
       if (!firstOrderBranch(session)) continue;
       const key = branchGroupId(session);
+
       if (!details.has(key) || session.branch === firstOrderBranch(session)) details.set(key, session);
     }
+
     return details;
   });
+
   const groupBranchBadge = (id: string) => {
     const group = savedGroupsById().get(id);
     const session = branchGroupDetails().get(id);
     const branch = group?.branch ?? (session && firstOrderBranch(session));
+
     return branch ? { branch, appearance: session?.branchAppearance ?? group?.branchAppearance } : undefined;
   };
+
   const groupDestination = (id: string) => {
     const group = savedGroupsById().get(id);
     const session = branchGroupDetails().get(id);
+
     return group && session && !group.branch ? { ...group, cwd: session.worktreeRoot ?? session.cwd, projectKind: session.projectKind } : group;
   };
+
   const projectDetails = createMemo(() => {
     const details = new Map<string, SessionSummary>();
-    sessions().forEach(session => { const key = branchGroupId(session); if (!details.has(key)) details.set(key, session); });
+    sessions().forEach(session => { const key = branchGroupId(session);
+
+    if (!details.has(key)) details.set(key, session); });
+
     return details;
   });
+
   const normalizedQuery = createMemo(() => (query().trim().toLowerCase()));
   const customGroupsByKey = createMemo(() => (new Map(customGroups().map((group) => [group.id, group]))));
+
   const visualProjectKey = (session: SessionSummary) => {
     if (session.cwdExists === false) return DIRLESS_KEY;
     const destination = storedGroups.state?.assignments[sessionKey(session)];
+
     if (!destination) return RECENT_KEY;
     const group = savedGroupsById().get(destination);
+
     return group?.cwd && isTemporaryChatCwd(group.cwd) ? RECENT_KEY : destination;
   };
+
   const filtered = createMemo(() => (sessions().filter((session) => {
     if (!storedGroups.state) return false;
+
     if (!normalizedQuery()) return true;
     const location = visualProjectKey(session);
     const groupName = location === DIRLESS_KEY ? "Dirless" : location === RECENT_KEY ? RECENT_LABEL : savedGroupsById().get(location)?.name ?? "";
+
     return `${session.name} ${session.project} ${projectName(session)} ${session.preview} ${session.hostName ?? session.hostId ?? "Local"} ${groupName}`.toLowerCase().includes(normalizedQuery());
   })));
+
   const groupedSessions = createMemo(() => (filtered().reduce<Record<string, SessionSummary[]>>((result, session) => {
-    (result[visualProjectKey(session)] ??= []).push(session); return result;
+    (result[visualProjectKey(session)] ??= []).push(session);
+
+    return result;
   }, {})));
+
   const recentSessions = createMemo(() => (orderedSessions(RECENT_KEY, groupedSessions()[RECENT_KEY] ?? [], sessionOrders())));
   const recentKeys = createMemo(() => (recentSessions().map(sessionKey).join("\n")));
   createDependencyEffect(() => { const capturedNormalizedQuery = normalizedQuery(); const capturedRecentKeys = recentKeys();
+
     if (capturedNormalizedQuery) return;
     setSessionOrders((current) => {
       const saved = current[RECENT_KEY];
+
       if (!saved) return current;
       const known = new Set(saved);
       const added = capturedRecentKeys.split("\n").filter((key) => key && !known.has(key));
+
       if (!added.length) return current;
       const next = { ...current, [RECENT_KEY]: [...added, ...saved] };
+
       try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { }
+
       return next;
     });
   }, () => [recentKeys(), normalizedQuery()]);
@@ -196,30 +280,39 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     const projectTokens: string[] = JSON.parse(capturedProjectOrderKey);
     setSidebarOrder((current) => {
       const added = projectTokens.filter((token) => !current.includes(token));
+
       if (!added.length) return current;
       const next = [...added, ...current];
+
       try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { }
+
       return next;
     });
   }, () => [projectOrderKey()]);
+
   const groups = createMemo(() => ([
     ...customVisualGroups().filter(([, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0),
     ...physicalGroups().filter(([, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0),
     [RECENT_KEY, RECENT_LABEL, "", undefined, recentSessions()] as const,
     [DIRLESS_KEY, "Dirless", "", undefined, orderedSessions(DIRLESS_KEY, groupedSessions()[DIRLESS_KEY] ?? [], sessionOrders())] as const,
   ]));
+
   const displayedSessions = createMemo(() => new Map([[RECENT_KEY, recentSessions()], ...groups().map(([key, , , , projectSessions]) => [key, projectSessions] as const)]));
   const defaultSidebarEntries = createMemo(() => (groups().map(([key]) => groupLayoutToken(key))));
   const fixedTokens = [groupLayoutToken(RECENT_KEY), groupLayoutToken(DIRLESS_KEY)];
+
   const orderedSidebarEntries = (entries: string[]) => {
     const availableEntries = new Set(entries);
     const order = sidebarOrder();
     const knownEntries = new Set(order);
     const addedEntries = entries.filter((entry) => !knownEntries.has(entry));
+
     return [...addedEntries.filter((entry) => !fixedTokens.includes(entry)), ...order.filter((entry) => !fixedTokens.includes(entry) && availableEntries.has(entry)), ...fixedTokens.filter(entry => availableEntries.has(entry))];
   };
+
   const sidebarEntries = createMemo(() => (orderedSidebarEntries(defaultSidebarEntries())));
   const saveGroup = (name: string, id?: string) => storedGroups.change(id ? { type: "rename", id, name } : { type: "create", name });
+
   return {
     get state() { return storedGroups.state; }, get error() { return storedGroups.error; },
     sessions, collapsedProjects, customGroupsByKey, groupBranchBadge, groupDestination, projectDetails,

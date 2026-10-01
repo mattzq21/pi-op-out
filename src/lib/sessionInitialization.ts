@@ -2,6 +2,7 @@ import { isConversationChanged } from "./conversationChanged";
 
 async function initializationStep<T>(label: string, work: () => Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+
   try {
     return await Promise.race([
       work(),
@@ -17,18 +18,25 @@ export async function initializeSession<T>(current: () => boolean, steps: { conn
         initializationStep("loading settings", steps.loadSettings),
         initializationStep("starting the conversation", steps.connect),
       ]);
+
       if (!current()) return false;
       const settings = await initializationStep("loading the conversation", () => steps.refresh(loadedSettings));
+
       if (!current()) return false;
       await initializationStep("configuring the agent", () => steps.configure(settings));
+
       if (!current()) return false;
       await initializationStep("restoring conversation state", steps.restore);
+
       return current();
     } catch (reason) {
       if (!current()) return false;
+
       if (!isConversationChanged(reason)) throw reason;
+
       if (attempt === 2) throw new Error("Conversation initialization was repeatedly interrupted. Retry the connection.");
     }
   }
+
   return false;
 }

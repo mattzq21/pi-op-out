@@ -5,4 +5,4 @@ export class ConversationChangedError extends Error {
   }
 }
 
-export const isConversationChanged = (reason: unknown): boolean => reason instanceof ConversationChangedError;
+export const isConversationChanged = (cause: unknown): boolean => cause instanceof ConversationChangedError;

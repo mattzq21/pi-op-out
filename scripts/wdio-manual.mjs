@@ -10,6 +10,7 @@ const defaultBinary = path.resolve(
   "release",
   process.platform === "win32" ? "piop.exe" : "piop",
 );
+
 const appBinaryPath = path.resolve(process.env.PI_E2E_BINARY ?? defaultBinary);
 
 if (!existsSync(appBinaryPath)) {
@@ -31,6 +32,7 @@ const webdriverPort = await new Promise((resolve, reject) => {
 });
 
 const windowBounds = selectWindowBounds();
+
 const capabilities = {
   browserName: "tauri",
   "tauri:options": { application: appBinaryPath },
@@ -46,6 +48,7 @@ const capabilities = {
 };
 
 const browser = await startWdioSession(capabilities);
+
 if (process.platform !== "linux") {
   const { x, y, width, height } = windowBounds;
   await browser.setWindowRect(x, y, width, height);
@@ -56,6 +59,7 @@ console.log(JSON.stringify({
   webdriverConfig: { hostname: "127.0.0.1", port: webdriverPort, path: "/" },
   window: windowBounds,
 }, null, 2));
+
 console.log("Keep this process running while the WebdriverIO MCP is attached. Press Ctrl+C to close the app.");
 
 await new Promise((resolve) => {

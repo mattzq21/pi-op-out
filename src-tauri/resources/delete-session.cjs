@@ -1,7 +1,11 @@
 const fs = require("node:fs/promises");
+
 const path = require("node:path");
+
 const os = require("node:os");
+
 const { createHash } = require("node:crypto");
+
 const { execFile } = require("node:child_process");
 
 function git(cwd, args, input = "") {
@@ -12,6 +16,7 @@ function git(cwd, args, input = "") {
       if (error) reject(new Error(stderr.trim() || error.message));
       else resolve(stdout);
     });
+
     child.stdin.on("error", () => { });
     child.stdin.end(input);
   });
@@ -19,20 +24,25 @@ function git(cwd, args, input = "") {
 
 async function readFile(file, optional = false) {
   let metadata;
+
   try { metadata = await fs.lstat(file); }
   catch (error) { if (optional && error.code === "ENOENT") return undefined; throw error; }
+
   if (!metadata.isFile()) throw new Error(`Refusing to delete a non-regular file: ${file}`);
+
   return { file, body: await fs.readFile(file), metadata, stagedPath: "", staged: false };
 }
 
 async function restoreFile(saved) {
   if (!saved.staged) return;
+
   try {
     await fs.link(saved.stagedPath, saved.file);
   } catch (error) {
     if (error.code === "EEXIST") throw new Error(`Refusing to overwrite a replacement created during deletion: ${saved.file}`);
     throw new Error(`Could not restore ${saved.file}: ${error.message}`);
   }
+
   try {
     await fs.unlink(saved.stagedPath);
     saved.staged = false;
@@ -43,12 +53,15 @@ async function restoreFile(saved) {
 
 async function stageFile(saved) {
   const current = await fs.lstat(saved.file);
+
   if (current.ino !== saved.metadata.ino || current.dev !== saved.metadata.dev || current.size !== saved.metadata.size || current.mtimeMs !== saved.metadata.mtimeMs || current.ctimeMs !== saved.metadata.ctimeMs) {
     throw new Error(`Session file changed during deletion: ${saved.file}`);
   }
+
   await fs.rename(saved.file, saved.stagedPath);
   saved.staged = true;
   const staged = await fs.lstat(saved.stagedPath);
+
   if (staged.ino !== saved.metadata.ino || staged.dev !== saved.metadata.dev || staged.size !== saved.metadata.size || staged.mtimeMs !== saved.metadata.mtimeMs) {
     throw new Error(`Session file changed while it was staged for deletion: ${saved.file}`);
   }
@@ -79,6 +92,7 @@ function snapshotCheckpoint(data) {
 
 function checkpointRepository(roots, cwd) {
   if (!roots.has(cwd)) roots.set(cwd, { required: false, commits: new Set(), expectedRefs: new Map() });
+
   return roots.get(cwd);
 }
 
@@ -88,25 +102,32 @@ async function snapshotRefs(entries, header) {
   const legacy = `refs/pi-session-snapshots/${id}`;
   const roots = new Map();
   checkpointRepository(roots, header.cwd);
+
   for (const entry of entries) {
     collectSnapshot(entry, roots, prefix, legacy);
     collectPromptCheckpoint(entry, roots, header, prefix);
   }
+
   const repositories = new Map();
+
   for (const [cwd, checkpoint] of roots) {
     if (!await checkpointDirectory(cwd, checkpoint)) continue;
     const common = await checkpointCommonDir(cwd, checkpoint);
+
     if (common === undefined) continue;
     const key = await fs.realpath(common);
+
     if (!repositories.has(key)) repositories.set(key, { cwd: key, displayPath: cwd, required: false, commits: new Set(), expectedRefs: new Map(), refs: [], deleted: false });
     const repository = repositories.get(key);
     repository.required ||= checkpoint.required;
     checkpoint.commits.forEach((commit) => repository.commits.add(commit));
     checkpoint.expectedRefs.forEach((commit, ref) => repository.expectedRefs.set(ref, commit));
   }
+
   for (const repository of repositories.values()) {
     await verifyRepositoryRefs(repository, prefix, legacy);
   }
+
   return [...repositories.values()].filter(({ refs }) => refs.length);
 }
 
@@ -116,6 +137,7 @@ async function main() {
   const lock = await acquireDeletionLock(source);
   let preserveRecovery = false;
   let lockRemoved = false;
+
   try {
     const [trace, sidecar, loopCheckpoint] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true), readFile(`${source}.loop-detection.json`, true)]);
     const files = [trace, sidecar, loopCheckpoint].filter(Boolean);
@@ -130,6 +152,7 @@ async function main() {
     }), { flag: "wx", mode: 0o600 });
     const staged = await Promise.allSettled(files.map(stageFile));
     const stageFailures = staged.filter((result) => result.status === "rejected");
+
     if (stageFailures.length) {
       const rollback = await Promise.allSettled(files.map(restoreFile));
       const recoveryErrors = rollback.filter((result) => result.status === "rejected");
@@ -139,16 +162,20 @@ async function main() {
         recoveryErrors.length ? `Rollback failed: ${recoveryErrors.map((result) => result.reason.message).join("; ")}. Recovery files retained in ${lock}` : "Deletion was rolled back.",
       ].join("\n"));
     }
+
     const results = await Promise.allSettled(repositories.map(async (repository) => {
       await git(repository.cwd, ["update-ref", "--stdin"], transaction(repository.refs, false));
       repository.deleted = true;
     }));
+
     const failures = results.filter((result) => result.status === "rejected");
+
     if (failures.length) {
       const rollback = await Promise.allSettled([
         ...files.map(restoreFile),
         ...repositories.filter((repository) => repository.deleted).map((repository) => git(repository.cwd, ["update-ref", "--stdin"], transaction(repository.refs, true))),
       ]);
+
       const recoveryErrors = rollback.filter((result) => result.status === "rejected");
       preserveRecovery = recoveryErrors.length > 0;
       throw new Error([
@@ -156,6 +183,7 @@ async function main() {
         recoveryErrors.length ? `Rollback failed: ${recoveryErrors.map((result) => result.reason.message).join("; ")}. Recovery files retained in ${lock}` : "Deletion was rolled back.",
       ].join("\n"));
     }
+
     try { await fs.rm(lock, { recursive: true }); lockRemoved = true; }
     catch (error) {
       preserveRecovery = true;
@@ -186,6 +214,7 @@ function promptRepository(entry, header) { return entry.data.repositoryRoot ?? h
 function collectPromptCheckpoint(entry, roots, header, prefix) {
   if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint" && promptCheckpoint(entry.data)) {
     const cwd = promptRepository(entry, header);
+
     if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw new Error('Invalid prompt checkpoint repository');
     const repository = checkpointRepository(roots, cwd);
     repository.required = true;
@@ -202,40 +231,55 @@ async function checkpointDirectory(cwd, checkpoint) {
   try {
     if (!(await fs.stat(cwd)).isDirectory()) {
       if (checkpoint.required) throw new Error(`Checkpoint repository is no longer a directory: ${cwd}`);
+
       return false;
     }
   } catch (error) {
     if (error.code === "ENOENT" && !checkpoint.required) return false;
+
     if (error.code === "ENOENT") throw new Error(`Cannot verify checkpoint cleanup because the repository no longer exists: ${cwd}. The conversation was not deleted.`);
     throw error;
   }
+
   return true;
 }
 
 async function checkpointCommonDir(cwd, checkpoint) {
   let common;
+
   try { common = (await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim(); }
   catch (error) {
     if (error.message.startsWith("fatal: not a git repository") && !checkpoint.required) return undefined;
+
     if (error.message.startsWith("fatal: not a git repository")) throw new Error(`Cannot verify checkpoint cleanup because the repository is unavailable: ${cwd}. The conversation was not deleted.`);
     throw error;
   }
+
   return common;
 }
 
 async function verifyRepositoryRefs(repository, prefix, legacy) {
   const output = await git(repository.cwd, ["for-each-ref", "--format=%(refname) %(objectname)", prefix, legacy]);
+
   const refs = output.trim().split("\n").filter(Boolean).map((line) => {
-    const [ref, oid] = line.split(" "); return { ref, oid };
+    const [ref, oid] = line.split(" ");
+
+    return { ref, oid };
   }).filter(({ ref }) => ref.startsWith(prefix) || ref === legacy);
+
   repository.refs = refs;
+
   if (!refs.length && repository.required) throw new Error(`Cannot verify checkpoint repository identity at ${repository.displayPath}: the conversation's refs are missing. The conversation was not deleted.`);
+
   if (!refs.length) return;
   const actual = new Map(refs.map(({ ref, oid }) => [ref, oid]));
+
   for (const [ref, commit] of repository.expectedRefs) {
     if (actual.has(ref) && actual.get(ref) !== commit) throw new Error(`Cannot verify checkpoint repository identity at ${repository.displayPath}: ${ref} no longer points to its recorded commit. The conversation was not deleted.`);
   }
+
   const matched = refs.some(({ ref, oid }) => repository.expectedRefs.get(ref) === oid || repository.commits.has(oid));
+
   if (!matched) throw new Error(`Cannot verify checkpoint repository identity at ${repository.displayPath}: no conversation ref matches the recorded checkpoint commits. The conversation was not deleted.`);
 
 }
@@ -245,16 +289,20 @@ async function sessionSource(target) {
   const root = await fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", area));
   const source = await fs.realpath(target.path);
   const relative = path.relative(root, source);
+
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || path.extname(source) !== ".jsonl") {
     throw new Error("Only Piop sessions can have their supporting data deleted");
   }
+
   return source;
 }
 
 async function acquireDeletionLock(source) {
   const lock = path.join(path.dirname(source), `.delete-${createHash("sha256").update(source).digest("hex")}.lock`);
+
   try { await fs.mkdir(lock, { mode: 0o700 }); }
   catch (error) { if (error.code === "EEXIST") throw new Error("Deletion is already in progress for this session"); throw error; }
+
   return lock;
 }
 
@@ -262,6 +310,7 @@ function validateHeader(header, target) {
   if (header?.type !== "session" || typeof header.id !== "string" || !header.id || typeof header.cwd !== "string" || !path.isAbsolute(header.cwd)) {
     throw new Error("Invalid session header; nothing was deleted");
   }
+
   if (target.activeSessionIds.includes(header.id)) throw new Error("Close the session before deleting it");
 
 }

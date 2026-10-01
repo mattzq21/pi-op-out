@@ -238,7 +238,7 @@ fn ensure_development_daemon() -> Result<(), String> {
     BUILD.get_or_init(|| {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         if !manifest.join("Cargo.toml").is_file() { return Ok(()); }
-        let prepared = std::env::var_os("PIOP_PREBUILT_DAEMON_FOR").is_some_and(|path| PathBuf::from(path) == manifest);
+        let prepared = std::env::var_os("PIOP_PREBUILT_DAEMON_FOR").is_some_and(|path| path == manifest);
         if prepared && manifest.join("target/debug").join(format!("piopd{}", std::env::consts::EXE_SUFFIX)).is_file() { return Ok(()); }
         let output = Command::new("cargo")
             .args(["build", "--locked", "--no-default-features", "--features", "daemon", "--bin", "piopd", "--target-dir"])

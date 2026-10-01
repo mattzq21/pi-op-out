@@ -13,6 +13,7 @@ describe("BUGS-3 regressions", () => {
   });
   afterEach(async () => {
     if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
+
     if (await app.terminalPanel.isExisting()) await app.closeTerminalButton.click();
     await app.conversationSearch.clearValue();
     await resetBackend();
@@ -38,6 +39,7 @@ describe("BUGS-3 regressions", () => {
   it("isolates drafts and terminals between fresh conversations", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({ create_temporary_chat: { cwd: "/tmp/bugs3-fresh", sessionId: "bugs3-fresh" }, start_pi: {}, stop_pi: {}, list_sessions: [], load_app_settings: settings, ...connectedSessionResponses(""), "pi_command:set_model": {}, start_terminal: {}, resize_terminal: {} });
+
     try {
       await $('button[aria-label="New conversation"]').click();
       await app.composer.waitForEnabled();
@@ -62,6 +64,7 @@ describe("BUGS-3 regressions", () => {
 
   it("keeps a terminal tab when closing its process fails", async () => {
     await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, close_terminal: { error: "Terminal close failed" } });
+
     try {
       await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();

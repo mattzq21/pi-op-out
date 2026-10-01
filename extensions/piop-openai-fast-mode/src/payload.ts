@@ -16,7 +16,9 @@ export function toModelRef(model: unknown): ModelRef | undefined {
   if (!isRecord(model)) return undefined;
 
   const { provider, id } = model;
+
   if (typeof provider !== "string" || typeof id !== "string") return undefined;
+
   if (!provider || !id) return undefined;
 
   return { provider, id };
@@ -60,6 +62,7 @@ export function getFastModePayload(
   if (!config.enabled) return undefined;
 
   const target = findMatchingTarget(model, config.targets);
+
   if (!target) return undefined;
 
   return applyFastModePayload(

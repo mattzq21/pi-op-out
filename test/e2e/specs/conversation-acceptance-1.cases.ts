@@ -83,6 +83,7 @@ describe("Conversation acceptance", () => {
     await expect($(".session-panel")).toBeDisplayed();
 
     await mockBackend({ start_terminal: {}, resize_terminal: {} });
+
     try {
       await pressShortcut(terminalShortcut);
       await expect(app.terminalPanel).toBeDisplayed();
@@ -106,6 +107,7 @@ describe("Conversation acceptance", () => {
 
   it("shows indexed conversations and their available actions", async () => {
     await mockBackend({ list_sessions: [{ id: "acceptance-indexed", path: "/tmp/acceptance-indexed.jsonl", name: "Acceptance indexed conversation", project: "Acceptance project", cwd: "/tmp", preview: "Indexed preview", messageCount: 2, hostId: "local" }] });
+
     try {
       await app.conversationSearch.setValue("Acceptance indexed");
       const session = $(".session-item");
@@ -132,6 +134,7 @@ describe("Conversation acceptance", () => {
       const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
       await tauri.invoke("plugin:event|emit", { event: "pi://groups-changed", payload: { groups: [group], assignments: { [`local:${session.id}`]: group.id }, removedProjects: [] } });
     }, indexed);
+
     try {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
@@ -155,6 +158,7 @@ describe("Conversation acceptance", () => {
   it("opens an indexed conversation in a new window from its visible action", async () => {
     const indexed = { id: "acceptance-clone", path: "/tmp/acceptance-clone.jsonl", name: "Acceptance clone target", project: "Acceptance project", cwd: "/tmp", preview: "Clone preview", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), new_window: "acceptance-window" });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.conversationSearch.setValue(indexed.name);
@@ -173,6 +177,7 @@ describe("Conversation acceptance", () => {
   it("explains when a conversation's project directory cannot be opened", async () => {
     const indexed = { id: "acceptance-open-directory", path: "/tmp/acceptance-open-directory.jsonl", name: "Acceptance directory target", project: "Acceptance project", cwd: "/missing/acceptance-project", preview: "Directory preview", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], open_project_directory: { error: "The project directory is unavailable" } });
+
     try {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
@@ -185,6 +190,7 @@ describe("Conversation acceptance", () => {
       await $(".error-toast button").click();
     } finally {
       await app.conversationSearch.clearValue();
+
       if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
       await resetBackend();
     }
@@ -194,6 +200,7 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-relocate", path: "/tmp/acceptance-relocate.jsonl", name: "Acceptance relocation target", project: "Moved project", cwd: "/missing/original-project", cwdExists: false, preview: "Relocation preview", messageCount: 3, hostId: "local" };
     const groups = { groups: [], assignments: { [`local:${indexed.id}`]: "__pi-desktop-dirless__" }, removedProjects: [] };
     await mockBackend({ list_sessions: [indexed], load_session_groups: groups, change_session_groups: groups, create_temporary_chat: { cwd: "/tmp/relocated-acceptance-project", sessionId: "dirless" }, relocate_session: {}, start_pi: {}, ...connectedSessionResponses(indexed.id) });
+
     try {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
@@ -207,6 +214,7 @@ describe("Conversation acceptance", () => {
       await expect(app.composer).toBeEnabled();
     } finally {
       await app.conversationSearch.clearValue();
+
       if (await app.extensionDialogHeading.isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
       await resetApp();
     }
@@ -216,6 +224,7 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-relocate-failure", path: "/tmp/acceptance-relocate-failure.jsonl", name: "Acceptance failed relocation", project: "Moved project", cwd: "/missing/failed-project", cwdExists: false, preview: "Failed relocation preview", messageCount: 2, hostId: "local" };
     const groups = { groups: [], assignments: { [`local:${indexed.id}`]: "__pi-desktop-dirless__" }, removedProjects: [] };
     await mockBackend({ list_sessions: [indexed], load_session_groups: groups, change_session_groups: groups, create_temporary_chat: { cwd: "/tmp/dirless-failure", sessionId: "dirless" }, relocate_session: { error: "Dirless directory is unavailable" } });
+
     try {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
@@ -227,7 +236,9 @@ describe("Conversation acceptance", () => {
       expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/dirless-failure", hostId: "local" });
     } finally {
       await app.conversationSearch.clearValue();
+
       if (await app.extensionDialogHeading.isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
+
       if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
       await resetBackend();
     }
@@ -236,6 +247,7 @@ describe("Conversation acceptance", () => {
   it("archives an indexed conversation through its visible action", async () => {
     const indexed = { id: "acceptance-archive", path: "/tmp/acceptance-archive.jsonl", name: "Acceptance archive target", project: "Acceptance project", cwd: "/tmp", preview: "Archive preview", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], load_git_diffs: {}, stop_pi: {}, archive_session: {} });
+
     try {
       await app.conversationSearch.setValue("Acceptance archive target");
       const session = $(".session-item");
@@ -253,6 +265,7 @@ describe("Conversation acceptance", () => {
   it("keeps a conversation available when archiving fails", async () => {
     const indexed = { id: "acceptance-archive-failure", path: "/tmp/acceptance-archive-failure.jsonl", name: "Acceptance archive failure", project: "Acceptance project", cwd: "/tmp", preview: "Archive failure preview", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], load_git_diffs: {}, stop_pi: {}, archive_session: { error: "Archive destination is unavailable" } });
+
     try {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
@@ -265,6 +278,7 @@ describe("Conversation acceptance", () => {
       await $(".error-toast button").click();
     } finally {
       await app.conversationSearch.clearValue();
+
       if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
       await resetBackend();
     }
@@ -277,6 +291,7 @@ describe("Conversation acceptance", () => {
       load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" },
       "pi_command:get_state": { ...connectedSessionResponses(indexed.id)["pi_command:get_state"], sessionFile: indexed.path, messageCount: indexed.messageCount },
     });
+
     try {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
@@ -303,6 +318,7 @@ describe("Conversation acceptance", () => {
   it("renames an indexed conversation", async () => {
     const indexed = { id: "acceptance-rename", path: "/tmp/acceptance-rename.jsonl", name: "Acceptance rename target", project: "Acceptance project", cwd: "/tmp", preview: "Rename preview", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "pi_command:set_session_name": {} });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.conversationSearch.setValue(indexed.name);

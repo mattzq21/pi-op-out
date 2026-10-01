@@ -78,11 +78,13 @@ test('saved question tools migrate without changing the historical snapshot', as
 test('prompt options clear duplicate project context and mark explicit skills by file or directory', async t => {
   const f = await agentFixture(t, { runtime: { tools: ['read'], skills: [], explicitOnlySkills: ['/skills/file/SKILL.md', '/skills/directory/'] } });
   await f.load(); await f.start();
+
   const skills = [
     { filePath: '/skills/file/SKILL.md', baseDir: '/skills/file' },
     { filePath: '/skills/directory/SKILL.md', baseDir: '/skills/directory' },
     { filePath: '/skills/normal/SKILL.md', baseDir: '/skills/normal' },
   ];
+
   const result = await f.prompt({ contextFiles: [{ path: 'a&"<>b', content: 'First instructions' }, { path: 'second', content: 'Second instructions' }], skills });
   assert.equal(result.customPrompt, 'System instructions');
   assert.deepEqual(result.contextFiles, []);

@@ -15,7 +15,9 @@ describe('session runtime pool', () => {
     mockIPC((command, args) => {
       calls.push({ command, args });
       const result = responses.get(command === 'pi_command' ? `pi_command:${args.command.type}` : command);
+
       if (result instanceof Error) throw result;
+
       return typeof result === 'function' ? result(args) : result;
     }, { shouldMockEvents: true });
     pool = new SessionRuntimePool();
@@ -26,9 +28,14 @@ describe('session runtime pool', () => {
     clearMocks(); delete globalThis.window; delete globalThis.document;
   });
   const commands = name => calls.filter(call => call.command === name);
-  const connect = async client => { await client.connect(); return commands('start_pi').at(-1).args.runtimeId; };
+
+  const connect = async client => { await client.connect();
+
+  return commands('start_pi').at(-1).args.runtimeId; };
+
   const send = (runtimeId, event) => emit('pi://event', { runtimeId, event });
   const settled = async () => { await setImmediate(); };
+
   const patch = 'diff --git a/a b/a\n@@ -1 +1 @@\n-old\n+new';
   const session = { id: 'session', cwd: '/repo', path: '/session', hostId: 'local' };
 
@@ -139,9 +146,11 @@ describe('session runtime pool', () => {
     const pending = Promise.withResolvers();
     responses.set('pi_command:get_state', () => pending.promise);
     const client = pool.create({ cwd: '/repo' }); const id = await connect(client);
+
     for (const statusText of ['json:{', 'json:{}', 'json:[{"status":"ready"}]', 'plain']) {
       await send(id, { type: 'extension_ui_request', method: 'setStatus', statusKey: 'pi-desktop-mcp-status', statusText });
     }
+
     assert.equal(pool.isRetained(client), false);
     await send(id, { type: 'message_start', message: { role: 'user', content: 'hello' } });
     await pool.release(client);
@@ -179,6 +188,7 @@ describe('session runtime pool', () => {
     pending.resolve({ stale: patch }); await settled();
     assert.deepEqual(pool.gitDiffs(client), { keep: patch });
     assert.deepEqual(commands('save_git_diffs')[0].args, { sessionPath: '/destination', snapshots: { keep: patch }, hostId: 'local' });
+
     for (const [source, destination] of [[undefined, '/a'], ['/a', undefined], ['/a', '/a']]) await pool.copySavedDiffs(client, source, destination);
     assert.equal(commands('save_git_diffs').length, 1);
     await pool.copySavedDiffs(client, '/source', '/all');

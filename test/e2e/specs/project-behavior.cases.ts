@@ -14,6 +14,7 @@ describe("Project behavior", () => {
       ...connectedSessionResponses("remote-browser"), load_app_settings: { ...defaultSettings, hosts: [remote] },
       home_directory: "/remote/home", list_directories: { path: "/remote/home", parent: "/remote", directories: ["/remote/home/project-a", "/remote/home/project-b"] },
     });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.openProjectChooser();
@@ -36,6 +37,7 @@ describe("Project behavior", () => {
   it("shows an error when a remote machine's home directory cannot be resolved", async () => {
     const remote = { id: "acceptance-home-error", name: "Unreachable remote", target: "tester@unreachable.example", piPath: "pi" };
     await mockBackend({ ...connectedSessionResponses("remote-home-error"), load_app_settings: { ...defaultSettings, hosts: [remote] }, home_directory: "/local/home" });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.openProjectChooser();
@@ -57,6 +59,7 @@ describe("Project behavior", () => {
       ...connectedSessionResponses("remote-list-error"), load_app_settings: { ...defaultSettings, hosts: [remote] },
       home_directory: "/remote/home", list_directories: { error: "Remote directory listing was denied" },
     });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.openProjectChooser();
@@ -79,6 +82,7 @@ describe("Project behavior", () => {
       ...connectedSessionResponses("acceptance-project"),
       "pi_command:set_model": {}, load_app_settings: settings, validate_project_directory: "/tmp",
     });
+
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await emitPiEvent({ type: "session_switched" });
@@ -105,6 +109,7 @@ describe("Project behavior", () => {
       "pi_command:set_model": {}, "pi_command:set_thinking_level": {}, validate_project_directory: "/tmp", start_pi: {}, stop_pi: {},
       load_app_settings: settings,
     });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.openProjectChooser();
@@ -136,6 +141,7 @@ describe("Project behavior", () => {
 
   it("forwards terminal keyboard input to the active project terminal", async () => {
     await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, write_terminal: {}, close_terminal: {} });
+
     try {
       await app.openTerminalButton.click();
       const terminalInput = $(".xterm-helper-textarea");
@@ -156,6 +162,7 @@ describe("Project behavior", () => {
 
   it("reports a backend connection failure without trapping the user in the chooser", async () => {
     await mockBackend({ stop_pi: {}, start_pi: { error: "Project runtime unavailable" }, validate_project_directory: "/tmp/acceptance-project", list_directories: { path: "/tmp/acceptance-project", parent: "/tmp", directories: [] } });
+
     try {
       await app.openProjectChooser();
       await app.setProjectPath("/tmp/acceptance-project");

@@ -5,6 +5,7 @@ import { installDom, renderComponent, enterText, act } from '../dom.mjs';
 test('mobile users can queue a follow-up while the agent is streaming', async () => {
   const dom = installDom(); let view;
   globalThis.__PIOP_TEST_MODE__ = 'mobile';
+
   try {
     const { Composer } = await import('../../src/components/Composer.tsx');
     const sent = [];

@@ -12,6 +12,7 @@ import { defaultKeybindings } from '../../src/lib/keybindings.ts';
 test('configured Alt shortcuts work while editing a message', async () => {
   const dom = installDom();
   let toggles = 0;
+
   const hook = await renderHook(() => useAppKeyboard({
     settings: () => ({ keybindings: { ...defaultKeybindings, toggleTerminal: 'Alt+J' } }),
     activePane: () => 'main', splitPane: () => undefined, canLeaveSettings: () => true,
@@ -19,6 +20,7 @@ test('configured Alt shortcuts work while editing a message', async () => {
     setView() {}, setPanelOpen() {}, setSplitComposerFocusRequest() {}, setMainComposerFocusRequest() {},
     settingsDirty: () => false, view: () => 'chat', terminalOpen: () => false, setTerminalOpen() {},
   }));
+
   try {
     const input = document.createElement('textarea'); document.body.append(input); input.focus();
     await act(() => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', altKey: true, bubbles: true, cancelable: true })));
@@ -30,8 +32,14 @@ describe('native text editing shortcuts', () => {
   let dom, remove, commands;
   beforeEach(() => { dom = installDom(); commands = []; document.execCommand = command => commands.push(command); remove = installTextEditingShortcuts(); });
   afterEach(() => { remove(); dom.restore(); });
-  function field(tag = 'input', properties = {}) { const node = document.createElement(tag); Object.assign(node, properties); document.body.append(node); node.focus(); return node; }
-  function press(target, key, modifiers = {}) { const event = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true, ...modifiers }); target.dispatchEvent(event); return event; }
+
+  function field(tag = 'input', properties = {}) { const node = document.createElement(tag); Object.assign(node, properties); document.body.append(node); node.focus();
+
+  return node; }
+
+  function press(target, key, modifiers = {}) { const event = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true, ...modifiers }); target.dispatchEvent(event);
+
+  return event; }
 
   test('undo and both redo bindings delegate to the browser and stop application shortcuts', () => {
     const input = field(); let propagated = 0; window.addEventListener('keydown', () => propagated++);
@@ -43,6 +51,7 @@ describe('native text editing shortcuts', () => {
 
   test('ordinary typing, composition, alternative modifiers and unrelated keys remain untouched', () => {
     const input = field();
+
     for (const [key, modifiers] of [['z', { ctrlKey: false }], ['z', { altKey: true }], ['z', { isComposing: true }], ['y', { shiftKey: true }], ['a', {}]]) assert.equal(press(input, key, modifiers).defaultPrevented, false);
     const handled = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }); handled.preventDefault(); input.dispatchEvent(handled);
     assert.deepEqual(commands, []);
@@ -108,12 +117,14 @@ describe('pending-message dragging', () => {
     for (const [x, y] of [[-100, 50], [400, 50], [100, -50], [100, 250]]) {
       await begin(); await pointer('pointermove', x, y); assert.deepEqual(hook.current.drop, { id: 'a' }); await pointer('pointerup', x, y);
     }
+
     await begin('other'); await pointer('pointermove', 100, 50); await pointer('pointerup', 100, 50);
     assert.deepEqual(moves, []);
   });
 
   test('escape, cancellation, disabled state and source removal clear listeners and scheduled scrolling', async () => {
     for (const type of ['pointercancel', 'blur']) { await begin(); await act(async () => window.dispatchEvent(new Event(type))); assert.equal(dom.frames.size, 0); }
+
     await begin(); await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))); assert.equal(handle.hasPointerCapture(1), true);
     await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))); assert.equal(handle.hasPointerCapture(1), false);
     await begin(); await hook.rerender({ messages, disabled: true }); assert.equal(dom.frames.size, 0);
@@ -123,6 +134,7 @@ describe('pending-message dragging', () => {
 
   test('drag scrolling responds to vertical edges and works without pointer capture support', async () => {
     handle.setPointerCapture = () => { throw new Error('unsupported'); };
+
     await begin(); await dom.flushFrames(); assert.equal(queue.scrollTop, 0);
     await pointer('pointermove', 100, 190); await dom.flushFrames(); assert.equal(queue.scrollTop, 6);
     await pointer('pointermove', 100, 0); await dom.flushFrames(); assert.equal(queue.scrollTop, 0);
@@ -137,13 +149,21 @@ describe('session group synchronization', () => {
   const empty = { groups: [], assignments: {}, removedProjects: [] };
   beforeEach(() => {
     dom = installDom(); hooks = []; calls = []; response = empty; failure = undefined;
-    mockIPC(async (command, args) => { calls.push({ command, args }); if (failure) throw failure; return response; }, { shouldMockEvents: true });
+    mockIPC(async (command, args) => { calls.push({ command, args });
+
+    if (failure) throw failure;
+
+    return response; }, { shouldMockEvents: true });
   });
   afterEach(async () => { for (const hook of hooks) await hook.unmount(); clearMocks(); dom.restore(); });
-  async function mount(sessions = []) { const hook = await renderHook(useSessionGroups, sessions); hooks.push(hook); return hook; }
+
+  async function mount(sessions = []) { const hook = await renderHook(useSessionGroups, sessions); hooks.push(hook);
+
+  return hook; }
 
   test('temporary-directory recognition requires a UUID v4 and an exact path boundary', () => {
     for (const path of ['/home/me/.piop/tmp/12345678-1234-4123-8123-123456789abc', 'C:\\Users\\Me\\.piop\\tmp\\12345678-1234-4123-A123-123456789ABC\\']) assert.equal(isTemporaryChatCwd(path), true);
+
     for (const path of ['/repo/tmp', '/.piop/tmp/12345678-1234-1123-8123-123456789abc', '/.piop/tmp/12345678-1234-4123-8123-123456789abc/file']) assert.equal(isTemporaryChatCwd(path), false);
   });
 

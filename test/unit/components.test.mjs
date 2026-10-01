@@ -12,7 +12,11 @@ describe('rendered controls and dialogs', () => {
   let dom, views;
   beforeEach(() => { dom = installDom(); views = []; });
   afterEach(async () => { for (const view of views) await view.unmount(); await dom.flushFrames(); dom.restore(); });
-  async function render(Component, props) { const view = await renderComponent(Component, props); views.push(view); return view; }
+
+  async function render(Component, props) { const view = await renderComponent(Component, props); views.push(view);
+
+  return view; }
+
   const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text);
   const click = async element => act(async () => element.click());
   const key = async (element, key, extra = {}) => act(async () => element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra })));
@@ -28,7 +32,11 @@ describe('rendered controls and dialogs', () => {
 
   test('extension input submits edited content, blocks duplicate responses and displays failures', async () => {
     const pending = Promise.withResolvers(); const responses = [];
-    const props = { request: { id: 'one', method: 'input', prefill: 'initial', title: 'Name', message: 'Choose a name' }, owner: 'Agent', onRespond: value => { responses.push(value); return pending.promise; } };
+
+    const props = { request: { id: 'one', method: 'input', prefill: 'initial', title: 'Name', message: 'Choose a name' }, owner: 'Agent', onRespond: value => { responses.push(value);
+
+    return pending.promise; } };
+
     await render(ExtensionDialog, props); const input = document.querySelector('input'); assert.equal(input.value, 'initial');
     await enterText(input, 'edited'); await key(input, 'Enter', { isComposing: true }); assert.deepEqual(responses, []);
     await key(input, 'Enter'); await key(input, 'Enter');
@@ -64,7 +72,11 @@ describe('rendered controls and dialogs', () => {
 
   test('worktree setup cancellation can fail and retry without closing or creating twice', async () => {
     const creation = Promise.withResolvers(); const cancellation = Promise.withResolvers(); let created = 0, cancelled = 0, closed = 0;
-    await render(WorktreeDialog, { projectPath: '/repo', onCancel: () => closed++, onCreate: (_name, setup) => { created++; setup(() => { cancelled++; return cancellation.promise; }); return creation.promise; } });
+    await render(WorktreeDialog, { projectPath: '/repo', onCancel: () => closed++, onCreate: (_name, setup) => { created++; setup(() => { cancelled++;
+
+    return cancellation.promise; });
+
+    return creation.promise; } });
     const input = document.querySelector('input'); await enterText(input, 'feature'); await key(input, 'Enter'); await key(input, 'Enter');
     assert.equal(created, 1); assert.equal(input.disabled, true); assert.match(document.querySelector('[role=status]').textContent, /Running environment setup/);
     await click(button('Cancel setup')); assert.equal(cancelled, 1); assert.match(document.querySelector('[role=status]').textContent, /Stopping/);
@@ -85,7 +97,9 @@ describe('rendered controls and dialogs', () => {
 
   test('group removal disables cancellation while pending and makes failed operations retryable', async () => {
     const pending = Promise.withResolvers(); let removed = 0, cancelled = 0;
-    await render(RemoveGroupDialog, { name: 'Work', onRemove: () => { removed++; return pending.promise; }, onCancel: () => cancelled++ });
+    await render(RemoveGroupDialog, { name: 'Work', onRemove: () => { removed++;
+
+    return pending.promise; }, onCancel: () => cancelled++ });
     await click(button('Remove group')); assert.equal(button('Cancel').disabled, true);
     await act(async () => document.querySelector('dialog').dispatchEvent(new Event('cancel', { cancelable: true })));
     assert.equal(cancelled, 0); assert.equal(removed, 1);
@@ -110,7 +124,10 @@ describe('rendered controls and dialogs', () => {
 
   test('sidebar dragging tracks the captured pointer and restores body styles on release', async () => {
     await render(ResizableSidebar, { compact: false }); const separator = document.querySelector('[role=separator]');
-    let captured; separator.setPointerCapture = id => { captured = id; }; separator.releasePointerCapture = () => { captured = undefined; };
+    let captured; separator.setPointerCapture = id => { captured = id; };
+
+    separator.releasePointerCapture = () => { captured = undefined; };
+
     const pointer = async (type, properties) => act(async () => { const event = new Event(type, { bubbles: true, cancelable: true }); Object.assign(event, { pointerId: 1, button: 0, isPrimary: true, clientX: 100, ...properties }); separator.dispatchEvent(event); });
     await pointer('pointerdown', { button: 2 }); assert.equal(captured, undefined);
     await pointer('pointerdown'); assert.equal(captured, 1); assert.equal(document.body.style.cursor, 'col-resize');
@@ -123,7 +140,9 @@ describe('rendered controls and dialogs', () => {
 
   test('worktree removal preserves the dialog on error and blocks Escape until removal settles', async () => {
     let cancelled = 0; const pending = Promise.withResolvers(); const policies = [];
-    await render(RemoveWorktreeDialog, { name: 'feature', path: '/repo', conversationCount: 0, onCancel: () => cancelled++, onRemove: policy => { policies.push(policy); return pending.promise; } });
+    await render(RemoveWorktreeDialog, { name: 'feature', path: '/repo', conversationCount: 0, onCancel: () => cancelled++, onRemove: policy => { policies.push(policy);
+
+    return pending.promise; } });
     await click(button('Delete worktree')); assert.deepEqual(policies, [false]);
     const dialog = document.querySelector('dialog');
     await act(async () => dialog.dispatchEvent(new Event('cancel', { cancelable: true }))); assert.equal(cancelled, 0);
@@ -150,6 +169,7 @@ describe('rendered controls and dialogs', () => {
     await render(ResizableSidebar, { compact: false }); const separator = document.querySelector('[role=separator]');
     assert.equal(separator.getAttribute('aria-valuenow'), '260');
     separator.setPointerCapture = () => {};
+
     await act(async () => { const event = new Event('pointerdown', { bubbles: true }); Object.assign(event, { pointerId: 1, isPrimary: true, button: 0, clientX: 100 }); separator.dispatchEvent(event); });
     assert.equal(document.body.style.cursor, 'col-resize');
     await act(async () => separator.dispatchEvent(new Event('lostpointercapture', { bubbles: true })));

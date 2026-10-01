@@ -10,22 +10,35 @@ describe('split conversation lifecycle', () => {
   let dom, view, props, calls, listeners, responses, transport, connected, released, dialogs;
   beforeEach(() => {
     dom = installDom(); HTMLElement.prototype.scrollIntoView = () => {};
+
     mockIPC(command => ['load_session_groups', 'change_session_groups'].includes(command) ? { version: 1, groups: [], assignments: {} } : undefined, { shouldMockEvents: true });
     calls = []; listeners = new Set(); connected = []; released = []; dialogs = [];
     const state = { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', messageCount: 0, pendingMessageCount: 0 };
     responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_snapshot', { revision: 'snapshot', state, history: { entries: [], leafId: null }, sequence: 0, epoch: 'epoch', liveTools: [], queue: { pendingMessages: [] } }], ['get_available_models', { models: [] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }]]);
-    transport = { currentHostId: () => 'local', ownsConversation: () => true, connect: async (...args) => connected.push(args), subscribe: handler => { listeners.add(handler); return () => listeners.delete(handler); }, command: async command => { calls.push(command); const result = responses.get(command.type); if (result instanceof Error) throw result; return typeof result === 'function' ? result(command) : result; } };
+    transport = { currentHostId: () => 'local', ownsConversation: () => true, connect: async (...args) => connected.push(args), subscribe: handler => { listeners.add(handler);
+
+    return () => listeners.delete(handler); }, command: async command => { calls.push(command); const result = responses.get(command.type);
+
+    if (result instanceof Error) throw result;
+
+    return typeof result === 'function' ? result(command) : result; } };
     transport.promptControls = new PromptControls();
     transport.setFastMode = async enabled => calls.push({ fastMode: enabled });
     transport.submitPrompt = async command => {
       await transport.promptControls.flush(value => transport.command(value), transport.setFastMode);
+
       return transport.command(command);
     };
+
     const diffs = {};
     props = { uploadsFor: () => [], onUploadsChange: () => {}, runtimePool: { forSession: () => transport, subscribe: () => () => {}, gitDiffs: () => diffs, captureMemoryDiffs: async () => undefined, setInteractive: (_, value) => calls.push({ interactive: value }) }, session: { id: 'session', name: 'Conversation', cwd: '/repo', path: '/session.jsonl', project: 'repo', messageCount: 0 }, settings: { autoCompaction: true, autoRetry: true, hiddenModels: [] }, draft: '', onDraftChange: () => {}, onOpenTerminal: () => {}, onDialogRequest: (...args) => dialogs.push(args), onDialogResolved: (...args) => dialogs.push(args), onDialogTransportClosed: async () => {}, onReleaseTransport: async value => released.push(value), onSessionChange: () => {}, onClose: () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
-  async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(SplitChatPane, props); }
+
+  async function render(extra = {}) { props = { ...props, ...extra };
+
+  if (view) await view.rerender(props); else view = await renderComponent(SplitChatPane, props); }
+
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const click = async element => act(async () => element.click());
   const event = async value => act(async () => { for (const listener of listeners) listener(value); });
@@ -78,6 +91,7 @@ describe('split conversation lifecycle', () => {
     await render({ onDialogTransportClosed: async value => closed.push(value) });
     await extension('setStatus', { statusKey: 'status', statusText: 'Old status' }); await extension('setTitle', { title: 'Old title' });
     transport.connect = async (...args) => { connected.push(args); throw new Error('offline'); };
+
     await event({ type: 'disconnected' }); assert.equal(control('Message piop').disabled, true); assert.equal(document.querySelector('.extension-status'), null); assert.equal(document.title, 'piop'); assert.deepEqual(closed, [transport]);
     await act(async () => t.mock.timers.tick(50)); assert.match(document.querySelector('.split-control-error').textContent, /offline/);
     transport.connect = async (...args) => connected.push(args);
@@ -98,7 +112,9 @@ describe('split conversation lifecycle', () => {
     let path = '/source.jsonl'; const changes = [], bindings = [], copies = [];
     transport.currentSessionPath = () => path;
     props.runtimePool.bind = (...args) => bindings.push(args); props.runtimePool.copySavedDiffs = async (...args) => copies.push(args);
-    responses.set('fork_after', () => { path = '/fork.jsonl'; const snapshot = responses.get('get_snapshot'); snapshot.state = { ...snapshot.state, sessionId: 'forked', sessionName: 'Fork', sessionFile: path }; snapshot.history = { entries: entries.slice(0, 2), leafId: 'a' }; return {}; });
+    responses.set('fork_after', () => { path = '/fork.jsonl'; const snapshot = responses.get('get_snapshot'); snapshot.state = { ...snapshot.state, sessionId: 'forked', sessionName: 'Fork', sessionFile: path }; snapshot.history = { entries: entries.slice(0, 2), leafId: 'a' };
+
+    return {}; });
     responses.set('get_entries', { entries: entries.slice(0, 2), leafId: 'a' });
     await render({ onSessionChange: (...args) => changes.push(args) });
     await click(document.querySelector('[title="Branch from here"]'));

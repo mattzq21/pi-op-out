@@ -5,10 +5,15 @@ import type { AgentState, ChatMessage, Model, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
 
 const SESSION_LIMIT = 256 * 1024 * 1024;
+
 const CACHE_LIMIT = 512 * 1024 * 1024;
+
 const SESSION_COUNT = 20;
+
 const TOOL_PAYLOAD_CONCURRENCY = 2;
+
 type Transport = Pick<NativeTransport, "command" | "subscribe">;
+
 interface CachedSession {
   state: AgentState;
   messages: ChatMessage[];
@@ -17,18 +22,25 @@ interface CachedSession {
   thinkingLevels: string[];
   resources: Record<string, unknown>;
 }
+
 const stores = new WeakMap<Transport, SessionMemory>();
+
 const fifo = new Map<SessionMemory, number>();
+
 const measured = new WeakMap<object, number>();
+
 let activeToolPayloadTransfers = 0;
+
 const waitingToolPayloadTransfers: (() => void)[] = [];
 
 async function transferToolPayload(transfer: () => Promise<void> | undefined) {
   if (activeToolPayloadTransfers >= TOOL_PAYLOAD_CONCURRENCY) await new Promise<void>(resolve => waitingToolPayloadTransfers.push(resolve));
   else activeToolPayloadTransfers++;
+
   try { await transfer(); }
   finally {
     const next = waitingToolPayloadTransfers.shift();
+
     if (next) next();
     else activeToolPayloadTransfers--;
   }
@@ -36,19 +48,25 @@ async function transferToolPayload(transfer: () => Promise<void> | undefined) {
 
 function bytes(value: unknown): number {
   if (typeof value === "string") return 24 + value.length * 2;
+
   if (!value || typeof value !== "object") return 16;
   const previous = measured.get(value);
+
   if (previous !== undefined) return previous;
   let size = 64;
+
   for (const key of Object.keys(value)) size += 32 + key.length * 2 + bytes((value as Record<string, unknown>)[key]);
   measured.set(value, size);
+
   return size;
 }
 
 function enforceCacheLimit() {
   let total = [...fifo.values()].reduce((sum, size) => sum + size, 0);
+
   for (const [store, size] of fifo) {
     if (fifo.size <= SESSION_COUNT && total <= CACHE_LIMIT) break;
+
     if (store.observed()) continue;
     fifo.delete(store);
     total -= size;
@@ -62,7 +80,9 @@ function initialSnapshot(state: AgentState): CachedSession {
 
 function stripToolArguments(message: ChatMessage): ChatMessage {
   if (!Array.isArray(message.content)) return message;
+
   if (!message.content.some((part) => part.type === "toolCall" && (part.partialArgs || Object.keys(part.arguments ?? {}).length))) return message;
+
   return { ...message, content: message.content.map((part) => part.type === "toolCall"
     ? { type: "toolCall", id: part.id, name: part.name, arguments: {} } : part) };
 }
@@ -84,7 +104,9 @@ export class SessionMemory {
     this.value = initialSnapshot(initialState);
   }
   getSnapshot = () => this.value;
-  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); enforceCacheLimit(); }; };
+  subscribe = (listener: () => void) => { this.listeners.add(listener);
+
+  return () => { this.listeners.delete(listener); enforceCacheLimit(); }; };
   observed() { return this.listeners.size > 0; }
   private notify() { for (const listener of this.listeners) listener(); }
 
@@ -96,6 +118,7 @@ export class SessionMemory {
     this.omitted = 0;
     this.reserved = 0;
     this.value = initialSnapshot(this.initialState);
+
     for (const release of this.resourceReleases.values()) release();
     this.resourceReleases.clear();
     this.notify();
@@ -119,13 +142,16 @@ export class SessionMemory {
     const positions = new Map<string, number[]>();
     messages.forEach((message, index) => {
       const id = message.deferredToolPayload;
+
       if (id === undefined || !this.loaded.has(id)) return;
       const indices = positions.get(id) ?? [];
       indices.push(index); positions.set(id, indices);
     });
+
     for (const id of this.loaded) {
       if (size <= SESSION_LIMIT) break;
       this.loaded.delete(id);
+
       for (const index of positions.get(id) ?? []) {
         const previous = messages[index];
         const next = { ...previous, content: "", details: undefined, toolInput: undefined, nestedCalls: undefined, toolPayloadLoaded: false };
@@ -133,29 +159,38 @@ export class SessionMemory {
         messages[index] = next;
       }
     }
+
     this.value = { ...this.value, messages };
+
     return bytes(this.value) + this.reserved;
   }
 
   private trim() {
     let size = this.trimToolPayloads(bytes(this.value) + this.reserved);
+
     if (size <= SESSION_LIMIT) return size;
     this.dropResources();
     size = bytes(this.value) + this.reserved;
+
     if (size <= SESSION_LIMIT) return size;
     const messages = this.value.messages.filter((message) => message.id !== "client-memory-limit");
     let removed = 0;
+
     while (removed < messages.length && size > SESSION_LIMIT - 1024) {
       size -= bytes(messages[removed]) + 32;
       removed++;
     }
+
     this.omitted += removed;
     const notice: ChatMessage = { id: "client-memory-limit", role: "system", content: `${this.omitted} older messages were removed from this client's memory. The full conversation remains on the host.` };
     this.value = { ...this.value, messages: [notice, ...messages.slice(removed)] };
     const remaining = new Set(this.value.messages.map((message) => message.deferredToolPayload));
+
     for (const id of this.loaded) if (!remaining.has(id)) this.loaded.delete(id);
     size = bytes(this.value) + this.reserved;
+
     if (size > SESSION_LIMIT) { this.value = initialSnapshot(this.initialState); this.revision = undefined; }
+
     return bytes(this.value) + this.reserved;
   }
 
@@ -169,10 +204,12 @@ export class SessionMemory {
   private decorate(message: ChatMessage): ChatMessage {
     if (message.role !== "tool" && !Array.isArray(message.content)) return message;
     const cached = this.decorated.get(message);
+
     if (cached) return cached;
     const result = this.decorateMessage(message);
     this.decorated.set(message, result);
     this.decorated.set(result, result);
+
     return result;
   }
 
@@ -180,7 +217,9 @@ export class SessionMemory {
     if (message.role !== "tool") return stripToolArguments(message);
     const id = message.deferredToolPayload ?? message.toolCallId ?? message.id;
     const loadToolPayload = message.loadToolPayload ?? (() => this.loadToolPayload(id));
+
     if (message.toolPayloadLoaded) return { ...message, deferredToolPayload: id, loadToolPayload };
+
     return { ...message, content: "", details: undefined, toolInput: undefined, nestedCalls: undefined, deferredToolPayload: id, toolPayloadLoaded: false, loadToolPayload };
   }
 
@@ -188,11 +227,13 @@ export class SessionMemory {
 
   batch(update: () => void) {
     this.batching++;
+
     try { update(); } finally { this.batching--; this.commit(); }
   }
 
   set<K extends keyof CachedSession>(key: K, update: StateUpdate<CachedSession[K]>) {
-    const next = typeof update === "function" ? (update as (current: CachedSession[K]) => CachedSession[K])(this.value[key]) : update;
+    const next = typeof update === "function" ? (update satisfies (current: CachedSession[K]) => CachedSession[K])(this.value[key]) : update;
+
     if (Object.is(next, this.value[key])) return;
     this.value = { ...this.value, [key]: key === "messages" ? (next as ChatMessage[]).map((message) => this.decorate(message)) : next };
     this.commit();
@@ -204,50 +245,70 @@ export class SessionMemory {
     const version = this.toolPayloadVersion(id);
     let serialized = "";
     let revision: string | undefined;
+
     for (;;) {
       const page = await this.transport.command<{ chunk: string; length: number; revision: string }>({ type: "get_tool_payload", toolCallId: id, offset: serialized.length, revision, limit: 2 * 1024 * 1024 });
+
       if (generation !== this.generation) return;
+
       if (page.length * 6 > SESSION_LIMIT) throw new Error("This tool payload exceeds the client memory limit.");
       this.reserved = page.length * 6;
       this.commit();
+
       if (generation !== this.generation) return;
       revision = page.revision;
       serialized += page.chunk;
+
       if (serialized.length >= page.length) break;
+
       if (!page.chunk) throw new Error("Incomplete tool payload");
     }
+
     const output = JSON.parse(serialized) as Pick<ChatMessage, "content" | "details" | "toolInput" | "nestedCalls">;
+
     if (generation !== this.generation) return;
     this.reserved = 0;
     this.loaded.delete(id); this.loaded.add(id);
     this.set("messages", (messages) => messages.map((message) => message.deferredToolPayload === id ? { ...message, ...output, toolPayloadLoaded: true, loadedToolPayloadVersion: version } : message));
+
     if (!this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded)) throw new Error("This tool payload could not fit in the client memory limit.");
   }
 
   private loadToolPayload(id: string) {
     if (this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded && message.loadedToolPayloadVersion === message.toolPayloadVersion)) return Promise.resolve();
     const previous = this.loading.get(id);
+
     if (previous) return previous;
     const generation = this.generation;
+
     const request = this.toolPayloadTransfers.then(() => transferToolPayload(() => generation === this.generation ? this.fetchToolPayload(id, generation) : undefined)).finally(() => {
       if (this.loading.get(id) === request) this.loading.delete(id);
-      if (generation === this.generation) { this.reserved = 0; if (fifo.has(this)) this.commit(); }
+
+      if (generation === this.generation) { this.reserved = 0;
+
+      if (fifo.has(this)) this.commit(); }
     });
+
     this.toolPayloadTransfers = request.catch(() => undefined);
     this.loading.set(id, request);
+
     return request;
   }
 }
 
 export function forgetSession(transport: Transport) {
   const store = stores.get(transport);
+
   if (store) { fifo.delete(store); store.evict(); }
 }
 
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
+
 function memoryFor(transport: Transport, initialState = emptyState) {
   let store = stores.get(transport);
+
   if (!store) { store = new SessionMemory(transport, initialState); stores.set(transport, store); }
+
   return store;
 }
 
@@ -265,5 +326,6 @@ export function useSessionMemory(transport: Accessor<Transport>, initialState: A
   const setModels = (update: StateUpdate<Model[]>) => memory().set("models", update);
   const setCommands = (update: StateUpdate<SlashCommand[]>) => memory().set("commands", update);
   const setThinkingLevels = (update: StateUpdate<string[]>) => memory().set("thinkingLevels", update);
+
   return { get state() { return snapshot().state; }, get messages() { return snapshot().messages; }, get models() { return snapshot().models; }, get commands() { return snapshot().commands; }, get thinkingLevels() { return snapshot().thinkingLevels; }, get resources() { return snapshot().resources; }, get memory() { return memory(); }, setState, setMessages, setModels, setCommands, setThinkingLevels };
 }

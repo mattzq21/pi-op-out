@@ -14,6 +14,7 @@ describe("Conversation acceptance", () => {
 
   it("returns multiline extension editor content", async () => {
     await mockBackend({ "pi_command:extension_ui_response": {} });
+
     try {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-editor-content", method: "editor", title: "Release notes", placeholder: "Release notes", prefill: "Initial line" });
       const editor = $('textarea[aria-label="Release notes"]');
@@ -29,6 +30,7 @@ describe("Conversation acceptance", () => {
 
   it("supports extension selection, confirmation, and cancellation", async () => {
     await mockBackend({ "pi_command:extension_ui_response": {} });
+
     try {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-select", method: "select", title: "Choose a target", options: ["Alpha", "Beta"] });
       await $('//dialog//button[normalize-space(.)="Beta"]').click();
@@ -86,6 +88,7 @@ describe("Conversation acceptance", () => {
 
   it("applies extension-driven window titles and editor text", async () => {
     const originalTitle = await browser.getTitle();
+
     try {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-title", method: "setTitle", title: "Acceptance review in progress" });
       await browser.waitUntil(async () => await browser.getTitle() === "Acceptance review in progress");
@@ -100,6 +103,7 @@ describe("Conversation acceptance", () => {
 
   it("stacks simultaneous application and extension notices", async () => {
     const debug = $('button[aria-label$="debug mode"]');
+
     try {
       await withClientSettingsWriteFailure(async () => {
         await debug.click();
@@ -118,6 +122,7 @@ describe("Conversation acceptance", () => {
   it("queues extension dialogs behind the project picker", async () => {
     await resetApp();
     await startTemporaryConversation({ home_directory: "/tmp", "pi_command:extension_ui_response": {} });
+
     try {
       await app.openProjectChooser();
       await emitPiEvent({ type: "extension_ui_request", id: "queued-confirm", method: "confirm", title: "Confirm extension action" });
@@ -128,6 +133,7 @@ describe("Conversation acceptance", () => {
       await $('//dialog//button[normalize-space(.)="Cancel"]').click();
     } finally {
       if (await app.projectDialogHeading.isExisting()) await app.cancelProjectChooser();
+
       if (await app.extensionDialogHeading.isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
       await resetApp();
     }
@@ -135,6 +141,7 @@ describe("Conversation acceptance", () => {
 
   it("keeps extension input when sending its response fails", async () => {
     await mockBackend({ "pi_command:extension_ui_response": { error: "Extension response channel closed" } });
+
     try {
       await emitPiEvent({ type: "extension_ui_request", id: "failed-response", method: "input", title: "Required value", placeholder: "Label" });
       const input = $('input[aria-label="Label"]');
@@ -147,12 +154,14 @@ describe("Conversation acceptance", () => {
         await updateBackendResponse("pi_command:extension_ui_response", {});
         await $('//dialog//button[normalize-space(.)="Continue"]').click();
       }
+
       await resetBackend();
     }
   });
 
   it("uses Tab to complete the selected slash command without submitting", async () => {
     await mockBackend({ ...connectedSessionResponses("tab-command-session"), "pi_command:prompt": {} });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("/comp");
@@ -173,6 +182,7 @@ describe("Conversation acceptance", () => {
     await app.openConversations();
     await $('button[aria-label="New conversation"]').click();
     await app.openProjectChooser();
+
     try {
       await pressShortcut(panelShortcut);
       await expect($(".session-panel")).toBeDisplayed();

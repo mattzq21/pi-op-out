@@ -1,6 +1,7 @@
 import type { RpcCommand, RpcEvent } from "../types";
 
 type Command = { name: string; source: string; sourceInfo?: { source?: string; path?: string } };
+
 type FastModeConnection = {
   command: (command: RpcCommand) => Promise<unknown>;
   send: (command: RpcCommand) => Promise<unknown>;
@@ -17,6 +18,7 @@ export class FastModeCommands {
 
   afterCommand(command: RpcCommand, result: unknown) {
     if (command.type === "get_commands") return this.discover(result);
+
     if (command.type === "prompt") return this.afterPrompt(command);
   }
 
@@ -32,11 +34,13 @@ export class FastModeCommands {
 
   private async afterPrompt(command: RpcCommand) {
     const invocation = typeof command.message === "string" ? command.message.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/) : undefined;
+
     if (invocation && this.commands.has(invocation[1]) && ["", "on", "off", "toggle"].includes((invocation[2] ?? "").trim().toLowerCase())) await this.refreshStatus(true);
   }
 
   private async refreshStatus(reload: boolean) {
     if (!this.statusCommand) return;
+
     try {
       await this.connection.send({ type: "prompt", message: `/${this.statusCommand}${reload ? " refresh" : ""}` });
     } catch {
@@ -53,6 +57,7 @@ export class FastModeCommands {
 
   private async change(mode: "on" | "off" | "toggle") {
     const command = this.commands.values().next().value;
+
     if (!command) throw new Error("Fast mode is unavailable in this conversation");
     await this.connection.send({ type: "prompt", message: `/${command} ${mode}` });
     await this.refreshStatus(true);

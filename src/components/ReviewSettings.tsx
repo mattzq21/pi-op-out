@@ -5,6 +5,7 @@ import defaultPrompt from "../../src-tauri/resources/session-broker/review-promp
 export function ReviewSettings(props: { settings: AppSettings; agents: AgentProfile[]; onChange: (patch: Partial<AppSettings>) => void }) {
   const selected = () => props.settings.reviewAgent ?? "general";
   const available = () => props.agents.some(agent => agent.name === selected());
+
   return <>
     <label class="field"><span>Review agent</span><select aria-label="Review agent" value={selected()} onChange={event => props.onChange({ reviewAgent: event.currentTarget.value })}>
       <Show when={!available()}><option value={selected()} disabled>Unavailable: {selected()}</option></Show>

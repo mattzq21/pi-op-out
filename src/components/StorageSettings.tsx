@@ -17,24 +17,30 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
 
 function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes)) return "—";
+
   if (bytes < 1024) return `${bytes} B`;
   const units = ["KiB", "MiB", "GiB", "TiB"];
   let value = bytes / 1024;
   let unit = units[0];
+
   for (let index = 1; value >= 1024 && index < units.length; index += 1) { value /= 1024; unit = units[index]; }
+
   return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${unit}`;
 }
 
 function itemCount(category: StorageCategory) {
   const item = categoryDetails[category.id]?.item ?? "item";
   const count = Number.isFinite(category.itemCount) ? category.itemCount : 0;
+
   return `${count} ${count === 1 ? item : item === "directory" ? "directories" : `${item}s`}`;
 }
 
 function formatDate(timestamp: number) {
   if (!Number.isFinite(timestamp)) return "Unknown date";
   const date = new Date(timestamp * 1000);
+
   if (Number.isNaN(date.getTime())) return "Unknown date";
+
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
@@ -52,16 +58,20 @@ export function StorageSettings(componentProps: { hostId?: string }) {
     const generation = ++refreshGeneration.current;
     pendingRefreshes.current += 1;
     setLoading(true); setError(undefined);
+
     try {
       const next = await loadStorageReport(capturedHostId0);
+
       if (generation === refreshGeneration.current) setReport(next);
     } catch (reason) {
       if (generation === refreshGeneration.current) setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       pendingRefreshes.current -= 1;
+
       if (pendingRefreshes.current === 0) setLoading(false);
     }
   };
+
   createDependencyEffect(() => { void refresh(); }, () => [componentProps.hostId]);
 
   const removeArchives = async (host: HostStorage, archives: ArchivedConversation[]) => {
@@ -70,44 +80,58 @@ export function StorageSettings(componentProps: { hostId?: string }) {
     setError(undefined);
     const failures: string[] = [];
     const removed = new Set<string>();
+
     for (const archive of archives) {
       try { await deleteArchivedConversation(archive.path, host.hostId); removed.add(archive.path); }
       catch (reason) { failures.push(`${archive.name}: ${reason instanceof Error ? reason.message : String(reason)}`); }
     }
+
     if (removed.size) setReport((current) => current ? { hosts: current.hosts.map((candidate) => candidate.hostId === host.hostId ? { ...candidate, archives: candidate.archives.filter((archive) => !removed.has(archive.path)) } : candidate) } : current);
-    setDeleting((current) => { const next = new Set(current); keys.forEach((key) => next.delete(key)); return next; });
+    setDeleting((current) => { const next = new Set(current); keys.forEach((key) => next.delete(key));
+
+    return next; });
     await refresh();
+
     if (failures.length) setError(failures.join("\n"));
   };
 
   const deleteOne = (host: HostStorage, archive: ArchivedConversation) => {
     if (!archive.deletable) return;
+
     if (!window.confirm(`Permanently delete “${archive.name}”? Its diff history and project checkpoint refs will also be removed.`)) return;
     void removeArchives(host, [archive]);
   };
+
   const changeWorktree = async (host: HostStorage, archive: ArchivedConversation) => {
     if (archive.worktreePath && !window.confirm(`Delete the worktree for “${archive.name}”? The archived chat and its checkpoints will be kept. Restore will use the last response's files. Dependencies and build outputs will need rebuilding.`)) return;
     const key = archiveKey(host, archive);
     setDeleting((current) => new Set([...current, key]));
     setError(undefined);
     let failure: string | undefined;
+
     try {
       if (archive.worktreePath) await removeArchivedWorktree(archive.worktreePath, host.hostId);
       else await restoreArchivedWorktree(archive.path, host.hostId);
     } catch (reason) { failure = reason instanceof Error ? reason.message : String(reason); }
-    finally { setDeleting((current) => { const next = new Set(current); next.delete(key); return next; }); }
+    finally { setDeleting((current) => { const next = new Set(current); next.delete(key);
+
+    return next; }); }
+
     await refresh();
+
     if (failure) setError(failure);
   };
+
   const deleteAll = (host: HostStorage) => {
     const archives = host.archives.filter((archive) => archive.deletable);
+
     if (!archives.length || !window.confirm(`Permanently delete ${archives.length === host.archives.length ? `all ${archives.length}` : `the ${archives.length} safely readable`} archived conversations on ${host.hostName}? Their diff histories and project checkpoint refs will also be removed.`)) return;
     void removeArchives(host, archives);
   };
 
   return <div class="settings-section storage-settings">
     <div class="section-title"><div><h2>Storage</h2><p>See what piop stores on each machine and permanently remove archived conversations.</p></div><button class="storage-refresh" disabled={loading() || deleting().size > 0} onClick={() => void refresh()}><RefreshCw size={14} class={loading() ? "spinning" : ""} />{loading() ? "Scanning…" : "Refresh"}</button></div>
-    {error() && <div class="storage-error" role="alert">{(error())!}</div>}
+    {error() && <div class="storage-error" role="alert">{(error())}</div>}
     {!report() && loading() && <div class="storage-loading" role="status"><HardDrive size={20} />Scanning storage…</div>}
     {<Key each={report()?.hosts} by={host => host.hostId}>{(host, _index) => {
       const total = createMemo(() => (host().categories.reduce((sum, category) => sum + category.byteSize, 0)));
@@ -115,9 +139,11 @@ export function StorageSettings(componentProps: { hostId?: string }) {
       const maximum = createMemo(() => (Math.max(...host().categories.map((category) => category.byteSize), 1)));
       const deletableArchives = createMemo(() => (host().archives.filter((archive) => archive.deletable)));
       const renderHostHeader = () => (<header><span class="config-icon"><Database size={16} /></span><span><strong>{host().hostName}</strong><small>{host().error ? "Storage unavailable" : `${approximate() ? "About " : ""}${formatBytes(total())} tracked`}</small></span></header>);
+
       const renderStorageHostError = () => (<Show when={!host().error} fallback={<div class="storage-host-error" role="alert">{host().error}</div>}>
         <div class="storage-categories">{<Key each={host().categories.filter((category) => category && categoryDetails[category.id])} by={(category) => category.id}>{(category, _index) => {
           const details = createMemo(() => (categoryDetails[category().id])); const CategoryIcon = createMemo(() => (details().icon));
+
           return <div class="storage-category" >
             <span class="storage-category-icon"><Dynamic component={CategoryIcon()} size={15} /></span>
             <span><strong>{details().name}</strong><small>{details().description} · {itemCount(category())}</small><i><b style={{ width: `${Math.max(category().byteSize ? 2 : 0, category().byteSize / maximum() * 100)}%` }} /></i></span>
@@ -133,6 +159,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
           const renderArchiveDetails = () => (<span><strong>{name()}</strong><small>{archive().deletable ? `${typeof archive().cwd === "string" ? archive().cwd : ""} · ${formatDate(archive().modifiedAt)}` : `Cleanup unavailable · ${archive().deleteError}`}</small></span>);
           const renderArchiveDelete = () => (<button aria-label={archive().deletable ? `Permanently delete ${name()}` : `Cannot safely delete ${name()}: ${archive().deleteError}`} disabled={!archive().deletable || deleting().size > 0 || loading()} onClick={() => deleteOne(host(), archive())}>{!archive().deletable ? <ShieldAlert size={14} /> : pending() ? <RefreshCw size={14} class="spinning" /> : <Trash2 size={14} />}</button>);
           const renderWorktreeAction = () => ((archive().worktreePath || archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : archive().worktreePath ? "Delete worktree" : "Restore worktree"}</button>);
+
           return <div class={`archive-row${archive().deletable ? "" : " cleanup-unavailable"}`}  title={archive().deleteError || archive().path}>
             {renderArchiveDetails()}
             <code>{formatBytes(Number(archive().byteSize) || 0)}</code>
@@ -142,6 +169,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
           </div>;
         }}</Key>}</div>}
       </Show>);
+
       return <section class="storage-host" >
         {renderHostHeader()}
         {renderStorageHostError()}

@@ -65,6 +65,7 @@ function normalizeTarget(rawTarget: unknown): FastTarget | undefined {
   }
 
   const rawServiceTier = rawTarget.serviceTier;
+
   const serviceTier =
     typeof rawServiceTier === "string" && rawServiceTier.trim() !== ""
       ? rawServiceTier.trim()
@@ -83,9 +84,11 @@ export function normalizeTargets(
 
   for (const rawTarget of rawTargets) {
     const target = normalizeTarget(rawTarget);
+
     if (!target) continue;
 
     const key = `${target.provider}\u0000${target.model}`;
+
     if (seen.has(key)) continue;
 
     seen.add(key);
@@ -105,6 +108,7 @@ export function normalizeConfig(
 
   const enabled =
     typeof raw.enabled === "boolean" ? raw.enabled : safeFallback.enabled;
+
   const targets = normalizeTargets(raw.targets) ?? safeFallback.targets;
 
   return { enabled, targets };
@@ -160,6 +164,7 @@ export function selectConfigPath({
   exists = existsSync,
 }: SelectConfigPathOptions): ResolvedConfigPath {
   const projectPath = getProjectConfigPath(cwd);
+
   if (exists(projectPath)) {
     return { scope: "project", path: projectPath };
   }
@@ -185,6 +190,7 @@ export async function loadConfigFromPath(
 ): Promise<FastModeConfig> {
   try {
     const json = await fs.readFile(configPath, "utf8");
+
     return parseConfigJson(json, fallback);
   } catch {
     return cloneConfig(fallback);
@@ -194,6 +200,7 @@ export async function loadConfigFromPath(
 async function migrateConfigPath(path: string): Promise<void> {
   if (existsSync(path)) return;
   const legacy = join(dirname(dirname(path)), "pi-openai-fast-mode-piop", "config.json");
+
   try {
     const contents = await fs.readFile(legacy, "utf8");
     await fs.mkdir(dirname(path), { recursive: true });
@@ -209,10 +216,12 @@ export async function loadConfigForScope(
   await migrateConfigPath(getProjectConfigPath(options.cwd));
   await migrateConfigPath(getUserConfigPath(options.agentDir));
   const selected = selectConfigPath(options);
+
   const config = await loadConfigFromPath(
     selected.path,
     options.fallback ?? DEFAULT_CONFIG,
   );
+
   return { ...selected, config };
 }
 
@@ -235,5 +244,6 @@ export async function saveConfigForScope(
 ): Promise<ResolvedConfigPath> {
   const selected = selectConfigPath(options);
   await saveConfigToPath(selected.path, config);
+
   return selected;
 }

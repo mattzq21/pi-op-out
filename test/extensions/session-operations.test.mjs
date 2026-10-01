@@ -7,11 +7,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+
 const exec = promisify(execFile);
 
 async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'piop-session-operations-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
+
   const bundle = await build({
     entryPoints: [fileURLToPath(new URL('../../src-tauri/resources/session-broker.ts', import.meta.url))],
     bundle: true, write: false, platform: 'node', format: 'esm',
@@ -26,14 +28,17 @@ async function fixture(t) {
       }));
     } }],
   });
+
   await writeFile(join(dir, 'broker.mjs'), bundle.outputFiles[0].contents);
   const module = await import(pathToFileURL(join(dir, 'broker.mjs')));
+
   const entries = [
     { type: 'message', id: 'u1', parentId: null, message: { role: 'user', content: 'first prompt' } },
     { type: 'message', id: 'a1', parentId: 'u1', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'done' }] } },
     { type: 'message', id: 'u2', parentId: 'a1', message: { role: 'user', content: 'fork now' } },
     { type: 'message', id: 'tool', parentId: 'u2', message: { role: 'assistant', stopReason: 'toolUse', content: [{ type: 'toolCall', id: 'pending' }] } },
   ];
+
   const header = { type: 'session', version: 3, id: 'source', cwd: dir };
   const sourcePath = join(dir, 'source.jsonl');
   const sourceText = [header, ...entries].map(JSON.stringify).join('\n') + '\n';
@@ -41,10 +46,12 @@ async function fixture(t) {
   const notices = [], messages = [], commands = new Map(), tools = new Map();
   const ctx = { cwd: dir, sessionManager: { getEntries: () => entries, getBranch: () => entries, getHeader: () => header, getSessionFile: () => sourcePath, getSessionDir: () => dir }, ui: { notify: (...args) => notices.push(args) } };
   module.registerSessionOperations({ registerTool: tool => tools.set(tool.name, tool), registerCommand: (name, command) => commands.set(name, command), sendMessage: message => messages.push(message) });
+
   return { ...module, ctx, dir, entries, sourcePath, sourceText, notices, messages, commands, tools };
 }
 
 const unexpectedWorktree = async () => { throw Error('Git must not be required'); };
+
 const readEntries = async path => (await readFile(path, 'utf8')).trim().split('\n').map(JSON.parse);
 
 test('archived child-owned checkpoints recover missing refs from retained commits', async t => {
@@ -114,9 +121,11 @@ test('fork to another directory preserves that directory and does not copy proje
 
 test('invalid fork targets and unfinished history fail before creating a worktree', async t => {
   const f = await fixture(t);
+
   for (const options of [{ entryId: 'missing' }, { entryId: 'tool' }, { entryId: 'u1' }, { cwd: '.', worktree: 'branch' }, { cwd: 'missing' }]) {
     await assert.rejects(f.forkConversation(f.ctx, options, unexpectedWorktree));
   }
+
   f.entries[3].message.stopReason = 'aborted';
   await assert.rejects(f.forkConversation(f.ctx, { entryId: 'tool' }, unexpectedWorktree), /completed assistant/);
   f.entries.length = 1;
@@ -125,10 +134,13 @@ test('invalid fork targets and unfinished history fail before creating a worktre
 
 test('worktree fork returns setup failures with the created path and session', async t => {
   const f = await fixture(t);
+
   const result = await f.forkConversation(f.ctx, { worktree: 'experiment' }, async name => {
     assert.equal(name, 'experiment');
+
     return { path: join(f.dir, 'new-tree'), branch: 'project-experiment', setupError: 'setup failed' };
   });
+
   assert.equal(result.setupError, 'setup failed');
   assert.equal((await readEntries(result.sessionPath))[0].cwd, result.path);
 });
@@ -138,6 +150,7 @@ test('tools and slash commands route worktrees to the current host and report re
   const requests = [];
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     requests.push({ url, body: JSON.parse(options.body) });
+
     return { ok: true, json: async () => ({ data: { path: f.dir, branch: 'fixture' } }) };
   });
   const previous = process.env.PI_DESKTOP_HOST_ID;
@@ -167,10 +180,13 @@ test('Git sessions fork in place and into an independent real worktree', async t
   const same = await f.forkConversation(f.ctx, {}, unexpectedWorktree);
   assert.equal(same.cwd, f.dir);
   const destination = join(f.dir, 'worktree');
+
   const fork = await f.forkConversation(f.ctx, { worktree: 'experiment' }, async branch => {
     await git('worktree', 'add', '-b', branch, destination);
+
     return { path: destination, branch };
   });
+
   assert.equal((await exec('git', ['-C', fork.cwd, 'branch', '--show-current'])).stdout.trim(), 'experiment');
   assert.equal((await git('rev-parse', 'HEAD')).stdout, sourceHead);
   assert.deepEqual((await readEntries(fork.sessionPath)).slice(1), f.entries.slice(0, 2));
@@ -195,8 +211,10 @@ test('cancelled tools do not create sessions or contact the worktree broker', as
   t.mock.method(globalThis, 'fetch', async () => { assert.fail('Cancelled operation contacted broker'); });
   const signal = AbortSignal.abort(new Error('cancelled'));
   const before = await readdir(f.dir);
+
   for (const [name, params] of [['fork_session', {}], ['create_worktree', { name: 'experiment' }], ['remove_worktree', { cwd: 'other' }]]) {
     await assert.rejects(f.tools.get(name).execute('call', params, signal, undefined, f.ctx), /cancelled/);
   }
+
   assert.deepEqual(await readdir(f.dir), before);
 });

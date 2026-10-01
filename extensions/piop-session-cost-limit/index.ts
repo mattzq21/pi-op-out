@@ -1,9 +1,13 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const STATUS_KEY = "piop-session-cost";
+
 const LIMIT_ENTRY = "piop-session-cost-limit";
+
 const MIN_LIMIT = 0.01;
+
 const MAX_LIMIT = 100000;
+
 const USAGE = "Usage: /cost <amount in USD> or /cost clear";
 
 type CostContext = Pick<ExtensionContext, "sessionManager" | "ui">;
@@ -15,29 +19,35 @@ function validAmount(value: unknown): value is number {
 function parseAmount(raw: string): number {
   const normalized = raw.trim().replace(/^\$/, "").replaceAll(",", "");
   const amount = Number(normalized);
+
   if (normalized === "" || !validAmount(amount)) {
     throw new Error(`Invalid amount "${raw.trim()}". ${USAGE} (between $0.01 and $100,000)`);
   }
+
   return amount;
 }
 
 function entryUsage(entry: unknown) {
   if (!entry || typeof entry !== "object") return 0;
   const value = entry as { type?: string; message?: { usage?: { cost?: { total?: unknown } } }; usage?: { cost?: { total?: unknown } } };
+
   return value.type === "message" ? value.message?.usage : ["compaction", "usage", "branch_summary"].includes(value.type ?? "") ? value.usage : undefined;
 }
 
 function entryCost(entry: unknown): number {
   const usage = entryUsage(entry);
   const amount = typeof usage === "object" ? usage?.cost?.total : undefined;
+
   return typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : 0;
 }
 
 function sessionCost(ctx: CostContext): number {
   let total = 0;
+
   for (const entry of ctx.sessionManager.getBranch()) {
     total += entryCost(entry);
   }
+
   return total;
 }
 
@@ -48,8 +58,10 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
 
   const restoreLimit = (ctx: CostContext) => {
     const entry = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "custom" && entry.customType === LIMIT_ENTRY);
+
     if (entry?.type === "custom") {
       const saved = (entry.data as { limit?: unknown } | undefined)?.limit;
+
       if (saved !== null && saved !== undefined && !validAmount(saved)) throw new Error("Invalid saved session cost limit");
       limit = typeof saved === "number" ? saved : undefined;
     } else {
@@ -62,8 +74,10 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
   const publish = (ctx: CostContext) => {
     if (limit === undefined) {
       ctx.ui.setStatus(STATUS_KEY, undefined);
+
       return;
     }
+
     const cost = sessionCost(ctx);
     ctx.ui.setStatus(STATUS_KEY, cost >= limit
       ? `Session cost limit reached (${formatCost(cost)} / ${formatCost(limit)})`
@@ -89,6 +103,7 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     if (limit === undefined) return;
     publish(ctx);
     const cost = sessionCost(ctx);
+
     if (cost >= limit || !Number.isFinite(event.warmCost) || cost + Math.max(0, event.warmCost) > limit) return { action: "stop" };
   });
 
@@ -97,12 +112,14 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     const error = `Session cost limit of ${formatCost(limit!)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`;
     ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error }));
     ctx.ui.notify(error, "warning");
+
     return { action: "handled" };
   });
 
   pi.on("tool_call", (_event, ctx) => {
     if (!overLimit(ctx)) return;
     publish(ctx);
+
     return { block: true, terminate: true, reason: `Session cost limit of ${formatCost(limit!)} reached (API prices). Tool execution blocked.` };
   });
   pi.on("turn_start", (_event, ctx) => {
@@ -118,13 +135,16 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       try {
         const raw = args.trim();
+
         if (/^clear$/i.test(raw)) {
           limit = undefined;
           pi.appendEntry(LIMIT_ENTRY, { limit: null });
           publish(ctx);
           ctx.ui.notify("Session cost limit cleared.", "info");
+
           return;
         }
+
         const amount = parseAmount(raw);
         limit = amount;
         pi.appendEntry(LIMIT_ENTRY, { limit: amount });

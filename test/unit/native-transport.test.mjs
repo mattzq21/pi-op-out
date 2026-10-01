@@ -20,7 +20,9 @@ beforeEach(() => {
     calls.push({ command, args });
     const key = command === 'pi_command' ? `pi_command:${args.command.type}` : command;
     const result = responses.get(key);
+
     if (result instanceof Error) throw result;
+
     return typeof result === 'function' ? result(args) : result;
   }, { shouldMockEvents: true });
 });
@@ -29,7 +31,11 @@ afterEach(async () => {
   clearMocks();
   delete globalThis.window; delete globalThis.document; delete globalThis.localStorage; delete globalThis.__PIOP_TEST_MODE__;
 });
-const transport = (target = { cwd: '/repo' }) => { const value = new native.NativeTransport(target); transports.push(value); return value; };
+
+const transport = (target = { cwd: '/repo' }) => { const value = new native.NativeTransport(target); transports.push(value);
+
+return value; };
+
 const commands = name => calls.filter(call => call.command === name);
 const rpc = type => commands('pi_command').filter(call => call.args.command.type === type);
 
@@ -123,7 +129,9 @@ test('unused temporary chats are removed on disposal while used chats survive', 
 test('disconnect during temporary-chat allocation cleans up without starting a process', async () => {
   const pending = Promise.withResolvers();
   const started = Promise.withResolvers();
-  responses.set('create_temporary_chat', () => { started.resolve(); return pending.promise; });
+  responses.set('create_temporary_chat', () => { started.resolve();
+
+  return pending.promise; });
   const client = transport({});
   const connecting = client.connect();
   await started.promise;
@@ -223,6 +231,7 @@ test('diagnostics retain the last five matching stderr lines and augment connect
   const runtimeId = commands('start_pi')[0].args.runtimeId;
   await emit('pi://stderr', { runtimeId: 'other', line: 'ignore' });
   await emit('pi://stderr', { runtimeId, line: ' ' });
+
   for (let i = 0; i < 6; i++) await emit('pi://stderr', { runtimeId, line: ` line ${i} ` });
   await emit('pi://stderr', ' final ');
   assert.equal(client.lastDiagnostic(), 'line 2\nline 3\nline 4\nline 5\nfinal');
@@ -258,7 +267,9 @@ test('settings save rolls back persisted values and connection after reconnect f
   responses.set('load_app_settings', previous);
   responses.set('save_app_settings', ({ settings }) => ({ settings, reconnect: true }));
   let attempts = 0;
-  responses.set('start_pi', () => { if (++attempts === 1) throw new Error('cannot connect'); return { attached: true }; });
+  responses.set('start_pi', () => { if (++attempts === 1) throw new Error('cannot connect');
+
+  return { attached: true }; });
   await assert.rejects(client.saveSettings(next), /cannot connect/);
   assert.deepEqual(commands('save_app_settings').map(call => call.args.settings), [next, previous]);
   assert.equal(client.currentHostId(), 'remote');
@@ -316,6 +327,7 @@ test('native file and directory helpers normalize nullable results and image typ
   assert.equal(await client.selectProjectDirectory(), null);
   responses.set('plugin:dialog|open', '/repo');
   assert.equal(await client.selectProjectDirectory('/default'), '/repo');
+
   for (const [name, type] of [['picture.PNG', 'image/png'], ['a.jpeg', 'image/jpeg'], ['a.txt', '']]) {
     responses.set('read_dropped_file', { name, data: [65, 66] });
     const file = await native.readDroppedFile('/file');
@@ -327,7 +339,9 @@ test('native file and directory helpers normalize nullable results and image typ
 
 test('initial window targets tolerate absent or malformed URL data', () => {
   assert.deepEqual(native.initialWindowTarget(), {});
+
   for (const value of ['{', 'null', '42']) { window.location.search = `?target=${encodeURIComponent(value)}`; assert.deepEqual(native.initialWindowTarget(), {}); }
+
   window.location.search = `?target=${encodeURIComponent(JSON.stringify({ cwd: '/repo', hostId: 'remote' }))}`;
   assert.deepEqual(native.initialWindowTarget(), { cwd: '/repo', hostId: 'remote' });
 });

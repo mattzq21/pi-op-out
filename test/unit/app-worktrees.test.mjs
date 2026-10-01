@@ -9,23 +9,44 @@ function fixture(t, options = {}) {
   t.after(() => { if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow); else delete globalThis.window; });
   globalThis.window = { __TAURI_INTERNALS__: { invoke: async (_command, { command, args }) => {
     if (options.groupError) throw options.groupError;
+
     if (command === 'change_session_groups') groups.push(args.change);
+
     return { groups: [], assignments: {}, removedProjects: [] };
   } } };
+
   const owner = {
-    createProjectWorktree: async (...args) => { calls.push(['create', ...args]); return result; },
-    runWorktreeSetup: async (...args) => { calls.push(['setup', ...args]); if (options.setupError) throw options.setupError; },
-    removeGitWorktree: async (...args) => { calls.push(['remove', ...args]); if (options.removeError) throw options.removeError; return { warning: options.warning }; },
+    createProjectWorktree: async (...args) => { calls.push(['create', ...args]);
+
+    return result; },
+    runWorktreeSetup: async (...args) => { calls.push(['setup', ...args]);
+
+    if (options.setupError) throw options.setupError; },
+    removeGitWorktree: async (...args) => { calls.push(['remove', ...args]);
+
+    if (options.removeError) throw options.removeError;
+
+    return { warning: options.warning }; },
     currentSessionPath: () => '/sessions/parent.jsonl',
     listSessions: async () => [],
-    command: async request => { calls.push(['command', request]); return request.type === 'get_entries' ? { entries: options.entries, leafId: options.entries.at(-1)?.id } : request.type === 'get_state' ? { sessionId: 'parent' } : result; },
+    command: async request => { calls.push(['command', request]);
+
+    return request.type === 'get_entries' ? { entries: options.entries, leafId: options.entries.at(-1)?.id } : request.type === 'get_state' ? { sessionId: 'parent' } : result; },
   };
+
   const child = {}, memoryDiffs = { a1: { files: [] } };
+
   const actions = createWorktreeActions({
     settings: () => options.settings, transport: () => owner, runtimePool: () => ({
-      captureMemoryDiffs: async transport => { assert.equal(transport, owner); return memoryDiffs; },
-      forSession: session => { calls.push(['forSession', session]); return child; },
-      copySavedDiffs: async (...args) => { calls.push(['diffs', ...args]); if (options.diffError) throw options.diffError; },
+      captureMemoryDiffs: async transport => { assert.equal(transport, owner);
+
+      return memoryDiffs; },
+      forSession: session => { calls.push(['forSession', session]);
+
+      return child; },
+      copySavedDiffs: async (...args) => { calls.push(['diffs', ...args]);
+
+      if (options.diffError) throw options.diffError; },
     }),
     addNotice: notice => notices.push(notice), setWorktreeTarget: value => calls.push(['target', value]),
     setSessions: update => sessions.splice(0, sessions.length, ...update(sessions)),
@@ -34,6 +55,7 @@ function fixture(t, options = {}) {
     selectSession: session => calls.push(['select', session]),
     syncSessionIndex: () => calls.push(['sync']),
   });
+
   return { actions, owner, child, memoryDiffs, calls, notices, groups, result, sessions };
 }
 
@@ -44,6 +66,7 @@ for (const [hostId, settings, hostName] of [
 ]) test(`project worktrees retain host identity (${hostName}) and run setup before closing`, async t => {
   const f = fixture(t, { settings });
   const onSetup = () => {};
+
   assert.equal(await f.actions.createWorktree({ transport: f.owner, cwd: '/parent', hostId }, 'experiment', onSetup), f.result);
   assert.deepEqual(f.calls, [['create', '/parent', 'experiment', hostId], ['setup', '/parent', '/child', hostId, onSetup], ['target', undefined]]);
   assert.deepEqual(f.groups, []);

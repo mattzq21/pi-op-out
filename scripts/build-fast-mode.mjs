@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { build } from "esbuild";
 
 const license = await readFile("extensions/piop-openai-fast-mode/LICENSE", "utf8");
+
 await build({
   entryPoints: ["extensions/piop-openai-fast-mode/src/index.ts"],
   outfile: "src-tauri/resources/fast-mode.bundle.mjs",
