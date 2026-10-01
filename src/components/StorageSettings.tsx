@@ -13,6 +13,8 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
   "project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects retained only by piop checkpoint refs", icon: GitBranch, item: "ref" },
   "git-diff-snapshots": { name: "Diff snapshots", description: "Temporary Git state used to calculate turn diffs", icon: Camera, item: "snapshot" },
   "temporary-chats": { name: "Temporary conversations", description: "Projectless conversation working directories", icon: FolderClock, item: "directory" },
+  "worktrees": { name: "Worktrees", description: "Working copies, including dependencies and build outputs", icon: GitBranch, item: "worktree" },
+  "other-storage": { name: "Other storage", description: "Settings, caches, logs, and other piop files", icon: HardDrive, item: "directory" },
 };
 
 function formatBytes(bytes: number) {
@@ -114,7 +116,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
       const approximate = createMemo(() => (host().categories.some((category) => category.estimated && category.byteSize > 0)));
       const maximum = createMemo(() => (Math.max(...host().categories.map((category) => category.byteSize), 1)));
       const deletableArchives = createMemo(() => (host().archives.filter((archive) => archive.deletable)));
-      const renderHostHeader = () => (<header><span class="config-icon"><Database size={16} /></span><span><strong>{host().hostName}</strong><small>{host().error ? "Storage unavailable" : `${approximate() ? "About " : ""}${formatBytes(total())} tracked`}</small></span></header>);
+      const renderHostHeader = () => (<header><span class="config-icon"><Database size={16} /></span><span><strong>{host().hostName}</strong><small>{host().error ? "Storage unavailable" : `${approximate() ? "About " : ""}${formatBytes(total())} ${host().warnings.length ? "measured · incomplete" : "total disk usage"}`}</small></span></header>);
       const renderStorageHostError = () => (<Show when={!host().error} fallback={<div class="storage-host-error" role="alert">{host().error}</div>}>
         <div class="storage-categories">{<Key each={host().categories.filter((category) => category && categoryDetails[category.id])} by={(category) => category.id}>{(category, _index) => {
           const details = createMemo(() => (categoryDetails[category().id])); const CategoryIcon = createMemo(() => (details().icon));
@@ -124,7 +126,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
             <code>{category().estimated && category().byteSize > 0 ? "~" : ""}{formatBytes(Number(category().byteSize) || 0)}</code>
           </div>;
         }}</Key>}</div>
-        {host().warnings.length > 0 && <div class="storage-warning" title={host().warnings.join("\n")}>Checkpoint size could not be measured for {host().warnings.length} checkpoint location{host().warnings.length === 1 ? "" : "s"}; other totals are unaffected.</div>}
+        {host().warnings.length > 0 && <div class="storage-warning" title={host().warnings.join("\n")}>Storage could not be fully measured at {host().warnings.length} location{host().warnings.length === 1 ? "" : "s"}. The total is incomplete.</div>}
         <div class="archive-heading"><span><strong>Archived conversations</strong><small>{host().archives.length ? `${host().archives.length} stored on ${host().hostName}` : `No archives on ${host().hostName}`}</small></span>{deletableArchives().length > 1 && <button class="storage-delete-all" disabled={deleting().size > 0 || loading()} onClick={() => deleteAll(host())}><Trash2 size={13} />{deletableArchives().length === host().archives.length ? "Delete all" : "Delete available"}</button>}</div>
         {host().archives.length > 0 && <div class="archive-list">{<Key each={host().archives} by={archive => archive.path}>{(archive, _index) => {
           if (!archive() || typeof archive().path !== "string") return null;
