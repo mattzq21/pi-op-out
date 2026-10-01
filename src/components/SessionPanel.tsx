@@ -15,7 +15,7 @@ import { SessionTooltip } from "./SessionTooltip";
 
 export type SessionAction = "split" | "new-window" | "rename" | "clone" | "open-directory" | "archive" | "copy-id" | "open-rollout";
 
-interface Props { debug?: boolean; sidebar: SidebarState; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
+interface Props { isArchiving: (session: SessionSummary) => boolean; debug?: boolean; sidebar: SidebarState; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
 
 type CustomGroup = SessionGroup;
 
@@ -353,25 +353,21 @@ export function SessionPanel(props: Props) {
     const running = createMemo(() => session().isRunning || panel().runningSessions.has(key()));
     const activity = createMemo(() => panel().unseenSessions.has(key()) ? "New activity" : undefined);
     const [tooltipAnchor, setTooltipAnchor] = createSignal<HTMLElement>();
-    const [archiving, setArchiving] = createSignal(false);
-    const archive = async () => {
-      if (archiving()) return;
-      setArchiving(true);
-
-      try { await panel().onAction(session(), "archive"); }
-      finally { setArchiving(false); }
+    const archiving = () => props.isArchiving(session());
+    const archive = () => {
+      if (!archiving()) void panel().onAction(session(), "archive");
     };
     const accessibleActivity = () => running() ? "Running" : activity();
     const target = createMemo(() => dropTarget()?.projectKey === projectKey && dropTarget()?.sessionKey === key() ? dropTarget()?.edge : undefined);
     const drag = () => ({ projectKey, sessionKey: key(), session: session() });
 
-    const renderSessionMain = () => (<button class="session-main" aria-label={`${session().name}, ${projectKindLabel(session())}${session().branch ? `, ${session().branch}` : ""}, ${formatApiCost(session().apiCost)}${accessibleActivity() ? `, ${accessibleActivity()}` : ""}`} aria-current={isActiveSession(session()) ? "page" : undefined} aria-description={!normalizedQuery() ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} onMouseDown={(event) => startMouseDrag(event, drag())} onKeyDown={(event) => { if (!normalizedQuery() && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag(), event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === sessionLayoutToken(key())) { suppressClickRef.current = undefined; event.preventDefault();
+    const renderSessionMain = () => (<button class="session-main" disabled={archiving()} aria-label={`${session().name}, ${projectKindLabel(session())}${session().branch ? `, ${session().branch}` : ""}, ${formatApiCost(session().apiCost)}${accessibleActivity() ? `, ${accessibleActivity()}` : ""}`} aria-current={isActiveSession(session()) ? "page" : undefined} aria-description={!normalizedQuery() ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} onMouseDown={(event) => { if (!archiving()) startMouseDrag(event, drag()); }} onKeyDown={(event) => { if (!archiving() && !normalizedQuery() && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag(), event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (archiving()) return; if (suppressClickRef.current === sessionLayoutToken(key())) { suppressClickRef.current = undefined; event.preventDefault();
 
     return; }
 
     panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><strong>{session().name}</strong><span class="session-api-cost" title="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
 
-    return <div onMouseEnter={(event) => setTooltipAnchor(event.currentTarget)} onMouseLeave={() => setTooltipAnchor(undefined)} onFocusIn={(event) => setTooltipAnchor(event.currentTarget)} onFocusOut={() => setTooltipAnchor(undefined)} data-session-key={key()} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session: session(), x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
+    return <div onMouseEnter={(event) => setTooltipAnchor(event.currentTarget)} onMouseLeave={() => setTooltipAnchor(undefined)} onFocusIn={(event) => setTooltipAnchor(event.currentTarget)} onFocusOut={() => setTooltipAnchor(undefined)} data-session-key={key()} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault(); if (archiving()) return; const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session: session(), x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
       {renderSessionMain()}
       <Show when={session().branch ? tooltipAnchor() : undefined}>{(anchor) => <SessionTooltip session={session()} anchor={anchor()} onClose={() => setTooltipAnchor(undefined)} />}</Show>
       <button class="session-archive" aria-busy={archiving()} aria-label={`${archiving() ? "Archiving" : "Archive"} ${session().name}`} title={!isSavedSession(session()) ? "Send a message before archiving this draft" : `${archiving() ? "Archiving" : "Archive"} ${session().name}`} disabled={archiving() || !isSavedSession(session())} onClick={() => void archive()}><Show when={archiving()} fallback={<Archive size={14} />}><LoaderCircle size={14} class="spinning" /></Show></button>
@@ -387,7 +383,7 @@ export function SessionPanel(props: Props) {
     const menuItems = groupMenu() ? [
       { label: "Open directory", Icon: FolderOpen, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) { setGroupActionError(undefined); void openGroupDirectory(groupDirectory.cwd, groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } } },
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: required((groupMenu())).projectKey, name: required((groupMenu())).label }) },
-    ] : menu() ? actions.flatMap(([action, Icon, label]) => !["copy-id", "open-rollout"].includes(action) || panel().debug ? [{ label, Icon, disabled: action === "open-rollout" && !required(menu()).session.path, run: () => panel().onAction(required((menu())).session, action) }] : []) : [];
+    ] : menu() ? actions.flatMap(([action, Icon, label]) => !["copy-id", "open-rollout"].includes(action) || panel().debug ? [{ label, Icon, disabled: props.isArchiving(required(menu()).session) || (action === "open-rollout" && !required(menu()).session.path), run: () => panel().onAction(required((menu())).session, action) }] : []) : [];
     return { activeMenu, menuItems };
   };
 

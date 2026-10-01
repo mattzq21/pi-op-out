@@ -1,4 +1,4 @@
-import type { Accessor, Setter } from "solid-js";
+import { createSignal, type Accessor, type Setter } from "solid-js";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import { createRef, type RefObject } from "./lib/solid";
@@ -30,13 +30,13 @@ type ArchiveContext = {
 
 export function createConversationArchive(context: ArchiveContext) {
   const { runtimePool, transport, chatSession, activeHostId, activeTransportRef, activeConversationKeyRef, transportConversationKeys, isSelectedSession, isSplitSession, conversationTerminalIds, removeConversationTerminals, removeDraft, setSessions, setActiveCwd, activateTransport, activateConversationKey, updateConnected, closeSplitPane, syncSessionIndex, addNotice } = context;
-  const archivePending = createRef(new Set<string>());
+  const [archivePending, setArchivePending] = createSignal(new Set<string>());
   const archivedSessionKeys = createRef(new Set<string>());
   const ownsSelectedSession = (owner: NativeTransport, session: SessionSummary) => owner === transport() && isSelectedSession(session);
   const ownsConversationUi = (owner: NativeTransport, key: string) => activeTransportRef.current === owner && activeConversationKeyRef.current === key;
 
   const archiveTarget = (session: SessionSummary, key: string) => {
-    if (archivePending.current.has(key)) return;
+    if (archivePending().has(key)) return;
 
     if (session.isDraft || !session.path) {
       addNotice({ title: "Conversation is not saved yet", message: "Send a message before archiving this draft." });
@@ -62,7 +62,7 @@ export function createConversationArchive(context: ArchiveContext) {
     const ownerTransport = archiveTarget(session, archivedSessionKey);
 
     if (!ownerTransport) return;
-    archivePending.current.add(archivedSessionKey);
+    setArchivePending(current => new Set(current).add(archivedSessionKey));
     const isActiveSession = ownsSelectedSession(ownerTransport, session);
     const splitSession = isSplitSession(session);
     const terminalIds = conversationTerminalIds(archivedSessionKey);
@@ -123,7 +123,7 @@ export function createConversationArchive(context: ArchiveContext) {
 
       await replaceArchivedConversation();
     } catch (reason) { await recoverArchiveFailure(reason); }
-    finally { archivePending.current.delete(archivedSessionKey); }
+    finally { setArchivePending(current => { const next = new Set(current); next.delete(archivedSessionKey); return next; }); }
 
     return;
   };
@@ -131,7 +131,7 @@ export function createConversationArchive(context: ArchiveContext) {
   return {
     archiveSession,
     restored: (hostId: string, sessionId: string) => archivedSessionKeys.current.delete(`${hostId}:${sessionId}`),
-    isPending: (session: SessionSummary) => archivePending.current.has(`${session.hostId ?? "local"}:${session.id}`),
+    isPending: (session: SessionSummary) => archivePending().has(`${session.hostId ?? "local"}:${session.id}`),
     isArchived: (session: SessionSummary) => archivedSessionKeys.current.has(`${session.hostId ?? "local"}:${session.id}`),
   };
 }
