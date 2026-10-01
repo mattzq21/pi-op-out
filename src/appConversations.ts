@@ -219,6 +219,10 @@ export function createAppConversations(preloadChat: () => void) {
   createDependencyEffect(() => {
     const unsubscribes = [
       listen("pi://sessions-changed", () => { void syncSessionIndex(); }, z.unknown()),
+      listen("pi://session-restored", ({ payload }) => {
+        archives.restored(payload.hostId, payload.sessionId);
+        void syncSessionIndex();
+      }, z.object({ hostId: z.string(), sessionId: z.string() })),
       listen("pi://session-removed", ({ payload }) => {
         runtimePool().removeSummary(payload.hostId ?? "local", payload.sessionPath);
         setSessions((current) => current.filter((session) => !runtimePool().isRemoved(session)));

@@ -86,6 +86,7 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("delete_session", handle_delete_session),
     ("delete_archived_session", handle_delete_archived_session),
     ("restore_archived_worktree", handle_restore_archived_worktree),
+    ("restore_archived_session", handle_restore_archived_session),
     ("relocate_session", handle_relocate_session),
     ("load_app_settings", handle_load_app_settings),
     ("save_app_settings", handle_save_app_settings),
@@ -397,6 +398,12 @@ fn handle_delete_archived_session(app: AppHandle, _owner: String, args: Value) -
 fn handle_restore_archived_worktree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || restore_archived_worktree(app.clone(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "clientId")?)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_restore_archived_session(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(restore_archived_session(app.clone(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
     })
 }
 

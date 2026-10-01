@@ -320,6 +320,36 @@ fn restore_worktree_command(settings: &AppSettings, host_id: &str, path: &str) -
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
+pub(super) fn restore_archived_session(app: AppHandle, session_path: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    let runtime = app.state::<PiRuntime>();
+    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
+    let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, true, "restore")?;
+    let settings = load_app_settings(app.clone())?;
+    let path = archived_session_file(&settings, &host_id, &session_path)?;
+    let session_id = session_identity(&settings, &host_id, &path)?;
+    let mut command = restore_session_command(&settings, &host_id, &path)?;
+    let output = run_limited(&mut command, 64 * 1024, "Could not restore archived conversation")?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    mutation.finish()?;
+    let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":session_id}));
+    let _ = app.emit("pi://sessions-changed", json!({}));
+    Ok(())
+}
+
+fn restore_session_command(settings: &AppSettings, host_id: &str, path: &str) -> Result<Command, String> {
+    let script = include_str!("../../resources/restore-archived-session.cjs");
+    if host_id == "local" {
+        let mut command = node_command();
+        command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, path]);
+        return Ok(command);
+    }
+    let mut command = ssh(remote_host(settings, host_id)?);
+    command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(path))));
+    Ok(command)
+}
+
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn restore_archived_worktree(app: AppHandle, session_path: String, host_id: Option<String>, client_id: String) -> Result<serde_json::Value, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let runtime = app.state::<PiRuntime>();

@@ -77,6 +77,8 @@ export const loadStorageReport = async (hostId?: string) => {
 
 export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call("delete_archived_session", { sessionPath, hostId }, voidResultSchema);
 
+export const restoreArchivedConversation = (sessionPath: string, hostId = "local") => call("restore_archived_session", { sessionPath, hostId }, voidResultSchema);
+
 export const restoreArchivedWorktree = (sessionPath: string, hostId = "local") => call("restore_archived_worktree", { sessionPath, hostId }, gitWorktreeSchema);
 
 export const removeArchivedWorktree = (cwd: string, hostId = "local") => call("remove_git_worktree", { cwd, hostId, deleteBranch: false }, gitWorktreeRemovalSchema);

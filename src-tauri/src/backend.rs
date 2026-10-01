@@ -377,7 +377,7 @@ use pi_runtime::{detach_pi, open_project_directory_with, update_runtime_snapshot
 use pi_runtime::{open_external_url_with, read_dropped_file};
 #[cfg(test)]
 use terminals::{TerminalLaunch, decode_terminal_bytes, resize_terminal_pty, start_terminal_with, stop_terminals, stream_terminal_output, write_terminal_input, write_terminal_queue};
-use archives::{archive_session, archived_session_file, delete_archived_session, delete_session, desktop_session_file, failed_storage, inspect_storage, relocate_session, restore_archived_worktree, storage_report};
+use archives::{archive_session, archived_session_file, delete_archived_session, delete_session, desktop_session_file, failed_storage, inspect_storage, relocate_session, restore_archived_worktree, restore_archived_session, storage_report};
 #[cfg(test)]
 use archives::{archive_local_session, archive_remote_session, collect_storage_report, delete_session_files, local_archived_session_file_at, local_desktop_session_file_at, parse_storage_inventory, query_storage_inventory, relocate_local_session, relocate_remote_session, remote_session_file, run_session_deletion};
 use git_diffs::{capture_git_tree, discard_git_tree, discard_git_tree_at_host, load_git_diff, load_git_diff_between_at_host, load_git_diffs, load_git_diffs_at_host, save_git_diffs, save_git_diffs_at_host};

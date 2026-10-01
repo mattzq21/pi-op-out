@@ -130,6 +130,7 @@ export function createConversationArchive(context: ArchiveContext) {
 
   return {
     archiveSession,
+    restored: (hostId: string, sessionId: string) => archivedSessionKeys.current.delete(`${hostId}:${sessionId}`),
     isPending: (session: SessionSummary) => archivePending.current.has(`${session.hostId ?? "local"}:${session.id}`),
     isArchived: (session: SessionSummary) => archivedSessionKeys.current.has(`${session.hostId ?? "local"}:${session.id}`),
   };
