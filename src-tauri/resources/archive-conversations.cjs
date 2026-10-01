@@ -119,6 +119,24 @@ function rollback(groups, records) {
   }
   return errors;
 }
+function preserveSharedDirectories(groups, selected) {
+  walkSessions(sessions, (file) => {
+    if (selected.has(fs.realpathSync(file))) return;
+    const cwd = readSession(file).header.cwd;
+    let canonical;
+
+    try { canonical = fs.realpathSync(cwd); }
+    catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return;
+      throw error;
+    }
+
+    for (const group of groups) {
+      if ((group.kind === 'git' || group.kind === 'directory') && inside(group.path, canonical)) group.kind = 'shared';
+    }
+  });
+}
+
 function main() {
   const selected = new Set(request.paths.map((file) => fs.realpathSync(file)));
   const records = [...selected].map((file) => {
@@ -132,6 +150,7 @@ function main() {
     byDirectory.get(location.path).records.push(record);
   }
   const groups = [...byDirectory.values()];
+  preserveSharedDirectories(groups, selected);
   const removable = groups.filter((group) => group.kind === 'git' || group.kind === 'directory');
   for (const group of removable) {
     if (groups.some((other) => other !== group && inside(group.path, other.path))) throw new Error('Overlapping session directories cannot be archived together');
@@ -144,7 +163,6 @@ function main() {
     if (removable.some((group) => inside(group.path, canonical))) throw new Error(`Another chat or terminal still uses ${cwd}`);
   };
   if (removable.length) {
-    walkSessions(sessions, (file) => { if (!selected.has(file)) assertUnused(readSession(file).header.cwd); });
     request.terminals.forEach(assertUnused);
   }
   if (request.inspect) {
@@ -162,7 +180,7 @@ function main() {
         record.backup = path.join(transaction, `${randomUUID()}.jsonl`);
         fs.copyFileSync(record.file, record.backup, fs.constants.COPYFILE_EXCL);
         if (group.kind === 'git') rewriteCheckpoints(record, group);
-        if (group.kind === 'main') delete record.header.worktreeRestore;
+        if (group.kind === 'main' || group.kind === 'shared') delete record.header.worktreeRestore;
         else if (group.kind !== 'missing') record.header.worktreeRestore = {
           kind: group.kind, path: group.path, conversationPath: fs.realpathSync(record.header.cwd),
           ...(group.kind === 'git' ? { repositoryRoot: group.common, commit: group.commit, ref: group.refs[index], branch: group.branchRef?.slice('refs/heads/'.length) } : { storedPath: group.storedPath }),
