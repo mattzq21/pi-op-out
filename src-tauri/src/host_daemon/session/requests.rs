@@ -181,6 +181,9 @@ impl Session {
     }
 
     fn receive_state(&self, data: &Value) {
+        if !self.ephemeral && self.state().state["sessionId"] != data["sessionId"] {
+            crate::session_registry::record(data, self.cwd.as_deref());
+        }
         let rekey = {
             let mut state = self.state();
             state.state = data.clone();

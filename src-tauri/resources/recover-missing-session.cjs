@@ -13,13 +13,15 @@ let container;
 try {
   if (request.action === 'empty') directory = fs.mkdtempSync('/tmp/piop-session-');
   else if (request.action === 'remote') {
-    let branch = request.branch?.trim();
+    const registryRequest = { action: 'get', sessionId: header.id, root: path.join(require('node:os').homedir(), request.storage) };
+    const saved = JSON.parse(execFileSync(process.execPath, ['-e', process.argv[3], JSON.stringify(registryRequest)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 }));
+    let branch = request.branch?.trim() || saved?.upstream_branch || saved?.branch;
     if (!branch) {
       try { branch = JSON.parse(fs.readFileSync(path.join(path.dirname(header.cwd), 'parent.json'), 'utf8')).branch; } catch { }
     }
     if (!branch) throw new Error('Enter the branch to recover. This session has no saved branch name.');
     git(['check-ref-format', '--branch', branch]);
-    let repository = request.repository?.trim();
+    let repository = request.repository?.trim() || saved?.remote_url;
     if (!repository) repository = header.checkpointRepositoryRoot || header.worktreeRestore?.repositoryRoot;
     if (!repository) {
       const entries = fs.readFileSync(request.sessionPath, 'utf8').split('\n').filter((line) => line.trim()).map(JSON.parse);

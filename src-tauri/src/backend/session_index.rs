@@ -143,6 +143,7 @@ pub(super) fn read_session_summaries_with(candidates: &[(String, String, u64, u6
 }
 
 pub(super) fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
+    crate::session_registry::index_existing();
     let mut cache = index.local.lock().map_err(|_| "Local session index lock was poisoned")?;
     let mut seen = HashSet::new(); let mut changed = Vec::new();
     for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")) {

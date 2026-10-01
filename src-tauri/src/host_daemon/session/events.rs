@@ -27,6 +27,9 @@ pub(super) fn state_change(name: &str) -> bool {
 
 impl Session {
     pub(super) fn receive(&self, mut event: Value) {
+        if !self.ephemeral && (kind(&event) == "agent_settled" || (kind(&event) == "message_end" && event["message"]["role"] == "assistant")) {
+            crate::session_registry::record(&self.state().state, self.cwd.as_deref());
+        }
         self.retain_live(&event);
         if kind(&event) == "extension_ui_request" {
             let Some(next) = self.receive_extension(event) else {

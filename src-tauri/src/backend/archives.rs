@@ -342,14 +342,15 @@ pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host
     let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "relocate")?;
     let settings = load_app_settings(app.clone())?;
     let path = desktop_session_file(&settings, &host_id, &session_path)?;
-    let arguments = json!({"sessionPath":path,"action":action,"repository":repository,"branch":branch}).to_string();
+    let arguments = json!({"sessionPath":path,"action":action,"repository":repository,"branch":branch,"storage":STORAGE_DIRECTORY}).to_string();
     let script = include_str!("../../resources/recover-missing-session.cjs");
     let relocate = include_str!("../../resources/relocate-session.cjs");
+    let registry = include_str!("../../resources/session-registry.cjs");
     let mut command = if host_id == "local" {
-        let mut command = node_command(); command.args(["-e", script, &arguments, relocate]); command
+        let mut command = node_command(); command.args(["-e", script, &arguments, relocate, registry]); command
     } else {
         let mut command = ssh(remote_host(&settings, &host_id)?);
-        command.arg(remote_login_command(&format!("node -e {} {} {}", shell_quote(script), shell_quote(&arguments), shell_quote(relocate)))); command
+        command.arg(remote_login_command(&format!("node -e {} {} {} {}", shell_quote(script), shell_quote(&arguments), shell_quote(relocate), shell_quote(registry)))); command
     };
     let output = run_limited(&mut command, 64 * 1024, "Could not recover the session directory")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
