@@ -1,6 +1,6 @@
 import { Key } from "@solid-primitives/keyed";
 import { createContext, createMemo, useContext } from "solid-js";
-import { ArrowUpRight, Check, CircleAlert, LoaderCircle, Pause } from "lucide-solid";
+import { ArrowUpRight, CircleX, GitFork, GitMerge, Pause } from "lucide-solid";
 import { z } from "zod";
 import { ConversationHostContext, SubagentNavigationContext } from "../lib/subagentNavigation";
 import "./subagent-timeline.css";
@@ -32,9 +32,10 @@ export function SubagentResults(props: { runs: Run[] }) {
   return <section class="subagent-timeline" aria-label="Delegated work">
     <Key each={rows()} by="key">{row => {
     const run = createMemo(() => row().run);
+    const statusLabel = () => run().status === "running" ? "Subagent started" : run().status === "completed" ? "Subagent succeeded" : run().status === "cancelled" ? "Subagent cancelled" : "Subagent failed";
 
     return <div class="subagent-branch">
-          <span class={`subagent-state subagent-${run().status}`} title={run().status} role="img" aria-label={run().status}>{run().status === "running" ? <LoaderCircle size={14} class="subagent-spinner" /> : run().status === "completed" ? <Check size={14} /> : run().status === "cancelled" ? <Pause size={14} /> : <CircleAlert size={14} />}</span>
+          <span class={`subagent-state subagent-${run().status}`} title={statusLabel()} role="img" aria-label={statusLabel()}>{run().status === "running" ? <GitFork size={14} /> : run().status === "completed" ? <GitMerge size={14} /> : run().status === "cancelled" ? <Pause size={14} /> : <CircleX size={14} />}</span>
           <span class="subagent-name">{run().name}</span>
           {open && run().sessionId && run().sessionPath && <button type="button" class="subagent-view" aria-label={`View ${run().name} agent chat`} onClick={() => open({ ...run(), hostId: host?.() ?? run().hostId })}>View<ArrowUpRight size={13} /></button>}
     </div>;

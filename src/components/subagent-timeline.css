@@ -9,6 +9,3 @@
 .subagent-completed { color: var(--green); }
 .subagent-running { color: var(--running); }
 .subagent-failed { color: #d77865; }
-.subagent-spinner { animation: subagent-spin 1s linear infinite; }
-@keyframes subagent-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .subagent-spinner { animation: none; } }
