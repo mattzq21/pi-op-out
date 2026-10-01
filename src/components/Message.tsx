@@ -129,12 +129,12 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
   const status = createMemo(() => (componentProps.message.toolStatus ?? "done"));
   const label = createMemo(() => (<ToolLabel message={componentProps.message} toolCount={componentProps.toolCount ?? 1} status={status()} />));
 
-  return <>{!componentProps.debug || isSubagent() ? (<div class={`tool-event ${status()}`}><div class="tool-summary">{label()}</div></div>) : (<details class={`tool-event ${status()}`} open={open()} onToggle={(event) => setOpen(event.currentTarget.open)}>
+  return <>{!componentProps.debug && !isSubagent() ? (<div class={`tool-event ${status()}`}><div class="tool-summary">{label()}</div></div>) : (<details class={`tool-event ${status()}`} open={open()} onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary class="tool-summary">{label()}<ChevronRight size={12} class="tool-chevron" aria-hidden="true" /></summary>
     {open() && <ToolPayload message={componentProps.message} loading={loading()} error={error()} retry={() => setRetry((value) => value + 1)} />}
   </details>)}
     {runs().length > 0 && <SubagentResults runs={runs()} />}
-    {isSubagent() && error() && <div role="alert">{error()} <button type="button" onClick={() => setRetry(value => value + 1)}>Retry</button></div>}
+    {isSubagent() && !open() && error() && <div role="alert">{error()} <button type="button" onClick={() => setRetry(value => value + 1)}>Retry</button></div>}
   </>;
 }
 
