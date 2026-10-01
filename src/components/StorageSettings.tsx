@@ -10,8 +10,8 @@ import { deleteArchivedConversation, loadStorageReport, openGroupDirectory, rest
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport } from "../types";
 
 const categoryDetails: Record<StorageCategory["id"], { name: string; description: string; icon: typeof Archive; item: string }> = {
-  "active-conversations": { name: "Active conversations", description: "Saved chats and their diff histories", icon: MessageSquare, item: "conversation" },
-  "archived-conversations": { name: "Archived conversations", description: "Archived chats and their diff histories", icon: Archive, item: "conversation" },
+  "active-conversations": { name: "Conversations", description: "Saved chats and their diff histories", icon: MessageSquare, item: "conversation" },
+  "archived-conversations": { name: "Conversations", description: "Saved chats and their diff histories", icon: MessageSquare, item: "conversation" },
   "project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects retained only by piop checkpoint refs", icon: GitBranch, item: "ref" },
   "git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
   "archived-git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
