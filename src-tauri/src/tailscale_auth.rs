@@ -111,7 +111,8 @@ impl tokio_tungstenite::tungstenite::handshake::server::Callback for TailscaleId
         let login = headers.get("tailscale-user-login").and_then(|value| value.to_str().ok());
         let origin_allowed = match headers.get("origin") {
             None => true,
-            Some(value) => matches!(value.to_str(), Ok("https://localhost" | "capacitor://localhost")),
+            Some(value) => matches!(value.to_str(), Ok("https://localhost" | "capacitor://localhost"))
+                || DEVELOPMENT && matches!(value.to_str(), Ok("http://localhost:5173")),
         };
         if headers.contains_key("tailscale-funnel-request") || !origin_allowed || login != Some(self.login.as_str()) {
             return Err(Response::builder().status(403).body(Some("Tailscale identity is not authorized".into())).unwrap());

@@ -13,6 +13,7 @@ pub(crate) struct Transcript {
     generation: Uuid,
     creation_order: u64,
     output: String,
+    input_draft: String,
     end: u64,
     text_end: u64,
     updated: SystemTime,
@@ -47,7 +48,7 @@ pub(crate) fn start(runtime: &TerminalRuntime, id: &str, session_key: &str, cwd:
         None => history.values().map(|item| item.creation_order).max().unwrap_or(0).checked_add(1).ok_or("Terminal creation order exhausted")?,
     };
     history.insert(id.into(), Transcript { session_id: session_id.into(), host_id: host_id.into(), owner: owner.into(), cwd: cwd.into(), generation, creation_order,
-        output: String::new(), end: 0, text_end: 0, updated: SystemTime::now(), running: true });
+        output: String::new(), input_draft: String::new(), end: 0, text_end: 0, updated: SystemTime::now(), running: true });
     Ok(())
 }
 
@@ -145,7 +146,7 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
         return Ok(json!(entries.into_iter().map(|(id, item)| {
             let known = &request["known"][id];
             let unchanged = known["generation"].as_str() == Some(item.generation.to_string().as_str()) && known["outputEnd"].as_u64() == Some(item.text_end);
-            json!({"id":id,"output":if unchanged { Value::Null } else { json!(item.output) },"outputEnd":item.text_end,
+            json!({"id":id,"output":if unchanged { Value::Null } else { json!(item.output) },"outputEnd":item.text_end,"inputDraft":item.input_draft,
                 "generation":item.generation.to_string(),"owned":owned && (!session_id.starts_with("draft-") || item.owner == owner),"started":true,"exited":!item.running})
         }).collect::<Vec<_>>()));
     }
@@ -180,13 +181,37 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
         return Err("Take ownership of the destination session first".into());
     }
     match action {
-        "write" => {
+        "draft" => {
+            let data = request["data"].as_str().ok_or("Missing terminal draft")?;
+            if data.len() > 1024 * 1024 { return Err("Terminal draft exceeds 1 MiB".into()); }
+            item.input_draft = data.into();
+            let _ = app.emit("pi://event", json!({"type":"terminal_draft","terminalId":id,
+                "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),"data":data}));
+        }
+        "write" | "write_with_draft" | "adopt_draft" => {
             let data = request["data"].as_str().ok_or("Missing terminal input")?;
             if data.len() > 1024 * 1024 { return Err("Terminal input exceeds 1 MiB".into()); }
-            processes.get(id).ok_or("Terminal is not running")?.writer.try_send(data.into()).map_err(|_| "Terminal input is busy".to_string())?;
+            let draft = if action == "write" { "" } else { item.input_draft.as_str() };
+            let input = format!("{draft}{data}");
+            processes.get(id).ok_or("Terminal is not running")?.writer.try_send(input).map_err(|_| "Terminal input is busy".to_string())?;
+            if action != "write" && !item.input_draft.is_empty() {
+                item.input_draft.clear();
+                let _ = app.emit("pi://event", json!({"type":"terminal_draft","terminalId":id,
+                    "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),"data":""}));
+            }
         }
         "resize" => {
-            processes.get(id).ok_or("Terminal is not running")?.master.resize(PtySize { cols: dimension(request, "cols")?, rows: dimension(request, "rows")?, pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
+            let cols = dimension(request, "cols")?;
+            let rows = dimension(request, "rows")?;
+            let master = &processes.get(id).ok_or("Terminal is not running")?.master;
+            let size = master.get_size().map_err(|error| error.to_string())?;
+            if size.cols == cols && size.rows == rows { return Ok(Value::Null); }
+            master.resize(PtySize { cols, rows, pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
+            let data = format!("\u{1b}[8;{rows};{cols}t");
+            item.append(&data);
+            let _ = app.emit("pi://event", json!({"type":"terminal_output","terminalId":id,
+                "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),
+                "outputEnd":item.text_end,"data":data}));
         }
         "reassign" => {
             item.session_id = session_id.into();

@@ -81,6 +81,9 @@ pub(super) fn start_terminal_with(runtime: &TerminalRuntime, launch: TerminalLau
     let generation = Uuid::new_v4();
     let terminal_history = runtime.history.clone();
     terminal_lookup::start(runtime, &terminal_id, &session_key, &cwd, &host_id, &window_label, generation)?;
+    let size = format!("\u{1b}[8;{};{}t", rows.max(1), cols.max(1));
+    terminal_lookup::record(&terminal_history, &terminal_id, &size);
+    emit(terminal_lookup::event(&terminal_history, &terminal_id, json!({ "type": "terminal_output", "terminalId": terminal_id, "data": size })));
     thread::spawn(move || {
         stream_terminal_output(&mut reader, &event_id, |packet| {
             if let Ok(values) = terminal_processes.lock() {

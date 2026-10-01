@@ -2,7 +2,8 @@ import { createComputed, createEffect, createMemo, createSignal, onCleanup, type
 import { appendTerminalOutputs, initialTerminals, MAX_TERMINALS, terminalConversationKey, type QueuedTerminalOutput, type SessionTerminals, type TerminalTarget } from "./appSupport";
 import { reassignTerminals } from "./appRuntime";
 import type { NativeTransport } from "./lib/nativeTransport";
-import { createMemoFields, createRef } from "./lib/solid";
+import { createDependencyEffect, createMemoFields, createRef } from "./lib/solid";
+import { isMobile } from "./lib/platform";
 import { appendTerminalOutput, TERMINAL_OUTPUT_LIMIT } from "./lib/terminalOutput";
 import { nativeTerminals, type TerminalEvent } from "./lib/nativeTerminals";
 
@@ -72,10 +73,13 @@ export function createTerminalController({ transport, sessionTransport, conversa
           const merged: SessionTerminals["tabs"] = tabs.map(tab => {
             queuedTerminalOutput.current.delete(tab.id);
             const old = previous?.tabs.find(value => value.id === tab.id && value.generation === tab.generation);
-            return { ...old, ...tab };
+
+            return old && old.outputEnd > tab.outputEnd
+              ? { ...old, ...tab, output: old.output, outputEnd: old.outputEnd }
+              : { ...old, ...tab };
           });
           for (const tab of previous?.tabs ?? []) {
-            if (!tab.generation && !merged.some(value => value.id === tab.id) && (!tab.started || startingTerminals.current.has(tab.id))) merged.push(tab);
+            if (!tab.placeholder && !tab.generation && !merged.some(value => value.id === tab.id) && (!tab.started || startingTerminals.current.has(tab.id))) merged.push(tab);
           }
           if (!merged.length) {
             if (previous?.tabs.some(tab => tab.generation)) setTerminalOpen(false);
@@ -113,6 +117,9 @@ export function createTerminalController({ transport, sessionTransport, conversa
         const session = current[key];
         const tab = session?.tabs.find(value => value.id === event.terminalId);
         if (!tab || tab.generation !== event.generation) { resync = true; return current; }
+        if (event.type === "terminal_draft") {
+          return { ...current, [key]: { ...session, tabs: session.tabs.map(value => value.id === tab.id ? { ...value, inputDraft: event.data ?? "" } : value) } };
+        }
         if (event.type === "terminal_exit") {
           return { ...current, [key]: { ...session, tabs: session.tabs.map(value => value.id === tab.id ? { ...value, exited: true } : value) } };
         }
@@ -156,6 +163,18 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
     if (!owned() || startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
     const sessionKey = capturedTerminalSessionId;
+
+    if (state.activeTerminal.placeholder) {
+      await refreshShared();
+      const tab = terminalsBySession()[sessionKey]?.tabs.find(value => value.id === terminalId);
+
+      if (!owned() || !ready() || terminalSessionId() !== sessionKey || !tab?.placeholder) {
+        startingTerminals.current.delete(terminalId);
+
+        return;
+      }
+    }
+
     setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey);
 
     return { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: true, exited: false } : terminal) } }; });
@@ -275,7 +294,25 @@ export function createTerminalController({ transport, sessionTransport, conversa
     void transport().writeTerminal(id, data).catch(reason => { addNotice({ title: "Terminal input failed", message: String(reason) }); void refreshShared(); });
   };
 
-  const resize = (cols: number, rows: number) => { if (ready() && owned()) void transport().resizeTerminal(state.activeTerminal.id, cols, rows).catch(() => undefined); };
+  const updateDraft = (data: string) => {
+    if (!ready() || !owned()) return;
+    void nativeTerminals.write(state.activeTerminal.id, data, "draft").catch(reason => addNotice({ title: "Could not sync terminal input", message: String(reason) }));
+  };
+
+  const resize = async (cols: number, rows: number) => {
+    if (isMobile || !ready() || !owned()) return;
+
+    try { await transport().resizeTerminal(state.activeTerminal.id, cols, rows); }
+    catch (reason) {
+      addNotice({ title: "Could not resize terminal", message: String(reason) });
+      throw reason;
+    }
+  };
+
+  createDependencyEffect(() => {
+    if (isMobile || !ready() || !owned() || !state.activeTerminal.inputDraft) return;
+    void nativeTerminals.write(state.activeTerminal.id, "", "adopt_draft").catch(reason => addNotice({ title: "Could not restore terminal input", message: String(reason) }));
+  }, () => [ready(), owned(), state.activeTerminal.id, state.activeTerminal.inputDraft]);
 
   return {
     terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, owned, takeOwnership,
@@ -283,6 +320,6 @@ export function createTerminalController({ transport, sessionTransport, conversa
     startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal,
     queueTerminalOutput, flushOutput, exited, conversationTerminalIds, allTerminalIds, draftTerminalIds,
     forgetConversation, removeConversationTerminals, resetConversation, rekeyConversation,
-    toggleFor, toggle, close, write, resize,
+    toggleFor, toggle, close, write, updateDraft, resize,
   };
 }
