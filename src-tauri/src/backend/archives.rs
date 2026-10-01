@@ -22,6 +22,8 @@ use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
 
 pub(super) fn inspect_storage(host: Option<&RemoteHost>) -> Result<HostStorage, String> {
+    if host.is_none() { crate::restore_recovery::recover(&home_dir()?.join(STORAGE_DIRECTORY))?; }
+    if let Some(host) = host { crate::restore_recovery::recover_remote(host)?; }
     let script = include_str!("../../resources/storage-inventory.bundle.mjs");
     let mut command = if let Some(host) = host {
         let mut command = ssh(host);
@@ -336,15 +338,15 @@ pub(super) fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>,
     delete_stored_sessions(app, &runtime, paths, host_id, true, client_id)
 }
 
-fn restore_worktree_command(settings: &AppSettings, host_id: &str, path: &str) -> Result<Command, String> {
+fn restore_worktree_command(settings: &AppSettings, host_id: &str, arguments: &[&str]) -> Result<Command, String> {
     let script = include_str!("../../resources/restore-archived-worktree.bundle.mjs");
     let command = if host_id == "local" {
         let mut command = node_command();
-        command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, path]);
+        command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, "--"]).args(arguments);
         command
     } else {
         let mut command = ssh(remote_host(settings, host_id)?);
-        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(path))));
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} -- {}", shell_quote(script), arguments.iter().map(|argument| shell_quote(argument)).collect::<Vec<_>>().join(" "))));
         command
     };
     Ok(command)
@@ -352,19 +354,30 @@ fn restore_worktree_command(settings: &AppSettings, host_id: &str, path: &str) -
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn restore_archived_session(app: AppHandle, session_path: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
-    let host_id = host_id.unwrap_or_else(|| "local".into());
-    let runtime = app.state::<PiRuntime>();
-    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
-    let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, true, "restore")?;
-    let settings = load_app_settings(app.clone())?;
-    let path = archived_session_file(&settings, &host_id, &session_path)?;
-    let session_id = session_identity(&settings, &host_id, &path)?;
-    let mut command = restore_worktree_command(&settings, &host_id, &path)?;
+    restore_archived_worktree(app, session_path, host_id, client_id).map(|_| ())
+}
+
+fn restore_result(settings: &AppSettings, host_id: &str, path: &str) -> Result<serde_json::Value, String> {
+    let mut command = restore_worktree_command(settings, host_id, &["--result", path])?;
     let result = run_worktree_restoration(&mut command)?;
-    mutation.finish_restore(result["sessionPath"].as_str().ok_or("Restored session path missing")?)?;
-    let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":session_id,"sessionPath":result["sessionPath"]}));
-    let _ = app.emit("pi://sessions-changed", json!({}));
-    Ok(())
+    if result.is_null() { return Err("No committed restoration is available".into()); }
+    Ok(result)
+}
+
+fn perform_restore(app: &AppHandle, settings: &AppSettings, host_id: &str, session_path: &str, client_id: &str) -> Result<serde_json::Value, String> {
+    let path = match archived_session_file(settings, host_id, session_path) {
+        Ok(path) => path,
+        Err(error) => return restore_result(settings, host_id, session_path).map_err(|_| error),
+    };
+    let mutation = match conversation_ownership::MutationGuard::acquire(app, host_id, &path, client_id, true, "restore") {
+        Ok(mutation) => mutation,
+        Err(error) => return restore_result(settings, host_id, &path).map_err(|_| error),
+    };
+    let mut command = restore_worktree_command(settings, host_id, &[&path])?;
+    let result = run_worktree_restoration(&mut command).or_else(|error| restore_result(settings, host_id, &path).map_err(|_| error))?;
+    let restored_path = result["sessionPath"].as_str().ok_or("Restored session path missing")?;
+    if let Err(error) = mutation.finish_restore(restored_path) { eprintln!("Restore committed; could not acknowledge ownership release: {error}"); }
+    Ok(result)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
@@ -372,15 +385,10 @@ pub(super) fn restore_archived_worktree(app: AppHandle, session_path: String, ho
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let runtime = app.state::<PiRuntime>();
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
-    let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, true, "restore")?;
     let settings = load_app_settings(app.clone())?;
-    let path = archived_session_file(&settings, &host_id, &session_path)?;
-    let mut command = restore_worktree_command(&settings, &host_id, &path)?;
-    let session_id = session_identity(&settings, &host_id, &path)?;
-    let result = run_worktree_restoration(&mut command)?;
-    mutation.finish_restore(result["sessionPath"].as_str().ok_or("Restored session path missing")?)?;
-    let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":session_id,"sessionPath":result["sessionPath"]}));
-    let _ = app.emit("pi://sessions-changed", ());
+    let result = perform_restore(&app, &settings, &host_id, &session_path, &client_id)?;
+    let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":result["sessionId"],"sessionPath":result["sessionPath"]}));
+    let _ = app.emit("pi://sessions-changed", json!({}));
     Ok(result)
 }
 

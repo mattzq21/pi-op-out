@@ -58,8 +58,8 @@ impl Host {
     fn end_mutation(&self, packet: &Value) -> Result<Value> {
         let guard = self.registry().guards.remove(&text(packet, "token"));
         if let Some((guard, operation)) = guard {
-            if operation == "restore" && flag(packet, "success") {
-                return guard.restored(self.ownership(), &text(packet, "restoredPath")).map(|()| Value::Null);
+            if operation == "restore" {
+                return guard.restore_finished(self.ownership(), packet["restoredPath"].as_str()).map(|()| Value::Null);
             }
             guard.release(
                 self.ownership(),

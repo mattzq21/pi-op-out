@@ -31,6 +31,7 @@ mod daemon_endpoint;
 mod desktop_daemon;
 mod provider_auth;
 mod conversation_ownership;
+mod restore_recovery;
 mod session_groups;
 mod session_registry;
 use terminals::terminal_lookup;

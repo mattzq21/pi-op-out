@@ -1,151 +1,146 @@
 const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const { randomUUID } = require('node:crypto');
+const { execFileSync, spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
+const { exists, recover, restore, restoredResult } = require('./restore-transaction.cjs');
 
 const checkpointSchema = Type.Object({ path: Type.String(), repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-f0-9]{40,64}$' }) });
 
-const locationSchema = Type.String();
+const root = process.env.PIOP_RESTORE_ROOT || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop');
 
-const path = require('node:path');
-const os = require('node:os');
-const { execFileSync } = require('node:child_process');
-
-const file = fs.realpathSync(process.argv[1]);
-
-const archive = fs.realpathSync(path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop', 'archived'));
-
-if (!file.startsWith(archive + path.sep) || !file.endsWith('.jsonl')) throw new Error('Only archived conversations can restore worktrees');
-
-const entries = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).map(JSON.parse);
-
-const header = entries[0];
-
-const saved = header?.worktreeRestore;
-
-const sessions = path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop', 'sessions');
-
-fs.mkdirSync(sessions, { recursive: true });
-
-const destination = path.join(fs.realpathSync(sessions), path.basename(file));
-
-const sessionMoves = [
-  [file.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.snapshots')],
-  [file.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json')],
-  [`${file}.loop-detection.json`, `${destination}.loop-detection.json`],
-  [file, destination],
-];
-
-for (const [, target] of sessionMoves) {
-  try { fs.lstatSync(target); throw new Error(`The active session destination already exists: ${target}`); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
+function absent(file) {
+  if (exists(file)) throw new Error(`Restoration destination already exists: ${file}`);
 }
 
-function restoreSession(undoDirectory) {
-  const moved = [];
+function lastResponse(entries) {
+  const byId = new Map(entries.flatMap(entry => entry.id ? [[entry.id, entry]] : []));
+  const visited = new Set();
+  let cursor = entries.at(-1);
 
-  try {
-    for (const [source, target] of sessionMoves) {
-      try { fs.renameSync(source, target); moved.push([source, target]); }
-      catch (error) { if (error.code !== 'ENOENT' || source === file) throw error; }
-    }
-  } catch (error) {
-    const failures = [];
+  while (cursor && !visited.has(cursor.id)) {
+    visited.add(cursor.id);
 
-    for (const [source, target] of moved.reverse()) {
-      try { fs.renameSync(target, source); } catch (failure) { failures.push(failure.message); }
-    }
-
-    try { undoDirectory(); } catch (failure) { failures.push(failure.message); }
-
-    throw new Error([error.message, ...failures].join('\n'));
+    if (cursor.type === 'message' && cursor.message?.role === 'assistant') return cursor;
+    cursor = byId.get(cursor.parentId);
   }
 }
 
-if (header?.type === 'session' && !saved && path.isAbsolute(header.cwd ?? '')) {
-  restoreSession(() => {});
-  process.stdout.write(JSON.stringify({ path: header.cwd, branch: null, sessionPath: destination }));
-  process.exit(0);
+function verifySnapshot(entries, saved) {
+  const response = lastResponse(entries);
+
+  const snapshot = entries.findLast(entry => entry.type === 'custom' && entry.customType === 'pi-project-files-watch-snapshot'
+    && (saved.kind === 'git' ? entry.data?.ref === saved.ref : response && entry.data?.responseEntryIds?.includes(response.id)));
+
+  if (!snapshot || snapshot.data.unavailable || snapshot.data.ref !== saved.ref || snapshot.data.commit !== saved.commit) throw new Error('The recovery checkpoint cannot be verified');
 }
 
-if (header?.type === 'session' && saved?.kind === 'directory') {
-  const storage = fs.realpathSync(path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop', 'archived-tmp'));
+function verifyLocation(header, saved) {
+  if (!Check(checkpointSchema, saved) || !path.isAbsolute(saved.path) || !path.isAbsolute(saved.repositoryRoot)) throw new Error('No saved worktree checkpoint is available');
+  const owner = header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
+
+  if (!saved.ref.startsWith(`refs/pi-session-snapshots/chats/${owner}/`)) throw new Error('The restoration checkpoint is not owned by this archive');
+  verifyConversationLocation(header, saved);
+}
+
+function verifyConversationLocation(header, saved) {
+  const conversationPath = saved.conversationPath ?? header.cwd;
+
+  if (!Check(Type.String(), conversationPath) || !path.isAbsolute(conversationPath)) throw new Error('Invalid archived conversation location');
+  const relative = path.relative(saved.path, conversationPath);
+
+  if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw new Error('Invalid archived worktree location');
+}
+
+function restoredBranch(saved, git) {
+  if (saved.branch !== undefined) {
+    if (!Check(Type.String({ minLength: 1, pattern: '^[^-]' }), saved.branch)) throw new Error('Invalid archived branch name');
+    git(['check-ref-format', `refs/heads/${saved.branch}`]);
+
+    try { git(['show-ref', '--verify', '--quiet', `refs/heads/${saved.branch}`]); }
+    catch (error) { if (error.status === 1) return saved.branch; throw error; }
+  }
+
+  return `piop-restored-${randomUUID()}`;
+}
+
+function worktreePlan(entries, header) {
+  const saved = header.worktreeRestore;
+  verifyLocation(header, saved);
+  const git = args => execFileSync('git', ['-C', saved.repositoryRoot, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3] }).trim();
+
+  if (git(['rev-parse', '--verify', saved.ref]) !== saved.commit) throw new Error('The recovery checkpoint is missing or has changed');
+  verifySnapshot(entries, saved);
+  absent(saved.path);
+
+  return {
+    repositoryRoot: saved.repositoryRoot, path: saved.path, commit: saved.commit, branch: restoredBranch(saved, git),
+    staging: path.join(path.dirname(saved.path), `.piop-restore-${randomUUID()}`),
+    reservation: `refs/piop-restore-transactions/${randomUUID()}`,
+  };
+}
+
+function directoryPlan(saved) {
+  const storage = fs.realpathSync(path.join(root, 'archived-tmp'));
   const stored = fs.realpathSync(saved.storedPath);
 
   if (path.dirname(stored) !== storage || !path.isAbsolute(saved.path ?? '') || !fs.lstatSync(stored).isDirectory()) throw new Error('Invalid archived directory');
-
-  try { fs.lstatSync(saved.path); throw new Error('The original directory already exists; it will not be overwritten'); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-
+  absent(saved.path);
   fs.mkdirSync(path.dirname(saved.path), { recursive: true });
-  fs.renameSync(stored, saved.path);
-  restoreSession(() => fs.renameSync(saved.path, stored));
-  process.stdout.write(JSON.stringify({ path: saved.path, branch: null, sessionPath: destination }));
-  process.exit(0);
+
+  return { source: stored, destination: saved.path };
 }
 
-if (header?.type !== 'session' || !Check(checkpointSchema, saved) || !path.isAbsolute(saved.path) || !path.isAbsolute(saved.repositoryRoot)) throw new Error('No saved worktree checkpoint is available');
+function readArchive(file) {
+  const archive = fs.realpathSync(path.join(root, 'archived'));
 
-const owner = Check(Type.String(), header.id) ? header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session' : undefined;
+  if (!file.startsWith(archive + path.sep) || !file.endsWith('.jsonl')) throw new Error('Only archived conversations can restore worktrees');
+  const entries = fs.readFileSync(file, 'utf8').split('\n').flatMap(line => line.trim() ? [JSON.parse(line)] : []);
+  const header = entries[0];
 
-if (!owner || !saved.ref.startsWith(`refs/pi-session-snapshots/chats/${owner}/`)) throw new Error('The restoration checkpoint is not owned by this archive');
+  if (header?.type !== 'session' || !Check(Type.String({ minLength: 1 }), header.id) || !path.isAbsolute(header.cwd ?? '')) throw new Error('Invalid archived session header');
 
-const conversationPath = saved.conversationPath ?? header.cwd;
-
-if (!Check(locationSchema, conversationPath) || !path.isAbsolute(conversationPath)) throw new Error('Invalid archived conversation location');
-
-const relative = path.relative(saved.path, conversationPath);
-
-if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw new Error('Invalid archived worktree location');
-
-const git = (args) => execFileSync('git', ['-C', saved.repositoryRoot, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-
-if (git(['rev-parse', '--verify', saved.ref]) !== saved.commit) throw new Error('The recovery checkpoint is missing or has changed');
-
-const byId = new Map(entries.filter((entry) => entry.id).map((entry) => [entry.id, entry]));
-
-let cursor = entries.at(-1);
-
-let response;
-
-const visited = new Set();
-
-while (cursor && !visited.has(cursor.id)) {
-  visited.add(cursor.id);
-
-  if (cursor.type === 'message' && cursor.message?.role === 'assistant') { response = cursor; break; }
-
-  cursor = byId.get(cursor.parentId);
+  return { entries, header };
 }
 
-const snapshot = entries.findLast((entry) => entry.type === 'custom' && entry.customType === 'pi-project-files-watch-snapshot'
-  && (saved.kind === 'git' ? entry.data?.ref === saved.ref : response && entry.data?.responseEntryIds?.includes(response.id)));
+function restoreArchive(file) {
+  const { entries, header } = readArchive(file);
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions, { recursive: true });
 
-if (!snapshot || snapshot.data.unavailable || snapshot.data.ref !== saved.ref || snapshot.data.commit !== saved.commit) throw new Error('The recovery checkpoint cannot be verified');
+  const destination = path.join(fs.realpathSync(sessions), path.basename(file));
 
-try { fs.lstatSync(saved.path); throw new Error('The worktree path already exists; it will not be overwritten'); }
-catch (error) { if (error.code !== 'ENOENT') throw error; }
+  for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.diffs.json'), `${destination}.loop-detection.json`]) absent(target);
+  const saved = header.worktreeRestore;
 
-const { randomUUID } = require('node:crypto');
+  if (!saved) return restore(root, header, file, destination, { path: header.cwd, branch: null, sessionPath: destination });
 
-let branch = saved.branch;
+  if (saved.kind === 'directory') return restore(root, header, file, destination, { path: saved.path, branch: null, sessionPath: destination }, directoryPlan(saved));
+  const worktree = worktreePlan(entries, header);
 
-if (branch !== undefined) {
-  if (!Check(Type.String({ minLength: 1, pattern: '^[^-]' }), branch)) throw new Error('Invalid archived branch name');
-  git(['check-ref-format', `refs/heads/${branch}`]);
-
-  try {
-    git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]);
-    branch = undefined;
-  } catch (error) { if (error.status !== 1) throw error; }
+  return restore(root, header, file, destination, { path: saved.path, branch: worktree.branch, sessionPath: destination }, undefined, worktree);
 }
 
-branch ??= `piop-restored-${randomUUID()}`;
+function main() {
+  if (process.argv[1] === '--result') return restoredResult(root, process.argv[2]);
+  recover(root);
 
-git(['worktree', 'add', '-b', branch, saved.path, saved.commit]);
+  if (process.argv[1] === '--recover') return;
 
-restoreSession(() => {
-  git(['worktree', 'remove', '--force', saved.path]);
-  git(['branch', '-D', branch]);
-});
+  return restoreArchive(fs.realpathSync(process.argv[1]));
+}
 
-process.stdout.write(JSON.stringify({ path: saved.path, branch, sessionPath: destination }));
+if (process.argv.at(-1) !== '--locked') {
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const lock = fs.openSync(path.join(root, 'restore.lock'), 'a', 0o600);
+  const child = spawnSync('sh', ['-c', 'flock --exclusive 3 || exit $?; exec "$@"', 'piop-restore', process.execPath, ...process.execArgv, '--', ...process.argv.slice(1), '--locked'], { stdio: ['inherit', 'inherit', 'inherit', lock] });
+  fs.closeSync(lock);
+
+  if (child.error) throw child.error;
+  process.exitCode = child.status ?? 1;
+} else {
+  try { const result = main(); process.stdout.write(JSON.stringify(result ?? null)); }
+  catch (error) { console.error(error.message); process.exitCode = 1; }
+}

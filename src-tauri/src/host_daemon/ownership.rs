@@ -65,12 +65,16 @@ impl Guard {
     }
 
     pub fn restored(mut self, ownership: &ConversationOwnership, path: &str) -> Result<()> {
-        let saved = ownership.locate(&self.id, Some(path), false, true)?.ok_or("Restored conversation is not in active storage")?;
-        self.record["path"] = json!(saved.path);
-        self.record["deleted"] = json!(false);
-        self.record["client"] = Value::Null;
-        ownership.write(&self.id, &self.record)?;
+        ownership.locate(&self.id, Some(path), false, true)?.ok_or("Restored conversation is not in active storage")?;
         self.archived = false;
+        self.release(ownership, false)
+    }
+
+    pub fn restore_finished(self, ownership: &ConversationOwnership, path: Option<&str>) -> Result<()> {
+        crate::restore_recovery::recover(&ownership.root)?;
+        if let Some(saved) = ownership.locate(&self.id, path, false, true)? {
+            return self.restored(ownership, &saved.path.to_string_lossy());
+        }
         self.release(ownership, false)
     }
 
@@ -88,6 +92,7 @@ impl Guard {
 
 impl ConversationOwnership {
     pub async fn new(home: &Path, storage: &str, revoke: Arc<dyn Revocation>) -> Result<Arc<Self>> {
+        crate::restore_recovery::recover(&home.join(storage))?;
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(|error| error.to_string())?;
         let endpoint = format!(
             "http://127.0.0.1:{}",
@@ -241,6 +246,7 @@ impl ConversationOwnership {
             return Err("Conversation client is missing".into());
         }
         let lock = self.lock(id, false).await?;
+        crate::restore_recovery::recover(&self.root)?;
         let record = self.read(id)?;
         let previous = record.clone().unwrap_or(Value::Null);
         let saved = self.saved_for_claim(id, &previous, options)?;

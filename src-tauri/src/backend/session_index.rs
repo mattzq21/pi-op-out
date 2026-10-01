@@ -143,6 +143,7 @@ pub(super) fn read_session_summaries_with(candidates: &[(String, String, u64, u6
 }
 
 pub(super) fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
+    crate::restore_recovery::recover(root.parent().ok_or("Session storage root missing")?)?;
     crate::session_registry::index_existing();
     let mut cache = index.local.lock().map_err(|_| "Local session index lock was poisoned")?;
     let mut seen = HashSet::new(); let mut changed = Vec::new();
@@ -159,6 +160,7 @@ pub(super) fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> R
 }
 
 pub(super) fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
+    crate::restore_recovery::recover_remote(host)?;
     let metadata = query_remote_session_metadata(|script| { let mut command = ssh(host); command.arg(script); command })?;
     update_remote_session_index(index, host, &metadata,
         |changed| read_session_summaries(changed, Some(host)),
