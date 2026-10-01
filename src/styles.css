@@ -42,6 +42,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .sidebar-drop-zone { position: relative; z-index: 2; height: 8px; margin: -4px 0; }
 .sidebar-drop-zone.active:after { content: ""; position: absolute; left: 2px; right: 2px; top: 3px; height: 2px; border-radius: 2px; background: var(--accent); }
 .custom-group-draft .project-label { cursor: text; }
+.project.drop-project > .project-heading > .project-label { color: var(--accent); }
 .custom-group-draft input { width: 100%; min-width: 0; border: 0; border-bottom: 1px solid var(--accent); outline: 0; padding: 3px 1px; background: transparent; color: var(--ink); font: 500 12px "DM Sans"; text-transform: none; letter-spacing: normal; }
 .custom-group-draft input::placeholder { color: var(--faint); }
 .project-heading { display: flex; align-items: center; }.project-heading .project-label { min-width: 0; flex: 1; }.project-actions { display: flex; opacity: 0; }.project-heading:hover .project-actions, .project-actions:focus-within { opacity: 1; }.project-actions button { width: 24px; height: 24px; border: 0; border-radius: 5px; background: transparent; color: var(--faint); display: grid; place-items: center; }.project-actions button:hover, .project-actions button:focus-visible { color: var(--accent); background: #ffffff88; }.project-heading input { width: 100%; min-width: 0; border: 0; border-bottom: 1px solid var(--accent); outline: 0; padding: 3px 1px; background: transparent; color: var(--ink); font: 500 12px "DM Sans"; text-transform: none; letter-spacing: normal; }
@@ -495,7 +496,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .sidebar-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
 .sidebar-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; }
-.sidebar-resizer:hover::after, .sidebar-resizer.dragging::after, .sidebar-resizer:focus-visible::after { background: var(--accent); }
+.sidebar-resizer:hover::after, .sidebar-resizer.dragging::after, .sidebar-resizer:focus-visible::after { background: color-mix(in srgb, var(--accent) 55%, black); }
 .sidebar-resizer:focus-visible { outline: none; }
 
 .mcp-pending-message { filter: brightness(.6); }
