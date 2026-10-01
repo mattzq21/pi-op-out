@@ -31,7 +31,12 @@ function walkSessions(directory, visit) {
   }
 }
 function locate(cwd) {
-  const canonical = fs.realpathSync(cwd);
+  let canonical;
+  try { canonical = fs.realpathSync(cwd); }
+  catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return { path: path.resolve(cwd), kind: 'missing' };
+    throw error;
+  }
   let top;
   try { top = fs.realpathSync(git(canonical, ['rev-parse', '--show-toplevel'])); }
   catch (error) {
@@ -127,7 +132,7 @@ function main() {
     byDirectory.get(location.path).records.push(record);
   }
   const groups = [...byDirectory.values()];
-  const removable = groups.filter((group) => group.kind !== 'main');
+  const removable = groups.filter((group) => group.kind === 'git' || group.kind === 'directory');
   for (const group of removable) {
     if (groups.some((other) => other !== group && inside(group.path, other.path))) throw new Error('Overlapping session directories cannot be archived together');
     if (records.some((record) => inside(group.path, record.file))) throw new Error('The working directory contains conversation storage and cannot be moved');
@@ -135,7 +140,7 @@ function main() {
   const assertUnused = (cwd) => {
     let canonical;
     try { canonical = fs.realpathSync(cwd); }
-    catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return; throw error; }
     if (removable.some((group) => inside(group.path, canonical))) throw new Error(`Another chat or terminal still uses ${cwd}`);
   };
   if (removable.length) {
@@ -158,7 +163,7 @@ function main() {
         fs.copyFileSync(record.file, record.backup, fs.constants.COPYFILE_EXCL);
         if (group.kind === 'git') rewriteCheckpoints(record, group);
         if (group.kind === 'main') delete record.header.worktreeRestore;
-        else record.header.worktreeRestore = {
+        else if (group.kind !== 'missing') record.header.worktreeRestore = {
           kind: group.kind, path: group.path, conversationPath: fs.realpathSync(record.header.cwd),
           ...(group.kind === 'git' ? { repositoryRoot: group.common, commit: group.commit, ref: group.refs[index], branch: group.branchRef?.slice('refs/heads/'.length) } : { storedPath: group.storedPath }),
         };
