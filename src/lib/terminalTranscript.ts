@@ -46,10 +46,16 @@ export function createTerminalTranscript() {
     text += value;
   };
 
-  const backspace = () => {
-    if (text && !text.endsWith("\n")) text = eraseLastCharacter(text);
+  const truncate = (end: number) => {
+    text = text.slice(0, end);
 
     while (runs.length && runs[runs.length - 1].start >= text.length) runs.pop();
+  };
+
+  const clearCurrentLine = () => truncate(text.lastIndexOf("\n") + 1);
+
+  const backspace = () => {
+    if (text && !text.endsWith("\n")) truncate(eraseLastCharacter(text).length);
   };
 
   const appendText = (char: string) => {
@@ -60,7 +66,7 @@ export function createTerminalTranscript() {
     }
 
     if (carriageReturn) {
-      if (char !== "\n" && text && !text.endsWith("\n")) write("\n");
+      if (char !== "\n") clearCurrentLine();
       carriageReturn = false;
     }
 
@@ -73,9 +79,17 @@ export function createTerminalTranscript() {
     if (!/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(char)) write(char);
   };
 
+  const eraseLine = () => {
+    if (!["", "0", "1", "2"].includes(parameters)) return;
+
+    if (carriageReturn || parameters === "1" || parameters === "2") clearCurrentLine();
+    carriageReturn = false;
+  };
+
   const consumeCsi = (char: string) => {
     if (char >= "@" && char <= "~") {
       if (char === "m") rendition = applyTerminalRendition(rendition, parameters);
+      else if (char === "K") eraseLine();
       parameters = ""; state = "text";
     } else if (parameters.length < 256) parameters += char;
   };
