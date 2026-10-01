@@ -5,10 +5,28 @@ import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { writeSessionFile } from "./session-file.ts";
+import type { SessionAgentState, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
+import { Type as Schema, type Static } from "typebox";
+import { Check, Parse } from "typebox/value";
 
-type ReviewRecord = { sessionId: string; sessionPath: string; cwd: string; parentSessionId: string };
+const reviewSchema = Schema.Object({ sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String() });
 
-async function createReview(ctx: ExtensionContext, agentState: unknown): Promise<ReviewRecord> {
+const settingsSchema = Schema.Object({ reviewAgent: Schema.Optional(Schema.String()), reviewPrompt: Schema.Optional(Schema.String()) });
+
+const fileErrorSchema = Schema.Object({ code: Schema.String() });
+
+type ReviewRecord = Static<typeof reviewSchema>;
+
+interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[] }
+
+declare module "@earendil-works/pi-coding-agent" {
+  interface EventBus {
+    on(channel: "piop:required-tools", handler: (request: RequiredToolsRequest) => void): () => void;
+    emit(channel: "piop:required-tools", request: RequiredToolsRequest): void;
+  }
+}
+
+async function createReview(ctx: ExtensionContext, agentState: SessionAgentState): Promise<ReviewRecord> {
   const header = ctx.sessionManager.getHeader();
 
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save the main conversation before starting a review");
@@ -37,9 +55,7 @@ function registerReviewMessaging(pi: ExtensionAPI) {
   let reviewerId: string | undefined;
   const isReviewer = (ctx: ExtensionContext) => reviewerId === ctx.sessionManager.getSessionId();
 
-  const stop = pi.events.on("piop:required-tools", value => {
-    const request = value as { ctx: ExtensionContext; tools: string[] };
-
+  const stop = pi.events.on("piop:required-tools", request => {
     if (isReviewer(request.ctx)) request.tools.push("message_main_chat");
   });
 
@@ -73,10 +89,10 @@ function registerReviewMessaging(pi: ExtensionAPI) {
 }
 
 async function reviewSettings() {
-  let settings: { reviewAgent?: string; reviewPrompt?: string } = {};
+  let settings: Static<typeof settingsSchema> = {};
 
-  try { settings = JSON.parse(await readFile(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "settings.json"), "utf8")); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  try { settings = Parse(settingsSchema, JSON.parse(await readFile(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "settings.json"), "utf8"))); }
+  catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error; }
 
   const agent = settings.reviewAgent?.trim() || "general";
   const prompt = settings.reviewPrompt ?? await readFile(new URL("./review-prompt.txt", import.meta.url), "utf8");
@@ -96,7 +112,7 @@ export function registerReview(pi: ExtensionAPI) {
       return; }
 
       const settings = await reviewSettings();
-      const profile: { agent: string; state?: unknown; error?: string } = { agent: settings.agent };
+      const profile: SubagentProfileRequest = { agent: settings.agent };
       pi.events.emit("piop:agents:subagent", profile);
 
       if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${settings.agent}`);
@@ -109,10 +125,10 @@ export function registerReview(pi: ExtensionAPI) {
   pi.registerCommand("pi-orchestration-review-open", {
     description: "Open a saved review belonging to this chat",
     handler: async (args, ctx) => {
-      const entry = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === "piop-review" && (entry.data as ReviewRecord)?.sessionId === args.trim());
+      const entry = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.sessionId === args.trim());
 
       if (!entry || entry.type !== "custom") throw new Error("Review not found in this conversation");
-      const record = entry.data as ReviewRecord;
+      const record = Parse(reviewSchema, entry.data);
 
       if (record.parentSessionId !== ctx.sessionManager.getSessionId()) throw new Error("This review belongs to another conversation");
       openReview(ctx, record);

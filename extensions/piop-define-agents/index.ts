@@ -1,5 +1,6 @@
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
 import { mcpServers, type McpServer } from "./mcp-config.ts";
+import type { Agent, AgentSnapshot, SessionAgentState } from "./contracts.ts";
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -8,13 +9,9 @@ import { dirname, join, resolve } from "node:path";
 import type { BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServer[] };
+export type { Agent } from "./contracts.ts";
 
 type RuntimeDefaults = { model: string; effort: string };
-
-type AgentSnapshot = { version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
-
-type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string; fastModeOverride?: boolean | null };
 
 function persistedAgentIdentity(state: SessionAgentState) {
   const agent = state.snapshot?.definition;
@@ -387,8 +384,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
   });
 
-  const stopSubagentProfiles = pi.events.on("piop:agents:subagent", (value) => {
-    const request = value as { agent?: string; state?: SessionAgentState; error?: string };
+  const stopSubagentProfiles = pi.events.on("piop:agents:subagent", (request) => {
     const agent = request.agent ? findAgent(request.agent) : currentAgent();
 
     if (!agent) { request.error = "Choose a configured agent profile";

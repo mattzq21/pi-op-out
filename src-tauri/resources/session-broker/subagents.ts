@@ -1,5 +1,9 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type, type AssistantMessage } from "@earendil-works/pi-ai";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
+import { Type as Schema, type Static } from "typebox";
+import { Check, Parse } from "typebox/value";
+import type { SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
+import type { GoalScope } from "./goals.ts";
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
@@ -19,28 +23,43 @@ const SUBAGENT_TIMEOUT_MS = 600_000;
 
 type SubagentTask = { task: string; name: string; agent?: string; sessionId?: string };
 
-type SubagentRun = { version: 1; toolCallId: string; parentSessionId: string; sessionId: string; sessionPath: string; hostId: string; name: string; task: string; status: "running" | "completed" | "failed" | "cancelled"; startedAt: number; endedAt?: number; output?: string; apiCost?: number };
+const runSchema = Schema.Object({
+  version: Schema.Literal(1), toolCallId: Schema.String(), parentSessionId: Schema.String(), sessionId: Schema.String(), sessionPath: Schema.String(),
+  hostId: Schema.String(), name: Schema.String(), task: Schema.String(), status: Schema.Union([Schema.Literal("running"), Schema.Literal("completed"), Schema.Literal("failed"), Schema.Literal("cancelled")]),
+  startedAt: Schema.Number(), endedAt: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.String()), apiCost: Schema.Optional(Schema.Number()),
+});
 
-function completedSubagentOutput(last: AssistantMessage | undefined) {
+const usageSchema = Schema.Object({ input: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.Number()), cacheWrite: Schema.Optional(Schema.Number()), cost: Schema.Optional(Schema.Object({ total: Schema.Optional(Schema.Number()) })) });
+
+const transcriptEntrySchema = Schema.Object({ type: Schema.String(), usage: Schema.Optional(usageSchema), message: Schema.Optional(Schema.Unknown()) });
+
+const assistantSchema = Schema.Object({ role: Schema.Literal("assistant"), stopReason: Schema.String(), errorMessage: Schema.Optional(Schema.String()), content: Schema.Array(Schema.Unknown()), usage: Schema.Optional(usageSchema) });
+
+const textSchema = Schema.Object({ type: Schema.Literal("text"), text: Schema.String() });
+
+type SubagentResponse = Static<typeof assistantSchema>;
+
+type SubagentRun = Static<typeof runSchema>;
+
+function completedSubagentOutput(last: SubagentResponse | undefined) {
   if (!last) throw new Error("Subagent produced no assistant response; inspect its transcript");
 
   if (last.stopReason === "error" || last.stopReason === "aborted") throw new Error(last.errorMessage || `Subagent ${last.stopReason}`);
 
   if (last.stopReason === "toolUse") throw new Error("Subagent stopped before completing its task");
-  const output = last.content.filter((part) => part.type === "text").map((part) => part.text).join("\n") || "(No text returned; inspect the saved transcript.)";
+  const output = last.content.flatMap((part) => Check(textSchema, part) ? [part.text] : []).join("\n") || "(No text returned; inspect the saved transcript.)";
 
   return output.length > 16_000 ? `${output.slice(0, 16_000)}\n[Result truncated. Full conversation is saved in the child transcript.]` : output;
 }
 
-function subagentEntryCost(entry: { type?: string; usage?: { cost?: { total?: number } }; message?: { usage?: { cost?: { total?: number } } } }) {
-  const source = entry.type === "message" ? entry.message : entry;
-  const amount = source?.usage?.cost?.total;
+function subagentEntryCost(usage: Static<typeof usageSchema> | undefined) {
+  const amount = usage?.cost?.total;
 
-  return typeof amount === "number" && Number.isFinite(amount) ? Math.max(0, amount) : 0;
+  return amount !== undefined && Number.isFinite(amount) ? Math.max(0, amount) : 0;
 }
 
 async function subagentCompletion(run: SubagentRun, offset: number, reportUsage: (tokens: number) => void) {
-  let last: AssistantMessage | undefined;
+  let last: SubagentResponse | undefined;
   let cost = 0;
   let tokens = 0;
   const input = createReadStream(run.sessionPath, { start: offset });
@@ -52,12 +71,13 @@ async function subagentCompletion(run: SubagentRun, offset: number, reportUsage:
 
       try { entry = JSON.parse(line); } catch { continue; }
 
-      cost += subagentEntryCost(entry);
+      if (!Check(transcriptEntrySchema, entry)) continue;
 
-      if (entry.type !== "message") { tokens += goalTokens(entry.usage); continue; }
+      if (entry.type !== "message") { tokens += goalTokens(entry.usage); cost += subagentEntryCost(entry.usage); continue; }
 
-      if (entry.message?.role !== "assistant") continue;
-      last = entry.message as AssistantMessage;
+      if (!Check(assistantSchema, entry.message)) continue;
+      last = entry.message;
+      cost += subagentEntryCost(last.usage);
       tokens += goalTokens(last.usage);
     }
   } finally { lines.close(); input.destroy(); reportUsage(tokens); }
@@ -69,7 +89,7 @@ async function subagentCompletion(run: SubagentRun, offset: number, reportUsage:
 
 async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: SubagentTask, toolCallId: string): Promise<SubagentRun> {
   const parentSessionId = ctx.sessionManager.getSessionId();
-  const runs = ctx.sessionManager.getEntries().flatMap((entry) => entry.type === "custom" && entry.customType === SUBAGENT_RUN ? [entry.data as SubagentRun] : []);
+  const runs = ctx.sessionManager.getEntries().flatMap((entry) => entry.type === "custom" && entry.customType === SUBAGENT_RUN ? [Parse(runSchema, entry.data)] : []);
 
   if (task.sessionId) {
     if (task.agent) throw new Error("A resumed subagent keeps its original agent profile");
@@ -83,7 +103,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   const header = ctx.sessionManager.getHeader();
 
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before delegating work");
-  const profile: { agent?: string; state?: unknown; error?: string } = { agent: task.agent };
+  const profile: SubagentProfileRequest = { agent: task.agent };
   pi.events.emit("piop:agents:subagent", profile);
 
   if (profile.error) throw new Error(profile.error);
@@ -95,7 +115,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, status: "running", startedAt: Date.now() };
   let parentId: string | null = null;
 
-  const entry = (value: object) => { const id = randomUUID().slice(0, 8); const result = { ...value, id, parentId, timestamp }; parentId = id;
+  const entry = (value: CustomEntryDraft | { type: "session_info"; name: string }) => { const id = randomUUID().slice(0, 8); const result = { ...value, id, parentId, timestamp }; parentId = id;
 
   return result; };
 
@@ -115,7 +135,7 @@ async function dispatchSubagent(run: SubagentRun, requestId: string, execution: 
   const { signal, pi, ctx } = execution;
   signal?.throwIfAborted();
   const offset = (await stat(run.sessionPath)).size;
-  const scope: { goalId?: string; ctx: ExtensionContext; ready?: Promise<void> } = { ctx };
+  const scope: GoalScope = { ctx };
   pi.events.emit("piop:goal-scope", scope);
   await scope.ready;
   let reported = 0;
@@ -135,7 +155,7 @@ async function dispatchSubagent(run: SubagentRun, requestId: string, execution: 
 
   signal?.addEventListener("abort", abort, { once: true });
   let dispatched = false;
-  let last: AssistantMessage | undefined;
+  let last: SubagentResponse | undefined;
 
   try {
     await request("/message", { hostId: run.hostId, sessionId: run.sessionId, message: run.task, requestId, deadline: Date.now() + SUBAGENT_TIMEOUT_MS }, requestSignal, SUBAGENT_TIMEOUT_MS);
@@ -178,8 +198,8 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
   pi.appendEntry(SUBAGENT_RUN, { ...run }); publish(run);
 }
 
-function subagentPayload(runs: SubagentRun[]) {
-  return { content: [{ type: "text" as const, text: runs.map((run) => `${run.name}: ${run.status}\nSession: ${run.hostId}/${run.sessionId}\nTranscript: ${run.sessionPath}${run.output ? `\n${run.output}` : ""}`).join("\n\n") }], details: { version: 1, runs: structuredClone(runs) } };
+function subagentPayload(runs: SubagentRun[]): AgentToolResult<{ version: 1; runs: SubagentRun[] }> {
+  return { content: [{ type: "text", text: runs.map((run) => `${run.name}: ${run.status}\nSession: ${run.hostId}/${run.sessionId}\nTranscript: ${run.sessionPath}${run.output ? `\n${run.output}` : ""}`).join("\n\n") }], details: { version: 1, runs: structuredClone(runs) } };
 }
 
 function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "ready">, pending: Set<Promise<void>>) {
