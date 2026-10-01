@@ -10,6 +10,8 @@ type Catalog = Map<string, boolean>;
 
 type CachedCatalog = { expires: number; pending: Promise<Catalog> };
 
+const FAST_CATALOG_CLIENT_VERSION = "0.159.3";
+
 const tiersSchema = z.array(z.object({ id: z.string().optional() }).catch({})).nullish().catch(undefined);
 
 const speedsSchema = z.array(z.string().catch("")).nullish().catch(undefined);
@@ -54,10 +56,10 @@ function catalogUrl(model: Model, baseUrl = model.baseUrl): URL {
 
   if (model.api === "openai-codex-responses") {
     if (!path.endsWith("/codex")) path += "/codex";
-    url.searchParams.set("client_version", "0.142.2");
   }
 
   url.pathname = `${path}/models`;
+  url.searchParams.set("client_version", FAST_CATALOG_CLIENT_VERSION);
 
   return url;
 }
@@ -107,9 +109,9 @@ export function createFastModeDiscovery() {
       body: JSON.stringify({ hostId: process.env.PI_DESKTOP_HOST_ID || "local" }), signal: AbortSignal.timeout(30_000),
     }).then(async response => {
       if (!response.ok) throw new Error("Fast mode startup catalog unavailable");
-      const body = z.object({ data: daemonCatalogSchema }).parse(await response.json());
+      const body = z.object({ data: z.object({ clientVersion: z.literal(FAST_CATALOG_CLIENT_VERSION), models: daemonCatalogSchema }) }).parse(await response.json());
 
-      return body.data;
+      return body.data.models;
     }).catch(() => undefined);
     const entries = await daemonCatalog;
 

@@ -1,13 +1,15 @@
+export const FAST_CATALOG_CLIENT_VERSION = '0.159.3';
+
 function fastCatalogUrl(model, resolution) {
   const url = new URL(resolution.auth.baseUrl ?? model.baseUrl);
   let path = url.pathname.replace(/\/+$/, '').replace(/\/responses$/, '');
 
   if (model.api === 'openai-codex-responses') {
     if (!path.endsWith('/codex')) path += '/codex';
-    url.searchParams.set('client_version', '0.142.2');
   }
 
   url.pathname = `${path}/models`;
+  url.searchParams.set('client_version', FAST_CATALOG_CLIENT_VERSION);
 
   return url;
 }

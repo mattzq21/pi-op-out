@@ -170,7 +170,7 @@ async function handle(packet) {
   if (packet.method === 'initialize') return { authPath: loaded.authPath, builtinIds: loaded.builtinIds };
   await syncAccounts(loaded);
 
-  if (packet.method === 'fast_capabilities') return discoverFastCapabilities(loaded.runtime);
+  if (packet.method === 'fast_capabilities') return { clientVersion: FAST_CATALOG_CLIENT_VERSION, models: await discoverFastCapabilities(loaded.runtime) };
 
   if (packet.method === 'inspect') {
     await loaded.runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
