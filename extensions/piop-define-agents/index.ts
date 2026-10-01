@@ -17,7 +17,7 @@ export type { Agent } from "./contracts.ts";
 
 const STATUS_KEY = "pi-define-agents";
 
-const sessionTools = ["fork_session", "create_worktree", "remove_worktree", "subagent"];
+const sessionTools = ["fork_session", "create_worktree", "subagent"];
 
 export type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean };
 

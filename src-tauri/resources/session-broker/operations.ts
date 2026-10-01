@@ -82,11 +82,6 @@ export function registerSessionOperations(pi: ExtensionAPI) {
     parameters: Type.Object({ name: Type.String() }),
     async execute(_id, params, signal, _update, ctx) { return result(await create(ctx, params.name, signal)); },
   });
-  pi.registerTool({
-    name: "remove_worktree", label: "Remove Git worktree", description: "Remove an unused clean Git worktree after configured cleanup scripts. Refuses the main checkout, dirty worktrees, and worktrees used by conversations or terminals. Branch deletion is optional and never forced.",
-    parameters: Type.Object({ cwd: Type.String(), deleteBranch: Type.Optional(Type.Boolean()) }),
-    async execute(_id, params, signal, _update, ctx) { return result(await remove(resolve(ctx.cwd, params.cwd), params.deleteBranch, signal)); },
-  });
 
   const report = async <T,>(ctx: ExtensionContext, operation: () => Promise<T>) => {
     try { pi.sendMessage({ customType: "piop-session-operation", content: JSON.stringify(await operation(), null, 2), display: true }, { triggerTurn: false }); }
