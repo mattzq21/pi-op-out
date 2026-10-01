@@ -9,10 +9,9 @@
 .subagent-work > summary:hover .subagent-name { color: var(--accent); }
 .subagent-name { color: var(--ink); overflow-wrap: anywhere; }
 .subagent-state { display: inline-flex; flex-shrink: 0; }
-.subagent-status { font-size: 10px; }
 .subagent-detail-chevron { flex-shrink: 0; }
 .subagent-work[open] > summary .subagent-detail-chevron { transform: rotate(90deg); }
-.subagent-view { flex-shrink: 0; margin-top: 3px; }
+.subagent-view { flex-shrink: 0; }
 .subagent-completed { color: var(--green); }
 .subagent-running { color: var(--running); }
 .subagent-failed { color: #d77865; }
