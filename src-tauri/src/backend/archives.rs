@@ -362,7 +362,7 @@ pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let runtime = app.state::<PiRuntime>();
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
-    let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "relocate")?;
+    let mutation = if action == "inspect" { None } else { Some(conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "relocate")?) };
     let settings = load_app_settings(app.clone())?;
     let path = desktop_session_file(&settings, &host_id, &session_path)?;
     let arguments = json!({"sessionPath":path,"action":action,"repository":repository,"branch":branch,"storage":STORAGE_DIRECTORY}).to_string();
@@ -376,8 +376,10 @@ pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host
         command.arg(remote_login_command(&format!("node -e {} {} {} {}", shell_quote(script), shell_quote(&arguments), shell_quote(relocate), shell_quote(registry)))); command
     };
     let result = run_directory_recovery(&mut command)?;
-    mutation.finish()?;
-    let _ = app.emit("pi://sessions-changed", ());
+    if let Some(mutation) = mutation {
+        mutation.finish()?;
+        let _ = app.emit("pi://sessions-changed", ());
+    }
     Ok(result)
 }
 
