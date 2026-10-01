@@ -19,15 +19,17 @@ try {
     if (!branch) {
       try { branch = JSON.parse(fs.readFileSync(path.join(path.dirname(header.cwd), 'parent.json'), 'utf8')).branch; } catch { }
     }
-    if (!branch) throw new Error('Enter the branch to recover. This session has no saved branch name.');
-    git(['check-ref-format', '--branch', branch]);
     let repository = request.repository?.trim() || saved?.remote_url;
     if (!repository) repository = header.checkpointRepositoryRoot || header.worktreeRestore?.repositoryRoot;
     if (!repository) {
       const entries = fs.readFileSync(request.sessionPath, 'utf8').split('\n').filter((line) => line.trim()).map(JSON.parse);
       repository = entries.findLast((entry) => entry.data?.repositoryRoot)?.data.repositoryRoot;
     }
-    if (!repository) throw new Error('Enter the remote repository URL or an existing local checkout.');
+    const missingFields = [];
+    if (!branch) missingFields.push('branch');
+    if (!repository || (path.isAbsolute(repository) && !fs.existsSync(repository))) missingFields.push('repository');
+    if (missingFields.length) { process.stdout.write(JSON.stringify({ missingFields })); process.exit(0); }
+    git(['check-ref-format', '--branch', branch]);
     if (fs.existsSync(repository)) repository = git(['-C', repository, 'remote', 'get-url', 'origin']);
     container = fs.mkdtempSync('/tmp/piop-recovery-');
     directory = path.join(container, 'workdir');

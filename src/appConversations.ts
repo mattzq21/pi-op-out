@@ -505,6 +505,7 @@ export function createAppConversations(preloadChat: () => void) {
     setMissingDirectoryDialog({ session, cancel, recover: async (mode, repository, branch) => {
       if (!relocated) {
         const result = await client.recoverMissingSession(session.path, mode, repository, branch, hostId);
+        if ("missingFields" in result) return result;
         relocated = { ...session, cwd: result.cwd, cwdExists: true, projectRoot: mode === "remote" ? result.cwd : null, worktreeRoot: null, projectKind: mode === "remote" ? "main" : "no-repo", branch: mode === "remote" ? branch || null : null };
       }
       const recovered = relocated;

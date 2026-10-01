@@ -299,7 +299,7 @@ export class NativeTransport {
   archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call<void>("archive_session", { sessionPath, hostId, terminalIds }); }
   deleteSession(sessionPath: string, hostId = "local") { return call<void>("delete_session", { sessionPath, hostId }); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call<void>("relocate_session", { sessionPath, cwd, hostId }); }
-  recoverMissingSession(sessionPath: string, action: "remote" | "empty", repository: string, branch: string, hostId = "local") { return call<{ cwd: string }>("recover_missing_session", { sessionPath, hostId, action, repository, branch }); }
+  recoverMissingSession(sessionPath: string, action: "remote" | "empty", repository: string, branch: string, hostId = "local") { return call<{ cwd: string } | { missingFields: string[] }>("recover_missing_session", { sessionPath, hostId, action, repository, branch }); }
   async relocateDirlessSession(sessionPath: string, hostId = "local") {
     const chat = await call<{ cwd: string }>("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" });
     await this.relocateSession(sessionPath, chat.cwd, hostId);
