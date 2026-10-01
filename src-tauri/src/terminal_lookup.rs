@@ -108,6 +108,9 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
     }
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime unavailable")?;
     let mut history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
+    if action == "close" && !history.contains_key(id) && !processes.contains_key(id) {
+        return Ok(Value::Null);
+    }
     let item = history.get_mut(id).ok_or("Terminal is unavailable")?;
     if action == "claim" {
         item.owner = owner.clone();
