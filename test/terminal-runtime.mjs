@@ -7,6 +7,7 @@ export class Terminal {
   attachCustomKeyEventHandler(handler) { this.key = handler; }
   getSelection() { return this.selection; }
   focus() { this.focused = (this.focused ?? 0) + 1; }
+  blur() { this.focused = 0; }
   write(value, callback) { this.writes.push(value); this.completions.push(callback); }
   flush() { for (const callback of this.completions.splice(0)) callback?.(); }
   reset() { this.resets++; }
