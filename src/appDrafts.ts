@@ -44,7 +44,6 @@ export function createConversationDrafts() {
     if (key) removeDraft(key);
   };
 
-  const copyUploads = (source: NativeTransport, destination: NativeTransport) => setComposerUploads(destination, [...(uploadsByTransport().get(source) ?? [])]);
 
-  return { composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, transportHasDraft, rekeyDraft, removeDraft, discard, copyUploads };
+  return { composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, transportHasDraft, rekeyDraft, removeDraft, discard };
 }

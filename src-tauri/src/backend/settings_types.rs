@@ -101,7 +101,7 @@ pub(super) fn default_settings() -> AppSettings {
 }
 
 pub(super) fn session_operation_tools() -> Vec<Value> {
-    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree"), ("subagent", "Delegate parallel tasks to agents with saved transcripts"), ("request_user_input", "Ask the user questions with choices and free-text answers"), ("lookup_terminals", "Read session terminal activity through terminal-agent"), ("get_goal", "Read the current persistent goal"), ("create_goal", "Create a persistent goal with an optional token budget"), ("update_goal", "Complete, block or pause the current goal")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
+    [("subagent", "Delegate parallel tasks to agents with saved transcripts"), ("request_user_input", "Ask the user questions with choices and free-text answers"), ("lookup_terminals", "Read session terminal activity through terminal-agent"), ("get_goal", "Read the current persistent goal"), ("create_goal", "Create a persistent goal with an optional token budget"), ("update_goal", "Complete, block or pause the current goal")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
 }
 
 pub(super) fn codex_web_search_tool() -> Value {

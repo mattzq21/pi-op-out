@@ -16,7 +16,7 @@ import { BranchIcon } from "./BranchIcon";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 import { SessionTooltip } from "./SessionTooltip";
 
-export type SessionAction = "split" | "new-window" | "rename" | "clone" | "open-directory" | "archive" | "copy-id" | "open-rollout";
+export type SessionAction = "split" | "new-window" | "rename" | "open-directory" | "archive" | "copy-id" | "open-rollout";
 
 interface Props { transport: NativeTransport; settings: AppSettings; isArchiving: (session: SessionSummary) => boolean; debug?: boolean; sidebar: SidebarState; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
 

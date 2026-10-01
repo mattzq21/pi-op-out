@@ -1,6 +1,5 @@
 import { createRepositoryStatus } from "./lib/repositoryStatus";
 import { z } from "zod";
-import { agentStateSchema, entrySchema } from "./lib/responseSchemas";
 import { required } from "./lib/required";
 import { batch,createComputed,createMemo,createSignal } from "solid-js";
 import { createConversationArchive } from "./appArchive";
@@ -19,14 +18,13 @@ import { type SessionAction } from "./components/SessionPanel";
 import type { MissingDirectoryRequest } from "./components/MissingDirectoryDialog";
 import { encodeAgentValue } from "./lib/agentProtocol";
 import { isConversationChanged } from "./lib/conversationChanged";
-import { branchMessages } from "./lib/messages";
 import { initialWindowTarget,NativeTransport,openSessionWindow } from "./lib/nativeTransport";
 import { seedChatSelection } from "./lib/newChatSelection";
 import { chatSubmission,prepareChatWorktree } from "./lib/newChatWorktree";
 import { resolveNewSessionBranch } from "./lib/newSessionBranch";
 import { isMobile,listen } from "./lib/platform";
 import { sessionDebugAction } from "./lib/sessionDebugAction";
-import { inheritSessionGroup,updateSessionGroups,type SessionGroup } from "./lib/sessionGroups";
+import { updateSessionGroups,type SessionGroup } from "./lib/sessionGroups";
 import { createCachedSessionList } from "./lib/sessionListCache";
 import { useSessionResume } from "./lib/sessionResume";
 import { SessionRuntimePool,useTurnDiffs } from "./lib/sessionRuntimePool";
@@ -270,42 +268,6 @@ export function createAppConversations(preloadChat: () => void) {
     const capturedRuntimePool = runtimePool(); const capturedView = view(); const capturedTransport = transport();
     capturedRuntimePool.activate(capturedView === "chat" ? capturedTransport : undefined); }, () => [runtimePool(), transport(), view()]);
 
-  const parseBranchCommand = (branchCommand: RegExpExecArray) => {
-    const [, command, rawArgs = ""] = branchCommand;
-    const args = rawArgs.trim().split(/\s+/).filter(Boolean);
-    const hasNumber = args.length > 0 && /^[+-]?\d/.test(args[0]);
-    const number = hasNumber ? required(args.shift()) : "0";
-
-    if (!/^\d+$/.test(number) || !Number.isSafeInteger(Number(number))) throw new Error("The response number must be a non-negative integer");
-
-    if (command === "branch-off" && args.length) throw new Error("Usage: /branch-off [number]");
-    const responses = chatSession().messages.filter((message) => message.role === "assistant" && message.entryId && !message.streaming && message.stopReason !== "toolUse" && (message.stopReason === "aborted" || message.stopReason === "error" || (Array.isArray(message.content) ? message.content.some((part) => part.type === "text" && part.text?.trim()) : message.content.trim())));
-    const message = responses.at(-1 - Number(number));
-
-    if (!message) throw new Error(`No response exists ${number} responses back`);
-
-    return { command, args, message };
-  };
-
-  const sendBranchCommand = async (branchCommand: RegExpExecArray, images: ImageAttachment[]) => { const capturedBranchConversation = branchConversation(); const capturedIsGitRepository = isGitRepository(); const capturedProjectCwd = projectCwd(); const capturedActiveHostId = activeHostId(); const capturedTransport = transport();
-
-    if (images.length) throw new Error("Branch commands do not accept attachments");
-    const { command, args, message } = parseBranchCommand(branchCommand);
-
-    if (command === "branch-off") return capturedBranchConversation(message);
-
-    if (!capturedIsGitRepository || !capturedProjectCwd) throw new Error("Open a Git project before creating a worktree");
-    const target = { cwd: (capturedProjectCwd), hostId: capturedActiveHostId, message, transport: capturedTransport };
-
-    if (!args.length) { setWorktreeTarget(target);
-
-      return true; }
-
-    await createWorktree(target, args.join(" "));
-
-    return true;
-  };
-
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => { const capturedTransport = await prepareChatWorktree(transport(), async (cwd, host, onActivate) => { const group = pendingSessionGroups.current.get(transport()); await openProject(cwd, host, true, onActivate);
 
       if (group) pendingSessionGroups.current.set(transport(), group); }, transport, connected, error);
@@ -315,11 +277,6 @@ export function createAppConversations(preloadChat: () => void) {
     const imagePayload = images.length ? { images } : {};
 
     if (/^\/review(?:\s|$)/.test(text.trim())) reviewImages.set(capturedTransport, images);
-    const branchCommand = /^\/(worktree|branch-off)(?:\s+(.*))?$/s.exec(text.trim());
-
-    if (branchCommand) {
-      return sendBranchCommand(branchCommand, images);
-    }
 
     try {
       if (behavior) { await ownerTransport.submitPrompt({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload });
@@ -596,39 +553,6 @@ export function createAppConversations(preloadChat: () => void) {
 
   const archiveSession = archives.archiveSession;
 
-  const cloneSelectedSession = async (session: SessionSummary, selectedTransport: NativeTransport) => { const capturedRuntimePool = runtimePool(); const capturedSession = { ...chatSession() };
-    const hostId = session.hostId ?? "local";
-    const sourcePath = session.path; const previousKey = `${hostId}:${session.id}`;
-
-    try { await selectedTransport.connect(); const sourceDiffs = await capturedRuntimePool.captureMemoryDiffs(selectedTransport); const cloned = await selectedTransport.command({ type: "clone" }, z.object({ cancelled: z.boolean().optional() }));
-
-      if (cloned.cancelled) return; const nextState = await selectedTransport.command({ type: "get_state" }, agentStateSchema); await inheritSessionGroup(previousKey, `${hostId}:${nextState.sessionId}`, session); capturedRuntimePool.bind(hostId, nextState.sessionId, selectedTransport); rekeyConversationUi(previousKey, `${hostId}:${nextState.sessionId}`, selectedTransport, true, true);
-
-      if (!selectedTransport.isEphemeral()) { const sourceTransport = capturedRuntimePool.forSession(session); drafts.copyUploads(selectedTransport, sourceTransport); }
-
-      const history = await selectedTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) })); const nextMessages = branchMessages(history.entries, history.leafId);
-
-      if (activeTransportRef.current === selectedTransport) { capturedSession.setState(nextState); capturedSession.setMessages(nextMessages); updateConnected(true); }
-
-      try { await capturedRuntimePool.copySavedDiffs(selectedTransport, sourcePath, nextState.sessionFile, new Set(nextMessages.map((entry) => entry.id)), sourceDiffs); } catch (reason) { addNotice({ title: "Conversation cloned, but project changes could not be copied", message: reason instanceof Error ? reason.message : String(reason) }); }
-
-      await syncSessionIndex(); } catch (reason) { addNotice({ title: "Could not clone conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
-  };
-
-  const cloneSession = async (session: SessionSummary, action: SessionAction) => {
-    const actionKey = `${action}:${session.hostId ?? "local"}:${session.id}`;
-
-    if (sessionActionPending.current.has(actionKey)) return; sessionActionPending.current.add(actionKey);
-
-    try {
-      const selectedTransport = selectSession(session);
-
-      if (!selectedTransport) return;
-
-      if (action === "clone") { await cloneSelectedSession(session, selectedTransport); }
-    } finally { sessionActionPending.current.delete(actionKey); }
-  };
-
   const openSessionInWindow = async (session: SessionSummary) => { if (isMobile) { selectSession(session);
 
       return; }
@@ -661,7 +585,6 @@ export function createAppConversations(preloadChat: () => void) {
 
       return; }
 
-    return cloneSession(session, action);
   };
 
   const draftChangeFor = (sessionKey: string, owner?: NativeTransport) => (update: StateUpdate<string>) => setComposerDraft(owner ? transportConversationKeys.current.get(owner) ?? sessionKey : sessionKey, update);
@@ -705,7 +628,7 @@ export function createAppConversations(preloadChat: () => void) {
     return { agents: (definedAgents()?.config.agents ?? []), activeAgent: composerControls.agent(definedAgents()?.active), agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
 
   const chatModels = createMemo(() => chatSession().models.filter(model => !settings()?.hiddenModels.includes(`${model.provider}/${model.id}`)));
-  const chatCommands = createMemo<SlashCommand[]>(() => [{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...chatSession().commands.filter(command => !["branch-off", "worktree"].includes(command.name))]);
+  const chatCommands = createMemo<SlashCommand[]>(() => chatSession().commands);
   const chatWidgets = createMemo(() => extensionStateIsCurrent() ? Object.values(widgets()).flat() : []);
   const dirlessPending = new Set<string>();
   const [missingDirectoryDialog, setMissingDirectoryDialog] = createSignal<MissingDirectoryRequest>();
