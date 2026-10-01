@@ -41,7 +41,7 @@ function locate(cwd) {
   }
   const common = fs.realpathSync(git(top, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
   const own = fs.realpathSync(git(top, ['rev-parse', '--absolute-git-dir']));
-  if (own === common) throw new Error('The main checkout cannot be archived as a worktree; use a linked worktree');
+  if (own === common) return { path: top, kind: 'main' };
   if (inside(top, root) || inside(top, common)) throw new Error('The worktree contains storage needed for recovery');
   const source = git(common, ['worktree', 'list', '--porcelain', '-z']).split('\0').find((entry) => entry.startsWith('worktree '))?.slice(9);
   if (!source) throw new Error('Could not locate the parent checkout');
@@ -123,7 +123,8 @@ function main() {
     byDirectory.get(location.path).records.push(record);
   }
   const groups = [...byDirectory.values()];
-  for (const group of groups) {
+  const removable = groups.filter((group) => group.kind !== 'main');
+  for (const group of removable) {
     if (groups.some((other) => other !== group && inside(group.path, other.path))) throw new Error('Overlapping session directories cannot be archived together');
     if (records.some((record) => inside(group.path, record.file))) throw new Error('The working directory contains conversation storage and cannot be moved');
   }
@@ -131,16 +132,18 @@ function main() {
     let canonical;
     try { canonical = fs.realpathSync(cwd); }
     catch (error) { if (error.code === 'ENOENT') return; throw error; }
-    if (groups.some((group) => inside(group.path, canonical))) throw new Error(`Another chat or terminal still uses ${cwd}`);
+    if (removable.some((group) => inside(group.path, canonical))) throw new Error(`Another chat or terminal still uses ${cwd}`);
   };
-  walkSessions(sessions, (file) => { if (!selected.has(file)) assertUnused(readSession(file).header.cwd); });
-  request.terminals.forEach(assertUnused);
+  if (removable.length) {
+    walkSessions(sessions, (file) => { if (!selected.has(file)) assertUnused(readSession(file).header.cwd); });
+    request.terminals.forEach(assertUnused);
+  }
   if (request.inspect) {
     process.stdout.write(JSON.stringify(groups.filter((group) => group.kind === 'git').map(({ path, source }) => ({ path, source }))));
     return;
   }
   fs.mkdirSync(archive, { recursive: true });
-  fs.mkdirSync(storedDirectories, { recursive: true });
+  if (removable.length) fs.mkdirSync(storedDirectories, { recursive: true });
   const transaction = fs.mkdtempSync(path.join(root, 'archive-transaction-'));
   try {
     for (const group of groups) {
@@ -150,7 +153,8 @@ function main() {
         record.backup = path.join(transaction, `${randomUUID()}.jsonl`);
         fs.copyFileSync(record.file, record.backup, fs.constants.COPYFILE_EXCL);
         if (group.kind === 'git') rewriteCheckpoints(record, group);
-        record.header.worktreeRestore = {
+        if (group.kind === 'main') delete record.header.worktreeRestore;
+        else record.header.worktreeRestore = {
           kind: group.kind, path: group.path, conversationPath: fs.realpathSync(record.header.cwd),
           ...(group.kind === 'git' ? { repositoryRoot: group.common, commit: group.commit, ref: group.refs[index] } : { storedPath: group.storedPath }),
         };
@@ -162,7 +166,7 @@ function main() {
       }
     }
     fs.writeFileSync(path.join(transaction, 'recovery.json'), JSON.stringify({ groups, records }), { flag: 'wx', mode: 0o600 });
-    for (const group of groups) {
+    for (const group of removable) {
       if (group.kind === 'directory') fs.renameSync(group.path, group.storedPath);
       else git(group.common, ['worktree', 'move', '--force', '--force', group.path, group.storedPath]);
       group.moved = true;
