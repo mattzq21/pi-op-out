@@ -172,7 +172,7 @@ export function Message(componentProps: Props) {
       const renderStreamCaret = () => (streaming() && <span class="stream-caret" />);
       const renderMessageActions = () => {
         const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={copy}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
-        const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label={`Branch from ${metadata().responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching() || forgetting()} onClick={() => void branch()}><GitBranch size={14} /></button>);
+        const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label="Branch off" title="Branch off" disabled={branching() || forgetting()} onClick={() => void branch()}><GitBranch size={14} /></button>);
         const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
         const renderCacheHitRate = () => ((componentProps.debug === undefined ? false : componentProps.debug) && metadata().cache && <span class={`cache-hit-rate${(metadata().cache)!.low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${(metadata().cache)!.rate}%, ${(metadata().cache)!.cachedTokens}/${(metadata().cache)!.promptTokens}`}>Cache {(metadata().cache)!.rate}%<span class="cache-fraction-tooltip" aria-hidden="true"><span>{cacheTokenDigits((metadata().cache)!.cachedTokens)}</span><span>{cacheTokenDigits((metadata().cache)!.promptTokens)}</span></span></span>);
         return ((componentProps.showActions === undefined ? true : componentProps.showActions) && !streaming() && (output().trim().length > 0 || componentProps.message.stopReason === "aborted" || componentProps.onCreateWorktree) && <div class="message-actions">
@@ -180,7 +180,7 @@ export function Message(componentProps: Props) {
           {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy response</span>}
           {renderBranchAction()}
           {renderForkAndForgetAction()}
-          {componentProps.onCreateWorktree && <button class="branch-button" aria-label="Create Git worktree" title="Create Git worktree after this response" onClick={() => (componentProps.onCreateWorktree)!(componentProps.message)}><FolderGit2 size={14} /></button>}
+          {componentProps.onCreateWorktree && <button class="branch-button" aria-label="Wortktree off" title="Wortktree off" onClick={() => (componentProps.onCreateWorktree)!(componentProps.message)}><FolderGit2 size={14} /></button>}
           {renderCacheHitRate()}
           {metadata().responseTime && <span class="message-time">{(metadata().responseTime)!.short}</span>}
         </div>);
