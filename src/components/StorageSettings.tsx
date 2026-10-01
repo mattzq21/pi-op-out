@@ -18,6 +18,12 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
   "other-storage": { name: "Other storage", description: "Settings, caches, logs, and other piop files", icon: HardDrive, item: "directory" },
 };
 
+const storageSections: { title: string; categories: StorageCategory["id"][] }[] = [
+  { title: "General", categories: ["project-checkpoints", "worktrees", "other-storage"] },
+  { title: "Active sessions", categories: ["active-conversations", "git-diff-snapshots", "temporary-chats"] },
+  { title: "Archived sessions", categories: ["archived-conversations", "archived-worktrees"] },
+];
+
 function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes)) return "—";
   if (bytes < 1024) return `${bytes} B`;
@@ -118,8 +124,8 @@ export function StorageSettings(componentProps: { hostId?: string }) {
       const maximum = createMemo(() => (Math.max(...host().categories.map((category) => category.byteSize), 1)));
       const deletableArchives = createMemo(() => (host().archives.filter((archive) => archive.deletable)));
       const renderHostHeader = () => (<header><span class="config-icon"><Database size={16} /></span><span><strong>{host().hostName}</strong><small>{host().error ? "Storage unavailable" : `${approximate() ? "About " : ""}${formatBytes(total())} ${host().warnings.length ? "measured · incomplete" : "total disk usage"}`}</small></span></header>);
-      const renderStorageHostError = () => (<Show when={!host().error} fallback={<div class="storage-host-error" role="alert">{host().error}</div>}>
-        <div class="storage-categories">{<Key each={host().categories.filter((category) => category && categoryDetails[category.id])} by={(category) => category.id}>{(category, _index) => {
+      const renderCategories = (categories: StorageCategory[]) => (
+        <div class="storage-categories">{<Key each={categories} by={(category) => category.id}>{(category, _index) => {
           const details = createMemo(() => (categoryDetails[category().id])); const CategoryIcon = createMemo(() => (details().icon));
           return <div class="storage-category" >
             <span class="storage-category-icon"><Dynamic component={CategoryIcon()} size={15} /></span>
@@ -127,7 +133,17 @@ export function StorageSettings(componentProps: { hostId?: string }) {
             <code>{category().estimated && category().byteSize > 0 ? "~" : ""}{formatBytes(Number(category().byteSize) || 0)}</code>
           </div>;
         }}</Key>}</div>
+      );
+      const renderStorageHostError = () => (<Show when={!host().error} fallback={<div class="storage-host-error" role="alert">{host().error}</div>}>
         {host().warnings.length > 0 && <div class="storage-warning" title={host().warnings.join("\n")}>Storage could not be fully measured at {host().warnings.length} location{host().warnings.length === 1 ? "" : "s"}. The total is incomplete.</div>}
+        {storageSections.map((section) => {
+          const categories = createMemo(() => section.categories.flatMap((id) => host().categories.filter((category) => category.id === id)));
+          const subtotal = createMemo(() => categories().reduce((sum, category) => sum + category.byteSize, 0));
+          const estimated = createMemo(() => categories().some((category) => category.estimated && category.byteSize > 0));
+          return <section class="storage-group" aria-label={section.title}>
+            <div class="storage-group-heading"><h3>{section.title}</h3><code>{estimated() ? "~" : ""}{formatBytes(subtotal())}</code></div>
+            {renderCategories(categories())}
+            {section.title === "Archived sessions" && <>
         <div class="archive-heading"><span><strong>Archived conversations</strong><small>{host().archives.length ? `${host().archives.length} stored on ${host().hostName}` : `No archives on ${host().hostName}`}</small></span>{deletableArchives().length > 1 && <button class="storage-delete-all" disabled={deleting().size > 0 || loading()} onClick={() => deleteAll(host())}><Trash2 size={13} />{deletableArchives().length === host().archives.length ? "Delete all" : "Delete available"}</button>}</div>
         {host().archives.length > 0 && <div class="archive-list">{<Key each={host().archives} by={archive => archive.path}>{(archive, _index) => {
           if (!archive() || typeof archive().path !== "string") return null;
@@ -144,6 +160,9 @@ export function StorageSettings(componentProps: { hostId?: string }) {
             {renderArchiveDelete()}
           </div>;
         }}</Key>}</div>}
+            </>}
+          </section>;
+        })}
       </Show>);
       return <section class="storage-host" >
         {renderHostHeader()}
