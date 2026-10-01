@@ -132,6 +132,14 @@ export function createAppConversations(preloadChat: () => void) {
 
   const terminals = createTerminalController({
     transport, conversationKey: activeConversationKey, addNotice,
+    sessionTransport: key => {
+      if (key === activeConversationKey()) return transport();
+      const pane = splitPane();
+
+      if (pane && splitConversationKey(pane) === key) return runtimePool().forSession(pane.session);
+
+      return [...transportConversationKeys.current].find(([, value]) => value === key)?.[0];
+    },
     location: () => ({ cwd: activeCwd() ?? sessions().find(session => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId())?.cwd, hostId: activeHostId() }),
   });
 

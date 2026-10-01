@@ -159,6 +159,10 @@ impl ConversationOwnership {
         }
     }
 
+    pub fn owns(&self, id: &str, client: &str) -> Result<bool> {
+        Ok(!client.is_empty() && self.read(id)?.is_some_and(|record| !flag(&record, "deleted") && record["client"].as_str() == Some(client)))
+    }
+
     fn read(&self, id: &str) -> Result<Option<Value>> {
         match std::fs::read(self.directory.join(format!("{}.json", Self::key(id)?))) {
             Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| error.to_string()),

@@ -1,4 +1,5 @@
 use super::*;
+use crate::{daemon, BrokerRuntime};
 use std::time::SystemTime;
 
 const RETAINED_BYTES: usize = 4 * 1024 * 1024;
@@ -116,6 +117,13 @@ pub(crate) fn discard_drafts(runtime: &TerminalRuntime, owner_prefix: &str) -> R
     Ok(())
 }
 
+fn session_owned(app: &AppHandle, session_id: &str, client: &str, draft_owned: bool) -> Result<bool, String> {
+    if session_id.starts_with("draft-") { return Ok(draft_owned); }
+    let settings = load_app_settings(app.clone())?;
+    let daemon = daemon::connect(app, &app.state::<PiRuntime>(), &app.state::<BrokerRuntime>(), &settings, "local")?;
+    Ok(daemon.request(json!({"type":"conversation_owner","sessionId":session_id,"clientId":client}))?.as_bool() == Some(true))
+}
+
 pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Result<Value, String> {
     let runtime = app.state::<TerminalRuntime>();
     let action = request["action"].as_str().ok_or("Missing terminal action")?;
@@ -125,10 +133,12 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
         discard_drafts(&runtime, &owner_prefix)?;
         return Ok(Value::Null);
     }
-    let owner = format!("{owner_prefix}{}", request["terminalClientId"].as_str().ok_or("Missing terminal client")?);
+    let owner = format!("{owner_prefix}{}", request["clientId"].as_str().ok_or("Missing session client")?);
     let session_key = request["sessionKey"].as_str().unwrap_or_default();
     let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);
+    let client = request["clientId"].as_str().ok_or("Missing session client")?;
     if action == "list" {
+        let owned = session_owned(app, session_id, client, true)?;
         let history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
         let mut entries: Vec<_> = history.iter().filter(|(_, item)| item.session_id == session_id && item.host_id == "local").collect();
         entries.sort_by_key(|(_, item)| item.creation_order);
@@ -136,12 +146,19 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
             let known = &request["known"][id];
             let unchanged = known["generation"].as_str() == Some(item.generation.to_string().as_str()) && known["outputEnd"].as_u64() == Some(item.text_end);
             json!({"id":id,"output":if unchanged { Value::Null } else { json!(item.output) },"outputEnd":item.text_end,
-                "generation":item.generation.to_string(),"owned":item.owner == owner,"started":true,"exited":!item.running})
+                "generation":item.generation.to_string(),"owned":owned && (!session_id.starts_with("draft-") || item.owner == owner),"started":true,"exited":!item.running})
         }).collect::<Vec<_>>()));
     }
     let id = request["sharedTerminalId"].as_str().ok_or("Missing terminal ID")?;
     if action == "start" {
-        runtime.ensure_owner(id, &owner)?;
+        if !session_owned(app, session_id, client, true)? { return Err("Take ownership of this session before changing its terminals".into()); }
+        {
+            let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime unavailable")?;
+            let mut history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
+            if history.get(id).is_some_and(|item| item.session_id != session_id) { return Err("Terminal belongs to another session".into()); }
+            if let Some(item) = history.get_mut(id) { item.owner = owner.clone(); }
+            if let Some(process) = processes.get_mut(id) { process.window_label = owner.clone(); }
+        }
         start_terminal_for_owner(app.clone(), owner, runtime, StartTerminalOptions {
             terminal_id: id.into(), session_key: format!("local:{session_id}"), cwd: request["cwd"].as_str().ok_or("Missing working directory")?.into(),
             cols: dimension(request, "cols")?, rows: dimension(request, "rows")?, host_id: Some("local".into()),
@@ -156,15 +173,12 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
     }
     let item = history.get_mut(id).ok_or("Terminal is unavailable")?;
     let previous_session = item.session_id.clone();
-    if action == "claim" {
-        item.owner = owner.clone();
-        if let Some(process) = processes.get_mut(id) { process.window_label = owner; }
-        drop(history);
-        drop(processes);
-        changed(app, &previous_session);
-        return Ok(Value::Null);
+    if !session_owned(app, &previous_session, client, item.owner == owner)? {
+        return Err("Take ownership of this session before changing its terminals".into());
     }
-    if item.owner != owner { return Err("Click the terminal to take ownership".into()); }
+    if action == "reassign" && !session_owned(app, session_id, client, true)? {
+        return Err("Take ownership of the destination session first".into());
+    }
     match action {
         "write" => {
             let data = request["data"].as_str().ok_or("Missing terminal input")?;

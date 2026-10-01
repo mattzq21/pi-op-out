@@ -13,7 +13,6 @@ class NativeTerminals {
   private writes = new Map<string, Promise<void>>();
   private starts = new Map<string, Promise<void>>();
   private hosts = new Map<string, string>();
-  private clientId = crypto.randomUUID();
   private transcripts = new Map<string, { generation: string; outputEnd: number; output: string; sessionKey: string; hostId: string }>();
   private cacheRevision = 0;
   private reassignments = new Map<string, Promise<void>>();
@@ -25,7 +24,7 @@ class NativeTerminals {
   }
 
   private command(action: string, terminalId: string, args: Record<string, unknown> = {}) {
-    return this.call("shared_terminal", { action, sharedTerminalId: terminalId, terminalClientId: this.clientId, hostId: this.hosts.get(terminalId) ?? "local", ...args }, voidResultSchema);
+    return this.call("shared_terminal", { action, sharedTerminalId: terminalId, hostId: this.hosts.get(terminalId) ?? "local", ...args }, voidResultSchema);
   }
 
   async list(sessionKey: string, hostId: string): Promise<SharedTerminal[]> {
@@ -33,7 +32,7 @@ class NativeTerminals {
     const revision = this.cacheRevision;
     const cached = new Map([...this.transcripts].filter(([, value]) => value.sessionKey === sessionKey && value.hostId === hostId));
     const known = Object.fromEntries([...cached].map(([id, value]) => [id, { generation: value.generation, outputEnd: value.outputEnd }]));
-    const response = await this.call("shared_terminal", { action: "list", sessionKey, hostId, known, terminalClientId: this.clientId }, sharedTerminalsSchema);
+    const response = await this.call("shared_terminal", { action: "list", sessionKey, hostId, known }, sharedTerminalsSchema);
     if (revision !== this.cacheRevision) return this.list(sessionKey, hostId);
     const terminals = response.map(terminal => ({ ...terminal, output: terminal.output ?? cached.get(terminal.id)?.output ?? "" }));
     const ids = new Set(terminals.map(terminal => terminal.id));
@@ -49,8 +48,6 @@ class NativeTerminals {
     }
     return terminals;
   }
-
-  claim(terminalId: string) { return this.command("claim", terminalId); }
 
   start(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId: string) {
     this.hosts.set(terminalId, hostId);

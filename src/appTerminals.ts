@@ -8,12 +8,13 @@ import { nativeTerminals, type TerminalEvent } from "./lib/nativeTerminals";
 
 type TerminalContext = {
   transport: Accessor<NativeTransport>;
+  sessionTransport: (key: string) => NativeTransport | undefined;
   conversationKey: Accessor<string>;
   location: Accessor<{ cwd?: string; hostId: string }>;
   addNotice: (notice: { title: string; message: string }) => void;
 };
 
-export function createTerminalController({ transport, conversationKey, location, addNotice }: TerminalContext) {
+export function createTerminalController({ transport, sessionTransport, conversationKey, location, addNotice }: TerminalContext) {
   const [terminalOpen, setTerminalOpen] = createSignal(false);
   const [terminalTarget, setTerminalTarget] = createSignal<TerminalTarget>();
   const [terminalsBySession, setTerminalsBySession] = createSignal<Record<string, SessionTerminals>>({});
@@ -37,6 +38,18 @@ export function createTerminalController({ transport, conversationKey, location,
   });
 
   const terminalState = () => state;
+  const [owned, setOwned] = createSignal(false);
+  createEffect(() => {
+    const owner = sessionTransport(terminalSessionId());
+    setOwned(owner?.ownsConversation() ?? false);
+    const stop = owner?.subscribe(event => {
+      if (event.type === "ownership_acquired" || event.type === "ownership_lost") {
+        setOwned(owner.ownsConversation());
+        void refreshShared();
+      }
+    });
+    onCleanup(() => stop?.());
+  });
   const [readySession, setReadySession] = createSignal<string>();
   const ready = () => readySession() === terminalSessionId();
   let refreshShared = async () => {};
@@ -119,8 +132,8 @@ export function createTerminalController({ transport, conversationKey, location,
     onCleanup(() => { cancelled = true; unlisten?.(); buffered = []; setReadySession(undefined); });
   });
   const takeOwnership = async () => {
-    try { await nativeTerminals.claim(state.activeTerminal.id); await refreshShared(); }
-    catch (reason) { addNotice({ title: "Could not take terminal ownership", message: String(reason) }); }
+    try { const owner = sessionTransport(terminalSessionId()); if (!owner) throw new Error("Session is unavailable"); await owner.takeOwnership(); setOwned(owner.ownsConversation()); await refreshShared(); }
+    catch (reason) { addNotice({ title: "Could not take session ownership", message: String(reason) }); }
   };
   const queuedTerminalOutput = createRef(new Map<string, QueuedTerminalOutput>());
   const terminalOutputFrame = createRef<number | undefined>(undefined);
@@ -141,7 +154,7 @@ export function createTerminalController({ transport, conversationKey, location,
 
   const startTerminal = async (terminalId: string, cols: number, rows: number) => { const capturedTerminalSessionId = terminalSessionId(); const capturedTerminalLocationState = { ...terminalLocationState() }; const capturedTransport = transport();
 
-    if (startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
+    if (!owned() || startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
     const sessionKey = capturedTerminalSessionId;
     setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey);
 
@@ -159,7 +172,7 @@ export function createTerminalController({ transport, conversationKey, location,
     return session ? { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: false, exited: true } : terminal) } } : current; }); queueTerminalOutput(terminalId, `\r\nCould not start terminal: ${String(reason)}\r\n`); } finally { startingTerminals.current.delete(terminalId); }
   };
 
-  const addTerminal = () => { const sessionKey = terminalSessionId(); setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey);
+  const addTerminal = () => { if (!owned()) return; const sessionKey = terminalSessionId(); setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey);
 
   if (session.tabs.length >= MAX_TERMINALS) return current; const id = `shared-terminal-${sessionKey}-${crypto.randomUUID()}`;
 
@@ -175,7 +188,7 @@ export function createTerminalController({ transport, conversationKey, location,
 
   return { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, snapshot, snapshotEnd } : terminal) } }; }); };
 
-  const deleteTerminal = async () => { const capturedComposerState = { ...terminalState() }; const capturedTerminalSessionId = terminalSessionId(); const capturedTransport = transport();
+  const deleteTerminal = async () => { if (!owned()) return; const capturedComposerState = { ...terminalState() }; const capturedTerminalSessionId = terminalSessionId(); const capturedTransport = transport();
     const terminalId = capturedComposerState.activeTerminal.id; const closingLast = capturedComposerState.sessionTerminals.tabs.length === 1; const panelTarget = capturedTerminalSessionId; const panelRevision = terminalPanelRevision.current;
 
     if (closingTerminals.current.has(terminalId)) return; closingTerminals.current.add(terminalId);
@@ -257,15 +270,15 @@ export function createTerminalController({ transport, conversationKey, location,
   const close = () => { terminalPanelRevision.current += 1; setTerminalOpen(false); };
 
   const write = (data: string) => {
-    if (!ready() || state.activeTerminal.owned === false) return;
+    if (!ready() || !owned()) return;
     const id = state.activeTerminal.id;
     void transport().writeTerminal(id, data).catch(reason => { addNotice({ title: "Terminal input failed", message: String(reason) }); void refreshShared(); });
   };
 
-  const resize = (cols: number, rows: number) => { if (ready() && state.activeTerminal.owned !== false) void transport().resizeTerminal(state.activeTerminal.id, cols, rows).catch(() => undefined); };
+  const resize = (cols: number, rows: number) => { if (ready() && owned()) void transport().resizeTerminal(state.activeTerminal.id, cols, rows).catch(() => undefined); };
 
   return {
-    terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, takeOwnership,
+    terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, owned, takeOwnership,
     viewKey: createMemo(() => `${terminalSessionId()}:${state.activeTerminal.id}:${state.activeTerminal.generation ?? ""}`),
     startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal,
     queueTerminalOutput, flushOutput, exited, conversationTerminalIds, allTerminalIds, draftTerminalIds,
