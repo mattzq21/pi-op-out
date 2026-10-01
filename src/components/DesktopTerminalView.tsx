@@ -21,6 +21,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
   const [draftStyle, setDraftStyle] = createSignal<CSSProperties>({ display: "none" });
   const terminalMount = createRef<HTMLDivElement>(null);
   const outputWrites = createRef(Promise.resolve());
+  const resizeToHost = createRef<(() => void) | undefined>(undefined);
   const host = createRef<HTMLDivElement>(null); const terminal = createRef<Terminal | undefined>(undefined); const lastOutputEnd = createRef(0); const queuedOutputEnd = createRef(0); const tabRefs = createRef(new Map<string, HTMLButtonElement>());
   const callbacks = createRef({ onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }); createComputed(() => { callbacks.current = { onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }; });
 
@@ -125,9 +126,33 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     const cursor = instance.onCursorMove(revealCursor);
     const draftRender = instance.onRender(positionDraft);
     const draftScroll = instance.onScroll(positionDraft);
-    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(revealCursor); observer?.observe(host.current);
+    let resizeTimer: number | undefined;
+    let requestedSize: string | undefined;
+
+    const fitShell = () => {
+      if (componentProps.ownershipRequired || !componentProps.started || componentProps.exited) return;
+      const size = fit.proposeDimensions();
+
+      if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
+      const key = `${size.cols}:${size.rows}`;
+
+      if (key === requestedSize) return;
+      requestedSize = key;
+      void componentProps.onResize?.(size.cols, size.rows).catch(() => { requestedSize = undefined; });
+    };
+
+    const scheduleResize = () => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(fitShell, 150);
+      revealCursor();
+    };
+
+    resizeToHost.current = () => { requestedSize = undefined; scheduleResize(); };
+
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(scheduleResize); observer?.observe(host.current);
 
     return () => { saveSnapshot(restored ? `\u001b[8;${instance.rows};${instance.cols}t${serializer.serialize()}` : capturedSnapshot1 || "", restored ? lastOutputEnd.current : capturedSnapshotEnd2 ?? 0); observer?.disconnect();
+    window.clearTimeout(resizeTimer); resizeToHost.current = undefined;
 
     if (cursorFrame !== undefined) cancelAnimationFrame(cursorFrame); cursor.dispose(); draftRender.dispose(); draftScroll.dispose(); data.dispose(); sizeHandler.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
   }, () => [componentProps.activeId, componentProps.cwd]);
@@ -140,7 +165,8 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
 
     if (componentProps.ownershipRequired) instance.blur();
     else if (!componentProps.started && !componentProps.exited) callbacks.current.onStart(componentProps.activeId, instance.cols, instance.rows);
-  }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired]);
+    resizeToHost.current?.();
+  }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired, componentProps.started, componentProps.exited]);
 
   createDependencyEffect(() => { const capturedOutputEnd0 = componentProps.outputEnd; const capturedOutput1 = componentProps.output;
     const instance = terminal.current;

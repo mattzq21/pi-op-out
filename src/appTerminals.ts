@@ -299,6 +299,16 @@ export function createTerminalController({ transport, sessionTransport, conversa
     void nativeTerminals.write(state.activeTerminal.id, data, "draft").catch(reason => addNotice({ title: "Could not sync terminal input", message: String(reason) }));
   };
 
+  const resize = async (cols: number, rows: number) => {
+    if (isMobile || !ready() || !owned()) return;
+
+    try { await transport().resizeTerminal(state.activeTerminal.id, cols, rows); }
+    catch (reason) {
+      addNotice({ title: "Could not resize terminal", message: String(reason) });
+      throw reason;
+    }
+  };
+
   createDependencyEffect(() => {
     if (isMobile || !ready() || !owned() || !state.activeTerminal.inputDraft) return;
     void nativeTerminals.write(state.activeTerminal.id, "", "adopt_draft").catch(reason => addNotice({ title: "Could not restore terminal input", message: String(reason) }));
@@ -310,6 +320,6 @@ export function createTerminalController({ transport, sessionTransport, conversa
     startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal,
     queueTerminalOutput, flushOutput, exited, conversationTerminalIds, allTerminalIds, draftTerminalIds,
     forgetConversation, removeConversationTerminals, resetConversation, rekeyConversation,
-    toggleFor, toggle, close, write, updateDraft,
+    toggleFor, toggle, close, write, updateDraft, resize,
   };
 }
