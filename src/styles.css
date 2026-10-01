@@ -107,7 +107,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .terminal-panel-resizer:hover::after, .terminal-panel-resizer.dragging::after, .terminal-panel-resizer:focus-visible::after { background: var(--accent); }
 .terminal-panel-resizer:focus-visible { outline: none; }
 .terminal-surface .terminal-host .xterm { min-width: 100%; min-height: 100%; }
-.terminal-surface.ownership-required { background: #1d1d1b; filter: brightness(.6); }
+.terminal-surface.ownership-required, .terminal-transcript-body.ownership-required { background: #1d1d1b; filter: brightness(.6); }
 .terminal-transcript-body { position: relative; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .terminal-transcript { flex: 1; min-height: 0; margin: 0; padding: 8px 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .terminal-command { display: inline; }
