@@ -10,7 +10,7 @@ import type { TerminalViewProps } from "./TerminalView";
 export function MobileTerminalView(componentProps: TerminalViewProps) {
   const [command, setCommand] = createSignal("");
   const host = createRef<HTMLDivElement>(null);
-  const input = createRef<HTMLInputElement>(null);
+  const input = createRef<HTMLSpanElement>(null);
   const tabRefs = createRef(new Map<string, HTMLButtonElement>());
   const history: string[] = [];
   let historyIndex = 0;
@@ -37,6 +37,12 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
 
   const disabled = () => Boolean(componentProps.ownershipRequired || !componentProps.started || componentProps.exited);
   const canAdd = createMemo(() => componentProps.terminals.length < 8);
+
+  createDependencyEffect(() => {
+    const element = input.current;
+
+    if (element && element.textContent !== command()) element.textContent = command();
+  }, () => [command(), componentProps.ownershipRequired]);
 
   createDependencyEffect(() => {
     if (componentProps.cwd && !componentProps.ownershipRequired && !componentProps.started && !componentProps.exited) componentProps.onStart(componentProps.activeId, 80, 24);
@@ -99,6 +105,12 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     componentProps.onDraft(value);
   };
 
+  const browseHistory = (direction: number) => {
+    if (historyIndex === history.length) draft = command();
+    historyIndex = Math.max(0, Math.min(history.length, historyIndex + direction));
+    editCommand(historyIndex === history.length ? draft : history[historyIndex]);
+  };
+
   let takingOwnership = false;
 
   const focusInput = async () => {
@@ -133,17 +145,17 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
         if (element) followOutput = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
       }}><span><For each={transcript().segments}>{segment => <span style={segment.style}>{segment.text}</span>}</For></span>{!componentProps.ownershipRequired &&
         <form class="terminal-command" onSubmit={event => { event.preventDefault(); send(); }}>
-          <input ref={element => { input.current = element; }} aria-label="Terminal command" size={Math.max(1, command().length + 1)} value={command()} disabled={disabled()} autocomplete="off" autocapitalize="off" spellcheck={false} onInput={event => editCommand(event.currentTarget.value)} onKeyDown={event => {
+          <span ref={element => { input.current = element; element.textContent = command(); }} role="textbox" aria-label="Terminal command" aria-multiline="true" aria-disabled={disabled()} tabIndex={disabled() ? -1 : 0} contentEditable={disabled() ? false : "plaintext-only"} autocapitalize="off" spellcheck={false} onInput={event => editCommand(event.currentTarget.textContent ?? "")} onKeyDown={event => {
             if (event.isComposing) return;
 
-            if (event.ctrlKey && event.key.toLowerCase() === "c" && event.currentTarget.selectionStart === event.currentTarget.selectionEnd) { event.preventDefault(); interrupt(); }
+            if (event.key === "Enter") { event.preventDefault(); send(); }
+
+            if (event.ctrlKey && event.key.toLowerCase() === "c" && window.getSelection()?.isCollapsed) { event.preventDefault(); interrupt(); }
 
             if (event.key === "ArrowUp" || event.key === "ArrowDown") {
               event.preventDefault();
 
-              if (historyIndex === history.length) draft = command();
-              historyIndex = Math.max(0, Math.min(history.length, historyIndex + (event.key === "ArrowUp" ? -1 : 1)));
-              editCommand(historyIndex === history.length ? draft : history[historyIndex]);
+              browseHistory(event.key === "ArrowUp" ? -1 : 1);
             }
           }} />
         </form>}

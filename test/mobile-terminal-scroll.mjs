@@ -61,4 +61,22 @@ try {
   await page.waitForFunction(()=>window.claims===1);
   assert.equal(await page.locator('[aria-label="Terminal command"]').evaluate(el=>document.activeElement===el),true,'a tap must take ownership and focus input');
   console.log('PASS: history scrolls with or without ownership; tapping still claims and focuses input');
+  const command=page.getByRole('textbox',{name:'Terminal command'});
+  await command.fill('abcdefghij '.repeat(12));
+  const layout=await command.evaluate(el=>({height:el.getBoundingClientRect().height,lineHeight:parseFloat(getComputedStyle(el).lineHeight)}));
+  assert.ok(layout.height>layout.lineHeight*2,'long mobile commands must wrap onto visible lines');
+  assert.ok(await transcript.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'command must not hide its beginning in horizontal scrolling');
+  await command.press('End');
+  await page.keyboard.insertText('suffix');
+  assert.equal(await page.evaluate(()=>window.lastDraft),'abcdefghij '.repeat(12)+'suffix','typing must preserve the caret and publish the whole draft');
+  await command.press('Enter');
+  assert.equal(await page.evaluate(()=>window.lastData),'abcdefghij '.repeat(12)+'suffix\r');
+  assert.equal(await command.textContent(),'');
+  await command.fill('x'.repeat(500));
+  assert.ok(await transcript.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'unbroken commands must also wrap');
+  await command.press('End');
+  await command.press('Control+c');
+  assert.equal(await page.evaluate(()=>window.lastData),'\u0003');
+  assert.equal(await command.textContent(),'');
+  console.log('PASS: commands wrap, drafts update, Enter submits and Ctrl+C interrupts');
 } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}

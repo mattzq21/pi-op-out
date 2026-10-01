@@ -19,5 +19,5 @@ render(() => <div style={{ height: '700px', display: 'flex', 'flex-direction': '
   <MobileTerminalView cwd="/tmp" activeId="scroll" terminals={[{ id: 'scroll', label: 'Terminal' }]}
     ownershipRequired={unowned()} onTakeOwnership={async () => { window.claims++; setUnowned(false); }}
     output={output()} outputEnd={output().length} started={true} onStart={() => {}}
-    onData={() => {}} onSnapshot={() => {}} onDraft={() => {}} onAdd={() => {}} onSelect={() => {}} onDelete={() => {}} onClose={() => {}} />
+    onData={value => { window.lastData = value; }} onSnapshot={() => {}} onDraft={value => { window.lastDraft = value; }} onAdd={() => {}} onSelect={() => {}} onDelete={() => {}} onClose={() => {}} />
 </div>, document.getElementById('app'));
