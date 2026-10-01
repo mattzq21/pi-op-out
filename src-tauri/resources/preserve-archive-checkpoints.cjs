@@ -76,8 +76,10 @@ function preserveResponse(header, entries) {
 
   if (header.worktreeRestore?.kind === 'git') {
     if (sameRepository(header.worktreeRestore.repositoryRoot)) verifyRef(header.worktreeRestore.ref, header.worktreeRestore.commit);
+
     return false;
   }
+
   if (sameRepository(header.cwd)
 
     && fs.realpathSync(git(header.cwd, ['rev-parse', '--show-toplevel'])) === fs.realpathSync(target)) {

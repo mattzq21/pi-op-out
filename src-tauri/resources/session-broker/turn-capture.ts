@@ -21,6 +21,7 @@ export function registerTurnCapture(pi: ExtensionAPI) {
   if (!script) return;
 
   const publish = (ctx: ExtensionContext, capture: TurnCapture) => ctx.ui.setStatus("pi-desktop-turn-capture", JSON.stringify(capture));
+
   const snapshot = async (cwd: string, ctx: ExtensionContext, turnId: string, phase: string) => {
 
     try {

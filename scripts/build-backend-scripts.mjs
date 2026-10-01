@@ -2,7 +2,7 @@ import { build } from "esbuild";
 import { writeFile } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 
-const scripts = ["cleanup-ephemeral-session", "session-descendants", "archive-worktree", "restore-archived-worktree", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "preserve-archive-checkpoints"];
+const scripts = ["cleanup-ephemeral-session", "session-descendants", "archive-conversations", "archive-worktree", "restore-archived-worktree", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "preserve-archive-checkpoints"];
 
 await Promise.all(scripts.map(async name => {
   const result = await build({

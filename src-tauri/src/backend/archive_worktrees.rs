@@ -35,7 +35,7 @@ fn cleanup_worktree_scripts(settings: &AppSettings, host_id: &str, worktrees: Ve
 
 fn archive_command(settings: &AppSettings, host_id: &str, arguments: &serde_json::Value) -> Result<LimitedOutput, String> {
     let arguments = arguments.to_string();
-    let script = include_str!("../../resources/archive-conversations.cjs");
+    let script = include_str!("../../resources/archive-conversations.bundle.mjs");
     let mut command = if host_id == "local" {
         let mut command = node_command();
         command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, &arguments]); command

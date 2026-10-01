@@ -88,7 +88,7 @@ export function SessionPanel(props: Props) {
 
   const closeMenu = (restoreFocus = false) => { const target = groupMenu()?.returnFocus ?? menu()?.returnFocus; setMenu(undefined); setGroupMenu(undefined);
 
-  if (restoreFocus) requestAnimationFrame(() => target?.focus()); };
+    if (restoreFocus) requestAnimationFrame(() => target?.focus()); };
 
   createDependencyEffect(() => { const capturedMenu = menu(); const capturedGroupMenu = groupMenu();
 
@@ -127,11 +127,11 @@ export function SessionPanel(props: Props) {
   }, () => [newGroupName() === undefined, editingGroupId()]);
   createDependencyEffect(() => () => { removeMouseListenersRef.current();
 
-  if (autoScrollFrameRef.current !== undefined) cancelAnimationFrame(autoScrollFrameRef.current); }, () => []);
+    if (autoScrollFrameRef.current !== undefined) cancelAnimationFrame(autoScrollFrameRef.current); }, () => []);
   createDependencyEffect(() => {
     const capturedMenu = menu(); const capturedPanel = panel();
 
- if (capturedMenu && !capturedPanel.sessions.some((session) => sessionKey(session) === sessionKey((capturedMenu).session))) closeMenu(); }, () => [menu(), panel().sessions]);
+    if (capturedMenu && !capturedPanel.sessions.some((session) => sessionKey(session) === sessionKey((capturedMenu).session))) closeMenu(); }, () => [menu(), panel().sessions]);
 
   const finishGroup = async (cancel = false) => { const capturedNewGroupName = newGroupName(); const capturedEditingGroupId = editingGroupId();
 
@@ -140,17 +140,17 @@ export function SessionPanel(props: Props) {
 
     if (cancel) { groupDraftActive.current = false; setEditingGroupId(undefined); setGroupDraftError(undefined); setNewGroupName(undefined);
 
-    return; }
+      return; }
 
     const error = validateGroupName(name, capturedEditingGroupId);
 
     if (error) { setGroupDraftError(error);
 
-    return; }
+      return; }
 
     if (!storedGroups.state) { setGroupDraftError("Groups are still loading.");
 
-    return; }
+      return; }
 
     groupSavePending.current = true; setGroupSaving(true);
 
@@ -277,7 +277,7 @@ export function SessionPanel(props: Props) {
 
       if (!current.active) { current.active = true;
 
-      if ("session" in current) setDraggedSession(current); else setDraggedProject(current.projectKey); }
+        if ("session" in current) setDraggedSession(current); else setDraggedProject(current.projectKey); }
 
       mouseEvent.preventDefault(); dragPointerRef.current = { x: mouseEvent.clientX, y: mouseEvent.clientY };
       updateDropTarget(mouseEvent.clientX, mouseEvent.clientY, current);
@@ -326,7 +326,7 @@ export function SessionPanel(props: Props) {
     onClick: (event: MouseEvent<HTMLElement>) => {
       if (suppressClickRef.current === groupLayoutToken(projectKey)) { suppressClickRef.current = undefined; event.preventDefault();
 
-      return; }
+        return; }
 
       toggleProject(projectKey);
     },
@@ -359,9 +359,9 @@ export function SessionPanel(props: Props) {
 
     const renderSessionMain = () => (<button class="session-main" aria-label={`${session().name}, ${projectKindLabel(session())}${session().branch ? `, ${session().branch}` : ""}, ${formatApiCost(session().apiCost)}${accessibleActivity() ? `, ${accessibleActivity()}` : ""}`} aria-current={isActiveSession(session()) ? "page" : undefined} aria-description={!normalizedQuery() ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} onMouseDown={(event) => startMouseDrag(event, drag())} onKeyDown={(event) => { if (!normalizedQuery() && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag(), event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === sessionLayoutToken(key())) { suppressClickRef.current = undefined; event.preventDefault();
 
-    return; }
+        return; }
 
-    panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><strong>{session().name}</strong><span class="session-api-cost" title="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
+      panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><strong>{session().name}</strong><span class="session-api-cost" title="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
 
     return <div onMouseEnter={(event) => setTooltipAnchor(event.currentTarget)} onMouseLeave={() => setTooltipAnchor(undefined)} onFocusIn={(event) => setTooltipAnchor(event.currentTarget)} onFocusOut={() => setTooltipAnchor(undefined)} data-session-key={key()} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session: session(), x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
       {renderSessionMain()}
@@ -380,6 +380,7 @@ export function SessionPanel(props: Props) {
       { label: "Open directory", Icon: FolderOpen, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) { setGroupActionError(undefined); void openGroupDirectory(groupDirectory.cwd, groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } } },
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: required((groupMenu())).projectKey, name: required((groupMenu())).label }) },
     ] : menu() ? actions.flatMap(([action, Icon, label]) => !["copy-id", "open-rollout"].includes(action) || panel().debug ? [{ label, Icon, disabled: action === "open-rollout" && !required(menu()).session.path, run: () => panel().onAction(required((menu())).session, action) }] : []) : [];
+
     return { activeMenu, menuItems };
   };
 
@@ -431,7 +432,7 @@ export function SessionPanel(props: Props) {
 
                   if (groupMenu()?.projectKey === projectKey) { closeMenu(true);
 
-                  return; }
+                    return; }
 
                   const bounds = event.currentTarget.getBoundingClientRect();
                   setMenu(undefined);
@@ -457,18 +458,18 @@ export function SessionPanel(props: Props) {
   };
 
   const renderConversationMenu = () => (menuActions().activeMenu && <div ref={element => { menuRef.current = element; }} class="conversation-menu session-context-menu" role="menu" aria-label={`${groupMenu()?.label ?? menu()?.session.name} actions`} style={{ left: cssPixels(required((menuActions().activeMenu)).x), top: cssPixels(required((menuActions().activeMenu)).y) }} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => {
-      const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]; const index = items.findIndex(item => item === document.activeElement);
+    const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]; const index = items.findIndex(item => item === document.activeElement);
 
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
-      else if (event.key === "Home" || event.key === "End") { event.preventDefault(); items[event.key === "Home" ? 0 : items.length - 1]?.focus(); }
-      else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeMenu(true); }
-    }}>{<Key each={menuActions().menuItems} by={({ label }) => label}>{(entry, _index) => <button  role="menuitem" disabled={entry().disabled} title={entry().disabled ? groupMenu() ? "Custom groups have no directory" : "Send a message before cloning this draft" : undefined} onClick={() => { const run = entry().run; run(); closeMenu(true); }}><Dynamic component={entry().Icon} size={14} />{entry().label}</button>}</Key>}</div>);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
+    else if (event.key === "Home" || event.key === "End") { event.preventDefault(); items[event.key === "Home" ? 0 : items.length - 1]?.focus(); }
+    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeMenu(true); }
+  }}>{<Key each={menuActions().menuItems} by={({ label }) => label}>{(entry, _index) => <button  role="menuitem" disabled={entry().disabled} title={entry().disabled ? groupMenu() ? "Custom groups have no directory" : "Send a message before cloning this draft" : undefined} onClick={() => { const run = entry().run; run(); closeMenu(true); }}><Dynamic component={entry().Icon} size={14} />{entry().label}</button>}</Key>}</div>);
 
   return <aside class="session-panel">
     {removingGroup() && <RemoveGroupDialog name={required((removingGroup())).name} onCancel={() => setRemovingGroup(undefined)} onRemove={async () => {
-    const capturedRemovingGroup = removingGroup();
+      const capturedRemovingGroup = removingGroup();
 
- await removeGroup(required((capturedRemovingGroup)).id); setRemovingGroup(undefined); }} />}
+      await removeGroup(required((capturedRemovingGroup)).id); setRemovingGroup(undefined); }} />}
     <label class="search"><Search size={15} /><input ref={element => { searchRef.current = element; }} aria-label="Search conversations" placeholder="Search conversations" value={panel().query} onInput={(event) => panel().onQuery(event.target.value)} /><kbd>Ctrl G</kbd></label>
     {renderSessionScroll()}
     {renderConversationMenu()}

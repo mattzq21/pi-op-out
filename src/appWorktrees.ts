@@ -37,12 +37,24 @@ function projectName(root: string) { return root.split(/[\\/]/).filter(Boolean).
 export function createWorktreeActions(context: WorktreeContext) {
   const { runtimePool, transport, addNotice, setWorktreeTarget, setSessions, setComposerDraft, setComposerUploads, selectSession, syncSessionIndex } = context;
 
+  const addWorktreeGroup = async (target: WorktreeTarget, result: { path: string; branch: string }) => {
+    try {
+      await updateSessionGroups({ type: "project", project: {
+          id: `${target.hostId}:${result.path}`, name: result.branch, cwd: result.path,
+          hostId: target.hostId, projectKind: "worktree", branch: result.branch,
+        } });
+    } catch (reason) {
+      addNotice({ title: "Worktree created, but could not be added to the sidebar", message: `${result.path}\n${reason instanceof Error ? reason.message : String(reason)}` });
+    }
+
+  };
+
   const createWorktree = async (target: WorktreeTarget, name: string, onSetup?: (cancel: (() => Promise<void>) | undefined) => void) => { const capturedRuntimePool = runtimePool();
 
     const setup = async (path: string) => {
       try { await target.transport.runWorktreeSetup(target.cwd, path, target.hostId, onSetup);
 
-      return true; }
+        return true; }
       catch (reason) {
         const message = reason instanceof Error ? reason.message : String(reason);
         addNotice({ title: message === "Environment setup cancelled" ? "Environment setup cancelled; worktree kept" : "Worktree created, but environment setup failed", message: `${path}\n${message}` });
@@ -53,14 +65,9 @@ export function createWorktreeActions(context: WorktreeContext) {
 
     if (!target.message) {
       const result = await target.transport.createProjectWorktree(target.cwd, name, target.hostId);
-      try {
-        await updateSessionGroups({ type: "project", project: {
-          id: `${target.hostId}:${result.path}`, name: result.branch, cwd: result.path,
-          hostId: target.hostId, projectKind: "worktree", branch: result.branch,
-        } });
-      } catch (reason) {
-        addNotice({ title: "Worktree created, but could not be added to the sidebar", message: `${result.path}\n${reason instanceof Error ? reason.message : String(reason)}` });
-      }
+
+      await addWorktreeGroup(target, result);
+
       await setup(result.path);
       setWorktreeTarget(undefined);
 
