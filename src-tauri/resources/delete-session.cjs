@@ -1,17 +1,10 @@
 const { Type } = require("typebox");
-
 const { Check } = require("typebox/value");
-
 const { unavailableCheckpoint, promptCheckpoint, snapshotCheckpoint, validSessionHeader } = require("./checkpoint-schemas.cjs");
-
 const fs = require("node:fs/promises");
-
 const path = require("node:path");
-
 const os = require("node:os");
-
 const { createHash } = require("node:crypto");
-
 const { execFile } = require("node:child_process");
 
 function git(cwd, args, input = "") {

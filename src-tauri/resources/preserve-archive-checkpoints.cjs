@@ -1,7 +1,5 @@
 const fs = require('node:fs');
-
 const { Type } = require('typebox');
-
 const { Check } = require('typebox/value');
 
 const refSchema = Type.String({ pattern: '^refs/pi-session-snapshots/' });
@@ -9,11 +7,8 @@ const refSchema = Type.String({ pattern: '^refs/pi-session-snapshots/' });
 const headerSchema = Type.Object({ type: Type.Literal('session'), id: Type.String() });
 
 const path = require('node:path');
-
 const os = require('node:os');
-
 const { execFileSync } = require('node:child_process');
-
 const { randomUUID } = require('node:crypto');
 
 const target = process.argv[1];

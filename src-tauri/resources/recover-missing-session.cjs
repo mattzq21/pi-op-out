@@ -1,7 +1,5 @@
 const fs = require('node:fs');
-
 const path = require('node:path');
-
 const { execFileSync } = require('node:child_process');
 
 const request = JSON.parse(process.argv[1]);

@@ -1,7 +1,5 @@
 const { Type } = require("typebox");
-
 const { Check } = require("typebox/value");
-
 const { isAbsolute } = require("node:path");
 
 const commitSchema = Type.String({ pattern: "^[a-f0-9]{40,64}$" });

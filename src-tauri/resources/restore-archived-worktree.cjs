@@ -1,7 +1,5 @@
 const fs = require('node:fs');
-
 const { Type } = require('typebox');
-
 const { Check } = require('typebox/value');
 
 const checkpointSchema = Type.Object({ path: Type.String(), repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-f0-9]{40,64}$' }) });
@@ -9,9 +7,7 @@ const checkpointSchema = Type.Object({ path: Type.String(), repositoryRoot: Type
 const locationSchema = Type.String();
 
 const path = require('node:path');
-
 const os = require('node:os');
-
 const { execFileSync } = require('node:child_process');
 
 const file = fs.realpathSync(process.argv[1]);

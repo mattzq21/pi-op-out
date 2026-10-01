@@ -1,5 +1,6 @@
-const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
-
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
 const git = (args, env = process.env) => execFileSync('git', args, { env, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });

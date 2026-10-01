@@ -1,19 +1,11 @@
 const { Type } = require("typebox");
-
 const { Check } = require("typebox/value");
-
 const { unavailableCheckpoint, promptCheckpoint, snapshotCheckpoint, validSessionHeader } = require("./checkpoint-schemas.cjs");
-
 const fs = require("node:fs/promises");
-
 const { createReadStream } = require("node:fs");
-
 const path = require("node:path");
-
 const os = require("node:os");
-
 const readline = require("node:readline");
-
 const { execFile } = require("node:child_process");
 
 const piopRoot = path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");

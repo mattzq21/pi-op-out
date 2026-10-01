@@ -1,7 +1,5 @@
 const fs = require('node:fs');
-
 const { Type } = require('typebox');
-
 const { Check } = require('typebox/value');
 
 const sessionSchema = Type.Object({ type: Type.Literal('session'), id: Type.String() });
