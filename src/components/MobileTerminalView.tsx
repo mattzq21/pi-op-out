@@ -122,7 +122,11 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
           <button type="button" disabled={disabled()} onPointerDown={event => event.preventDefault()} onClick={() => sendControl(entry()[1])}>{entry()[0]}</button>
         }</Key>
       </div>
-      {componentProps.ownershipRequired && <button class="terminal-take-ownership" onClick={async () => { await componentProps.onTakeOwnership?.(); input.current?.focus(); }}>Take session ownership to send commands</button>}
+      {componentProps.ownershipRequired && <button class="terminal-ownership" aria-label="Take session ownership" onClick={async () => {
+        await componentProps.onTakeOwnership?.();
+
+        if (!componentProps.ownershipRequired) input.current?.focus();
+      }} />}
 
     </div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
   </section>;

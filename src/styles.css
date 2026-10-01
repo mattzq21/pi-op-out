@@ -108,16 +108,15 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .terminal-panel-resizer:focus-visible { outline: none; }
 .terminal-surface .terminal-host .xterm { min-width: 100%; min-height: 100%; }
 .terminal-ownership > span { position: absolute; top: 8px; right: 12px; padding: 6px 10px; border: 1px solid #48453e; border-radius: 5px; background: #292824; color: #e5e1d8; font: 12px/1.5 ui-sans-serif, sans-serif; }
-.terminal-transcript-body { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.terminal-transcript-body { position: relative; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .terminal-transcript { flex: 1; min-height: 0; margin: 0; padding: 8px 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .terminal-command { display: inline; }
 .terminal-controls { display: flex; flex: 0 0 auto; gap: 4px; padding: 4px 10px; overflow-x: auto; border-top: 1px solid #ffffff13; }
 .terminal-controls button { flex: 0 0 auto; min-width: 36px; min-height: 36px; padding: 4px 8px; border: 1px solid #48453e; border-radius: 5px; background: #292824; color: #e5e1d8; cursor: pointer; touch-action: manipulation; }
 .terminal-controls button:disabled { opacity: .5; cursor: default; }
 .terminal-command input { min-width: 1ch; max-width: 100%; margin: 0; padding: 0; background: transparent; color: inherit; border: 0; border-radius: 0; outline: none; font: inherit; vertical-align: baseline; caret-color: var(--accent); }
-.terminal-command button, .terminal-take-ownership { padding: 6px 10px; border: 1px solid #48453e; border-radius: 4px; background: #292824; color: #e5e1d8; cursor: pointer; }
+.terminal-command button { padding: 6px 10px; border: 1px solid #48453e; border-radius: 4px; background: #292824; color: #e5e1d8; cursor: pointer; }
 .terminal-command button:disabled, .terminal-command input:disabled { opacity: .5; cursor: default; }
-.terminal-take-ownership { margin: 6px 10px; }
 .terminal-ownership { position: absolute; inset: 0; border: 0; background: transparent; cursor: pointer; }
 .terminal-ownership:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .conversation-ownership-banner { width: min(740px, calc(100% - 32px)); margin: 0 auto 10px; }
