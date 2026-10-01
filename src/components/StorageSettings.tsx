@@ -109,7 +109,8 @@ export function StorageSettings(componentProps: { hostId?: string }) {
     const removed = new Set<string>();
 
     for (const archive of archives) {
-      try { await deleteArchivedConversation(archive.path, host.hostId); removed.add(archive.path); }
+      if (removed.has(archive.path)) continue;
+      try { for (const path of await deleteArchivedConversation(archive.path, host.hostId)) removed.add(path); }
       catch (reason) { failures.push(`${archive.name}: ${reason instanceof Error ? reason.message : String(reason)}`); }
     }
 
@@ -125,7 +126,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
   const deleteOne = (host: HostStorage, archive: ArchivedConversation) => {
     if (!archive.deletable) return;
 
-    if (!window.confirm(`Permanently delete “${archive.name}”? Its diff history, project checkpoint refs, and any archived directory no other chat uses will also be removed.`)) return;
+    if (!window.confirm(`Permanently delete “${archive.name}” and its attached reviews and subagents? Their diff histories, project checkpoint refs, and any archived directory no other chat uses will also be removed. Forks and branch-offs will be kept.`)) return;
 
     void removeArchives(host, [archive]);
   };

@@ -155,7 +155,7 @@ pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, s
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let client = app.state::<PiRuntime>();
     let _lifecycle = client.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
-    let mut paths = session_descendants(&app, &host_id, &session_path)?;
+    let mut paths: Vec<String> = session_descendants(&app, &host_id, &session_path, false, false)?.into_iter().map(|(path, _)| path).collect();
     paths.push(session_path);
     let mut mutations = Vec::new();
     for path in &paths {
@@ -171,11 +171,11 @@ pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, s
     Ok(())
 }
 
-fn session_descendants(app: &AppHandle, host_id: &str, session_path: &str) -> Result<Vec<String>, String> {
+fn session_descendants(app: &AppHandle, host_id: &str, session_path: &str, archived: bool, include_other_area: bool) -> Result<Vec<(String, bool)>, String> {
     let script = include_str!("../../resources/session-descendants.bundle.mjs");
     let settings = load_app_settings(app.clone())?;
-    let root = if host_id == "local" { Some(desktop_sessions_dir(&home_dir()?)) } else { None };
-    let arguments = json!({"path":session_path,"root":root}).to_string();
+    let root = if host_id == "local" { Some(session_store_root(archived)?) } else { None };
+    let arguments = json!({"path":session_path,"root":root,"archived":archived,"includeOtherArea":include_other_area}).to_string();
     let mut command = if host_id == "local" {
         let mut command = node_command();
         command.args(["-e", script, &arguments]);
@@ -187,7 +187,11 @@ fn session_descendants(app: &AppHandle, host_id: &str, session_path: &str) -> Re
     };
     let output = run_limited(&mut command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not find subagent conversations")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid subagent conversation list: {error}"))
+    if include_other_area {
+        serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid subagent conversation list: {error}"))
+    } else {
+        serde_json::from_slice::<Vec<String>>(&output.stdout).map(|paths| paths.into_iter().map(|path| (path, archived)).collect()).map_err(|error| format!("Invalid subagent conversation list: {error}"))
+    }
 }
 
 #[cfg(test)]
@@ -236,28 +240,51 @@ fn session_store_root(archived: bool) -> Result<PathBuf, String> {
     Ok(if archived { home.join(STORAGE_DIRECTORY).join("archived") } else { desktop_sessions_dir(&home) })
 }
 
-fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: String, host_id: Option<String>, archived: bool, client_id: String) -> Result<(), String> {
+fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: String, host_id: Option<String>, archived: bool, client_id: String) -> Result<Vec<String>, String> {
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
-    let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, archived, "delete")?;
     let settings = load_app_settings(app.clone())?;
     let path = stored_session_file(&settings, &host_id, &session_path, archived)?;
-    let local_root = session_store_root(archived)?;
+    let mut mutations = vec![conversation_ownership::MutationGuard::acquire(&app, &host_id, &path, &client_id, archived, "delete")?];
+    let mut paths = vec![(path.clone(), archived)];
+    loop {
+        let children = session_descendants(&app, &host_id, &path, archived, true)?;
+        let mut added = false;
+        for (child, child_archived) in children {
+            if paths.iter().any(|(path, _)| path == &child) { continue; }
+            mutations.push(conversation_ownership::MutationGuard::acquire(&app, &host_id, &child, &client_id, child_archived, "delete")?);
+            paths.push((child, child_archived));
+            added = true;
+        }
+        if !added { break; }
+    }
+    let mut targets = Vec::new();
+    for (path, archived) in &paths {
+        let path = stored_session_file(&settings, &host_id, path, *archived)?;
+        targets.push(json!({"path":path,"area":if *archived { "archived" } else { "sessions" },"root":if host_id == "local" { Some(session_store_root(*archived)?) } else { None }}));
+    }
     let host = if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) };
-    delete_session_files(runtime, &path, &host_id, host.as_ref(), &local_root, archived)?;
-    mutation.finish()?;
-    let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":session_path}));
-    Ok(())
+    delete_session_targets(runtime, &targets, &host_id, host.as_ref())?;
+    for ((path, _), mutation) in paths.iter().zip(mutations) {
+        mutation.finish()?;
+        let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":path}));
+    }
+    Ok(paths.into_iter().map(|(path, _)| path).collect())
 }
 
+#[cfg(test)]
 pub(super) fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Option<&RemoteHost>, local_root: &Path, archived: bool) -> Result<(), String> {
+    delete_session_targets(runtime, &[json!({"path":path,"area":if archived { "archived" } else { "sessions" },"root":if host_id == "local" { Some(local_root) } else { None }})], host_id, host)
+}
+
+fn delete_session_targets(runtime: &PiRuntime, targets: &[serde_json::Value], host_id: &str, host: Option<&RemoteHost>) -> Result<(), String> {
     if runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
-        .any(|agent| !agent.messageable && agent.host_id == host_id && agent.session_path.as_deref() == Some(path)) {
+        .any(|agent| !agent.messageable && agent.host_id == host_id && targets.iter().any(|target| agent.session_path.as_deref() == target["path"].as_str())) {
         return Err("Close the session before deleting it".into());
     }
     let active_session_ids: Vec<String> = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
         .filter(|agent| !agent.messageable && agent.host_id == host_id).filter_map(|agent| agent.session_id.clone()).collect();
-    let arguments = json!({ "path": path, "activeSessionIds": active_session_ids, "area": if archived { "archived" } else { "sessions" }, "root": if host_id == "local" { Some(local_root) } else { None } }).to_string();
+    let arguments = json!({ "targets": targets, "activeSessionIds": active_session_ids }).to_string();
     let script = include_str!("../../resources/delete-session.bundle.mjs");
     let mut command = if host_id == "local" {
         let mut command = node_command();
@@ -280,12 +307,12 @@ pub(super) fn run_session_deletion(command: &mut Command) -> Result<(), String> 
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-pub(super) fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
+pub(super) fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<Vec<String>, String> {
     delete_stored_session(app, &runtime, session_path, host_id, false, client_id)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-pub(super) fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
+pub(super) fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<Vec<String>, String> {
     delete_stored_session(app, &runtime, session_path, host_id, true, client_id)
 }
 

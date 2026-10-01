@@ -133,25 +133,44 @@ async function snapshotRefs(entries, header) {
 }
 
 async function main() {
-  const target = JSON.parse(process.argv[1]);
-  const source = await sessionSource(target);
+  const request = JSON.parse(process.argv[1]);
+  const targets = request.targets || [request];
+  const sources = await Promise.all(targets.map(sessionSource));
+  if (!sources.length || new Set(sources).size !== sources.length) throw new Error("Invalid conversation deletion targets");
+  const source = sources[0];
   const lock = await acquireDeletionLock(source);
+  const childLocks = [];
   let preserveRecovery = false;
   let lockRemoved = false;
 
   try {
-    const [trace, sidecar, loopCheckpoint] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true), readFile(`${source}.loop-detection.json`, true)]);
-    const files = [trace, sidecar, loopCheckpoint].filter(Boolean);
-    const snapshots = await readSnapshotDirectory(source.replace(/\.jsonl$/, ".snapshots"));
-
-    if (snapshots) files.push(snapshots);
-    const entries = trace.body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
-    const header = entries[0];
-    validateHeader(header, target);
-    const directory = await archivedDirectory(source, header, target);
-
-    if (directory) files.push(directory);
-    const repositories = await snapshotRefs(entries, header);
+    for (const child of sources.slice(1)) childLocks.push(await acquireDeletionLock(child));
+    const files = [];
+    const repositoriesByPath = new Map();
+    const selected = new Set(sources);
+    for (const [index, source] of sources.entries()) {
+      const target = targets[index];
+      const [trace, sidecar, loopCheckpoint] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true), readFile(`${source}.loop-detection.json`, true)]);
+      files.push(...[trace, sidecar, loopCheckpoint].filter(Boolean));
+      const snapshots = await readSnapshotDirectory(source.replace(/\.jsonl$/, ".snapshots"));
+      if (snapshots) files.push(snapshots);
+      const entries = trace.body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
+      const header = entries[0];
+      validateHeader(header, request);
+      const directory = await archivedDirectory(source, header, target, selected);
+      if (directory && !files.some(saved => saved.file === directory.file)) files.push(directory);
+      for (const repository of await snapshotRefs(entries, header)) {
+        const existing = repositoriesByPath.get(repository.cwd);
+        if (existing) {
+          for (const ref of repository.refs) {
+            const duplicate = existing.refs.find(candidate => candidate.ref === ref.ref);
+            if (duplicate && duplicate.oid !== ref.oid) throw new Error("Checkpoint refs changed during deletion");
+            if (!duplicate) existing.refs.push(ref);
+          }
+        } else repositoriesByPath.set(repository.cwd, repository);
+      }
+    }
+    const repositories = [...repositoriesByPath.values()];
     files.forEach((saved, index) => { saved.stagedPath = path.join(lock, `${index}.staged`); });
     await fs.writeFile(path.join(lock, "recovery.json"), JSON.stringify({
       files: files.map((saved) => ({ path: saved.file, staged: path.basename(saved.stagedPath), mode: saved.metadata.mode & 0o777, atime: saved.metadata.atime, mtime: saved.metadata.mtime })),
@@ -198,6 +217,7 @@ async function main() {
     }
   } finally {
     if (!preserveRecovery && !lockRemoved) await fs.rm(lock, { recursive: true }).catch((error) => console.error(`Could not remove deletion recovery directory ${lock}: ${error.message}`));
+    for (const childLock of childLocks) await fs.rm(childLock, { recursive: true }).catch((error) => console.error(`Could not remove deletion lock ${childLock}: ${error.message}`));
   }
 }
 
@@ -209,7 +229,7 @@ async function archivedDirectoryMetadata(directory) {
   return { file: directory, metadata, directory: true, stagedPath: "", staged: false };
 }
 
-async function archivedDirectory(source, header, target) {
+async function archivedDirectory(source, header, target, selected = new Set([source])) {
   const saved = header.worktreeRestore;
 
   if (target.area !== "archived" || saved?.kind !== "directory") return undefined;
@@ -228,7 +248,7 @@ async function archivedDirectory(source, header, target) {
 
       if (entry.isDirectory() && await referenced(file)) return true;
 
-      if (!entry.isFile() || !file.endsWith(".jsonl") || file === source) continue;
+      if (!entry.isFile() || !file.endsWith(".jsonl") || selected.has(file)) continue;
       const first = (await fs.readFile(file, "utf8")).split("\n").find((line) => line.trim());
       const other = JSON.parse(first);
 

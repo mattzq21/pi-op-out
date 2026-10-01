@@ -75,7 +75,7 @@ export const loadStorageReport = async (hostId?: string) => {
   return hostId === undefined ? report : { hosts: report.hosts.map((host) => ({ ...host, hostId })) };
 };
 
-export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call("delete_archived_session", { sessionPath, hostId }, voidResultSchema);
+export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call("delete_archived_session", { sessionPath, hostId }, z.array(z.string()));
 
 export const restoreArchivedConversation = (sessionPath: string, hostId = "local") => call("restore_archived_session", { sessionPath, hostId }, voidResultSchema);
 
@@ -396,7 +396,7 @@ export class NativeTransport {
   loadGitDiffs(sessionPath: string, hostId = "local") { return call("load_git_diffs", { sessionPath, hostId }, gitDiffSnapshotsSchema); }
   saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId = "local") { return call("save_git_diffs", { sessionPath, snapshots, hostId }, voidResultSchema); }
   archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionPath, hostId, terminalIds }, voidResultSchema); }
-  deleteSession(sessionPath: string, hostId = "local") { return call("delete_session", { sessionPath, hostId }, voidResultSchema); }
+  deleteSession(sessionPath: string, hostId = "local") { return call("delete_session", { sessionPath, hostId }, z.array(z.string())); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call("relocate_session", { sessionPath, cwd, hostId }, voidResultSchema); }
   recoverMissingSession(sessionPath: string, action: "remote" | "empty", repository: string, branch: string, hostId = "local") { return call("recover_missing_session", { sessionPath, hostId, action, repository, branch }, z.union([z.object({ cwd: z.string() }), z.object({ missingFields: z.array(z.string()) })])); }
   async relocateDirlessSession(sessionPath: string, hostId = "local") {

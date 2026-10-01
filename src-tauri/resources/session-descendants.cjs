@@ -14,6 +14,7 @@ async function metadata(file) {
   const lines = createInterface({ input, crlfDelay: Infinity });
   let id;
   let parent;
+  let fork = false;
 
   try {
     for await (const line of lines) {
@@ -21,7 +22,7 @@ async function metadata(file) {
 
       try { entry = JSON.parse(line); } catch { continue; }
 
-      if (entry.type === "session") id = entry.id;
+      if (entry.type === "session") { id = entry.id; fork = Boolean(entry.parentSession); }
 
       if (entry.type === "custom" && ["piop-subagent-parent", "piop-review-parent"].includes(entry.customType)) parent = entry.data?.parentSessionId;
 
@@ -29,7 +30,7 @@ async function metadata(file) {
     }
   } finally { lines.close(); input.destroy(); }
 
-  return { file, id, parent };
+  return { file, id, parent: fork ? undefined : parent };
 }
 
 async function collect(root) {
@@ -47,16 +48,30 @@ async function collect(root) {
 
 async function main() {
   const args = JSON.parse(process.argv[1]);
-  const root = await fs.realpath(args.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "sessions"));
+  const area = args.archived ? "archived" : "sessions";
+  const root = await fs.realpath(args.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", area));
   const source = await fs.realpath(args.path);
   const relative = path.relative(root, source);
 
-  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || !source.endsWith(".jsonl")) throw new Error("Invalid conversation path");
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || !source.endsWith(".jsonl")) throw new Error("Invalid conversation path");
   const parent = await metadata(source);
 
   if (!Check(sessionIdSchema, parent.id)) throw new Error("Conversation has no session ID");
   const sessions = await collect(root);
-  process.stdout.write(JSON.stringify(descendants(sessions, parent.id, source)));
+  const archivedFiles = new Set(args.archived ? sessions.map(session => session.file) : []);
+
+  if (args.includeOtherArea) {
+    const otherRoot = path.join(root, "..", args.archived ? "sessions" : "archived");
+    let exists = true;
+    try { await fs.access(otherRoot); }
+    catch (error) { if (error.code !== "ENOENT") throw error; exists = false; }
+    const other = exists ? await collect(otherRoot) : [];
+    sessions.push(...other);
+    if (!args.archived) other.forEach(session => archivedFiles.add(session.file));
+  }
+
+  const children = descendants(sessions, parent.id, source);
+  process.stdout.write(JSON.stringify(args.includeOtherArea ? children.map(file => [file, archivedFiles.has(file)]) : children));
 }
 
 function descendants(sessions, parentId, source) {
