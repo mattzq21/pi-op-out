@@ -22,8 +22,8 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
 };
 
 const storageSections: { title: string; categories: StorageCategory["id"][] }[] = [
-  { title: "General", categories: ["project-checkpoints", "worktrees", "other-storage"] },
-  { title: "Active sessions", categories: ["active-conversations", "git-diff-snapshots", "temporary-chats"] },
+  { title: "General", categories: ["project-checkpoints", "other-storage"] },
+  { title: "Active sessions", categories: ["active-conversations", "git-diff-snapshots", "worktrees", "temporary-chats"] },
   { title: "Archived sessions", categories: ["archived-conversations", "archived-git-diff-snapshots", "archived-worktrees"] },
 ];
 
