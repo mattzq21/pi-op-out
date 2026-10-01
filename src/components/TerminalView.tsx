@@ -14,14 +14,13 @@ interface Props {
   ownershipRequired?: boolean; onTakeOwnership?: () => Promise<void>;
   cwd?: string; terminals: { id: string; label: string }[]; activeId: string; output: string; outputEnd: number; snapshot?: string; snapshotEnd?: number; started: boolean; exited?: boolean;
   onAdd: () => void; onSelect: (id: string) => void; onStart: (id: string, cols: number, rows: number) => void;
-  onData: (data: string) => void; onResize: (cols: number, rows: number) => void; onSnapshot: (value: string, outputEnd: number) => void; onDelete: () => void; onClose: () => void;
+  onData: (data: string) => void; onSnapshot: (value: string, outputEnd: number) => void; onDelete: () => void; onClose: () => void;
 }
 
 export function TerminalView(componentProps: Props) {
   const [copyError, setCopyError] = createSignal(false);
   const host = createRef<HTMLDivElement>(null); const terminal = createRef<Terminal | undefined>(undefined); const lastOutputEnd = createRef(0); const queuedOutputEnd = createRef(0); const tabRefs = createRef(new Map<string, HTMLButtonElement>());
-  const resizeToHost = createRef<(() => void) | undefined>(undefined);
-  const callbacks = createRef({ onData: componentProps.onData, onResize: componentProps.onResize, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }); createComputed(() => { callbacks.current = { onData: componentProps.onData, onResize: componentProps.onResize, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }; });
+  const callbacks = createRef({ onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }); createComputed(() => { callbacks.current = { onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }; });
 
   createDependencyEffect(() => { const capturedCwd0 = componentProps.cwd; const capturedSnapshot1 = componentProps.snapshot; const capturedSnapshotEnd2 = componentProps.snapshotEnd;
     const saveSnapshot = componentProps.onSnapshot;
@@ -59,25 +58,7 @@ export function TerminalView(componentProps: Props) {
       instance.resize(cols, rows);
       return true;
     });
-    let resizeTimer: number | undefined;
-    const fitAndResize = () => {
-      window.clearTimeout(resizeTimer);
-      resizeTimer = undefined;
-      if (componentProps.ownershipRequired) return;
-      try {
-        const size = fit.proposeDimensions();
-        if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
-        if (componentProps.started) callbacks.current.onResize(size.cols, size.rows);
-        else instance.resize(size.cols, size.rows);
-      } catch { }
-    };
-    const scheduleResize = () => {
-      window.clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(fitAndResize, 150);
-    };
-    resizeToHost.current = fitAndResize;
-
-    fit.fit();
+    if (!componentProps.started) fit.fit();
     let restored = !capturedSnapshot1;
 
     if (capturedSnapshot1) { queuedOutputEnd.current = capturedSnapshotEnd2 ?? 0; instance.write((capturedSnapshot1), () => { if (terminal.current !== instance) return; lastOutputEnd.current = capturedSnapshotEnd2 ?? 0; restored = true; }); }
@@ -85,9 +66,29 @@ export function TerminalView(componentProps: Props) {
     instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
     requestAnimationFrame(() => { if (terminal.current === instance && !componentProps.ownershipRequired) instance.focus(); });
     const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value); });
-    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(scheduleResize); observer?.observe(host.current); window.addEventListener("resize", scheduleResize);
+    let cursorFrame: number | undefined;
+    const revealCursor = () => {
+      if (cursorFrame !== undefined) cancelAnimationFrame(cursorFrame);
+      cursorFrame = requestAnimationFrame(() => {
+        cursorFrame = undefined;
+        const viewport = host.current;
+        const screen = instance.element?.querySelector<HTMLElement>(".xterm-screen");
+        const buffer = instance.buffer.active;
+        if (!viewport || !screen || buffer.viewportY !== buffer.baseY) return;
+        const cellWidth = screen.clientWidth / instance.cols;
+        const cellHeight = screen.clientHeight / instance.rows;
+        const screenRect = screen.getBoundingClientRect();
+        const viewportRect = viewport.getBoundingClientRect();
+        const left = screenRect.left - viewportRect.left + viewport.scrollLeft - viewport.clientLeft + Math.min(buffer.cursorX, instance.cols - 1) * cellWidth;
+        const top = screenRect.top - viewportRect.top + viewport.scrollTop - viewport.clientTop + buffer.cursorY * cellHeight;
+        viewport.scrollLeft = Math.max(Math.min(viewport.scrollLeft, left), left + cellWidth - viewport.clientWidth);
+        viewport.scrollTop = Math.max(Math.min(viewport.scrollTop, top), top + cellHeight - viewport.clientHeight);
+      });
+    };
+    const cursor = instance.onCursorMove(revealCursor);
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(revealCursor); observer?.observe(host.current);
 
-    return () => { saveSnapshot(restored ? `\u001b[8;${instance.rows};${instance.cols}t${serializer.serialize()}` : capturedSnapshot1 || "", restored ? lastOutputEnd.current : capturedSnapshotEnd2 ?? 0); observer?.disconnect(); window.removeEventListener("resize", scheduleResize); window.clearTimeout(resizeTimer); data.dispose(); sizeHandler.dispose(); instance.dispose(); terminal.current = undefined; resizeToHost.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
+    return () => { saveSnapshot(restored ? `\u001b[8;${instance.rows};${instance.cols}t${serializer.serialize()}` : capturedSnapshot1 || "", restored ? lastOutputEnd.current : capturedSnapshotEnd2 ?? 0); observer?.disconnect(); if (cursorFrame !== undefined) cancelAnimationFrame(cursorFrame); cursor.dispose(); data.dispose(); sizeHandler.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
   }, () => [componentProps.activeId, componentProps.cwd]);
 
   createDependencyEffect(() => {
@@ -98,7 +99,6 @@ export function TerminalView(componentProps: Props) {
 
     if (componentProps.ownershipRequired) instance.blur();
     else if (!componentProps.started && !componentProps.exited) callbacks.current.onStart(componentProps.activeId, instance.cols, instance.rows);
-    else if (componentProps.started) resizeToHost.current?.();
   }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired]);
 
   createDependencyEffect(() => { const capturedOutputEnd0 = componentProps.outputEnd; const capturedOutput1 = componentProps.output;

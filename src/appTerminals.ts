@@ -275,14 +275,12 @@ export function createTerminalController({ transport, sessionTransport, conversa
     void transport().writeTerminal(id, data).catch(reason => { addNotice({ title: "Terminal input failed", message: String(reason) }); void refreshShared(); });
   };
 
-  const resize = (cols: number, rows: number) => { if (ready() && owned()) void transport().resizeTerminal(state.activeTerminal.id, cols, rows).catch(() => undefined); };
-
   return {
     terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, owned, takeOwnership,
     viewKey: createMemo(() => `${terminalSessionId()}:${state.activeTerminal.id}:${state.activeTerminal.generation ?? ""}`),
     startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal,
     queueTerminalOutput, flushOutput, exited, conversationTerminalIds, allTerminalIds, draftTerminalIds,
     forgetConversation, removeConversationTerminals, resetConversation, rekeyConversation,
-    toggleFor, toggle, close, write, resize,
+    toggleFor, toggle, close, write,
   };
 }
