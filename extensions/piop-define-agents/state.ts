@@ -18,7 +18,7 @@ const serverSchema = Type.Object({
   startupTimeoutSec: Type.Optional(Type.Number()), injectAgentId: Type.Optional(Type.Boolean()),
 });
 
-const agentSchema = Type.Object({
+export const agentSchema = Type.Object({
   name: Type.String(), model: Type.String(), effort: Type.String(), fastMode: Type.Optional(Type.Boolean()), extensions: Type.Optional(Type.Array(Type.String())),
   path_systemprompt: Type.String(), path_agentprompt: Type.String(), tools: Type.Array(Type.String()), skills: Type.Array(Type.String()), mcpServers: Type.Array(serverSchema),
 });

@@ -1,4 +1,6 @@
-import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState } from "./state.ts";
+import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState } from "./state.ts";
+import { Type, type TSchema, type Static } from "typebox";
+import { Check } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
 import { mcpServers } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
@@ -47,12 +49,12 @@ async function migrateSystemPrompt(agent: StoredAgent) {
   let path = agent.path_systemprompt;
 
   if (path === undefined) {
-    let prompt = typeof agent.systemPrompt === "string" ? agent.systemPrompt : undefined;
+    let prompt = Check(Type.String(), agent.systemPrompt) ? agent.systemPrompt : undefined;
 
     if ("developerPrompt" in agent) {
       prompt = prompt?.trim() ? prompt : undefined;
 
-      if (typeof agent.developerPrompt === "string" && agent.developerPrompt.trim()) prompt = `${prompt ?? DEFAULT_SYSTEM_PROMPT}\n\n${agent.developerPrompt}`;
+      if (Check(Type.String(), agent.developerPrompt) && agent.developerPrompt.trim()) prompt = `${prompt ?? DEFAULT_SYSTEM_PROMPT}\n\n${agent.developerPrompt}`;
     }
 
     path = DEFAULT_PROMPT_PATH;
@@ -73,7 +75,7 @@ async function migrateAgentPrompt(agent: StoredAgent) {
   if (agentPromptPath === undefined) {
     agentPromptPath = ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "";
 
-    if (typeof agent.agentsMd === "string" && agent.agentsMd.trim()) {
+    if (Check(Type.String(), agent.agentsMd) && agent.agentsMd.trim()) {
       const hash = createHash("sha256").update(agent.name).update("\0").update(agent.agentsMd).digest("hex");
       agentPromptPath = `agentprompt/${safeName(agent.name)}-${hash}.md`;
       await ensurePromptFile(agentPromptPath, agent.agentsMd);
@@ -87,7 +89,7 @@ async function migratePrompts(stored: StoredConfig, pi: ExtensionAPI): Promise<C
   const agents = [];
 
   for (const agent of Array.isArray(stored.agents) ? stored.agents : []) {
-    if (!agent || typeof agent.name !== "string" || !agent.name.length) continue;
+    if (!Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)) continue;
     const path = await migrateSystemPrompt(agent);
     const agentPromptPath = await migrateAgentPrompt(agent);
     const { systemPrompt: _inline, developerPrompt: _legacy, agentsMd: _instructions, ...profile } = agent;
@@ -100,19 +102,19 @@ async function migratePrompts(stored: StoredConfig, pi: ExtensionAPI): Promise<C
 function promptPath(agent: Agent): string {
   if ("systemPrompt" in agent || "developerPrompt" in agent) throw new Error(`Agent "${agent.name}" must link a system prompt file using path_systemprompt`);
 
-  if (typeof agent.path_systemprompt !== "string" || !agent.path_systemprompt.trim()) throw new Error(`Agent "${agent.name}" requires a nonempty path_systemprompt`);
+  if (!Check(Type.String({ pattern: "\\S" }), agent.path_systemprompt)) throw new Error(`Agent "${agent.name}" requires a nonempty path_systemprompt`);
 
   return agent.path_systemprompt;
 }
 
 function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
-  for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.fastMode !== undefined && typeof agent.fastMode !== "boolean") throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
+  for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.fastMode !== undefined && !Check(Type.Boolean(), agent.fastMode)) throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
 
-  const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
-    name: agent.name, model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
+  const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)).map((agent) => ({
+    name: agent.name, model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
     fastMode: agent.fastMode, extensions: extensionPaths(agent.extensions),
-    path_systemprompt: promptPath(agent), path_agentprompt: typeof agent.path_agentprompt === "string" ? agent.path_agentprompt.trim() : ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "",
-    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string").flatMap(item => item === "goal" ? ["get_goal", "create_goal", "update_goal"] : [item]) : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: mcpServers(agent.mcpServers),
+    path_systemprompt: promptPath(agent), path_agentprompt: Check(Type.String(), agent.path_agentprompt) ? agent.path_agentprompt.trim() : ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "",
+    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)).flatMap(item => item === "goal" ? ["get_goal", "create_goal", "update_goal"] : [item]) : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
 
   if (!supplied.some((agent) => agent.name === "general")) {
@@ -139,7 +141,7 @@ async function readConfig(pi: ExtensionAPI): Promise<Config> {
 
     return config;
   }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  catch (error) { if (!Check(Type.Object({ code: Type.Literal("ENOENT") }), error)) throw error; }
 
   await writeConfig(normalize({}, pi), true);
 
@@ -261,7 +263,13 @@ async function loadConfig(pi: ExtensionAPI): Promise<Config> {
 
 function encode<T>(value: T) { return Buffer.from(JSON.stringify(value), "utf8").toString("base64url"); }
 
-function decode<T>(value: string): T { return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as T; }
+function decode<S extends TSchema>(schema: S, value: string): Static<S> {
+  const decoded: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+
+  if (!Check(schema, decoded)) throw new Error("Invalid encoded agent configuration");
+
+  return decoded;
+}
 
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
 
@@ -344,6 +352,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
+
   const currentSkillPaths = () => {
     const agent = currentAgent();
 
@@ -480,7 +489,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const configureAgentEffort = (agent: Agent) => {
     const effort = effortOverride || agent.effort.trim() || runtimeDefaults?.effort;
 
-    if (effort && effort !== pi.getThinkingLevel()) { applyingAgentEffort = effort; pi.setThinkingLevel(effort as Parameters<ExtensionAPI["setThinkingLevel"]>[0]); }
+    if (effort && effort !== pi.getThinkingLevel()) {
+      const levels: Array<Parameters<ExtensionAPI["setThinkingLevel"]>[0]> = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+      const level = levels.find(value => value === effort);
+
+      if (!level) throw new Error(`Unknown thinking level: ${effort}`);
+      applyingAgentEffort = level; pi.setThinkingLevel(level);
+    }
 
   };
 
@@ -640,9 +655,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     description: "Select a defined agent", handler: async (args, ctx) => {
       const argument = args.trim(); let name = argument;
 
-      try { const decoded = decode<unknown>(argument);
-
-      if (typeof decoded === "string") name = decoded; } catch { }
+      try { name = decode(Type.String(), argument); } catch { }
 
       if (!ctx.isIdle()) throw new Error("Wait for the current response before changing agents");
       await selectAgent(name, ctx);
@@ -683,7 +696,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   pi.registerCommand("pi-define-agents-config", {
     description: "Update agent definitions", handler: async (args, ctx) => {
-      const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
+      const supplied = decode(Type.Object({ agents: Type.Optional(Type.Array(agentSchema)) }), args.trim());
+      const next = normalize({ ...supplied, webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
       await writeConfig(next);
       config = next;
       publish(ctx);
