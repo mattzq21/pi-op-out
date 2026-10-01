@@ -1,125 +1,94 @@
 import { Key } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSignal } from "solid-js";
-import { isMobile } from "../lib/platform";
+import { createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
-
-import { FitAddon } from "@xterm/addon-fit";
-import { SerializeAddon } from "@xterm/addon-serialize";
-import { Terminal } from "@xterm/xterm";
-import "@xterm/xterm/css/xterm.css";
+import { createTerminalTranscript } from "../lib/terminalTranscript";
 import { Plus, RotateCcw, TerminalSquare, Trash2, X } from "lucide-solid";
 import { IconButton } from "./IconButton";
 
 interface Props {
   ownershipRequired?: boolean; onTakeOwnership?: () => Promise<void>;
-  cwd?: string; terminals: { id: string; label: string }[]; activeId: string; output: string; outputEnd: number; snapshot?: string; snapshotEnd?: number; started: boolean; exited?: boolean;
+  cwd?: string; terminals: { id: string; label: string }[]; activeId: string; output: string; outputEnd: number; started: boolean; exited?: boolean;
   onAdd: () => void; onSelect: (id: string) => void; onStart: (id: string, cols: number, rows: number) => void;
-  onData: (data: string) => void; onSnapshot: (value: string, outputEnd: number) => void; onDelete: () => void; onClose: () => void;
+  onData: (data: string) => void; onDelete: () => void; onClose: () => void;
 }
 
 export function TerminalView(componentProps: Props) {
-  const [copyError, setCopyError] = createSignal(false);
-  const host = createRef<HTMLDivElement>(null); const terminal = createRef<Terminal | undefined>(undefined); const lastOutputEnd = createRef(0); const queuedOutputEnd = createRef(0); const tabRefs = createRef(new Map<string, HTMLButtonElement>());
-  const callbacks = createRef({ onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }); createComputed(() => { callbacks.current = { onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }; });
-
-  createDependencyEffect(() => { const capturedCwd0 = componentProps.cwd; const capturedSnapshot1 = componentProps.snapshot; const capturedSnapshotEnd2 = componentProps.snapshotEnd;
-    const saveSnapshot = componentProps.onSnapshot;
-
-    if (!capturedCwd0 || !host.current) return;
-    const testPalette = import.meta.env.MODE === "e2e";
-    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
-    const instance = new Terminal({ cursorBlink: true, convertEol: false, fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 12, lineHeight: 1.25, scrollback: 5000, theme: { background: "#1d1d1b", foreground: "#e5e1d8", cursor: accent, selectionBackground: "#5a554b88", black: "#242320", red: "#d77865", green: "#72ad8d", yellow: testPalette ? "#d46a24" : "#c49b52", blue: "#7496b8", magenta: "#ad83ad", cyan: "#72aaa9", white: "#e5e1d8" } });
-    const fit = new FitAddon(); const serializer = new SerializeAddon(); instance.loadAddon(fit); instance.loadAddon(serializer); instance.open(host.current); terminal.current = instance;
-    setCopyError(false);
-    instance.attachCustomKeyEventHandler((event) => {
-      if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey || event.key.toLowerCase() !== "c") return true;
-      event.preventDefault();
-      event.stopPropagation();
-
-      if (event.type === "keydown") {
-        const selection = instance.getSelection();
-        setCopyError(false);
-
-        if (selection) {
-          const copy = async () => {
-            try { await navigator.clipboard.writeText(selection); }
-            catch { if (terminal.current === instance) setCopyError(true); }
-          };
-
-          void copy();
-        }
-      }
-
-      return false;
-    });
-    const sizeHandler = instance.parser.registerCsiHandler({ final: "t" }, params => {
-      const [operation, rows, cols] = params;
-      if (operation !== 8 || typeof rows !== "number" || typeof cols !== "number" || rows < 1 || cols < 1) return false;
-      instance.resize(cols, rows);
-      return true;
-    });
-    if (!componentProps.started) fit.fit();
-    let restored = !capturedSnapshot1;
-
-    if (capturedSnapshot1) { queuedOutputEnd.current = capturedSnapshotEnd2 ?? 0; instance.write((capturedSnapshot1), () => { if (terminal.current !== instance) return; lastOutputEnd.current = capturedSnapshotEnd2 ?? 0; restored = true; }); }
-
-    instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
-    requestAnimationFrame(() => { if (terminal.current === instance && !componentProps.ownershipRequired) instance.focus(); });
-    const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value); });
-    let cursorFrame: number | undefined;
-    const revealCursor = () => {
-      if (cursorFrame !== undefined) cancelAnimationFrame(cursorFrame);
-      cursorFrame = requestAnimationFrame(() => {
-        cursorFrame = undefined;
-        const viewport = host.current;
-        const screen = instance.element?.querySelector<HTMLElement>(".xterm-screen");
-        const buffer = instance.buffer.active;
-        if (!viewport || !screen || buffer.viewportY !== buffer.baseY) return;
-        const cellWidth = screen.clientWidth / instance.cols;
-        const cellHeight = screen.clientHeight / instance.rows;
-        const screenRect = screen.getBoundingClientRect();
-        const viewportRect = viewport.getBoundingClientRect();
-        const left = screenRect.left - viewportRect.left + viewport.scrollLeft - viewport.clientLeft + Math.min(buffer.cursorX, instance.cols - 1) * cellWidth;
-        const top = screenRect.top - viewportRect.top + viewport.scrollTop - viewport.clientTop + buffer.cursorY * cellHeight;
-        viewport.scrollLeft = Math.max(Math.min(viewport.scrollLeft, left), left + cellWidth - viewport.clientWidth);
-        viewport.scrollTop = Math.max(Math.min(viewport.scrollTop, top), top + cellHeight - viewport.clientHeight);
-      });
-    };
-    const cursor = instance.onCursorMove(revealCursor);
-    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(revealCursor); observer?.observe(host.current);
-
-    return () => { saveSnapshot(restored ? `\u001b[8;${instance.rows};${instance.cols}t${serializer.serialize()}` : capturedSnapshot1 || "", restored ? lastOutputEnd.current : capturedSnapshotEnd2 ?? 0); observer?.disconnect(); if (cursorFrame !== undefined) cancelAnimationFrame(cursorFrame); cursor.dispose(); data.dispose(); sizeHandler.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
-  }, () => [componentProps.activeId, componentProps.cwd]);
+  const [command, setCommand] = createSignal("");
+  const host = createRef<HTMLPreElement>(null);
+  const input = createRef<HTMLInputElement>(null);
+  const tabRefs = createRef(new Map<string, HTMLButtonElement>());
+  const history: string[] = [];
+  let historyIndex = 0;
+  let draft = "";
+  let followOutput = true;
+  let parser = createTerminalTranscript();
+  let parsedId = "";
+  let parsedEnd = 0;
+  const transcript = createMemo(() => {
+    const start = componentProps.outputEnd - componentProps.output.length;
+    if (parsedId !== componentProps.activeId || parsedEnd < start || parsedEnd > componentProps.outputEnd) {
+      parser = createTerminalTranscript();
+      parsedEnd = start;
+      parsedId = componentProps.activeId;
+    }
+    const text = parser.append(componentProps.output.slice(parsedEnd - start));
+    parsedEnd = componentProps.outputEnd;
+    return text;
+  });
+  const disabled = () => Boolean(componentProps.ownershipRequired || !componentProps.started || componentProps.exited);
+  const canAdd = createMemo(() => componentProps.terminals.length < 8);
 
   createDependencyEffect(() => {
-    const instance = terminal.current;
-
-    if (!instance) return;
-    instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
-
-    if (componentProps.ownershipRequired) instance.blur();
-    else if (!componentProps.started && !componentProps.exited) callbacks.current.onStart(componentProps.activeId, instance.cols, instance.rows);
+    if (componentProps.cwd && !componentProps.ownershipRequired && !componentProps.started && !componentProps.exited) componentProps.onStart(componentProps.activeId, 80, 24);
   }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired]);
 
-  createDependencyEffect(() => { const capturedOutputEnd0 = componentProps.outputEnd; const capturedOutput1 = componentProps.output;
-    const instance = terminal.current;
-
-    if (!instance) return;
-    const outputStart = capturedOutputEnd0 - capturedOutput1.length;
-    const parsed = () => { if (terminal.current === instance) lastOutputEnd.current = capturedOutputEnd0; };
-
-    if (queuedOutputEnd.current >= outputStart && queuedOutputEnd.current <= capturedOutputEnd0) instance.write(capturedOutput1.slice(queuedOutputEnd.current - outputStart), parsed); else { instance.reset(); instance.write(capturedOutput1, parsed); }
-
-    queuedOutputEnd.current = capturedOutputEnd0;
-  }, () => [componentProps.output, componentProps.outputEnd]);
   createDependencyEffect(() => {
-    const capturedActiveId0 = componentProps.activeId;
- tabRefs.current.get(capturedActiveId0)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, () => [componentProps.activeId, componentProps.terminals.length]);
+    if (followOutput && host.current) host.current.scrollTop = host.current.scrollHeight;
+  }, () => [transcript()]);
 
-  const canAdd = createMemo(() => (componentProps.terminals.length < 8));
+  createDependencyEffect(() => {
+    setCommand(""); history.length = 0; historyIndex = 0; draft = ""; followOutput = true;
+    tabRefs.current.get(componentProps.activeId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, () => [componentProps.activeId]);
 
-  return <section class="terminal-shell" aria-label="Session terminal"><header><div class="terminal-tabs">{<Key each={componentProps.terminals} by={(item) => item.id}>{(item, _index) => <button ref={(element) => { if (element) tabRefs.current.set(item().id, element); else tabRefs.current.delete(item().id); }}  class={`terminal-tab ${item().id === componentProps.activeId ? "active" : ""}`} aria-pressed={item().id === componentProps.activeId} onClick={() => componentProps.onSelect(item().id)}><TerminalSquare size={14} /><strong>{item().label}</strong></button>}</Key>}<IconButton label={canAdd() ? "Add terminal" : "Terminal limit reached"} disabled={componentProps.ownershipRequired || !canAdd()} onClick={componentProps.onAdd}><Plus size={16} /></IconButton></div><div>{copyError() && <span class="copy-feedback" role="status">Could not copy terminal selection</span>}{componentProps.exited && <><span class="terminal-exited">exited</span><IconButton label="Restart terminal" disabled={componentProps.ownershipRequired} onClick={() => componentProps.onStart(componentProps.activeId, terminal.current?.cols ?? 80, terminal.current?.rows ?? 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" disabled={componentProps.ownershipRequired} onClick={componentProps.onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={componentProps.onClose}><X size={16} /></IconButton></div></header>
-    {isMobile && componentProps.cwd && <div class="mobile-terminal-keys">{<Key each={[["Esc", "\u001b"], ["Tab", "\t"], ["Ctrl+C", "\u0003"], ["Ctrl+D", "\u0004"], ["↑", "\u001b[A"], ["↓", "\u001b[B"], ["←", "\u001b[D"], ["→", "\u001b[C"]]} by={([label, _data]) => label}>{(entry, _index) => <button  disabled={componentProps.ownershipRequired || !componentProps.started || componentProps.exited} onPointerDown={(event) => event.preventDefault()} onClick={() => { componentProps.onData(entry()[1]); terminal.current?.focus(); }}>{entry()[0]}</button>}</Key>}</div>}
-    {componentProps.cwd ? <div class="terminal-surface" classList={{ "ownership-required": Boolean(componentProps.ownershipRequired) }}><div class="terminal-host" ref={element => { host.current = element; }} onMouseDown={() => { if (!componentProps.ownershipRequired) terminal.current?.focus(); }} />{componentProps.ownershipRequired && <button class="terminal-ownership" aria-label="Take session ownership" onClick={async () => { await componentProps.onTakeOwnership?.(); if (!componentProps.ownershipRequired) terminal.current?.focus(); }} />}</div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
+  const send = () => {
+    if (disabled()) return;
+    const value = command();
+    componentProps.onData(value + "\r");
+    if (value && history.at(-1) !== value) { history.push(value); if (history.length > 100) history.shift(); }
+    historyIndex = history.length; draft = ""; setCommand(""); followOutput = true;
+    if (host.current) host.current.scrollTop = host.current.scrollHeight;
+    input.current?.focus();
+  };
+  const interrupt = () => {
+    if (disabled()) return;
+    componentProps.onData("\u0003"); setCommand(""); historyIndex = history.length; draft = "";
+    input.current?.focus();
+  };
+
+  return <section class="terminal-shell" aria-label="Session terminal"><header><div class="terminal-tabs">{<Key each={componentProps.terminals} by={(item) => item.id}>{(item, _index) => <button ref={(element) => { if (element) tabRefs.current.set(item().id, element); else tabRefs.current.delete(item().id); }}  class={`terminal-tab ${item().id === componentProps.activeId ? "active" : ""}`} aria-pressed={item().id === componentProps.activeId} onClick={() => componentProps.onSelect(item().id)}><TerminalSquare size={14} /><strong>{item().label}</strong></button>}</Key>}<IconButton label={canAdd() ? "Add terminal" : "Terminal limit reached"} disabled={componentProps.ownershipRequired || !canAdd()} onClick={componentProps.onAdd}><Plus size={16} /></IconButton></div><div>{componentProps.exited && <><span class="terminal-exited">exited</span><IconButton label="Restart terminal" disabled={componentProps.ownershipRequired} onClick={() => componentProps.onStart(componentProps.activeId, 80, 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" disabled={componentProps.ownershipRequired} onClick={componentProps.onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={componentProps.onClose}><X size={16} /></IconButton></div></header>
+    {componentProps.cwd ? <div class="terminal-transcript-body">
+      <pre class="terminal-transcript" aria-label="Terminal output" tabIndex={0} ref={element => { host.current = element; }} onScroll={() => {
+        const element = host.current;
+        if (element) followOutput = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+      }}>{transcript()}</pre>
+      {componentProps.ownershipRequired
+        ? <button class="terminal-take-ownership" onClick={async () => { await componentProps.onTakeOwnership?.(); input.current?.focus(); }}>Take session ownership to send commands</button>
+        : <form class="terminal-command" onSubmit={event => { event.preventDefault(); send(); }}>
+          <input ref={element => { input.current = element; }} aria-label="Terminal command" placeholder="Enter a command" value={command()} disabled={disabled()} autocomplete="off" autocapitalize="off" spellcheck={false} onInput={event => setCommand(event.currentTarget.value)} onKeyDown={event => {
+            if (event.isComposing) return;
+            if (event.ctrlKey && event.key.toLowerCase() === "c" && event.currentTarget.selectionStart === event.currentTarget.selectionEnd) { event.preventDefault(); interrupt(); }
+            if ((event.key === "ArrowUp" || event.key === "ArrowDown") && history.length) {
+              event.preventDefault();
+              if (historyIndex === history.length) draft = command();
+              historyIndex = Math.max(0, Math.min(history.length, historyIndex + (event.key === "ArrowUp" ? -1 : 1)));
+              setCommand(historyIndex === history.length ? draft : history[historyIndex]);
+            }
+          }} />
+          <button type="submit" disabled={disabled()}>Send</button>
+          <button type="button" disabled={disabled()} onClick={interrupt}>Ctrl+C</button>
+          <button type="button" disabled={disabled()} onClick={() => { componentProps.onData("\u0004"); input.current?.focus(); }}>Ctrl+D</button>
+        </form>}
+    </div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
   </section>;
 }

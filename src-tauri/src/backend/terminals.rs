@@ -45,7 +45,7 @@ pub(super) fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: S
         || if host_id == "local" {
             let working_dir = PathBuf::from(&cwd);
             if !working_dir.is_dir() { return Err(format!("Terminal working directory does not exist: {}", working_dir.display())); }
-            let mut command = CommandBuilder::new("/bin/bash"); command.cwd(working_dir); Ok(command)
+            let mut command = CommandBuilder::new("/bin/bash"); command.arg("--noediting"); command.cwd(working_dir); Ok(command)
         } else {
             let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
             let mut command = CommandBuilder::new("ssh");
@@ -57,7 +57,7 @@ pub(super) fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: S
 
 fn spawn_terminal_shell(slave: &dyn portable_pty::SlavePty, command: impl FnOnce() -> Result<CommandBuilder, String>) -> Result<Box<dyn PtyChild + Send + Sync>, String> {
     let mut command = command()?;
-    command.env("TERM", "xterm-256color"); command.env("COLORTERM", "truecolor");
+    command.env("TERM", "dumb");
     slave.spawn_command(command).map_err(|error| format!("Could not start terminal shell: {error}"))
 }
 
