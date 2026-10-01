@@ -316,6 +316,7 @@ pub(super) fn restore_archived_worktree(app: AppHandle, session_path: String, ho
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let result = serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid worktree restoration response: {error}"))?;
     mutation.finish()?;
+    let _ = app.emit("pi://sessions-changed", ());
     Ok(result)
 }
 

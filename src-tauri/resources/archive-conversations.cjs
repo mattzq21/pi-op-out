@@ -173,7 +173,7 @@ function main() {
     }
     for (const record of records) {
       fs.renameSync(record.prepared, record.file);
-      for (const [from, to] of [[record.file.replace(/\.jsonl$/, '.diffs.json'), record.destination.replace(/\.jsonl$/, '.diffs.json')], [`${record.file}.loop-detection.json`, `${record.destination}.loop-detection.json`], [record.file, record.destination]]) {
+      for (const [from, to] of [[record.file.replace(/\.jsonl$/, '.snapshots'), record.destination.replace(/\.jsonl$/, '.snapshots')], [record.file.replace(/\.jsonl$/, '.diffs.json'), record.destination.replace(/\.jsonl$/, '.diffs.json')], [`${record.file}.loop-detection.json`, `${record.destination}.loop-detection.json`], [record.file, record.destination]]) {
         try { fs.renameSync(from, to); record.moves.push({ from, to }); }
         catch (error) { if (error.code !== 'ENOENT' || from === record.file) throw error; }
       }

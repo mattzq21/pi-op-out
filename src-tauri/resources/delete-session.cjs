@@ -25,6 +25,14 @@ async function readFile(file, optional = false) {
   return { file, body: await fs.readFile(file), metadata, stagedPath: "", staged: false };
 }
 
+async function readSnapshotDirectory(file) {
+  let metadata;
+  try { metadata = await fs.lstat(file); }
+  catch (error) { if (error.code === "ENOENT") return undefined; throw error; }
+  if (!metadata.isDirectory()) throw new Error(`Invalid snapshot directory: ${file}`);
+  return { file, metadata, directory: true, stagedPath: "", staged: false };
+}
+
 async function restoreFile(saved) {
   if (!saved.staged) return;
   if (saved.directory) {
@@ -126,6 +134,8 @@ async function main() {
   try {
     const [trace, sidecar, loopCheckpoint] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true), readFile(`${source}.loop-detection.json`, true)]);
     const files = [trace, sidecar, loopCheckpoint].filter(Boolean);
+    const snapshots = await readSnapshotDirectory(source.replace(/\.jsonl$/, ".snapshots"));
+    if (snapshots) files.push(snapshots);
     const entries = trace.body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
     const header = entries[0];
     validateHeader(header, target);

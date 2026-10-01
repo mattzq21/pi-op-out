@@ -8,9 +8,10 @@ export function registerTurnCapture(pi: ExtensionAPI) {
   const script = process.env.PI_DESKTOP_GIT_CAPTURE_SCRIPT;
   if (!script) return;
   const publish = (ctx: ExtensionContext, capture: object) => ctx.ui.setStatus("pi-desktop-turn-capture", JSON.stringify(capture));
-  const snapshot = async (cwd: string) => {
+  const snapshot = async (cwd: string, ctx: ExtensionContext, turnId: string, phase: string) => {
     try {
-      const { stdout } = await runFile(process.execPath, ["-e", script], { cwd, maxBuffer: 64 * 1024 });
+      const owner = { sessionPath: ctx.sessionManager.getSessionFile(), sessionId: ctx.sessionManager.getSessionId(), turnId, phase };
+      const { stdout } = await runFile(process.execPath, ["-e", script, JSON.stringify(owner)], { cwd, maxBuffer: 64 * 1024 });
       const capture = JSON.parse(stdout);
       if (!capture || typeof capture.root !== "string" || !capture.root || typeof capture.repository_root !== "string" || !capture.repository_root
         || typeof capture.tree !== "string" || !/^[a-f0-9]{40,64}$/i.test(capture.tree)) throw new Error("Git snapshot was incomplete");
@@ -29,7 +30,7 @@ export function registerTurnCapture(pi: ExtensionAPI) {
     cancel(ctx);
     const started = { id: crypto.randomUUID(), cwd: ctx.cwd, sessionId: ctx.sessionManager.getSessionId(), entries: new Set(ctx.sessionManager.getBranch().map((entry) => entry.id)) };
     try {
-      const baseline = await snapshot(started.cwd);
+      const baseline = await snapshot(started.cwd, ctx, started.id, "start");
       if (baseline) { turn = started; publish(ctx, { phase: "start", turnId: started.id, cwd: started.cwd, baseline }); }
     } catch (error) { ctx.ui.notify(`Could not capture project changes: ${error instanceof Error ? error.message : String(error)}`, "error"); }
   });
@@ -44,7 +45,7 @@ export function registerTurnCapture(pi: ExtensionAPI) {
       const response = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "message" && !ended.entries.has(entry.id) && entry.message.role === "assistant" && (entry.message.content.some((part) => part.type === "text" && part.text.trim()) || ["aborted", "error"].includes(entry.message.stopReason)));
       if (!response) return;
       messageId = response.id;
-      current = await snapshot(ended.cwd);
+      current = await snapshot(ended.cwd, ctx, ended.id, "end");
     } catch (error) { ctx.ui.notify(`Could not capture project changes: ${error instanceof Error ? error.message : String(error)}`, "error"); }
     finally { publish(ctx, { phase: "end", turnId: ended.id, cwd: ended.cwd, current, sessionPath, messageId }); }
   });

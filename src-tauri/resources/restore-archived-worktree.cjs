@@ -8,6 +8,44 @@ if (!file.startsWith(archive + path.sep) || !file.endsWith('.jsonl')) throw new 
 const entries = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).map(JSON.parse);
 const header = entries[0];
 const saved = header?.worktreeRestore;
+const sessions = path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop', 'sessions');
+fs.mkdirSync(sessions, { recursive: true });
+const destination = path.join(fs.realpathSync(sessions), path.basename(file));
+const sessionMoves = [
+  [file.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.snapshots')],
+  [file.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json')],
+  [`${file}.loop-detection.json`, `${destination}.loop-detection.json`],
+  [file, destination],
+];
+for (const [, target] of sessionMoves) {
+  try { fs.lstatSync(target); throw new Error(`The active session destination already exists: ${target}`); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+}
+function restoreSession(undoDirectory) {
+  const moved = [];
+  try {
+    for (const [source, target] of sessionMoves) {
+      try { fs.renameSync(source, target); moved.push([source, target]); }
+      catch (error) { if (error.code !== 'ENOENT' || source === file) throw error; }
+    }
+  } catch (error) {
+    const failures = [];
+    for (const [source, target] of moved.reverse()) {
+      try { fs.renameSync(target, source); } catch (failure) { failures.push(failure.message); }
+    }
+    try { undoDirectory(); } catch (failure) { failures.push(failure.message); }
+    throw new Error([error.message, ...failures].join('\n'));
+  }
+}
+if (header?.type === 'session' && !saved && path.isAbsolute(header.cwd ?? '')) {
+  const inspect = (args) => execFileSync('git', ['-C', header.cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const own = fs.realpathSync(inspect(['rev-parse', '--absolute-git-dir']));
+  const common = fs.realpathSync(inspect(['rev-parse', '--path-format=absolute', '--git-common-dir']));
+  if (own !== common) throw new Error('No saved worktree checkpoint is available');
+  restoreSession(() => {});
+  process.stdout.write(JSON.stringify({ path: header.cwd, branch: null, sessionPath: destination }));
+  process.exit(0);
+}
 if (header?.type === 'session' && saved?.kind === 'directory') {
   const storage = fs.realpathSync(path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop', 'archived-worktrees'));
   const stored = fs.realpathSync(saved.storedPath);
@@ -16,7 +54,8 @@ if (header?.type === 'session' && saved?.kind === 'directory') {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   fs.mkdirSync(path.dirname(saved.path), { recursive: true });
   fs.renameSync(stored, saved.path);
-  process.stdout.write(JSON.stringify({ path: saved.path, branch: null }));
+  restoreSession(() => fs.renameSync(saved.path, stored));
+  process.stdout.write(JSON.stringify({ path: saved.path, branch: null, sessionPath: destination }));
   process.exit(0);
 }
 if (header?.type !== 'session' || !saved || !path.isAbsolute(saved.path ?? '') || !path.isAbsolute(saved.repositoryRoot ?? '')
@@ -47,4 +86,8 @@ catch (error) { if (error.code !== 'ENOENT') throw error; }
 const { randomUUID } = require('node:crypto');
 const branch = `piop-restored-${randomUUID()}`;
 git(['worktree', 'add', '-b', branch, saved.path, saved.commit]);
-process.stdout.write(JSON.stringify({ path: saved.path, branch }));
+restoreSession(() => {
+  git(['worktree', 'remove', '--force', saved.path]);
+  git(['branch', '-D', branch]);
+});
+process.stdout.write(JSON.stringify({ path: saved.path, branch, sessionPath: destination }));

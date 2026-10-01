@@ -170,7 +170,7 @@ async function archivedWorktree(header) {
   if (!validSessionHeader(header)) return {};
   const current = await currentWorktree(header.cwd);
   if (current === undefined) return restorableWorktree(header.worktreeRestore);
-  return current ? { worktreePath: current } : {};
+  return current ? { worktreePath: current } : { restorable: true };
 }
 
 async function restorableWorktree(saved) {
@@ -313,6 +313,7 @@ async function diskStorage(worktreeRoots) {
   const seen = new Set();
   const directories = new Set();
   const worktrees = new Set();
+  const snapshotCounts = new Map();
   let archivedDirectories = 0;
   const warnings = [];
   const root = await fs.realpath(piopRoot).catch(() => piopRoot);
@@ -320,6 +321,10 @@ async function diskStorage(worktreeRoots) {
   async function visit(target, category) {
     try {
       const metadata = await fs.lstat(target);
+      if (metadata.isDirectory() && target.endsWith('.snapshots')) {
+        if (category === 'active-conversations') category = 'git-diff-snapshots';
+        else if (category === 'archived-conversations') category = 'archived-git-diff-snapshots';
+      }
       const identity = `${metadata.dev}:${metadata.ino}`;
       if (seen.has(identity)) return;
       seen.add(identity);
@@ -328,6 +333,7 @@ async function diskStorage(worktreeRoots) {
       if (!metadata.isDirectory()) return;
       directories.add(target);
       const entries = await fs.readdir(target, { withFileTypes: true });
+      if (['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && path.dirname(target).endsWith('.snapshots') && entries.some((entry) => entry.name === 'snapshot.json')) snapshotCounts.set(category, (snapshotCounts.get(category) || 0) + 1);
       if (target === path.join(root, 'archived-worktrees')) archivedDirectories = entries.filter((entry) => entry.isDirectory()).length;
       const managed = path.relative(path.join(root, "worktrees"), target).split(path.sep);
       if (category === "worktrees" && managed.length === 2 && !managed.includes("..") && entries.some((entry) => entry.name === ".git")) worktrees.add(target);
@@ -348,7 +354,7 @@ async function diskStorage(worktreeRoots) {
       await visit(own, "worktrees");
     } catch (error) { warnings.push(`${worktree}: ${error.message}`); }
   }
-  return { sizes, directories, worktrees, archivedDirectories, warnings };
+  return { sizes, directories, worktrees, archivedDirectories, snapshotCounts, warnings };
 }
 
 async function main() {
@@ -406,7 +412,8 @@ async function main() {
       { id: "active-conversations", byteSize: disk.sizes.get("active-conversations") || 0, itemCount: active.itemCount },
       { id: "archived-conversations", byteSize: disk.sizes.get("archived-conversations") || 0, itemCount: archived.itemCount },
       { id: "project-checkpoints", byteSize: checkpoints.byteSize, itemCount: checkpoints.itemCount, estimated: true },
-      { id: "git-diff-snapshots", byteSize: disk.sizes.get("git-diff-snapshots") || 0, itemCount: gitDiffSnapshots.itemCount },
+      { id: "git-diff-snapshots", byteSize: disk.sizes.get("git-diff-snapshots") || 0, itemCount: gitDiffSnapshots.itemCount + (disk.snapshotCounts.get("git-diff-snapshots") || 0) },
+      { id: "archived-git-diff-snapshots", byteSize: disk.sizes.get("archived-git-diff-snapshots") || 0, itemCount: disk.snapshotCounts.get("archived-git-diff-snapshots") || 0 },
       { id: "temporary-chats", byteSize: disk.sizes.get("temporary-chats") || 0, itemCount: temporaryChats.itemCount },
       { id: "worktrees", byteSize: disk.sizes.get("worktrees") || 0, itemCount: disk.worktrees.size },
       { id: "archived-worktrees", byteSize: disk.sizes.get("archived-worktrees") || 0, itemCount: disk.archivedDirectories },

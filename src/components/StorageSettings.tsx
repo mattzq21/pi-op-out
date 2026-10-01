@@ -11,7 +11,8 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
   "active-conversations": { name: "Active conversations", description: "Saved chats and their diff histories", icon: MessageSquare, item: "conversation" },
   "archived-conversations": { name: "Archived conversations", description: "Archived chats and their diff histories", icon: Archive, item: "conversation" },
   "project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects retained only by piop checkpoint refs", icon: GitBranch, item: "ref" },
-  "git-diff-snapshots": { name: "Diff snapshots", description: "Temporary Git state used to calculate turn diffs", icon: Camera, item: "snapshot" },
+  "git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
+  "archived-git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
   "temporary-chats": { name: "No-project conversations", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
   "worktrees": { name: "Worktrees", description: "Working copies, including dependencies and build outputs", icon: GitBranch, item: "worktree" },
   "archived-worktrees": { name: "No-project conversations", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
@@ -21,7 +22,7 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
 const storageSections: { title: string; categories: StorageCategory["id"][] }[] = [
   { title: "General", categories: ["project-checkpoints", "worktrees", "other-storage"] },
   { title: "Active sessions", categories: ["active-conversations", "git-diff-snapshots", "temporary-chats"] },
-  { title: "Archived sessions", categories: ["archived-conversations", "archived-worktrees"] },
+  { title: "Archived sessions", categories: ["archived-conversations", "archived-git-diff-snapshots", "archived-worktrees"] },
 ];
 
 function formatBytes(bytes: number) {
@@ -151,7 +152,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
           const key = createMemo(() => (archiveKey(host(), { ...archive(), name: name() }))); const pending = createMemo(() => (deleting().has(key())));
           const renderArchiveDetails = () => (<span><strong>{name()}</strong><small>{archive().deletable ? `${typeof archive().cwd === "string" ? archive().cwd : ""} · ${formatDate(archive().modifiedAt)}` : `Cleanup unavailable · ${archive().deleteError}`}</small></span>);
           const renderArchiveDelete = () => (<button aria-label={archive().deletable ? `Permanently delete ${name()}` : `Cannot safely delete ${name()}: ${archive().deleteError}`} disabled={!archive().deletable || deleting().size > 0 || loading()} onClick={() => deleteOne(host(), archive())}>{!archive().deletable ? <ShieldAlert size={14} /> : pending() ? <RefreshCw size={14} class="spinning" /> : <Trash2 size={14} />}</button>);
-          const renderWorktreeAction = () => ((archive().worktreePath || archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : archive().worktreePath ? "Delete worktree" : "Restore directory"}</button>);
+          const renderWorktreeAction = () => ((archive().worktreePath || archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : archive().worktreePath ? "Delete worktree" : "Restore conversation"}</button>);
           return <div class={`archive-row${archive().deletable ? "" : " cleanup-unavailable"}`}  title={archive().deleteError || archive().path}>
             {renderArchiveDetails()}
             <code>{formatBytes(Number(archive().byteSize) || 0)}</code>
