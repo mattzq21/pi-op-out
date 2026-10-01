@@ -148,10 +148,21 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
  tabRefs.current.get(capturedActiveId0)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, () => [componentProps.activeId, componentProps.terminals.length]);
 
   const canAdd = createMemo(() => (componentProps.terminals.length < 8));
+  let takingOwnership = false;
+
+  const takeOwnership = async () => {
+    if (!componentProps.ownershipRequired || takingOwnership) return;
+    const instance = terminal.current;
+    takingOwnership = true;
+
+    try {
+      await componentProps.onTakeOwnership?.();
+
+      if (terminal.current === instance && !componentProps.ownershipRequired) instance?.focus();
+    } finally { takingOwnership = false; }
+  };
 
   return <ResizableTerminalPanel><header><div class="terminal-tabs">{<Key each={componentProps.terminals} by={(item) => item.id}>{(item, _index) => <button ref={(element) => { if (element) tabRefs.current.set(item().id, element); else tabRefs.current.delete(item().id); }}  class={`terminal-tab ${item().id === componentProps.activeId ? "active" : ""}`} aria-pressed={item().id === componentProps.activeId} onClick={() => componentProps.onSelect(item().id)}><TerminalSquare size={14} /><strong>{item().label}</strong></button>}</Key>}<IconButton label={canAdd() ? "Add terminal" : "Terminal limit reached"} disabled={componentProps.ownershipRequired || !canAdd()} onClick={componentProps.onAdd}><Plus size={16} /></IconButton></div><div>{copyError() && <span class="copy-feedback" role="status">Could not copy terminal selection</span>}{componentProps.exited && <><span class="terminal-exited">exited</span><IconButton label="Restart terminal" disabled={componentProps.ownershipRequired} onClick={() => componentProps.onStart(componentProps.activeId, terminal.current?.cols ?? 80, terminal.current?.rows ?? 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" disabled={componentProps.ownershipRequired} onClick={componentProps.onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={componentProps.onClose}><X size={16} /></IconButton></div></header>
-    {componentProps.cwd ? <div class="terminal-surface" classList={{ "ownership-required": Boolean(componentProps.ownershipRequired) }}><div class="terminal-host" ref={element => { host.current = element; }} onMouseDown={() => { if (!componentProps.ownershipRequired) terminal.current?.focus(); }} />{componentProps.ownershipRequired && <button class="terminal-ownership" aria-label="Take session ownership" onClick={async () => { await componentProps.onTakeOwnership?.();
-
-    if (!componentProps.ownershipRequired) terminal.current?.focus(); }}><span>Take ownership</span></button>}{componentProps.ownershipRequired && componentProps.inputDraft && <div class="terminal-draft-preview"><span>Mobile input</span><code>{componentProps.inputDraft}</code></div>}</div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
+    {componentProps.cwd ? <div class="terminal-surface" classList={{ "ownership-required": Boolean(componentProps.ownershipRequired) }}><div class="terminal-host" ref={element => { host.current = element; }} onMouseDown={() => terminal.current?.focus()} onFocusIn={() => { void takeOwnership(); }} />{componentProps.ownershipRequired && componentProps.inputDraft && <div class="terminal-draft-preview"><span>Mobile input</span><code>{componentProps.inputDraft}</code></div>}</div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
   </ResizableTerminalPanel>;
 }
