@@ -19,6 +19,7 @@ const terminalSizeSchema = z.tuple([z.literal(8), z.number().int().min(1).max(65
 export function DesktopTerminalView(componentProps: TerminalViewProps) {
   const [copyError, setCopyError] = createSignal(false);
   const [draftStyle, setDraftStyle] = createSignal<CSSProperties>({ display: "none" });
+  const terminalMount = createRef<HTMLDivElement>(null);
   const outputWrites = createRef(Promise.resolve());
   const host = createRef<HTMLDivElement>(null); const terminal = createRef<Terminal | undefined>(undefined); const lastOutputEnd = createRef(0); const queuedOutputEnd = createRef(0); const tabRefs = createRef(new Map<string, HTMLButtonElement>());
   const callbacks = createRef({ onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }); createComputed(() => { callbacks.current = { onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }; });
@@ -26,11 +27,11 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
   createDependencyEffect(() => { const capturedCwd0 = componentProps.cwd; const capturedSnapshot1 = componentProps.snapshot; const capturedSnapshotEnd2 = componentProps.snapshotEnd;
     const saveSnapshot = componentProps.onSnapshot;
 
-    if (!capturedCwd0 || !host.current) return;
+    if (!capturedCwd0 || !host.current || !terminalMount.current) return;
     const testPalette = import.meta.env.MODE === "e2e";
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
     const instance = new Terminal({ cursorBlink: true, convertEol: false, fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 12, lineHeight: 1.25, scrollback: 5000, theme: { ...terminalTheme, cursor: accent, yellow: testPalette ? "#d46a24" : terminalTheme.yellow } });
-    const fit = new FitAddon(); const serializer = new SerializeAddon(); instance.loadAddon(fit); instance.loadAddon(serializer); instance.open(host.current); terminal.current = instance;
+    const fit = new FitAddon(); const serializer = new SerializeAddon(); instance.loadAddon(fit); instance.loadAddon(serializer); instance.open(terminalMount.current); terminal.current = instance;
     setCopyError(false);
     instance.attachCustomKeyEventHandler((event) => {
       if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey || event.key.toLowerCase() !== "c") return true;
@@ -185,6 +186,6 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
   };
 
   return <ResizableTerminalPanel><header><div class="terminal-tabs">{<Key each={componentProps.terminals} by={(item) => item.id}>{(item, _index) => <button ref={(element) => { if (element) tabRefs.current.set(item().id, element); else tabRefs.current.delete(item().id); }}  class={`terminal-tab ${item().id === componentProps.activeId ? "active" : ""}`} aria-pressed={item().id === componentProps.activeId} onClick={() => componentProps.onSelect(item().id)}><TerminalSquare size={14} /><strong>{item().label}</strong></button>}</Key>}<IconButton label={canAdd() ? "Add terminal" : "Terminal limit reached"} disabled={componentProps.ownershipRequired || !canAdd()} onClick={componentProps.onAdd}><Plus size={16} /></IconButton></div><div>{copyError() && <span class="copy-feedback" role="status">Could not copy terminal selection</span>}{componentProps.exited && <><span class="terminal-exited">exited</span><IconButton label="Restart terminal" disabled={componentProps.ownershipRequired} onClick={() => componentProps.onStart(componentProps.activeId, terminal.current?.cols ?? 80, terminal.current?.rows ?? 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" disabled={componentProps.ownershipRequired} onClick={componentProps.onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={componentProps.onClose}><X size={16} /></IconButton></div></header>
-    {componentProps.cwd ? <div class="terminal-surface" classList={{ "ownership-required": Boolean(componentProps.ownershipRequired) }}><div class="terminal-host" ref={element => { host.current = element; }} onMouseDown={() => terminal.current?.focus()} onFocusIn={() => { void takeOwnership(); }}>{componentProps.ownershipRequired && componentProps.inputDraft && <div class="terminal-draft-inline" style={draftStyle()}>{componentProps.inputDraft}</div>}</div></div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
+    {componentProps.cwd ? <div class="terminal-surface" classList={{ "ownership-required": Boolean(componentProps.ownershipRequired) }}><div class="terminal-host" ref={element => { host.current = element; }} onMouseDown={() => terminal.current?.focus()} onFocusIn={() => { void takeOwnership(); }}><div class="terminal-mount" ref={element => { terminalMount.current = element; }} />{componentProps.ownershipRequired && componentProps.inputDraft && <div class="terminal-draft-inline" style={draftStyle()}>{componentProps.inputDraft}</div>}</div></div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
   </ResizableTerminalPanel>;
 }
