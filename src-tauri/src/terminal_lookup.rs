@@ -1,7 +1,7 @@
 use super::*;
 use std::time::SystemTime;
 
-const RETAINED_BYTES: usize = 256 * 1024;
+const RETAINED_BYTES: usize = 4 * 1024 * 1024;
 const EXITED_LIMIT: usize = 64;
 
 pub(crate) struct Transcript {
@@ -207,7 +207,7 @@ pub(crate) fn lookup(runtime: &TerminalRuntime, request: &Value, host_id: &str) 
         let mut terminals: Vec<_> = history.iter().filter(|(_, item)| belongs(item)).collect();
         terminals.sort_by_key(|(_, item)| item.creation_order);
         return Ok(json!({"terminals":terminals.into_iter().map(|(id, item)| item.summary(id)).collect::<Vec<_>>(),
-            "retention":"Up to 256 KiB per terminal; closed terminals are removed, exited history may be evicted. Select terminalId to read output."}));
+            "retention":"Up to 4 MiB per terminal; closed terminals are removed, exited history may be evicted. Select terminalId to read output."}));
     };
     let item = history.get(id).filter(belongs).ok_or("Terminal not found in this session; list terminals again")?;
     if request["generation"].as_str().is_some_and(|generation| generation != item.generation.to_string()) {
