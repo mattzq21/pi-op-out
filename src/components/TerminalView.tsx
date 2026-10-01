@@ -79,6 +79,19 @@ export function TerminalView(componentProps: Props) {
     input.current?.focus();
   };
 
+  const sendControl = (data: string) => {
+    if (disabled()) return;
+
+    if (data === "\u0003") {
+      interrupt();
+
+      return;
+    }
+
+    componentProps.onData(data);
+    input.current?.focus();
+  };
+
   return <section class="terminal-shell" aria-label="Session terminal"><header><div class="terminal-tabs">{<Key each={componentProps.terminals} by={(item) => item.id}>{(item, _index) => <button ref={(element) => { if (element) tabRefs.current.set(item().id, element); else tabRefs.current.delete(item().id); }}  class={`terminal-tab ${item().id === componentProps.activeId ? "active" : ""}`} aria-pressed={item().id === componentProps.activeId} onClick={() => componentProps.onSelect(item().id)}><TerminalSquare size={14} /><strong>{item().label}</strong></button>}</Key>}<IconButton label={canAdd() ? "Add terminal" : "Terminal limit reached"} disabled={componentProps.ownershipRequired || !canAdd()} onClick={componentProps.onAdd}><Plus size={16} /></IconButton></div><div>{componentProps.exited && <><span class="terminal-exited">exited</span><IconButton label="Restart terminal" disabled={componentProps.ownershipRequired} onClick={() => componentProps.onStart(componentProps.activeId, 80, 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" disabled={componentProps.ownershipRequired} onClick={componentProps.onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={componentProps.onClose}><X size={16} /></IconButton></div></header>
     {componentProps.cwd ? <div class="terminal-transcript-body">
       <pre class="terminal-transcript" aria-label="Terminal output" tabIndex={0} ref={element => { host.current = element; }} onScroll={() => {
@@ -86,6 +99,11 @@ export function TerminalView(componentProps: Props) {
 
         if (element) followOutput = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
       }}>{transcript()}</pre>
+      <div class="terminal-controls" role="group" aria-label="Terminal controls">
+        <Key each={[["Esc", "\u001b"], ["Tab", "\t"], ["Ctrl+C", "\u0003"], ["Ctrl+D", "\u0004"], ["↑", "\u001b[A"], ["↓", "\u001b[B"], ["←", "\u001b[D"], ["→", "\u001b[C"]]} by={entry => entry[0]}>{entry =>
+          <button type="button" disabled={disabled()} onPointerDown={event => event.preventDefault()} onClick={() => sendControl(entry()[1])}>{entry()[0]}</button>
+        }</Key>
+      </div>
       {componentProps.ownershipRequired
         ? <button class="terminal-take-ownership" onClick={async () => { await componentProps.onTakeOwnership?.(); input.current?.focus(); }}>Take session ownership to send commands</button>
         : <form class="terminal-command" onSubmit={event => { event.preventDefault(); send(); }}>
@@ -103,8 +121,6 @@ export function TerminalView(componentProps: Props) {
             }
           }} />
           <button type="submit" disabled={disabled()}>Send</button>
-          <button type="button" disabled={disabled()} onClick={interrupt}>Ctrl+C</button>
-          <button type="button" disabled={disabled()} onClick={() => { componentProps.onData("\u0004"); input.current?.focus(); }}>Ctrl+D</button>
         </form>}
     </div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
   </section>;
