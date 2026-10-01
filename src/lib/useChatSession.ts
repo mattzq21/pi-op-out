@@ -2,7 +2,9 @@ import { ConversationChangedError } from "./conversationChanged";
 import { type Accessor, createComputed, createMemo, onCleanup, untrack } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
-import type { AgentState, ChatMessage, Model, PromptContextInfo, RpcEvent, SlashCommand } from "../types";
+import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../types";
+import { chatSessionEventSchema, pendingMessagesSchema, type ChatSessionEvent } from "./chatSessionEventSchema";
+import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 import { contextUsageAfterCompaction } from "./contextUsage";
 import { appendFileChanges, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
@@ -10,14 +12,14 @@ import { useSessionMemory } from "./sessionMemory";
 
 interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 
-type MessageUpdate = (messages: ChatMessage[], positions: (id: unknown) => number[]) => boolean;
+type MessageUpdate = (messages: ChatMessage[], positions: (id: string | undefined) => number[]) => boolean;
 
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 
 function messagePositions(messages: ChatMessage[]) {
-  let indexed: Map<unknown, { through: number; positions: number[] }> | undefined;
+  let indexed: Map<string | undefined, { through: number; positions: number[] }> | undefined;
 
-  return (id: unknown) => {
+  return (id: string | undefined) => {
     indexed ??= new Map();
     const entry = indexed.get(id) ?? { through: 0, positions: [] };
 
@@ -70,7 +72,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   const resumeMarkers = createRef(new Set<string>());
   const liveRevision = createRef(0); const activeAssistantId = createRef<string | undefined>(undefined); const activeMessageIds = createRef(new Map<string, string>()); const liveMessageSequence = createRef(0); const pendingUpdates = createRef<MessageUpdate[]>([]); const frame = createRef<number | undefined>(undefined);
   const pendingRevision = createRef<{ base: string | undefined; next: string } | undefined>(undefined);
-  const nextLiveMessageId = (role: unknown) => `live-${String(role).slice(0, 32)}-${Date.now()}-${++liveMessageSequence.current}`;
+  const nextLiveMessageId = (role: string) => `live-${role.slice(0, 32)}-${Date.now()}-${++liveMessageSequence.current}`;
 
   const trackLiveId = (roleKey: string, liveId: string) => {
     if (activeMessageIds.current.size >= 32 && !activeMessageIds.current.has(roleKey)) {
@@ -116,8 +118,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     if (event.previousRevision !== pendingRevision.current.next || !["message_update", "tool_execution_update"].includes(event.type)) flush();
   };
 
-  const advanceRevision = (event: RpcEvent) => {
-    if (typeof event.revision !== "string" || (pendingRevision.current?.next ?? session.memory.revision) !== event.previousRevision) return;
+  const advanceRevision = (event: ChatSessionEvent) => {
+    if (event.revision === undefined || (pendingRevision.current?.next ?? session.memory.revision) !== event.previousRevision) return;
 
     if (["entry_appended", "message_end", "agent_settled", "session_info_changed", "session_switched", "settings_applied", "disconnected", "model_select"].includes(event.type)) return;
 
@@ -173,7 +175,11 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
       if (event.partialResult) eventHandler.current({ ...event, sequence: snapshot.sequence, type: "tool_execution_update" }); }
 
-      for (const event of buffer) if (typeof event.sequence !== "number" || (event.epoch === snapshot.epoch && event.sequence > snapshot.sequence)) eventHandler.current(event);
+      for (const raw of buffer) {
+        const event = chatSessionEventSchema.parse(raw);
+
+        if (event.sequence === undefined || (event.epoch === snapshot.epoch && event.sequence > snapshot.sequence)) eventHandler.current(event);
+      }
     };
 
     const finishRefresh = () => {
@@ -223,7 +229,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
           restoreHistory(snapshot);
           session.setState(current => ({ ...snapshot.state,
             contextUsage: snapshot.state.contextUsage ?? (current.sessionId === snapshot.state.sessionId ? current.contextUsage : undefined),
-            pendingMessages: snapshot.queue.pendingMessages as AgentState["pendingMessages"] }));
+            pendingMessages: pendingMessagesSchema.parse(snapshot.queue.pendingMessages) }));
           capturedTransport.promptControls?.acknowledge(snapshot.state);
         });
         session.memory.markRevision(snapshot.revision);
@@ -273,8 +279,9 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     return () => { stopped = true; clearTimeout(timer); unsubscribe(); };
   }, () => [refresh, transport()]);
 
-  const handleEvent = (event: RpcEvent) => {
+  const handleEvent = (raw: RpcEvent) => {
     if (owner.current !== transport()) return;
+    const event = chatSessionEventSchema.parse(raw);
 
     if (bufferedEvents.current) { bufferedEvents.current.push(event);
 
@@ -289,11 +296,11 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleExtensionUiRequest = () => {
-      if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "pi-desktop-prompt-context" && typeof event.statusText === "string" && event.statusText.startsWith("json:")) {
+      if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "pi-desktop-prompt-context" && event.statusText?.startsWith("json:")) {
         try {
-          const context = JSON.parse(event.statusText.slice(5)) as PromptContextInfo;
+          const context = promptContextSchema.parse(JSON.parse(event.statusText.slice(5)));
 
-          if (typeof context.userTimestamp === "number") {
+          if (context.userTimestamp !== undefined) {
             liveRevision.current += 1;
             session.setMessages((current) => current.map((message) => message.role === "user" && message.timestamp === context.userTimestamp && !message.promptContext ? { ...message, promptContext: context } : message));
           }
@@ -302,7 +309,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleEntryAppended = () => {
-      if (event.type === "entry_appended" && event.entry) { const entry = event.entry as PiEntry; const marker = resumeMarker(entry);
+      if (event.type === "entry_appended" && event.entry) { const entry = event.entry; const marker = resumeMarker(entry);
 
       if (marker) { resumeMarkers.current.add(marker); session.setMessages(checkpointLatestUser); }
 
@@ -340,10 +347,10 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       session.setState((current) => ({ ...current, isStreaming: false, isCompacting: false, isPausing: false, activity: undefined }));
     };
 
-    const messageLiveId = (rawMessage: Record<string, unknown>, roleKey: string) => {
+    const messageLiveId = (rawMessage: WireMessage, roleKey: string) => {
       const toolCallId = rawMessage.toolCallId;
 
-      return rawMessage.role === "toolResult" && typeof toolCallId === "string" ? toolCallId : event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
+      return rawMessage.role === "toolResult" && toolCallId !== undefined ? toolCallId : event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
     };
 
     const updateAssistant = (message: ChatMessage) => {
@@ -356,11 +363,11 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     const handleMessageStart = () => {
       if (event.type === "message_end") flush();
-      const rawMessage = (event.message ?? {}) as Record<string, unknown>; const roleKey = String((rawMessage satisfies { role?: unknown }).role ?? "message");
+      const rawMessage = event.message ?? wireMessageSchema.parse({}); const roleKey = rawMessage.role ?? "message";
 
       if (isResumeMessage(rawMessage, resumeMarkers.current)) return;
 
-      if (rawMessage.role === "custom" && (rawMessage satisfies { display?: unknown }).display === false) return;
+      if (rawMessage.role === "custom" && rawMessage.display === false) return;
       const liveId = messageLiveId(rawMessage, roleKey);
 
       if (event.type === "message_start") trackLiveId(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
@@ -372,16 +379,18 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleMessageUpdate = () => {
-      if (event.assistantMessageEvent) queue((current) => { let index = -1;
+      const assistantEvent = event.assistantMessageEvent;
+
+      if (assistantEvent) queue((current) => { let index = -1;
 
       for (let candidate = current.length - 1; candidate >= 0; candidate -= 1) { const message = current[candidate];
 
       if (message.role === "assistant" && (message.id === activeAssistantId.current || message.streaming)) { index = candidate; break; } }
 
-      if (index < 0) return false; current[index] = applyAssistantMessageEvent(current[index], event.assistantMessageEvent);
+      if (index < 0) return false; current[index] = applyAssistantMessageEvent(current[index], assistantEvent);
 
       return true; });
-      else if (event.message) { const rawMessage = (event.message ?? {}) as Record<string, unknown>; const roleKey = String((rawMessage satisfies { role?: unknown }).role ?? "message"); let liveId = activeMessageIds.current.get(roleKey);
+      else if (event.message) { const rawMessage = event.message; const roleKey = rawMessage.role ?? "message"; let liveId = activeMessageIds.current.get(roleKey);
 
       if (!liveId) { liveId = nextLiveMessageId(roleKey); trackLiveId(roleKey, liveId); }
 
@@ -421,7 +430,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleQueueUpdate = () => {
-      session.setState((current) => ({ ...current, pendingMessages: event.pendingMessages as AgentState["pendingMessages"], pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));
+      session.setState((current) => ({ ...current, pendingMessages: event.pendingMessages, pendingMessageCount: (event.steering?.length ?? 0) + (event.followUp?.length ?? 0) }));
     };
 
     const handleCompactionStart = () => {
@@ -441,10 +450,12 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleThinkingLevelChanged = () => {
-      if (event.type === "thinking_level_changed" && typeof event.level === "string") session.setState((current) => ({ ...current, thinkingLevel: event.level as string }));
+      const level = event.level;
+
+      if (event.type === "thinking_level_changed" && level !== undefined) session.setState((current) => ({ ...current, thinkingLevel: level }));
     };
 
-    const handlers: Record<string, () => void> = {
+    const handlers = new Map(Object.entries({
       "runtime_presence": handleRuntimePresence,
       "extension_ui_request": handleExtensionUiRequest,
       "entry_appended": handleEntryAppended,
@@ -465,9 +476,9 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       "auto_compaction_end": handleCompactionEnd,
       "auto_retry_start": handleAutoRetryStart,
       "thinking_level_changed": handleThinkingLevelChanged
-    };
+    }));
 
-    if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
+    handlers.get(event.type)?.();
     advanceRevision(event);
   };
 

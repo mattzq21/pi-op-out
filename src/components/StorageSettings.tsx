@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { Key } from "@solid-primitives/keyed";
 import { createMemo, createSignal, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
@@ -153,10 +154,10 @@ export function StorageSettings(componentProps: { hostId?: string }) {
         {host().warnings.length > 0 && <div class="storage-warning" title={host().warnings.join("\n")}>Checkpoint size could not be measured for {host().warnings.length} checkpoint location{host().warnings.length === 1 ? "" : "s"}; other totals are unaffected.</div>}
         <div class="archive-heading"><span><strong>Archived conversations</strong><small>{host().archives.length ? `${host().archives.length} stored on ${host().hostName}` : `No archives on ${host().hostName}`}</small></span>{deletableArchives().length > 1 && <button class="storage-delete-all" disabled={deleting().size > 0 || loading()} onClick={() => deleteAll(host())}><Trash2 size={13} />{deletableArchives().length === host().archives.length ? "Delete all" : "Delete available"}</button>}</div>
         {host().archives.length > 0 && <div class="archive-list">{<Key each={host().archives} by={archive => archive.path}>{(archive, _index) => {
-          if (!archive() || typeof archive().path !== "string") return null;
-          const name = createMemo(() => (typeof archive().name === "string" ? archive().name : archive().path));
+          if (!z.object({ path: z.string() }).safeParse(archive()).success) return null;
+          const name = createMemo(() => (z.string().catch(archive().path).parse(archive().name)));
           const key = createMemo(() => (archiveKey(host(), { ...archive(), name: name() }))); const pending = createMemo(() => (deleting().has(key())));
-          const renderArchiveDetails = () => (<span><strong>{name()}</strong><small>{archive().deletable ? `${typeof archive().cwd === "string" ? archive().cwd : ""} · ${formatDate(archive().modifiedAt)}` : `Cleanup unavailable · ${archive().deleteError}`}</small></span>);
+          const renderArchiveDetails = () => (<span><strong>{name()}</strong><small>{archive().deletable ? `${z.string().catch("").parse(archive().cwd)} · ${formatDate(archive().modifiedAt)}` : `Cleanup unavailable · ${archive().deleteError}`}</small></span>);
           const renderArchiveDelete = () => (<button aria-label={archive().deletable ? `Permanently delete ${name()}` : `Cannot safely delete ${name()}: ${archive().deleteError}`} disabled={!archive().deletable || deleting().size > 0 || loading()} onClick={() => deleteOne(host(), archive())}>{!archive().deletable ? <ShieldAlert size={14} /> : pending() ? <RefreshCw size={14} class="spinning" /> : <Trash2 size={14} />}</button>);
           const renderWorktreeAction = () => ((archive().worktreePath || archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : archive().worktreePath ? "Delete worktree" : "Restore worktree"}</button>);
 

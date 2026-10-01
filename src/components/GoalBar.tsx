@@ -1,18 +1,22 @@
 import { createMemo, createSignal, Show } from "solid-js";
 import { CirclePause, CirclePlay, Pencil, Trash2 } from "lucide-solid";
+import { z } from "zod";
 import "./goal-bar.css";
 
-type Goal = { objective: string; status: string; tokensUsed: number; tokenBudget: number | null; elapsedMs: number };
+const labels = { active: "Pursuing goal", paused: "Goal paused", blocked: "Goal blocked", usage_limited: "Usage limit reached", budget_limited: "Goal budget reached", complete: "Goal complete" };
 
-const labels: Record<string, string> = { active: "Pursuing goal", paused: "Goal paused", blocked: "Goal blocked", usage_limited: "Usage limit reached", budget_limited: "Goal budget reached", complete: "Goal complete" };
+const goalSchema = z.object({
+  objective: z.string(), status: z.enum(["active", "paused", "blocked", "usage_limited", "budget_limited", "complete"]),
+  tokensUsed: z.number(), tokenBudget: z.number().nullable().optional(), elapsedMs: z.number(),
+});
+
+type Goal = z.infer<typeof goalSchema>;
 
 function readGoal(value?: string): Goal | undefined {
   if (!value) return;
 
   try {
-    const goal = JSON.parse(value) as Goal;
-
-    if (typeof goal.objective === "string" && goal.status in labels && Number.isFinite(goal.elapsedMs) && Number.isFinite(goal.tokensUsed)) return goal;
+    return goalSchema.parse(JSON.parse(value));
   } catch { return; }
 }
 
@@ -26,7 +30,7 @@ function duration(ms: number) {
   return `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
 }
 
-export function GoalBar(props: { value?: string; disabled: boolean; onCommand: (action: string) => Promise<unknown> }) {
+export function GoalBar<T>(props: { value?: string; disabled: boolean; onCommand: (action: string) => Promise<T> }) {
   const goal = createMemo(() => {
     const current = readGoal(props.value);
 

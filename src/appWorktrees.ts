@@ -81,7 +81,7 @@ export function createWorktreeActions(context: WorktreeContext) {
     try { await capturedRuntimePool.copySavedDiffs(branchTransport, sourcePath, result.sessionPath, new Set(messages.slice(0, cutoff + (beforePrompt ? 0 : 1)).map(entry => entry.id)), sourceDiffs); }
     catch (reason) { addNotice({ title: "Worktree created, but project changes could not be copied", message: String(reason) }); }
 
-    setComposerUploads(branchTransport, beforePrompt && Array.isArray(sourceMessage.content) ? sourceMessage.content.flatMap((part) => part.type === "image" && part.data && part.mimeType ? [{ id: crypto.randomUUID(), name: "Attached image", kind: "image" as const, byteSize: Math.ceil(part.data.length * 3 / 4), image: { type: "image" as const, data: part.data, mimeType: part.mimeType } }] : []) : []);
+    setComposerUploads(branchTransport, beforePrompt && Array.isArray(sourceMessage.content) ? sourceMessage.content.flatMap((part): ComposerUpload[] => part.type === "image" && part.data && part.mimeType ? [{ id: crypto.randomUUID(), name: "Attached image", kind: "image", byteSize: Math.ceil(part.data.length * 3 / 4), image: { type: "image", data: part.data, mimeType: part.mimeType } }] : []) : []);
     selectSession(session);
     void syncSessionIndex();
 

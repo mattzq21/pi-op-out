@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { required } from "../lib/required";
 import { Key } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSelector, createSignal } from "solid-js";
@@ -175,7 +176,9 @@ export function ProjectDialog(componentProps: Props) {
       void callbacks.current.onChooseDirectory(capturedParent, capturedHostId).then((value) => {
         if (cancelled) return;
 
-        if (value && typeof value !== "string") setLoaded({ hostId: capturedHostId, requested: capturedParent, listing: value });
+        const listing = z.object({ path: z.string(), parent: z.string().optional(), directories: z.array(z.string()) }).safeParse(value);
+
+        if (listing.success) setLoaded({ hostId: capturedHostId, requested: capturedParent, listing: listing.data });
         else { setLoaded(undefined); setError("Could not list this folder. Try another path."); }
       }).catch((reason) => { if (!cancelled) { setLoaded(undefined); setError(reason instanceof Error ? reason.message : String(reason)); } }).finally(() => { if (!cancelled) setLoading(false); });
     }, 150);
@@ -202,16 +205,16 @@ export function ProjectDialog(componentProps: Props) {
     if (event.isComposing || opening() || event.metaKey || event.ctrlKey) return;
     const move = () => { event.preventDefault(); setActive((index) => results().length ? (index + (event.key === "ArrowDown" ? 1 : -1) + results().length) % results().length : 0); };
 
-    const handlers: Record<string, () => void> = {
+    const handlers = new Map(Object.entries({
       ArrowDown: move, ArrowUp: move,
       Enter: () => { event.preventDefault();
 
       if (fragment() && selected()) void open(selected()); else if (query()) void open(expandHome(query() === "~" || query().startsWith("~/") || isWindowsPath(homePath()) && query().startsWith("~\\") || isAbsolutePath(query()) ? query() : withSeparator(basePath()) + query(), homePath())); },
       Tab: () => { if (!event.shiftKey && selected() && !loading()) { event.preventDefault(); browse(selected()); } },
       Backspace: () => { if (event.altKey && listing()?.parent) { event.preventDefault(); browse(required(required((listing())).parent)); } },
-    };
+    }));
 
-    if (Object.hasOwn(handlers, event.key)) handlers[event.key]();
+    handlers.get(event.key)?.();
   };
 
   const renderDirectoryPaletteSearch = () => (<div class="directory-palette-search"><Search size={20} />{hasHomePrefix() && <span class="directory-palette-prefix" aria-hidden="true">~/</span>}<input ref={element => { inputRef.current = element; }} autofocus role="combobox" aria-label={hasHomePrefix() ? "Folder path relative to home" : "Search or type a folder path"} aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading() && selected() ? "directory-result-" + active() : undefined} autocomplete="off" spellcheck={false} placeholder="Type a folder path…" readOnly={opening()} value={hasHomePrefix() ? query().slice(2) : query()} onInput={(event) => { const value = event.target.value; changeQuery(hasHomePrefix() && !isAbsolutePath(value) && !value.startsWith("~") ? "~/" + value : value); }} onKeyDown={handlePathKey} /></div>);

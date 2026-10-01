@@ -258,7 +258,7 @@ export function createAppConversations(preloadChat: () => void) {
     if (!/^\d+$/.test(number) || !Number.isSafeInteger(Number(number))) throw new Error("The response number must be a non-negative integer");
 
     if (command === "branch-off" && args.length) throw new Error("Usage: /branch-off [number]");
-    const responses = chatSession().messages.filter((message) => message.role === "assistant" && message.entryId && !message.streaming && message.stopReason !== "toolUse" && (message.stopReason === "aborted" || message.stopReason === "error" || (typeof message.content === "string" ? message.content.trim() : message.content.some((part) => part.type === "text" && part.text?.trim()))));
+    const responses = chatSession().messages.filter((message) => message.role === "assistant" && message.entryId && !message.streaming && message.stopReason !== "toolUse" && (message.stopReason === "aborted" || message.stopReason === "error" || (Array.isArray(message.content) ? message.content.some((part) => part.type === "text" && part.text?.trim()) : message.content.trim())));
     const message = responses.at(-1 - Number(number));
 
     if (!message) throw new Error(`No response exists ${number} responses back`);

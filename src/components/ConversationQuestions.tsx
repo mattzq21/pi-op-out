@@ -1,7 +1,7 @@
 import { required } from "../lib/required";
 import { createComputed, createContext, createMemo, For, useContext, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
-import type { ExtensionUiRequest } from "../types";
+import type { ExtensionUiRequest, ExtensionUiResponse } from "../types";
 import { AskUserDialog, createQuestionDraft, isAskUserRequest } from "./AskUserDialog";
 
 type QuestionRequest = { request: ExtensionUiRequest; transport: NativeTransport; owner: string; queueId: string };
@@ -22,7 +22,7 @@ export function createConversationQuestions(requests: Accessor<QuestionRequest[]
     return saved;
   };
 
-  return { requests, draft, respond: async (item: QuestionRequest, response: Record<string, unknown>) => {
+  return { requests, draft, respond: async (item: QuestionRequest, response: ExtensionUiResponse) => {
     await item.transport.command({ type: "extension_ui_response", id: item.request.id, ...response });
     drafts.delete(item.queueId);
     remove(item);
@@ -32,7 +32,7 @@ export function createConversationQuestions(requests: Accessor<QuestionRequest[]
 export const ConversationQuestionsContext = createContext<{
   requests: Accessor<QuestionRequest[]>;
   draft: (item: QuestionRequest) => ReturnType<typeof createQuestionDraft>;
-  respond: (item: QuestionRequest, response: Record<string, unknown>) => Promise<void>;
+  respond: (item: QuestionRequest, response: ExtensionUiResponse) => Promise<void>;
 }>();
 
 export function ConversationQuestions(props: { transport?: NativeTransport }) {

@@ -61,9 +61,11 @@ export function useAppKeyboard(context: KeyboardContext) {
       event.stopPropagation();
 
       if (view() === "settings" && ["toggleTerminal", "focusComposer", "toggleConversations"].includes(binding.action)) return;
-      const actions: Record<string, () => void> = { newConversation: () => { void newSession(); }, toggleConversations: () => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen((open) => !open); }, toggleTerminal, toggleDebugMode, openSettings: () => setView("settings") };
+      const actions = new Map(Object.entries({ newConversation: () => { void newSession(); }, toggleConversations: () => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen((open) => !open); }, toggleTerminal, toggleDebugMode, openSettings: (): void => { setView("settings"); } }));
 
-      if (Object.hasOwn(actions, binding.action)) { actions[binding.action]();
+      const action = actions.get(binding.action);
+
+      if (action) { action();
 
       return; }
 

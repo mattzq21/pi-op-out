@@ -1,3 +1,4 @@
+import { z, type JSONType } from "zod";
 import { required } from "../lib/required";
 import { ReviewLink } from "./ReviewLink";
 import { Key } from "@solid-primitives/keyed";
@@ -37,7 +38,7 @@ const shortMessageTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", m
 const fullMessageTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 function formatMessageTime(timestamp?: number) {
-  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) return undefined;
+  if (timestamp === undefined || !Number.isFinite(timestamp)) return undefined;
   const date = new Date(timestamp);
 
   if (Number.isNaN(date.getTime())) return undefined;
@@ -66,10 +67,10 @@ function responseMetadata(message: Accessor<ChatMessage>, turnCacheUsage: Access
   return createMemo(() => ({ cache: cacheHitStats(turnCacheUsage() ?? message().usage), responseLabel: responseLabel(), responseTime: responseTime() }));
 }
 
-function toolInputLines(value: unknown) {
+function toolInputLines(value: JSONType | undefined) {
   const input = value === undefined ? undefined : JSON.stringify(value, null, 2);
 
-  return input && value !== null && typeof value === "object" && !Array.isArray(value) ? input.slice(1, -1).replace(/^\n|\n$/g, "").replace(/^  /gm, "") : input;
+  return input && z.record(z.string(), z.json()).safeParse(value).success ? input.slice(1, -1).replace(/^\n|\n$/g, "").replace(/^  /gm, "") : input;
 }
 
 function MessageCopyButton(componentProps: { state: "idle" | "copied" | "error"; copy: () => Promise<void> }) {
@@ -82,7 +83,7 @@ function ToolLabel(componentProps: { message: ChatMessage; toolCount: number; st
 
 function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; error?: string; retry: () => void }) {
   const toolInput = createMemo(() => componentProps.message.toolInput);
-  const input = createMemo(() => toolInputLines(toolInput()));
+  const input = createMemo(() => toolInputLines(z.json().optional().catch(undefined).parse(toolInput())));
   const output = createMemo(() => (textOf(componentProps.message.content)));
   const runs = createMemo(() => componentProps.message.toolName === "subagent" ? subagentRuns(componentProps.message.details) : []);
   const needsLoad = () => !componentProps.loading && !componentProps.error && componentProps.message.deferredToolPayload && !componentProps.message.toolPayloadLoaded;

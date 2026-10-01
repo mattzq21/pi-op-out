@@ -9,14 +9,14 @@ type SettingsConnection = {
   target: () => SettingsTarget;
   selectTarget: (target: SettingsTarget) => void;
   resetToLocal: (fresh: boolean) => void;
-  disconnect: () => Promise<unknown>;
+  disconnect: () => Promise<boolean>;
   connect: () => Promise<void>;
   closed: () => boolean;
   emit: (event: RpcEvent) => void;
 };
 
 export class NativeSettings {
-  private lifecycle: Promise<unknown> = Promise.resolve();
+  private lifecycle: Promise<void> = Promise.resolve();
   private pending?: { settings: AppSettings };
   private daemonPending = false;
   private applying?: Promise<void>;
@@ -114,7 +114,7 @@ export class NativeSettings {
   }
 
   receive(event: RpcEvent) {
-    if (event.type === "settings_pending" && typeof event.pending === "boolean") this.daemonPending = event.pending;
+    if (event.type === "settings_pending" && (event.pending === true || event.pending === false)) this.daemonPending = event.pending;
 
     if (event.type === "disconnected") this.daemonPending = false;
   }

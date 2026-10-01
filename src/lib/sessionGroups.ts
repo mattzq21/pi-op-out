@@ -5,6 +5,9 @@ import type { SessionSummary } from "../types";
 import { changeSessionGroups, loadSessionGroups } from "./nativeTransport";
 import { listen } from "./platform";
 import { cacheSessionGroups, restoreSessionGroups } from "./sessionGroupsCache";
+import { z } from "zod";
+import { stringsSchema, validItems } from "./messageSchemas";
+import { readStoredJson } from "./storedJson";
 
 export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; branch?: string; branchAppearance?: SessionSummary["branchAppearance"]; }
 
@@ -13,6 +16,10 @@ export const DIRLESS_KEY = "__pi-desktop-dirless__";
 export interface SessionGroups { groups: SessionGroup[]; assignments: Record<string, string | null>; removedProjects: string[]; }
 
 export interface SessionGroupSeed { sessionKey: string; project: SessionGroup; }
+
+const legacyCustomGroupsSchema = validItems(z.object({ id: z.string(), name: z.string() }));
+
+const legacyLocationsSchema = z.record(z.string(), z.string().optional().catch(undefined));
 
 export type GroupChange = { type: "relocate"; project: SessionGroup; key: string } | { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "inspectProject"; id: string; projectKind: "no-repo" | "main" | "worktree" } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
 
@@ -38,7 +45,7 @@ export function updateSessionGroups(update: GroupChange) {
   });
 }
 
-let queue: Promise<unknown> = Promise.resolve();
+let queue: Promise<void> = Promise.resolve();
 
 export function inheritSessionGroup(parentKey: string, childKey: string, parent?: SessionSummary) {
   return enqueue(async () => {
@@ -53,32 +60,29 @@ export function inheritSessionGroup(parentKey: string, childKey: string, parent?
 
 function enqueue<T>(work: () => Promise<T>): Promise<T> {
   const result = queue.then(work, work);
-  queue = result.catch(() => undefined);
+  queue = result.then(() => undefined, () => undefined);
 
   return result;
 }
 
 function legacyGroups(seeds: SessionGroupSeed[]): SessionGroups {
-  const read = (key: string): unknown => { try { return JSON.parse(localStorage.getItem(key) ?? "null"); } catch { return null; } };
-
-  const removed = read("pi-desktop-removed-project-groups");
-  const removedProjects = Array.isArray(removed) ? removed.filter((id): id is string => typeof id === "string") : [];
+  const removedProjects = readStoredJson("pi-desktop-removed-project-groups", stringsSchema, []);
   const groups = new Map<string, SessionGroup>();
 
   for (const seed of seeds) {
     if (!removedProjects.includes(seed.project.id)) groups.set(seed.project.id, seed.project);
   }
 
-  const custom = read("pi-desktop-custom-session-groups");
+  const custom = readStoredJson("pi-desktop-custom-session-groups", legacyCustomGroupsSchema, []);
   addLegacyCustomGroups(groups, custom);
-  const assignments = legacyAssignments(groups, read("pi-desktop-session-locations"), removedProjects);
+  const assignments = legacyAssignments(groups, readStoredJson("pi-desktop-session-locations", legacyLocationsSchema, {}), removedProjects);
 
   return { groups: [...groups.values()], assignments, removedProjects };
 }
 
-function addLegacyCustomGroups(groups: Map<string, SessionGroup>, custom: unknown) {
-  if (Array.isArray(custom)) for (const group of custom) {
-    if (group && typeof group.id === "string" && typeof group.name === "string" && group.name.trim()) {
+function addLegacyCustomGroups(groups: Map<string, SessionGroup>, custom: Array<Pick<SessionGroup, "id" | "name">>) {
+  for (const group of custom) {
+    if (group.name.trim()) {
       const id = `__pi-desktop-custom-group__:${group.id}`;
       groups.set(id, { id, name: group.name });
     }
@@ -95,11 +99,11 @@ function addLegacyLocation(groups: Map<string, SessionGroup>, location: string, 
   if (cwd) groups.set(location, { id: location, name: cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd, cwd, hostId });
 }
 
-function legacyAssignments(groups: Map<string, SessionGroup>, locations: unknown, removedProjects: string[]) {
+function legacyAssignments(groups: Map<string, SessionGroup>, locations: z.infer<typeof legacyLocationsSchema>, removedProjects: string[]) {
   const assignments: Record<string, string | null> = {};
 
-  if (locations && typeof locations === "object" && !Array.isArray(locations)) for (const [key, location] of Object.entries(locations)) {
-    if (typeof location !== "string") continue;
+  for (const [key, location] of Object.entries(locations)) {
+    if (location === undefined) continue;
     addLegacyLocation(groups, location, removedProjects);
     assignments[key] = groups.has(location) ? location : null;
   }

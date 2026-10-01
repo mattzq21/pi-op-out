@@ -44,9 +44,9 @@ function expandSkillReference(value: string, commands: SlashCommand[]) {
   const prose = proseOnly(value);
 
   for (const match of prose.matchAll(reference)) {
-    skills ??= new Map(commands.flatMap((command) => { const name = skillName(command);
+    skills ??= new Map(commands.flatMap((command): Array<[string, string]> => { const name = skillName(command);
 
-    return name ? [[name.toLowerCase(), name] as const] : []; }));
+    return name ? [[name.toLowerCase(), name]] : []; }));
     const name = skills.get(match[2].toLowerCase());
 
     if (!name || match.index === undefined) continue;

@@ -31,6 +31,15 @@ function textOutside(range: Range, clip: Bounds, cache: Map<Node, DOMRect>) {
   return bounds.right <= clip.left || bounds.left >= clip.right || bounds.bottom <= clip.top || bounds.top >= clip.bottom;
 }
 
+function searchableTextNode(node: Node) {
+  if (!(node instanceof Text) || !node.data) return undefined;
+  const parent = node.parentElement;
+
+  if (!parent || parent.closest('script, style, textarea, input, [hidden], [aria-hidden="true"]')) return undefined;
+
+  return { node, parent };
+}
+
 function findMatches(root: HTMLElement, query: string): Match[] {
   if (!query) return [];
   const collapsedQuery = query.replace(/\s+/g, " ");
@@ -80,9 +89,10 @@ function findMatches(root: HTMLElement, query: string): Match[] {
   };
 
   while (walker.nextNode()) {
-    const node = walker.currentNode as Text, parent = node.parentElement;
+    const candidate = searchableTextNode(walker.currentNode);
 
-    if (!parent || !node.data || parent.closest('script, style, textarea, input, [hidden], [aria-hidden="true"]')) continue;
+    if (!candidate) continue;
+    const { node, parent } = candidate;
     const style = getComputedStyle(parent);
 
     if (style.visibility === "hidden" || !parent.getClientRects().length) continue;
@@ -179,6 +189,8 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
   const [boxes, setBoxes] = createSignal<Box[]>([]);
   const input = createRef<HTMLInputElement>(null);
   const previousFocus = createRef<HTMLElement | null>(null);
+  const rememberFocus = () => { previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; };
+
   const selected = createRef<Match | undefined>(undefined);
   let scheduleDraw = () => {};
 
@@ -207,7 +219,7 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
       if (isFindShortcut(event)) {
         event.preventDefault(); event.stopImmediatePropagation();
 
-        if (!capturedOpen) previousFocus.current = document.activeElement as HTMLElement;
+        if (!capturedOpen) rememberFocus();
         setOpen(true);
         requestAnimationFrame(() => { input.current?.focus(); input.current?.select(); });
       } else if (capturedOpen && event.key === "Escape") {

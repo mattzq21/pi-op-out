@@ -1,11 +1,18 @@
 import { createMemo,createSignal,type Accessor } from "solid-js";
 import type { SessionSummary } from "../types";
 import { hasVisibleText } from "./content";
-import { DIRLESS_KEY,branchGroupId,firstOrderBranch,isTemporaryChatCwd,useSessionGroups } from "./sessionGroups";
+import { DIRLESS_KEY,branchGroupId,firstOrderBranch,isTemporaryChatCwd,useSessionGroups, type SessionGroup } from "./sessionGroups";
 import { useSessionProjects } from "./sessionProjects";
 import { createDependencyEffect } from "./solid";
+import { z } from "zod";
+import { stringsSchema } from "./messageSchemas";
+import { readStoredJson } from "./storedJson";
 
 export interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
+
+type SidebarGroup = readonly [key: string, name: string, hostId: string, hostName: string | undefined, sessions: SessionSummary[]];
+
+const sessionOrdersSchema = z.record(z.string(), z.array(z.string()).optional().catch(undefined));
 
 const COLLAPSED_PROJECTS_KEY = "pi-desktop-collapsed-projects";
 
@@ -30,27 +37,17 @@ function recentSessionOrder(left: SessionSummary, right: SessionSummary) {
 }
 
 function savedGroupKeys(storageKey: string) {
-  try { const value = JSON.parse(localStorage.getItem(storageKey) || "[]");
-
-  return new Set<string>(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); }
-  catch { return new Set<string>(); }
+  return new Set(readStoredJson(storageKey, stringsSchema, []));
 }
 
 function savedSessionOrders() {
-  try {
-    const value = JSON.parse(localStorage.getItem(SESSION_ORDERS_KEY) || "{}");
+  const orders = readStoredJson(SESSION_ORDERS_KEY, sessionOrdersSchema, {});
 
-    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-
-    return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].every((item) => typeof item === "string")));
-  } catch { return {}; }
+  return Object.fromEntries(Object.entries(orders).flatMap(([key, sessions]): [string, string[]][] => sessions ? [[key, sessions]] : []));
 }
 
 function savedSidebarOrder() {
-  try { const value = JSON.parse(localStorage.getItem(SIDEBAR_ORDER_KEY) || "[]");
-
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }
-  catch { return []; }
+  return readStoredJson(SIDEBAR_ORDER_KEY, stringsSchema, []);
 }
 
 export function sessionKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.id}`; }
@@ -92,7 +89,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   const storedGroups = projects ?? useSessionProjects(sessions);
   const savedGroups = createMemo(() => storedGroups.state?.groups ?? []);
-  const savedGroupsById = createMemo(() => new Map(savedGroups().map(group => [group.id, group] as const).reverse()));
+  const savedGroupsById = createMemo(() => new Map(savedGroups().map((group): [string, SessionGroup] => [group.id, group]).reverse()));
   const customGroups = createMemo(() => savedGroups().filter(group => !group.cwd && group.id !== DIRLESS_KEY));
   const [collapsedProjects, setCollapsedProjects] = createSignal(savedGroupKeys(COLLAPSED_PROJECTS_KEY));
   const [sessionOrders, setSessionOrders] = createSignal<Record<string, string[]>>(savedSessionOrders());
@@ -273,8 +270,8 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
       return next;
     });
   }, () => [recentKeys(), normalizedQuery()]);
-  const physicalGroups = createMemo(() => (savedGroups().filter((group) => group.cwd && !isTemporaryChatCwd(group.cwd)).map((group) => [group.id, group.name, group.hostId ?? "local", group.hostName ?? undefined, orderedSessions(group.id, groupedSessions()[group.id] ?? [], sessionOrders())] as const)));
-  const customVisualGroups = createMemo(() => (customGroups().map((group) => [group.id, group.name, "", undefined, orderedSessions(group.id, groupedSessions()[group.id] ?? [], sessionOrders())] as const)));
+  const physicalGroups = createMemo(() => (savedGroups().filter((group) => group.cwd && !isTemporaryChatCwd(group.cwd)).map((group): SidebarGroup => [group.id, group.name, group.hostId ?? "local", group.hostName ?? undefined, orderedSessions(group.id, groupedSessions()[group.id] ?? [], sessionOrders())])));
+  const customVisualGroups = createMemo(() => (customGroups().map((group): SidebarGroup => [group.id, group.name, "", undefined, orderedSessions(group.id, groupedSessions()[group.id] ?? [], sessionOrders())])));
   const projectOrderKey = createMemo(() => (JSON.stringify(savedGroups().map((group) => groupLayoutToken(group.id)))));
   createDependencyEffect(() => { const capturedProjectOrderKey = projectOrderKey();
     const projectTokens: string[] = JSON.parse(capturedProjectOrderKey);
@@ -290,14 +287,14 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     });
   }, () => [projectOrderKey()]);
 
-  const groups = createMemo(() => ([
+  const groups = createMemo<SidebarGroup[]>(() => ([
     ...customVisualGroups().filter(([, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0),
     ...physicalGroups().filter(([, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0),
-    [RECENT_KEY, RECENT_LABEL, "", undefined, recentSessions()] as const,
-    [DIRLESS_KEY, "Dirless", "", undefined, orderedSessions(DIRLESS_KEY, groupedSessions()[DIRLESS_KEY] ?? [], sessionOrders())] as const,
+    [RECENT_KEY, RECENT_LABEL, "", undefined, recentSessions()],
+    [DIRLESS_KEY, "Dirless", "", undefined, orderedSessions(DIRLESS_KEY, groupedSessions()[DIRLESS_KEY] ?? [], sessionOrders())],
   ]));
 
-  const displayedSessions = createMemo(() => new Map([[RECENT_KEY, recentSessions()], ...groups().map(([key, , , , projectSessions]) => [key, projectSessions] as const)]));
+  const displayedSessions = createMemo(() => new Map([[RECENT_KEY, recentSessions()], ...groups().map(([key, , , , projectSessions]): [string, SessionSummary[]] => [key, projectSessions])]));
   const defaultSidebarEntries = createMemo(() => (groups().map(([key]) => groupLayoutToken(key))));
   const fixedTokens = [groupLayoutToken(RECENT_KEY), groupLayoutToken(DIRLESS_KEY)];
 

@@ -7,6 +7,12 @@ import type { RefObject } from "./lib/solid";
 import type { useChatSession } from "./lib/useChatSession";
 import type { SessionSummary } from "./types";
 
+declare global {
+  interface WindowEventMap {
+    "piop-mobile-before-disconnect": CustomEvent<{ waitUntil: (task: Promise<void>) => void }>;
+  }
+}
+
 export function createConversationViewKey<T>(transport: Accessor<T>, conversationKey: Accessor<string>, submission: Accessor<object | undefined> = () => undefined) {
   let previous: { owner: T; key: string; identity: object; submission?: object } | undefined;
 
@@ -25,7 +31,7 @@ export function createConversationViewKey<T>(transport: Accessor<T>, conversatio
 }
 
 export function useWorkspaceDisconnect(hasDrafts: () => boolean, pool: () => SessionRuntimePool, terminalIds: () => string[], owner: () => NativeTransport) {
-  const beforeDisconnect = (event: Event) => {
+  const beforeDisconnect = (event: WindowEventMap["piop-mobile-before-disconnect"]) => {
     if (hasDrafts() && !window.confirm("Discard unsaved settings, messages, and attachments and disconnect?")) { event.preventDefault();
 
     return; }
@@ -35,7 +41,7 @@ export function useWorkspaceDisconnect(hasDrafts: () => boolean, pool: () => Ses
       await pool().disconnectAll(true);
     };
 
-    (event as CustomEvent<{ waitUntil: (task: Promise<unknown>) => void }>).detail.waitUntil(close());
+    event.detail.waitUntil(close());
   };
 
   window.addEventListener("piop-mobile-before-disconnect", beforeDisconnect);

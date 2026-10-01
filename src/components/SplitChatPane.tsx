@@ -8,6 +8,9 @@ import { createDependencyEffect, createRef, type StateUpdate } from "../lib/soli
 import { X } from "lucide-solid";
 import { REVIEW_REQUEST_TITLE } from "../appSupport";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY, encodeAgentValue } from "../lib/agentProtocol";
+import { definedAgentsCapabilitySchema } from "../lib/agentSchemas";
+import { z } from "zod";
+
 import type { NativeTransport } from "../lib/nativeTransport";
 import { SessionRuntimePool, useTurnDiffs } from "../lib/sessionRuntimePool";
 import { useChatSession } from "../lib/useChatSession";
@@ -15,6 +18,8 @@ import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgent
 
 import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
+
+const reviewMessageSchema = z.object({ message: z.string().refine(message => Boolean(message.trim()), "A message is required") });
 
 interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; freshReview?: boolean; initialPrompt?: string; initialImages?: ImageAttachment[]; onMessageMain?: (message: string) => Promise<void>; onReady?: () => void; onFailed?: (cause: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 
@@ -99,7 +104,9 @@ export function SplitChatPane(componentProps: Props) {
       };
 
       const handleExtensionUiResolved = () => {
-        if (event.type === "extension_ui_resolved" && typeof event.id === "string") capturedOnDialogResolved8(capturedTransport, event.id);
+        const id = z.string().safeParse(event.id);
+
+        if (event.type === "extension_ui_resolved" && id.success) capturedOnDialogResolved8(capturedTransport, id.data);
       };
 
       const handleSessionInfoChanged = () => {
@@ -115,9 +122,7 @@ export function SplitChatPane(componentProps: Props) {
           if (!delivery) {
             delivery = Promise.resolve().then(async () => {
               if (!capturedFreshReview6 || !messageMain) throw new Error("No main conversation is attached to this reviewer");
-              const { message } = JSON.parse(request.placeholder || "{}");
-
-              if (typeof message !== "string" || !message.trim()) throw new Error("A message is required");
+              const { message } = reviewMessageSchema.parse(JSON.parse(request.placeholder || "{}"));
               await messageMain(message);
 
               return "delivered";
@@ -139,10 +144,10 @@ export function SplitChatPane(componentProps: Props) {
 
         const showDialog = () => capturedOnDialogRequest9(request, capturedTransport, `Split: ${capturedSession5.name}`);
 
-        const methods: Record<string, () => void> = {
+        const methods = {
           setStatus: () => {
             if (request.statusKey === DEFINED_AGENTS_STATUS_KEY) {
-              try { setDefinedAgents(request.statusText?.startsWith("json:") ? decodeAgentValue<DefinedAgentsCapability>(request.statusText.slice(5)) : undefined); }
+              try { setDefinedAgents(request.statusText?.startsWith("json:") ? definedAgentsCapabilitySchema.parse(decodeAgentValue(request.statusText.slice(5))) : undefined); }
               catch { setDefinedAgents(undefined); }
             } else if (request.statusKey && !["pi-desktop-prompt-context", "pi-desktop-mcp-status"].includes(request.statusKey)) {
               setStatuses((current) => { const next = { ...current };
@@ -159,11 +164,11 @@ export function SplitChatPane(componentProps: Props) {
           return next; }); },
           notify: () => { if (!event.inputRejected) setNotices((current) => [...current, { id: crypto.randomUUID(), title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }]); },
           setTitle: () => { document.title = request.title || "piop"; },
-          set_editor_text: () => { if (typeof request.text === "string") capturedOnDraftChange10(request.text); setExtensionFocusRequest((value) => value + 1); },
+          set_editor_text: () => { if (request.text !== undefined) capturedOnDraftChange10(request.text); setExtensionFocusRequest((value) => value + 1); },
           input: showDialog, editor: showDialog, select: showDialog, confirm: showDialog,
         };
 
-        if (Object.hasOwn(methods, request.method)) methods[request.method]();
+        methods[request.method]();
       };
 
       const handleExtensionError = () => {
@@ -196,7 +201,7 @@ export function SplitChatPane(componentProps: Props) {
         if (!closing) { setControlError("Connection lost. Reconnecting…"); window.setTimeout(() => void connectRuntime(false), 50); }
       };
 
-      const handlers: Record<string, () => void> = {
+      const handlers = new Map(Object.entries({
         "ownership_lost": handleOwnershipLost,
         "ownership_acquired": handleOwnershipAcquired,
         "extension_ui_resolved": handleExtensionUiResolved,
@@ -208,9 +213,9 @@ export function SplitChatPane(componentProps: Props) {
         "settings_applied": handleSettingsApplied,
         "disconnected": handleDisconnected,
         "connection_restored": handleDisconnected
-      };
+      }));
 
-      if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
+      handlers.get(event.type)?.();
     });
 
     void connectRuntime(true);

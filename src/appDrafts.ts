@@ -9,7 +9,7 @@ export function createConversationDrafts() {
 
   const setComposerUploads = (ownerTransport: NativeTransport, update: StateUpdate<ComposerUpload[]>) => setUploadsByTransport((current) => {
     const next = new Map(current);
-    const uploads = typeof update === "function" ? update(next.get(ownerTransport) ?? []) : update;
+    const uploads = Array.isArray(update) ? update : update(next.get(ownerTransport) ?? []);
 
     if (uploads.length) next.set(ownerTransport, uploads); else next.delete(ownerTransport);
 
@@ -18,7 +18,7 @@ export function createConversationDrafts() {
 
   const transportHasDraft = (owner: NativeTransport, key?: string) => Boolean(key && composerDrafts()[key]) || (uploadsByTransport().get(owner)?.length ?? 0) > 0;
 
-  const setComposerDraft = (sessionKey: string, update: StateUpdate<string>) => setComposerDrafts((current) => { const value = typeof update === "function" ? update(current[sessionKey] ?? "") : update;
+  const setComposerDraft = (sessionKey: string, update: StateUpdate<string>) => setComposerDrafts((current) => { const value = update instanceof Function ? update(current[sessionKey] ?? "") : update;
 
   if (value) return { ...current, [sessionKey]: value }; const next = { ...current }; delete next[sessionKey];
 

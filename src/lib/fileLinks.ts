@@ -68,8 +68,8 @@ function linkExplicitPaths(root: DocumentFragment) {
 export function detectFileLinks(html: string | DocumentFragment) {
   const template = document.createElement("template");
 
-  if (typeof html === "string") template.innerHTML = html;
-  else template.content.append(html);
+  if (html instanceof DocumentFragment) template.content.append(html);
+  else template.innerHTML = html;
   linkFileReferences(template.content);
 
   return template.innerHTML;
@@ -90,7 +90,7 @@ export function linkFileReferences(root: DocumentFragment) {
   const nodes: Text[] = [];
 
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (!node.parentElement?.closest("pre, code, a, button")) nodes.push(node as Text);
+    if (node instanceof Text && !node.parentElement?.closest("pre, code, a, button")) nodes.push(node);
   }
 
   for (const node of nodes) linkText(node);

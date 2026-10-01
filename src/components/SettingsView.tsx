@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { stableSnapshot, settingsSnapshot, agentEditsSnapshot, settingKeys } from "../lib/settingsSnapshots";
 import { required } from "../lib/required";
 import { AgentTools } from "./AgentTools";
 import { Key, Rerun } from "@solid-primitives/keyed";
@@ -20,18 +22,24 @@ import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
 export type Section = "providers" | "general" | "dictation" | "review" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections";
 
-export const sections = [
-  { id: "general" as const, label: "General", icon: Settings2 },
-  { id: "dictation" as const, label: "Dictation", icon: Mic },
-  { id: "review" as const, label: "Review", icon: ShieldCheck },
-  { id: "models" as const, label: "Models", icon: Cpu },
-  { id: "providers" as const, label: "Providers", icon: ShieldCheck },
-  { id: "storage" as const, label: "Storage", icon: HardDrive },
-  { id: "environment" as const, label: "Worktree scripts", icon: Wrench },
-  { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
-  { id: "machines" as const, label: "Machines", icon: Server },
-  { id: "agents" as const, label: "Agents", icon: Bot },
-  ...(isMobile ? [{ id: "connections" as const, label: "Hosts", icon: Server }] : []),
+type SettingsSection = { id: Section; label: string; icon: typeof Settings2 };
+
+const mobileSections: SettingsSection[] = isMobile ? [{ id: "connections", label: "Hosts", icon: Server }] : [];
+
+const mcpTransports: Array<NonNullable<McpServer["transport"]>> = ["stdio", "http"];
+
+export const sections: SettingsSection[] = [
+  { id: "general", label: "General", icon: Settings2 },
+  { id: "dictation", label: "Dictation", icon: Mic },
+  { id: "review", label: "Review", icon: ShieldCheck },
+  { id: "models", label: "Models", icon: Cpu },
+  { id: "providers", label: "Providers", icon: ShieldCheck },
+  { id: "storage", label: "Storage", icon: HardDrive },
+  { id: "environment", label: "Worktree scripts", icon: Wrench },
+  { id: "keybinds", label: "Keybinds", icon: Keyboard },
+  { id: "machines", label: "Machines", icon: Server },
+  { id: "agents", label: "Agents", icon: Bot },
+  ...mobileSections,
 ];
 
 export const clientSections = new Set<Section>(["models", "keybinds", "connections"]);
@@ -39,22 +47,6 @@ export const clientSections = new Set<Section>(["models", "keybinds", "connectio
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 
 const firstAgentIndex = (agents: AgentProfile[]) => agents.length ? 0 : -1;
-
-function stableSnapshot(value: unknown) {
-  const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stable(item)])) : value;
-
-  return JSON.stringify(stable(value));
-}
-
-function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {
-  return stableSnapshot({ settings, agentConfig });
-}
-
-function agentEditsSnapshot(config?: AgentConfig) {
-  const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stable(item)])) : value;
-
-  return JSON.stringify(stable(config?.agents.map((item) => item.extensions ? { ...item, extensions: item.extensions.map((path) => path.trim()).filter(Boolean) } : item)));
-}
 
 function validAgentMcp(servers: McpServer[]) { return servers.length <= 32 && new Set(servers.map((server) => server.id)).size === servers.length && servers.every((server) => !mcpServerError(server)); }
 
@@ -81,7 +73,7 @@ function mcpHeadersError(value: string | undefined) {
     try {
       const headers = JSON.parse(value);
 
-      if (!headers || Array.isArray(headers) || typeof headers !== "object" || Object.values(headers).some((value) => typeof value !== "string")) return "Headers must be a JSON object containing string values";
+      if (!z.record(z.string(), z.string()).safeParse(headers).success) return "Headers must be a JSON object containing string values";
     } catch { return "Headers must be valid JSON"; }
   }
 
@@ -120,16 +112,17 @@ export function SettingsView(props: SettingsViewProps) {
   const [pastHeader, setPastHeader] = createSignal(false);
   createDependencyEffect(() => {
     const onScroll = (event: Event) => {
-      const el = event.target as HTMLElement | null;
+      const el = event.target;
 
-      if (el && el.classList && el.classList.contains("settings-shell")) setPastHeader(el.scrollTop > 96);
+      if (el instanceof HTMLElement && el.classList.contains("settings-shell")) setPastHeader(el.scrollTop > 96);
     };
 
     window.addEventListener("scroll", onScroll, true);
 
     return () => window.removeEventListener("scroll", onScroll, true);
   }, () => []);
-  const [baselineSettings, setBaselineSettings] = createSignal(settingsSnapshot(settingsProps().settings));
+  const [baselineValue, setBaselineValue] = createSignal(structuredClone(settingsProps().settings));
+  const baselineSettings = () => settingsSnapshot(baselineValue());
   const [baselineAgentConfig, setBaselineAgentConfig] = createSignal(agentEditsSnapshot(agentConfig()));
   const agentConfigSnapshot = createMemo(() => (agentEditsSnapshot(agentConfig())));
   const incomingAgentConfigRef = createRef(agentConfigSnapshot());
@@ -150,15 +143,17 @@ export function SettingsView(props: SettingsViewProps) {
 
     if (incomingSnapshot === incomingSettingsSnapshot.current) return;
     incomingSettingsSnapshot.current = incomingSnapshot;
-    const baseline = JSON.parse(baselineSettings()).settings as AppSettings;
+    const baseline = baselineValue();
 
     if (settingsSnapshot(incoming) === baselineSettings()) return;
     const local = draft();
     const merged = { ...incoming };
     let collisions = false;
 
-    for (const key of Object.keys(local) as Array<keyof AppSettings>) {
-      const same = (left: unknown, right: unknown) => stableSnapshot(left) === stableSnapshot(right);
+    for (const key of settingKeys) {
+      if (!Object.hasOwn(local, key)) continue;
+
+      const same = (left: AppSettings[keyof AppSettings], right: AppSettings[keyof AppSettings]) => stableSnapshot(left) === stableSnapshot(right);
 
       if (!same(local[key], baseline[key])) {
         if (!same(incoming[key], baseline[key]) && !same(incoming[key], local[key])) collisions = true;
@@ -167,14 +162,14 @@ export function SettingsView(props: SettingsViewProps) {
     }
 
     setDraft(merged);
-    setBaselineSettings(settingsSnapshot(incoming));
+    setBaselineValue(structuredClone(incoming));
 
     if (collisions) setSettingsConflict(true);
   }, () => [settingsProps().settings, saving()]);
 
   const reloadLatest = () => {
     setDraft(structuredClone(settingsProps().settings));
-    setBaselineSettings(settingsSnapshot(settingsProps().settings));
+    setBaselineValue(structuredClone(settingsProps().settings));
     setAgentDrafts(structuredClone(agentConfig()?.agents ?? []));
     setHasAgentConfigDraft(agentConfig() !== undefined);
     setBaselineAgentConfig(agentEditsSnapshot(agentConfig()));
@@ -226,7 +221,7 @@ export function SettingsView(props: SettingsViewProps) {
 
  if (savingRef.current || !capturedDirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined);
 
- try { await capturedSettingsProps.onSave(capturedDraft, capturedAgentConfigDirty ? capturedCurrentAgentConfig : undefined); setBaselineSettings(settingsSnapshot(capturedDraft));
+ try { await capturedSettingsProps.onSave(capturedDraft, capturedAgentConfigDirty ? capturedCurrentAgentConfig : undefined); setBaselineValue(structuredClone(capturedDraft));
 
  if (capturedAgentConfigDirty) setBaselineAgentConfig(agentEditsSnapshot(capturedCurrentAgentConfig)); setSaved(currentSnapshotRef.current === capturedCurrentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
 
@@ -466,7 +461,7 @@ export function SettingsView(props: SettingsViewProps) {
               <label class="field"><span>piop extensions (one path per line)</span><textarea aria-label="Agent piop extensions" placeholder="/path/to/extension.ts" value={(agent().extensions ?? []).join("\n")} onInput={(event) => updateAgent({ extensions: event.target.value.split("\n") })} onBlur={() => updateAgent({ extensions: (agent().extensions ?? []).map(path => path.trim()).filter(Boolean) })} /></label>
               <AgentAllowlist title="Tools"><AgentTools tools={draft().tools} selected={agent().tools} onChange={tools => updateAgent({ tools })} /></AgentAllowlist><AgentAllowlist title="Skills">{<Key each={draft().skills} by={(skill) => skill.path}>{(skill, _index) => <label ><input type="checkbox" aria-label={`Allow ${skill().name}`} checked={agent().skills.includes(skill().path)} onInput={() => toggleAgentResource("skills", skill().path)} />{skill().name}</label>}</Key>}</AgentAllowlist><div class="agent-mcp-settings"><h3>MCP servers</h3><div class="mcp-list">{<Key each={agent().mcpServers} by={(server) => server.id}>{(server, _index) => { const fieldError = createMemo(() => (mcpServerError(server())));
 
-              return <div class="mcp-card" ><div class="mcp-card-head"><span class="config-icon mcp"><PlugZap size={16} /></span><input aria-label="Server name" aria-invalid={!server().name.trim() || nameValidation().duplicateMcpNames.has(server().name.trim().toLowerCase())} value={server().name} onInput={(e) => updateMcp(server().id, { name: e.target.value })} /><Toggle label={`Enable ${server().name}`} checked={server().enabled} onChange={(enabled) => updateMcp(server().id, { enabled })} /><IconButton label={`Remove ${server().name}`} onClick={() => removeMcp(server().id)}><Trash2 size={15} /></IconButton></div>{fieldError() && <small class="mcp-error" role="alert">{fieldError()}</small>}<div class="field"><span>Transport</span><div class="mcp-transport-toggle" role="group" aria-label={`${server().name} transport`}>{<Key each={(["stdio", "http"] as const)} by={(transport) => transport}>{(transport, _index) => <button  type="button" aria-pressed={(server().transport ?? "stdio") === transport()} onClick={() => updateMcp(server().id, { transport: transport() })}>{transport() === "stdio" ? "stdio" : "HTTP"}</button>}</Key>}</div></div><label class="field"><span>Startup timeout (seconds)</span><input type="number" min={1} max={600} step={1} aria-label={`${server().name} startup timeout`} value={server().startupTimeoutSec ?? 10} onInput={(event) => { const value = event.target.value; updateMcp(server().id, { startupTimeoutSec: Number(value) }); }} /></label><Toggle label={`Supply Piop agent ID to ${server().name}`} checked={server().injectAgentId === true} onChange={(injectAgentId) => updateMcp(server().id, { injectAgentId })} />{(server().transport ?? "stdio") === "stdio" ? <div class="command-fields stdio-fields"><label><span>Command</span><input aria-invalid={!server().command.trim()} value={server().command} onInput={(e) => updateMcp(server().id, { command: e.target.value })} /></label><label><span>Arguments</span><input value={server().args} onInput={(e) => updateMcp(server().id, { args: e.target.value })} /></label></div> : <div class="command-fields http-fields"><label><span>URL</span><input type="url" aria-invalid={Boolean(fieldError()?.includes("URL"))} placeholder="https://example.com/mcp" value={server().url ?? ""} onInput={(e) => updateMcp(server().id, { url: e.target.value })} /></label><label><span>Headers (JSON)</span><input aria-invalid={Boolean(fieldError()?.startsWith("Headers"))} placeholder={'{"Authorization":"Bearer …"}'} value={server().headers ?? ""} onInput={(e) => updateMcp(server().id, { headers: e.target.value })} /></label></div>}</div>; }}</Key>}</div><button class="secondary-button" disabled={agent().mcpServers.length >= 32} onClick={addMcp}><CirclePlus size={15} />Add MCP server</button></div>
+              return <div class="mcp-card" ><div class="mcp-card-head"><span class="config-icon mcp"><PlugZap size={16} /></span><input aria-label="Server name" aria-invalid={!server().name.trim() || nameValidation().duplicateMcpNames.has(server().name.trim().toLowerCase())} value={server().name} onInput={(e) => updateMcp(server().id, { name: e.target.value })} /><Toggle label={`Enable ${server().name}`} checked={server().enabled} onChange={(enabled) => updateMcp(server().id, { enabled })} /><IconButton label={`Remove ${server().name}`} onClick={() => removeMcp(server().id)}><Trash2 size={15} /></IconButton></div>{fieldError() && <small class="mcp-error" role="alert">{fieldError()}</small>}<div class="field"><span>Transport</span><div class="mcp-transport-toggle" role="group" aria-label={`${server().name} transport`}>{<Key each={mcpTransports} by={(transport) => transport}>{(transport, _index) => <button  type="button" aria-pressed={(server().transport ?? "stdio") === transport()} onClick={() => updateMcp(server().id, { transport: transport() })}>{transport() === "stdio" ? "stdio" : "HTTP"}</button>}</Key>}</div></div><label class="field"><span>Startup timeout (seconds)</span><input type="number" min={1} max={600} step={1} aria-label={`${server().name} startup timeout`} value={server().startupTimeoutSec ?? 10} onInput={(event) => { const value = event.target.value; updateMcp(server().id, { startupTimeoutSec: Number(value) }); }} /></label><Toggle label={`Supply Piop agent ID to ${server().name}`} checked={server().injectAgentId === true} onChange={(injectAgentId) => updateMcp(server().id, { injectAgentId })} />{(server().transport ?? "stdio") === "stdio" ? <div class="command-fields stdio-fields"><label><span>Command</span><input aria-invalid={!server().command.trim()} value={server().command} onInput={(e) => updateMcp(server().id, { command: e.target.value })} /></label><label><span>Arguments</span><input value={server().args} onInput={(e) => updateMcp(server().id, { args: e.target.value })} /></label></div> : <div class="command-fields http-fields"><label><span>URL</span><input type="url" aria-invalid={Boolean(fieldError()?.includes("URL"))} placeholder="https://example.com/mcp" value={server().url ?? ""} onInput={(e) => updateMcp(server().id, { url: e.target.value })} /></label><label><span>Headers (JSON)</span><input aria-invalid={Boolean(fieldError()?.startsWith("Headers"))} placeholder={'{"Authorization":"Bearer …"}'} value={server().headers ?? ""} onInput={(e) => updateMcp(server().id, { headers: e.target.value })} /></label></div>}</div>; }}</Key>}</div><button class="secondary-button" disabled={agent().mcpServers.length >= 32} onClick={addMcp}><CirclePlus size={15} />Add MCP server</button></div>
             </div></Show>);
           };
 

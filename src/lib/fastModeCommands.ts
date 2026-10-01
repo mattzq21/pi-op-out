@@ -1,10 +1,18 @@
 import type { RpcCommand, RpcEvent } from "../types";
+import { z } from "zod";
 
 type Command = { name: string; source: string; sourceInfo?: { source?: string; path?: string } };
 
+export const commandListingSchema = z.object({
+  commands: z.array(z.object({
+    name: z.string(), source: z.string(),
+    sourceInfo: z.object({ source: z.string().optional(), path: z.string().optional() }).optional(),
+  })),
+});
+
 type FastModeConnection = {
-  command: (command: RpcCommand) => Promise<unknown>;
-  send: (command: RpcCommand) => Promise<unknown>;
+  command: (command: RpcCommand) => Promise<void>;
+  send: (command: RpcCommand) => Promise<void>;
   emit: (event: RpcEvent) => void;
 };
 
@@ -16,14 +24,13 @@ export class FastModeCommands {
 
   reset() { this.statusCommand = undefined; this.commands.clear(); }
 
-  afterCommand(command: RpcCommand, result: unknown) {
-    if (command.type === "get_commands") return this.discover(result);
+  afterCommand(command: RpcCommand, result?: z.infer<typeof commandListingSchema>) {
+    if (command.type === "get_commands" && result) return this.discover(result.commands);
 
     if (command.type === "prompt") return this.afterPrompt(command);
   }
 
-  private async discover(result: unknown) {
-    const { commands } = result as { commands: Command[] };
+  private async discover(commands: Command[]) {
     const fromPackage = (item: Command, name: string) => item.sourceInfo?.source === `npm:${name}` || item.sourceInfo?.path?.split(/[\\/]/).includes(name);
     const localPackages = ["piop-openai-fast-mode", "pi-openai-fast-mode-piop"];
     const fastCommands = commands.filter(item => item.source === "extension" && /^fast(?::\d+)?$/.test(item.name) && [...localPackages, "pi-openai-fast-mode"].some(name => fromPackage(item, name)));
@@ -33,7 +40,8 @@ export class FastModeCommands {
   }
 
   private async afterPrompt(command: RpcCommand) {
-    const invocation = typeof command.message === "string" ? command.message.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/) : undefined;
+    const message = z.string().safeParse(command.message);
+    const invocation = message.success ? message.data.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/) : undefined;
 
     if (invocation && this.commands.has(invocation[1]) && ["", "on", "off", "toggle"].includes((invocation[2] ?? "").trim().toLowerCase())) await this.refreshStatus(true);
   }

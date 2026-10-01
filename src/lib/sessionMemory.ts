@@ -1,8 +1,16 @@
 import { type Accessor, createMemo } from "solid-js";
 import { createMemoFields, createSubscription, type StateUpdate } from "../lib/solid";
 
-import type { AgentState, ChatMessage, Model, SlashCommand } from "../types";
+import type { AgentState, ChatMessage, GitDiffSnapshots, Model, RpcEvent, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
+import { z } from "zod";
+import { wireMessageSchema } from "./messageSchemas";
+
+type SessionResource = GitDiffSnapshots | Array<RpcEvent | undefined>;
+
+const toolPayloadSchema = wireMessageSchema.pick({ content: true, details: true, toolInput: true, nestedCalls: true });
+
+const stringSchema = z.string();
 
 const SESSION_LIMIT = 256 * 1024 * 1024;
 
@@ -20,7 +28,7 @@ interface CachedSession {
   models: Model[];
   commands: SlashCommand[];
   thinkingLevels: string[];
-  resources: Record<string, unknown>;
+  resources: Record<string, SessionResource>;
 }
 
 const stores = new WeakMap<Transport, SessionMemory>();
@@ -46,17 +54,20 @@ async function transferToolPayload(transfer: () => Promise<void> | undefined) {
   }
 }
 
-function bytes(value: unknown): number {
-  if (typeof value === "string") return 24 + value.length * 2;
+function bytes<T>(value: T): number {
+  const text = stringSchema.safeParse(value);
 
-  if (!value || typeof value !== "object") return 16;
-  const previous = measured.get(value);
+  if (text.success) return 24 + text.data.length * 2;
+
+  if (!value || Object(value) !== value || value instanceof Function) return 16;
+  const object = Object(value);
+  const previous = measured.get(object);
 
   if (previous !== undefined) return previous;
   let size = 64;
 
-  for (const key of Object.keys(value)) size += 32 + key.length * 2 + bytes((value as Record<string, unknown>)[key]);
-  measured.set(value, size);
+  for (const [key, item] of Object.entries(object)) size += 32 + key.length * 2 + bytes(item);
+  measured.set(object, size);
 
   return size;
 }
@@ -124,7 +135,7 @@ export class SessionMemory {
     this.notify();
   }
 
-  retainResource(key: string, value: unknown, release: () => void) {
+  retainResource(key: string, value: SessionResource, release: () => void) {
     this.value = { ...this.value, resources: { ...this.value.resources, [key]: value } };
     this.resourceReleases.set(key, release);
     this.commit();
@@ -232,10 +243,12 @@ export class SessionMemory {
   }
 
   set<K extends keyof CachedSession>(key: K, update: StateUpdate<CachedSession[K]>) {
-    const next = typeof update === "function" ? (update satisfies (current: CachedSession[K]) => CachedSession[K])(this.value[key]) : update;
+    const next = update instanceof Function ? update(this.value[key]) : update;
 
     if (Object.is(next, this.value[key])) return;
-    this.value = { ...this.value, [key]: key === "messages" ? (next as ChatMessage[]).map((message) => this.decorate(message)) : next };
+    this.value = { ...this.value, [key]: next };
+
+    if (key === "messages") this.value = { ...this.value, messages: this.value.messages.map(message => this.decorate(message)) };
     this.commit();
   }
 
@@ -264,7 +277,7 @@ export class SessionMemory {
       if (!page.chunk) throw new Error("Incomplete tool payload");
     }
 
-    const output = JSON.parse(serialized) as Pick<ChatMessage, "content" | "details" | "toolInput" | "nestedCalls">;
+    const output = toolPayloadSchema.parse(JSON.parse(serialized));
 
     if (generation !== this.generation) return;
     this.reserved = 0;
@@ -312,7 +325,7 @@ function memoryFor(transport: Transport, initialState = emptyState) {
   return store;
 }
 
-export function retainSessionResource(transport: Transport, key: string, value: unknown, release: () => void) {
+export function retainSessionResource(transport: Transport, key: string, value: SessionResource, release: () => void) {
   memoryFor(transport).retainResource(key, value, release);
 }
 

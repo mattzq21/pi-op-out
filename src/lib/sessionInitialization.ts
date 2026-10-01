@@ -11,7 +11,7 @@ async function initializationStep<T>(label: string, work: () => Promise<T>): Pro
   } finally { clearTimeout(timer); }
 }
 
-export async function initializeSession<T>(current: () => boolean, steps: { connect: () => Promise<void>; loadSettings: () => Promise<T>; refresh: (settings: T) => Promise<T>; configure: (settings: T) => Promise<void>; restore: () => Promise<unknown> }) {
+export async function initializeSession<T, R>(current: () => boolean, steps: { connect: () => Promise<void>; loadSettings: () => Promise<T>; refresh: (settings: T) => Promise<T>; configure: (settings: T) => Promise<void>; restore: () => Promise<R> }) {
   for (let attempt = 0; attempt < 3 && current(); attempt++) {
     try {
       const [loadedSettings] = await Promise.all([

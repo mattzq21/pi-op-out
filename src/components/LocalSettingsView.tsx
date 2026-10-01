@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { required } from "../lib/required";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createMemo, createSignal } from "solid-js";
@@ -6,9 +7,10 @@ import { createDependencyEffect } from "../lib/solid";
 
 import { Monitor } from "lucide-solid";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY, encodeAgentValue } from "../lib/agentProtocol";
+import { definedAgentsCapabilitySchema } from "../lib/agentSchemas";
 import { NativeTransport } from "../lib/nativeTransport";
 import { isMobile, listen } from "../lib/platform";
-import type { AgentConfig, AppSettings, DefinedAgentsCapability, Model, SessionSummary } from "../types";
+import type { AgentConfig, AppSettings, Model, SessionSummary } from "../types";
 import { clientSections, sections, SettingsView, type Section } from "./SettingsView";
 
 interface Props {
@@ -66,10 +68,12 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     let config: AgentConfig | undefined;
 
     const unsubscribe = reader.subscribe((event) => {
-      if (event.type !== "extension_ui_request" || event.method !== "setStatus" || event.statusKey !== DEFINED_AGENTS_STATUS_KEY || typeof event.statusText !== "string" || !event.statusText.startsWith("json:")) return;
+      const statusText = z.string().safeParse(event.statusText);
+
+      if (event.type !== "extension_ui_request" || event.method !== "setStatus" || event.statusKey !== DEFINED_AGENTS_STATUS_KEY || !statusText.success || !statusText.data.startsWith("json:")) return;
 
       try {
-        config = decodeAgentValue<DefinedAgentsCapability>(event.statusText.slice(5)).config;
+        config = definedAgentsCapabilitySchema.parse(decodeAgentValue(statusText.data.slice(5))).config;
 
         if (!cancelled && config) {
           const discovered = config;

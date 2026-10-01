@@ -1,5 +1,6 @@
 import { createSignal, createUniqueId, For, Show } from "solid-js";
-import type { ExtensionUiRequest } from "../types";
+import type { ExtensionUiRequest, ExtensionUiResponse } from "../types";
+import { z } from "zod";
 import { ArrowRight, CircleHelp, Pencil, X } from "lucide-solid";
 import { DictationControls } from "./DictationControls";
 
@@ -7,31 +8,28 @@ type Question = { id: string; header: string; question: string; options: { label
 
 type Answer = { selected: number; notes: string };
 
+const questionsSchema = z.object({
+  questions: z.array(z.object({
+    id: z.string(), header: z.string(), question: z.string(),
+    options: z.array(z.object({ label: z.string(), description: z.string() })),
+  })),
+});
+
 export function isAskUserRequest(request: ExtensionUiRequest) {
   return request.method === "input" && request.title === "__piop_request_user_input__";
 }
 
 function readQuestions(request: ExtensionUiRequest): Question[] {
   try {
-    const { questions } = JSON.parse(request.placeholder ?? "{}");
-
-    if (!Array.isArray(questions) || !questions.length) return [];
-
-    return questions.every(validQuestion) ? questions : [];
+    return questionsSchema.parse(JSON.parse(request.placeholder ?? "{}")).questions;
   } catch { return []; }
-}
-
-function validQuestion(value: Question) {
-  return value && [value.id, value.header, value.question].every((item) => typeof item === "string")
-    && Array.isArray(value.options)
-    && value.options.every((option) => option && typeof option.label === "string" && typeof option.description === "string");
 }
 
 export function createQuestionDraft(request: ExtensionUiRequest) {
   return { index: createSignal(0), answers: createSignal<Answer[]>(readQuestions(request).map(() => ({ selected: -1, notes: "" }))) };
 }
 
-export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: string; draft?: ReturnType<typeof createQuestionDraft>; onRespond: (response: Record<string, unknown>) => void | Promise<void> }) {
+export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: string; draft?: ReturnType<typeof createQuestionDraft>; onRespond: (response: ExtensionUiResponse) => void | Promise<void> }) {
   const questions = readQuestions(props.request);
   const { index: [index, setIndex], answers: [answers, setAnswers] } = props.draft ?? createQuestionDraft(props.request);
   const [busy, setBusy] = createSignal(false);
@@ -40,7 +38,7 @@ export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: stri
   const answer = () => answers()[index()];
   const update = (change: Partial<Answer>) => setAnswers((current) => current.map((item, i) => i === index() ? { ...item, ...change } : item));
 
-  const respond = async (response: Record<string, unknown>) => {
+  const respond = async (response: ExtensionUiResponse) => {
     if (busy()) return;
     setBusy(true); setError("");
 

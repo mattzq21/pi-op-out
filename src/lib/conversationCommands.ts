@@ -3,7 +3,7 @@ import { FastModeCommands } from "./fastModeCommands";
 
 export class ConversationCommands extends FastModeCommands {
   private goalAttachments(command: RpcCommand) {
-    if (command.type === "prompt" && typeof command.message === "string" && /^\/goal\s+\S/.test(command.message) && Array.isArray(command.images) && command.images.length) {
+    if (command.type === "prompt" && command.message !== undefined && /^\/goal\s+\S/.test(command.message) && Array.isArray(command.images) && command.images.length) {
       const objective = command.message.slice(6);
       const attachments = command.images.map((image, index) => ({ name: `Image ${index + 1}`, image }));
 
@@ -14,7 +14,7 @@ export class ConversationCommands extends FastModeCommands {
   }
   normalize(command: RpcCommand) {
     command = this.goalAttachments(command);
-    const compact = ["prompt", "steer", "follow_up"].includes(command.type) && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
+    const compact = ["prompt", "steer", "follow_up"].includes(command.type) && command.message !== undefined ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
 
     if (compact && command.type !== "prompt") throw new Error("Stop or pause piop before running /compact.");
 

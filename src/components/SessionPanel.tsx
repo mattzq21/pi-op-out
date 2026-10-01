@@ -26,9 +26,9 @@ type DraggedItem = DraggedSession | { projectKey: string };
 
 type MouseDrag = DraggedItem & { startX: number; startY: number; active: boolean; };
 
-const actions = [
+const actions: ReadonlyArray<readonly [SessionAction, typeof AppWindow, string]> = [
   ["new-window", AppWindow, "Open in new window"], ["rename", Pencil, "Rename conversation"], ["open-directory", FolderOpen, "Open project directory"], ["copy-id", Copy, "Copy session ID"], ["open-rollout", FileText, "Open rollout file"]
-] as const;
+];
 
 function projectKindLabel(session: SessionSummary) {
   const kind = session.projectKind;
@@ -218,7 +218,7 @@ export function SessionPanel(props: Props) {
       if (autoScrollFrameRef.current !== undefined) { cancelAnimationFrame(autoScrollFrameRef.current); autoScrollFrameRef.current = undefined; }
     };
 
-    const projectDropTarget = (hit: HTMLElement | null, y: number, projectKey: string): DropTarget | undefined => {
+    const projectDropTarget = (hit: Element | null, y: number, projectKey: string): DropTarget | undefined => {
       const entryElement = hit?.closest<HTMLElement>("section[data-sidebar-token], .session-item[data-sidebar-token]");
       const token = entryElement?.dataset.sidebarToken;
 
@@ -230,14 +230,14 @@ export function SessionPanel(props: Props) {
       return { projectKey: RECENT_KEY, sessionKey: "", edge, layoutBefore: edge === "before" ? token : sidebarEntriesRef.current[index + 1] ?? null };
     };
 
-    const emptyProjectDrop = (hit: HTMLElement | null): DropTarget | undefined => {
+    const emptyProjectDrop = (hit: Element | null): DropTarget | undefined => {
       const projectElement = hit?.closest<HTMLElement>("[data-drop-project-key]");
 
       return projectElement ? { projectKey: required(projectElement.dataset.dropProjectKey), sessionKey: "", edge: "after" } : undefined;
     };
 
     const updateDropTarget = (x: number, y: number, current: MouseDrag) => {
-      const hit = document.elementFromPoint(x, y) as HTMLElement | null;
+      const hit = document.elementFromPoint(x, y);
       let nextTarget: DropTarget | undefined;
       const sidebarDropZone = hit?.closest<HTMLElement>("[data-sidebar-drop-zone]");
       const sessionElement = hit?.closest<HTMLElement>(".session-item[data-session-key]");
@@ -384,7 +384,7 @@ export function SessionPanel(props: Props) {
     } catch (reason) { setGroupActionError(reason instanceof Error ? reason.message : String(reason)); }
   };
 
-  const groupsByToken = createMemo(() => (new Map(groups().map((group) => [groupLayoutToken(group[0]), group] as const))));
+  const groupsByToken = createMemo(() => (new Map(groups().map((group): [string, typeof group] => [groupLayoutToken(group[0]), group]))));
 
   const groupMenuDetails = () => {
     const groupDirectory = groupMenu() ? groupDestination(required(groupMenu()).projectKey) : undefined;
@@ -482,7 +482,7 @@ export function SessionPanel(props: Props) {
   };
 
   const renderConversationMenu = () => (menuActions().activeMenu && <div ref={element => { menuRef.current = element; }} class="conversation-menu session-context-menu" role="menu" aria-label={`${groupMenu()?.label ?? menu()?.session.name} actions`} style={{ left: cssPixels(required((menuActions().activeMenu)).x), top: cssPixels(required((menuActions().activeMenu)).y) }} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => {
-      const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]; const index = items.indexOf(document.activeElement as HTMLButtonElement);
+      const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]; const index = items.findIndex(item => item === document.activeElement);
 
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
       else if (event.key === "Home" || event.key === "End") { event.preventDefault(); items[event.key === "Home" ? 0 : items.length - 1]?.focus(); }

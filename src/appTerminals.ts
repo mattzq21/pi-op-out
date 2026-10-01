@@ -146,7 +146,7 @@ export function createTerminalController({ transport, conversationKey, location,
     setTerminalTarget(current => current?.sessionKey === previousKey ? { ...current, sessionKey: nextKey } : current);
   };
 
-  const exited = (terminalId: unknown) => {
+  const exited = (terminalId: string) => {
     flushOutput();
     setTerminalsBySession(current => Object.fromEntries(Object.entries(current).map(([key, session]) => [key, {
       ...session, tabs: session.tabs.map(terminal => terminal.id === terminalId ? { ...terminal, exited: true } : terminal),

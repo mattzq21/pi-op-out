@@ -64,7 +64,7 @@ export class PromptControls {
     if (applied.thinkingLevel !== undefined && state.thinkingLevel !== applied.thinkingLevel) return;
     this.selection[1]({}); this.applied = undefined;
   }
-  async flush(command: (value: RpcCommand) => Promise<unknown>, fast: (enabled: boolean) => Promise<void>) {
+  async flush<T>(command: (value: RpcCommand) => Promise<T>, fast: (enabled: boolean) => Promise<void>) {
     const selected = this.selection[0]();
 
     if (selected === this.applied) return;

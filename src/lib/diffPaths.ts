@@ -14,7 +14,7 @@ export function decodeGitPath(value: string) {
   const source = value.slice(1, -1); const bytes: number[] = []; const encoder = new TextEncoder();
 
   if (!source.includes("\\")) return new TextDecoder().decode(encoder.encode(source));
-  const escapes: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, "\\": 92, '"': 34 };
+  const escapes = new Map(Object.entries({ a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, "\\": 92, '"': 34 }));
 
   for (let index = 0; index < source.length; index += 1) {
     if (source[index] !== "\\") { index = appendPathText(bytes, encoder, source, index); continue; }
@@ -24,7 +24,7 @@ export function decodeGitPath(value: string) {
     if (next === undefined) break;
 
     if (/[0-7]/.test(next)) { const octal = required(source.slice(index).match(/^[0-7]{1,3}/))[0]; index += octal.length - 1; bytes.push(Number.parseInt(octal, 8)); }
-    else if (escapes[next] !== undefined) bytes.push(escapes[next]);
+    else if (escapes.has(next)) bytes.push(required(escapes.get(next)));
     else bytes.push(...encoder.encode(next));
   }
 

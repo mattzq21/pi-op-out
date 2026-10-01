@@ -39,7 +39,7 @@ export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot:
     const root = componentProps.scrollRoot.current?.closest(".chat-shell");
 
     if (!root) return;
-    const find = (event: Event) => setSearching((event as CustomEvent<boolean>).detail === true);
+    const find = (event: Event) => setSearching(event instanceof CustomEvent && event.detail === true);
     root.addEventListener("piop:find-open", find);
     setSearching(root.hasAttribute("data-find-open"));
 

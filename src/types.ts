@@ -1,10 +1,16 @@
-export type Role = "user" | "assistant" | "tool" | "system";
+import type { z } from "zod";
+import type { rpcCommandSchema, rpcEventSchema } from "./lib/rpcSchemas";
+import type { JSONType } from "zod";
 
-export interface NestedToolCalls { calls: Array<{ id: string; name: string; arguments?: Record<string, unknown>; argumentsBytes?: number; status: "ok" | "error" | "unfinished"; durationMs?: number; error?: string }>; complete: boolean; }
+export type ToolArguments = Record<string, JSONType>;
+
+export type Role = "user" | "assistant" | "tool" | "system" | "custom";
+
+export interface NestedToolCalls { calls: Array<{ id: string; name: string; arguments?: ToolArguments; argumentsBytes?: number; status: "ok" | "error" | "unfinished"; durationMs?: number; error?: string }>; complete: boolean; }
 
 export interface ChatMessage { nestedCalls?: NestedToolCalls; }
 
-export type ContentPart = ImageAttachment | { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown>; partialArgs?: string };
+export type ContentPart = ImageAttachment | { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "toolCall"; id: string; name: string; arguments: ToolArguments; partialArgs?: string };
 
 export interface ChatMessage { deliveryBehavior?: "steer" | "followUp"; id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted"; errorMessage?: string; toolName?: string; toolInput?: unknown; toolStatus?: "running" | "done" | "error"; promptContext?: PromptContextInfo; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
 
@@ -39,7 +45,9 @@ export interface AgentState { viewers?: number; pendingMessages?: PendingMessage
 
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; error?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }
 
-export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; thinkingLevelMap?: Record<string, unknown>; contextWindow?: number; input?: ("text" | "image")[]; }
+export interface ExtensionUiResponse { cancelled?: boolean; confirmed?: boolean; value?: string; }
+
+export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; thinkingLevelMap?: Record<string, JSONType>; contextWindow?: number; input?: ("text" | "image")[]; }
 
 export interface AgentProfile { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServer[]; }
 
@@ -51,9 +59,9 @@ export interface AgentConfigChange { hostId: string; revision: number; }
 
 export interface SettingsChange { settings: AppSettings; agentConfigChange?: AgentConfigChange; }
 
-export interface RpcCommand { id?: string; type: string; [key: string]: unknown; }
+export type RpcCommand = z.infer<typeof rpcCommandSchema>;
 
-export interface RpcEvent { type: string; [key: string]: unknown; }
+export type RpcEvent = z.infer<typeof rpcEventSchema>;
 
 export interface ToolConfig { name: string; description: string; enabled: boolean; builtin?: boolean; }
 

@@ -39,7 +39,17 @@ export interface CustomProviderInput {
   providerId: string; name: string; baseUrl: string; api: string; apiKey: string; noKey: boolean; sessionAffinity: boolean;
 }
 
-const call = <T>(hostId: string, request: Record<string, unknown>) => invoke<T>("provider_auth", { hostId, request });
+type AuthFlowRequest =
+  | { action: "begin"; providerId: string; authType: string; addAccount: boolean }
+  | { action: "reply"; flowId: string; promptId: string; answer: string }
+  | { action: "cancel" | "poll"; flowId: string };
+
+type ProviderAuthRequest = AuthFlowRequest
+  | { action: "list"; refreshModels: boolean }
+  | { action: "logout"; providerId: string }
+  | ({ action: "create" } & CustomProviderInput);
+
+const call = <T>(hostId: string, request: ProviderAuthRequest) => invoke<T>("provider_auth", { hostId, request });
 
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
@@ -154,7 +164,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
     return () => { cancelled = true; clearTimeout(timer); };
   }, () => [hostId(), flow()?.flowId, flow()?.status, working(), tick()]);
 
-  const perform = async (request: Record<string, unknown>, begin = false) => { const capturedHostId = hostId();
+  const perform = async (request: AuthFlowRequest, begin = false) => { const capturedHostId = hostId();
 
     if (requestPending.current) return;
     requestPending.current = true;

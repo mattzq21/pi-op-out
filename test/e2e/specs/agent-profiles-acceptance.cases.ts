@@ -2,6 +2,7 @@ import { $, browser, expect } from "@wdio/globals";
 import { readFileSync, writeFileSync } from "node:fs";
 
 import { decodeAgentValue } from "../../../src/lib/agentProtocol.js";
+import { agentConfigSchema } from "../../../src/lib/agentSchemas.js";
 import type { AgentConfig } from "../../../src/types.js";
 import { app } from "../pageobjects/app.page.js";
 import { installedAgentConfigPath, mockBackend, backendCalls, resetBackend, resetApp, emitPiEvent, defaultSettings, acceptanceAgents, enableAgents, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
@@ -39,7 +40,7 @@ describe("Agent profiles acceptance", () => {
 
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-use ")));
     const message = ((await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-use "))?.args.command as { message: string }).message;
-    expect(decodeAgentValue<string>(message.slice("/pi-define-agents-use ".length))).toBe("reviewer");
+    expect(decodeAgentValue(message.slice("/pi-define-agents-use ".length))).toBe("reviewer");
   });
 
   it("creates an agent with inherited resources and editable instructions", async () => {
@@ -94,7 +95,7 @@ describe("Agent profiles acceptance", () => {
     await app.saveSettingsButton.click();
     await expect(app.saveSettingsButton).toHaveText("Saved");
     const prompt = (await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-config "))?.args.command as { message: string };
-    const saved = decodeAgentValue<AgentConfig>(prompt.message.slice("/pi-define-agents-config ".length));
+    const saved = agentConfigSchema.parse(decodeAgentValue(prompt.message.slice("/pi-define-agents-config ".length)));
     expect(saved.agents.find((agent) => agent.name === "reviewer")?.path_agentprompt).toBe("review-acceptance.md");
     expect((await backendCalls()).filter(({ command }) => command === "save_app_settings")).toHaveLength(1);
     expect((await backendCalls()).some(({ command }) => command === "stop_pi")).toBe(true);
@@ -179,7 +180,7 @@ describe("Agent profiles acceptance", () => {
     const calls = await backendCalls();
     const settingsWrites = calls.filter(({ command }) => command === "save_app_settings");
     expect(settingsWrites).toHaveLength(0);
-    const configurations = calls.filter(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-config ")).map(({ args }) => decodeAgentValue<AgentConfig>((args.command as { message: string }).message.slice("/pi-define-agents-config ".length)));
+    const configurations = calls.filter(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-config ")).map(({ args }) => agentConfigSchema.parse(decodeAgentValue((args.command as { message: string }).message.slice("/pi-define-agents-config ".length))));
     expect(configurations).toHaveLength(1);
     expect(configurations[0].agents.find((agent) => agent.name === "reviewer")?.path_agentprompt).toBe("rejected-change.md");
   });

@@ -1,9 +1,12 @@
 import { required } from "./required";
 import { extensionUiSchema } from "./extensionUiSchema";
+import { wireMessageSchema } from "./messageSchemas";
+import { gitDiffSnapshotSchema } from "./diffSchemas";
+import { z } from "zod";
 import { type Accessor } from "solid-js";
 import { createSubscription } from "../lib/solid";
 
-import type { AgentState, AppSettings, GitDiffSnapshot, GitDiffSnapshots, RpcEvent, SessionSummary } from "../types";
+import type { AgentState, AppSettings, GitDiffSnapshots, RpcEvent, SessionSummary } from "../types";
 import { textOf } from "./content";
 import { NativeTransport, type NativeConnectionTarget } from "./nativeTransport";
 import { forgetSession, retainSessionResource } from "./sessionMemory";
@@ -12,7 +15,7 @@ const sessionKey = (hostId: string, sessionId: string) => `${hostId}:${sessionId
 
 const EMPTY_DIFFS: GitDiffSnapshots = {};
 
-const startsUserMessage = (event: RpcEvent) => event.type === "message_start" && (event.message as { role?: string })?.role === "user";
+const startsUserMessage = (event: RpcEvent) => event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success;
 
 type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: string; promise: Promise<GitDiffSnapshots> }; persistence: "session" | "memory" };
 
@@ -152,8 +155,10 @@ export class SessionRuntimePool {
   }
 
   private retainUserSession(transport: NativeTransport, event: RpcEvent) {
-    if (event.type === "message_start" && (event.message as { role?: string })?.role === "user") {
-      const message = event.message as { content: import("../types").ChatMessage["content"]; timestamp?: unknown };
+    const parsed = wireMessageSchema.safeParse(event.message);
+
+    if (event.type === "message_start" && parsed.success && parsed.data.role === "user") {
+      const message = parsed.data;
       const prompt = textOf(message.content); const timestamp = Number(message.timestamp);
       this.retainSession(transport, prompt, Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now());
     }
@@ -164,9 +169,10 @@ export class SessionRuntimePool {
 
     if (event.hostId !== transport.currentHostId() || event.sessionPath !== transport.currentSessionPath()) return;
 
-    if (state.persistence === "memory" && event.type === "turn_diff" && typeof event.messageId === "string" && event.snapshot) {
-      const messageId = event.messageId;
-      const snapshot = event.snapshot as GitDiffSnapshot;
+    const diff = z.object({ messageId: z.string(), snapshot: gitDiffSnapshotSchema }).safeParse(event);
+
+    if (state.persistence === "memory" && event.type === "turn_diff" && diff.success) {
+      const { messageId, snapshot } = diff.data;
       void (state.load?.promise ?? Promise.resolve()).then(() => {
         if (!this.transports.has(transport) || event.sessionPath !== transport.currentSessionPath()) return;
         state.snapshots = { ...state.snapshots, [messageId]: snapshot };
@@ -261,8 +267,6 @@ export class SessionRuntimePool {
   isAnyRunning() { return this.runningTransports.size > 0; }
 
   queueSettingsChange(previous: AppSettings, settings: AppSettings) {
-    const changed = (before: unknown, after: unknown) => JSON.stringify(before) !== JSON.stringify(after);
-
     const hostConnection = (value: AppSettings, hostId: string) => {
       const host = value.hosts.find((host) => host.id === hostId);
 
@@ -272,7 +276,7 @@ export class SessionRuntimePool {
     for (const transport of this.transports) {
       const hostId = transport.currentHostId();
       transport.queueSettings(settings, {
-        reconnect: hostId !== "local" && changed(hostConnection(previous, hostId), hostConnection(settings, hostId)),
+        reconnect: hostId !== "local" && JSON.stringify(hostConnection(previous, hostId)) !== JSON.stringify(hostConnection(settings, hostId)),
       });
     }
   }

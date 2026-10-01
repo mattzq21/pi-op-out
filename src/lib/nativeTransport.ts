@@ -1,12 +1,15 @@
+import { z } from "zod";
+import { commandSessionSchema, runtimeEventSchema, runtimeStderrSchema, type CommandSession } from "./rpcSchemas";
 import { forgetSession, retainSessionResource } from "./sessionMemory";
 import { PromptControls } from "./promptControls";
 import { nativeCall as call } from "./nativeCall";
 import { NativeSettings } from "./nativeSettings";
 import { nativeTerminals } from "./nativeTerminals";
 import { ConversationCommands } from "./conversationCommands";
+import { commandListingSchema } from "./fastModeCommands";
 import { listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
-import { restoredSessionTarget } from "./sessionResume";
+import { nativeConnectionTargetSchema, restoredSessionTarget } from "./sessionResume";
 import type { GroupChange, SessionGroup, SessionGroups, SessionGroupSeed } from "./sessionGroups";
 import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, OpencodeGoUsage, RpcCommand, RpcEvent, SessionSummary, StorageReport } from "../types";
 
@@ -15,7 +18,7 @@ export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: 
 export function initialWindowTarget(): NativeConnectionTarget {
   try { const target = new URLSearchParams(window.location.search).get("target"); const value = target ? JSON.parse(target) : restoredSessionTarget();
 
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
+  return nativeConnectionTargetSchema.parse(value); }
   catch { return {}; }
 }
 
@@ -157,8 +160,8 @@ export class NativeTransport {
   private terminalActivity = false;
   hasTerminalActivity() { return this.terminalActivity; }
   private readonly fastMode = new ConversationCommands({
-    command: command => this.command(command),
-    send: command => call("pi_command", { runtimeId: this.runtimeId, command }),
+    command: async command => { await this.command(command); },
+    send: async command => { await call("pi_command", { runtimeId: this.runtimeId, command }); },
     emit: event => this.emit(event),
   });
   private readOnly: boolean;
@@ -174,23 +177,23 @@ export class NativeTransport {
   return result; }
   private queueView(): RpcEvent { return this.queueSnapshot; }
   private trackSessionActivity(event: RpcEvent) {
-    if (event.type === "agent_start" || (event.type === "message_start" && (event.message as { role?: string })?.role === "user")) this.temporaryChatUsed = true;
+    if (event.type === "agent_start" || (event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success)) this.temporaryChatUsed = true;
   }
   private retainWidget(event: RpcEvent) {
-    if (event.type === "extension_ui_request" && event.method === "setWidget" && typeof event.widgetKey === "string") {
+    if (event.type === "extension_ui_request" && event.method === "setWidget" && event.widgetKey !== undefined) {
       if (Array.isArray(event.widgetLines)) this.retainedWidgets.set(event.widgetKey, event); else this.retainedWidgets.delete(event.widgetKey);
     }
   }
   private retainExtensionState(event: RpcEvent) {
     this.retainWidget(event);
 
-    if (event.type === "extension_ui_resolved" && typeof event.id === "string") this.retainedRequests.delete(event.id);
+    if (event.type === "extension_ui_resolved" && event.id !== undefined) this.retainedRequests.delete(event.id);
 
-    if (event.type === "extension_ui_request" && event.method === "setStatus" && typeof event.statusKey === "string") {
+    if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey !== undefined) {
       if (event.statusText) this.retainedStatuses.set(event.statusKey, event); else this.retainedStatuses.delete(event.statusKey);
     }
 
-    if (event.type === "extension_ui_request" && ["input", "editor", "select", "confirm"].includes(String(event.method)) && typeof event.id === "string") this.retainedRequests.set(event.id, event);
+    if (event.type === "extension_ui_request" && ["input", "editor", "select", "confirm"].includes(String(event.method)) && event.id !== undefined) this.retainedRequests.set(event.id, event);
   }
   private async ensureConnectionDirectory(version: number) {
     if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" });
@@ -203,13 +206,13 @@ export class NativeTransport {
 
     return true;
   }
-  private retainCommandSession(command: RpcCommand, result: unknown) {
-    if (command.type === "get_state" || command.type === "get_snapshot") { const state = (command.type === "get_snapshot" ? (result as { state: unknown }).state : result) as { sessionFile?: string; sessionId?: string };
+  private retainCommandSession(command: RpcCommand, result: CommandSession) {
+    if (command.type === "get_state" || command.type === "get_snapshot") { const state = command.type === "get_snapshot" ? result.state ?? {} : result;
 
     if (this.sessionId && this.sessionId !== state.sessionId) forgetSession(this); this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
 
     if (command.type === "get_snapshot") {
-      for (const event of (result as { extensionState?: RpcEvent[] }).extensionState ?? []) this.emit(event);
+      for (const event of result.extensionState ?? []) this.emit(event);
     }
   }
   private emit(event: RpcEvent) {
@@ -282,22 +285,21 @@ export class NativeTransport {
     this.clearConnectionListeners();
 
     const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
-      const envelope = payload as { runtimeId?: unknown; event?: RpcEvent };
+      const envelope = runtimeEventSchema.parse(payload);
 
-      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) { if (envelope.event.type === "ownership_lost") { this.owns = false; this.retainedRequests.clear(); }
+      if (envelope.runtimeId !== undefined && envelope.runtimeId !== this.runtimeId) return;
+      const event = envelope.event;
 
-      if (envelope.event.type === "disconnected") this.connectionLost(); this.emit(envelope.event); } }
-      else {
-        const event = payload as RpcEvent;
+      if (envelope.runtimeId !== undefined && event.type === "ownership_lost") { this.owns = false; this.retainedRequests.clear(); }
 
-        if (event.type === "disconnected") this.connectionLost();
-        this.emit(event);
-      }
+      if (event.type === "disconnected") this.connectionLost();
+      this.emit(event);
     });
 
     const stderrUnlisten = await listen<{ runtimeId?: string; line?: string } | string>("pi://stderr", ({ payload }) => {
-      const runtimeId = typeof payload === "string" ? this.runtimeId : payload.runtimeId;
-      const line = typeof payload === "string" ? payload : payload.line;
+      const output = runtimeStderrSchema.parse(payload);
+      const runtimeId = output.global ? this.runtimeId : output.runtimeId;
+      const line = output.line;
 
       if (runtimeId !== this.runtimeId || !line?.trim()) return;
       this.stderrLines = [...this.stderrLines.slice(-4), line.trim()];
@@ -361,13 +363,13 @@ export class NativeTransport {
 
     try {
       const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command });
-      this.retainCommandSession(command, result);
-      this.resetChangedSession(command, result);
-      const fastModeUpdate = this.fastMode.afterCommand(command, result);
+      this.retainCommandSession(command, commandSessionSchema.parse(result));
+      this.resetChangedSession(command, z.object({ cancelled: z.boolean().optional() }).catch({}).parse(result));
+      const fastModeUpdate = this.fastMode.afterCommand(command, command.type === "get_commands" ? commandListingSchema.parse(result) : undefined);
 
       if (fastModeUpdate) await fastModeUpdate;
 
-      if (command.type === "extension_ui_response" && typeof command.id === "string") this.retainedRequests.delete(command.id);
+      if (command.type === "extension_ui_response" && command.id !== undefined) this.retainedRequests.delete(command.id);
 
       return result;
     } catch (reason) {
@@ -375,8 +377,8 @@ export class NativeTransport {
       throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message);
     }
   }
-  private resetChangedSession(command: RpcCommand, result: unknown) {
-    if (["new_session", "switch_session", "fork", "fork_after", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { forgetSession(this); this.sessionId = undefined; }
+  private resetChangedSession(command: RpcCommand, result: { cancelled?: boolean }) {
+    if (["new_session", "switch_session", "fork", "fork_after", "clone"].includes(command.type) && !result.cancelled) { forgetSession(this); this.sessionId = undefined; }
   }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); this.retainedStatuses.forEach((event) => listener(event)); this.retainedWidgets.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event));
 
@@ -410,7 +412,7 @@ export class NativeTransport {
   return call<boolean>("is_git_repository", { cwd: this.cwd, hostId: this.hostId }); }
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId });
 
-  return typeof branch === "string" ? branch : null; }
+  return z.string().nullable().catch(null).parse(branch); }
   loadSettings() { return this.settings.load(); }
   loadHostSettings() { return this.settings.loadHost(); }
   saveHostSettings(settings: AppSettings, agentsChanged = false) { return this.settings.saveHost(settings, agentsChanged); }
@@ -421,7 +423,7 @@ export class NativeTransport {
   }
   async selectProjectDirectory(defaultPath?: string) { const selected = await open({ directory: true, multiple: false, title: "Open project", defaultPath });
 
-  return typeof selected === "string" ? selected : null; }
+  return Array.isArray(selected) ? null : selected; }
   homeDirectory(hostId: string) { return call<string>("home_directory", { hostId }); }
   validateProjectDirectory(path: string, hostId: string, allowStorage = false) { return call<string>("validate_project_directory", { path, hostId, allowStorage }); }
   listDirectories(hostId: string, path?: string) { return call<DirectoryListing>("list_directories", { hostId, path }); }
@@ -442,7 +444,7 @@ export class NativeTransport {
 export async function readDroppedFile(path: string): Promise<File> {
   const result = await call<{ name: string; data: number[] }>("read_dropped_file", { path });
   const extension = result.name.split(".").pop()?.toLowerCase() ?? "";
-  const imageTypes: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+  const imageTypes = new Map(Object.entries({ png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" }));
 
-  return new File([new Uint8Array(result.data)], result.name, { type: imageTypes[extension] ?? "" });
+  return new File([new Uint8Array(result.data)], result.name, { type: imageTypes.get(extension) ?? "" });
 }

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { required } from "./lib/required";
 import { extensionUiSchema } from "./lib/extensionUiSchema";
 import { isConversationChanged } from "./lib/conversationChanged";
@@ -7,8 +8,13 @@ import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate
 
 import { REVIEW_REQUEST_TITLE, MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type SplitPaneState, type TerminalTarget } from "./appSupport";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
+import { definedAgentsCapabilitySchema } from "./lib/agentSchemas";
 import { NativeTransport } from "./lib/nativeTransport";
 import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiRequest, RpcEvent } from "./types";
+
+const optionalString = z.string().optional().catch(undefined);
+
+const reviewPayloadSchema = z.object({ task: optionalString, cwd: optionalString, parentSessionId: optionalString, sessionId: optionalString, sessionPath: optionalString });
 
 type AppEventsContext = {
   transport: NativeTransport;
@@ -17,7 +23,7 @@ type AppEventsContext = {
   loadSettings: () => Promise<AppSettings>;
   refresh: (hostId?: string, settings?: AppSettings) => Promise<AppSettings>;
   queueTerminalOutput: (terminalId: string, data: string) => void;
-  terminalExited: (terminalId: unknown) => void;
+  terminalExited: (terminalId: string) => void;
   addNotice: (notice: { title: string; message: string; }) => void;
   activeTransportRef: RefObject<NativeTransport>;
   pendingReviewRequest: RefObject<{ id: string; transport: NativeTransport; } | undefined>;
@@ -89,7 +95,9 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       };
 
       const handleTerminalExit = () => {
-        capturedOptions.terminalExited(event.terminalId);
+        const terminalId = z.string().safeParse(event.terminalId);
+
+        if (terminalId.success) capturedOptions.terminalExited(terminalId.data);
       };
 
       const handleExtensionError = () => {
@@ -105,19 +113,19 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         const notifyExtension = () => { if (!event.inputRejected) capturedOptions.addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }); };
 
         const reviewPayload = () => {
-          const payload = JSON.parse(request.placeholder || "{}") as { task?: unknown; cwd?: unknown; parentSessionId?: unknown; sessionId?: unknown; sessionPath?: unknown };
+          const payload = reviewPayloadSchema.parse(JSON.parse(request.placeholder || "{}"));
 
-          if (typeof payload.parentSessionId !== "string" || !payload.parentSessionId) throw new Error("Invalid /review request");
+          if (!payload.parentSessionId) throw new Error("Invalid /review request");
 
-          if (typeof payload.sessionId !== "string" || typeof payload.sessionPath !== "string" || !payload.sessionPath) throw new Error("Missing saved review session");
+          if (payload.sessionId === undefined || !payload.sessionPath) throw new Error("Missing saved review session");
 
-          return { task: typeof payload.task === "string" ? payload.task : undefined, cwd: payload.cwd, parentSessionId: payload.parentSessionId, sessionId: payload.sessionId, sessionPath: payload.sessionPath };
+          return { task: payload.task, cwd: payload.cwd, parentSessionId: payload.parentSessionId, sessionId: payload.sessionId, sessionPath: payload.sessionPath };
         };
 
         const openReview = () => {
           try {
             const payload = reviewPayload();
-            const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : ".";
+            const cwd = payload.cwd || ".";
             const previous = capturedOptions.pendingReviewRequest.current;
 
             if (previous && previous.id !== request.id) void previous.transport.command({ type: "extension_ui_response", id: previous.id, cancelled: true }).catch(() => undefined);
@@ -143,7 +151,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
           capturedOptions.setExtensionOwner(capturedOptions.transport);
 
           try {
-            const capability = request.statusText?.startsWith("json:") ? decodeAgentValue<DefinedAgentsCapability>(request.statusText.slice(5)) : undefined;
+            const capability = request.statusText?.startsWith("json:") ? definedAgentsCapabilitySchema.parse(decodeAgentValue(request.statusText.slice(5))) : undefined;
             capturedOptions.setDefinedAgents(capability);
 
             if (capability) void capturedOptions.refreshSession().catch(() => undefined);
@@ -163,7 +171,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
           capturedOptions.setExtensionOwner(capturedOptions.transport);
           capturedOptions.setWidgets((current) => { const next = { ...current };
 
-          if (request.widgetLines) next[required(request.widgetKey)] = (Array.isArray(request.widgetLines) ? request.widgetLines : []).filter((line): line is string => typeof line === "string").map((line) => line.slice(0, 500)).slice(0, 50); else delete next[required(request.widgetKey)];
+          if (request.widgetLines) next[required(request.widgetKey)] = request.widgetLines.map((line) => line.slice(0, 500)).slice(0, 50); else delete next[required(request.widgetKey)];
 
           return next; });
         };
@@ -173,7 +181,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         const setEditorText = () => {
           const key = capturedOptions.transportConversationKeys.current.get(capturedOptions.transport) ?? capturedOptions.terminalSessionId();
 
-          if (typeof request.text === "string") capturedOptions.setComposerDraft(key, request.text);
+          if (request.text !== undefined) capturedOptions.setComposerDraft(key, request.text);
           capturedOptions.setActivePane("main");
           capturedOptions.setMainComposerFocusRequest((value) => value + 1);
         };
@@ -193,9 +201,9 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         if (request.method === "setStatus") return handleStatus();
 
         if (request.method === "setWidget" && request.widgetKey) return setExtensionWidget();
-        const otherMethods: Record<string, () => void> = { setTitle: setExtensionTitle, set_editor_text: setEditorText, input: openExtensionDialog, editor: openExtensionDialog, select: openExtensionDialog, confirm: openExtensionDialog };
+        const otherMethods = new Map(Object.entries({ setTitle: setExtensionTitle, set_editor_text: setEditorText, input: openExtensionDialog, editor: openExtensionDialog, select: openExtensionDialog, confirm: openExtensionDialog }));
 
-        if (Object.hasOwn(otherMethods, request.method)) return otherMethods[request.method]();
+        return otherMethods.get(request.method)?.();
       };
 
       const handleSessionSwitched = () => {
@@ -246,7 +254,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         }, 50);
       };
 
-      const handlers: Record<string, () => void> = {
+      const handlers = new Map(Object.entries({
         "extension_ui_resolved": handleExtensionUiResolved,
         "message_end": handleMessageEnd,
         "terminal_output": handleTerminalOutput,
@@ -260,9 +268,9 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         "ownership_acquired": handleOwnershipAcquired,
         "disconnected": handleDisconnected,
         "connection_restored": handleDisconnected
-      };
+      }));
 
-      if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
+      handlers.get(event.type)?.();
     });
 
     loadSelectedSession().catch((cause: unknown) => { if (current() && !isConversationChanged(cause)) capturedOptions.setError(cause instanceof Error ? cause.message : String(cause)); });

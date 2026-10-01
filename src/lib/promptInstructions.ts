@@ -33,7 +33,7 @@ function instructionBlocks(source: string) {
 }
 
 export function separatePromptInstructions(context: PromptContextInfo): PromptContextInfo {
-  if (typeof context.systemPrompt !== "string") return context;
+  if (!context.systemPrompt) return context;
   const blocks = instructionBlocks(context.systemPrompt);
 
   if (!blocks.length) return context;

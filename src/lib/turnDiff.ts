@@ -1,8 +1,9 @@
 import type { GitDiffSnapshot } from "../types";
 import { parseDiff } from "./diff";
+import { gitPatchSchema } from "./diffSchemas";
 
 export function turnDiff(gitPatch?: GitDiffSnapshot) {
-  const patch = typeof gitPatch === "string" ? gitPatch : gitPatch?.patch ?? "";
+  const { patch } = gitPatchSchema.parse(gitPatch);
 
   const warnings: string[] = [];
 

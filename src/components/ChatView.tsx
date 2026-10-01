@@ -1,3 +1,6 @@
+import { z } from "zod";
+import { stringsSchema, validItems } from "../lib/messageSchemas";
+import { gitPatchSchema } from "../lib/diffSchemas";
 import { required } from "../lib/required";
 import { GoalBar } from "./GoalBar";
 import { ReviewNavigationContext } from "./ReviewLink";
@@ -132,9 +135,7 @@ export function ChatView(props: Props) {
     if (!mcpLoading().startsWith("json:")) return [{ id: "loading", name: mcpLoading().replace(/^Loading /, "") }];
 
     try {
-      const value: unknown = JSON.parse(mcpLoading().slice(5));
-
-      return Array.isArray(value) ? value.filter((server): server is { id: string; name: string } => server && typeof server.id === "string" && typeof server.name === "string") : [];
+      return validItems(z.object({ id: z.string(), name: z.string() })).catch([]).parse(JSON.parse(mcpLoading().slice(5)));
     } catch { return []; }
   });
 
@@ -229,7 +230,7 @@ export function ChatView(props: Props) {
       const renderConversationOwnershipBanner = () => ((takingOwnership() || ownershipError()) && <div class="conversation-ownership-banner"><div>{takingOwnership() && <p role="status">Taking ownership…</p>}{ownershipError() && <p role="alert">{ownershipError()}</p>}</div></div>);
       const ComposerInteraction = () => (<div class="composer-interaction"><Composer ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache() : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn() ? { id: `${required((abortedTurn())).assistant.timestamp ?? required((abortedTurn())).assistant.id}:${required((abortedTurn())).prompt}`, value: required((abortedTurn())).prompt } : undefined} onSend={send} onAbort={stopResponse} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
 
-      return (<Show when={!props.readOnly}><div ref={element => { composerStack.current = element; }} class="composer-stack"><GoalBar value={props.statuses["piop-goal"]} disabled={Boolean(props.controlsDisabled || !ownsConversation() || !props.transport)} onCommand={action => required(props.transport).command({ type: "prompt", message: `/goal ${action}` })} />{props.widgets.length > 0 && <div class="extension-widget">{<Index each={props.widgets.filter((line) => typeof line === "string")}>{(line, _index) => <div >{line()}</div>}</Index>}</div>} {activity() && <div class="runtime-activity" role="status">{(activity())}</div>}{renderConversationOwnershipBanner()}<Show when={ownsConversation()}><div class="composer-questions"><ConversationQuestions transport={props.transport} /></div></Show><ComposerInteraction /></div></Show>);
+      return (<Show when={!props.readOnly}><div ref={element => { composerStack.current = element; }} class="composer-stack"><GoalBar value={props.statuses["piop-goal"]} disabled={Boolean(props.controlsDisabled || !ownsConversation() || !props.transport)} onCommand={action => required(props.transport).command({ type: "prompt", message: `/goal ${action}` })} />{props.widgets.length > 0 && <div class="extension-widget">{<Index each={stringsSchema.parse(props.widgets)}>{(line, _index) => <div >{line()}</div>}</Index>}</div>} {activity() && <div class="runtime-activity" role="status">{(activity())}</div>}{renderConversationOwnershipBanner()}<Show when={ownsConversation()}><div class="composer-questions"><ConversationQuestions transport={props.transport} /></div></Show><ComposerInteraction /></div></Show>);
     };
 
     return (<div class="conversation-content">
@@ -400,7 +401,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     const final = [...componentProps.messages].reverse().find((message) => message.role === "assistant" && (textOf(message.content).trim() || message.stopReason === "aborted" || message.stopReason === "error"));
     const snapshot = final ? componentProps.gitDiffs?.[final.id] : undefined;
 
-    return typeof snapshot === "string" ? snapshot : snapshot?.patch;
+    return gitPatchSchema.parse(snapshot).patch;
   });
 
   const changes = createMemo(() => turnDiff(patch()));
@@ -412,7 +413,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const finalIndex = createMemo(() => (finalResponseIndex(componentProps.messages)));
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(componentProps.messages[finalIndex()].content) : ""));
 
-  const intermediate = createMemo(() => (componentProps.messages.flatMap((message, index) => {
+  const intermediate = createMemo(() => (componentProps.messages.flatMap((message, index): ChatMessage[] => {
     if (message.role === "user" || (message.role === "system" && message.customType !== "compaction")) return [];
 
     if (index !== finalIndex()) return [message];
@@ -420,7 +421,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     if (!finalThinking()) return [];
     const { promptContext: _promptContext, ...reasoningMessage } = message;
 
-    return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking" as const, thinking: finalThinking() }], stopReason: undefined, errorMessage: undefined }];
+    return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking", thinking: finalThinking() }], stopReason: undefined, errorMessage: undefined }];
   })));
 
   const userMessages = createMemo(() => (componentProps.messages.filter((message) => message.role === "user")));

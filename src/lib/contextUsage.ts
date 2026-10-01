@@ -1,10 +1,14 @@
 import type { ContextUsage, RpcEvent } from "../types";
+import { z } from "zod";
+
+const compactionResultSchema = z.object({ estimatedTokensAfter: z.number().nonnegative() });
 
 export function contextUsageAfterCompaction(current: ContextUsage | undefined, event: RpcEvent) {
   if (!current) return undefined;
-  const estimate = (event.result as { estimatedTokensAfter?: unknown } | null)?.estimatedTokensAfter;
+  const result = compactionResultSchema.safeParse(event.result);
 
-  if (typeof estimate !== "number" || !Number.isFinite(estimate) || estimate < 0) return current;
+  if (!result.success) return current;
+  const estimate = result.data.estimatedTokensAfter;
 
   return { ...current, tokens: estimate, percent: current.contextWindow > 0 ? estimate / current.contextWindow * 100 : null };
 }

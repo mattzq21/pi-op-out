@@ -115,7 +115,10 @@ export class DictationVad {
 
       try {
         if (warmup) return false;
-        this.state.set(outputs.stateN.data as Float32Array);
+        const state = outputs.stateN.data;
+
+        if (!(state instanceof Float32Array)) throw new Error("Voice activity model returned an invalid state tensor");
+        this.state.set(state);
         this.context.set(this.frame.subarray(FRAME_SIZE - 64));
 
         return this.endpoint.accept(Number(outputs.output.data[0]));

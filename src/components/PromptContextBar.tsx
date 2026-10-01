@@ -8,6 +8,7 @@ import { type CSSProperties } from "../lib/solid";
 
 import type { PromptContextInfo } from "../types";
 import { separatePromptInstructions } from "../lib/promptInstructions";
+import { promptContextSchema } from "../lib/messageSchemas";
 
 type Section = "system" | "instructions" | "tools" | "skills";
 
@@ -32,7 +33,7 @@ function ContextCopyButton(props: { content: () => string }) {
 }
 
 function shares(values: { system: number; instructions: number; tools: number; skills: number }) {
-  const keys = ["system", "instructions", "tools", "skills"] as const;
+  const keys: Section[] = ["system", "instructions", "tools", "skills"];
   const total = keys.reduce((sum, key) => sum + values[key], 0);
 
   if (!total) return { system: 0, instructions: 0, tools: 0, skills: 0 };
@@ -47,13 +48,7 @@ function shares(values: { system: number; instructions: number; tools: number; s
 }
 
 function contextTokens(context: PromptContextInfo) {
-  const tokens = context?.tokens && typeof context.tokens === "object" ? { system: Number((context.tokens satisfies Record<string, unknown>).system) || 0, instructions: Number((context.tokens satisfies Record<string, unknown>).instructions) || 0, tools: Number((context.tokens satisfies Record<string, unknown>).tools) || 0, skills: Number((context.tokens satisfies Record<string, unknown>).skills) || 0 } : { system: 0, instructions: 0, tools: 0, skills: 0 };
-
-  return tokens;
-}
-
-function validSkills<T extends { filePath: string }>(skills: T[] | undefined): T[] {
-  return Array.isArray(skills) ? skills.filter(item => Boolean(item) && typeof item.filePath === "string") : [];
+  return context.tokens;
 }
 
 function skillTax(context: PromptContextInfo) {
@@ -70,21 +65,19 @@ function skillPercentages(context: PromptContextInfo) {
 }
 
 function contextSections(context: PromptContextInfo) {
-  const systemPrompt = typeof context?.systemPrompt === "string" ? context.systemPrompt
+  const systemPrompt = context.systemPrompt
     .replace(/<skills>[\s\S]*?<\/skills>/g, "")
     .replace(/(?:^|\n\n)The following skills provide specialized instructions[\s\S]*?<\/available_skills>/g, "")
-    .replace(/\n{3,}/g, "\n\n").trim() : "";
+    .replace(/\n{3,}/g, "\n\n").trim();
 
-  const instructions = Array.isArray(context?.instructions) ? context.instructions.filter((item): item is NonNullable<typeof item> => Boolean(item) && typeof (item satisfies { path?: unknown }).path === "string") : [];
-  const tools = Array.isArray(context?.tools) ? context.tools.filter((item): item is NonNullable<typeof item> => Boolean(item) && typeof (item satisfies { name?: unknown }).name === "string") : [];
-  const skills = validSkills(context?.skills);
-  const userInvokedSkills = validSkills(context?.userInvokedSkills);
+  const { instructions, tools, skills } = context;
+  const userInvokedSkills = context.userInvokedSkills ?? [];
 
   return { systemPrompt, instructions, tools, skills, userInvokedSkills };
 }
 
 export const PromptContextBar = function PromptContextBar(componentProps: { context: PromptContextInfo }) {
-  const context = createMemo(() => separatePromptInstructions(componentProps.context));
+  const context = createMemo(() => separatePromptInstructions(promptContextSchema.parse(componentProps.context)));
   const [active, setActive] = createSignal<Section>();
   const [skillTab, setSkillTab] = createSignal<"tax" | "model" | "user">("model");
   const taxText = () => skillTax(context()).replace(/^<skills>\s*/, "") || "No skills tax in this context";
@@ -101,7 +94,7 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
 
   const renderSkillContents = () => (skillTab() === "tax" ? <pre>{taxText()}</pre> : visibleSkills().length ? <Key each={visibleSkills()} by={(skill) => skill.id ?? skill.filePath}>{(skill, _index) => skillTab() === "user"
         ? <details class="prompt-skill-invocation"><summary>{skill().name}</summary><small>{skill().filePath}</small><pre>{skill().content ?? "Skill body was not recorded in this snapshot."}</pre></details>
-        : <div><strong>{typeof skill().name === "string" ? skill().name : skill().filePath}</strong>{typeof skill().description === "string" && skill().description && <p>{skill().description}</p>}<small>{skill().filePath}</small></div>}</Key> : <p>{emptySkills()}</p>);
+        : <div><strong>{skill().name}</strong>{skill().description && <p>{skill().description}</p>}<small>{skill().filePath}</small></div>}</Key> : <p>{emptySkills()}</p>);
 
   const renderPromptContextContent = () => (active() && <div class={`prompt-context-content ${required((active()))}`}>
     <ContextCopyButton content={() => {
@@ -116,8 +109,8 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
       }
     }} />
     {required((active())) === "system" && <pre>{sections().systemPrompt || "No system prompt"}</pre>}
-    {required((active())) === "instructions" && (sections().instructions.length ? <Key each={sections().instructions} by={(instruction) => instruction.path}>{(instruction, _index) => <div ><strong>{instruction().path}</strong><pre>{typeof instruction().content === "string" ? instruction().content : ""}</pre></div>}</Key> : <p>No project instructions</p>)}
-    {required((active())) === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{typeof tool().description === "string" && tool().description && <p>{tool().description}</p>}<details class="prompt-context-tool-json"><summary>JSON</summary><pre>{JSON.stringify(tool().parameters, null, 2)}</pre></details></div>}</Key> : <p>No active tools</p>)}
+    {required((active())) === "instructions" && (sections().instructions.length ? <Key each={sections().instructions} by={(instruction) => instruction.path}>{(instruction, _index) => <div ><strong>{instruction().path}</strong><pre>{instruction().content}</pre></div>}</Key> : <p>No project instructions</p>)}
+    {required((active())) === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{tool().description && <p>{tool().description}</p>}<details class="prompt-context-tool-json"><summary>JSON</summary><pre>{JSON.stringify(tool().parameters, null, 2)}</pre></details></div>}</Key> : <p>No active tools</p>)}
     {required((active())) === "skills" && <>
       <nav class="prompt-skills-tabs" aria-label="Skill categories">
         <button type="button" aria-pressed={skillTab() === "model"} title="Share of total estimated context used by skill definitions" onClick={() => setSkillTab("model")}>Defined <small>{skillPercent().defined}%</small></button>

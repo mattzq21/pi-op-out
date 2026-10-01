@@ -17,6 +17,11 @@ import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
+import { z } from "zod";
+
+const pastedImageSchema = z.object({ data: z.string().optional(), mimeType: z.string().optional(), error: z.string().optional() });
+
+const pendingMessageIdentitySchema = z.object({ id: z.string() });
 
 interface Props {
   ownershipRequired?: boolean;
@@ -221,7 +226,7 @@ export function Composer(props: Props) {
   }, () => [selectedMatch(), matches()]);
   createDependencyEffect(() => { setPaletteDismissed(false); }, () => [value()]);
   createDependencyEffect(() => {
-    const dismissOutside = (event: PointerEvent) => { if (!composerRef.current?.contains(event.target as Node)) setPaletteDismissed(true); };
+    const dismissOutside = (event: PointerEvent) => { if (!(event.target instanceof Node) || !composerRef.current?.contains(event.target)) setPaletteDismissed(true); };
 
     document.addEventListener("pointerdown", dismissOutside);
 
@@ -443,8 +448,11 @@ export function Composer(props: Props) {
 
   createDependencyEffect(() => {
     const handle = (event: Event) => {
-      if (event.target !== ref.current || controls().inputDisabled || props.ownershipRequired) return;
-      const detail = (event as CustomEvent<{ data?: string; mimeType?: string; error?: string }>).detail;
+      if (!(event instanceof CustomEvent) || event.target !== ref.current || controls().inputDisabled || props.ownershipRequired) return;
+      const parsed = pastedImageSchema.safeParse(event.detail);
+
+      if (!parsed.success) return;
+      const detail = parsed.data;
 
       if (detail.error) { setUploadError(detail.error);
 
@@ -584,8 +592,8 @@ export function Composer(props: Props) {
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
     {renderStreamBanner()}
-    {composer().pendingMessages.length > 0 && <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => message && typeof message.id === "string")} by={(message) => message.id}>{(message, _index) => {
-      const text = createMemo(() => (typeof message().message === "string" ? message().message : String(message().message ?? "")));
+    {composer().pendingMessages.length > 0 && <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={(message) => message.id}>{(message, _index) => {
+      const text = createMemo(() => String(message().message ?? ""));
       const change = (action: import("../types").PendingMessageAction) => changePending(message().id, action);
       const disabled = createMemo(() => (composer().controlsDisabled || changingPending() || composer().pausing));
       const queue = createMemo(() => pendingQueues().get(message().behavior));
@@ -671,7 +679,7 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
   createDependencyEffect(() => { const capturedMenuStyle = menuStyle();
 
     if (!capturedMenuStyle) return;
-    const dismiss = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) close(); };
+    const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Node) || !root.current?.contains(event.target)) close(); };
 
     document.addEventListener("pointerdown", dismiss); window.addEventListener("resize", close);
 
@@ -689,7 +697,7 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
     setActiveIndex(next); optionRefs.current[next]?.focus();
   };
 
-  return <div ref={element => { root.current = element; }} class="composer-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); trigger.current?.focus(); } else if (menuStyle() && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
+  return <div ref={element => { root.current = element; }} class="composer-picker" onBlur={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); trigger.current?.focus(); } else if (menuStyle() && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
     <button ref={element => { trigger.current = element; }} type="button" class="select-control composer-picker-trigger" aria-label={picker().label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle())} data-value={picker().value} data-options={picker().options.map((option) => option.value).join(" ")} disabled={picker().disabled} onClick={toggle}>{picker().selectedLabel ?? selectedOption()?.label ?? picker().label}</button>
     {menuStyle() && <div class={`composer-picker-menu${picker().centered ? " centered" : ""}${picker().compact ? " compact" : ""}`} role="listbox" aria-label={`${picker().label} options`} style={(menuStyle())}>{picker().options.length === 0 && <div class="empty-small">No options available</div>}{<Key each={picker().options} by={(option) => `${option.detail ?? picker().label}:${option.value}`}>{(option, index) => <button ref={(element) => { optionRefs.current[index()] = element; }}  type="button" role="option" aria-selected={option().value === picker().value} tabIndex={isActive(index()) ? 0 : -1} data-value={option().value} disabled={picker().disabled || option().disabled} onFocus={() => setActiveIndex(index())} onClick={() => { if (picker().disabled || optionChosenRef.current) return; optionChosenRef.current = true; picker().onChange(option().value); close(); trigger.current?.focus(); }}><span>{option().label}</span>{option().detail && <small>{option().detail}</small>}</button>}</Key>}</div>}
   </div>;

@@ -1,4 +1,7 @@
 import { createContext, createSignal, useContext } from "solid-js";
+import { z } from "zod";
+
+const reviewLinkSchema = z.object({ sessionId: z.string().optional() });
 
 export const ReviewNavigationContext = createContext<(id: string) => Promise<void>>();
 
@@ -6,7 +9,7 @@ export function ReviewLink(props: { details: unknown }) {
   const open = useContext(ReviewNavigationContext);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
-  const sessionId = () => (props.details as { sessionId?: string } | undefined)?.sessionId;
+  const sessionId = () => reviewLinkSchema.catch({}).parse(props.details).sessionId;
 
   const show = async () => {
     const id = sessionId();

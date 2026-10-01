@@ -2,6 +2,14 @@ import type { Accessor } from "solid-js";
 import type { NativeConnectionTarget } from "./nativeTransport";
 import { isMobile } from "./platform";
 import { createDependencyEffect } from "./solid";
+import { z } from "zod";
+
+export const nativeConnectionTargetSchema = z.object({
+  cwd: z.string().optional(), sessionPath: z.string().optional(), sessionId: z.string().optional(),
+  hostId: z.string().optional(), readOnly: z.boolean().optional(),
+});
+
+const savedSessionTargetSchema = nativeConnectionTargetSchema.omit({ readOnly: true }).required();
 
 function storageKey() {
   const host = isMobile ? localStorage.getItem("piop-mobile-host") ?? "" : "desktop";
@@ -14,9 +22,7 @@ export function restoredSessionTarget(): NativeConnectionTarget {
   try {
     const value = JSON.parse(localStorage.getItem(storageKey()) ?? "null");
 
-    if (!value || typeof value.sessionId !== "string" || typeof value.sessionPath !== "string" || typeof value.cwd !== "string" || typeof value.hostId !== "string") return {};
-
-    return { sessionId: value.sessionId, sessionPath: value.sessionPath, cwd: value.cwd, hostId: value.hostId };
+    return savedSessionTargetSchema.parse(value);
   } catch { return {}; }
 }
 
