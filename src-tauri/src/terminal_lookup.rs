@@ -10,6 +10,7 @@ pub(crate) struct Transcript {
     owner: String,
     cwd: String,
     generation: Uuid,
+    creation_order: u64,
     output: String,
     end: u64,
     text_end: u64,
@@ -40,7 +41,11 @@ pub(super) fn owned_by(item: &Transcript, owner: &str) -> bool { item.owner == o
 pub(crate) fn start(runtime: &TerminalRuntime, id: &str, session_key: &str, cwd: &str, host_id: &str, owner: &str, generation: Uuid) -> Result<(), String> {
     let mut history = runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?;
     let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);
-    history.insert(id.into(), Transcript { session_id: session_id.into(), host_id: host_id.into(), owner: owner.into(), cwd: cwd.into(), generation,
+    let creation_order = match history.get(id) {
+        Some(item) => item.creation_order,
+        None => history.values().map(|item| item.creation_order).max().unwrap_or(0).checked_add(1).ok_or("Terminal creation order exhausted")?,
+    };
+    history.insert(id.into(), Transcript { session_id: session_id.into(), host_id: host_id.into(), owner: owner.into(), cwd: cwd.into(), generation, creation_order,
         output: String::new(), end: 0, text_end: 0, updated: SystemTime::now(), running: true });
     Ok(())
 }
@@ -84,7 +89,7 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
         let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);
         let history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
         let mut entries: Vec<_> = history.iter().filter(|(_, item)| item.session_id == session_id && item.host_id == "local").collect();
-        entries.sort_by_key(|(id, _)| *id);
+        entries.sort_by_key(|(_, item)| item.creation_order);
         return Ok(json!(entries.into_iter().map(|(id, item)| {
             let known = &request["known"][id];
             let unchanged = known["generation"].as_str() == Some(item.generation.to_string().as_str()) && known["outputEnd"].as_u64() == Some(item.text_end);
@@ -145,7 +150,7 @@ pub(crate) fn lookup(runtime: &TerminalRuntime, request: &Value, host_id: &str) 
     let belongs = |item: &&Transcript| item.session_id == session_id && item.host_id == host_id;
     let Some(id) = request["terminalId"].as_str() else {
         let mut terminals: Vec<_> = history.iter().filter(|(_, item)| belongs(item)).collect();
-        terminals.sort_by_key(|(id, _)| *id);
+        terminals.sort_by_key(|(_, item)| item.creation_order);
         return Ok(json!({"terminals":terminals.into_iter().map(|(id, item)| item.summary(id)).collect::<Vec<_>>(),
             "retention":"Up to 256 KiB per terminal; closed terminals are removed, exited history may be evicted. Select terminalId to read output."}));
     };
