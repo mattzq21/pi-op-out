@@ -202,8 +202,9 @@ export function createAppConversations(preloadChat: () => void) {
       listen("pi://sessions-changed", () => { void syncSessionIndex(); }, z.unknown()),
       listen("pi://session-restored", ({ payload }) => {
         archives.restored(payload.hostId, payload.sessionId);
+        runtimePool().restoreSummary(payload.hostId, payload.sessionPath);
         void syncSessionIndex();
-      }, z.object({ hostId: z.string(), sessionId: z.string() })),
+      }, z.object({ hostId: z.string(), sessionId: z.string(), sessionPath: z.string() })),
       listen("pi://session-removed", ({ payload }) => {
         runtimePool().removeSummary(payload.hostId ?? "local", payload.sessionPath);
         setSessions((current) => current.filter((session) => !runtimePool().isRemoved(session)));

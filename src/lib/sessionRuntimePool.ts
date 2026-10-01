@@ -50,6 +50,7 @@ export class SessionRuntimePool {
   private liveSessions = new Map<NativeTransport, SessionSummary>();
   private removedPaths = new Set<string>();
   isRemoved(session: SessionSummary) { return this.removedPaths.has(`${session.hostId ?? "local"}:${session.path}`); }
+  restoreSummary(hostId: string, path: string) { this.removedPaths.delete(`${hostId}:${path}`); }
   removeSummary(hostId: string, path: string) {
     this.removedPaths.add(`${hostId}:${path}`);
 

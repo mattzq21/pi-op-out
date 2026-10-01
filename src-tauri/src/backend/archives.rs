@@ -362,7 +362,7 @@ pub(super) fn restore_archived_session(app: AppHandle, session_path: String, hos
     let mut command = restore_worktree_command(&settings, &host_id, &path)?;
     let result = run_worktree_restoration(&mut command)?;
     mutation.finish_restore(result["sessionPath"].as_str().ok_or("Restored session path missing")?)?;
-    let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":session_id}));
+    let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":session_id,"sessionPath":result["sessionPath"]}));
     let _ = app.emit("pi://sessions-changed", json!({}));
     Ok(())
 }
@@ -379,7 +379,7 @@ pub(super) fn restore_archived_worktree(app: AppHandle, session_path: String, ho
     let session_id = session_identity(&settings, &host_id, &path)?;
     let result = run_worktree_restoration(&mut command)?;
     mutation.finish_restore(result["sessionPath"].as_str().ok_or("Restored session path missing")?)?;
-    let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":session_id}));
+    let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":session_id,"sessionPath":result["sessionPath"]}));
     let _ = app.emit("pi://sessions-changed", ());
     Ok(result)
 }
