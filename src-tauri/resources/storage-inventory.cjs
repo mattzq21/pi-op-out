@@ -305,7 +305,7 @@ async function checkpointStorage(repositoryRoots, measuredDirectories) {
       warnings.push(`${cwd}: ${error.message}`);
     }
   }
-  return { byteSize, itemCount, warnings };
+  return { byteSize, itemCount, warnings, directories: [...repositories] };
 }
 
 async function diskStorage(worktreeRoots) {
@@ -406,6 +406,24 @@ async function main() {
   }
   const disk = await diskStorage(worktreeRoots);
   const checkpoints = await checkpointStorage(checkpointRoots, disk.directories);
+  const directoryCandidates = {
+    'active-conversations': [activeRoot],
+    'archived-conversations': [archiveRoot],
+    'project-checkpoints': checkpoints.directories,
+    'git-diff-snapshots': [path.join(piopRoot, 'git-snapshots'), ...active.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots'))],
+    'archived-git-diff-snapshots': archived.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots')),
+    'temporary-chats': [path.join(piopRoot, 'tmp')],
+    'worktrees': [path.join(piopRoot, 'worktrees'), ...[...worktreeRoots].filter((directory) => !directory.startsWith(path.join(piopRoot, 'worktrees') + path.sep))],
+    'archived-worktrees': [path.join(piopRoot, 'archived-worktrees')],
+    'other-storage': [piopRoot],
+  };
+  const categoryDirectories = Object.fromEntries(await Promise.all(Object.entries(directoryCandidates).map(async ([id, candidates]) => {
+    const directories = await Promise.all([...new Set(candidates)].map(async (directory) => {
+      try { return (await fs.stat(directory)).isDirectory() ? directory : null; }
+      catch { return null; }
+    }));
+    return [id, directories.filter(Boolean)];
+  })));
   archives.sort((left, right) => right.modifiedAt - left.modifiedAt);
   process.stdout.write(JSON.stringify({
     categories: [
@@ -418,7 +436,7 @@ async function main() {
       { id: "worktrees", byteSize: disk.sizes.get("worktrees") || 0, itemCount: disk.worktrees.size },
       { id: "archived-worktrees", byteSize: disk.sizes.get("archived-worktrees") || 0, itemCount: disk.archivedDirectories },
       { id: "other-storage", byteSize: disk.sizes.get("other-storage") || 0, itemCount: 1 },
-    ],
+    ].map((category) => ({ ...category, directories: categoryDirectories[category.id] })),
     archives,
     warnings: [...disk.warnings, ...checkpoints.warnings],
   }));

@@ -4,7 +4,7 @@ import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Archive, Camera, Database, FolderClock, GitBranch, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
-import { deleteArchivedConversation, loadStorageReport, removeArchivedWorktree, restoreArchivedWorktree } from "../lib/nativeTransport";
+import { deleteArchivedConversation, loadStorageReport, openGroupDirectory, removeArchivedWorktree, restoreArchivedWorktree } from "../lib/nativeTransport";
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport } from "../types";
 
 const categoryDetails: Record<StorageCategory["id"], { name: string; description: string; icon: typeof Archive; item: string }> = {
@@ -57,6 +57,12 @@ export function StorageSettings(componentProps: { hostId?: string }) {
   const [deleting, setDeleting] = createSignal<Set<string>>((() => new Set())());
   const refreshGeneration = createRef(0);
   const pendingRefreshes = createRef(0);
+
+  const openDirectory = async (directory: string, host: HostStorage) => {
+    setError(undefined);
+    try { await openGroupDirectory(directory, host.hostId); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  };
 
   const refresh = async () => { const capturedHostId0 = componentProps.hostId;
     const generation = ++refreshGeneration.current;
@@ -124,14 +130,22 @@ export function StorageSettings(componentProps: { hostId?: string }) {
       const approximate = createMemo(() => (host().categories.some((category) => category.estimated && category.byteSize > 0)));
       const maximum = createMemo(() => (Math.max(...host().categories.map((category) => category.byteSize), 1)));
       const deletableArchives = createMemo(() => (host().archives.filter((archive) => archive.deletable)));
-      const renderHostHeader = () => (<header><span class="config-icon"><Database size={16} /></span><span><strong>{host().hostName}</strong><small>{host().error ? "Storage unavailable" : `${approximate() ? "About " : ""}${formatBytes(total())} ${host().warnings.length ? "measured · incomplete" : "total disk usage"}`}</small></span></header>);
+      const storageRoot = createMemo(() => host().categories.find((category) => category.id === "other-storage")?.directories?.[0]);
+      const renderHostHeader = () => (<header><button type="button" class="config-icon storage-directory-button" aria-label={`Open ${host().hostName} storage directory`} title={host().hostId !== "local" ? "Remote directories cannot be opened in the local file manager" : storageRoot() ?? "Storage directory unavailable"} disabled={host().hostId !== "local" || !storageRoot()} onClick={() => { const directory = storageRoot(); if (directory) void openDirectory(directory, host()); }}><Database size={16} /></button><span><strong>{host().hostName}</strong><small>{host().error ? "Storage unavailable" : `${approximate() ? "About " : ""}${formatBytes(total())} ${host().warnings.length ? "measured · incomplete" : "total disk usage"}`}</small></span></header>);
       const renderCategories = (categories: StorageCategory[]) => (
         <div class="storage-categories">{<Key each={categories} by={(category) => category.id}>{(category, _index) => {
           const details = createMemo(() => (categoryDetails[category().id])); const CategoryIcon = createMemo(() => (details().icon));
+          const directories = createMemo(() => category().directories ?? []);
+          const [showDirectories, setShowDirectories] = createSignal(false);
+          const openCategory = () => {
+            if (directories().length === 1) void openDirectory(directories()[0], host());
+            else setShowDirectories((visible) => !visible);
+          };
           return <div class="storage-category" >
-            <span class="storage-category-icon"><Dynamic component={CategoryIcon()} size={15} /></span>
+            <button type="button" class="storage-category-icon storage-directory-button" aria-label={`Open ${details().name} ${directories().length > 1 ? "directories" : "directory"}`} aria-expanded={directories().length > 1 ? showDirectories() : undefined} title={host().hostId !== "local" ? "Remote directories cannot be opened in the local file manager" : directories().length ? directories().join("\n") : "No stored directory"} disabled={host().hostId !== "local" || !directories().length} onClick={openCategory}><Dynamic component={CategoryIcon()} size={15} /></button>
             <span><strong>{details().name}</strong><small>{details().description} · {itemCount(category())}</small><i><b style={{ width: `${Math.max(category().byteSize ? 2 : 0, category().byteSize / maximum() * 100)}%` }} /></i></span>
             <code>{category().estimated && category().byteSize > 0 ? "~" : ""}{formatBytes(Number(category().byteSize) || 0)}</code>
+            {showDirectories() && <div class="storage-directory-list" aria-label={`${details().name} directories`}>{directories().map((directory) => <button type="button" title={directory} onClick={() => void openDirectory(directory, host())}>{directory}</button>)}</div>}
           </div>;
         }}</Key>}</div>
       );
