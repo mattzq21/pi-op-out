@@ -1,7 +1,7 @@
 import { required } from "../lib/required";
 import { Key } from "@solid-primitives/keyed";
 import { createContext, createMemo, useContext } from "solid-js";
-import { ArrowUpRight, Check, ChevronRight, CircleAlert, LoaderCircle, Pause } from "lucide-solid";
+import { ArrowUpRight, Check, CircleAlert, LoaderCircle, Pause } from "lucide-solid";
 import { z } from "zod";
 import { ConversationHostContext, SubagentNavigationContext } from "../lib/subagentNavigation";
 import "./subagent-timeline.css";
@@ -40,7 +40,6 @@ export function SubagentResults(props: { runs: Run[] }) {
           <span class={`subagent-state subagent-${run().status}`} title={run().status}>{run().status === "running" ? <LoaderCircle size={14} class="subagent-spinner" /> : run().status === "completed" ? <Check size={14} /> : run().status === "cancelled" ? <Pause size={14} /> : <CircleAlert size={14} />}</span>
           <span class="subagent-name">{run().name}</span>
           {open && run().sessionId && run().sessionPath && <button type="button" class="subagent-view" aria-label={`View ${run().name} agent chat`} onClick={(event) => { event.preventDefault(); event.stopPropagation(); open({ ...run(), hostId: host?.() ?? run().hostId }); }}>View<ArrowUpRight size={13} /></button>}
-          <ChevronRight size={12} class="subagent-detail-chevron" />
         </summary>
         <div class="subagent-work-content">
           <div class="tool-payload-label">Assignment</div><p>{run().task}</p>
