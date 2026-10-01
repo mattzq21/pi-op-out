@@ -9,7 +9,7 @@ import type { AgentConfig, ChatMessage, CodexUsage, DefinedAgentsCapability, Ext
 
 const staleExtensionContext = "This extension ctx is stale after session replacement or reload.";
 
-type TerminalTabState = { id: string; output: string; outputEnd: number; snapshot?: string; snapshotEnd?: number; started: boolean; exited?: boolean };
+type TerminalTabState = { id: string; output: string; outputEnd: number; snapshot?: string; snapshotEnd?: number; started: boolean; exited?: boolean; owned?: boolean; generation?: string };
 
 type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
 
@@ -37,7 +37,7 @@ const MAX_TERMINALS = 8;
 
 const windowInstanceId = crypto.randomUUID();
 
-const initialTerminals = (sessionId: string): SessionTerminals => { const id = `terminal-${windowInstanceId}-${sessionId}-1`;
+const initialTerminals = (sessionId: string): SessionTerminals => { const id = `shared-terminal-${windowInstanceId}-${sessionId}-1`;
 
 return { activeId: id, tabs: [{ id, output: "", outputEnd: 0, started: false }] }; };
 

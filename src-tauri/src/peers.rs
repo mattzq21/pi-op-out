@@ -63,6 +63,7 @@ impl Connection {
         let mut host_id = None;
         for kind in ["runtimeId", "terminalId"] {
             if let Some(wire_id) = payload[kind].as_str() {
+                if kind == "terminalId" && wire_id.starts_with("shared-terminal-") { continue; }
                 let Some(id) = wire_id.strip_prefix(&self.prefix).map(str::to_owned) else { return Err(()); };
                 let route = state.routes.lock().ok().and_then(|routes| routes.get(&(kind.into(), id.clone())).cloned());
                 let Some(route) = route.filter(|route| std::ptr::eq(Arc::as_ptr(&route.connection), self)) else { return Err(()); };
@@ -184,12 +185,17 @@ pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -
     let stale_terminals = check_route_resources(&state, owner, command, args, &route)?;
     check_local_collisions(app, args)?;
     register_started_resource(&state, command, args, &route)?;
-    let forwarded = forwarded_arguments(args, &route, &stale_terminals);
+    let mut forwarded = forwarded_arguments(args, &route, &stale_terminals);
+    if command == "shared_terminal" { forwarded["terminalConnectionId"] = json!(owner); }
     invoke_route(&state, command, args, route, forwarded)
 }
 
 pub(crate) fn detach_owner(app: &AppHandle, owner: &str) {
     let state = app.state::<PeerRuntime>();
+    let connections = state.connections.lock().map(|connections| connections.values().map(|(_, connection)| connection.clone()).collect::<Vec<_>>()).unwrap_or_default();
+    for connection in connections {
+        let _ = connection.invoke("shared_terminal", json!({"action":"discard_drafts","terminalConnectionId":owner,"hostId":"local"}));
+    }
     let routes = state.routes.lock().map(|mut routes| {
         let owned = routes.iter().filter(|(_, route)| route.owner == owner).map(|(key, route)| (key.clone(), route.clone())).collect::<Vec<_>>();
         routes.retain(|_, route| route.owner != owner); owned
@@ -351,7 +357,7 @@ fn forwarded_arguments(args: &Value, route: &Route, stale_terminals: &HashSet<St
     let mut forwarded = args.clone();
     forwarded["hostId"] = json!("local");
     for kind in ["runtimeId", "terminalId"] { if let Some(id) = args[kind].as_str() { forwarded[kind] = json!(format!("{}{id}", route.connection.prefix)); } }
-    if let Some(ids) = args["terminalIds"].as_array() { forwarded["terminalIds"] = json!(ids.iter().filter_map(Value::as_str).filter(|id| !stale_terminals.contains(*id)).map(|id| format!("{}{id}", route.connection.prefix)).collect::<Vec<_>>()); }
+    if let Some(ids) = args["terminalIds"].as_array() { forwarded["terminalIds"] = json!(ids.iter().filter_map(Value::as_str).filter(|id| !stale_terminals.contains(*id)).map(|id| if id.starts_with("shared-terminal-") { id.to_string() } else { format!("{}{id}", route.connection.prefix) }).collect::<Vec<_>>()); }
     forwarded
 }
 
@@ -384,6 +390,7 @@ fn update_auth_route(state: &PeerRuntime, command: &str, route: Route, result: &
 fn check_terminal_routes(routes: &HashMap<(String, String), Route>, owner: &str, args: &Value, route: &Route) -> Result<HashSet<String>, String> {
     let mut stale_terminals = HashSet::new();
         if let Some(ids) = args["terminalIds"].as_array() { for id in ids.iter().filter_map(Value::as_str) {
+            if id.starts_with("shared-terminal-") { continue; }
             let saved = routes.get(&("terminalId".into(), id.into())).ok_or("Terminal belongs to another connection")?;
             if saved.owner != owner { return Err("Terminal belongs to another connection".into()); }
             if !Arc::ptr_eq(&saved.connection, &route.connection) {
