@@ -3,6 +3,7 @@ import { nativeCall, type NativeCall } from "./nativeCall";
 import { z } from "zod";
 
 const sharedTerminalsSchema = z.array(z.object({ id: z.string(), output: z.string().nullable(), outputEnd: z.number(), generation: z.string(), owned: z.boolean(), started: z.boolean(), exited: z.boolean() }));
+type SharedTerminal = z.infer<typeof sharedTerminalsSchema>[number] & { output: string };
 
 class NativeTerminals {
   private writes = new Map<string, Promise<void>>();
@@ -19,7 +20,7 @@ class NativeTerminals {
     return this.call("shared_terminal", { action, sharedTerminalId: terminalId, terminalClientId: this.clientId, hostId: this.hosts.get(terminalId) ?? "local", ...args }, voidResultSchema);
   }
 
-  async list(sessionKey: string, hostId: string) {
+  async list(sessionKey: string, hostId: string): Promise<SharedTerminal[]> {
     await this.reassignments.get(sessionKey);
     const revision = this.cacheRevision;
     const cached = new Map([...this.transcripts].filter(([, value]) => value.sessionKey === sessionKey && value.hostId === hostId));
