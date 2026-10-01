@@ -1,7 +1,7 @@
 import { required } from "../lib/required";
 import { Key } from "@solid-primitives/keyed";
-import { createContext, createMemo, createSignal, createUniqueId, useContext } from "solid-js";
-import { ArrowUpRight, Check, ChevronRight, CircleAlert, GitBranch, LoaderCircle, Pause } from "lucide-solid";
+import { createContext, createMemo, useContext } from "solid-js";
+import { ArrowUpRight, Check, ChevronRight, CircleAlert, LoaderCircle, Pause } from "lucide-solid";
 import { z } from "zod";
 import { ConversationHostContext, SubagentNavigationContext } from "../lib/subagentNavigation";
 import "./subagent-timeline.css";
@@ -29,25 +29,9 @@ export function SubagentResults(props: { runs: Run[] }) {
   const updates = useContext(SubagentUpdatesContext);
   const runs = createMemo(() => props.runs.map(run => updates?.().get(subagentRunKey(run) ?? "") ?? run));
   const rows = createMemo(() => runs().map((run, index) => ({ run, key: `${run.hostId}:${run.sessionId || run.sessionPath || `pending-${index}`}` })));
-  const finished = createMemo(() => runs().length > 0 && runs().every(run => ["completed", "failed", "cancelled"].includes(run.status)));
-  const issues = createMemo(() => runs().filter(run => run.status === "failed" || run.status === "cancelled").length);
-  const [expanded, setExpanded] = createSignal(false);
-  const visible = () => !finished() || expanded();
-  const id = createUniqueId();
-  const label = () => {
-    const count = runs().length;
-    const active = runs().filter(run => !["completed", "failed", "cancelled"].includes(run.status)).length;
-
-    return `${finished() || active === count ? count : `${active} of ${count}`} ${count === 1 ? "agent" : "agents"} ${finished() ? "finished" : "working"}${issues() ? ` · ${issues()} ${issues() === 1 ? "needs" : "need"} attention` : ""}`;
-  };
 
   return <section class="subagent-timeline" aria-label="Delegated work">
-    <div class="subagent-timeline-heading">
-      {finished() ? issues() ? <CircleAlert size={14} class="subagent-issue" /> : <Check size={14} class="subagent-completed" /> : <GitBranch size={14} />}
-      <span role="status">{label()}</span>
-      {finished() && <button type="button" class="subagent-toggle" aria-expanded={visible()} aria-controls={id} onClick={() => setExpanded(value => !value)}>{expanded() ? "Hide work" : "View work"}<ChevronRight size={12} classList={{ "subagent-chevron-open": expanded() }} /></button>}
-    </div>
-    <div id={id} hidden={!visible()} class="subagent-branches"><Key each={rows()} by="key">{row => {
+    <Key each={rows()} by="key">{row => {
     const run = createMemo(() => row().run);
 
     return <div class="subagent-branch">
@@ -64,5 +48,5 @@ export function SubagentResults(props: { runs: Run[] }) {
       </details>
       {open && run().sessionId && run().sessionPath && <button type="button" class="subagent-view" aria-label={`View ${run().name} agent chat`} onClick={() => open({ ...run(), hostId: host?.() ?? run().hostId })}>View<ArrowUpRight size={13} /></button>}
     </div>;
-  }}</Key></div></section>;
+  }}</Key></section>;
 }
