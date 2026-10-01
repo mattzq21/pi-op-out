@@ -2,6 +2,10 @@ import type { CreateRule } from "@oxlint/plugins";
 
 import createPaddingLineRule from "../vendor/eslint-stylistic/padding-line-between-statements.ts";
 
+const requireDeclaration = {
+  selector: 'VariableDeclaration[kind="const"][declarations.length=1]:has(VariableDeclarator[init.type="CallExpression"][init.callee.type="Identifier"][init.callee.name="require"])',
+};
+
 const paddingRule = createPaddingLineRule([
   { blankLine: "always", prev: "import", next: "*" },
   { blankLine: "always", prev: "*", next: { selector: "Program > :not(ImportDeclaration)" } },
@@ -21,6 +25,7 @@ const paddingRule = createPaddingLineRule([
   { blankLine: "always", prev: "*", next: ["return", "if", "switch", "try", "for", "while", "do"] },
   { blankLine: "always", prev: "block-like", next: "*" },
   { blankLine: "any", prev: "import", next: "import" },
+  { blankLine: "any", prev: requireDeclaration, next: requireDeclaration },
   {
     blankLine: "any",
     prev: {
