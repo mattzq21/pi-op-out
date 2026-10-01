@@ -88,6 +88,7 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("restore_archived_worktree", handle_restore_archived_worktree),
     ("restore_archived_session", handle_restore_archived_session),
     ("relocate_session", handle_relocate_session),
+    ("recover_missing_session", handle_recover_missing_session),
     ("load_app_settings", handle_load_app_settings),
     ("save_app_settings", handle_save_app_settings),
     ("codex_usage", handle_codex_usage),
@@ -404,6 +405,12 @@ fn handle_restore_archived_worktree(app: AppHandle, _owner: String, args: Value)
 fn handle_restore_archived_session(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || serde_json::to_value(restore_archived_session(app.clone(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_recover_missing_session(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || archives::recover_missing_session(app, argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "action")?, argument(&args, "repository")?, argument(&args, "branch")?, argument(&args, "clientId")?)).await.map_err(|error| error.to_string())?
     })
 }
 

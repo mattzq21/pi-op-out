@@ -359,6 +359,35 @@ pub(super) fn relocate_session(app: AppHandle, session_path: String, cwd: String
     mutation.finish()
 }
 
+pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host_id: Option<String>, action: String, repository: Option<String>, branch: Option<String>, client_id: String) -> Result<serde_json::Value, String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    let runtime = app.state::<PiRuntime>();
+    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+    let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "relocate")?;
+    let settings = load_app_settings(app.clone())?;
+    let path = desktop_session_file(&settings, &host_id, &session_path)?;
+    let arguments = json!({"sessionPath":path,"action":action,"repository":repository,"branch":branch,"storage":STORAGE_DIRECTORY}).to_string();
+    let script = include_str!("../../resources/recover-missing-session.cjs");
+    let relocate = include_str!("../../resources/relocate-session.bundle.mjs");
+    let registry = include_str!("../../resources/session-registry.cjs");
+    let mut command = if host_id == "local" {
+        let mut command = node_command(); command.args(["-e", script, &arguments, relocate, registry]); command
+    } else {
+        let mut command = ssh(remote_host(&settings, &host_id)?);
+        command.arg(remote_login_command(&format!("node -e {} {} {} {}", shell_quote(script), shell_quote(&arguments), shell_quote(relocate), shell_quote(registry)))); command
+    };
+    let result = run_directory_recovery(&mut command)?;
+    mutation.finish()?;
+    let _ = app.emit("pi://sessions-changed", ());
+    Ok(result)
+}
+
+fn run_directory_recovery(command: &mut Command) -> Result<serde_json::Value, String> {
+    let output = run_limited(command, 64 * 1024, "Could not recover the session directory")?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid recovery response: {error}"))
+}
+
 pub(super) fn relocate_remote_session(session_path: &str, cwd: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let session = shell_quote(session_path); let replacement = shell_quote(cwd.trim());
     let relocate = shell_quote(include_str!("../../resources/relocate-session.bundle.mjs"));

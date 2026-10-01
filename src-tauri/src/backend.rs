@@ -32,6 +32,7 @@ mod desktop_daemon;
 mod provider_auth;
 mod conversation_ownership;
 mod session_groups;
+mod session_registry;
 use terminals::terminal_lookup;
 #[cfg(not(feature = "desktop"))]
 mod daemon;

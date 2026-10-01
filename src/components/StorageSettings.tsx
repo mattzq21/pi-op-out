@@ -202,7 +202,6 @@ export function StorageSettings(componentProps: { hostId?: string }) {
           const renderArchiveDelete = () => (<button aria-label={archive().deletable ? `Permanently delete ${name()}` : `Cannot safely delete ${name()}: ${archive().deleteError}`} disabled={!archive().deletable || deleting().size > 0 || loading()} onClick={() => deleteOne(host(), archive())}>{!archive().deletable ? <ShieldAlert size={14} /> : pending() ? <RefreshCw size={14} class="spinning" /> : <Trash2 size={14} />}</button>);
 
           const renderWorktreeAction = () => ((!archive().worktreePath && archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : "Restore conversation"}</button>);
-
           return <div class={`archive-row${archive().deletable ? "" : " cleanup-unavailable"}`}  title={archive().deleteError || archive().path}>
             {renderArchiveDetails()}
             <code>{formatBytes(Number(archive().byteSize) || 0)}</code>
