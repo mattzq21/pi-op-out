@@ -1,11 +1,11 @@
 .subagent-timeline { margin: 6px 0 10px; color: var(--muted); font-size: 12px; min-width: 0; }
-.subagent-timeline button { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--muted); font: inherit; padding: 5px 6px; border-radius: 4px; cursor: pointer; }
-.subagent-timeline button:hover { color: var(--ink); background: var(--panel); }
+.subagent-timeline button { display: inline-flex; align-items: center; gap: 7px; min-width: 0; border: 0; background: transparent; color: var(--muted); font: inherit; text-align: left; padding: 5px 0; border-radius: 4px; cursor: pointer; }
+.subagent-timeline button:hover:not(:disabled) { color: var(--ink); background: var(--panel); }
+.subagent-timeline button:disabled { cursor: default; }
 .subagent-timeline button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .subagent-branch { min-height: 34px; display: flex; align-items: center; gap: 7px; }
 .subagent-name { color: var(--ink); overflow-wrap: anywhere; }
 .subagent-state { display: inline-flex; flex-shrink: 0; }
-.subagent-view { flex-shrink: 0; }
 .subagent-completed { color: var(--green); }
 .subagent-running { color: var(--running); }
 .subagent-failed { color: #d77865; }
