@@ -106,7 +106,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .terminal-panel-resizer::after { content: ""; position: absolute; top: 3px; left: 0; right: 0; height: 2px; background: transparent; }
 .terminal-panel-resizer:hover::after, .terminal-panel-resizer.dragging::after, .terminal-panel-resizer:focus-visible::after { background: var(--accent); }
 .terminal-panel-resizer:focus-visible { outline: none; }
-.terminal-surface.ownership-required .terminal-host { filter: brightness(.45); }
+.terminal-surface .terminal-host .xterm { min-width: 100%; min-height: 100%; }
+.terminal-ownership > span { position: absolute; top: 8px; right: 12px; padding: 6px 10px; border: 1px solid #48453e; border-radius: 5px; background: #292824; color: #e5e1d8; font: 12px/1.5 ui-sans-serif, sans-serif; }
 .terminal-transcript-body { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .terminal-transcript { flex: 1; min-height: 0; margin: 0; padding: 8px 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .terminal-command { display: inline; }
