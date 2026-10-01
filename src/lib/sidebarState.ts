@@ -308,7 +308,14 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   };
 
   const sidebarEntries = createMemo(() => (orderedSidebarEntries(defaultSidebarEntries())));
-  const saveGroup = (name: string, id?: string) => storedGroups.change(id ? { type: "rename", id, name } : { type: "create", name });
+
+  const saveGroup = (name: string, id?: string, project?: Pick<SessionGroup, "cwd" | "hostId" | "hostName">) => {
+    if (id) return storedGroups.change({ type: "rename", id, name });
+
+    if (project?.cwd) return storedGroups.change({ type: "project", project: { ...project, id: `__pi-desktop-custom-group__:${crypto.randomUUID()}`, name } });
+
+    return storedGroups.change({ type: "create", name });
+  };
 
   return {
     get state() { return storedGroups.state; }, get error() { return storedGroups.error; },

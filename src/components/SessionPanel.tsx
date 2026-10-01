@@ -9,13 +9,16 @@ import { openGroupDirectory } from "../lib/nativeTransport";
 import type { SessionGroup } from "../lib/sessionGroups";
 import { groupLayoutToken,isFixedGroup,RECENT_KEY,sessionKey,sessionLayoutToken,type DraggedSession,type SidebarState } from "../lib/sidebarState";
 import type { SessionSummary } from "../types";
+import { GroupProjectPicker, type GroupProject } from "./GroupProjectPicker";
+import type { NativeTransport } from "../lib/nativeTransport";
+import type { AppSettings } from "../types";
 import { BranchIcon } from "./BranchIcon";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 import { SessionTooltip } from "./SessionTooltip";
 
 export type SessionAction = "split" | "new-window" | "rename" | "clone" | "open-directory" | "archive" | "copy-id" | "open-rollout";
 
-interface Props { isArchiving: (session: SessionSummary) => boolean; debug?: boolean; sidebar: SidebarState; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
+interface Props { transport: NativeTransport; settings: AppSettings; isArchiving: (session: SessionSummary) => boolean; debug?: boolean; sidebar: SidebarState; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
 
 type CustomGroup = SessionGroup;
 
@@ -65,6 +68,7 @@ export function SessionPanel(props: Props) {
   const [groupSaving, setGroupSaving] = createSignal(false);
   const groupSavePending = createRef(false);
   const [groupActionError, setGroupActionError] = createSignal<string>();
+  const [groupProject, setGroupProject] = createSignal<GroupProject>();
   const [newGroupName, setNewGroupName] = createSignal<string>();
   const [editingGroupId, setEditingGroupId] = createSignal<string>();
   const [groupDraftError, setGroupDraftError] = createSignal<string>();
@@ -114,7 +118,7 @@ export function SessionPanel(props: Props) {
   createDependencyEffect(() => { const capturedPanel = panel();
 
     if (!capturedPanel.createGroupRequest) return;
-    groupDraftActive.current = true; setEditingGroupId(undefined); setGroupDraftError(undefined); setNewGroupName("");
+    setGroupProject(undefined); groupDraftActive.current = true; setEditingGroupId(undefined); setGroupDraftError(undefined); setNewGroupName("");
     sessionScrollRef.current?.scrollTo({ top: 0 });
     capturedPanel.onCreateGroupHandled?.();
   }, () => [panel().createGroupRequest, panel().onCreateGroupHandled]);
@@ -155,7 +159,7 @@ export function SessionPanel(props: Props) {
     groupSavePending.current = true; setGroupSaving(true);
 
     try {
-      await saveGroup(name, capturedEditingGroupId);
+      await saveGroup(name, capturedEditingGroupId, groupProject());
       groupDraftActive.current = false; setGroupDraftError(undefined); setNewGroupName(undefined); setEditingGroupId(undefined);
     } catch (reason) { setGroupDraftError(String(reason)); }
     finally { groupSavePending.current = false; setGroupSaving(false); }
@@ -403,7 +407,7 @@ export function SessionPanel(props: Props) {
   const renderSessionScroll = () => {
     const renderGroupError = () => ((storedGroups.error || groupActionError()) && <p class="group-error" role="alert">{storedGroups.error || groupActionError()}</p>);
     const renderGroupLoading = () => (!storedGroups.state && !storedGroups.error && <p class="empty-small">Loading groups…</p>);
-    const renderNewGroup = () => (<Show when={newGroupName() !== undefined && !editingGroupId()}><section class="project custom-group-draft"><div class="project-label"><input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Group name" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "new-group-error" : undefined} placeholder="Group name" value={(newGroupName())} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup(true)} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div>{groupDraftError() && <small id="new-group-error" class="group-error">{(groupDraftError())}</small>}</section></Show>);
+    const renderNewGroup = () => (<Show when={newGroupName() !== undefined && !editingGroupId()}><section class="project custom-group-draft"><div class="project-label"><input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Group name" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "new-group-error" : undefined} placeholder="Group name" value={(newGroupName())} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div><GroupProjectPicker transport={props.transport} settings={props.settings} hostId={panel().activeHostId} disabled={groupSaving()} project={groupProject()} onSelect={setGroupProject} /><div class="group-draft-actions"><button type="button" disabled={groupSaving()} onClick={() => void finishGroup(true)}>Cancel</button><button type="button" disabled={groupSaving()} onClick={() => void finishGroup()}>Create</button></div>{groupDraftError() && <small id="new-group-error" class="group-error">{(groupDraftError())}</small>}</section></Show>);
     const renderEmptyConversations = () => (storedGroups.state && !filtered().length && <div class="empty-small">{normalizedQuery() ? `No conversations match “${panel().query.trim()}”.` : "No conversations yet."}</div>);
 
     return (<div ref={element => { sessionScrollRef.current = element; }} class="session-scroll">
