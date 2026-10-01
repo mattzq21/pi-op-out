@@ -23,6 +23,7 @@ import { ConversationQuestions } from "./ConversationQuestions";
 import { DeferredTurn } from "./DeferredTurn";
 import { DiffViewer } from "./DiffViewer";
 import { Message } from "./Message";
+import { SubagentUpdatesContext, subagentRunKey, subagentRuns } from "./SubagentResults";
 import { PromptContextBar } from "./PromptContextBar";
 import { ConversationHostContext } from "../lib/subagentNavigation";
 
@@ -67,6 +68,12 @@ export function ChatView(props: Props) {
   const touchY = createRef<number | undefined>(undefined);
   const composerStack = createRef<HTMLDivElement>(null);
   const messages = () => props.messages;
+  const subagentUpdates = createMemo(() => new Map(messages().flatMap(message =>
+    message.customType === "piop-subagent-result" ? subagentRuns(message.details).flatMap(run => {
+      const key = subagentRunKey(run);
+
+      return key ? [[key, run] as const] : [];
+    }) : [])));
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), previous), []);
 
   const sessionUsage = createMemo(() => {
@@ -243,7 +250,7 @@ export function ChatView(props: Props) {
     <ConversationContent />
   </main>;
 
-  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><ReviewNavigationContext.Provider value={async id => { if (!props.transport) throw new Error("Conversation is unavailable"); await props.transport.command({ type: "prompt", message: `/pi-orchestration-review-open ${id}` }); }}><ConversationShell /></ReviewNavigationContext.Provider></ConversationHostContext.Provider>;
+  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><SubagentUpdatesContext.Provider value={subagentUpdates}><ReviewNavigationContext.Provider value={async id => { if (!props.transport) throw new Error("Conversation is unavailable"); await props.transport.command({ type: "prompt", message: `/pi-orchestration-review-open ${id}` }); }}><ConversationShell /></ReviewNavigationContext.Provider></SubagentUpdatesContext.Provider></ConversationHostContext.Provider>;
 }
 
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };

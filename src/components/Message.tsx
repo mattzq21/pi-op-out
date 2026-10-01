@@ -102,6 +102,7 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
 }
 
 function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug">) {
+  const runs = createMemo(() => componentProps.message.toolName === "subagent" ? subagentRuns(componentProps.message.details) : []);
   const [open, setOpen] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
@@ -130,7 +131,7 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
   const status = createMemo(() => (componentProps.message.toolStatus ?? "done"));
   const label = createMemo(() => (<ToolLabel message={componentProps.message} toolCount={componentProps.toolCount ?? 1} status={status()} />));
 
-  return <>{!componentProps.debug && componentProps.message.toolName !== "subagent" ? (<div class={`tool-event ${status()}`}><div class="tool-summary">{label()}</div></div>) : (<details class={`tool-event ${status()}`} open={open()} onToggle={(event) => setOpen(event.currentTarget.open)}>
+  return <>{runs().length ? <SubagentResults runs={runs()} /> : !componentProps.debug && componentProps.message.toolName !== "subagent" ? (<div class={`tool-event ${status()}`}><div class="tool-summary">{label()}</div></div>) : (<details class={`tool-event ${status()}`} open={open()} onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary class="tool-summary">{label()}<ChevronRight size={12} class="tool-chevron" aria-hidden="true" /></summary>
     {open() && <ToolPayload message={componentProps.message} loading={loading()} error={error()} retry={() => setRetry((value) => value + 1)} />}
   </details>)}</>;

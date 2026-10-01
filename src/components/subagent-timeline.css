@@ -1,0 +1,32 @@
+.subagent-timeline { margin: 6px 0 10px; color: var(--muted); font-size: 12px; min-width: 0; }
+.subagent-timeline-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-height: 28px; }
+.subagent-timeline button { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--muted); font: inherit; padding: 5px 6px; border-radius: 4px; cursor: pointer; }
+.subagent-timeline button:hover { color: var(--ink); background: var(--panel); }
+.subagent-timeline :is(button, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.subagent-toggle { margin-left: 2px; }
+.subagent-chevron-open { transform: rotate(90deg); }
+.subagent-branches { margin-left: 6px; }
+.subagent-branch { position: relative; display: flex; align-items: flex-start; gap: 8px; padding-left: 21px; }
+.subagent-branch::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1px solid var(--line); }
+.subagent-branch:last-child::before { height: 17px; bottom: auto; }
+.subagent-branch::after { content: ""; position: absolute; left: 0; top: 17px; width: 14px; border-top: 1px solid var(--line); }
+.subagent-work { flex: 1; min-width: 0; }
+.subagent-work > summary { min-height: 34px; display: flex; align-items: center; gap: 7px; list-style: none; cursor: pointer; border-radius: 4px; }
+.subagent-work > summary::-webkit-details-marker { display: none; }
+.subagent-work > summary:hover .subagent-name { color: var(--accent); }
+.subagent-name { color: var(--ink); overflow-wrap: anywhere; }
+.subagent-state { display: inline-flex; flex-shrink: 0; }
+.subagent-status { font-size: 10px; }
+.subagent-detail-chevron { flex-shrink: 0; }
+.subagent-work[open] > summary .subagent-detail-chevron { transform: rotate(90deg); }
+.subagent-view { flex-shrink: 0; margin-top: 3px; }
+.subagent-completed { color: var(--green); }
+.subagent-running { color: var(--running); }
+.subagent-issue, .subagent-failed { color: #d77865; }
+.subagent-work-content { padding: 4px 0 12px 21px; overflow-wrap: anywhere; }
+.subagent-work-content p { margin: 4px 0 12px; white-space: pre-wrap; line-height: 1.55; }
+.subagent-work-content pre { margin: 4px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; font: 11px/1.55 ui-monospace, monospace; }
+.subagent-transcript summary { cursor: pointer; }
+.subagent-spinner { animation: subagent-spin 1s linear infinite; }
+@keyframes subagent-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .subagent-spinner { animation: none; } }
