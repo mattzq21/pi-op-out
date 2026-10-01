@@ -80,10 +80,36 @@ pub(crate) fn detach(runtime: &TerminalRuntime, owner: &str) {
     if let Ok(mut history) = runtime.history.lock() { history.retain(|_, item| item.owner != owner); }
 }
 
+pub(crate) fn session_terminals(runtime: &TerminalRuntime, host_id: &str, session_ids: &[String]) -> Result<Vec<String>, String> {
+    let history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
+    Ok(history.iter().filter(|(_, item)| item.host_id == host_id && session_ids.contains(&item.session_id)).map(|(id, _)| id.clone()).collect())
+}
+
+pub(crate) fn discard_drafts(runtime: &TerminalRuntime, owner_prefix: &str) -> Result<(), String> {
+    let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime unavailable")?;
+    let mut history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
+    let ids: Vec<_> = history.iter().filter(|(_, item)| item.session_id.starts_with("draft-") && item.owner.starts_with(owner_prefix)).map(|(id, _)| id.clone()).collect();
+    let mut removed = Vec::new();
+    for id in ids {
+        history.remove(&id);
+        if let Some(process) = processes.remove(&id) { removed.push(process); }
+    }
+    drop(history);
+    drop(processes);
+    for mut process in removed { let _ = process.child.kill(); let _ = process.child.wait(); }
+    Ok(())
+}
+
 pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Result<Value, String> {
     let runtime = app.state::<TerminalRuntime>();
-    let owner = format!("shared:{connection}:{}", request["terminalClientId"].as_str().ok_or("Missing terminal client")?);
     let action = request["action"].as_str().ok_or("Missing terminal action")?;
+    let source = request["terminalConnectionId"].as_str().unwrap_or_default();
+    let owner_prefix = format!("shared:{connection}:{source}:");
+    if action == "discard_drafts" {
+        discard_drafts(&runtime, &owner_prefix)?;
+        return Ok(Value::Null);
+    }
+    let owner = format!("{owner_prefix}{}", request["terminalClientId"].as_str().ok_or("Missing terminal client")?);
     let session_key = request["sessionKey"].as_str().unwrap_or_default();
     if action == "list" {
         let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);

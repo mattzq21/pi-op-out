@@ -168,6 +168,7 @@ export function createTerminalController({ transport, conversationKey, location,
   onCleanup(flushOutput);
   const conversationTerminalIds = (key: string) => terminalsBySession()[key]?.tabs.map(terminal => terminal.id) ?? [];
   const allTerminalIds = () => Object.values(terminalsBySession()).flatMap(session => session.tabs.map(terminal => terminal.id));
+  const draftTerminalIds = () => Object.entries(terminalsBySession()).filter(([key]) => key.slice(key.lastIndexOf(":") + 1).startsWith("draft-")).flatMap(([, session]) => session.tabs.map(terminal => terminal.id));
 
   const forgetConversation = (key: string) => setTerminalsBySession(current => {
     if (!(key in current)) return current;
@@ -233,7 +234,7 @@ export function createTerminalController({ transport, conversationKey, location,
     terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, takeOwnership,
     viewKey: createMemo(() => `${terminalSessionId()}:${state.activeTerminal.id}:${state.activeTerminal.generation ?? ""}`),
     startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal,
-    queueTerminalOutput, flushOutput, exited, conversationTerminalIds, allTerminalIds,
+    queueTerminalOutput, flushOutput, exited, conversationTerminalIds, allTerminalIds, draftTerminalIds,
     forgetConversation, removeConversationTerminals, resetConversation, rekeyConversation,
     toggleFor, toggle, close, write, resize,
   };

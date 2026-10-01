@@ -191,6 +191,7 @@ pub(super) fn stop_terminals(runtime: &TerminalRuntime, terminal_ids: &[String])
 }
 
 pub(super) fn detach_owner(runtime: &TerminalRuntime, owner: &str) {
+    let _ = terminal_lookup::discard_drafts(runtime, &format!("shared:{owner}:"));
     let ids = runtime.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == owner).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
     let _ = stop_terminals(runtime, &ids);
     terminal_lookup::detach(runtime, owner);

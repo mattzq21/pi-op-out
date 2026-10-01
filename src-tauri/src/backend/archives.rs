@@ -14,7 +14,7 @@ use crate::platform::State;
 #[cfg(test)]
 use uuid::Uuid;
 use crate::{AppSettings, HostStorage, MAX_GIT_PATH_LIST_BYTES, MAX_REMOTE_HOSTS, MAX_SESSION_INDEX_BATCH_BYTES, PiRuntime, RemoteHost, STORAGE_DIRECTORY, StorageInventory, StorageReport, TerminalRuntime, conversation_ownership, node_command};
-use crate::terminals::{stop_terminals};
+use crate::terminals::{stop_terminals, terminal_lookup};
 use crate::archive_worktrees::archive_conversations;
 use crate::worktree_setup::{LimitedOutput, desktop_sessions_dir, run_limited, shell_quote};
 use crate::pi_launch::{remote_host, remote_login_command, session_identity, ssh};
@@ -151,7 +151,7 @@ fn retire_archived_session(app: &AppHandle, client: &PiRuntime, host_id: &str, s
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, terminal_ids: Vec<String>, client_id: String) -> Result<(), String> {
+pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, mut terminal_ids: Vec<String>, client_id: String) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let client = app.state::<PiRuntime>();
     let _lifecycle = client.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
@@ -162,6 +162,9 @@ pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, s
         mutations.push(conversation_ownership::MutationGuard::acquire(&app, &host_id, path, &client_id, false, "archive")?);
         retire_archived_session(&app, &client, &host_id, path)?;
     }
+    let settings = load_app_settings(app.clone())?;
+    let session_ids = paths.iter().map(|path| session_identity(&settings, &host_id, path)).collect::<Result<Vec<_>, _>>()?;
+    terminal_ids.extend(terminal_lookup::session_terminals(&runtime, &host_id, &session_ids)?);
     stop_terminals(&runtime, &terminal_ids)?;
     archive_conversations(&app, &host_id, &paths)?;
     for (path, guard) in paths.iter().zip(mutations) {

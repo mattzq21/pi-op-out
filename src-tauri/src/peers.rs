@@ -184,12 +184,17 @@ pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -
     let stale_terminals = check_route_resources(&state, owner, command, args, &route)?;
     check_local_collisions(app, args)?;
     register_started_resource(&state, command, args, &route)?;
-    let forwarded = forwarded_arguments(args, &route, &stale_terminals);
+    let mut forwarded = forwarded_arguments(args, &route, &stale_terminals);
+    if command == "shared_terminal" { forwarded["terminalConnectionId"] = json!(owner); }
     invoke_route(&state, command, args, route, forwarded)
 }
 
 pub(crate) fn detach_owner(app: &AppHandle, owner: &str) {
     let state = app.state::<PeerRuntime>();
+    let connections = state.connections.lock().map(|connections| connections.values().map(|(_, connection)| connection.clone()).collect::<Vec<_>>()).unwrap_or_default();
+    for connection in connections {
+        let _ = connection.invoke("shared_terminal", json!({"action":"discard_drafts","terminalConnectionId":owner,"hostId":"local"}));
+    }
     let routes = state.routes.lock().map(|mut routes| {
         let owned = routes.iter().filter(|(_, route)| route.owner == owner).map(|(key, route)| (key.clone(), route.clone())).collect::<Vec<_>>();
         routes.retain(|_, route| route.owner != owner); owned
