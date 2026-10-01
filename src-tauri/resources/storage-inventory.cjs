@@ -174,6 +174,16 @@ async function archivedWorktree(header) {
 }
 
 async function restorableWorktree(saved) {
+    if (saved?.kind === 'directory' && path.isAbsolute(saved.path ?? '') && path.isAbsolute(saved.storedPath ?? '')) {
+      try {
+        try { await fs.lstat(saved.path); return {}; }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        const stored = await fs.realpath(saved.storedPath);
+        const root = await fs.realpath(path.join(piopRoot, 'archived-worktrees'));
+        if (path.dirname(stored) !== root || !(await fs.lstat(stored)).isDirectory()) return {};
+        return { restorable: true };
+      } catch (error) { return { restoreError: `Archived directory unavailable: ${error.message}` }; }
+    }
     if (!saved || !path.isAbsolute(saved.path ?? '') || !snapshotCheckpoint(saved)) return {};
     try {
       await fs.lstat(saved.path);
@@ -182,7 +192,7 @@ async function restorableWorktree(saved) {
     try {
       if ((await git(saved.repositoryRoot, ['rev-parse', '--verify', saved.ref])).trim() === saved.commit) return { restorable: true };
     } catch { }
-    return { restoreError: 'The last response checkpoint is unavailable.' };
+    return { restoreError: 'The recovery checkpoint is unavailable.' };
 }
 
 function archiveLocation(header, file) {
@@ -303,9 +313,10 @@ async function diskStorage(worktreeRoots) {
   const seen = new Set();
   const directories = new Set();
   const worktrees = new Set();
+  let archivedDirectories = 0;
   const warnings = [];
   const root = await fs.realpath(piopRoot).catch(() => piopRoot);
-  const categories = { sessions: "active-conversations", archived: "archived-conversations", "git-snapshots": "git-diff-snapshots", tmp: "temporary-chats", worktrees: "worktrees" };
+  const categories = { sessions: "active-conversations", archived: "archived-conversations", "git-snapshots": "git-diff-snapshots", tmp: "temporary-chats", worktrees: "worktrees", "archived-worktrees": "archived-worktrees" };
   async function visit(target, category) {
     try {
       const metadata = await fs.lstat(target);
@@ -317,6 +328,7 @@ async function diskStorage(worktreeRoots) {
       if (!metadata.isDirectory()) return;
       directories.add(target);
       const entries = await fs.readdir(target, { withFileTypes: true });
+      if (target === path.join(root, 'archived-worktrees')) archivedDirectories = entries.filter((entry) => entry.isDirectory()).length;
       const managed = path.relative(path.join(root, "worktrees"), target).split(path.sep);
       if (category === "worktrees" && managed.length === 2 && !managed.includes("..") && entries.some((entry) => entry.name === ".git")) worktrees.add(target);
       for (const entry of entries) {
@@ -336,7 +348,7 @@ async function diskStorage(worktreeRoots) {
       await visit(own, "worktrees");
     } catch (error) { warnings.push(`${worktree}: ${error.message}`); }
   }
-  return { sizes, directories, worktrees, warnings };
+  return { sizes, directories, worktrees, archivedDirectories, warnings };
 }
 
 async function main() {
@@ -397,6 +409,7 @@ async function main() {
       { id: "git-diff-snapshots", byteSize: disk.sizes.get("git-diff-snapshots") || 0, itemCount: gitDiffSnapshots.itemCount },
       { id: "temporary-chats", byteSize: disk.sizes.get("temporary-chats") || 0, itemCount: temporaryChats.itemCount },
       { id: "worktrees", byteSize: disk.sizes.get("worktrees") || 0, itemCount: disk.worktrees.size },
+      { id: "archived-worktrees", byteSize: disk.sizes.get("archived-worktrees") || 0, itemCount: disk.archivedDirectories },
       { id: "other-storage", byteSize: disk.sizes.get("other-storage") || 0, itemCount: 1 },
     ],
     archives,

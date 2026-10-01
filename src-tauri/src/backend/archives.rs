@@ -1,4 +1,5 @@
 use serde_json::json;
+#[cfg(test)]
 use std::fs;
 use std::thread;
 use std::path::Path;
@@ -10,10 +11,11 @@ use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 use crate::platform::AppHandle;
 use crate::platform::State;
+#[cfg(test)]
 use uuid::Uuid;
 use crate::{AppSettings, HostStorage, MAX_GIT_PATH_LIST_BYTES, MAX_REMOTE_HOSTS, MAX_SESSION_INDEX_BATCH_BYTES, PiRuntime, RemoteHost, STORAGE_DIRECTORY, StorageInventory, StorageReport, TerminalRuntime, conversation_ownership, node_command};
 use crate::terminals::{stop_terminals};
-use crate::archive_worktrees::{archived_worktree_cwd, cleanup_archived_worktree};
+use crate::archive_worktrees::archive_conversations;
 use crate::worktree_setup::{LimitedOutput, desktop_sessions_dir, run_limited, shell_quote};
 use crate::pi_launch::{remote_host, remote_login_command, session_identity, ssh};
 use crate::environment::home_dir;
@@ -148,44 +150,23 @@ fn retire_archived_session(app: &AppHandle, client: &PiRuntime, host_id: &str, s
     Ok(())
 }
 
-fn archive_session_on_host(app: &AppHandle, host_id: &str, session_path: &str) -> Result<(), String> {
-    if host_id != "local" {
-        let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, host_id)?;
-        return archive_remote_session(session_path, |script| { let mut command = ssh(host); command.arg(script); command });
-    }
-    archive_local_session(&home_dir()?, session_path)
-}
-
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, terminal_ids: Vec<String>, client_id: String) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let client = app.state::<PiRuntime>();
     let _lifecycle = client.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
-    let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "archive")?;
-    retire_archived_session(&app, &client, &host_id, &session_path)?;
-    archive_descendants(&app, &client, &host_id, &session_path, &client_id)?;
-    let worktree_cwd = archived_worktree_cwd(&app, &host_id, &session_path);
-    archive_session_on_host(&app, &host_id, &session_path)?;
-    let _ = stop_terminals(&runtime, &terminal_ids);
-    mutation.finish()?;
-    if let Some(cwd) = worktree_cwd {
-        if let Err(error) = cleanup_archived_worktree(&app, &host_id, &cwd) { eprintln!("Archive cleanup skipped or incomplete: {error}"); }
-    }
-    let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":session_path}));
-    Ok(())
-}
-
-fn archive_descendants(app: &AppHandle, client: &PiRuntime, host_id: &str, session_path: &str, client_id: &str) -> Result<(), String> {
-    let descendants = session_descendants(app, host_id, session_path)?;
+    let mut paths = session_descendants(&app, &host_id, &session_path)?;
+    paths.push(session_path);
     let mut mutations = Vec::new();
-    for child in &descendants {
-        mutations.push(conversation_ownership::MutationGuard::acquire(app, host_id, child, client_id, false, "archive")?);
-        retire_archived_session(app, client, host_id, child)?;
+    for path in &paths {
+        mutations.push(conversation_ownership::MutationGuard::acquire(&app, &host_id, path, &client_id, false, "archive")?);
+        retire_archived_session(&app, &client, &host_id, path)?;
     }
-    for (child, guard) in descendants.iter().zip(mutations).rev() {
-        archive_session_on_host(app, host_id, child)?;
+    stop_terminals(&runtime, &terminal_ids)?;
+    archive_conversations(&app, &host_id, &paths)?;
+    for (path, guard) in paths.iter().zip(mutations) {
         guard.finish()?;
-        let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":child}));
+        let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":path}));
     }
     Ok(())
 }
@@ -209,6 +190,7 @@ fn session_descendants(app: &AppHandle, host_id: &str, session_path: &str) -> Re
     serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid subagent conversation list: {error}"))
 }
 
+#[cfg(test)]
 pub(super) fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let file_name = Path::new(session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
     let destination = format!("{}-{file_name}", Uuid::new_v4());
@@ -220,6 +202,7 @@ pub(super) fn archive_remote_session(session_path: &str, command: impl FnOnce(St
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn archive_local_session(home: &Path, session_path: &str) -> Result<(), String> {
     let source = local_desktop_session_file_at(home, session_path)?;
     let archive_dir = home.join(STORAGE_DIRECTORY).join("archived");
@@ -254,6 +237,7 @@ fn session_store_root(archived: bool) -> Result<PathBuf, String> {
 }
 
 fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: String, host_id: Option<String>, archived: bool, client_id: String) -> Result<(), String> {
+    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, archived, "delete")?;
     let settings = load_app_settings(app.clone())?;

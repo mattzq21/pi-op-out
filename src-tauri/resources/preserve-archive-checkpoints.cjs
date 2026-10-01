@@ -46,6 +46,10 @@ function lastResponseSnapshot(entries) {
 }
 
 function preserveResponse(header, entries) {
+  if (header.worktreeRestore?.kind === 'git') {
+    if (sameRepository(header.worktreeRestore.repositoryRoot)) verifyRef(header.worktreeRestore.ref, header.worktreeRestore.commit);
+    return false;
+  }
   if (typeof header.cwd === 'string' && sameRepository(header.cwd)
     && fs.realpathSync(git(header.cwd, ['rev-parse', '--show-toplevel'])) === fs.realpathSync(target)) {
     const snapshot = lastResponseSnapshot(entries);

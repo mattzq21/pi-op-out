@@ -14,6 +14,7 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
   "git-diff-snapshots": { name: "Diff snapshots", description: "Temporary Git state used to calculate turn diffs", icon: Camera, item: "snapshot" },
   "temporary-chats": { name: "Temporary conversations", description: "Projectless conversation working directories", icon: FolderClock, item: "directory" },
   "worktrees": { name: "Worktrees", description: "Working copies, including dependencies and build outputs", icon: GitBranch, item: "worktree" },
+  "archived-worktrees": { name: "Archived directories", description: "Preserved working directories for non-repository chats", icon: Archive, item: "directory" },
   "other-storage": { name: "Other storage", description: "Settings, caches, logs, and other piop files", icon: HardDrive, item: "directory" },
 };
 
@@ -84,7 +85,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
 
   const deleteOne = (host: HostStorage, archive: ArchivedConversation) => {
     if (!archive.deletable) return;
-    if (!window.confirm(`Permanently delete “${archive.name}”? Its diff history and project checkpoint refs will also be removed.`)) return;
+    if (!window.confirm(`Permanently delete “${archive.name}”? Its diff history, project checkpoint refs, and any archived directory no other chat uses will also be removed.`)) return;
     void removeArchives(host, [archive]);
   };
   const changeWorktree = async (host: HostStorage, archive: ArchivedConversation) => {
@@ -103,7 +104,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
   };
   const deleteAll = (host: HostStorage) => {
     const archives = host.archives.filter((archive) => archive.deletable);
-    if (!archives.length || !window.confirm(`Permanently delete ${archives.length === host.archives.length ? `all ${archives.length}` : `the ${archives.length} safely readable`} archived conversations on ${host.hostName}? Their diff histories and project checkpoint refs will also be removed.`)) return;
+    if (!archives.length || !window.confirm(`Permanently delete ${archives.length === host.archives.length ? `all ${archives.length}` : `the ${archives.length} safely readable`} archived conversations on ${host.hostName}? Their diff histories, project checkpoint refs, and archived directories no other chats use will also be removed.`)) return;
     void removeArchives(host, archives);
   };
 
@@ -134,7 +135,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
           const key = createMemo(() => (archiveKey(host(), { ...archive(), name: name() }))); const pending = createMemo(() => (deleting().has(key())));
           const renderArchiveDetails = () => (<span><strong>{name()}</strong><small>{archive().deletable ? `${typeof archive().cwd === "string" ? archive().cwd : ""} · ${formatDate(archive().modifiedAt)}` : `Cleanup unavailable · ${archive().deleteError}`}</small></span>);
           const renderArchiveDelete = () => (<button aria-label={archive().deletable ? `Permanently delete ${name()}` : `Cannot safely delete ${name()}: ${archive().deleteError}`} disabled={!archive().deletable || deleting().size > 0 || loading()} onClick={() => deleteOne(host(), archive())}>{!archive().deletable ? <ShieldAlert size={14} /> : pending() ? <RefreshCw size={14} class="spinning" /> : <Trash2 size={14} />}</button>);
-          const renderWorktreeAction = () => ((archive().worktreePath || archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : archive().worktreePath ? "Delete worktree" : "Restore worktree"}</button>);
+          const renderWorktreeAction = () => ((archive().worktreePath || archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : archive().worktreePath ? "Delete worktree" : "Restore directory"}</button>);
           return <div class={`archive-row${archive().deletable ? "" : " cleanup-unavailable"}`}  title={archive().deleteError || archive().path}>
             {renderArchiveDetails()}
             <code>{formatBytes(Number(archive().byteSize) || 0)}</code>

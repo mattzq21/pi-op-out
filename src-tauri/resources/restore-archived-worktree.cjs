@@ -8,6 +8,17 @@ if (!file.startsWith(archive + path.sep) || !file.endsWith('.jsonl')) throw new 
 const entries = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).map(JSON.parse);
 const header = entries[0];
 const saved = header?.worktreeRestore;
+if (header?.type === 'session' && saved?.kind === 'directory') {
+  const storage = fs.realpathSync(path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop', 'archived-worktrees'));
+  const stored = fs.realpathSync(saved.storedPath);
+  if (path.dirname(stored) !== storage || !path.isAbsolute(saved.path ?? '') || !fs.lstatSync(stored).isDirectory()) throw new Error('Invalid archived directory');
+  try { fs.lstatSync(saved.path); throw new Error('The original directory already exists; it will not be overwritten'); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  fs.mkdirSync(path.dirname(saved.path), { recursive: true });
+  fs.renameSync(stored, saved.path);
+  process.stdout.write(JSON.stringify({ path: saved.path, branch: null }));
+  process.exit(0);
+}
 if (header?.type !== 'session' || !saved || !path.isAbsolute(saved.path ?? '') || !path.isAbsolute(saved.repositoryRoot ?? '')
   || typeof saved.ref !== 'string' || !saved.ref.startsWith('refs/pi-session-snapshots/')
   || !/^[a-f0-9]{40,64}$/.test(saved.commit ?? '')) throw new Error('No saved worktree checkpoint is available');
@@ -18,7 +29,7 @@ if (typeof conversationPath !== 'string' || !path.isAbsolute(conversationPath)) 
 const relative = path.relative(saved.path, conversationPath);
 if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw new Error('Invalid archived worktree location');
 const git = (args) => execFileSync('git', ['-C', saved.repositoryRoot, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-if (git(['rev-parse', '--verify', saved.ref]) !== saved.commit) throw new Error('The last response checkpoint is missing or has changed');
+if (git(['rev-parse', '--verify', saved.ref]) !== saved.commit) throw new Error('The recovery checkpoint is missing or has changed');
 const byId = new Map(entries.filter((entry) => entry.id).map((entry) => [entry.id, entry]));
 let cursor = entries.at(-1);
 let response;
@@ -28,9 +39,9 @@ while (cursor && !visited.has(cursor.id)) {
   if (cursor.type === 'message' && cursor.message?.role === 'assistant') { response = cursor; break; }
   cursor = byId.get(cursor.parentId);
 }
-const snapshot = response && entries.findLast((entry) => entry.type === 'custom' && entry.customType === 'pi-project-files-watch-snapshot'
-  && entry.data?.responseEntryIds?.includes(response.id));
-if (!snapshot || snapshot.data.unavailable || snapshot.data.ref !== saved.ref || snapshot.data.commit !== saved.commit) throw new Error('The last response checkpoint cannot be verified');
+const snapshot = entries.findLast((entry) => entry.type === 'custom' && entry.customType === 'pi-project-files-watch-snapshot'
+  && (saved.kind === 'git' ? entry.data?.ref === saved.ref : response && entry.data?.responseEntryIds?.includes(response.id)));
+if (!snapshot || snapshot.data.unavailable || snapshot.data.ref !== saved.ref || snapshot.data.commit !== saved.commit) throw new Error('The recovery checkpoint cannot be verified');
 try { fs.lstatSync(saved.path); throw new Error('The worktree path already exists; it will not be overwritten'); }
 catch (error) { if (error.code !== 'ENOENT') throw error; }
 const { randomUUID } = require('node:crypto');

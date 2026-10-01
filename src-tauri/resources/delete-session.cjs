@@ -27,6 +27,13 @@ async function readFile(file, optional = false) {
 
 async function restoreFile(saved) {
   if (!saved.staged) return;
+  if (saved.directory) {
+    try { await fs.lstat(saved.file); throw new Error(`Refusing to overwrite a replacement directory: ${saved.file}`); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    await fs.rename(saved.stagedPath, saved.file);
+    saved.staged = false;
+    return;
+  }
   try {
     await fs.link(saved.stagedPath, saved.file);
   } catch (error) {
@@ -122,6 +129,8 @@ async function main() {
     const entries = trace.body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
     const header = entries[0];
     validateHeader(header, target);
+    const directory = await archivedDirectory(source, header, target);
+    if (directory) files.push(directory);
     const repositories = await snapshotRefs(entries, header);
     files.forEach((saved, index) => { saved.stagedPath = path.join(lock, `${index}.staged`); });
     await fs.writeFile(path.join(lock, "recovery.json"), JSON.stringify({
@@ -164,6 +173,32 @@ async function main() {
   } finally {
     if (!preserveRecovery && !lockRemoved) await fs.rm(lock, { recursive: true }).catch((error) => console.error(`Could not remove deletion recovery directory ${lock}: ${error.message}`));
   }
+}
+
+async function archivedDirectory(source, header, target) {
+  const saved = header.worktreeRestore;
+  if (target.area !== "archived" || saved?.kind !== "directory") return undefined;
+  const archive = await fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "archived"));
+  const root = await fs.realpath(path.join(archive, '..', 'archived-worktrees'));
+  let directory;
+  try { directory = await fs.realpath(saved.storedPath); }
+  catch (error) { if (error.code === "ENOENT") return undefined; throw error; }
+  if (path.dirname(directory) !== root) throw new Error("Invalid archived working directory");
+  async function referenced(location) {
+    for (const entry of await fs.readdir(location, { withFileTypes: true })) {
+      const file = path.join(location, entry.name);
+      if (entry.isDirectory() && await referenced(file)) return true;
+      if (!entry.isFile() || !file.endsWith(".jsonl") || file === source) continue;
+      const first = (await fs.readFile(file, "utf8")).split("\n").find((line) => line.trim());
+      const other = JSON.parse(first);
+      if (other.worktreeRestore?.kind === "directory" && other.worktreeRestore.storedPath === saved.storedPath) return true;
+    }
+    return false;
+  }
+  if (await referenced(archive)) return undefined;
+  const metadata = await fs.lstat(directory);
+  if (!metadata.isDirectory()) throw new Error("Archived working directory is not a directory");
+  return { file: directory, metadata, directory: true, stagedPath: "", staged: false };
 }
 
 function collectSnapshot(entry, roots, prefix, legacy) {
