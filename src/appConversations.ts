@@ -140,6 +140,21 @@ export function createAppConversations(preloadChat: () => void) {
     void capturedTransport.isGitRepository().then((isRepository) => { if (!cancelled) setIsGitRepository(isRepository); }).catch(() => undefined);
     return () => { cancelled = true; };
   }, () => [transport(), sessions().find((session) => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId())?.projectKind]);
+  const latestPromptId = createMemo(() => {
+    const messages = chatSession().messages;
+    for (let index = messages.length - 1; index >= 0; index--) {
+      if (messages[index].role === "user") return messages[index].id;
+    }
+  });
+  createDependencyEffect(() => {
+    if (isGitRepository() !== false || !latestPromptId()) return;
+    const owner = transport();
+    let cancelled = false;
+    void owner.isGitRepository().then(isRepository => {
+      if (!cancelled && transport() === owner) setIsGitRepository(isRepository);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, () => [transport(), latestPromptId(), chatSession().state.isStreaming, isGitRepository()]);
   const syncSessionIndex = () => {
     if (sessionIndexRequest.current) { sessionIndexDirty.current = true; return sessionIndexRequest.current; }
     sessionIndexDirty.current = false;
