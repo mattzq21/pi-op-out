@@ -356,7 +356,6 @@ export class NativeTransport {
     return this.disposal;
   }
   toggleFastMode() { return this.fastMode.toggle(); }
-  refreshFastModeCapabilities() { return this.fastMode.refreshCapabilities(); }
   setFastMode(enabled: boolean) { return this.fastMode.set(enabled); }
   command<S extends z.ZodType>(command: RpcCommand, schema: S): Promise<z.output<S>>;
   command(command: RpcCommand): Promise<z.output<typeof jsonResultSchema>>;

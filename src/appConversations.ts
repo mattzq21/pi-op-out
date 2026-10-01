@@ -516,12 +516,7 @@ export function createAppConversations(preloadChat: () => void) {
     return nextTransport;
   };
 
-  const setModel = (model: Model) => {
-    const selectedTransport = transport();
-    selectedTransport.promptControls.model(model, composerControls.state(chatSession().state).thinkingLevel);
-    void selectedTransport.refreshFastModeCapabilities().catch(reason => addNotice({ title: "Could not refresh Fast mode support", message: reason instanceof Error ? reason.message : String(reason) }));
-  };
-
+  const setModel = (model: Model) => transport().promptControls.model(model, composerControls.state(chatSession().state).thinkingLevel);
   const setThinking = (level: string) => transport().promptControls.thinking(level);
 
   const abortInteraction = async () => {

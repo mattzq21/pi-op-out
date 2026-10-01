@@ -170,6 +170,8 @@ async function handle(packet) {
   if (packet.method === 'initialize') return { authPath: loaded.authPath, builtinIds: loaded.builtinIds };
   await syncAccounts(loaded);
 
+  if (packet.method === 'fast_capabilities') return discoverFastCapabilities(loaded.runtime);
+
   if (packet.method === 'inspect') {
     await loaded.runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
     const credentials = await loaded.runtime.listCredentials().catch(() => { throw new Error('Could not read saved provider status on this host.'); });

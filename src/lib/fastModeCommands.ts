@@ -18,12 +18,11 @@ type FastModeConnection = {
 
 export class FastModeCommands {
   private statusCommand?: string;
-  private capabilityCommand?: string;
   private commands = new Set<string>();
 
   constructor(private connection: FastModeConnection) {}
 
-  reset() { this.statusCommand = undefined; this.capabilityCommand = undefined; this.commands.clear(); }
+  reset() { this.statusCommand = undefined; this.commands.clear(); }
 
   afterCommand(command: RpcCommand, result?: z.infer<typeof commandListingSchema>) {
     if (command.type === "get_commands" && result) return this.discover(result.commands);
@@ -34,7 +33,6 @@ export class FastModeCommands {
   private async discover(commands: Command[]) {
     const fromPackage = (item: Command, name: string) => item.sourceInfo?.source === `npm:${name}` || item.sourceInfo?.path?.split(/[\\/]/).includes(name);
     const localPackages = ["piop-openai-fast-mode", "pi-openai-fast-mode-piop"];
-    this.capabilityCommand = commands.find(item => item.source === "extension" && /^piop-fast-refresh(?::\d+)?$/.test(item.name) && localPackages.some(name => fromPackage(item, name)))?.name;
     const fastCommands = commands.filter(item => item.source === "extension" && /^fast(?::\d+)?$/.test(item.name) && [...localPackages, "pi-openai-fast-mode"].some(name => fromPackage(item, name)));
     this.commands = new Set(fastCommands.map(item => item.name));
     this.statusCommand = fastCommands.some(item => localPackages.some(name => fromPackage(item, name))) ? undefined : commands.find(item => item.source === "extension" && item.name === "pi-desktop-fast-status")?.name;
@@ -64,12 +62,6 @@ export class FastModeCommands {
   }
 
   async toggle() { await this.change("toggle"); }
-
-  async refreshCapabilities() {
-    await this.connection.command({ type: "get_commands" });
-
-    if (this.capabilityCommand) await this.connection.send({ type: "prompt", message: `/${this.capabilityCommand}` });
-  }
 
   private async change(mode: "on" | "off" | "toggle") {
     const command = this.commands.values().next().value;

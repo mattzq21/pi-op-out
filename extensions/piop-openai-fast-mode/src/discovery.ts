@@ -94,8 +94,33 @@ function requestHeaders(model: Model, apiKey: string | undefined, extra: Record<
 
 export function createFastModeDiscovery() {
   const cache = new Map<string, CachedCatalog>();
+  let daemonCatalog: Promise<z.infer<typeof daemonCatalogSchema>> | undefined;
+  const daemonCatalogSchema = z.array(z.object({ provider: z.string(), model: z.string(), supported: z.boolean() }));
+
+  async function startupCatalog(model: Model): Promise<Catalog | undefined> {
+    const broker = process.env.PI_DESKTOP_BROKER_URL;
+    const token = process.env.PI_DESKTOP_BROKER_TOKEN;
+
+    if (!broker || !token) return undefined;
+    daemonCatalog ??= fetch(`${broker}/fast-capabilities`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ hostId: process.env.PI_DESKTOP_HOST_ID || "local" }), signal: AbortSignal.timeout(30_000),
+    }).then(async response => {
+      if (!response.ok) throw new Error("Fast mode startup catalog unavailable");
+      const body = z.object({ data: daemonCatalogSchema }).parse(await response.json());
+
+      return body.data;
+    }).catch(() => []);
+    const entries = await daemonCatalog;
+
+    return new Map(entries.filter(entry => entry.provider === model.provider).map(entry => [entry.model, entry.supported]));
+  }
 
   async function catalog(ctx: ExtensionContext, model: Model): Promise<Catalog> {
+    const startup = await startupCatalog(model);
+
+    if (startup) return startup;
+
     try {
       const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 
