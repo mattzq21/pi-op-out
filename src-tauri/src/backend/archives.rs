@@ -240,15 +240,25 @@ fn session_store_root(archived: bool) -> Result<PathBuf, String> {
     Ok(if archived { home.join(STORAGE_DIRECTORY).join("archived") } else { desktop_sessions_dir(&home) })
 }
 
-fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: String, host_id: Option<String>, archived: bool, client_id: String) -> Result<Vec<String>, String> {
+fn delete_stored_sessions(app: AppHandle, runtime: &PiRuntime, session_paths: Vec<String>, host_id: Option<String>, archived: bool, client_id: String) -> Result<Vec<String>, String> {
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let settings = load_app_settings(app.clone())?;
-    let path = stored_session_file(&settings, &host_id, &session_path, archived)?;
-    let mut mutations = vec![conversation_ownership::MutationGuard::acquire(&app, &host_id, &path, &client_id, archived, "delete")?];
-    let mut paths = vec![(path.clone(), archived)];
+    if session_paths.is_empty() { return Err("Select at least one conversation to delete".into()); }
+    let mut mutations = Vec::new();
+    let mut paths = Vec::new();
+    for session_path in session_paths {
+        let path = stored_session_file(&settings, &host_id, &session_path, archived)?;
+        if paths.iter().any(|(existing, _)| existing == &path) { continue; }
+        mutations.push(conversation_ownership::MutationGuard::acquire(&app, &host_id, &path, &client_id, archived, "delete")?);
+        paths.push((path, archived));
+    }
+    let roots = paths.clone();
     loop {
-        let children = session_descendants(&app, &host_id, &path, archived, true)?;
+        let mut children = Vec::new();
+        for (path, archived) in &roots {
+            children.extend(session_descendants(&app, &host_id, path, *archived, true)?);
+        }
         let mut added = false;
         for (child, child_archived) in children {
             if paths.iter().any(|(path, _)| path == &child) { continue; }
@@ -266,7 +276,9 @@ fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: Stri
     let host = if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) };
     delete_session_targets(runtime, &targets, &host_id, host.as_ref())?;
     for ((path, _), mutation) in paths.iter().zip(mutations) {
-        mutation.finish()?;
+        if let Err(error) = mutation.finish_committed() {
+            eprintln!("Conversation deletion committed, but ownership cleanup failed for {path}: {error}");
+        }
         let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":path}));
     }
     Ok(paths.into_iter().map(|(path, _)| path).collect())
@@ -301,19 +313,24 @@ fn delete_session_targets(runtime: &PiRuntime, targets: &[serde_json::Value], ho
 
 pub(super) fn run_session_deletion(command: &mut Command) -> Result<(), String> {
     let output = run_limited(command, 256 * 1024, "Could not delete session")?;
-    if output.status.success() { return Ok(()); }
+    if output.status.success() {
+        if !output.stderr.is_empty() { eprintln!("{}", String::from_utf8_lossy(&output.stderr).trim()); }
+        return Ok(());
+    }
     let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
     Err(if error.is_empty() { "Could not delete session".into() } else { error })
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<Vec<String>, String> {
-    delete_stored_session(app, &runtime, session_path, host_id, false, client_id)
+    delete_stored_sessions(app, &runtime, vec![session_path], host_id, false, client_id)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-pub(super) fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<Vec<String>, String> {
-    delete_stored_session(app, &runtime, session_path, host_id, true, client_id)
+pub(super) fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, session_paths: Option<Vec<String>>, host_id: Option<String>, client_id: String) -> Result<Vec<String>, String> {
+    let mut paths = session_paths.unwrap_or_default();
+    paths.push(session_path);
+    delete_stored_sessions(app, &runtime, paths, host_id, true, client_id)
 }
 
 fn restore_worktree_command(settings: &AppSettings, host_id: &str, path: &str) -> Result<Command, String> {

@@ -6,7 +6,7 @@ import { DeleteArchivesDialog } from "./DeleteArchivesDialog";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Archive, Camera, Database, FolderClock, GitBranch, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
-import { deleteArchivedConversation, loadStorageReport, openGroupDirectory, restoreArchivedWorktree } from "../lib/nativeTransport";
+import { deleteArchivedConversations, loadStorageReport, openGroupDirectory, restoreArchivedWorktree } from "../lib/nativeTransport";
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport } from "../types";
 
 const categoryDetails: Record<StorageCategory["id"], { name: string; description: string; icon: typeof Archive; item: string }> = {
@@ -102,17 +102,15 @@ export function StorageSettings(componentProps: { hostId?: string }) {
   createDependencyEffect(() => { void refresh(); }, () => [componentProps.hostId]);
 
   const removeArchives = async (host: HostStorage, archives: ArchivedConversation[]) => {
+    if (!archives.length) return;
     const keys = archives.map((archive) => archiveKey(host, archive));
     setDeleting((current) => new Set([...current, ...keys]));
     setError(undefined);
-    const failures: string[] = [];
+    let failure: string | undefined;
     const removed = new Set<string>();
 
-    for (const archive of archives) {
-      if (removed.has(archive.path)) continue;
-      try { for (const path of await deleteArchivedConversation(archive.path, host.hostId)) removed.add(path); }
-      catch (reason) { failures.push(`${archive.name}: ${reason instanceof Error ? reason.message : String(reason)}`); }
-    }
+    try { for (const path of await deleteArchivedConversations(archives.map(archive => archive.path), host.hostId)) removed.add(path); }
+    catch (reason) { failure = reason instanceof Error ? reason.message : String(reason); }
 
     if (removed.size) setReport((current) => current ? { hosts: current.hosts.map((candidate) => candidate.hostId === host.hostId ? { ...candidate, archives: candidate.archives.filter((archive) => !removed.has(archive.path)) } : candidate) } : current);
     setDeleting((current) => { const next = new Set(current); keys.forEach((key) => next.delete(key));
@@ -120,7 +118,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
       return next; });
     await refresh();
 
-    if (failures.length) setError(failures.join("\n"));
+    if (failure) setError(failure);
   };
 
   const deleteOne = (host: HostStorage, archive: ArchivedConversation) => {

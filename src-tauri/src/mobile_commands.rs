@@ -392,7 +392,7 @@ fn handle_delete_session(app: AppHandle, _owner: String, args: Value) -> Command
 
 fn handle_delete_archived_session(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(delete_archived_session(app.clone(), app.state(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || serde_json::to_value(delete_archived_session(app.clone(), app.state(), argument(&args, "sessionPath")?, argument(&args, "sessionPaths")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
     })
 }
 
