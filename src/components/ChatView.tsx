@@ -443,8 +443,16 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const retryTurn = createMemo(() => (componentProps.retryable ? findReplaceableAbortedTurn(componentProps.messages) : undefined));
   const retryPrompt = createMemo(() => (retryTurn()?.prompt));
   const retryImages = createMemo(() => (retryAttachments(retryTurn())));
+  const firstResponseInputTokens = createMemo(() => {
+    const earlyTokens = componentProps.promptContexts[0]?.inputTokens;
 
-  const renderPromptContextBar = () => (<Show when={componentProps.debug}><Index each={componentProps.promptContexts}>{context => <PromptContextBar context={context()} />}</Index></Show>);
+    if (earlyTokens !== undefined) return earlyTokens;
+    const response = componentProps.messages.find(message => message.role === "assistant");
+
+    return cacheHitStats(response?.usage)?.promptTokens;
+  });
+
+  const renderPromptContextBar = () => (<Show when={componentProps.debug && firstResponseInputTokens()}>{inputTokens => <Index each={componentProps.promptContexts}>{context => <PromptContextBar context={context()} inputTokens={inputTokens()} />}</Index>}</Show>);
   const renderWorkGroup = () => hasWork() && <details class="work-group" open={workOpen()} onToggle={(event) => setWorkOpen(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" /></summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}><MessageList messages={intermediate()} expanded debug={componentProps.debug} paused={componentProps.paused} showActions={false} /></div>}</details>;
 
   const renderActiveWorkContent = () => (<Show when={componentProps.active || componentProps.paused} fallback={required(<>

@@ -31,6 +31,7 @@ const skillSchema = z.object({
 
 export const promptContextSchema = z.object({
   userTimestamp: z.number().optional(),
+  inputTokens: z.number().int().positive().optional(),
   systemPrompt: z.string().catch(""),
   instructions: validItems(z.object({ path: z.string(), content: z.string().catch("") })).catch([]),
   tools: validItems(z.object({ name: z.string(), description: z.string().catch(""), parameters: z.unknown().optional() })).catch([]),

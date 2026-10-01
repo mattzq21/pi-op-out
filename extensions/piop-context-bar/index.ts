@@ -19,6 +19,8 @@ const changeMessageSchema = Type.Object({ role: Type.Literal("custom"), customTy
 
 const resumeSchema = Type.Object({ message: Type.String() });
 
+const responseUsageSchema = Type.Object({ response: Type.Object({ usage: Type.Object({ input_tokens: Type.Integer({ minimum: 1 }) }) }) });
+
 const STATUS_KEY = "pi-desktop-prompt-context";
 
 const ENTRY_TYPE = "piop-context";
@@ -148,6 +150,7 @@ function invocationWindow(branch: ReturnType<ExtensionContext["sessionManager"][
 
 export default function contextBar(pi: ExtensionAPI) {
   let promptOptions: BuildSystemPromptOptions | undefined;
+  let publishInputTokens: ((tokens: number, ctx: ExtensionContext) => void) | undefined;
 
   const publishPromptContext = (ctx: ExtensionContext, messages: ContextMessages) => {
     const branch = ctx.sessionManager.getBranch();
@@ -192,9 +195,17 @@ export default function contextBar(pi: ExtensionAPI) {
 
     pi.appendEntry(ENTRY_TYPE, snapshot);
     ctx.ui.setStatus(STATUS_KEY, `json:${JSON.stringify(snapshot)}`);
+    publishInputTokens = (inputTokens, context) => context.ui.setStatus(STATUS_KEY, `json:${JSON.stringify({ ...snapshot, inputTokens })}`);
   };
 
-  pi.on("session_start", (_event, ctx) => { promptOptions = undefined; ctx.ui.setStatus(STATUS_KEY, undefined); });
+  pi.on("session_start", (_event, ctx) => { promptOptions = undefined; publishInputTokens = undefined; ctx.ui.setStatus(STATUS_KEY, undefined); });
   pi.on("before_agent_start", (event) => { promptOptions = event.systemPromptOptions; });
   pi.on("context", (event, ctx) => { publishPromptContext(ctx, event.messages); });
+  pi.on("provider_stream_event", (event, ctx) => {
+    if (!publishInputTokens || !["openai-responses", "openai-codex-responses"].includes(event.api) || !Check(responseUsageSchema, event.data)) return;
+    publishInputTokens(event.data.response.usage.input_tokens, ctx);
+    publishInputTokens = undefined;
+  });
+  pi.on("message_end", (event) => { if (event.message.role === "assistant") publishInputTokens = undefined; });
+  pi.on("agent_end", () => { publishInputTokens = undefined; });
 }
