@@ -54,7 +54,7 @@ export function registerSubagentMailbox(pi: ExtensionAPI) {
   };
 
   const unsubscribe = pi.events.on("piop:required-tools", request => {
-    if (request.ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-run")) request.tools.push("wait_agent");
+    if (request.ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-run")) request.tools.push("wait_agent", "await_subagents");
   });
 
   pi.on("session_shutdown", unsubscribe);

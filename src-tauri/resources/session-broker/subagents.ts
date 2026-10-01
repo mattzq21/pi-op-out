@@ -229,9 +229,19 @@ export function registerSubagents(pi: ExtensionAPI) {
   pi.on("session_before_switch", stop);
   pi.on("session_shutdown", stop);
   pi.registerTool({
+    name: "await_subagents", label: "Await all subagents", exposure: "model-only",
+    description: "Wait until every pending subagent has finished, successfully or with an error. No parameters, timeout, or early return on input or cancellation. Returns immediately if no subagents are pending. Subagent results are delivered separately in the conversation.",
+    parameters: Type.Object({}),
+    async execute() {
+      while (pending.size) await Promise.allSettled([...pending]);
+
+      return { content: [{ type: "text", text: "All subagents have finished. Results are delivered separately in the conversation." }], details: {} };
+    },
+  });
+  pi.registerTool({
     name: "subagent", label: "Subagents",
     exposure: "model-only",
-    description: "Delegate 1–4 independent tasks in the background. Returns child session IDs once created, without waiting for results. Completion or failure is queued in the parent mailbox and does not start a new parent turn. Continue independent work while children run; call wait_agent when ready to wait for mailbox activity. Each child has a fresh context, a saved transcript visible in piop, and the current working directory (files are shared). Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Child agents cannot delegate further. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
+    description: "Delegate 1–4 independent tasks in the background. Returns child session IDs once created, without waiting for results. Completion or failure is queued in the parent mailbox and does not start a new parent turn. Continue independent work while children run; call await_subagents to wait until all children finish, or wait_agent to wait for mailbox activity. Each child has a fresh context, a saved transcript visible in piop, and the current working directory (files are shared). Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Child agents cannot delegate further. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
     parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1, maxLength: 120 }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })), sessionId: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 4 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
@@ -259,7 +269,7 @@ export function registerSubagents(pi: ExtensionAPI) {
       };
 
       await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
-      pi.setActiveTools([...new Set([...pi.getActiveTools(), "wait_agent"])]);
+      pi.setActiveTools([...new Set([...pi.getActiveTools(), "wait_agent", "await_subagents"])]);
 
       return { ...subagentPayload(results), isError: results.some((run) => run.status === "failed" || run.status === "cancelled") };
     },
