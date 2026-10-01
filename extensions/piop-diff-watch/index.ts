@@ -573,6 +573,7 @@ export default function diffWatch(pi: ExtensionAPI) {
     return snapshotQueue;
   });
 
+
   pi.registerCommand("pi-desktop-branch-checkpoint", {
     description: "Create a worktree and conversation from a retained checkpoint",
     async handler(args, ctx) {
