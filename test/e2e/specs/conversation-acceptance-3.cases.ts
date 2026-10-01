@@ -117,7 +117,9 @@ describe("Conversation acceptance", () => {
       await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "start_terminal"));
-      const terminalId = (await backendCalls()).find(({ command }) => command === "start_terminal")?.args.terminalId as string;
+      const terminalId = (await backendCalls()).find(({ command }) => command === "start_terminal")?.args.terminalId;
+
+      if (!terminalId) throw new Error("Terminal start was not recorded");
 
       await emitPiEvent({ type: "terminal_output", terminalId, data: "acceptance terminal output\r\n" });
       await browser.waitUntil(async () => String(await browser.execute(() => document.querySelector(".xterm-rows")?.textContent)).includes("acceptance terminal output"));
@@ -181,16 +183,21 @@ describe("Conversation acceptance", () => {
     await mockBackend({ ...connectedSessionResponses("copy-session"), "pi_command:get_entries": history });
 
     try {
-      await browser.execute(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { (window as unknown as { __e2eClipboard?: string }).__e2eClipboard = text; } } }));
+      await browser.execute(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { window.__e2eClipboard = text; } } }));
       await emitPiEvent({ type: "session_switched" });
       await expect($(".assistant-message")).toHaveText(expect.stringContaining("const answer = 42;"));
 
       await expect($(".assistant-message").$('button[aria-label^="Copy assistant response"]')).toBeEnabled();
-      await browser.execute(() => document.querySelector<HTMLButtonElement>('.assistant-message button[aria-label^="Copy assistant response"]')!.click());
-      expect(await browser.execute(() => (window as unknown as { __e2eClipboard?: string }).__e2eClipboard)).toBe(response);
+      await browser.execute(() => {
+        const element = document.querySelector('.assistant-message button[aria-label^="Copy assistant response"]');
+
+        if (!(element instanceof HTMLElement)) throw new Error("Expected page element was not found");
+        element.click();
+      });
+      expect(await browser.execute(() => window.__e2eClipboard)).toBe(response);
       await $('button[aria-label="Copy code"]').click();
       await expect($('button[aria-label="Code copied"]')).toBeDisplayed();
-      expect(await browser.execute(() => (window as unknown as { __e2eClipboard?: string }).__e2eClipboard)).toBe("const answer = 42;");
+      expect(await browser.execute(() => window.__e2eClipboard)).toBe("const answer = 42;");
     } finally {
       await resetBackend();
     }
@@ -264,10 +271,15 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "session_switched" });
       const branch = $(".assistant-message").$('button[aria-label^="Branch from assistant response"]');
       await expect(branch).toBeEnabled();
-      await browser.execute(() => document.querySelector<HTMLButtonElement>('.assistant-message button[aria-label^="Branch from assistant response"]')!.click());
+      await browser.execute(() => {
+        const element = document.querySelector('.assistant-message button[aria-label^="Branch from assistant response"]');
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "fork_after"));
-      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "fork_after")?.args.command).toEqual({ type: "fork_after", entryId: "branch-assistant" });
+        if (!(element instanceof HTMLElement)) throw new Error("Expected page element was not found");
+        element.click();
+      });
+
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "fork_after"));
+      expect((await backendCalls()).find(({ args }) => args.command?.type === "fork_after")?.args.command).toEqual({ type: "fork_after", entryId: "branch-assistant" });
       await expect($(".user-message .message-body")).toHaveText("Establish the branch point");
       await expect($(".assistant-message")).toHaveText(expect.stringContaining("This response can be branched."));
     } finally {
@@ -281,13 +293,18 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "agent_start" });
       await app.prepareMessage("Focus on the acceptance criteria");
-      await browser.execute(() => document.querySelector('[aria-label="Message piop"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true })));
+      await browser.execute(() => {
+        const element = document.querySelector('[aria-label="Message piop"]');
+
+        if (!(element instanceof HTMLElement)) throw new Error("Expected page element was not found");
+        element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+      });
 
       await expect(app.composer).toHaveValue("");
       await emitPiEvent({ type: "queue_update", steering: ["Focus on the acceptance criteria"], followUp: [] });
       await expect($(".stream-banner")).toHaveText(expect.stringContaining("1 queued"));
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "steer"));
-      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "steer")?.args.command).toEqual({ type: "steer", message: "Focus on the acceptance criteria" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "steer"));
+      expect((await backendCalls()).find(({ args }) => args.command?.type === "steer")?.args.command).toEqual({ type: "steer", message: "Focus on the acceptance criteria" });
     } finally {
       await emitPiEvent({ type: "queue_update", steering: [], followUp: [] });
       await emitPiEvent({ type: "agent_end" });
@@ -309,8 +326,8 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "queue_update", steering: [], followUp: [pending.message], pendingMessages: [pending] });
       await expect($(".stream-banner")).toHaveText(expect.stringContaining("1 queued"));
       await $('button[aria-label="Stop piop"]').click();
-      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String((args.command as { type?: string })?.type))).length === 2);
-      expect((await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String(args.command?.type))).length === 2);
+      expect((await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String(args.command?.type))).map(({ args }) => args.command)).toEqual([
         { type: "follow_up", message: pending.message }, { type: "abort" },
       ]);
       await $('button[aria-label="Remove queued message: Check this after the current response"]').click();
@@ -331,8 +348,8 @@ describe("Conversation acceptance", () => {
       await input.setValue("beta");
       await $('//dialog//button[normalize-space(.)="Continue"]').click();
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response"));
-      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response")?.args.command).toEqual({ type: "extension_ui_response", id: "acceptance-input", value: "beta" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "extension_ui_response"));
+      expect((await backendCalls()).find(({ args }) => args.command?.type === "extension_ui_response")?.args.command).toEqual({ type: "extension_ui_response", id: "acceptance-input", value: "beta" });
       await expect(app.extensionDialogHeading).not.toBeExisting();
     } finally {
       await resetBackend();
@@ -351,8 +368,8 @@ describe("Conversation acceptance", () => {
 
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-no-confirm", method: "confirm", title: "Publish release?" });
       await $('//dialog//button[normalize-space(.)="No"]').click();
-      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").length === 2);
-      expect((await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").map(({ args }) => args.command)).toEqual([
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").length === 2);
+      expect((await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").map(({ args }) => args.command)).toEqual([
         { type: "extension_ui_response", id: "acceptance-enter-input", value: "beta" },
         { type: "extension_ui_response", id: "acceptance-no-confirm", confirmed: false },
       ]);

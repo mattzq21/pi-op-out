@@ -1,6 +1,6 @@
 import { $, $$, browser, expect } from "@wdio/globals";
 
-import type { AppSettings } from "../../../src/types.js";
+import { appSettingsSchema } from "../../../src/lib/responseSchemas.js";
 import { app } from "../pageobjects/app.page.js";
 import { mockBackend, backendCalls, updateBackendResponse, resetApp, emitPiEvent, defaultSettings, enableAgents, connectedSessionResponses } from './acceptance-fixture.js';
 
@@ -39,7 +39,7 @@ describe("Settings acceptance", () => {
       await app.saveSettingsButton.click();
       await expect(app.saveSettingsButton).toHaveText("Saved");
       const settingsWrites = (await backendCalls()).filter(({ command }) => command === "save_app_settings");
-      expect(settingsWrites.map(({ args }) => (args.settings as AppSettings).autoRetry)).toEqual([!defaultSettings.autoRetry, defaultSettings.autoRetry]);
+      expect(settingsWrites.map(({ args }) => appSettingsSchema.parse(args.settings).autoRetry)).toEqual([!defaultSettings.autoRetry, defaultSettings.autoRetry]);
       expect(settingsWrites.every(({ mocked }) => mocked)).toBe(true);
       await app.openConversations();
     } finally {
@@ -88,12 +88,12 @@ describe("Settings acceptance", () => {
   it("can prepare a remote machine without saving it", async () => {
     await app.openSettings();
     await app.openSettingsSection("Machines");
-    const before = await $$("input[aria-label='Machine name']");
+    const before = await $$("input[aria-label='Machine name']").length;
     await app.addMachineButton.click();
     const names = await $$("input[aria-label='Machine name']");
-    const name = names[names.length - 1];
+    const name = names[(await names.length) - 1];
 
-    await expect(names).toBeElementsArrayOfSize(before.length + 1);
+    await expect(names).toBeElementsArrayOfSize(before + 1);
     await expect(name).toHaveValue("New machine");
     await name.setValue("Acceptance machine");
     const card = await name.$('./ancestor::div[contains(@class, "mcp-card")]');
@@ -106,19 +106,19 @@ describe("Settings acceptance", () => {
     await expect(executable).toHaveValue("/opt/pi/bin/piopd");
     await $('button[aria-label="Remove Acceptance machine"]').click();
     await $('//dialog//button[normalize-space(.)="Remove machine"]').click();
-    await expect($$("input[aria-label='Machine name']")).toBeElementsArrayOfSize(before.length);
+    await expect($$("input[aria-label='Machine name']")).toBeElementsArrayOfSize(before);
     await app.openConversations();
   });
 
   it("can prepare an MCP server without saving it", async () => {
     await app.openSettings();
     await app.openSettingsSection("Agents");
-    const before = await $$("input[aria-label='Server name']");
+    const before = await $$("input[aria-label='Server name']").length;
     await app.addMcpServerButton.click();
     const names = await $$("input[aria-label='Server name']");
-    const name = names[names.length - 1];
+    const name = names[(await names.length) - 1];
 
-    await expect(names).toBeElementsArrayOfSize(before.length + 1);
+    await expect(names).toBeElementsArrayOfSize(before + 1);
     await name.setValue("Acceptance server");
     const card = await name.$('./ancestor::div[contains(@class, "mcp-card")]');
     const command = await card.$('.//label[span[normalize-space(.)="Command"]]/input');
@@ -130,17 +130,17 @@ describe("Settings acceptance", () => {
     await expect(command).toHaveValue("node");
     await expect(args).toHaveValue("server.js --quiet");
     await $('button[aria-label="Remove Acceptance server"]').click();
-    await expect($$("input[aria-label='Server name']")).toBeElementsArrayOfSize(before.length);
+    await expect($$("input[aria-label='Server name']")).toBeElementsArrayOfSize(before);
     await app.openConversations();
   });
 
   it("can prepare an HTTP MCP server with headers without saving it", async () => {
     await app.openSettings();
     await app.openSettingsSection("Agents");
-    const before = await $$('input[aria-label="Server name"]');
+    const before = await $$('input[aria-label="Server name"]').length;
     await app.addMcpServerButton.click();
     const names = await $$('input[aria-label="Server name"]');
-    const name = names[names.length - 1];
+    const name = names[(await names.length) - 1];
     await name.setValue("Acceptance HTTP");
     const card = await name.$('./ancestor::div[contains(@class, "mcp-card")]');
     await card.$('.//button[normalize-space(.)="HTTP"]').click();
@@ -154,7 +154,7 @@ describe("Settings acceptance", () => {
     await expect(headers).toHaveValue('{"Authorization":"Bearer acceptance"}');
     await expect(card.$('.//label[span[normalize-space(.)="Command"]]')).not.toBeExisting();
     await $('button[aria-label="Remove Acceptance HTTP"]').click();
-    await expect($$('input[aria-label="Server name"]')).toBeElementsArrayOfSize(before.length);
+    await expect($$('input[aria-label="Server name"]')).toBeElementsArrayOfSize(before);
     await app.openConversations();
   });
 

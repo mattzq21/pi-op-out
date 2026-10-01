@@ -78,7 +78,6 @@ describe("Project behavior", () => {
   it("switches to a project after the backend connects successfully", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({
-      stop_pi: {}, start_pi: {},
       ...connectedSessionResponses("acceptance-project"),
       "pi_command:set_model": {}, load_app_settings: settings, validate_project_directory: "/tmp",
     });
@@ -125,11 +124,11 @@ describe("Project behavior", () => {
       await app.chooseComposerOption("Thinking level", "Off");
       await expect(app.thinkingLevelPicker).toHaveText("Off");
 
-      expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type)))).toHaveLength(0);
+      expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String(args.command?.type)))).toHaveLength(0);
       await app.prepareMessage("Use the selected model and effort");
       await app.sendMessageButton.click();
-      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type))).length === 2);
-      expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String(args.command?.type))).length === 2);
+      expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String(args.command?.type))).map(({ args }) => args.command)).toEqual([
         { type: "set_model", provider: "e2e", modelId: "alternate" }, { type: "set_thinking_level", level: "off" },
       ]);
     } finally {

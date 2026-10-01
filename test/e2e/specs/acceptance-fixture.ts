@@ -2,18 +2,48 @@ import { $, browser } from "@wdio/globals";
 import { mkdirSync, readFileSync, renameSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { encodeAgentValue } from "../../../src/lib/agentProtocol.js";
-import type { AppSettings, DefinedAgentsCapability, AgentConfig } from "../../../src/types.js";
+import type { AppSettings, DefinedAgentsCapability } from "../../../src/types.js";
+import { z, appSettingsSchema, modelSchema } from "../../../src/lib/responseSchemas.js";
+import { agentConfigSchema } from "../../../src/lib/agentSchemas.js";
+import { nativeArgumentsSchema, jsonResultSchema } from "../../../src/lib/transportSchemas.js";
 import { app } from "../pageobjects/app.page.js";
 
-export type BackendCall = { command: string; args: Record<string, unknown>; mocked: boolean };
+const backendCallSchema = z.object({ command: z.string(), args: nativeArgumentsSchema.default({}), mocked: z.boolean() });
 
-export const isUserPrompt = (value: unknown) => {
-  const command = value as { type?: string; message?: string } | undefined;
+const responsesSchema = z.record(z.string(), z.unknown());
 
-  return command?.type === "prompt" && !/^\/(?:fast|pi-desktop-fast-status|pi-define-agents-use)(?:\s|$)/.test(command.message ?? "");
+type BackendResponses = z.infer<typeof responsesSchema>;
+
+export type BackendCall = z.infer<typeof backendCallSchema>;
+
+const promptSchema = z.object({ type: z.literal("prompt"), message: z.string().optional() });
+
+type UserPrompt = z.infer<typeof promptSchema>;
+
+const modelsSchema = z.object({ models: z.array(modelSchema).optional() });
+
+const savedSettingsSchema = z.looseObject({ settings: appSettingsSchema.optional() });
+
+const startSchema = z.looseObject({ events: z.array(z.unknown()).optional() });
+
+const clientPreferencesSchema = z.looseObject({ knownModels: z.array(z.string()).default([]), hiddenModels: z.array(z.string()).default([]) });
+
+declare global {
+  interface Window {
+    __e2eClipboard?: string;
+    __TAURI_INTERNALS__: { invoke<T>(command: string, args?: T): Promise<z.infer<typeof jsonResultSchema>> };
+  }
+}
+
+export const isUserPrompt = (value: unknown): value is UserPrompt => {
+  const command = promptSchema.safeParse(value);
+
+  return command.success && !/^\/(?:fast|pi-desktop-fast-status|pi-define-agents-use)(?:\s|$)/.test(command.data.message ?? "");
 };
 
-export const installedAgentConfigPath = join(process.env.PIOP_TEST_HOME || (() => { throw new Error("E2E requires an isolated home"); })(), ".piop", "piop-define-agents", "config.json");
+const testHome = process.env.PIOP_TEST_HOME || (() => { throw new Error("E2E requires an isolated home"); })();
+
+export const installedAgentConfigPath = join(testHome, ".piop", "piop-define-agents", "config.json");
 
 export const callBridge = () => $('textarea[aria-label="E2E calls"]');
 
@@ -24,23 +54,25 @@ export const isolatedUsageResponses = {
   opencode_go_usage: { error: "Usage lookup disabled in conversation fixtures" },
 };
 
-const withKnownModels = (responses: Record<string, unknown>) => {
+const withKnownModels = (responses: BackendResponses) => {
   responses = { ...responses };
-  const models = (responses["pi_command:get_available_models"] as { models?: Array<{ provider: string; id: string }> })?.models ?? [];
+  const models = modelsSchema.parse(responses["pi_command:get_available_models"] ?? {}).models ?? [];
   const known = (settings: AppSettings) => ({ ...settings, knownModels: [...new Set([...(settings.knownModels ?? []), ...models.map(model => `${model.provider}/${model.id}`)])] });
 
-  if (responses.load_app_settings && !(responses.load_app_settings as { error?: unknown }).error) responses.load_app_settings = known(responses.load_app_settings as AppSettings);
-  const saved = responses.save_app_settings as { settings?: AppSettings } | undefined;
+  const settings = appSettingsSchema.safeParse(responses.load_app_settings);
+
+  if (settings.success) responses.load_app_settings = known(settings.data);
+  const saved = savedSettingsSchema.parse(responses.save_app_settings ?? {});
 
   if (saved?.settings) responses.save_app_settings = { ...saved, settings: known(saved.settings) };
 
   return responses;
 };
 
-export const withSessionSnapshot = (responses: Record<string, unknown>) => {
+export const withSessionSnapshot = (responses: BackendResponses) => {
   responses = withKnownModels(responses);
 
-  if (responses.start_pi && agentEvent) responses.start_pi = { ...responses.start_pi as object, events: [agentEvent] };
+  if (responses.start_pi && agentEvent) responses.start_pi = { ...startSchema.parse(responses.start_pi), events: [agentEvent] };
   const state = responses["pi_command:get_state"];
 
   if (!state) return responses;
@@ -48,30 +80,29 @@ export const withSessionSnapshot = (responses: Record<string, unknown>) => {
   return { ...responses, "pi_command:get_session_revision": { revision: "changed" }, "pi_command:get_snapshot": { revision: "snapshot", state, history: responses["pi_command:get_entries"] ?? { entries: [], leafId: null }, queue: { pendingMessages: [] }, liveTools: [], sequence: 0, epoch: "e2e" } };
 };
 
-export const mockBackend = async (responses: Record<string, unknown>) => {
-  const models = (responses["pi_command:get_available_models"] as { models?: Array<{ provider: string; id: string }> })?.models;
+export const mockBackend = async (responses: BackendResponses) => {
+  const models = modelsSchema.parse(responses["pi_command:get_available_models"] ?? {}).models;
 
-  if (models) await browser.execute((ids) => {
-    const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: <T>(command: string, args?: unknown) => Promise<T> } }).__TAURI_INTERNALS__;
+  if (models) {
+    const ids = models.map(model => `${model.provider}/${model.id}`);
+    const stored = await browser.execute(() => window.__TAURI_INTERNALS__.invoke("load_client_settings"));
+    const preferences = clientPreferencesSchema.parse(stored ?? {});
+    preferences.knownModels = [...new Set([...preferences.knownModels, ...ids])];
+    preferences.hiddenModels = preferences.hiddenModels.filter(id => !ids.includes(id));
+    await browser.execute(settings => window.__TAURI_INTERNALS__.invoke("save_client_settings", { settings }), preferences);
+  }
 
-    return tauri.invoke<Record<string, unknown>>("load_client_settings").then(async stored => {
-      const preferences = stored ?? {};
-      preferences.knownModels = [...new Set([...(preferences.knownModels as string[] ?? []), ...ids])];
-      preferences.hiddenModels = (preferences.hiddenModels as string[] ?? []).filter((id: string) => !ids.includes(id));
-      await tauri.invoke("save_client_settings", { settings: preferences });
-    });
-  }, models.map(model => `${model.provider}/${model.id}`));
   await callBridge().setValue("[]");
   await responseBridge().setValue(JSON.stringify(withSessionSnapshot({ ...isolatedUsageResponses, ...responses })));
 
   if (responses.list_sessions) await browser.execute(async () => {
-    const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
+    const tauri = window.__TAURI_INTERNALS__;
     await tauri.invoke("plugin:event|emit", { event: "pi://sessions-changed", payload: {} });
   });
 };
 
 export const withClientSettingsWriteFailure = async (action: () => Promise<void>) => {
-  const path = join(process.env.PIOP_TEST_HOME!, ".piop", "client-settings.json");
+  const path = join(testHome, ".piop", "client-settings.json");
   const backup = `${path}.e2e-backup`;
   renameSync(path, backup);
 
@@ -82,21 +113,17 @@ export const withClientSettingsWriteFailure = async (action: () => Promise<void>
   } finally { renameSync(backup, path); }
 };
 
-export const backendCalls = async () => (JSON.parse(await callBridge().getValue() || "[]") as Partial<BackendCall>[]).filter((call) => call && typeof call === "object").map((call) => ({
-  command: typeof call.command === "string" ? call.command : "",
-  args: call.args && typeof call.args === "object" ? call.args : {},
-  mocked: call.mocked === true,
-}));
+export const backendCalls = async () => z.array(backendCallSchema).parse(JSON.parse(await callBridge().getValue() || "[]"));
 
-export const updateBackendResponse = async (command: string, response: unknown) => {
-  const responses = JSON.parse(await responseBridge().getValue() || "{}") as Record<string, unknown>;
+export const updateBackendResponse = async <T,>(command: string, response: T) => {
+  const responses = responsesSchema.parse(JSON.parse(await responseBridge().getValue() || "{}"));
   await responseBridge().setValue(JSON.stringify(withSessionSnapshot({ ...responses, [command]: response })));
 };
 
 export const resetBackend = async () => {
   const prompts = (await backendCalls()).filter(call => call.mocked && isUserPrompt(call.args.command));
 
-  for (const prompt of prompts) await emitPiEvent({ type: "message_start", message: { role: "user", content: (prompt.args.command as { message: string }).message, timestamp: Date.now() } });
+  for (const prompt of prompts) await emitPiEvent({ type: "message_start", message: { role: "user", content: promptSchema.parse(prompt.args.command).message, timestamp: Date.now() } });
   agentEvent = undefined;
   await callBridge().setValue("[]");
   await responseBridge().setValue(JSON.stringify(isolatedUsageResponses));
@@ -117,9 +144,9 @@ export const resetApp = async () => {
   await app.composer.waitForEnabled();
 };
 
-export const emitPiEvent = async (payload: Record<string, unknown>) => {
+export const emitPiEvent = async (payload: BackendResponses) => {
   await browser.execute(async (event) => {
-    const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
+    const tauri = window.__TAURI_INTERNALS__;
     await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: event });
 
     if (event.type === "agent_end") await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: { type: "agent_settled" } });
@@ -130,11 +157,11 @@ export const emitPiEvent = async (payload: Record<string, unknown>) => {
 export let defaultSettings: AppSettings;
 
 before(async () => {
-  defaultSettings = await browser.execute(async () => {
-    const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: <T>(command: string, args?: unknown) => Promise<T> } }).__TAURI_INTERNALS__;
+  defaultSettings = appSettingsSchema.parse(await browser.execute(async () => {
+    const tauri = window.__TAURI_INTERNALS__;
 
-    return tauri.invoke<AppSettings>("daemon_invoke", { command: "load_app_settings", args: { clientId: "desktop:e2e-settings" } });
-  });
+    return tauri.invoke("daemon_invoke", { command: "load_app_settings", args: { clientId: "desktop:e2e-settings" } });
+  }));
 });
 
 export const acceptanceAgents = (): DefinedAgentsCapability => ({
@@ -149,7 +176,7 @@ export const acceptanceAgents = (): DefinedAgentsCapability => ({
 });
 
 export const installedAgents = (): DefinedAgentsCapability => {
-  const config = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as Partial<AgentConfig>;
+  const config = agentConfigSchema.partial().parse(JSON.parse(readFileSync(installedAgentConfigPath, "utf8")));
   const agents = config.agents ?? [];
 
   return {
@@ -161,7 +188,7 @@ export const installedAgents = (): DefinedAgentsCapability => {
   };
 };
 
-let agentEvent: Record<string, unknown> | undefined;
+let agentEvent: BackendResponses | undefined;
 
 export const enableAgents = async (capability = acceptanceAgents()) => {
   agentEvent = { type: "extension_ui_request", id: "acceptance-agents", method: "setStatus", statusKey: "pi-define-agents", statusText: `json:${encodeAgentValue(capability)}` };
@@ -172,11 +199,16 @@ export const enableAgents = async (capability = acceptanceAgents()) => {
 };
 
 export const setSelectValue = (selector: string, value: string) => browser.execute((target, next) => {
-  const select = document.querySelector<HTMLSelectElement>(target)!; select.value = next; select.dispatchEvent(new Event("change", { bubbles: true }));
+  const select = document.querySelector(target);
+
+  if (!(select instanceof HTMLSelectElement)) throw new Error(`Select not found: ${target}`);
+  select.value = next; select.dispatchEvent(new Event("change", { bubbles: true }));
 }, selector, value);
 
 export const pressShortcut = (shortcut: string) => browser.execute((value) => {
-  const parts = value.split("+"); const modifiers = parts.slice(0, -1).map((part) => part.toLowerCase()); const key = value.endsWith("+") ? "+" : parts.at(-1) === "Space" ? " " : parts.at(-1)!;
+  const parts = value.split("+"); const modifiers = parts.slice(0, -1).map((part) => part.toLowerCase()); const key = value.endsWith("+") ? "+" : parts.at(-1) === "Space" ? " " : parts.at(-1);
+
+  if (!key) throw new Error("Shortcut has no key");
   const mod = modifiers.includes("mod"); const mac = navigator.platform.toLowerCase().includes("mac");
   window.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: modifiers.includes("ctrl") || (mod && !mac), metaKey: modifiers.includes("meta") || (mod && mac), altKey: modifiers.includes("alt"), shiftKey: modifiers.includes("shift"), bubbles: true }));
 }, shortcut);
@@ -191,10 +223,10 @@ export const connectedSessionResponses = (sessionId: string) => ({
   "pi_command:set_auto_compaction": {}, "pi_command:set_auto_retry": {}, "pi_command:set_thinking_level": {},
 });
 
-export const startTemporaryConversation = async (responses: Record<string, unknown>) => {
+export const startTemporaryConversation = async (responses: BackendResponses) => {
   await mockBackend({
     create_temporary_chat: { cwd: "/tmp/acceptance-terminal", sessionId: "acceptance-terminal" },
-    start_pi: {}, stop_pi: {}, list_sessions: [],
+    list_sessions: [],
     load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" },
     ...connectedSessionResponses("acceptance-terminal"),
     "pi_command:set_model": {},

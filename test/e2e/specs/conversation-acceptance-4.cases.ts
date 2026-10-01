@@ -21,8 +21,8 @@ describe("Conversation acceptance", () => {
       await editor.setValue("First line\nSecond line");
       await $('//dialog//button[normalize-space(.)="Continue"]').click();
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { id?: string })?.id === "acceptance-editor-content"));
-      expect((await backendCalls()).find(({ args }) => (args.command as { id?: string })?.id === "acceptance-editor-content")?.args.command).toEqual({ type: "extension_ui_response", id: "acceptance-editor-content", value: "First line\nSecond line" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.id === "acceptance-editor-content"));
+      expect((await backendCalls()).find(({ args }) => args.command?.id === "acceptance-editor-content")?.args.command).toEqual({ type: "extension_ui_response", id: "acceptance-editor-content", value: "First line\nSecond line" });
     } finally {
       await resetBackend();
     }
@@ -34,21 +34,21 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-select", method: "select", title: "Choose a target", options: ["Alpha", "Beta"] });
       await $('//dialog//button[normalize-space(.)="Beta"]').click();
-      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").length === 1);
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").length === 1);
       await expect(app.extensionDialogHeading).not.toBeExisting();
 
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-confirm", method: "confirm", title: "Deploy now?", message: "This will deploy the acceptance build." });
       await expect(app.extensionDialogHeading).toHaveText("Deploy now?");
       await $('//dialog//button[normalize-space(.)="Confirm"]').click();
-      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").length === 2);
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").length === 2);
       await expect(app.extensionDialogHeading).not.toBeExisting();
 
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-editor", method: "editor", title: "Edit release notes", prefill: "Initial notes" });
       await expect($('textarea[aria-label="Edit release notes"]')).toHaveValue("Initial notes");
       await $('//dialog//button[normalize-space(.)="Cancel"]').click();
 
-      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").length === 3);
-      expect((await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").map(({ args }) => args.command)).toEqual([
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").length === 3);
+      expect((await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").map(({ args }) => args.command)).toEqual([
         { type: "extension_ui_response", id: "acceptance-select", value: "Beta" },
         { type: "extension_ui_response", id: "acceptance-confirm", confirmed: true },
         { type: "extension_ui_response", id: "acceptance-editor", cancelled: true },

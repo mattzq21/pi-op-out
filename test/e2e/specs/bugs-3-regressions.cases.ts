@@ -43,7 +43,7 @@ describe("BUGS-3 regressions", () => {
 
   it("isolates drafts and terminals between fresh conversations", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
-    await mockBackend({ create_temporary_chat: { cwd: "/tmp/bugs3-fresh", sessionId: "bugs3-fresh" }, start_pi: {}, stop_pi: {}, list_sessions: [], load_app_settings: settings, ...connectedSessionResponses(""), "pi_command:set_model": {}, start_terminal: {}, resize_terminal: {} });
+    await mockBackend({ create_temporary_chat: { cwd: "/tmp/bugs3-fresh", sessionId: "bugs3-fresh" }, list_sessions: [], load_app_settings: settings, ...connectedSessionResponses(""), "pi_command:set_model": {}, start_terminal: {}, resize_terminal: {} });
 
     try {
       await $('button[aria-label="New conversation"]').click();
