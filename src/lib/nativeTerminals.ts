@@ -9,7 +9,8 @@ class NativeTerminals {
   private starts = new Map<string, Promise<void>>();
   private hosts = new Map<string, string>();
   private clientId = crypto.randomUUID();
-  private transcripts = new Map<string, { generation: string; outputEnd: number; output: string }>();
+  private transcripts = new Map<string, { generation: string; outputEnd: number; output: string; sessionKey: string; hostId: string }>();
+  private cacheRevision = 0;
   private reassignments = new Map<string, Promise<void>>();
 
   constructor(private call: NativeCall) {}
@@ -20,11 +21,23 @@ class NativeTerminals {
 
   async list(sessionKey: string, hostId: string) {
     await this.reassignments.get(sessionKey);
-    const known = Object.fromEntries([...this.transcripts].map(([id, value]) => [id, { generation: value.generation, outputEnd: value.outputEnd }]));
+    const revision = this.cacheRevision;
+    const cached = new Map([...this.transcripts].filter(([, value]) => value.sessionKey === sessionKey && value.hostId === hostId));
+    const known = Object.fromEntries([...cached].map(([id, value]) => [id, { generation: value.generation, outputEnd: value.outputEnd }]));
     const response = await this.call("shared_terminal", { action: "list", sessionKey, hostId, known, terminalClientId: this.clientId }, sharedTerminalsSchema);
-    const terminals = response.map(terminal => ({ ...terminal, output: terminal.output ?? this.transcripts.get(terminal.id)?.output ?? "" }));
-    for (const terminal of terminals) this.transcripts.set(terminal.id, terminal);
-    for (const terminal of terminals) this.hosts.set(terminal.id, hostId);
+    if (revision !== this.cacheRevision) return this.list(sessionKey, hostId);
+    const terminals = response.map(terminal => ({ ...terminal, output: terminal.output ?? cached.get(terminal.id)?.output ?? "" }));
+    const ids = new Set(terminals.map(terminal => terminal.id));
+    for (const [id, value] of this.transcripts) {
+      if (value.sessionKey === sessionKey && value.hostId === hostId && !ids.has(id)) {
+        this.transcripts.delete(id);
+        this.hosts.delete(id);
+      }
+    }
+    for (const terminal of terminals) {
+      this.transcripts.set(terminal.id, { ...terminal, sessionKey, hostId });
+      this.hosts.set(terminal.id, hostId);
+    }
     return terminals;
   }
 
@@ -63,7 +76,12 @@ class NativeTerminals {
 
   reassign(terminalId: string, sessionKey: string) {
     const pending = Promise.all([this.starts.get(terminalId), this.reassignments.get(sessionKey)])
-      .then(() => this.command("reassign", terminalId, { sessionKey }));
+      .then(() => this.command("reassign", terminalId, { sessionKey }))
+      .then(() => {
+        this.cacheRevision += 1;
+        const cached = this.transcripts.get(terminalId);
+        if (cached) this.transcripts.set(terminalId, { ...cached, sessionKey });
+      });
     this.reassignments.set(sessionKey, pending);
     const clear = () => { if (this.reassignments.get(sessionKey) === pending) this.reassignments.delete(sessionKey); };
     void pending.then(clear, clear);
@@ -75,7 +93,10 @@ class NativeTerminals {
     await this.writes.get(terminalId)?.catch(() => undefined);
     this.writes.delete(terminalId);
 
-    return this.command("close", terminalId);
+    await this.command("close", terminalId);
+    this.cacheRevision += 1;
+    this.transcripts.delete(terminalId);
+    this.hosts.delete(terminalId);
   }
 }
 
