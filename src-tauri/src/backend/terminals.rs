@@ -86,15 +86,16 @@ pub(super) fn start_terminal_with(runtime: &TerminalRuntime, launch: TerminalLau
             if let Ok(values) = terminal_processes.lock() {
                 if values.get(&event_id).is_some_and(|process| process.generation == generation) {
                     terminal_lookup::record(&terminal_history, &event_id, packet["data"].as_str().unwrap_or_default());
-                    emit(packet);
+                    emit(terminal_lookup::event(&terminal_history, &event_id, packet));
                 }
             }
         });
         let finished = terminal_processes.lock().ok().and_then(|mut values| {
             if !values.get(&event_id).is_some_and(|process| process.generation == generation) { return None; }
             let process = values.remove(&event_id);
+            let packet = terminal_lookup::event(&terminal_history, &event_id, json!({ "type": "terminal_exit", "terminalId": event_id }));
             terminal_lookup::finish(&terminal_history, &event_id);
-            emit(json!({ "type": "terminal_exit", "terminalId": event_id }));
+            emit(packet);
             process
         });
         if let Some(mut process) = finished { let _ = process.child.wait(); }

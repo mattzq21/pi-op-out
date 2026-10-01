@@ -63,6 +63,7 @@ impl Connection {
         let mut host_id = None;
         for kind in ["runtimeId", "terminalId"] {
             if let Some(wire_id) = payload[kind].as_str() {
+                if kind == "terminalId" && wire_id.starts_with("shared-terminal-") { continue; }
                 let Some(id) = wire_id.strip_prefix(&self.prefix).map(str::to_owned) else { return Err(()); };
                 let route = state.routes.lock().ok().and_then(|routes| routes.get(&(kind.into(), id.clone())).cloned());
                 let Some(route) = route.filter(|route| std::ptr::eq(Arc::as_ptr(&route.connection), self)) else { return Err(()); };

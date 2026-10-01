@@ -56,6 +56,22 @@ pub(crate) fn record(history: &Mutex<HashMap<String, Transcript>>, id: &str, dat
     }
 }
 
+pub(super) fn event(history: &Mutex<HashMap<String, Transcript>>, id: &str, mut packet: Value) -> Value {
+    if let Ok(history) = history.lock() {
+        if let Some(item) = history.get(id) {
+            packet["sessionId"] = json!(item.session_id);
+            packet["hostId"] = json!(item.host_id);
+            packet["generation"] = json!(item.generation.to_string());
+            packet["outputEnd"] = json!(item.text_end);
+        }
+    }
+    packet
+}
+
+fn changed(app: &AppHandle, session_id: &str) {
+    let _ = app.emit("pi://event", json!({"type":"terminal_changed","sessionId":session_id,"hostId":"local"}));
+}
+
 pub(crate) fn finish(history: &Mutex<HashMap<String, Transcript>>, id: &str) {
     if let Ok(mut history) = history.lock() {
         if let Some(item) = history.get_mut(id) { item.running = false; }
@@ -130,6 +146,7 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
             terminal_id: id.into(), session_key: format!("local:{session_id}"), cwd: request["cwd"].as_str().ok_or("Missing working directory")?.into(),
             cols: dimension(request, "cols")?, rows: dimension(request, "rows")?, host_id: Some("local".into()),
         })?;
+        changed(app, session_id);
         return Ok(Value::Null);
     }
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime unavailable")?;
@@ -138,9 +155,13 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
         return Ok(Value::Null);
     }
     let item = history.get_mut(id).ok_or("Terminal is unavailable")?;
+    let previous_session = item.session_id.clone();
     if action == "claim" {
         item.owner = owner.clone();
         if let Some(process) = processes.get_mut(id) { process.window_label = owner; }
+        drop(history);
+        drop(processes);
+        changed(app, &previous_session);
         return Ok(Value::Null);
     }
     if item.owner != owner { return Err("Click the terminal to take ownership".into()); }
@@ -156,6 +177,10 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
         "reassign" => {
             item.session_id = session_id.into();
             if let Some(process) = processes.get_mut(id) { process.session_key = format!("local:{session_id}"); }
+            drop(history);
+            drop(processes);
+            changed(app, &previous_session);
+            if session_id != previous_session { changed(app, session_id); }
         }
         "close" => {
             let process = processes.remove(id);
@@ -163,6 +188,7 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
             drop(history);
             drop(processes);
             if let Some(mut process) = process { let _ = process.child.kill(); let _ = process.child.wait(); }
+            changed(app, &previous_session);
         }
         _ => return Err("Unknown terminal action".into()),
     }

@@ -3,8 +3,8 @@ import { appendTerminalOutputs, initialTerminals, MAX_TERMINALS, terminalConvers
 import { reassignTerminals } from "./appRuntime";
 import type { NativeTransport } from "./lib/nativeTransport";
 import { createMemoFields, createRef } from "./lib/solid";
-import { TERMINAL_OUTPUT_LIMIT } from "./lib/terminalOutput";
-import { nativeTerminals } from "./lib/nativeTerminals";
+import { appendTerminalOutput, TERMINAL_OUTPUT_LIMIT } from "./lib/terminalOutput";
+import { nativeTerminals, type TerminalEvent } from "./lib/nativeTerminals";
 
 type TerminalContext = {
   transport: Accessor<NativeTransport>;
@@ -45,11 +45,13 @@ export function createTerminalController({ transport, conversationKey, location,
     const hostId = terminalLocationState().terminalHostId;
     if (!terminalOpen()) return;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
+    let unlisten: (() => void) | undefined;
+    let dirty = false;
+    let buffered: TerminalEvent[] = [];
     let pending: Promise<void> | undefined;
     let reportedError = false;
     const refresh = () => {
-      if (pending) return pending;
+      if (pending) { dirty = true; return pending; }
       pending = nativeTerminals.list(key, hostId).then(tabs => {
         if (cancelled) return;
         setTerminalsBySession(current => {
@@ -76,13 +78,45 @@ export function createTerminalController({ transport, conversationKey, location,
           if (!reportedError) addNotice({ title: "Could not sync terminals", message: String(reason) });
           reportedError = true;
         }
-      }).finally(() => { pending = undefined; });
+      }).finally(() => {
+        pending = undefined;
+        if (cancelled) return;
+        const events = buffered; buffered = [];
+        for (const event of events) handleEvent(event);
+        if (dirty) { dirty = false; void refresh(); }
+      });
       return pending;
     };
     refreshShared = async () => { await pending; if (!cancelled) await refresh(); };
-    const poll = async () => { await refresh(); if (!cancelled) timer = setTimeout(poll, 250); };
-    void poll();
-    onCleanup(() => { cancelled = true; clearTimeout(timer); setReadySession(undefined); });
+    const handleEvent = (event: TerminalEvent) => {
+      if (cancelled || (event.hostId ?? "local") !== hostId || event.sessionId !== key.slice(key.lastIndexOf(":") + 1)) return;
+      if (event.type === "terminal_changed") { void refresh(); return; }
+      if (pending) {
+        if (buffered.length < 512) buffered.push(event); else dirty = true;
+        return;
+      }
+      let resync = false;
+      setTerminalsBySession(current => {
+        const session = current[key];
+        const tab = session?.tabs.find(value => value.id === event.terminalId);
+        if (!tab || tab.generation !== event.generation) { resync = true; return current; }
+        if (event.type === "terminal_exit") {
+          return { ...current, [key]: { ...session, tabs: session.tabs.map(value => value.id === tab.id ? { ...value, exited: true } : value) } };
+        }
+        if (event.type !== "terminal_output" || event.outputEnd === undefined || event.data === undefined || event.outputEnd <= tab.outputEnd) return current;
+        const start = event.outputEnd - event.data.length;
+        if (start > tab.outputEnd) { resync = true; return current; }
+        const data = event.data.slice(tab.outputEnd - start);
+        return { ...current, [key]: { ...session, tabs: session.tabs.map(value => value.id === tab.id ? { ...value, ...appendTerminalOutput(value.output, value.outputEnd, data, data.length) } : value) } };
+      });
+      if (resync) void refresh();
+    };
+    void nativeTerminals.listen(handleEvent).then(stop => {
+      if (cancelled) { stop(); return; }
+      unlisten = stop;
+      void refresh();
+    }).catch(reason => { if (!cancelled) addNotice({ title: "Could not subscribe to terminals", message: String(reason) }); });
+    onCleanup(() => { cancelled = true; unlisten?.(); buffered = []; setReadySession(undefined); });
   });
   const takeOwnership = async () => {
     try { await nativeTerminals.claim(state.activeTerminal.id); await refreshShared(); }

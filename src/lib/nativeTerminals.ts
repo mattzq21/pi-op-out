@@ -1,6 +1,10 @@
 import { voidResultSchema } from "./responseSchemas";
 import { nativeCall, type NativeCall } from "./nativeCall";
 import { z } from "zod";
+import { listen } from "./platform";
+
+const terminalEventSchema = z.object({ type: z.string().optional(), hostId: z.string().optional(), sessionId: z.string().optional(), terminalId: z.string().optional(), generation: z.string().optional(), outputEnd: z.number().optional(), data: z.string().optional() }).catch({});
+export type TerminalEvent = z.infer<typeof terminalEventSchema>;
 
 const sharedTerminalsSchema = z.array(z.object({ id: z.string(), output: z.string().nullable(), outputEnd: z.number(), generation: z.string(), owned: z.boolean(), started: z.boolean(), exited: z.boolean() }));
 type SharedTerminal = z.infer<typeof sharedTerminalsSchema>[number] & { output: string };
@@ -15,6 +19,10 @@ class NativeTerminals {
   private reassignments = new Map<string, Promise<void>>();
 
   constructor(private call: NativeCall) {}
+
+  listen(onEvent: (event: TerminalEvent) => void) {
+    return listen("pi://event", event => { if (event.payload.type?.startsWith("terminal_")) onEvent(event.payload); }, terminalEventSchema);
+  }
 
   private command(action: string, terminalId: string, args: Record<string, unknown> = {}) {
     return this.call("shared_terminal", { action, sharedTerminalId: terminalId, terminalClientId: this.clientId, hostId: this.hosts.get(terminalId) ?? "local", ...args }, voidResultSchema);
