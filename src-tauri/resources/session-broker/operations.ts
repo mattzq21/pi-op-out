@@ -1,10 +1,9 @@
-import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type as Schema } from "typebox";
-import { Check, Parse } from "typebox/value";
+import { Check } from "typebox/value";
 import { resolve } from "node:path";
 import { currentHost, request, MESSAGE_TIMEOUT_MS } from "./client.ts";
-import { forkConversation, type ForkOptions, createdWorktreeSchema } from "./fork.ts";
+import { forkConversation } from "./fork.ts";
 
 const branchRequestSchema = Schema.Object({ id: Schema.String(), entryId: Schema.String() });
 
@@ -63,25 +62,7 @@ export function registerForkAndForget(pi: ExtensionAPI) {
 }
 
 export function registerSessionOperations(pi: ExtensionAPI) {
-  const create = async (ctx: ExtensionContext, name: string, signal?: AbortSignal) => Parse(createdWorktreeSchema, await request("/worktrees/create", { hostId: currentHost(), cwd: ctx.cwd, name }, signal, MESSAGE_TIMEOUT_MS));
-
-  const fork = (ctx: ExtensionContext, options: ForkOptions, signal?: AbortSignal) => { signal?.throwIfAborted();
-
-  return forkConversation(ctx, options, (name) => create(ctx, name, signal)); };
-
   const remove = (cwd: string, deleteBranch = false, signal?: AbortSignal) => request("/worktrees/remove", { hostId: currentHost(), cwd, deleteBranch }, signal, MESSAGE_TIMEOUT_MS);
-  const result = <T,>(data: T): AgentToolResult<T> => ({ content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: data });
-  pi.registerTool({
-    name: "fork_session", label: "Fork conversation",
-    description: "Create a separate saved conversation through a completed assistant response. Works with or without Git. Defaults to the latest completed response (empty history if none). Keeps the current agent running. Optionally create a new directory or a Git worktree with current files. Existing destination paths are rejected. Returns hostId/sessionId for send_message; does not start the child.",
-    parameters: Type.Object({ cwd: Type.Optional(Type.String({ description: "New destination directory to create; its parent must exist and the destination must not exist. Omit to use the current directory. Files are not copied." })), worktree: Type.Optional(Type.String({ description: "New Git worktree name; mutually exclusive with cwd" })), entryId: Type.Optional(Type.String({ description: "Completed assistant entry on the current branch" })) }),
-    async execute(_id, params, signal, _update, ctx) { return result(await fork(ctx, params, signal)); },
-  });
-  pi.registerTool({
-    name: "create_worktree", label: "Create Git worktree", description: "Create a Git branch and worktree from current files, including uncommitted and nonignored untracked files, then run configured setup scripts. Does not create a conversation. Requires a Git project. Setup failures return the kept path and setupError.",
-    parameters: Type.Object({ name: Type.String() }),
-    async execute(_id, params, signal, _update, ctx) { return result(await create(ctx, params.name, signal)); },
-  });
 
   const report = async <T,>(ctx: ExtensionContext, operation: () => Promise<T>) => {
     try { pi.sendMessage({ customType: "piop-session-operation", content: JSON.stringify(await operation(), null, 2), display: true }, { triggerTurn: false }); }
