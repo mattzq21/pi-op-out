@@ -125,6 +125,7 @@ fn control_extension(command: &str) -> Option<&'static str> {
         "runtime_settings" => Some("piop-runtime-settings"),
         "branch_checkpoint" => Some("pi-desktop-branch-checkpoint"),
         "fork_and_forget" => Some("pi-desktop-fork-and-forget"),
+        "rollback_and_forget" => Some("pi-desktop-rollback-and-forget"),
         "fork_after" => Some("pi-desktop-fork-after"),
         _ => None,
     }

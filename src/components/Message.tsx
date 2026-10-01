@@ -17,7 +17,7 @@ import { ZoomableImage } from "./ZoomableImage";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
 import type { FileReference } from "../lib/projectFiles";
 
-interface Props { message: ChatMessage; onOpenFile?: (file: FileReference) => void; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; onOpenFile?: (file: FileReference) => void; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; canRollback?: boolean; onForkAndForget?: (message: ChatMessage, restoreWorktree?: boolean) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
 function cacheTokenDigits(tokens: number) {
   const groups = String(tokens).match(/\d{1,3}(?=(?:\d{3})*$)/g) ?? [];
@@ -187,12 +187,12 @@ export function Message(componentProps: Props) {
       try { await (capturedOnBranch0)(capturedMessage1); } finally { branchingRef.current = false; setBranching(false); }
     };
 
-    const forkAndForget = async () => { const capturedOnForkAndForget0 = componentProps.onForkAndForget; const capturedMessage1 = componentProps.message;
+    const forkAndForget = async (restoreWorktree = false) => { const capturedOnForkAndForget0 = componentProps.onForkAndForget; const capturedMessage1 = componentProps.message;
 
       if (!capturedOnForkAndForget0 || branchingRef.current || forgettingRef.current) return;
       forgettingRef.current = true; setForgetting(true);
 
-      try { await (capturedOnForkAndForget0)(capturedMessage1); } finally { forgettingRef.current = false; setForgetting(false); }
+      try { await (capturedOnForkAndForget0)(capturedMessage1, restoreWorktree); } finally { forgettingRef.current = false; setForgetting(false); }
     };
 
     const renderMessageBody = () => {
@@ -215,6 +215,7 @@ export function Message(componentProps: Props) {
           {renderCacheHitRate()}
           {metadata().responseTime && <span class="message-time">{required((metadata().responseTime)).short}</span>}
           {renderForkAndForgetAction()}
+          {componentProps.canRollback && componentProps.onForkAndForget && <button class="branch-button rollback-and-forget-button" aria-label="Branch and forget from here" title="Branch and forget: restore worktree after this response" disabled={branching() || forgetting()} onClick={() => void forkAndForget(true)}><FolderGit2 size={14} /></button>}
         </div>);
       };
 

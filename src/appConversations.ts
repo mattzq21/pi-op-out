@@ -368,7 +368,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const conversationBusy = () => chatSession().state.isStreaming || chatSession().state.isPausing || chatSession().state.pendingMessageCount;
 
-  const forkAndForget = async (message: ChatMessage) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() };
+  const forkAndForget = async (message: ChatMessage, restoreWorktree = false) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() };
     const ownerTransport = capturedTransport; const ownerKey = activeConversationKeyRef.current;
     const entryId = message.entryId;
 
@@ -383,7 +383,7 @@ export function createAppConversations(preloadChat: () => void) {
 
     try {
       if (conversationBusy()) throw new Error("Wait for the current response and queued messages to finish first");
-      const result = await ownerTransport.command({ type: "fork_and_forget", entryId }, z.object({ cancelled: z.boolean().optional() }));
+      const result = await ownerTransport.command({ type: restoreWorktree ? "rollback_and_forget" : "fork_and_forget", entryId }, z.object({ cancelled: z.boolean().optional() }));
 
       if (result.cancelled) return;
 

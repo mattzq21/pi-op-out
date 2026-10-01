@@ -167,7 +167,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       if (thinkingResult) session.setThinkingLevels(thinkingResult.levels);
 
       if (commandResult) {
-        const visible = commandResult.commands.filter((command) => command.sourceInfo?.source !== "inline" && !command.name.startsWith("pi-orchestration-") && !["pi-desktop-control", "pi-desktop-fast-status", "pi-desktop-fork-and-forget", "mcp-status", "piop-runtime-settings", "pi-provider-auth-refresh"].includes(command.name));
+        const visible = commandResult.commands.filter((command) => command.sourceInfo?.source !== "inline" && !command.name.startsWith("pi-orchestration-") && !["pi-desktop-control", "pi-desktop-fast-status", "pi-desktop-fork-and-forget", "pi-desktop-rollback-and-forget", "mcp-status", "piop-runtime-settings", "pi-provider-auth-refresh"].includes(command.name));
         session.setCommands(visible.some((command) => command.name === "compact") ? visible : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visible]);
       }
     };

@@ -1,4 +1,5 @@
 import { entrySchema } from "../lib/responseSchemas";
+import { createRepositoryStatus } from "../lib/repositoryStatus";
 import { required } from "../lib/required";
 import { extensionUiSchema } from "../lib/extensionUiSchema";
 import { inheritSessionGroup } from "../lib/sessionGroups";
@@ -31,6 +32,7 @@ export function SplitChatPane(componentProps: Props) {
   const gitDiffs = useTurnDiffs(() => (componentProps.runtimePool), () => (transport())); const runtime = useChatSession(() => (transport()), () => (initialState(componentProps.session)));
   const session = createMemo(() => (runtime)); const [error, setError] = createSignal<string>(); const [connected, setConnected] = createSignal(false);
   const [controlError, setControlError] = createSignal<string>();
+  const isGitRepository = createRepositoryStatus(transport, () => componentProps.session.projectKind, () => session().messages, () => session().state.isStreaming);
   const draftRef = createRef(componentProps.draft); createComputed(() => { draftRef.current = componentProps.draft; });
   const connectedRef = createRef(connected()); createComputed(() => { connectedRef.current = connected(); });
   const updateConnected = (value: boolean) => { connectedRef.current = value; setConnected(value); };
@@ -247,7 +249,7 @@ export function SplitChatPane(componentProps: Props) {
  if (result.cancelled) return; const nextState = await capturedSession.refresh(); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport); const history = await capturedTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) })); await capturedRuntimePool0.copySavedDiffs(capturedTransport, sourcePath, capturedTransport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)), sourceDiffs); } catch (reason) { reportControlError(reason); } finally { finishBranching(); } };
 
   const forgettingRef = createRef(false);
-  const forkAndForget = async (message: ChatMessage) => {
+  const forkAndForget = async (message: ChatMessage, restoreWorktree = false) => {
     if (forgettingRef.current) return;
     const capturedTransport = transport();
     const capturedSession = session();
@@ -257,7 +259,7 @@ export function SplitChatPane(componentProps: Props) {
       if (!message.entryId) throw new Error("Could not find the selected assistant response");
       const state = capturedSession.state;
       if (state.isStreaming || state.isPausing || state.pendingMessageCount) throw new Error("Wait for the current response and queued messages to finish first");
-      const result = await capturedTransport.command({ type: "fork_and_forget", entryId: message.entryId }, z.object({ cancelled: z.boolean().optional() }));
+      const result = await capturedTransport.command({ type: restoreWorktree ? "rollback_and_forget" : "fork_and_forget", entryId: message.entryId }, z.object({ cancelled: z.boolean().optional() }));
       if (result.cancelled) return;
       capturedSession.discardPendingUpdates();
       await capturedSession.refresh();
@@ -284,7 +286,7 @@ export function SplitChatPane(componentProps: Props) {
   const chatAgents = createMemo(() => (definedAgents()?.config.agents ?? []));
   const chatWidgets = createMemo(() => Object.values(widgets()).flat());
 
-  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} gitDiffs={gitDiffs()} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} models={chatModels()} commands={session().commands} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), definedAgents()?.config.fastModeModels)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={componentProps.onDraftChange} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={branch} onForkAndForget={forkAndForget} onAgent={(name) => void transport().command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(name)}` }).then(() => { transport().promptControls.reset();
+  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} gitDiffs={gitDiffs()} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} models={chatModels()} commands={session().commands} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), definedAgents()?.config.fastModeModels)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={componentProps.onDraftChange} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={branch} canRollback={Boolean(isGitRepository())} onForkAndForget={forkAndForget} onAgent={(name) => void transport().command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(name)}` }).then(() => { transport().promptControls.reset();
 
   return session().refresh(); }).catch(reportControlError)} onModel={(model) => transport().promptControls.model(model, transport().promptControls.state(session().state).thinkingLevel)} onToggleFastMode={() => transport().promptControls.toggle(statuses())} onThinking={(level) => transport().promptControls.thinking(level)} />);
 
