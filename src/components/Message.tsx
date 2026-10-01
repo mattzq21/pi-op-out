@@ -212,7 +212,7 @@ export function Message(componentProps: Props) {
           {renderBranchAction()}
           {renderForkAndForgetAction()}
 
-          {componentProps.onCreateWorktree && <button class="branch-button" aria-label="Worktree" title="Worktree" onClick={() => required(componentProps.onCreateWorktree)(componentProps.message)}><FolderGit2 size={14} /></button>}
+          {componentProps.onCreateWorktree && <button class="branch-button" aria-label="Branch" title="Branch" onClick={() => required(componentProps.onCreateWorktree)(componentProps.message)}><FolderGit2 size={14} /></button>}
           {renderCacheHitRate()}
           {metadata().responseTime && <span class="message-time">{required((metadata().responseTime)).short}</span>}
         </div>);
