@@ -18,6 +18,7 @@ const terminalSizeSchema = z.tuple([z.literal(8), z.number().int().min(1).max(65
 
 export function DesktopTerminalView(componentProps: TerminalViewProps) {
   const [copyError, setCopyError] = createSignal(false);
+  const outputWrites = createRef(Promise.resolve());
   const host = createRef<HTMLDivElement>(null); const terminal = createRef<Terminal | undefined>(undefined); const lastOutputEnd = createRef(0); const queuedOutputEnd = createRef(0); const tabRefs = createRef(new Map<string, HTMLButtonElement>());
   const callbacks = createRef({ onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }); createComputed(() => { callbacks.current = { onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }; });
 
@@ -64,8 +65,16 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
 
     if (!componentProps.started) fit.fit();
     let restored = !capturedSnapshot1;
+    outputWrites.current = Promise.resolve();
 
-    if (capturedSnapshot1) { queuedOutputEnd.current = capturedSnapshotEnd2 ?? 0; instance.write((capturedSnapshot1), () => { if (terminal.current !== instance) return; lastOutputEnd.current = capturedSnapshotEnd2 ?? 0; restored = true; }); }
+    if (capturedSnapshot1) {
+      queuedOutputEnd.current = capturedSnapshotEnd2 ?? 0;
+      outputWrites.current = new Promise<void>(resolve => instance.write(capturedSnapshot1, () => {
+        if (terminal.current === instance) { lastOutputEnd.current = capturedSnapshotEnd2 ?? 0; restored = true; }
+
+        resolve();
+      }));
+    }
 
     instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
     requestAnimationFrame(() => { if (terminal.current === instance && !componentProps.ownershipRequired) instance.focus(); });
@@ -117,7 +126,20 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     const outputStart = capturedOutputEnd0 - capturedOutput1.length;
     const parsed = () => { if (terminal.current === instance) lastOutputEnd.current = capturedOutputEnd0; };
 
-    if (queuedOutputEnd.current >= outputStart && queuedOutputEnd.current <= capturedOutputEnd0) instance.write(capturedOutput1.slice(queuedOutputEnd.current - outputStart), parsed); else { instance.reset(); instance.write(capturedOutput1, parsed); }
+    if (capturedOutputEnd0 <= queuedOutputEnd.current) return;
+
+    const reset = queuedOutputEnd.current < outputStart;
+    const data = reset ? capturedOutput1 : capturedOutput1.slice(queuedOutputEnd.current - outputStart);
+    outputWrites.current = outputWrites.current.then(() => new Promise<void>(resolve => {
+      if (terminal.current !== instance) {
+        resolve();
+
+        return;
+      }
+
+      if (reset) instance.reset();
+      instance.write(data, () => { parsed(); resolve(); });
+    }));
 
     queuedOutputEnd.current = capturedOutputEnd0;
   }, () => [componentProps.output, componentProps.outputEnd]);

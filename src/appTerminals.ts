@@ -72,7 +72,10 @@ export function createTerminalController({ transport, sessionTransport, conversa
           const merged: SessionTerminals["tabs"] = tabs.map(tab => {
             queuedTerminalOutput.current.delete(tab.id);
             const old = previous?.tabs.find(value => value.id === tab.id && value.generation === tab.generation);
-            return { ...old, ...tab };
+
+            return old && old.outputEnd > tab.outputEnd
+              ? { ...old, ...tab, output: old.output, outputEnd: old.outputEnd }
+              : { ...old, ...tab };
           });
           for (const tab of previous?.tabs ?? []) {
             if (!tab.generation && !merged.some(value => value.id === tab.id) && (!tab.started || startingTerminals.current.has(tab.id))) merged.push(tab);
