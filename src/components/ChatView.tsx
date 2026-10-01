@@ -443,6 +443,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const retryTurn = createMemo(() => (componentProps.retryable ? findReplaceableAbortedTurn(componentProps.messages) : undefined));
   const retryPrompt = createMemo(() => (retryTurn()?.prompt));
   const retryImages = createMemo(() => (retryAttachments(retryTurn())));
+
   const firstResponseInputTokens = createMemo(() => {
     const earlyTokens = componentProps.promptContexts[0]?.inputTokens;
 
