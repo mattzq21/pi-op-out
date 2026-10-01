@@ -30,7 +30,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     if (!capturedCwd0 || !host.current || !terminalMount.current) return;
     const testPalette = import.meta.env.MODE === "e2e";
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
-    const instance = new Terminal({ cursorBlink: true, convertEol: false, fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 12, lineHeight: 1.25, scrollback: 5000, theme: { ...terminalTheme, cursor: accent, yellow: testPalette ? "#d46a24" : terminalTheme.yellow } });
+    const instance = new Terminal({ windowOptions: { setWinSizeChars: true }, cursorBlink: true, convertEol: false, fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 12, lineHeight: 1.25, scrollback: 5000, theme: { ...terminalTheme, cursor: accent, yellow: testPalette ? "#d46a24" : terminalTheme.yellow } });
     const fit = new FitAddon(); const serializer = new SerializeAddon(); instance.loadAddon(fit); instance.loadAddon(serializer); instance.open(terminalMount.current); terminal.current = instance;
     setCopyError(false);
     instance.attachCustomKeyEventHandler((event) => {
