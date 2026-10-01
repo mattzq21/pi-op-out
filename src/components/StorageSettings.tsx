@@ -12,9 +12,9 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
   "archived-conversations": { name: "Archived conversations", description: "Archived chats and their diff histories", icon: Archive, item: "conversation" },
   "project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects retained only by piop checkpoint refs", icon: GitBranch, item: "ref" },
   "git-diff-snapshots": { name: "Diff snapshots", description: "Temporary Git state used to calculate turn diffs", icon: Camera, item: "snapshot" },
-  "temporary-chats": { name: "No-project conversations", description: "Projectless conversation working directories", icon: FolderClock, item: "directory" },
+  "temporary-chats": { name: "No-project conversations", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
   "worktrees": { name: "Worktrees", description: "Working copies, including dependencies and build outputs", icon: GitBranch, item: "worktree" },
-  "archived-worktrees": { name: "Archived directories", description: "Preserved working directories for non-repository chats", icon: Archive, item: "directory" },
+  "archived-worktrees": { name: "No-project conversations", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
   "other-storage": { name: "Other storage", description: "Settings, caches, logs, and other piop files", icon: HardDrive, item: "directory" },
 };
 
