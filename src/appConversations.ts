@@ -1,6 +1,5 @@
 import { createRepositoryStatus } from "./lib/repositoryStatus";
 import { z } from "zod";
-import { agentStateSchema, entrySchema } from "./lib/responseSchemas";
 import { required } from "./lib/required";
 import { batch,createComputed,createMemo,createSignal } from "solid-js";
 import { createConversationArchive } from "./appArchive";
@@ -19,14 +18,13 @@ import { type SessionAction } from "./components/SessionPanel";
 import type { MissingDirectoryRequest } from "./components/MissingDirectoryDialog";
 import { encodeAgentValue } from "./lib/agentProtocol";
 import { isConversationChanged } from "./lib/conversationChanged";
-import { branchMessages } from "./lib/messages";
 import { initialWindowTarget,NativeTransport,openSessionWindow } from "./lib/nativeTransport";
 import { seedChatSelection } from "./lib/newChatSelection";
 import { chatSubmission,prepareChatWorktree } from "./lib/newChatWorktree";
 import { resolveNewSessionBranch } from "./lib/newSessionBranch";
 import { isMobile,listen } from "./lib/platform";
 import { sessionDebugAction } from "./lib/sessionDebugAction";
-import { inheritSessionGroup,updateSessionGroups,type SessionGroup } from "./lib/sessionGroups";
+import { updateSessionGroups,type SessionGroup } from "./lib/sessionGroups";
 import { createCachedSessionList } from "./lib/sessionListCache";
 import { useSessionResume } from "./lib/sessionResume";
 import { SessionRuntimePool,useTurnDiffs } from "./lib/sessionRuntimePool";
@@ -555,39 +553,6 @@ export function createAppConversations(preloadChat: () => void) {
 
   const archiveSession = archives.archiveSession;
 
-  const cloneSelectedSession = async (session: SessionSummary, selectedTransport: NativeTransport) => { const capturedRuntimePool = runtimePool(); const capturedSession = { ...chatSession() };
-    const hostId = session.hostId ?? "local";
-    const sourcePath = session.path; const previousKey = `${hostId}:${session.id}`;
-
-    try { await selectedTransport.connect(); const sourceDiffs = await capturedRuntimePool.captureMemoryDiffs(selectedTransport); const cloned = await selectedTransport.command({ type: "clone" }, z.object({ cancelled: z.boolean().optional() }));
-
-      if (cloned.cancelled) return; const nextState = await selectedTransport.command({ type: "get_state" }, agentStateSchema); await inheritSessionGroup(previousKey, `${hostId}:${nextState.sessionId}`, session); capturedRuntimePool.bind(hostId, nextState.sessionId, selectedTransport); rekeyConversationUi(previousKey, `${hostId}:${nextState.sessionId}`, selectedTransport, true, true);
-
-      if (!selectedTransport.isEphemeral()) { const sourceTransport = capturedRuntimePool.forSession(session); drafts.copyUploads(selectedTransport, sourceTransport); }
-
-      const history = await selectedTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) })); const nextMessages = branchMessages(history.entries, history.leafId);
-
-      if (activeTransportRef.current === selectedTransport) { capturedSession.setState(nextState); capturedSession.setMessages(nextMessages); updateConnected(true); }
-
-      try { await capturedRuntimePool.copySavedDiffs(selectedTransport, sourcePath, nextState.sessionFile, new Set(nextMessages.map((entry) => entry.id)), sourceDiffs); } catch (reason) { addNotice({ title: "Conversation cloned, but project changes could not be copied", message: reason instanceof Error ? reason.message : String(reason) }); }
-
-      await syncSessionIndex(); } catch (reason) { addNotice({ title: "Could not clone conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
-  };
-
-  const cloneSession = async (session: SessionSummary, action: SessionAction) => {
-    const actionKey = `${action}:${session.hostId ?? "local"}:${session.id}`;
-
-    if (sessionActionPending.current.has(actionKey)) return; sessionActionPending.current.add(actionKey);
-
-    try {
-      const selectedTransport = selectSession(session);
-
-      if (!selectedTransport) return;
-
-      if (action === "clone") { await cloneSelectedSession(session, selectedTransport); }
-    } finally { sessionActionPending.current.delete(actionKey); }
-  };
-
   const openSessionInWindow = async (session: SessionSummary) => { if (isMobile) { selectSession(session);
 
       return; }
@@ -620,7 +585,6 @@ export function createAppConversations(preloadChat: () => void) {
 
       return; }
 
-    return cloneSession(session, action);
   };
 
   const draftChangeFor = (sessionKey: string, owner?: NativeTransport) => (update: StateUpdate<string>) => setComposerDraft(owner ? transportConversationKeys.current.get(owner) ?? sessionKey : sessionKey, update);
