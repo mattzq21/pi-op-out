@@ -137,7 +137,7 @@ async function inspectSession(file, includeArchiveDetails) {
     }
   } finally { lines.close(); }
 
-  const result = { checkpointRepositories: [...checkpointRepositories.values()], cwd: validSessionHeader(header) ? header.cwd : undefined };
+  const result = { checkpointRepositories: [...checkpointRepositories.values()], cwd: validSessionHeader(header) ? header.cwd : undefined, sessionId: Check(Type.String(), header?.id) ? safeSessionId(header.id) : undefined };
 
   if (!includeArchiveDetails) return result;
 
@@ -344,6 +344,7 @@ function checkpointWarnings(repository) {
 }
 
 async function checkpointBytes(cwd, refs, snapshots) {
+  if (!snapshots.length) return 0;
   const snapshotRefs = new Set(snapshots);
   const ordinary = refs.filter((ref) => !snapshotRefs.has(ref)).map((ref) => `^${ref}`);
 
@@ -362,12 +363,24 @@ async function checkpointBytes(cwd, refs, snapshots) {
   return byteSize;
 }
 
-async function checkpointStorage(repositoryRoots, measuredDirectories) {
+function archivedCheckpoint(ref, archivedSessionIds) {
+  const match = /^refs\/pi-session-snapshots\/chats\/([^/]+)\//.exec(ref)
+    ?? /^refs\/pi-session-snapshots\/([^/]+)$/.exec(ref);
 
+  return !!match && archivedSessionIds.has(match[1]);
+}
+
+function recordCheckpointCategory(category, refs, common) {
+  category.itemCount += refs.length;
+
+  if (refs.length) category.directories.push(common);
+}
+
+async function checkpointStorage(repositoryRoots, measuredDirectories, archivedSessionIds) {
   const repositories = new Set();
-  let byteSize = 0;
-  let itemCount = 0;
+  const active = { byteSize: 0, itemCount: 0, directories: [] };
   const warnings = [];
+  const archived = { byteSize: 0, itemCount: 0, directories: [] };
 
   for (const cwd of repositoryRoots) {
     try {
@@ -383,16 +396,21 @@ async function checkpointStorage(repositoryRoots, measuredDirectories) {
       const snapshots = refs.filter((ref) => ref === "refs/pi-session-snapshots" || ref.startsWith("refs/pi-session-snapshots/"));
 
       if (!snapshots.length) continue;
-      itemCount += snapshots.length;
+      const archiveRefs = new Set(snapshots.filter((ref) => archivedCheckpoint(ref, archivedSessionIds)));
+      const archivedSnapshots = snapshots.filter((ref) => archiveRefs.has(ref));
+      const otherSnapshots = snapshots.filter((ref) => !archiveRefs.has(ref));
+      recordCheckpointCategory(active, otherSnapshots, common);
+      recordCheckpointCategory(archived, archivedSnapshots, common);
 
       if (measuredDirectories.has(common)) continue;
-      byteSize += await checkpointBytes(cwd, refs, snapshots);
+      archived.byteSize += await checkpointBytes(cwd, refs, archivedSnapshots);
+      active.byteSize += await checkpointBytes(cwd, refs.filter((ref) => !archiveRefs.has(ref)), otherSnapshots);
     } catch (error) {
       warnings.push(`${cwd}: ${error.message}`);
     }
   }
 
-  return { byteSize, itemCount, warnings, directories: [...repositories] };
+  return { ...active, warnings, archived };
 }
 
 function snapshotCategory(target, category, metadata) {
@@ -492,11 +510,16 @@ async function collectUnreadableArchive(file, archives) {
   });
 }
 
-async function collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives) {
+function collectArchivedSession(details, archived, archivedSessionIds) {
+  if (archived && details.sessionId) archivedSessionIds.add(details.sessionId);
+}
+
+async function collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedSessionIds) {
   for (const candidate of sessionFiles) {
     try {
       const details = await inspectSession(candidate.file, candidate.archived);
       details.checkpointRepositories.forEach((repository) => checkpointRoots.add(repository.root));
+      collectArchivedSession(details, candidate.archived, archivedSessionIds);
 
       if (details.cwd) {
         const worktree = await currentWorktree(details.cwd);
@@ -534,6 +557,7 @@ async function main() {
   ]);
 
   const checkpointRoots = new Set();
+  const archivedSessionIds = new Set();
   const worktreeRoots = new Set();
   const archives = [];
 
@@ -542,15 +566,16 @@ async function main() {
     ...archived.files.filter((file) => file.endsWith(".jsonl")).map((file) => ({ file, archived: true })),
   ];
 
-  await collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives);
+  await collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedSessionIds);
 
   const disk = await diskStorage(worktreeRoots);
-  const checkpoints = await checkpointStorage(checkpointRoots, disk.directories);
+  const checkpoints = await checkpointStorage(checkpointRoots, disk.directories, archivedSessionIds);
 
   const directoryCandidates = {
     'active-conversations': [activeRoot],
     'archived-conversations': [archiveRoot],
     'project-checkpoints': checkpoints.directories,
+    'archived-project-checkpoints': checkpoints.archived.directories,
     'git-diff-snapshots': [path.join(piopRoot, 'git-snapshots'), ...active.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots'))],
     'archived-git-diff-snapshots': archived.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots')),
     'temporary-chats': [path.join(piopRoot, 'tmp')],
@@ -577,6 +602,7 @@ async function main() {
       { id: "active-conversations", byteSize: storedBytes("active-conversations"), itemCount: active.itemCount },
       { id: "archived-conversations", byteSize: storedBytes("archived-conversations"), itemCount: archived.itemCount },
       { id: "project-checkpoints", byteSize: checkpoints.byteSize, itemCount: checkpoints.itemCount, estimated: true },
+      { id: "archived-project-checkpoints", byteSize: checkpoints.archived.byteSize, itemCount: checkpoints.archived.itemCount, estimated: true },
       { id: "git-diff-snapshots", byteSize: storedBytes("git-diff-snapshots"), itemCount: gitDiffSnapshots.itemCount + (snapshotCount("git-diff-snapshots")) },
       { id: "archived-git-diff-snapshots", byteSize: storedBytes("archived-git-diff-snapshots"), itemCount: snapshotCount("archived-git-diff-snapshots") },
       { id: "temporary-chats", byteSize: storedBytes("temporary-chats"), itemCount: temporaryChats.itemCount },

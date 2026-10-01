@@ -12,7 +12,8 @@ import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport 
 const categoryDetails: Record<StorageCategory["id"], { name: string; description: string; icon: typeof Archive; item: string }> = {
   "active-conversations": { name: "Conversations", description: "Saved chats and their diff histories", icon: MessageSquare, item: "conversation" },
   "archived-conversations": { name: "Conversations", description: "Saved chats and their diff histories", icon: MessageSquare, item: "conversation" },
-  "project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects retained only by piop checkpoint refs", icon: GitBranch, item: "ref" },
+  "project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects retained by active session checkpoints, including shared objects", icon: GitBranch, item: "ref" },
+  "archived-project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects retained only by archived session checkpoints", icon: GitBranch, item: "ref" },
   "git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
   "archived-git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
   "temporary-chats": { name: "No-project workdirs", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
@@ -22,9 +23,9 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
 };
 
 const storageSections: { title: string; categories: StorageCategory["id"][] }[] = [
-  { title: "General", categories: ["project-checkpoints", "worktrees", "other-storage"] },
-  { title: "Active sessions", categories: ["active-conversations", "git-diff-snapshots", "temporary-chats"] },
-  { title: "Archived sessions", categories: ["archived-conversations", "archived-git-diff-snapshots", "archived-worktrees"] },
+  { title: "General", categories: ["other-storage"] },
+  { title: "Active sessions", categories: ["active-conversations", "git-diff-snapshots", "project-checkpoints", "worktrees", "temporary-chats"] },
+  { title: "Archived sessions", categories: ["archived-conversations", "archived-git-diff-snapshots", "archived-project-checkpoints", "archived-worktrees"] },
 ];
 
 function formatBytes(bytes: number) {
