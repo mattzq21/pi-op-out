@@ -529,7 +529,7 @@ pub(super) fn validate_worktree_unused(settings: &AppSettings, host_id: &str, ta
 }
 
 pub(super) fn preserve_worktree_checkpoints(settings: &AppSettings, host_id: &str, target: &WorktreeRemovalTarget) -> Result<(), String> {
-    let script = include_str!("../../resources/preserve-archive-checkpoints.cjs");
+    let script = include_str!("../../resources/preserve-archive-checkpoints.bundle.mjs");
     let mut preserve = if host_id == "local" {
         let mut command = node_command(); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, &target.path]); command
     } else {

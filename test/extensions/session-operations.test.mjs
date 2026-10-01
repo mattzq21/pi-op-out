@@ -73,7 +73,7 @@ test('archived child-owned checkpoints recover missing refs from retained commit
     { type: 'message', id: 'response', parentId: 'old', message: { role: 'assistant' } },
     { type: 'custom', id: 'last', parentId: 'response', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: f.dir, ref: current, commit, responseEntryIds: ['response'] } },
   ].map(JSON.stringify).join('\n') + '\n');
-  const script = await readFile(new URL('../../src-tauri/resources/preserve-archive-checkpoints.cjs', import.meta.url), 'utf8');
+  const script = await readFile(new URL('../../src-tauri/resources/preserve-archive-checkpoints.bundle.mjs', import.meta.url), 'utf8');
   await exec(process.execPath, ['-e', `require('node:os').homedir = () => ${JSON.stringify(f.dir)};\n${script}`, f.dir], { env: { ...process.env, PIOP_STORAGE_DIRECTORY: '.piop' } });
   const entries = await readEntries(file);
   assert.match(entries[1].data.ref, /^refs\/pi-session-snapshots\/chats\/child\//);

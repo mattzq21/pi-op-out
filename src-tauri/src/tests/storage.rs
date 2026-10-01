@@ -12,7 +12,7 @@ fn storage_inventory_query_counts_real_files_and_marks_malformed_archives_undele
     fs::write(root.join("archived/broken.diffs.json"), "{}").unwrap();
     fs::write(root.join("git-snapshots/pi-desktop-diff-one/object"), "object").unwrap();
     fs::write(root.join("tmp/chat/file"), "temporary").unwrap();
-    let script = format!("require('node:os').homedir = () => {};\n{}", serde_json::to_string(home.0.to_str().unwrap()).unwrap(), include_str!("../../resources/storage-inventory.cjs"));
+    let script = format!("require('node:os').homedir = () => {};\n{}", serde_json::to_string(home.0.to_str().unwrap()).unwrap(), include_str!("../../resources/storage-inventory.bundle.mjs"));
     let mut command = Command::new("node"); command.args(["-e", &script]);
     let report = query_storage_inventory(&mut command, None).unwrap();
     assert_eq!(report.host_id, "local"); assert!(report.error.is_none());

@@ -1,3 +1,9 @@
+const { Type } = require("typebox");
+
+const { Check } = require("typebox/value");
+
+const { unavailableCheckpoint, promptCheckpoint, snapshotCheckpoint, validSessionHeader } = require("./checkpoint-schemas.cjs");
+
 const fs = require("node:fs/promises");
 
 const path = require("node:path");
@@ -69,25 +75,6 @@ async function stageFile(saved) {
 
 function transaction(refs, restore) {
   return ["start", ...refs.map(({ ref, oid }) => restore ? `create ${ref} ${oid}` : `delete ${ref} ${oid}`), "prepare", "commit", ""].join("\n");
-}
-
-function unavailableCheckpoint(data) {
-  return data && typeof data === "object" && data.unavailable === true;
-}
-
-function promptCheckpoint(data) {
-  return data && typeof data === "object"
-    && typeof data.key === "string" && /^[a-zA-Z0-9-]+$/.test(data.key)
-    && typeof data.owner === "string"
-    && typeof data.commit === "string" && /^[a-f0-9]{40,64}$/.test(data.commit)
-    && (data.base === null || (typeof data.base === "string" && /^[a-f0-9]{40,64}$/.test(data.base)));
-}
-
-function snapshotCheckpoint(data) {
-  return data && typeof data === "object"
-    && typeof data.repositoryRoot === "string" && path.isAbsolute(data.repositoryRoot)
-    && typeof data.ref === "string" && data.ref.startsWith("refs/pi-session-snapshots/") && !/[\r\n]/.test(data.ref)
-    && typeof data.commit === "string" && /^[a-f0-9]{40,64}$/.test(data.commit);
 }
 
 function checkpointRepository(roots, cwd) {
@@ -215,7 +202,7 @@ function collectPromptCheckpoint(entry, roots, header, prefix) {
   if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint" && promptCheckpoint(entry.data)) {
     const cwd = promptRepository(entry, header);
 
-    if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw new Error('Invalid prompt checkpoint repository');
+    if (!Check(Type.String(), cwd) || !path.isAbsolute(cwd)) throw new Error('Invalid prompt checkpoint repository');
     const repository = checkpointRepository(roots, cwd);
     repository.required = true;
     repository.commits.add(entry.data.commit);
@@ -307,7 +294,7 @@ async function acquireDeletionLock(source) {
 }
 
 function validateHeader(header, target) {
-  if (header?.type !== "session" || typeof header.id !== "string" || !header.id || typeof header.cwd !== "string" || !path.isAbsolute(header.cwd)) {
+  if (!validSessionHeader(header)) {
     throw new Error("Invalid session header; nothing was deleted");
   }
 

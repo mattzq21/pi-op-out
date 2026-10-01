@@ -1,3 +1,9 @@
+const { Type } = require("typebox");
+
+const { Check } = require("typebox/value");
+
+const { unavailableCheckpoint, promptCheckpoint, snapshotCheckpoint, validSessionHeader } = require("./checkpoint-schemas.cjs");
+
 const fs = require("node:fs/promises");
 
 const { createReadStream } = require("node:fs");
@@ -57,30 +63,11 @@ async function scanDirectory(directory, countEntry, includeFile = () => true) {
 }
 
 function messageText(message) {
-  if (typeof message?.content === "string") return message.content;
+  if (Check(Type.String(), message?.content)) return message.content;
 
   if (!Array.isArray(message?.content)) return "";
 
   return message.content.filter((part) => part?.type === "text").map((part) => part.text || "").join("\n");
-}
-
-function unavailableCheckpoint(data) {
-  return data && typeof data === "object" && data.unavailable === true;
-}
-
-function promptCheckpoint(data) {
-  return data && typeof data === "object"
-    && typeof data.key === "string" && /^[a-zA-Z0-9-]+$/.test(data.key)
-    && typeof data.owner === "string"
-    && typeof data.commit === "string" && /^[a-f0-9]{40,64}$/.test(data.commit)
-    && (data.base === null || (typeof data.base === "string" && /^[a-f0-9]{40,64}$/.test(data.base)));
-}
-
-function snapshotCheckpoint(data) {
-  return data && typeof data === "object"
-    && typeof data.repositoryRoot === "string" && path.isAbsolute(data.repositoryRoot)
-    && typeof data.ref === "string" && data.ref.startsWith("refs/pi-session-snapshots/") && !/[\r\n]/.test(data.ref)
-    && typeof data.commit === "string" && /^[a-f0-9]{40,64}$/.test(data.commit);
 }
 
 function safeSessionId(sessionId) {
@@ -104,7 +91,7 @@ async function inspectSession(file, includeArchiveDetails) {
   const recordSnapshot = (entry) => {
     if (entry.type === "custom" && entry.customType === "pi-project-files-watch-snapshot") {
       if (snapshotCheckpoint(entry.data)) {
-        const id = typeof header.id === "string" ? safeSessionId(header.id) : "";
+        const id = Check(Type.String(), header.id) ? safeSessionId(header.id) : "";
         const prefix = `refs/pi-session-snapshots/chats/${id}/`;
 
         if (id && (entry.data.ref.startsWith(prefix) || entry.data.ref === `refs/pi-session-snapshots/${id}`)) {
@@ -121,7 +108,7 @@ async function inspectSession(file, includeArchiveDetails) {
     if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint") {
       const cwd = promptRepository(entry, header);
 
-      if (promptCheckpoint(entry.data) && typeof cwd === "string" && path.isAbsolute(cwd) && typeof header.id === "string") {
+      if (promptCheckpoint(entry.data) && Check(Type.String(), cwd) && path.isAbsolute(cwd) && Check(Type.String(), header.id)) {
         const repository = checkpointRepositoryRecord(checkpointRepositories, cwd);
         repository.commits.add(entry.data.commit);
         repository.expectedRefs.set(`refs/pi-session-snapshots/chats/${safeSessionId(header.id)}/prompts/${entry.data.key}`, entry.data.commit);
@@ -131,7 +118,7 @@ async function inspectSession(file, includeArchiveDetails) {
   };
 
   const recordDescription = (entry) => {
-    if (entry.type === "session_info" && typeof entry.name === "string" && entry.name.trim()) explicitName = entry.name.trim().slice(0, 2000);
+    if (entry.type === "session_info" && Check(Type.String(), entry.name) && entry.name.trim()) explicitName = entry.name.trim().slice(0, 2000);
 
     if (!firstPrompt && entry.type === "message" && entry.message?.role === "user") firstPrompt = messageText(entry.message).trim().slice(0, 2000);
   };
@@ -175,18 +162,18 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
     ? "This archive is malformed, so piop cannot discover and safely remove its project checkpoint refs."
     : checkpointError;
 
-  return {
-    ...result,
-    archive: {
+  const archive = {
       ...archiveLocation(header, file),
       name: explicitName || firstPrompt || "Untitled conversation",
       modifiedAt: Math.floor(metadata.mtimeMs / 1000),
       byteSize: metadata.size + diffBytes,
       deletable,
       ...await archivedWorktree(header),
-      ...(deletable ? {} : { deleteError }),
-    },
   };
+
+  if (!deletable) archive.deleteError = deleteError;
+
+  return { ...result, archive };
 }
 
 const worktreeChecks = new Map();
@@ -232,13 +219,11 @@ async function restorableWorktree(saved) {
 
 function archiveLocation(header, file) {
   return {
-    id: typeof header?.id === "string" && header.id ? header.id : path.basename(file, ".jsonl"),
+    id: Check(Type.String({ minLength: 1 }), header?.id) ? header.id : path.basename(file, ".jsonl"),
     path: file,
-    cwd: typeof header?.cwd === "string" ? header.cwd : "Unknown project",
+    cwd: Check(Type.String(), header?.cwd) ? header.cwd : "Unknown project",
   };
 }
-
-function validSessionHeader(header) { return header?.type === "session" && typeof header.id === "string" && Boolean(header.id) && typeof header.cwd === "string" && path.isAbsolute(header.cwd); }
 
 function git(cwd, args, input = "") {
   return new Promise((resolve, reject) => {

@@ -53,7 +53,7 @@ test('archive preservation tolerates deleted ancestor refs while preserving chil
 
   const file = join(archive, 'child.jsonl');
   await writeFile(file, entries.map(JSON.stringify).join('\n') + '\n');
-  const script = await readFile(new URL('../../src-tauri/resources/preserve-archive-checkpoints.cjs', import.meta.url), 'utf8');
+  const script = await readFile(new URL('../../src-tauri/resources/preserve-archive-checkpoints.bundle.mjs', import.meta.url), 'utf8');
   execFileSync(process.execPath, ['-e', script, child], { env: { ...process.env, HOME: dir, PIOP_STORAGE_DIRECTORY: '.piop' }, stdio: 'pipe' });
   const saved = (await readFile(file, 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(saved[0].worktreeRestore.commit, second);

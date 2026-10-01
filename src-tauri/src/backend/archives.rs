@@ -20,7 +20,7 @@ use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
 
 pub(super) fn inspect_storage(host: Option<&RemoteHost>) -> Result<HostStorage, String> {
-    let script = include_str!("../../resources/storage-inventory.cjs");
+    let script = include_str!("../../resources/storage-inventory.bundle.mjs");
     let mut command = if let Some(host) = host {
         let mut command = ssh(host);
         command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {}", shell_quote(script))));
@@ -274,7 +274,7 @@ pub(super) fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &st
     let active_session_ids: Vec<String> = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
         .filter(|agent| !agent.messageable && agent.host_id == host_id).filter_map(|agent| agent.session_id.clone()).collect();
     let arguments = json!({ "path": path, "activeSessionIds": active_session_ids, "area": if archived { "archived" } else { "sessions" }, "root": if host_id == "local" { Some(local_root) } else { None } }).to_string();
-    let script = include_str!("../../resources/delete-session.cjs");
+    let script = include_str!("../../resources/delete-session.bundle.mjs");
     let mut command = if host_id == "local" {
         let mut command = node_command();
         command.args(["-e", script, &arguments]);

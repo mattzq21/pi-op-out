@@ -1,5 +1,13 @@
 const fs = require('node:fs');
 
+const { Type } = require('typebox');
+
+const { Check } = require('typebox/value');
+
+const refSchema = Type.String({ pattern: '^refs/pi-session-snapshots/' });
+
+const headerSchema = Type.Object({ type: Type.Literal('session'), id: Type.String() });
+
 const path = require('node:path');
 
 const os = require('node:os');
@@ -18,10 +26,10 @@ const commonDirectory = (cwd) => fs.realpathSync(git(cwd, ['rev-parse', '--path-
 
 const common = commonDirectory(target);
 
-const sameRepository = (cwd) => { try { return typeof cwd === 'string' && commonDirectory(cwd) === common; } catch { return false; } };
+const sameRepository = (cwd) => { try { return Check(Type.String(), cwd) && commonDirectory(cwd) === common; } catch { return false; } };
 
 const verifyRef = (ref, commit) => {
-  if (typeof ref !== 'string' || !ref.startsWith('refs/pi-session-snapshots/') || !/^[a-f0-9]{40,64}$/.test(commit ?? '') || git(common, ['rev-parse', '--verify', ref]) !== commit) throw new Error('Could not preserve archived conversation checkpoints before deleting the worktree');
+  if (!Check(refSchema, ref) || !/^[a-f0-9]{40,64}$/.test(commit ?? '') || git(common, ['rev-parse', '--verify', ref]) !== commit) throw new Error('Could not preserve archived conversation checkpoints before deleting the worktree');
 };
 
 function archiveOwnedRef(sessionId, snapshot, recover = false) {
@@ -36,7 +44,7 @@ function archiveOwnedRef(sessionId, snapshot, recover = false) {
   if (retained) return retained[0];
 
   if (recover) {
-    if (typeof snapshot.ref !== 'string' || !snapshot.ref.startsWith('refs/pi-session-snapshots/')) throw new Error('Invalid archived checkpoint ref');
+    if (!Check(refSchema, snapshot.ref)) throw new Error('Invalid archived checkpoint ref');
     git(common, ['cat-file', '-e', `${snapshot.commit}^{commit}`]);
   } else verifyRef(snapshot.ref, snapshot.commit);
   const ref = `${prefix}archive/${snapshot.commit}`;
@@ -65,7 +73,7 @@ function lastResponseSnapshot(entries) {
 }
 
 function preserveResponse(header, entries) {
-  if (typeof header.cwd === 'string' && sameRepository(header.cwd)
+  if (sameRepository(header.cwd)
     && fs.realpathSync(git(header.cwd, ['rev-parse', '--show-toplevel'])) === fs.realpathSync(target)) {
     const snapshot = lastResponseSnapshot(entries);
 
@@ -105,7 +113,7 @@ function ownedSnapshot(entry, prefix, id) {
   if (entry.type !== 'custom' || entry.customType !== 'pi-project-files-watch-snapshot' || entry.data?.unavailable) return false;
   const ref = entry.data?.ref;
 
-  return typeof ref === 'string' && (ref.startsWith(prefix) || ref === `refs/pi-session-snapshots/${id}`);
+  return Check(refSchema, ref) && (ref.startsWith(prefix) || ref === `refs/pi-session-snapshots/${id}`);
 }
 
 function preserveSnapshotRoots(header, entries) {
@@ -158,7 +166,7 @@ function preserve(file) {
 
   const header = entries[0];
 
-  if (header?.type !== 'session' || typeof header.id !== 'string') return;
+  if (!Check(headerSchema, header)) return;
   const responseChanged = preserveResponse(header, entries);
   const promptsChanged = preservePrompts(header, entries);
   const rootsChanged = preserveSnapshotRoots(header, entries);
