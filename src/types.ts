@@ -16,7 +16,7 @@ export interface ChatMessage { deliveryBehavior?: "steer" | "followUp"; id: stri
 
 export interface SessionSummary { id: string; isDraft?: boolean; subagentParentId?: string; daemonId?: string; isRunning?: boolean; groupId?: string | null; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; projectRoot?: string | null; branch?: string | null; worktreeRoot?: string | null; branchAppearance?: { letter?: string; color?: string } | null; projectKind?: "no-repo" | "main" | "worktree" | null; preview: string; messageCount: number; lastMessageAt: number; apiCost: number; hostId?: string; hostName?: string; }
 
-export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "project-checkpoints" | "git-diff-snapshots" | "archived-git-diff-snapshots" | "temporary-chats" | "worktrees" | "archived-worktrees" | "other-storage"; byteSize: number; itemCount: number; estimated?: boolean; directories?: string[]; }
+export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "archived-worktree-checkpoints" | "project-checkpoints" | "git-diff-snapshots" | "archived-git-diff-snapshots" | "temporary-chats" | "worktrees" | "archived-worktrees" | "other-storage"; byteSize: number; itemCount: number; estimated?: boolean; directories?: string[]; }
 
 export interface ArchivedConversation { id: string; path: string; name: string; cwd: string; modifiedAt: number; byteSize: number; deletable: boolean; deleteError?: string; worktreePath?: string; restorable?: boolean; restoreError?: string; }
 

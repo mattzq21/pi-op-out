@@ -141,7 +141,17 @@ async function inspectSession(file, includeArchiveDetails) {
 
   if (!includeArchiveDetails) return result;
 
+  Object.assign(result, archiveRecoveryCheckpoint(header, result.checkpointRepositories));
+
   return archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result);
+}
+
+function archiveRecoveryCheckpoint(header, repositories) {
+  const saved = header?.worktreeRestore;
+
+  if (!saved?.ref || !saved?.commit) return {};
+
+  return { archiveCheckpoint: repositories.find((repository) => repository.expectedRefs.get(saved.ref) === saved.commit), archiveCheckpointRef: saved.ref };
 }
 
 async function archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result) {
@@ -344,6 +354,7 @@ function checkpointWarnings(repository) {
 }
 
 async function checkpointBytes(cwd, refs, snapshots) {
+  if (!snapshots.length) return 0;
   const snapshotRefs = new Set(snapshots);
   const ordinary = refs.filter((ref) => !snapshotRefs.has(ref)).map((ref) => `^${ref}`);
 
@@ -362,12 +373,33 @@ async function checkpointBytes(cwd, refs, snapshots) {
   return byteSize;
 }
 
-async function checkpointStorage(repositoryRoots, measuredDirectories) {
+async function archiveRefsByCommonRepository(archivedCheckpointRefs) {
+  const archiveRefsByRepository = new Map();
 
+  for (const [root, refs] of archivedCheckpointRefs) {
+    const repository = await checkpointRepository(root);
+
+    if (repository.error) continue;
+
+    if (!archiveRefsByRepository.has(repository.common)) archiveRefsByRepository.set(repository.common, new Set());
+    refs.forEach((ref) => archiveRefsByRepository.get(repository.common).add(ref));
+  }
+
+  return archiveRefsByRepository;
+}
+
+function recordCheckpointCategory(category, refs, common) {
+  category.itemCount += refs.length;
+
+  if (refs.length) category.directories.push(common);
+}
+
+async function checkpointStorage(repositoryRoots, measuredDirectories, archivedCheckpointRefs) {
   const repositories = new Set();
-  let byteSize = 0;
-  let itemCount = 0;
+  const general = { byteSize: 0, itemCount: 0, directories: [] };
   const warnings = [];
+  const archived = { byteSize: 0, itemCount: 0, directories: [] };
+  const archiveRefsByRepository = await archiveRefsByCommonRepository(archivedCheckpointRefs);
 
   for (const cwd of repositoryRoots) {
     try {
@@ -383,16 +415,21 @@ async function checkpointStorage(repositoryRoots, measuredDirectories) {
       const snapshots = refs.filter((ref) => ref === "refs/pi-session-snapshots" || ref.startsWith("refs/pi-session-snapshots/"));
 
       if (!snapshots.length) continue;
-      itemCount += snapshots.length;
+      const archiveRefs = archiveRefsByRepository.get(common) ?? new Set();
+      const archivedSnapshots = snapshots.filter((ref) => archiveRefs.has(ref));
+      const otherSnapshots = snapshots.filter((ref) => !archiveRefs.has(ref));
+      recordCheckpointCategory(general, otherSnapshots, common);
+      recordCheckpointCategory(archived, archivedSnapshots, common);
 
       if (measuredDirectories.has(common)) continue;
-      byteSize += await checkpointBytes(cwd, refs, snapshots);
+      archived.byteSize += await checkpointBytes(cwd, refs, archivedSnapshots);
+      general.byteSize += await checkpointBytes(cwd, refs.filter((ref) => !archiveRefs.has(ref)), otherSnapshots);
     } catch (error) {
       warnings.push(`${cwd}: ${error.message}`);
     }
   }
 
-  return { byteSize, itemCount, warnings, directories: [...repositories] };
+  return { ...general, warnings, archived };
 }
 
 function snapshotCategory(target, category, metadata) {
@@ -492,11 +529,20 @@ async function collectUnreadableArchive(file, archives) {
   });
 }
 
-async function collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives) {
+function collectArchiveCheckpoint(details, archivedCheckpointRefs) {
+  if (!details.archiveCheckpoint) return;
+  const root = details.archiveCheckpoint.root;
+
+  if (!archivedCheckpointRefs.has(root)) archivedCheckpointRefs.set(root, new Set());
+  archivedCheckpointRefs.get(root).add(details.archiveCheckpointRef);
+}
+
+async function collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedCheckpointRefs) {
   for (const candidate of sessionFiles) {
     try {
       const details = await inspectSession(candidate.file, candidate.archived);
       details.checkpointRepositories.forEach((repository) => checkpointRoots.add(repository.root));
+      collectArchiveCheckpoint(details, archivedCheckpointRefs);
 
       if (details.cwd) {
         const worktree = await currentWorktree(details.cwd);
@@ -534,6 +580,7 @@ async function main() {
   ]);
 
   const checkpointRoots = new Set();
+  const archivedCheckpointRefs = new Map();
   const worktreeRoots = new Set();
   const archives = [];
 
@@ -542,15 +589,16 @@ async function main() {
     ...archived.files.filter((file) => file.endsWith(".jsonl")).map((file) => ({ file, archived: true })),
   ];
 
-  await collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives);
+  await collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedCheckpointRefs);
 
   const disk = await diskStorage(worktreeRoots);
-  const checkpoints = await checkpointStorage(checkpointRoots, disk.directories);
+  const checkpoints = await checkpointStorage(checkpointRoots, disk.directories, archivedCheckpointRefs);
 
   const directoryCandidates = {
     'active-conversations': [activeRoot],
     'archived-conversations': [archiveRoot],
     'project-checkpoints': checkpoints.directories,
+    'archived-worktree-checkpoints': checkpoints.archived.directories,
     'git-diff-snapshots': [path.join(piopRoot, 'git-snapshots'), ...active.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots'))],
     'archived-git-diff-snapshots': archived.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots')),
     'temporary-chats': [path.join(piopRoot, 'tmp')],
@@ -577,6 +625,7 @@ async function main() {
       { id: "active-conversations", byteSize: storedBytes("active-conversations"), itemCount: active.itemCount },
       { id: "archived-conversations", byteSize: storedBytes("archived-conversations"), itemCount: archived.itemCount },
       { id: "project-checkpoints", byteSize: checkpoints.byteSize, itemCount: checkpoints.itemCount, estimated: true },
+      { id: "archived-worktree-checkpoints", byteSize: checkpoints.archived.byteSize, itemCount: checkpoints.archived.itemCount, estimated: true },
       { id: "git-diff-snapshots", byteSize: storedBytes("git-diff-snapshots"), itemCount: gitDiffSnapshots.itemCount + (snapshotCount("git-diff-snapshots")) },
       { id: "archived-git-diff-snapshots", byteSize: storedBytes("archived-git-diff-snapshots"), itemCount: snapshotCount("archived-git-diff-snapshots") },
       { id: "temporary-chats", byteSize: storedBytes("temporary-chats"), itemCount: temporaryChats.itemCount },
