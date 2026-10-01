@@ -69,6 +69,11 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     input.current?.focus();
   };
 
+  createDependencyEffect(() => {
+    setCommand(componentProps.inputDraft ?? "");
+    historyIndex = history.length; draft = "";
+  }, () => [componentProps.ownershipRequired]);
+
   const interrupt = () => {
     if (disabled()) return;
     componentProps.onDraft("");

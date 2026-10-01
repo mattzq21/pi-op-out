@@ -188,10 +188,17 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
             let _ = app.emit("pi://event", json!({"type":"terminal_draft","terminalId":id,
                 "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),"data":data}));
         }
-        "write" => {
+        "write" | "write_with_draft" | "adopt_draft" => {
             let data = request["data"].as_str().ok_or("Missing terminal input")?;
             if data.len() > 1024 * 1024 { return Err("Terminal input exceeds 1 MiB".into()); }
-            processes.get(id).ok_or("Terminal is not running")?.writer.try_send(data.into()).map_err(|_| "Terminal input is busy".to_string())?;
+            let draft = if action == "write" { "" } else { item.input_draft.as_str() };
+            let input = format!("{draft}{data}");
+            processes.get(id).ok_or("Terminal is not running")?.writer.try_send(input).map_err(|_| "Terminal input is busy".to_string())?;
+            if action != "write" && !item.input_draft.is_empty() {
+                item.input_draft.clear();
+                let _ = app.emit("pi://event", json!({"type":"terminal_draft","terminalId":id,
+                    "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),"data":""}));
+            }
         }
         "resize" => {
             let cols = dimension(request, "cols")?;

@@ -1,7 +1,7 @@
 import { voidResultSchema } from "./responseSchemas";
 import { nativeCall, type NativeCall } from "./nativeCall";
 import { z } from "zod";
-import { listen } from "./platform";
+import { isMobile, listen } from "./platform";
 
 const terminalEventSchema = z.object({ type: z.string().optional(), hostId: z.string().optional(), sessionId: z.string().optional(), terminalId: z.string().optional(), generation: z.string().optional(), outputEnd: z.number().optional(), data: z.string().optional() }).catch({});
 export type TerminalEvent = z.infer<typeof terminalEventSchema>;
@@ -60,7 +60,7 @@ class NativeTerminals {
     return pending;
   }
 
-  write(terminalId: string, data: string, action = "write") {
+  write(terminalId: string, data: string, action = isMobile ? "write" : "write_with_draft") {
     const starting = this.starts.get(terminalId);
 
     const next = (this.writes.get(terminalId) ?? Promise.resolve()).catch(() => undefined)

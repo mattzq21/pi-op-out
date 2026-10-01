@@ -1,6 +1,6 @@
 import { Key } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal } from "solid-js";
-import { createDependencyEffect, createRef } from "../lib/solid";
+import { createDependencyEffect, createRef, type CSSProperties } from "../lib/solid";
 
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -18,6 +18,7 @@ const terminalSizeSchema = z.tuple([z.literal(8), z.number().int().min(1).max(65
 
 export function DesktopTerminalView(componentProps: TerminalViewProps) {
   const [copyError, setCopyError] = createSignal(false);
+  const [draftStyle, setDraftStyle] = createSignal<CSSProperties>({ display: "none" });
   const outputWrites = createRef(Promise.resolve());
   const host = createRef<HTMLDivElement>(null); const terminal = createRef<Terminal | undefined>(undefined); const lastOutputEnd = createRef(0); const queuedOutputEnd = createRef(0); const tabRefs = createRef(new Map<string, HTMLButtonElement>());
   const callbacks = createRef({ onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }); createComputed(() => { callbacks.current = { onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }; });
@@ -81,6 +82,25 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value); });
     let cursorFrame: number | undefined;
 
+    const positionDraft = () => {
+      const viewport = host.current;
+      const screen = instance.element?.querySelector<HTMLElement>(".xterm-screen");
+
+      if (!viewport || !screen) return;
+      const buffer = instance.buffer.active;
+      const row = buffer.baseY + buffer.cursorY - buffer.viewportY;
+      const screenRect = screen.getBoundingClientRect();
+      const viewportRect = viewport.getBoundingClientRect();
+      setDraftStyle({
+        display: row < 0 || row >= instance.rows ? "none" : "block",
+        left: `${screenRect.left - viewportRect.left + viewport.scrollLeft - viewport.clientLeft}px`,
+        top: `${screenRect.top - viewportRect.top + viewport.scrollTop - viewport.clientTop + row * screen.clientHeight / instance.rows}px`,
+        width: `${screen.clientWidth}px`,
+        "text-indent": `${Math.min(buffer.cursorX, instance.cols) * screen.clientWidth / instance.cols}px`,
+        "line-height": `${screen.clientHeight / instance.rows}px`,
+      });
+    };
+
     const revealCursor = () => {
       if (cursorFrame !== undefined) cancelAnimationFrame(cursorFrame);
       cursorFrame = requestAnimationFrame(() => {
@@ -102,11 +122,13 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     };
 
     const cursor = instance.onCursorMove(revealCursor);
+    const draftRender = instance.onRender(positionDraft);
+    const draftScroll = instance.onScroll(positionDraft);
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(revealCursor); observer?.observe(host.current);
 
     return () => { saveSnapshot(restored ? `\u001b[8;${instance.rows};${instance.cols}t${serializer.serialize()}` : capturedSnapshot1 || "", restored ? lastOutputEnd.current : capturedSnapshotEnd2 ?? 0); observer?.disconnect();
 
-    if (cursorFrame !== undefined) cancelAnimationFrame(cursorFrame); cursor.dispose(); data.dispose(); sizeHandler.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
+    if (cursorFrame !== undefined) cancelAnimationFrame(cursorFrame); cursor.dispose(); draftRender.dispose(); draftScroll.dispose(); data.dispose(); sizeHandler.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
   }, () => [componentProps.activeId, componentProps.cwd]);
 
   createDependencyEffect(() => {
@@ -163,6 +185,6 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
   };
 
   return <ResizableTerminalPanel><header><div class="terminal-tabs">{<Key each={componentProps.terminals} by={(item) => item.id}>{(item, _index) => <button ref={(element) => { if (element) tabRefs.current.set(item().id, element); else tabRefs.current.delete(item().id); }}  class={`terminal-tab ${item().id === componentProps.activeId ? "active" : ""}`} aria-pressed={item().id === componentProps.activeId} onClick={() => componentProps.onSelect(item().id)}><TerminalSquare size={14} /><strong>{item().label}</strong></button>}</Key>}<IconButton label={canAdd() ? "Add terminal" : "Terminal limit reached"} disabled={componentProps.ownershipRequired || !canAdd()} onClick={componentProps.onAdd}><Plus size={16} /></IconButton></div><div>{copyError() && <span class="copy-feedback" role="status">Could not copy terminal selection</span>}{componentProps.exited && <><span class="terminal-exited">exited</span><IconButton label="Restart terminal" disabled={componentProps.ownershipRequired} onClick={() => componentProps.onStart(componentProps.activeId, terminal.current?.cols ?? 80, terminal.current?.rows ?? 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" disabled={componentProps.ownershipRequired} onClick={componentProps.onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={componentProps.onClose}><X size={16} /></IconButton></div></header>
-    {componentProps.cwd ? <div class="terminal-surface" classList={{ "ownership-required": Boolean(componentProps.ownershipRequired) }}><div class="terminal-host" ref={element => { host.current = element; }} onMouseDown={() => terminal.current?.focus()} onFocusIn={() => { void takeOwnership(); }} />{componentProps.ownershipRequired && componentProps.inputDraft && <div class="terminal-draft-preview"><span>Mobile input</span><code>{componentProps.inputDraft}</code></div>}</div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
+    {componentProps.cwd ? <div class="terminal-surface" classList={{ "ownership-required": Boolean(componentProps.ownershipRequired) }}><div class="terminal-host" ref={element => { host.current = element; }} onMouseDown={() => terminal.current?.focus()} onFocusIn={() => { void takeOwnership(); }}>{componentProps.ownershipRequired && componentProps.inputDraft && <div class="terminal-draft-inline" style={draftStyle()}>{componentProps.inputDraft}</div>}</div></div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
   </ResizableTerminalPanel>;
 }

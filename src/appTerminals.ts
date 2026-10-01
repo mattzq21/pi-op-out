@@ -2,7 +2,8 @@ import { createComputed, createEffect, createMemo, createSignal, onCleanup, type
 import { appendTerminalOutputs, initialTerminals, MAX_TERMINALS, terminalConversationKey, type QueuedTerminalOutput, type SessionTerminals, type TerminalTarget } from "./appSupport";
 import { reassignTerminals } from "./appRuntime";
 import type { NativeTransport } from "./lib/nativeTransport";
-import { createMemoFields, createRef } from "./lib/solid";
+import { createDependencyEffect, createMemoFields, createRef } from "./lib/solid";
+import { isMobile } from "./lib/platform";
 import { appendTerminalOutput, TERMINAL_OUTPUT_LIMIT } from "./lib/terminalOutput";
 import { nativeTerminals, type TerminalEvent } from "./lib/nativeTerminals";
 
@@ -285,6 +286,11 @@ export function createTerminalController({ transport, sessionTransport, conversa
     if (!ready() || !owned()) return;
     void nativeTerminals.write(state.activeTerminal.id, data, "draft").catch(reason => addNotice({ title: "Could not sync terminal input", message: String(reason) }));
   };
+
+  createDependencyEffect(() => {
+    if (isMobile || !ready() || !owned() || !state.activeTerminal.inputDraft) return;
+    void nativeTerminals.write(state.activeTerminal.id, "", "adopt_draft").catch(reason => addNotice({ title: "Could not restore terminal input", message: String(reason) }));
+  }, () => [ready(), owned(), state.activeTerminal.id, state.activeTerminal.inputDraft]);
 
   return {
     terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, owned, takeOwnership,
