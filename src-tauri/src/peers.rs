@@ -351,7 +351,7 @@ fn forwarded_arguments(args: &Value, route: &Route, stale_terminals: &HashSet<St
     let mut forwarded = args.clone();
     forwarded["hostId"] = json!("local");
     for kind in ["runtimeId", "terminalId"] { if let Some(id) = args[kind].as_str() { forwarded[kind] = json!(format!("{}{id}", route.connection.prefix)); } }
-    if let Some(ids) = args["terminalIds"].as_array() { forwarded["terminalIds"] = json!(ids.iter().filter_map(Value::as_str).filter(|id| !stale_terminals.contains(*id)).map(|id| format!("{}{id}", route.connection.prefix)).collect::<Vec<_>>()); }
+    if let Some(ids) = args["terminalIds"].as_array() { forwarded["terminalIds"] = json!(ids.iter().filter_map(Value::as_str).filter(|id| !stale_terminals.contains(*id)).map(|id| if id.starts_with("shared-terminal-") { id.to_string() } else { format!("{}{id}", route.connection.prefix) }).collect::<Vec<_>>()); }
     forwarded
 }
 
@@ -384,6 +384,7 @@ fn update_auth_route(state: &PeerRuntime, command: &str, route: Route, result: &
 fn check_terminal_routes(routes: &HashMap<(String, String), Route>, owner: &str, args: &Value, route: &Route) -> Result<HashSet<String>, String> {
     let mut stale_terminals = HashSet::new();
         if let Some(ids) = args["terminalIds"].as_array() { for id in ids.iter().filter_map(Value::as_str) {
+            if id.starts_with("shared-terminal-") { continue; }
             let saved = routes.get(&("terminalId".into(), id.into())).ok_or("Terminal belongs to another connection")?;
             if saved.owner != owner { return Err("Terminal belongs to another connection".into()); }
             if !Arc::ptr_eq(&saved.connection, &route.connection) {

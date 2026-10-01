@@ -12,6 +12,7 @@ pub(crate) struct Transcript {
     generation: Uuid,
     output: String,
     end: u64,
+    text_end: u64,
     updated: SystemTime,
     pub(crate) running: bool,
 }
@@ -20,6 +21,7 @@ impl Transcript {
     pub(crate) fn append(&mut self, data: &str) {
         self.output.push_str(data);
         self.end += data.len() as u64;
+        self.text_end += data.encode_utf16().count() as u64;
         self.updated = SystemTime::now();
         let mut discard = self.output.len().saturating_sub(RETAINED_BYTES);
         while !self.output.is_char_boundary(discard) { discard += 1; }
@@ -33,11 +35,13 @@ impl Transcript {
     }
 }
 
+pub(super) fn owned_by(item: &Transcript, owner: &str) -> bool { item.owner == owner }
+
 pub(crate) fn start(runtime: &TerminalRuntime, id: &str, session_key: &str, cwd: &str, host_id: &str, owner: &str, generation: Uuid) -> Result<(), String> {
     let mut history = runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?;
     let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);
     history.insert(id.into(), Transcript { session_id: session_id.into(), host_id: host_id.into(), owner: owner.into(), cwd: cwd.into(), generation,
-        output: String::new(), end: 0, updated: SystemTime::now(), running: true });
+        output: String::new(), end: 0, text_end: 0, updated: SystemTime::now(), running: true });
     Ok(())
 }
 
@@ -69,6 +73,70 @@ pub(crate) fn reassign(runtime: &TerminalRuntime, owner: &str, id: &str, session
 
 pub(crate) fn detach(runtime: &TerminalRuntime, owner: &str) {
     if let Ok(mut history) = runtime.history.lock() { history.retain(|_, item| item.owner != owner); }
+}
+
+pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Result<Value, String> {
+    let runtime = app.state::<TerminalRuntime>();
+    let owner = format!("shared:{connection}:{}", request["terminalClientId"].as_str().ok_or("Missing terminal client")?);
+    let action = request["action"].as_str().ok_or("Missing terminal action")?;
+    let session_key = request["sessionKey"].as_str().unwrap_or_default();
+    if action == "list" {
+        let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);
+        let history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
+        let mut entries: Vec<_> = history.iter().filter(|(_, item)| item.session_id == session_id && item.host_id == "local").collect();
+        entries.sort_by_key(|(id, _)| *id);
+        return Ok(json!(entries.into_iter().map(|(id, item)| {
+            let known = &request["known"][id];
+            let unchanged = known["generation"].as_str() == Some(item.generation.to_string().as_str()) && known["outputEnd"].as_u64() == Some(item.text_end);
+            json!({"id":id,"output":if unchanged { Value::Null } else { json!(item.output) },"outputEnd":item.text_end,
+                "generation":item.generation.to_string(),"owned":item.owner == owner,"started":true,"exited":!item.running})
+        }).collect::<Vec<_>>()));
+    }
+    let id = request["sharedTerminalId"].as_str().ok_or("Missing terminal ID")?;
+    if action == "start" {
+        runtime.ensure_owner(id, &owner)?;
+        start_terminal_for_owner(app.clone(), owner, runtime, StartTerminalOptions {
+            terminal_id: id.into(), session_key: session_key.into(), cwd: request["cwd"].as_str().ok_or("Missing working directory")?.into(),
+            cols: dimension(request, "cols")?, rows: dimension(request, "rows")?, host_id: Some("local".into()),
+        })?;
+        return Ok(Value::Null);
+    }
+    let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime unavailable")?;
+    let mut history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
+    let item = history.get_mut(id).ok_or("Terminal is unavailable")?;
+    if action == "claim" {
+        item.owner = owner.clone();
+        if let Some(process) = processes.get_mut(id) { process.window_label = owner; }
+        return Ok(Value::Null);
+    }
+    if item.owner != owner { return Err("Click the terminal to take ownership".into()); }
+    match action {
+        "write" => {
+            let data = request["data"].as_str().ok_or("Missing terminal input")?;
+            if data.len() > 1024 * 1024 { return Err("Terminal input exceeds 1 MiB".into()); }
+            processes.get(id).ok_or("Terminal is not running")?.writer.try_send(data.into()).map_err(|_| "Terminal input is busy".to_string())?;
+        }
+        "resize" => {
+            processes.get(id).ok_or("Terminal is not running")?.master.resize(PtySize { cols: dimension(request, "cols")?, rows: dimension(request, "rows")?, pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
+        }
+        "reassign" => {
+            item.session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id).into();
+            if let Some(process) = processes.get_mut(id) { process.session_key = session_key.into(); }
+        }
+        "close" => {
+            let process = processes.remove(id);
+            history.remove(id);
+            drop(history);
+            drop(processes);
+            if let Some(mut process) = process { let _ = process.child.kill(); let _ = process.child.wait(); }
+        }
+        _ => return Err("Unknown terminal action".into()),
+    }
+    Ok(Value::Null)
+}
+
+fn dimension(request: &Value, key: &str) -> Result<u16, String> {
+    request[key].as_u64().and_then(|value| u16::try_from(value).ok()).map(|value| value.max(1)).ok_or_else(|| format!("Invalid {key}"))
 }
 
 pub(crate) fn lookup(runtime: &TerminalRuntime, request: &Value, host_id: &str) -> Result<Value, String> {

@@ -37,6 +37,7 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
 type CommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>>;
 type CommandHandler = fn(AppHandle, String, Value) -> CommandFuture;
 const COMMANDS: &[(&str, CommandHandler)] = &[
+    ("shared_terminal", handle_shared_terminal),
     ("reassign_terminal", handle_reassign_terminal),
     ("dictation_configuration", handle_dictation_configuration),
     ("dictation_transcribe", handle_dictation_transcribe),
@@ -184,6 +185,12 @@ fn handle_pi_presence(app: AppHandle, _owner: String, args: Value) -> CommandFut
 fn handle_start_terminal(app: AppHandle, owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || serde_json::to_value(start_terminal_for_owner(app.clone(), owner, app.state(), start_terminal_options(&args)?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_shared_terminal(app: AppHandle, owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || terminal_lookup::shared(&app, &owner, &args)).await.map_err(|error| error.to_string())?
     })
 }
 

@@ -11,6 +11,7 @@ import { Plus, RotateCcw, TerminalSquare, Trash2, X } from "lucide-solid";
 import { IconButton } from "./IconButton";
 
 interface Props {
+  ownershipRequired?: boolean; onTakeOwnership?: () => Promise<void>;
   cwd?: string; terminals: { id: string; label: string }[]; activeId: string; output: string; outputEnd: number; snapshot?: string; snapshotEnd?: number; started: boolean; exited?: boolean;
   onAdd: () => void; onSelect: (id: string) => void; onStart: (id: string, cols: number, rows: number) => void;
   onData: (data: string) => void; onResize: (cols: number, rows: number) => void; onSnapshot: (value: string, outputEnd: number) => void; onDelete: () => void; onClose: () => void;
@@ -59,12 +60,21 @@ export function TerminalView(componentProps: Props) {
     if (capturedSnapshot1) { queuedOutputEnd.current = capturedSnapshotEnd2 ?? 0; instance.write((capturedSnapshot1), () => { if (terminal.current !== instance) return; lastOutputEnd.current = capturedSnapshotEnd2 ?? 0; restored = true; }); }
 
     if (!capturedStarted3) callbacks.current.onStart(capturedActiveId4, instance.cols, instance.rows); else callbacks.current.onResize(instance.cols, instance.rows);
-    requestAnimationFrame(() => { if (terminal.current === instance) instance.focus(); });
-    const data = instance.onData((value) => callbacks.current.onData(value)); const resize = instance.onResize(({ cols, rows }) => callbacks.current.onResize(cols, rows));
+    instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
+    requestAnimationFrame(() => { if (terminal.current === instance && !componentProps.ownershipRequired) instance.focus(); });
+    const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value); }); const resize = instance.onResize(({ cols, rows }) => { if (!componentProps.ownershipRequired) callbacks.current.onResize(cols, rows); });
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(fitAndResize); observer?.observe(host.current); window.addEventListener("resize", fitAndResize);
 
     return () => { saveSnapshot(restored ? serializer.serialize() : capturedSnapshot1 || "", restored ? lastOutputEnd.current : capturedSnapshotEnd2 ?? 0); observer?.disconnect(); window.removeEventListener("resize", fitAndResize); data.dispose(); resize.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
   }, () => [componentProps.activeId, componentProps.cwd]);
+
+  createDependencyEffect(() => {
+    const instance = terminal.current;
+    if (!instance) return;
+    instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
+    if (componentProps.ownershipRequired) instance.blur();
+    else { callbacks.current.onResize(instance.cols, instance.rows); }
+  }, () => [componentProps.ownershipRequired]);
 
   createDependencyEffect(() => { const capturedOutputEnd0 = componentProps.outputEnd; const capturedOutput1 = componentProps.output;
     const instance = terminal.current;
@@ -83,8 +93,8 @@ export function TerminalView(componentProps: Props) {
 
   const canAdd = createMemo(() => (componentProps.terminals.length < 8));
 
-  return <section class="terminal-shell" aria-label="Session terminal"><header><div class="terminal-tabs">{<Key each={componentProps.terminals} by={(item) => item.id}>{(item, _index) => <button ref={(element) => { if (element) tabRefs.current.set(item().id, element); else tabRefs.current.delete(item().id); }}  class={`terminal-tab ${item().id === componentProps.activeId ? "active" : ""}`} aria-pressed={item().id === componentProps.activeId} onClick={() => componentProps.onSelect(item().id)}><TerminalSquare size={14} /><strong>{item().label}</strong></button>}</Key>}<IconButton label={canAdd() ? "Add terminal" : "Terminal limit reached"} disabled={!canAdd()} onClick={componentProps.onAdd}><Plus size={16} /></IconButton></div><div>{copyError() && <span class="copy-feedback" role="status">Could not copy terminal selection</span>}{componentProps.exited && <><span class="terminal-exited">exited</span><IconButton label="Restart terminal" onClick={() => componentProps.onStart(componentProps.activeId, terminal.current?.cols ?? 80, terminal.current?.rows ?? 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" onClick={componentProps.onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={componentProps.onClose}><X size={16} /></IconButton></div></header>
-    {isMobile && componentProps.cwd && <div class="mobile-terminal-keys">{<Key each={[["Esc", "\u001b"], ["Tab", "\t"], ["Ctrl+C", "\u0003"], ["Ctrl+D", "\u0004"], ["↑", "\u001b[A"], ["↓", "\u001b[B"], ["←", "\u001b[D"], ["→", "\u001b[C"]]} by={([label, _data]) => label}>{(entry, _index) => <button  disabled={!componentProps.started || componentProps.exited} onPointerDown={(event) => event.preventDefault()} onClick={() => { componentProps.onData(entry()[1]); terminal.current?.focus(); }}>{entry()[0]}</button>}</Key>}</div>}
-    {componentProps.cwd ? <div class="terminal-host" ref={element => { host.current = element; }} onMouseDown={() => terminal.current?.focus()} /> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
+  return <section class="terminal-shell" aria-label="Session terminal"><header><div class="terminal-tabs">{<Key each={componentProps.terminals} by={(item) => item.id}>{(item, _index) => <button ref={(element) => { if (element) tabRefs.current.set(item().id, element); else tabRefs.current.delete(item().id); }}  class={`terminal-tab ${item().id === componentProps.activeId ? "active" : ""}`} aria-pressed={item().id === componentProps.activeId} onClick={() => componentProps.onSelect(item().id)}><TerminalSquare size={14} /><strong>{item().label}</strong></button>}</Key>}<IconButton label={canAdd() ? "Add terminal" : "Terminal limit reached"} disabled={!canAdd()} onClick={componentProps.onAdd}><Plus size={16} /></IconButton></div><div>{copyError() && <span class="copy-feedback" role="status">Could not copy terminal selection</span>}{componentProps.exited && <><span class="terminal-exited">exited</span><IconButton label="Restart terminal" disabled={componentProps.ownershipRequired} onClick={() => componentProps.onStart(componentProps.activeId, terminal.current?.cols ?? 80, terminal.current?.rows ?? 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" disabled={componentProps.ownershipRequired} onClick={componentProps.onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={componentProps.onClose}><X size={16} /></IconButton></div></header>
+    {isMobile && componentProps.cwd && <div class="mobile-terminal-keys">{<Key each={[["Esc", "\u001b"], ["Tab", "\t"], ["Ctrl+C", "\u0003"], ["Ctrl+D", "\u0004"], ["↑", "\u001b[A"], ["↓", "\u001b[B"], ["←", "\u001b[D"], ["→", "\u001b[C"]]} by={([label, _data]) => label}>{(entry, _index) => <button  disabled={componentProps.ownershipRequired || !componentProps.started || componentProps.exited} onPointerDown={(event) => event.preventDefault()} onClick={() => { componentProps.onData(entry()[1]); terminal.current?.focus(); }}>{entry()[0]}</button>}</Key>}</div>}
+    {componentProps.cwd ? <div class="terminal-surface" classList={{ "ownership-required": Boolean(componentProps.ownershipRequired) }}><div class="terminal-host" ref={element => { host.current = element; }} onMouseDown={() => { if (!componentProps.ownershipRequired) terminal.current?.focus(); }} />{componentProps.ownershipRequired && <button class="terminal-ownership" aria-label="Take terminal ownership" onClick={async () => { await componentProps.onTakeOwnership?.(); if (!componentProps.ownershipRequired) terminal.current?.focus(); }} />}</div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
   </section>;
 }

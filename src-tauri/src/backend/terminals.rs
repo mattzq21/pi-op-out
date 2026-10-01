@@ -65,6 +65,9 @@ pub(super) fn start_terminal_with(runtime: &TerminalRuntime, launch: TerminalLau
     command: impl FnOnce() -> Result<CommandBuilder, String>, mut emit: impl FnMut(Value) + Send + 'static) -> Result<(), String> {
     let TerminalLaunch { terminal_id, session_key, cwd, cols, rows, host_id, window_label } = launch;
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
+    if runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?.get(&terminal_id).is_some_and(|item| !terminal_lookup::owned_by(item, &window_label)) {
+        return Err("Terminal belongs to another connection".into());
+    }
     if let Some(process) = processes.get(&terminal_id) {
         return if process.window_label == window_label { Ok(()) } else { Err("Terminal belongs to another connection".into()) };
     }
