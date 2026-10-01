@@ -1,5 +1,5 @@
 import { Key } from "@solid-primitives/keyed";
-import { createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal, For } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import { createTerminalTranscript } from "../lib/terminalTranscript";
 import { Plus, RotateCcw, TerminalSquare, Trash2, X } from "lucide-solid";
@@ -32,7 +32,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     const text = parser.append(componentProps.output.slice(parsedEnd - start));
     parsedEnd = componentProps.outputEnd;
 
-    return text;
+    return { text, segments: parser.segments() };
   });
 
   const disabled = () => Boolean(componentProps.ownershipRequired || !componentProps.started || componentProps.exited);
@@ -99,7 +99,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
         const element = host.current;
 
         if (element) followOutput = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
-      }}><span>{transcript()}</span>{!componentProps.ownershipRequired &&
+      }}><span><For each={transcript().segments}>{segment => <span style={segment.style}>{segment.text}</span>}</For></span>{!componentProps.ownershipRequired &&
         <form class="terminal-command" onSubmit={event => { event.preventDefault(); send(); }}>
           <input ref={element => { input.current = element; }} aria-label="Terminal command" size={Math.max(1, command().length + 1)} value={command()} disabled={disabled()} autocomplete="off" autocapitalize="off" spellcheck={false} onInput={event => setCommand(event.currentTarget.value)} onKeyDown={event => {
             if (event.isComposing) return;

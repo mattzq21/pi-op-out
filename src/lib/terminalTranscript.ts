@@ -1,4 +1,5 @@
 import { TERMINAL_OUTPUT_LIMIT } from "./terminalOutput";
+import { applyTerminalRendition, terminalTextStyle, type TerminalRendition } from "./terminalColors";
 
 type ControlState = "text" | "escape" | "csi" | "string" | "stringEscape" | "charset";
 
@@ -36,6 +37,20 @@ export function createTerminalTranscript() {
   let text = "";
   let state: ControlState = "text";
   let carriageReturn = false;
+  let parameters = "";
+  let rendition: TerminalRendition = {};
+  let runs: { start: number; rendition: TerminalRendition }[] = [];
+
+  const write = (value: string) => {
+    if (runs.at(-1)?.rendition !== rendition) runs.push({ start: text.length, rendition });
+    text += value;
+  };
+
+  const backspace = () => {
+    if (text && !text.endsWith("\n")) text = eraseLastCharacter(text);
+
+    while (runs.length && runs[runs.length - 1].start >= text.length) runs.pop();
+  };
 
   const appendText = (char: string) => {
     if (char === "\r") {
@@ -45,20 +60,33 @@ export function createTerminalTranscript() {
     }
 
     if (carriageReturn) {
-      if (char !== "\n" && text && !text.endsWith("\n")) text += "\n";
+      if (char !== "\n" && text && !text.endsWith("\n")) write("\n");
       carriageReturn = false;
     }
 
     if (char === "\b") {
-      if (text && !text.endsWith("\n")) text = eraseLastCharacter(text);
+      backspace();
 
       return;
     }
 
-    if (!/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(char)) text += char;
+    if (!/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(char)) write(char);
+  };
+
+  const consumeCsi = (char: string) => {
+    if (char >= "@" && char <= "~") {
+      if (char === "m") rendition = applyTerminalRendition(rendition, parameters);
+      parameters = ""; state = "text";
+    } else if (parameters.length < 256) parameters += char;
   };
 
   const consume = (char: string) => {
+    if (state === "csi") {
+      consumeCsi(char);
+
+      return;
+    }
+
     if (state !== "text") {
       state = controlHandlers[state](char);
 
@@ -79,9 +107,20 @@ export function createTerminalTranscript() {
   return {
     append(data: string) {
       for (const char of data) consume(char);
+
+      const discard = Math.max(0, text.length - TERMINAL_OUTPUT_LIMIT);
+
+      if (discard) {
+        runs = runs.filter((_, index) => (runs[index + 1]?.start ?? text.length) > discard)
+          .map(run => ({ ...run, start: Math.max(0, run.start - discard) }));
+      }
+
       text = text.slice(-TERMINAL_OUTPUT_LIMIT);
 
       return text;
+    },
+    segments() {
+      return runs.map((run, index) => ({ text: text.slice(run.start, runs[index + 1]?.start), style: terminalTextStyle(run.rendition) }));
     },
   };
 }

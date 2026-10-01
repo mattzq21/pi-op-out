@@ -10,6 +10,7 @@ import { Plus, RotateCcw, TerminalSquare, Trash2, X } from "lucide-solid";
 import { IconButton } from "./IconButton";
 import { ResizableTerminalPanel } from "./ResizableTerminalPanel";
 import { z } from "zod";
+import { terminalTheme } from "../lib/terminalColors";
 
 import type { TerminalViewProps } from "./TerminalView";
 
@@ -26,7 +27,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     if (!capturedCwd0 || !host.current) return;
     const testPalette = import.meta.env.MODE === "e2e";
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
-    const instance = new Terminal({ cursorBlink: true, convertEol: false, fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 12, lineHeight: 1.25, scrollback: 5000, theme: { background: "#1d1d1b", foreground: "#e5e1d8", cursor: accent, selectionBackground: "#5a554b88", black: "#242320", red: "#d77865", green: "#72ad8d", yellow: testPalette ? "#d46a24" : "#c49b52", blue: "#7496b8", magenta: "#ad83ad", cyan: "#72aaa9", white: "#e5e1d8" } });
+    const instance = new Terminal({ cursorBlink: true, convertEol: false, fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 12, lineHeight: 1.25, scrollback: 5000, theme: { ...terminalTheme, cursor: accent, yellow: testPalette ? "#d46a24" : terminalTheme.yellow } });
     const fit = new FitAddon(); const serializer = new SerializeAddon(); instance.loadAddon(fit); instance.loadAddon(serializer); instance.open(host.current); terminal.current = instance;
     setCopyError(false);
     instance.attachCustomKeyEventHandler((event) => {
