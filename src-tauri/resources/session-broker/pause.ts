@@ -1,19 +1,42 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
+import { Check, Parse } from "typebox/value";
 import type { ContextEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type StoppedAssistantMessage = AssistantMessage & { piopCompletedBlocks?: true };
+
+const reasoningSchema = Type.Object({ type: Type.Literal("reasoning"), encrypted_content: Type.String() });
+
+const completedBlocksSchema = Type.Object({ piopCompletedBlocks: Type.Literal(true) });
+
+const pauseSchema = Type.Object({ isPaused: Type.Literal(true) });
+
+const resumeSchema = Type.Object({ message: Type.String() });
+
+const controlSchema = Type.Object({ id: Type.Optional(Type.String()), action: Type.Optional(Type.String()) });
+
+interface PauseProbe { controller?: PauseController }
+
+interface GoalResumeRequest { action: "resume"; ctx: ExtensionContext; ready?: Promise<void> }
+
+declare module "@earendil-works/pi-coding-agent" {
+  interface EventBus {
+    on(channel: "pi-desktop:pause-controller", handler: (probe: PauseProbe) => void): () => void;
+    emit(channel: "pi-desktop:pause-controller", probe: PauseProbe): void;
+  }
+}
 
 function replayableThinking(signatureText: string | undefined) {
   try {
     const signature = JSON.parse(signatureText ?? "null");
 
-    return signature?.type === "reasoning" && typeof signature.encrypted_content === "string" && signature.encrypted_content.trim();
+    return Check(reasoningSchema, signature) && signature.encrypted_content.trim();
   } catch { return false; }
 }
 
 export function desktopPauseContext(messages: ContextEvent["messages"], resumeMessages: ReadonlySet<string>): ContextEvent["messages"] {
-  return messages.filter((message) => !(message.role === "assistant" && message.stopReason === "aborted" && message.errorMessage === "Response paused")).map((message) => {
-    if (message.role === "assistant" && message.stopReason === "aborted" && (message as StoppedAssistantMessage).piopCompletedBlocks && message.content.length) {
+  return messages.filter((message) => !(message.role === "assistant" && message.stopReason === "aborted" && message.errorMessage === "Response paused")).map((message): ContextEvent["messages"][number] => {
+    if (message.role === "assistant" && message.stopReason === "aborted" && Check(completedBlocksSchema, message) && message.content.length) {
       const content = message.content.flatMap<AssistantMessage["content"][number]>((block) => {
         if (block.type !== "thinking" || !["openai-responses", "openai-codex-responses", "azure-openai-responses"].includes(message.api)) return [block];
 
@@ -26,16 +49,16 @@ export function desktopPauseContext(messages: ContextEvent["messages"], resumeMe
 
       return {
         ...message,
-        stopReason: "stop" as const,
+        stopReason: "stop",
         errorMessage: undefined,
-        content: [...content, { type: "text" as const, text: "[Response stopped by the user. Only completed content blocks are retained. Any tool calls in this response were not executed.]" }],
+        content: [...content, { type: "text", text: "[Response stopped by the user. Only completed content blocks are retained. Any tool calls in this response were not executed.]" }],
       };
     }
 
     if (message.role !== "user") return message;
-    const text = typeof message.content === "string" ? message.content : message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+    const text = Array.isArray(message.content) ? message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n") : message.content;
 
-    return resumeMessages.has(text) ? { ...message, content: [{ type: "text" as const, text: "Continue the previous task using the completed turns and tool results already in context. The last run was paused by the user. Check the current state of any interrupted work before continuing, and finish the remaining task without repeating completed work." }] } : message;
+    return resumeMessages.has(text) ? { ...message, content: [{ type: "text", text: "Continue the previous task using the completed turns and tool results already in context. The last run was paused by the user. Check the current state of any interrupted work before continuing, and finish the remaining task without repeating completed work." }] } : message;
   });
 }
 
@@ -51,7 +74,7 @@ function wasAborted(message: AssistantMessage, ctx: ExtensionContext) {
 }
 
 export function registerPauseControl(pi: ExtensionAPI): PauseController {
-  const probe: { controller?: PauseController } = {};
+  const probe: PauseProbe = {};
   pi.events.emit("pi-desktop:pause-controller", probe);
 
   if (probe.controller) return probe.controller;
@@ -79,11 +102,9 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "custom") continue;
 
-      if (entry.customType === pauseEntry) isPaused = (entry.data as { isPaused?: boolean } | undefined)?.isPaused === true;
+      if (entry.customType === pauseEntry) isPaused = Check(pauseSchema, entry.data);
 
-      if (entry.customType === resumeEntry) { const message = (entry.data as { message?: string } | undefined)?.message;
-
-      if (typeof message === "string") resumeMessages.add(message); }
+      if (entry.customType === resumeEntry && Check(resumeSchema, entry.data)) resumeMessages.add(entry.data.message);
     }
 
     publishPause();
@@ -159,7 +180,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
 
       if (!isPaused) return undefined;
       const version = generation;
-      const goalControl: { action: "resume"; ctx: ExtensionContext; ready?: Promise<void> } = { action: "resume", ctx };
+      const goalControl: GoalResumeRequest = { action: "resume", ctx };
       pi.events.emit("piop:goal-control", goalControl);
       await goalControl.ready;
 
@@ -179,7 +200,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     },
   };
 
-  const unsubscribe = pi.events.on("pi-desktop:pause-controller", (value) => { (value as { controller?: PauseController }).controller = controller; });
+  const unsubscribe = pi.events.on("pi-desktop:pause-controller", (value) => { value.controller = controller; });
   pi.on("session_shutdown", () => { generation += 1; unsubscribe(); pauseOperation = undefined; });
 
   const applyControl = async (action: string, ctx: ExtensionContext) => {
@@ -199,7 +220,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
       let resumeMessage: string | undefined;
 
       try {
-        const control = JSON.parse(args) as { id?: string; action?: string }; id = control.id; action = control.action ?? "";
+        const control = Parse(controlSchema, JSON.parse(args)); id = control.id; action = control.action ?? "";
 
         if (!id || ctx.mode !== "rpc") throw new Error("Desktop control requires an RPC request");
         resumeMessage = await applyControl(action, ctx);

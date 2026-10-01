@@ -195,8 +195,13 @@ pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?.join("piop-diff-watch");
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
-    atomic_write_private(&extension_path, include_str!("../../../extensions/piop-diff-watch/index.ts").as_bytes())?;
-    atomic_write_private(&dir.join("git.ts"), include_str!("../../../extensions/piop-diff-watch/git.ts").as_bytes())?;
+    for (name, content) in [
+        ("index.ts", include_str!("../../../extensions/piop-diff-watch/index.ts")),
+        ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
+        ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
+    ] {
+        atomic_write_private(&dir.join(name), content.as_bytes())?;
+    }
     remove_legacy_diff_assets(&dir)?;
     Ok(extension_path)
 }

@@ -1,26 +1,36 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const runFile = promisify(execFile);
 
+const captureSchema = Type.Object({
+  root: Type.String({ minLength: 1 }), repository_root: Type.String({ minLength: 1 }), tree: Type.String({ pattern: "^[a-fA-F0-9]{40,64}$" }),
+});
+
+const skippedCaptureSchema = Type.Object({ code: Type.Union([Type.Literal(3), Type.Literal(4), Type.Literal(6)]) });
+
+type TurnCapture = { phase: "start"; turnId: string; cwd: string; baseline: string }
+  | { phase: "end"; turnId: string; cwd?: string; current?: string | null; sessionPath?: string; messageId?: string };
+
 export function registerTurnCapture(pi: ExtensionAPI) {
   const script = process.env.PI_DESKTOP_GIT_CAPTURE_SCRIPT;
 
   if (!script) return;
-  const publish = (ctx: ExtensionContext, capture: object) => ctx.ui.setStatus("pi-desktop-turn-capture", JSON.stringify(capture));
+  const publish = (ctx: ExtensionContext, capture: TurnCapture) => ctx.ui.setStatus("pi-desktop-turn-capture", JSON.stringify(capture));
 
   const snapshot = async (cwd: string) => {
     try {
       const { stdout } = await runFile(process.execPath, ["-e", script], { cwd, maxBuffer: 64 * 1024 });
       const capture = JSON.parse(stdout);
 
-      if (!capture || typeof capture.root !== "string" || !capture.root || typeof capture.repository_root !== "string" || !capture.repository_root
-        || typeof capture.tree !== "string" || !/^[a-f0-9]{40,64}$/i.test(capture.tree)) throw new Error("Git snapshot was incomplete");
+      if (!Check(captureSchema, capture)) throw new Error("Git snapshot was incomplete");
 
       return JSON.stringify({ root: capture.root, tree: capture.tree, repository_root: capture.repository_root });
     } catch (error) {
-      if ([3, 4, 6].includes(Number((error as { code?: unknown }).code))) return null;
+      if (Check(skippedCaptureSchema, error)) return null;
       throw error;
     }
   };

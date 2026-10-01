@@ -1,7 +1,9 @@
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { isAbsolute, dirname, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext, SessionEntry, SessionHeader } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 
 const CACHE_FORK_ENTRY = "piop-openai-cache-fork";
 
@@ -17,22 +19,26 @@ const RUNTIME_STATE_PROPERTY = "__piopOpenAICacheLineageRuntime";
 
 const WRAPPED_STREAM_PROPERTY = "__piopOpenAICacheLineageWrapper";
 
-type JsonObject = Record<string, unknown>;
-
 type CacheLineageRuntimeState = { activeId?: string };
 
-const runtimeGlobal = globalThis as typeof globalThis & {
-  [RUNTIME_STATE_PROPERTY]?: CacheLineageRuntimeState;
-};
-
-const runtimeState = runtimeGlobal[RUNTIME_STATE_PROPERTY] ??= {};
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+declare global {
+  var __piopOpenAICacheLineageRuntime: CacheLineageRuntimeState | undefined;
 }
 
-function normalizeCacheKey(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length === 0) return undefined;
+const runtimeState = globalThis[RUNTIME_STATE_PROPERTY] ??= {};
+
+const lineageSchema = Type.Object({ id: Type.String() });
+
+const headerSchema = Type.Object({ type: Type.Literal("session"), id: Type.String({ minLength: 1 }), parentSession: Type.Optional(Type.String()) });
+
+type LineageHeader = Static<typeof headerSchema>;
+
+const modelSchema = Type.Object({ provider: Type.String(), api: Type.String() });
+
+const payloadSchema = Type.Object({ prompt_cache_key: Type.String() });
+
+function normalizeCacheKey(value: string | undefined): string | undefined {
+  if (!value) return undefined;
 
   return Array.from(value).slice(0, MAX_CACHE_KEY_CHARS).join("");
 }
@@ -41,7 +47,7 @@ function storedLineage(entries: SessionEntry[]): string | undefined {
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
 
-    if (entry?.type !== "custom" || (entry.customType !== CACHE_FORK_ENTRY && entry.customType !== LEGACY_CACHE_LINEAGE_ENTRY) || !isJsonObject(entry.data)) continue;
+    if (entry?.type !== "custom" || (entry.customType !== CACHE_FORK_ENTRY && entry.customType !== LEGACY_CACHE_LINEAGE_ENTRY) || !Check(lineageSchema, entry.data)) continue;
     const id = normalizeCacheKey(entry.data.id);
 
     if (id) return id;
@@ -50,11 +56,7 @@ function storedLineage(entries: SessionEntry[]): string | undefined {
   return undefined;
 }
 
-function isSessionHeader(value: unknown): value is SessionHeader {
-  return isJsonObject(value) && value.type === "session" && typeof value.id === "string" && value.id.length > 0;
-}
-
-async function readSessionHeader(path: string): Promise<SessionHeader | undefined> {
+async function readSessionHeader(path: string): Promise<LineageHeader | undefined> {
   let handle: Awaited<ReturnType<typeof open>> | undefined;
 
   try {
@@ -68,9 +70,9 @@ async function readSessionHeader(path: string): Promise<SessionHeader | undefine
     const newline = contents.indexOf("\n");
 
     if (newline < 0 && bytesRead === buffer.length) return undefined;
-    const value = JSON.parse(newline < 0 ? contents : contents.slice(0, newline)) as unknown;
+    const value = JSON.parse(newline < 0 ? contents : contents.slice(0, newline));
 
-    return isSessionHeader(value) ? value : undefined;
+    return Check(headerSchema, value) ? value : undefined;
   } catch {
     return undefined;
   } finally {
@@ -86,7 +88,7 @@ function parentPath(parentSession: string, childPath: string | undefined): strin
 
 async function inheritedLineage(ctx: ExtensionContext): Promise<string> {
   const sessionId = normalizeCacheKey(ctx.sessionManager.getSessionId()) ?? "session";
-  const saved = storedLineage(ctx.sessionManager.getBranch() as SessionEntry[]);
+  const saved = storedLineage(ctx.sessionManager.getBranch());
 
   if (saved) return saved;
 
@@ -111,8 +113,8 @@ async function inheritedLineage(ctx: ExtensionContext): Promise<string> {
   return lineageId;
 }
 
-function usesOpenAIResponses(model: unknown): boolean {
-  if (!isJsonObject(model) || typeof model.provider !== "string") return false;
+function usesOpenAIResponses(model: ExtensionContext["model"]): boolean {
+  if (!Check(modelSchema, model)) return false;
   const provider = model.provider.replace(/--piop-account-\d+$/, "");
 
   return (provider === "openai-codex" && model.api === "openai-codex-responses")
@@ -127,11 +129,9 @@ export default function openAICacheFork(pi: ExtensionAPI): void {
 
     if (!provider) return;
 
-    const currentStream = provider.streamSimple as typeof provider.streamSimple & {
-      [WRAPPED_STREAM_PROPERTY]?: boolean;
-    };
+    const currentStream = provider.streamSimple;
 
-    if (currentStream[WRAPPED_STREAM_PROPERTY]) return;
+    if (Object.getOwnPropertyDescriptor(currentStream, WRAPPED_STREAM_PROPERTY)?.value === true) return;
 
     const wrappedStream: typeof provider.streamSimple = (model, context, options) => provider.streamSimple(
       model,
@@ -157,7 +157,7 @@ export default function openAICacheFork(pi: ExtensionAPI): void {
     cacheLineageId = await inheritedLineage(ctx);
     runtimeState.activeId = cacheLineageId;
 
-    if (!storedLineage(ctx.sessionManager.getBranch() as SessionEntry[])) {
+    if (!storedLineage(ctx.sessionManager.getBranch())) {
       try {
         pi.appendEntry(CACHE_FORK_ENTRY, { id: cacheLineageId });
       } catch {
@@ -172,7 +172,7 @@ export default function openAICacheFork(pi: ExtensionAPI): void {
     wrapCodexProvider(ctx);
   });
   pi.on("before_provider_request", async (event, ctx) => {
-    if (!usesOpenAIResponses(ctx.model) || !isJsonObject(event.payload) || typeof event.payload.prompt_cache_key !== "string") return undefined;
+    if (!usesOpenAIResponses(ctx.model) || !Check(payloadSchema, event.payload)) return undefined;
     const promptCacheKey = await initialize(ctx);
 
     const payload = event.payload.prompt_cache_key === promptCacheKey

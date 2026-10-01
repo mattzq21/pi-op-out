@@ -1,7 +1,20 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
+import { Type as Schema } from "typebox";
+import { Check } from "typebox/value";
 
 type Activity = "mailbox" | "input" | "cancelled" | "timeout";
+
+const notificationSchema = Schema.Object({ notificationId: Schema.String() });
+
+interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[] }
+
+declare module "@earendil-works/pi-coding-agent" {
+  interface EventBus {
+    on(channel: "piop:required-tools", handler: (request: RequiredToolsRequest) => void): () => void;
+    emit(channel: "piop:required-tools", request: RequiredToolsRequest): void;
+  }
+}
 
 function waitForActivity(listeners: Set<(activity: Activity) => void>, timeout: number, signal?: AbortSignal) {
   return new Promise<Activity>((resolve) => {
@@ -21,7 +34,7 @@ function waitForActivity(listeners: Set<(activity: Activity) => void>, timeout: 
   });
 }
 
-function waitResult(activity: Activity) {
+function waitResult(activity: Activity): AgentToolResult<{ timed_out: boolean }> {
   const messages: Record<Activity, string> = {
     mailbox: "Wait completed. Subagent results are delivered separately in the conversation.",
     input: "Wait interrupted by new input.",
@@ -29,7 +42,7 @@ function waitResult(activity: Activity) {
     timeout: "Wait timed out.",
   };
 
-  return { content: [{ type: "text" as const, text: messages[activity] }], details: { timed_out: activity === "timeout" } };
+  return { content: [{ type: "text", text: messages[activity] }], details: { timed_out: activity === "timeout" } };
 }
 
 export function registerSubagentMailbox(pi: ExtensionAPI) {
@@ -40,9 +53,7 @@ export function registerSubagentMailbox(pi: ExtensionAPI) {
     for (const listener of [...listeners]) listener(activity);
   };
 
-  const unsubscribe = pi.events.on("piop:required-tools", value => {
-    const request = value as { ctx: ExtensionContext; tools: string[] };
-
+  const unsubscribe = pi.events.on("piop:required-tools", request => {
     if (request.ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-run")) request.tools.push("wait_agent");
   });
 
@@ -53,9 +64,9 @@ export function registerSubagentMailbox(pi: ExtensionAPI) {
   pi.on("context", event => {
     for (const message of event.messages) {
       if (message.role !== "custom" || message.customType !== "piop-subagent-result") continue;
-      const details = message.details as { notificationId?: string } | undefined;
+      const details = message.details;
 
-      if (details?.notificationId) pending.delete(details.notificationId);
+      if (Check(notificationSchema, details) && details.notificationId) pending.delete(details.notificationId);
     }
   });
   pi.registerTool({

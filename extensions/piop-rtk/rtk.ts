@@ -57,8 +57,8 @@ function registerRtkUnavailableNotice(pi: ExtensionAPI) {
   }
 
   try {
-    pi.on("session_start", (_event: unknown, ctx: unknown) => {
-      sessionContext = ctx as StatusContext
+    pi.on("session_start", (_event, ctx) => {
+      sessionContext = ctx
       applyStatus()
     })
   } catch {
@@ -102,7 +102,7 @@ export default async function (pi: ExtensionAPI) {
 
       const cmd = event.input.command
 
-      if (typeof cmd !== "string" || cmd.trim() === "") return
+      if (cmd.trim() === "") return
 
       if (cmd.startsWith("rtk ")) return
 

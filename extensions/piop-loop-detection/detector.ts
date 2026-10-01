@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import { digest, type Observation, type Outcome } from "./observations.ts";
 
 export const LIMIT = 32;
@@ -24,36 +26,25 @@ export type FileChange = { path: string; before: string; after: string };
 
 export const defaults = (): Config => ({ enabled: false, threshold: 4, cooldownSeconds: 120 });
 
-const integer = (value: unknown, min: number, max: number): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
+const integer = (minimum: number, maximum = Number.MAX_SAFE_INTEGER) => Type.Integer({ minimum, maximum });
 
-const hash = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+const hashSchema = Type.String({ pattern: "^[a-f0-9]{64}$" });
 
-export function validConfig(value: unknown): value is Config {
-  const config = value as Config | undefined;
+export const configSchema = Type.Object({ enabled: Type.Boolean(), threshold: integer(3, 10), cooldownSeconds: integer(30, 3600) });
 
-  return !!config && typeof config.enabled === "boolean" && integer(config.threshold, 3, 10) && integer(config.cooldownSeconds, 30, 3600);
-}
+const evidenceProperties = { key: hashSchema, count: integer(1, 1000), seq: integer(0), at: integer(0), warned: Type.Boolean() };
 
-function validEvidence(value: Evidence | EditEvidence) {
-  return value && hash(value.key) && integer(value.count, 1, 1000) && integer(value.seq, 0, Number.MAX_SAFE_INTEGER)
-    && integer(value.at, 0, Number.MAX_SAFE_INTEGER) && typeof value.warned === "boolean";
-}
+export const snapshotSchema = Type.Object({
+  version: Type.Literal(1), config: configSchema, scope: hashSchema, profile: hashSchema, seq: integer(0),
+  attempts: Type.Array(Type.Object({ ...evidenceProperties, result: hashSchema }), { maxItems: LIMIT }),
+  edits: Type.Array(Type.Object({ ...evidenceProperties, before: hashSchema, after: hashSchema }), { maxItems: LIMIT }),
+  information: Type.Array(hashSchema, { maxItems: LIMIT }), lastWarningAt: integer(0), lastWarningSeq: integer(-100),
+  warning: Type.Optional(Type.Object({ text: Type.String({ maxLength: 512 }), remaining: integer(0, 3) })),
+});
 
-function validWarning(value: Warning | undefined) {
-  return value === undefined || (!!value && typeof value.text === "string" && value.text.length <= 512 && integer(value.remaining, 0, 3));
-}
+const fileChangeSchema = Type.Object({ path: Type.String(), before: hashSchema, after: hashSchema });
 
-function validSnapshot(value: Snapshot) {
-  return value.version === 1 && validConfig(value.config) && hash(value.scope) && hash(value.profile)
-    && integer(value.seq, 0, Number.MAX_SAFE_INTEGER) && integer(value.lastWarningAt, 0, Number.MAX_SAFE_INTEGER)
-    && integer(value.lastWarningSeq, -100, Number.MAX_SAFE_INTEGER) && validWarning(value.warning);
-}
-
-function validLists(value: Snapshot) {
-  return Array.isArray(value.attempts) && value.attempts.length <= LIMIT && value.attempts.every(item => validEvidence(item) && hash(item.result))
-    && Array.isArray(value.edits) && value.edits.length <= LIMIT && value.edits.every(item => validEvidence(item) && hash(item.before) && hash(item.after))
-    && Array.isArray(value.information) && value.information.length <= LIMIT && value.information.every(hash);
-}
+export function validConfig(value: unknown): value is Config { return Check(configSchema, value); }
 
 export class LoopDetector {
   state: Snapshot;
@@ -62,11 +53,8 @@ export class LoopDetector {
     this.state = { version: 1, config: defaults(), scope, profile, seq: 0, attempts: [], edits: [], information: [], lastWarningAt: 0, lastWarningSeq: -100 };
   }
 
-  restore(value: unknown, now: number) {
-    if (!value || typeof value !== "object") return;
-    const saved = value as Snapshot;
-
-    if (!validSnapshot(saved) || !validLists(saved)) return;
+  restore(saved: Snapshot | undefined, now: number) {
+    if (!Check(snapshotSchema, saved)) return;
     this.state.config = { ...saved.config };
 
     if (saved.scope !== this.state.scope || saved.profile !== this.state.profile) return;
@@ -148,7 +136,7 @@ export class LoopDetector {
   change(change: FileChange, now: number): string | undefined {
     if (!this.state.config.enabled || change.before === change.after) return;
 
-    if (!hash(change.before) || !hash(change.after) || typeof change.path !== "string") return;
+    if (!Check(fileChangeSchema, change)) return;
     const item = this.recordEdit(change, now);
 
     if (item.count === 1) this.progress();

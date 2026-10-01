@@ -1,13 +1,21 @@
 import { closeSync, constants, fstatSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Snapshot } from "./detector.ts";
+import { snapshotSchema, type Snapshot } from "./detector.ts";
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
 
 const MAX_BYTES = 512 * 1024;
 
 const MAX_CHECKPOINTS = 16;
 
-type Checkpoint = { anchor: string; configuration: string | null; state: Snapshot };
+const checkpointSchema = Type.Object({ anchor: Type.String(), configuration: Type.Optional(Type.Union([Type.String(), Type.Null()])), state: Type.Unknown() });
+
+type Checkpoint = Static<typeof checkpointSchema>;
+
+const checkpointFileSchema = Type.Object({ version: Type.Literal(1), checkpoints: Type.Array(Type.Unknown()) });
+
+const resumeSchema = Type.Object({ message: Type.String() });
 
 const file = (ctx: ExtensionContext) => {
   const session = ctx.sessionManager.getSessionFile();
@@ -29,14 +37,14 @@ function read(path: string): Checkpoint[] {
     if (size > MAX_BYTES) return [];
     const data = JSON.parse(buffer.subarray(0, size).toString("utf8"));
 
-    if (data.version !== 1 || !Array.isArray(data.checkpoints)) return [];
+    if (!Check(checkpointFileSchema, data)) return [];
 
-    return data.checkpoints.slice(-MAX_CHECKPOINTS).filter((item: Checkpoint) => item && typeof item.anchor === "string" && item.state);
+    return data.checkpoints.slice(-MAX_CHECKPOINTS).flatMap(item => Check(checkpointSchema, item) && item.state ? [item] : []);
   } catch { return []; }
   finally { if (fd !== undefined) closeSync(fd); }
 }
 
-export function loadCheckpoint(ctx: ExtensionContext, configuration: string | null): unknown {
+export function loadCheckpoint(ctx: ExtensionContext, configuration: string | null): Snapshot | undefined {
   const path = file(ctx);
 
   if (!path) return;
@@ -45,15 +53,14 @@ export function loadCheckpoint(ctx: ExtensionContext, configuration: string | nu
 
   const resumes = new Set(branch.flatMap(entry => {
     if (entry.type !== "custom" || entry.customType !== "pi-desktop-resume") return [];
-    const message = (entry.data as { message?: unknown } | undefined)?.message;
 
-    return typeof message === "string" ? [message] : [];
+    return Check(resumeSchema, entry.data) ? [entry.data.message] : [];
   }));
 
   for (const entry of branch.reverse()) {
     const checkpoint = checkpoints.findLast(item => item.anchor === entry.id);
 
-    if (checkpoint) return checkpoint.state;
+    if (checkpoint) return Check(snapshotSchema, checkpoint.state) ? checkpoint.state : undefined;
 
     if (newUserInput(entry, resumes)) return;
   }
@@ -62,7 +69,7 @@ export function loadCheckpoint(ctx: ExtensionContext, configuration: string | nu
 function newUserInput(entry: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>[number], resumes: Set<string>) {
   if (entry.type !== "message" || entry.message.role !== "user") return false;
   const content = entry.message.content;
-  const text = typeof content === "string" ? content : content.filter(part => part.type === "text").map(part => part.text).join("\n");
+  const text = Array.isArray(content) ? content.flatMap(part => part.type === "text" ? [part.text] : []).join("\n") : content;
 
   return !resumes.has(text);
 }

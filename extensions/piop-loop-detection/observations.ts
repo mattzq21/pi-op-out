@@ -1,3 +1,6 @@
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
+import type { JsonValue } from "@earendil-works/pi-ai";
 import { createHash } from "node:crypto";
 import type { ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 
@@ -9,23 +12,25 @@ export type Observation = { key: string; kind: "command" | "search" | "read"; la
 
 export type Outcome = { fingerprint: string; failed: boolean };
 
-function stable(value: unknown, depth = 0): unknown {
+function stable(value: JsonValue, depth = 0): JsonValue {
   if (depth > 12) throw new Error("Nested tool input");
 
   if (Array.isArray(value)) return value.map(item => stable(item, depth + 1));
 
-  if (!value || typeof value !== "object") return value;
+  if (!(value instanceof Object)) return value;
 
   return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, stable(item, depth + 1)]));
 }
 
-export function fingerprint(value: unknown): string | undefined {
+export function fingerprint(value: ToolCallEvent["input"] | [string, ToolCallEvent["input"]]): string | undefined {
   try {
     const text = JSON.stringify(value);
 
     if (!text || text.length > MAX_TEXT) return;
 
-    return digest(JSON.stringify(stable(value)));
+    const parsed: JsonValue = JSON.parse(text);
+
+    return digest(JSON.stringify(stable(parsed)));
   } catch { return; }
 }
 
@@ -43,11 +48,14 @@ function shellSearch(command: string) {
   return /^(?:rg|grep|find)\s/.test(command) && !/[;&|`$<>\n]/.test(command);
 }
 
-function toolKind(name: string, input: Record<string, unknown>): Observation["kind"] | undefined {
+const commandSchema = Type.Object({ command: Type.Optional(Type.Unknown()), cmd: Type.Optional(Type.Unknown()) });
+
+function toolKind(name: string, input: ToolCallEvent["input"]): Observation["kind"] | undefined {
   if (/^(?:bash|powershell|exec_command)$/.test(name)) {
+    if (!Check(commandSchema, input)) return;
     const command = input.command ?? input.cmd;
 
-    if (typeof command !== "string" || polling(command.trim())) return;
+    if (!Check(Type.String(), command) || polling(command.trim())) return;
 
     return shellSearch(command.trim()) ? "search" : "command";
   }
@@ -58,7 +66,7 @@ function toolKind(name: string, input: Record<string, unknown>): Observation["ki
 }
 
 function toolName(name: string) {
-  const short = name.split(".").at(-1)!;
+  const short = name.split(".").at(-1) ?? name;
 
   if (!short.startsWith("mcp_")) return short;
 
@@ -70,8 +78,7 @@ export function observe(event: ToolCallEvent): Observation | undefined {
   const kind = toolKind(name, event.input);
 
   if (!kind) return;
-  const input: Record<string, unknown> = { ...event.input };
-  delete input.yield_time_ms;
+  const input = Object.fromEntries(Object.entries(event.input).filter(([key]) => key !== "yield_time_ms"));
   const key = fingerprint([event.toolName, input]);
 
   if (!key) return;
@@ -90,11 +97,21 @@ function outputText(event: ToolResultEvent): string | undefined {
   return text.replaceAll("\r\n", "\n").trimEnd();
 }
 
-function shellEnvelope(text: string) {
+const exitSchema = Type.Union([Type.Number(), Type.Null()]);
+
+const envelopeSchema = Type.Object({ output: Type.String(), exit_code: Type.Optional(exitSchema), session_id: Type.Optional(Type.Unknown()) });
+
+const detailsSchema = Type.Object({ exitCode: Type.Optional(exitSchema), exit_code: Type.Optional(exitSchema), truncation: Type.Optional(Type.Unknown()), session_id: Type.Optional(Type.Unknown()) });
+
+type ShellOutput = { text: string; exit?: number | null; running: boolean };
+
+type ResultDetails = Static<typeof detailsSchema>;
+
+function shellEnvelope(text: string): ShellOutput {
   try {
     const value = JSON.parse(text);
 
-    if (typeof value?.output === "string") return { text: value.output, exit: value.exit_code, running: value.session_id != null && value.exit_code == null };
+    if (Check(envelopeSchema, value)) return { text: value.output, exit: value.exit_code, running: value.session_id != null && value.exit_code == null };
   } catch { }
 
   const exit = text.match(/(?:^|\n)Process exited with code (\d+)(?:\n|$)/)?.[1];
@@ -105,17 +122,9 @@ function shellEnvelope(text: string) {
   return { text, exit: undefined, running: /(?:^|\n)Process running with session ID\b/.test(text) };
 }
 
-function resultExit(event: ToolResultEvent, exit: unknown) {
-  const details = event.details as { exitCode?: number; exit_code?: number } | undefined;
+function resultExit(result: ShellOutput, details: ResultDetails) { return result.exit ?? details.exitCode ?? details.exit_code; }
 
-  return exit ?? details?.exitCode ?? details?.exit_code;
-}
-
-function incomplete(event: ToolResultEvent, exit: unknown) {
-  const details = event.details as { truncation?: unknown; session_id?: unknown } | undefined;
-
-  return !!details?.truncation || (details?.session_id != null && exit == null);
-}
+function incomplete(details: ResultDetails, exit: ShellOutput["exit"]) { return Boolean(details.truncation || (details.session_id != null && exit == null)); }
 
 export function outcome(event: ToolResultEvent): Outcome | undefined {
   const text = outputText(event);
@@ -125,10 +134,11 @@ export function outcome(event: ToolResultEvent): Outcome | undefined {
   const result = shell ? shellEnvelope(text) : { text, exit: undefined, running: false };
 
   if (result.running || /(?:^|\n)Command (?:aborted|cancelled|canceled)\.?$/.test(text)) return;
-  const exit = resultExit(event, result.exit);
+  const details: ResultDetails = Check(detailsSchema, event.details) ? event.details : {};
+  const exit = resultExit(result, details);
 
-  if (incomplete(event, exit)) return;
-  const failed = event.isError || (typeof exit === "number" && exit !== 0);
+  if (incomplete(details, exit)) return;
+  const failed = event.isError || (exit != null && exit !== 0);
 
   return { fingerprint: digest(JSON.stringify([failed, exit, result.text])), failed };
 }

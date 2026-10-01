@@ -1,4 +1,6 @@
 import { GitError, runGit } from "./git.ts";
+import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, requestIdSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
+import { Check } from "typebox/value";
 import { lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
@@ -22,6 +24,8 @@ const MAX_CHANGED_PATHS = 4096;
 const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
+
+interface SnapshotEnvironment extends Record<string, string> { GIT_INDEX_FILE: string }
 
 async function repositoryRoot(cwd: string) {
   try { return (await runGit(cwd, ["rev-parse", "--show-toplevel"])).trim(); }
@@ -75,7 +79,7 @@ async function sessionIdFromFile(sessionFile: string) {
 
   try { handle = await open(sessionFile, "r"); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if (Check(fileErrorSchema, error) && error.code === "ENOENT") return undefined;
     throw error;
   }
 
@@ -88,7 +92,7 @@ async function sessionIdFromFile(sessionFile: string) {
     if (newline < 0 && bytesRead === buffer.length) throw new Error("Parent session header is too large");
     const header = JSON.parse(newline < 0 ? contents : contents.slice(0, newline));
 
-    return header?.type === "session" && typeof header.id === "string" ? header.id : undefined;
+    return Check(sessionHeaderSchema, header) ? header.id : undefined;
   } finally {
     await handle.close();
   }
@@ -129,10 +133,10 @@ async function inheritParentSnapshot(root: string, sessionId: string, parentSess
 async function recoverCopiedSnapshot(ctx: ExtensionContext, root: string, sessionId: string) {
   const copied = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "custom" && entry.customType === SNAPSHOT_ENTRY);
 
-  if (!copied || copied.type !== "custom" || !copied.data || typeof copied.data !== "object") return undefined;
-  const data = copied.data as { repositoryRoot?: unknown; commit?: unknown };
+  if (!copied || copied.type !== "custom" || !Check(copiedSnapshotSchema, copied.data)) return undefined;
+  const data = copied.data;
 
-  if (data.repositoryRoot !== root || typeof data.commit !== "string" || !/^[0-9a-f]{40,64}$/i.test(data.commit)) return undefined;
+  if (data.repositoryRoot !== root) return undefined;
 
   try { await runGit(root, ["cat-file", "-e", `${data.commit}^{commit}`]); }
   catch { return undefined; }
@@ -169,7 +173,7 @@ async function worktreeTree(root: string, isolated = false) {
   await assertSnapshotInputBounded(root);
   const temporary = await mkdtemp(join(tmpdir(), "pi-git-snapshot-"));
   const index = join(temporary, "index");
-  const env: Record<string, string> = { GIT_INDEX_FILE: index };
+  const env: SnapshotEnvironment = { GIT_INDEX_FILE: index };
 
   try {
     if (isolated) {
@@ -194,7 +198,7 @@ async function assertSnapshotCommitSafe(root: string) {
 
   for (const name of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer", "BISECT_START"]) {
     try { await lstat(join(gitDirectory, name)); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    catch (error) { if (Check(fileErrorSchema, error) && error.code === "ENOENT") continue; throw error; }
 
     throw new Error("Finish or abort the in-progress Git operation before saving an agent-settled commit");
   }
@@ -243,30 +247,9 @@ async function saveSnapshot(root: string, sessionId: string) {
   return { version: 1, repositoryRoot: root, ref, commit, branch, capturedAt: timestamp };
 }
 
-interface PromptCheckpoint {
-  repositoryRoot?: string;
-  key: string;
-  owner: string;
-  commit: string;
-  base: string | null;
-  capturedAt: string;
-}
-
 function promptRef(sessionId: string, key: string) {
   return `${sessionRefPrefix(sessionId)}prompts/${key}`;
 }
-
-function checkpointData(data: unknown): PromptCheckpoint | undefined {
-  if (!data || typeof data !== "object") return undefined;
-  const value = data as PromptCheckpoint;
-
-  return typeof value.key === "string" && /^[a-zA-Z0-9-]+$/.test(value.key)
-    && typeof value.owner === "string" && typeof value.commit === "string" && /^[a-f0-9]{40,64}$/.test(value.commit)
-    && validCheckpointBase(value.base)
-    ? value : undefined;
-}
-
-function validCheckpointBase(base: unknown) { return base === null || (typeof base === "string" && /^[a-f0-9]{40,64}$/.test(base)); }
 
 async function promptRefs(root: string, sessionId: string) {
   const output = await runGit(root, ["for-each-ref", "--sort=-refname", "--format=%(refname)%09%(objectname)", `${sessionRefPrefix(sessionId)}prompts/`]);
@@ -303,7 +286,7 @@ async function capturePrompt(root: string, ctx: ExtensionContext): Promise<Promp
 
 async function pinPromptHistory(root: string | undefined, sessionId: string, entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, sourceOwner?: string) {
   const checkpoints = entries.flatMap((entry) => entry.type === "custom" && entry.customType === PROMPT_ENTRY
-    ? [checkpointData(entry.data)].filter((value): value is PromptCheckpoint => Boolean(value)) : []);
+    && Check(checkpointSchema, entry.data) ? [entry.data] : []);
 
   for (const checkpoint of checkpoints) {
     const target = promptRef(sessionId, checkpoint.key);
@@ -337,7 +320,7 @@ async function checkpointWorktreeTarget(root: string, branch: string) {
   if (worktrees.includes(target)) throw new Error(`Git worktree is already registered: ${target}`);
 
   try { await mkdir(container, { mode: 0o700 }); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`Worktree directory already exists: ${container}`); throw error; }
+  catch (error) { if (Check(fileErrorSchema, error) && error.code === "EEXIST") throw new Error(`Worktree directory already exists: ${container}`); throw error; }
 
   try { await writeFile(join(container, "parent.json"), JSON.stringify({ branch, parentBranch }), { flag: "wx", mode: 0o600 }); }
   catch (error) { await rmdir(container).catch(() => undefined); throw error; }
@@ -397,7 +380,7 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
 async function cleanupCheckpointContainer(target: string) {
   try { await lstat(target);
 
-  return; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return; }
+  return; } catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") return; }
 
   await rm(join(dirname(target), "parent.json"), { force: true });
   await rmdir(dirname(target)).catch(() => undefined);
@@ -424,7 +407,7 @@ function precedingCheckpoint(history: CheckpointHistory, afterResponse: boolean)
 
     if (entry.type === "message" && entry.message.role === "user") break;
 
-    if (entry.type === "custom" && entry.customType === PROMPT_ENTRY) { checkpoint = checkpointData(entry.data); break; }
+    if (entry.type === "custom" && entry.customType === PROMPT_ENTRY) { checkpoint = Check(checkpointSchema, entry.data) ? entry.data : undefined; break; }
   }
 
   return checkpoint;
@@ -432,11 +415,11 @@ function precedingCheckpoint(history: CheckpointHistory, afterResponse: boolean)
 
 async function responseCheckpoint(ctx: ExtensionContext, root: string, entryId: string, owner: string) {
   const saved = ctx.sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === SNAPSHOT_ENTRY
-    && (entry.data as { responseEntryIds?: string[] })?.responseEntryIds?.includes(entryId));
+    && Check(responseIdsSchema, entry.data) && entry.data.responseEntryIds.includes(entryId));
 
-  const data = saved?.type === "custom" ? saved.data as { commit?: string } : undefined;
+  const data = saved?.type === "custom" ? saved.data : undefined;
 
-  if (!data?.commit || !/^[a-f0-9]{40,64}$/.test(data.commit)) {
+  if (!Check(responseCommitSchema, data)) {
     throw new Error("No settled Git checkpoint is available for this response. Wait for the agent to settle or stop it first.");
   }
 
@@ -465,7 +448,7 @@ async function assertWorktreeAvailable(root: string, branch: string, target: str
 
   if (before.split("\n").includes(`worktree ${target}`)) throw new Error("Worktree already exists");
 
-  try { await lstat(target); throw new Error("Worktree directory already exists"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  try { await lstat(target); throw new Error("Worktree directory already exists"); } catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error; }
 
 }
 
@@ -477,12 +460,14 @@ async function branchSessionEntries(ctx: ExtensionContext, root: string, id: str
 
   const baseline = {
     type: "custom", id: randomUUID(), parentId: retained.at(-1)?.id ?? null, timestamp, customType: SNAPSHOT_ENTRY,
-    data: { version: 1, repositoryRoot: target, ref: baselineRef, commit: checkpoint.commit, capturedAt: timestamp, ...(afterResponse ? { responseEntryIds: [entryId] } : {}) }
+    data: { version: 1, repositoryRoot: target, ref: baselineRef, commit: checkpoint.commit, capturedAt: timestamp }
   };
+
+  const savedBaseline = afterResponse ? { ...baseline, data: { ...baseline.data, responseEntryIds: [entryId] } } : baseline;
 
   const header = { ...ctx.sessionManager.getHeader(), type: "session", id, timestamp, cwd: target, parentSession: ctx.sessionManager.getSessionFile() };
 
-  return [header, ...retained, baseline];
+  return [header, ...retained, savedBaseline];
 }
 
 function shellQuote(value: string) { return `'${value.replaceAll("'", `'\\''`)}'`; }
@@ -559,15 +544,15 @@ export default function diffWatch(pi: ExtensionAPI) {
   pi.on("message_start", (event, ctx) => {
     if (event.message.role !== "user") return;
 
-    const text = typeof event.message.content === "string" ? event.message.content
-      : event.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+    const text = Array.isArray(event.message.content)
+      ? event.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n") : event.message.content;
 
     const contexts = queuedContexts.get(text); const queuedContent = contexts?.shift();
 
     if (!contexts?.length) queuedContexts.delete(text);
 
     if (queuedContent) pi.appendEntry(queuedContextEntry, { timestamp: event.message.timestamp, content: queuedContent });
-    const resume = ctx.sessionManager.getBranch().some((entry) => entry.type === "custom" && entry.customType === "pi-desktop-resume" && (entry.data as { message?: string })?.message === text);
+    const resume = ctx.sessionManager.getBranch().some((entry) => entry.type === "custom" && entry.customType === "pi-desktop-resume" && Check(resumeSchema, entry.data) && entry.data.message === text);
 
     if (resume) return;
     snapshotQueue = snapshotQueue.then(async () => {
@@ -594,9 +579,9 @@ export default function diffWatch(pi: ExtensionAPI) {
       let id: string | undefined;
 
       try {
-        const request = JSON.parse(args); id = request.id;
+        const request = JSON.parse(args); id = Check(requestIdSchema, request) ? request.id : undefined;
 
-        if (ctx.mode !== "rpc" || typeof id !== "string" || typeof request.entryId !== "string" || typeof request.name !== "string") throw new Error("Invalid checkpoint branch request");
+        if (ctx.mode !== "rpc" || !Check(branchRequestSchema, request)) throw new Error("Invalid checkpoint branch request");
         const operation = snapshotQueue.then(() => branchCheckpoint(ctx, request.entryId, request.name, request.afterResponse === true));
         snapshotQueue = operation.then(() => undefined, () => undefined);
         const data = await operation;
@@ -710,17 +695,17 @@ export default function diffWatch(pi: ExtensionAPI) {
   });
 
   pi.on("context", (event, ctx) => {
-    const contexts = new Map(ctx.sessionManager.getBranch().flatMap((entry) => {
+    const contexts = new Map<number, string>(ctx.sessionManager.getBranch().flatMap((entry): Array<[number, string]> => {
       if (entry.type !== "custom" || entry.customType !== queuedContextEntry) return [];
-      const data = entry.data as { timestamp?: number; content?: string };
+      const data = entry.data;
 
-      return typeof data?.timestamp === "number" && typeof data.content === "string" ? [[data.timestamp, data.content] as const] : [];
+      return Check(queuedContextSchema, data) ? [[data.timestamp, data.content]] : [];
     }));
 
-    const sourceMessages: typeof event.messages = event.messages.flatMap((message) => {
+    const sourceMessages = event.messages.flatMap((message): typeof event.messages => {
       const content = message.role === "user" ? contexts.get(message.timestamp) : undefined;
 
-      return content ? [{ role: "custom" as const, customType: CHANGE_CONTEXT_MESSAGE, content, display: false, timestamp: message.timestamp }, message] : [message];
+      return content ? [{ role: "custom", customType: CHANGE_CONTEXT_MESSAGE, content, display: false, timestamp: message.timestamp }, message] : [message];
     });
 
     let contextIndex = -1;
