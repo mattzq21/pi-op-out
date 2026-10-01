@@ -8,7 +8,7 @@ import { Dynamic } from "solid-js/web";
 import { accountModelNameLookup } from "../lib/providerAccounts";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, Mic, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-solid";
+import { Bot, Check, CircleGauge, CirclePlus, ClipboardCheck, Cpu, HardDrive, Keyboard, Mic, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -31,7 +31,7 @@ const mcpTransports: Array<NonNullable<McpServer["transport"]>> = ["stdio", "htt
 export const sections: SettingsSection[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "dictation", label: "Dictation", icon: Mic },
-  { id: "review", label: "Review", icon: ShieldCheck },
+  { id: "review", label: "Review", icon: ClipboardCheck },
   { id: "models", label: "Models", icon: Cpu },
   { id: "providers", label: "Providers", icon: ShieldCheck },
   { id: "storage", label: "Storage", icon: HardDrive },
