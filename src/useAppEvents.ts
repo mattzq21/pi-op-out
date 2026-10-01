@@ -63,6 +63,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
     const loadSelectedSession = async () => {
       if (!await capturedOptions.prepareSession(capturedOptions.transport) || !current()) return;
+
       const ready = await initializeSession(current, {
         connect: () => capturedOptions.transport.connect(),
         loadSettings: () => capturedOptions.loadSettings(),
@@ -87,7 +88,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       const handleMessageEnd = () => {
         const timer = window.setTimeout(() => { refreshTimers.delete(timer);
 
-        if (!cancelled) void capturedOptions.refresh().catch(() => undefined); }, 30);
+          if (!cancelled) void capturedOptions.refresh().catch(() => undefined); }, 30);
 
         refreshTimers.add(timer);
       };
@@ -136,11 +137,11 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
               key: crypto.randomUUID(),
               session: { id: payload.sessionId, path: payload.sessionPath, name: "Code review", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task ?? "Code review", messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
               review: { task: payload.task, requestId: request.id, images: capturedOptions.reviewImages.get(capturedOptions.transport), messageMain: async message => {
-                const parent = capturedOptions.transport;
+                  const parent = capturedOptions.transport;
 
-                if (parent.connectionTarget().sessionId !== payload.parentSessionId) throw new Error("The original main conversation is no longer connected");
-                await parent.command({ type: "prompt", message: `[Message from code review]\n${message}`, streamingBehavior: "followUp" });
-              } },
+                  if (parent.connectionTarget().sessionId !== payload.parentSessionId) throw new Error("The original main conversation is no longer connected");
+                  await parent.command({ type: "prompt", message: `[Message from code review]\n${message}`, streamingBehavior: "followUp" });
+                } },
             });
             capturedOptions.reviewImages.delete(capturedOptions.transport);
           } catch (reason) {
@@ -164,18 +165,18 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
           capturedOptions.setExtensionOwner(capturedOptions.transport);
           capturedOptions.setStatuses((current) => { const next = { ...current };
 
-          if (request.statusText) next[required(request.statusKey)] = request.statusText; else delete next[required(request.statusKey)];
+            if (request.statusText) next[required(request.statusKey)] = request.statusText; else delete next[required(request.statusKey)];
 
-          return next; });
+            return next; });
         };
 
         const setExtensionWidget = () => {
           capturedOptions.setExtensionOwner(capturedOptions.transport);
           capturedOptions.setWidgets((current) => { const next = { ...current };
 
-          if (request.widgetLines) next[required(request.widgetKey)] = request.widgetLines.map((line) => line.slice(0, 500)).slice(0, 50); else delete next[required(request.widgetKey)];
+            if (request.widgetLines) next[required(request.widgetKey)] = request.widgetLines.map((line) => line.slice(0, 500)).slice(0, 50); else delete next[required(request.widgetKey)];
 
-          return next; });
+            return next; });
         };
 
         const setExtensionTitle = () => { document.title = request.title || "piop"; };
@@ -190,9 +191,9 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
         const handleStatus = () => { if (request.statusKey === DEFINED_AGENTS_STATUS_KEY) return setDefinedAgentStatus();
 
-        if (request.statusKey === MCP_STATUS_KEY) return;
+          if (request.statusKey === MCP_STATUS_KEY) return;
 
-        if (request.statusKey && request.statusKey !== PROMPT_CONTEXT_STATUS_KEY) return setExtensionStatus(); };
+          if (request.statusKey && request.statusKey !== PROMPT_CONTEXT_STATUS_KEY) return setExtensionStatus(); };
 
         const openExtensionDialog = () => { capturedOptions.queueExtensionDialog(request, capturedOptions.transport, capturedOptions.mainDialogOwnerRef.current); };
 

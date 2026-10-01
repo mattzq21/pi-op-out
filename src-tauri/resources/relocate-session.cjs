@@ -1,13 +1,10 @@
 const fs = require('node:fs');
-
 const { Type } = require('typebox');
-
 const { Check } = require('typebox/value');
 
 const snapshotSchema = Type.Object({ repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-fA-F0-9]{40,64}$' }) });
 
 const { randomUUID } = require('node:crypto');
-
 const { execFileSync } = require('node:child_process');
 
 const [sessionPath, requestedReplacement] = process.argv.slice(1);

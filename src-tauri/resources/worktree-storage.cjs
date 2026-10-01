@@ -1,11 +1,7 @@
 const fs = require('node:fs');
-
 const path = require('node:path');
-
 const os = require('node:os');
-
 const { randomUUID } = require('node:crypto');
-
 const { execFileSync } = require('node:child_process');
 
 const [action, directory, storage, branch] = process.argv.slice(1);

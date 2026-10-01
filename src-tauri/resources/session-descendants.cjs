@@ -1,17 +1,12 @@
 const fs = require("node:fs/promises");
-
 const { Type } = require("typebox");
-
 const { Check } = require("typebox/value");
 
 const sessionIdSchema = Type.String();
 
 const { createReadStream } = require("node:fs");
-
 const { createInterface } = require("node:readline");
-
 const path = require("node:path");
-
 const os = require("node:os");
 
 async function metadata(file) {

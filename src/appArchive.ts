@@ -123,7 +123,9 @@ export function createConversationArchive(context: ArchiveContext) {
 
       await replaceArchivedConversation();
     } catch (reason) { await recoverArchiveFailure(reason); }
-    finally { setArchivePending(current => { const next = new Set(current); next.delete(archivedSessionKey); return next; }); }
+    finally { setArchivePending(current => { const next = new Set(current); next.delete(archivedSessionKey);
+
+      return next; }); }
 
     return;
   };

@@ -58,6 +58,12 @@ function formatDate(timestamp: number) {
 
 function archiveKey(host: HostStorage, archive: ArchivedConversation) { return `${host.hostId}:${archive.path}`; }
 
+function directoryTitle(hostId: string, directories: string[]) {
+  if (hostId !== "local") return "Remote directories cannot be opened in the local file manager";
+
+  return directories.length ? directories.join("\n") : "No stored directory";
+}
+
 export function StorageSettings(componentProps: { hostId?: string }) {
   const [report, setReport] = createSignal<StorageReport>();
   const [loading, setLoading] = createSignal(false);
@@ -69,6 +75,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
 
   const openDirectory = async (directory: string, host: HostStorage) => {
     setError(undefined);
+
     try { await openGroupDirectory(directory, host.hostId); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
@@ -108,7 +115,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
     if (removed.size) setReport((current) => current ? { hosts: current.hosts.map((candidate) => candidate.hostId === host.hostId ? { ...candidate, archives: candidate.archives.filter((archive) => !removed.has(archive.path)) } : candidate) } : current);
     setDeleting((current) => { const next = new Set(current); keys.forEach((key) => next.delete(key));
 
-    return next; });
+      return next; });
     await refresh();
 
     if (failures.length) setError(failures.join("\n"));
@@ -133,7 +140,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
     } catch (reason) { failure = reason instanceof Error ? reason.message : String(reason); }
     finally { setDeleting((current) => { const next = new Set(current); next.delete(key);
 
-    return next; }); }
+        return next; }); }
 
     await refresh();
 
@@ -142,7 +149,6 @@ export function StorageSettings(componentProps: { hostId?: string }) {
 
   const deleteAll = (host: HostStorage) => {
     const archives = host.archives.filter((archive) => archive.deletable);
-
 
     if (archives.length) setArchiveDeletion({ host, archives });
 
@@ -164,52 +170,60 @@ export function StorageSettings(componentProps: { hostId?: string }) {
       const deletableArchives = createMemo(() => (host().archives.filter((archive) => archive.deletable)));
 
       const storageRoot = createMemo(() => host().categories.find((category) => category.id === "other-storage")?.directories?.[0]);
-      const renderHostHeader = () => (<header><button type="button" class="config-icon storage-directory-button" aria-label={`Open ${host().hostName} storage directory`} title={host().hostId !== "local" ? "Remote directories cannot be opened in the local file manager" : storageRoot() ?? "Storage directory unavailable"} disabled={host().hostId !== "local" || !storageRoot()} onClick={() => { const directory = storageRoot(); if (directory) void openDirectory(directory, host()); }}><Database size={16} /></button><span><strong>{host().hostName}</strong><small>{host().error ? "Storage unavailable" : `${approximate() ? "About " : ""}${formatBytes(total())} ${host().warnings.length ? "measured · incomplete" : "total disk usage"}`}</small></span></header>);
+
+      const renderHostHeader = () => (<header><button type="button" class="config-icon storage-directory-button" aria-label={`Open ${host().hostName} storage directory`} title={host().hostId !== "local" ? "Remote directories cannot be opened in the local file manager" : storageRoot() ?? "Storage directory unavailable"} disabled={host().hostId !== "local" || !storageRoot()} onClick={() => { const directory = storageRoot();
+
+        if (directory) void openDirectory(directory, host()); }}><Database size={16} /></button><span><strong>{host().hostName}</strong><small>{host().error ? "Storage unavailable" : `${approximate() ? "About " : ""}${formatBytes(total())} ${host().warnings.length ? "measured · incomplete" : "total disk usage"}`}</small></span></header>);
+
       const renderCategories = (categories: StorageCategory[]) => (
         <div class="storage-categories">{<Key each={categories} by={(category) => category.id}>{(category, _index) => {
           const details = createMemo(() => (categoryDetails[category().id])); const CategoryIcon = createMemo(() => (details().icon));
           const directories = createMemo(() => category().directories ?? []);
           const [showDirectories, setShowDirectories] = createSignal(false);
+
           const openCategory = () => {
             if (directories().length === 1) void openDirectory(directories()[0], host());
             else setShowDirectories((visible) => !visible);
           };
 
           return <div class="storage-category" >
-            <button type="button" class="storage-category-icon storage-directory-button" aria-label={`Open ${details().name} ${directories().length > 1 ? "directories" : "directory"}`} aria-expanded={directories().length > 1 ? showDirectories() : undefined} title={host().hostId !== "local" ? "Remote directories cannot be opened in the local file manager" : directories().length ? directories().join("\n") : "No stored directory"} disabled={host().hostId !== "local" || !directories().length} onClick={openCategory}><Dynamic component={CategoryIcon()} size={15} /></button>
+            <button type="button" class="storage-category-icon storage-directory-button" aria-label={`Open ${details().name} ${directories().length > 1 ? "directories" : "directory"}`} aria-expanded={directories().length > 1 ? showDirectories() : undefined} title={directoryTitle(host().hostId, directories())} disabled={host().hostId !== "local" || !directories().length} onClick={openCategory}><Dynamic component={CategoryIcon()} size={15} /></button>
             <span><strong>{details().name}</strong><small>{details().description} · {itemCount(category())}</small><i><b style={{ width: `${Math.max(category().byteSize ? 2 : 0, category().byteSize / maximum() * 100)}%` }} /></i></span>
             <code>{category().estimated && category().byteSize > 0 ? "~" : ""}{formatBytes(Number(category().byteSize) || 0)}</code>
             {showDirectories() && <div class="storage-directory-list" aria-label={`${details().name} directories`}>{directories().map((directory) => <button type="button" title={directory} onClick={() => void openDirectory(directory, host())}>{directory}</button>)}</div>}
           </div>;
         }}</Key>}</div>
       );
+
       const renderStorageHostError = () => (<Show when={!host().error} fallback={<div class="storage-host-error" role="alert">{host().error}</div>}>
         {host().warnings.length > 0 && <div class="storage-warning" title={host().warnings.join("\n")}>Storage could not be fully measured at {host().warnings.length} location{host().warnings.length === 1 ? "" : "s"}. The total is incomplete.</div>}
         {storageSections.map((section) => {
           const categories = createMemo(() => section.categories.flatMap((id) => host().categories.filter((category) => category.id === id)));
           const subtotal = createMemo(() => categories().reduce((sum, category) => sum + category.byteSize, 0));
           const estimated = createMemo(() => categories().some((category) => category.estimated && category.byteSize > 0));
+
           return <section class="storage-group" aria-label={section.title}>
             <div class="storage-group-heading"><h3>{section.title}</h3><code>{estimated() ? "~" : ""}{formatBytes(subtotal())}</code></div>
             {renderCategories(categories())}
             {section.title === "Archived sessions" && <>
-        <div class="archive-heading"><span><strong>Archived conversations</strong><small>{host().archives.length ? `${host().archives.length} stored on ${host().hostName}` : `No archives on ${host().hostName}`}</small></span>{deletableArchives().length > 1 && <button class="storage-delete-all" disabled={deleting().size > 0 || loading()} onClick={() => deleteAll(host())}><Trash2 size={13} />{deletableArchives().length === host().archives.length ? "Delete all" : "Delete available"}</button>}</div>
-        {host().archives.length > 0 && <div class="archive-list">{<Key each={host().archives} by={archive => archive.path}>{(archive, _index) => {
-          if (!z.object({ path: z.string() }).safeParse(archive()).success) return null;
-          const name = createMemo(() => (z.string().catch(archive().path).parse(archive().name)));
-          const key = createMemo(() => (archiveKey(host(), { ...archive(), name: name() }))); const pending = createMemo(() => (deleting().has(key())));
-          const renderArchiveDetails = () => (<span><strong>{name()}</strong><small>{archive().deletable ? `${z.string().catch("").parse(archive().cwd)} · ${formatDate(archive().modifiedAt)}` : `Cleanup unavailable · ${archive().deleteError}`}</small></span>);
-          const renderArchiveDelete = () => (<button aria-label={archive().deletable ? `Permanently delete ${name()}` : `Cannot safely delete ${name()}: ${archive().deleteError}`} disabled={!archive().deletable || deleting().size > 0 || loading()} onClick={() => deleteOne(host(), archive())}>{!archive().deletable ? <ShieldAlert size={14} /> : pending() ? <RefreshCw size={14} class="spinning" /> : <Trash2 size={14} />}</button>);
+              <div class="archive-heading"><span><strong>Archived conversations</strong><small>{host().archives.length ? `${host().archives.length} stored on ${host().hostName}` : `No archives on ${host().hostName}`}</small></span>{deletableArchives().length > 1 && <button class="storage-delete-all" disabled={deleting().size > 0 || loading()} onClick={() => deleteAll(host())}><Trash2 size={13} />{deletableArchives().length === host().archives.length ? "Delete all" : "Delete available"}</button>}</div>
+              {host().archives.length > 0 && <div class="archive-list">{<Key each={host().archives} by={archive => archive.path}>{(archive, _index) => {
+                if (!z.object({ path: z.string() }).safeParse(archive()).success) return null;
+                const name = createMemo(() => (z.string().catch(archive().path).parse(archive().name)));
+                const key = createMemo(() => (archiveKey(host(), { ...archive(), name: name() }))); const pending = createMemo(() => (deleting().has(key())));
+                const renderArchiveDetails = () => (<span><strong>{name()}</strong><small>{archive().deletable ? `${z.string().catch("").parse(archive().cwd)} · ${formatDate(archive().modifiedAt)}` : `Cleanup unavailable · ${archive().deleteError}`}</small></span>);
+                const renderArchiveDelete = () => (<button aria-label={archive().deletable ? `Permanently delete ${name()}` : `Cannot safely delete ${name()}: ${archive().deleteError}`} disabled={!archive().deletable || deleting().size > 0 || loading()} onClick={() => deleteOne(host(), archive())}>{!archive().deletable ? <ShieldAlert size={14} /> : pending() ? <RefreshCw size={14} class="spinning" /> : <Trash2 size={14} />}</button>);
 
-          const renderWorktreeAction = () => ((!archive().worktreePath && archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : "Restore conversation"}</button>);
-          return <div class={`archive-row${archive().deletable ? "" : " cleanup-unavailable"}`}  title={archive().deleteError || archive().path}>
-            {renderArchiveDetails()}
-            <code>{formatBytes(Number(archive().byteSize) || 0)}</code>
-            {renderWorktreeAction()}
-            {archive().restoreError && <small role="status">{archive().restoreError}</small>}
-            {renderArchiveDelete()}
-          </div>;
-        }}</Key>}</div>}
+                const renderWorktreeAction = () => ((!archive().worktreePath && archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : "Restore conversation"}</button>);
+
+                return <div class={`archive-row${archive().deletable ? "" : " cleanup-unavailable"}`}  title={archive().deleteError || archive().path}>
+                  {renderArchiveDetails()}
+                  <code>{formatBytes(Number(archive().byteSize) || 0)}</code>
+                  {renderWorktreeAction()}
+                  {archive().restoreError && <small role="status">{archive().restoreError}</small>}
+                  {renderArchiveDelete()}
+                </div>;
+              }}</Key>}</div>}
             </>}
           </section>;
         })}

@@ -1,5 +1,4 @@
 const fs = require("node:fs");
-
 const path = require("node:path");
 
 const home = require("node:os").homedir();

@@ -1,5 +1,4 @@
 const fs = require('node:fs');
-
 const { createInterface } = require('node:readline');
 
 async function copyThroughLeaf(source, output, id, leafId) {

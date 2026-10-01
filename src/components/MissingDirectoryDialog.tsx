@@ -16,11 +16,14 @@ export function MissingDirectoryDialog(props: { request: MissingDirectoryRequest
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
   onMount(() => dialog.showModal());
+
   const recover = async (action: "remote" | "empty") => {
     if (busy()) return;
     setBusy(true); setError(""); setRemoteFailed(false);
+
     try {
       const result = await props.request.recover(action, repository(), branch());
+
       if (result) {
         setFields(current => [...new Set([...current, ...result.missingFields])]);
         setError("Saved recovery details are incomplete. Enter the missing information below and try again.");
@@ -29,7 +32,10 @@ export function MissingDirectoryDialog(props: { request: MissingDirectoryRequest
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setRemoteFailed(action === "remote"); }
     finally { setBusy(false); }
   };
-  return <dialog ref={dialog} class="extension-dialog missing-directory-dialog" aria-labelledby="missing-directory-title" onCancel={(event) => { event.preventDefault(); if (!busy()) props.request.cancel(); }}>
+
+  return <dialog ref={dialog} class="extension-dialog missing-directory-dialog" aria-labelledby="missing-directory-title" onCancel={(event) => { event.preventDefault();
+
+    if (!busy()) props.request.cancel(); }}>
     <h2 id="missing-directory-title">Working directory is missing</h2>
     <p>“{props.request.session.name}” has not been loaded. Choose how to recover its working directory.</p>
     <code class="missing-directory-path">{props.request.session.cwd}</code>

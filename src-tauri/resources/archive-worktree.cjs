@@ -1,15 +1,11 @@
 const fs = require('node:fs');
-
 const { Type } = require('typebox');
-
 const { Check } = require('typebox/value');
 
 const parentSchema = Type.Object({ branch: Type.String(), parentBranch: Type.String({ pattern: '^refs/heads/' }) });
 
 const path = require('node:path');
-
 const os = require('node:os');
-
 const { execFileSync } = require('node:child_process');
 
 const [action, target, source, storage] = process.argv.slice(1);
