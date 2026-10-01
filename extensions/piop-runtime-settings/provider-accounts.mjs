@@ -1,6 +1,12 @@
 import { readFile as accountRead, mkdir as accountMkdir } from 'node:fs/promises';
 import { spawn as accountSpawn } from 'node:child_process';
 import { dirname as accountDirname, join as accountJoin } from 'node:path';
+import { Type } from 'typebox';
+import { Check } from 'typebox/value';
+
+const accountSchema = Type.Object({ providerId: Type.String(), number: Type.Integer({ minimum: 2, maximum: Number.MAX_SAFE_INTEGER }), id: Type.String() });
+
+const messageSchema = Type.Object({ role: Type.Literal('assistant') });
 
 export const providerAccountsPath = (authPath) => `${authPath}.piop-accounts.json`;
 
@@ -15,7 +21,7 @@ export async function readProviderAccounts(authPath) {
 }
 
 function validProviderAccount(record) {
-  return record && typeof record.providerId === 'string' && Number.isSafeInteger(record.number) && record.number >= 2 && record.id === `${record.providerId}--piop-account-${record.number}`;
+  return Check(accountSchema, record) && record.id === `${record.providerId}--piop-account-${record.number}`;
 }
 
 export async function allocateProviderAccount(authPath, providerId, occupied) {
@@ -89,7 +95,7 @@ function accountStream(source, provider) {
       for await (const event of source) {
         const next = { ...event };
 
-        for (const field of ['partial', 'message', 'error']) if (next[field] && typeof next[field] === 'object') next[field] = message(next[field]);
+        for (const field of ['partial', 'message', 'error']) if (Check(messageSchema, next[field])) next[field] = message(next[field]);
         yield next;
       }
     },

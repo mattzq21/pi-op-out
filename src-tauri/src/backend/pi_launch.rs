@@ -164,7 +164,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let rtk_extension = shell_quote(include_str!("../../../extensions/piop-rtk/rtk.ts"));
     let rtk_license = shell_quote(include_str!("../../../extensions/piop-rtk/LICENSE"));
     let runtime_settings_extension = shell_quote(include_str!("../../../extensions/piop-runtime-settings/index.ts"));
-    let provider_accounts = shell_quote(include_str!("../../../extensions/piop-runtime-settings/provider-accounts.mjs"));
+    let provider_accounts = shell_quote(include_str!("../../resources/provider-accounts.bundle.mjs"));
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
     let broker = shell_quote(include_str!("../../resources/session-broker.ts"));
     let ask_user = shell_quote(include_str!("../../resources/ask-user.ts"));

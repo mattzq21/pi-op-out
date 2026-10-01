@@ -36,7 +36,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
     let path = dir.join("runtime-settings.ts");
-    atomic_write_private(&dir.join("provider-accounts.mjs"), include_str!("../../../extensions/piop-runtime-settings/provider-accounts.mjs").as_bytes())?;
+    atomic_write_private(&dir.join("provider-accounts.mjs"), include_str!("../../resources/provider-accounts.bundle.mjs").as_bytes())?;
     atomic_write_private(&path, include_str!("../../../extensions/piop-runtime-settings/index.ts").as_bytes())?;
     atomic_write_private(&dir.join("runtime-settings.json"), &serde_json::to_vec(&runtime_settings(settings)).map_err(|error| error.to_string())?)?;
     Ok(path)
