@@ -24,17 +24,22 @@ export function TerminalView(componentProps: Props) {
   let parser = createTerminalTranscript();
   let parsedId = "";
   let parsedEnd = 0;
+
   const transcript = createMemo(() => {
     const start = componentProps.outputEnd - componentProps.output.length;
+
     if (parsedId !== componentProps.activeId || parsedEnd < start || parsedEnd > componentProps.outputEnd) {
       parser = createTerminalTranscript();
       parsedEnd = start;
       parsedId = componentProps.activeId;
     }
+
     const text = parser.append(componentProps.output.slice(parsedEnd - start));
     parsedEnd = componentProps.outputEnd;
+
     return text;
   });
+
   const disabled = () => Boolean(componentProps.ownershipRequired || !componentProps.started || componentProps.exited);
   const canAdd = createMemo(() => componentProps.terminals.length < 8);
 
@@ -55,11 +60,19 @@ export function TerminalView(componentProps: Props) {
     if (disabled()) return;
     const value = command();
     componentProps.onData(value + "\r");
-    if (value && history.at(-1) !== value) { history.push(value); if (history.length > 100) history.shift(); }
+
+    if (value && history.at(-1) !== value) {
+      history.push(value);
+
+      if (history.length > 100) history.shift();
+    }
+
     historyIndex = history.length; draft = ""; setCommand(""); followOutput = true;
+
     if (host.current) host.current.scrollTop = host.current.scrollHeight;
     input.current?.focus();
   };
+
   const interrupt = () => {
     if (disabled()) return;
     componentProps.onData("\u0003"); setCommand(""); historyIndex = history.length; draft = "";
@@ -70,6 +83,7 @@ export function TerminalView(componentProps: Props) {
     {componentProps.cwd ? <div class="terminal-transcript-body">
       <pre class="terminal-transcript" aria-label="Terminal output" tabIndex={0} ref={element => { host.current = element; }} onScroll={() => {
         const element = host.current;
+
         if (element) followOutput = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
       }}>{transcript()}</pre>
       {componentProps.ownershipRequired
@@ -77,9 +91,12 @@ export function TerminalView(componentProps: Props) {
         : <form class="terminal-command" onSubmit={event => { event.preventDefault(); send(); }}>
           <input ref={element => { input.current = element; }} aria-label="Terminal command" placeholder="Enter a command" value={command()} disabled={disabled()} autocomplete="off" autocapitalize="off" spellcheck={false} onInput={event => setCommand(event.currentTarget.value)} onKeyDown={event => {
             if (event.isComposing) return;
+
             if (event.ctrlKey && event.key.toLowerCase() === "c" && event.currentTarget.selectionStart === event.currentTarget.selectionEnd) { event.preventDefault(); interrupt(); }
-            if ((event.key === "ArrowUp" || event.key === "ArrowDown") && history.length) {
+
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
               event.preventDefault();
+
               if (historyIndex === history.length) draft = command();
               historyIndex = Math.max(0, Math.min(history.length, historyIndex + (event.key === "ArrowUp" ? -1 : 1)));
               setCommand(historyIndex === history.length ? draft : history[historyIndex]);
