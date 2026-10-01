@@ -188,7 +188,10 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
         "resize" => {
             let cols = dimension(request, "cols")?;
             let rows = dimension(request, "rows")?;
-            processes.get(id).ok_or("Terminal is not running")?.master.resize(PtySize { cols, rows, pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
+            let master = &processes.get(id).ok_or("Terminal is not running")?.master;
+            let size = master.get_size().map_err(|error| error.to_string())?;
+            if size.cols == cols && size.rows == rows { return Ok(Value::Null); }
+            master.resize(PtySize { cols, rows, pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
             let data = format!("\u{1b}[8;{rows};{cols}t");
             item.append(&data);
             let _ = app.emit("pi://event", json!({"type":"terminal_output","terminalId":id,

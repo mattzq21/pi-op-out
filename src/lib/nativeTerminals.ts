@@ -74,10 +74,15 @@ class NativeTerminals {
     return next;
   }
 
-  async resize(terminalId: string, cols: number, rows: number) {
-    await this.starts.get(terminalId);
+  resize(terminalId: string, cols: number, rows: number) {
+    const starting = this.starts.get(terminalId);
+    const next = (this.writes.get(terminalId) ?? Promise.resolve()).catch(() => undefined)
+      .then(() => starting).then(() => this.command("resize", terminalId, { cols, rows }));
+    this.writes.set(terminalId, next);
+    const clear = () => { if (this.writes.get(terminalId) === next) this.writes.delete(terminalId); };
+    void next.then(clear, clear);
 
-    return this.command("resize", terminalId, { cols, rows });
+    return next;
   }
 
   reassign(terminalId: string, sessionKey: string) {
