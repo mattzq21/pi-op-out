@@ -60,7 +60,6 @@ export function SubagentResults(props: { runs: Run[] }) {
           <div class="tool-payload-label">Assignment</div><p>{run().task}</p>
           {run().output && <><div class="tool-payload-label">Response</div><pre>{run().output}</pre></>}
           {Number.isFinite(run().apiCost) && <p class="subagent-cost">Cost · ${required(run().apiCost).toFixed(4)}</p>}
-          {run().sessionPath && <details class="subagent-transcript"><summary>Saved transcript</summary><pre>{run().sessionPath}</pre></details>}
         </div>
       </details>
       {open && run().sessionId && run().sessionPath && <button type="button" class="subagent-view" aria-label={`View ${run().name} agent chat`} onClick={() => open({ ...run(), hostId: host?.() ?? run().hostId })}>View<ArrowUpRight size={13} /></button>}

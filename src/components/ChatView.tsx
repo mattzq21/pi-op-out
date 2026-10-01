@@ -404,6 +404,8 @@ function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compac
 type ConversationTurnProps = { messages: ChatMessage[]; promptContexts: PromptContextInfo[]; gitDiffs?: GitDiffSnapshots; cwd?: string; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; canRollback?: boolean; onForkAndForget?: Props["onForkAndForget"]; onCreateWorktree?: Props["onCreateWorktree"] };
 
 function ConversationTurn(componentProps: ConversationTurnProps) {
+  const isSubagentMessage = (message: ChatMessage) => message.toolName === "subagent" && message.role === "tool" || message.customType === "piop-subagent-result";
+  const subagentMessages = createMemo(() => componentProps.messages.filter(isSubagentMessage));
   const patch = createMemo(() => {
     const final = [...componentProps.messages].reverse().find((message) => message.role === "assistant" && (textOf(message.content).trim() || message.stopReason === "aborted" || message.stopReason === "error"));
     const snapshot = final ? componentProps.gitDiffs?.[final.id] : undefined;
@@ -421,7 +423,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(componentProps.messages[finalIndex()].content) : ""));
 
   const intermediate = createMemo(() => (componentProps.messages.flatMap((message, index): ChatMessage[] => {
-    if (message.role === "user" || (message.role === "system" && message.customType !== "compaction")) return [];
+    if (message.role === "user" || isSubagentMessage(message) || (message.role === "system" && message.customType !== "compaction")) return [];
 
     if (index !== finalIndex()) return [message];
 
@@ -456,6 +458,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
   const renderActiveWorkContent = () => (<Show when={componentProps.active || componentProps.paused} fallback={required(<>
     {renderWorkGroup()}
+    <MessageList messages={subagentMessages()} expanded debug={componentProps.debug} paused={componentProps.paused} showActions={false} />
     {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} diff={changes()} debug={componentProps.debug} paused={componentProps.paused} onBranch={componentProps.onBranch} canRollback={componentProps.canRollback} onForkAndForget={componentProps.onForkAndForget} onCreateWorktree={worktreeResponse()} retrying={retrying()} onRetry={retryPrompt() ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(componentProps.onRetry(required((retryPrompt())), undefined, retryImages())).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
     <MessageList messages={componentProps.messages.filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />

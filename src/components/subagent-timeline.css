@@ -26,7 +26,6 @@
 .subagent-work-content { padding: 4px 0 12px 21px; overflow-wrap: anywhere; }
 .subagent-work-content p { margin: 4px 0 12px; white-space: pre-wrap; line-height: 1.55; }
 .subagent-work-content pre { margin: 4px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; font: 11px/1.55 ui-monospace, monospace; }
-.subagent-transcript summary { cursor: pointer; }
 .subagent-spinner { animation: subagent-spin 1s linear infinite; }
 @keyframes subagent-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .subagent-spinner { animation: none; } }
