@@ -99,14 +99,34 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     componentProps.onDraft(value);
   };
 
+  let takingOwnership = false;
+
+  const focusInput = async () => {
+    if (takingOwnership) return;
+    takingOwnership = true;
+
+    try {
+      if (componentProps.ownershipRequired) await componentProps.onTakeOwnership?.();
+
+      if (!disabled()) input.current?.focus();
+    } finally { takingOwnership = false; }
+  };
+
   return <section class="terminal-shell" aria-label="Session terminal"><header><div class="terminal-tabs">{<Key each={componentProps.terminals} by={(item) => item.id}>{(item, _index) => <button ref={(element) => { if (element) tabRefs.current.set(item().id, element); else tabRefs.current.delete(item().id); }}  class={`terminal-tab ${item().id === componentProps.activeId ? "active" : ""}`} aria-pressed={item().id === componentProps.activeId} onClick={() => componentProps.onSelect(item().id)}><TerminalSquare size={14} /><strong>{item().label}</strong></button>}</Key>}<IconButton label={canAdd() ? "Add terminal" : "Terminal limit reached"} disabled={componentProps.ownershipRequired || !canAdd()} onClick={componentProps.onAdd}><Plus size={16} /></IconButton></div><div>{componentProps.exited && <><span class="terminal-exited">exited</span><IconButton label="Restart terminal" disabled={componentProps.ownershipRequired} onClick={() => componentProps.onStart(componentProps.activeId, 80, 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" disabled={componentProps.ownershipRequired} onClick={componentProps.onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={componentProps.onClose}><X size={16} /></IconButton></div></header>
     {componentProps.cwd ? <div class="terminal-transcript-body" classList={{ "ownership-required": Boolean(componentProps.ownershipRequired) }}>
       <div class="terminal-transcript" aria-label="Terminal output" tabIndex={0} ref={element => { host.current = element; }} onClick={event => {
-        if (disabled() || event.target === input.current) return;
+        if (event.target === input.current) return;
         const selection = window.getSelection();
 
         if (selection && !selection.isCollapsed && event.currentTarget.contains(selection.anchorNode)) return;
-        input.current?.focus();
+        void focusInput();
+      }} onKeyDown={event => {
+        if (event.target !== event.currentTarget) return;
+
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          void focusInput();
+        }
       }} onScroll={() => {
         const element = host.current;
 
@@ -134,11 +154,6 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
           <button type="button" disabled={disabled()} onPointerDown={event => event.preventDefault()} onClick={() => sendControl(entry()[1])}>{entry()[0]}</button>
         }</Key>
       </div>
-      {componentProps.ownershipRequired && <button class="terminal-ownership" aria-label="Take session ownership" onClick={async () => {
-        await componentProps.onTakeOwnership?.();
-
-        if (!componentProps.ownershipRequired) input.current?.focus();
-      }} />}
 
     </div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}
   </section>;
