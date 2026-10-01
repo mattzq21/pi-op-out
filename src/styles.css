@@ -496,7 +496,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .sidebar-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
 .sidebar-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; }
-.sidebar-resizer:hover::after, .sidebar-resizer.dragging::after, .sidebar-resizer:focus-visible::after { background: var(--accent); }
+.sidebar-resizer:hover::after, .sidebar-resizer.dragging::after, .sidebar-resizer:focus-visible::after { background: color-mix(in srgb, var(--accent) 55%, black); }
 .sidebar-resizer:focus-visible { outline: none; }
 
 .mcp-pending-message { filter: brightness(.6); }
