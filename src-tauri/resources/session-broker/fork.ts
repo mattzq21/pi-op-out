@@ -27,6 +27,8 @@ const fileErrorSchema = Type.Object({ code: Type.String() });
 
 const responseIdsSchema = Type.Object({ responseEntryIds: Type.Array(Type.String()) });
 
+const missingRefSchema = Type.Object({ code: Type.Literal(1) });
+
 type PinnedPrompt = { cwd: string; ref: string; commit: string };
 
 function forkPromptRepository(root: string | undefined, header: NonNullable<ReturnType<ExtensionContext["sessionManager"]["getHeader"]>>) {
@@ -47,12 +49,21 @@ async function pinForkPrompts(header: NonNullable<ReturnType<ExtensionContext["s
     const source = `refs/pi-session-snapshots/chats/${sourceId}/prompts/${data.key}`;
     const ref = `refs/pi-session-snapshots/chats/${sessionId}/prompts/${data.key}`;
     const commit = data.commit;
-    const existing = await runFile("git", ["-C", repository, "rev-parse", "--verify", source], { timeout: 10000 });
-
-    if (existing.stdout.trim() !== commit) throw new Error("Prompt checkpoint changed while forking");
+    await verifyForkCheckpoint(repository, source, commit);
     await runFile("git", ["-C", repository, "update-ref", ref, commit, "0".repeat(commit.length)], { timeout: 10000 });
     pinned.push({ cwd: repository, ref, commit });
     entry.data = { ...data, repositoryRoot: repository };
+  }
+}
+
+async function verifyForkCheckpoint(repository: string, source: string, commit: string) {
+  try {
+    const existing = await runFile("git", ["-C", repository, "rev-parse", "--verify", "--quiet", source], { timeout: 10000 });
+
+    if (existing.stdout.trim() !== commit) throw new Error("Prompt checkpoint changed while forking");
+  } catch (error) {
+    if (!Check(missingRefSchema, error)) throw error;
+    await runFile("git", ["-C", repository, "cat-file", "-e", `${commit}^{commit}`], { timeout: 10000 });
   }
 }
 
