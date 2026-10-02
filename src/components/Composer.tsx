@@ -61,6 +61,8 @@ interface Props {
   onOpenTerminal?: () => void;
   onAgent: (name: string) => void;
   onReloadAgents?: () => Promise<void>;
+  agentHostLabel?: string;
+  agentReloadScope?: string;
   onModel: (model: Model) => void;
   onToggleFastMode: () => void | Promise<void>;
   onThinking: (level: string) => void;
@@ -146,14 +148,17 @@ export function Composer(props: Props) {
   const [reloadingAgents, setReloadingAgents] = createSignal(false);
   const [reloadError, setReloadError] = createSignal<string>();
 
+  createDependencyEffect(() => { setReloadError(undefined); setReloadingAgents(false); }, () => [props.agentReloadScope]);
+
   const reloadAgents = async () => {
     if (!props.onReloadAgents || reloadingAgents()) return;
+    const scope = props.agentReloadScope;
 
     setReloadingAgents(true); setReloadError(undefined);
 
     try { await props.onReloadAgents(); }
-    catch (error) { setReloadError(error instanceof Error ? error.message : String(error)); }
-    finally { setReloadingAgents(false); }
+    catch (error) { if (scope === props.agentReloadScope) setReloadError(error instanceof Error ? error.message : String(error)); }
+    finally { if (scope === props.agentReloadScope) setReloadingAgents(false); }
   };
 
   const [visualProps, controlProps] = splitProps(props, ["toolbar"]);
@@ -513,7 +518,7 @@ export function Composer(props: Props) {
         const agentSelectionDisabled = () => composer().agentLocked || composer().streaming || controls().inputDisabled;
         const changeAgent = (name: string) => { if (!agentSelectionDisabled()) composer().onAgent(name); };
 
-        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : composer().activeAgent ?? "general"} value={composer().activeAgent ?? "general"} disabled={props.onReloadAgents ? controls().inputDisabled : agentSelectionDisabled()} menuMinWidth={130} centered compact options={agentOptions().map(option => ({ ...option, disabled: agentSelectionDisabled() || reloadingAgents() }))} onChange={changeAgent} footer={props.onReloadAgents && <><button type="button" disabled={reloadingAgents()} onClick={() => void reloadAgents()}>{reloadingAgents() ? "Reloading…" : "Reload"}</button>{reloadError() && <p role="alert">{reloadError()}</p>}</>} />);
+        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : composer().activeAgent ?? "general"} value={composer().activeAgent ?? "general"} disabled={props.onReloadAgents ? controls().inputDisabled : agentSelectionDisabled()} menuMinWidth={130} centered compact options={agentOptions().map(option => ({ ...option, disabled: agentSelectionDisabled() || reloadingAgents() }))} onChange={changeAgent} footer={props.onReloadAgents && <><div class="agent-definitions-host">Definitions on {props.agentHostLabel ?? "Local"}</div><button type="button" title={`Reload definitions on ${props.agentHostLabel ?? "Local"} for sessions on this host`} disabled={reloadingAgents()} onClick={() => void reloadAgents()}>{reloadingAgents() ? "Reloading…" : "Reload"}</button>{reloadError() && <p role="alert">{reloadError()}</p>}</>} />);
         const renderFastModeIndicator = () => (fastModeSupported() && <button type="button" class={`fast-mode-indicator${fastModeEnabled() ? " active" : ""}`} aria-label="Fast mode" aria-description={(composer().fastModeStatus)} aria-pressed={fastModeEnabled()} aria-busy={togglingFastMode()} disabled={controls().inputDisabled || togglingFastMode()} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button>);
 
         const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName(required((composer().model))) : undefined} value={composer().model ? `${required((composer().model)).provider}/${required((composer().model)).id}` : ""} disabled={controls().inputDisabled} options={modelOptions()} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value);

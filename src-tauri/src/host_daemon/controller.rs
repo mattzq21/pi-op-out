@@ -388,10 +388,14 @@ impl Host {
         Ok(())
     }
 
-    async fn reload_agents(self: &Arc<Self>) -> Result<Value> {
+    async fn reload_agents(self: &Arc<Self>, runtime: &str, session_id: &str) -> Result<Value> {
         let _gate = self.configuration_gate.lock().await;
+        let target = self.agent_reload_target(runtime, session_id)?;
         let settings = self.registry().configuration.as_ref().map(|value| value["settings"].clone()).ok_or("Daemon is not configured")?;
         let definitions = super::agents::load(&self.home, &self.storage, &settings, false).await?;
+        if !Arc::ptr_eq(&target, &self.agent_reload_target(runtime, session_id)?) {
+            return Err("The session changed while loading agent definitions. Reload from its current host.".into());
+        }
         let sessions = {
             let mut registry = self.registry();
             registry.agent_revision += 1;
@@ -406,7 +410,15 @@ impl Host {
             session.publish(json!({"type":"settings_pending","pending":true}), None);
             self.reconcile(session);
         }
-        Ok(json!({"success":true}))
+        Ok(json!({"success":true,"sessionId":session_id}))
+    }
+
+    fn agent_reload_target(&self, runtime: &str, session_id: &str) -> Result<Arc<Session>> {
+        let registry = self.registry();
+        if registry.readonly.contains_key(runtime) { return Err(ownership_error()); }
+        registry.subscriptions.get(runtime)
+            .filter(|session| session.identity == session_id && !session.closed())
+            .cloned().ok_or_else(|| "The session changed. Reload agent definitions from its current host.".into())
     }
 
     async fn readonly_command(&self, packet: &Value, target: ReadonlyView) -> Result<Value> {
