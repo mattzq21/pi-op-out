@@ -84,7 +84,11 @@ impl Host {
             })
         };
         if let Some(session) = session {
-            session.retire().await?;
+            if flag(packet, "archive") {
+                self.release_owned_session(&session.identity.clone(), "archive", session).await?;
+            } else {
+                session.retire().await?;
+            }
         }
         Ok(Value::Null)
     }

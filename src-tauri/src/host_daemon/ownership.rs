@@ -393,7 +393,7 @@ fn optional_path(path: &Path) -> Result<Option<PathBuf>> {
 }
 
 fn claim_blocked(previous: &Value, client: &str, options: &Value) -> bool {
-    owned_by_other(previous, client) && !flag(options, "take") && !(flag(options, "archived") && flag(previous, "deleted"))
+    owned_by_other(previous, client) && !flag(options, "take") && !flag(options, "archive") && !(flag(options, "archived") && flag(previous, "deleted"))
 }
 
 fn owned_by_other(previous: &Value, client: &str) -> bool {

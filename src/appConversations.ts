@@ -206,10 +206,13 @@ export function createAppConversations(preloadChat: () => void) {
         void syncSessionIndex();
       }, z.object({ hostId: z.string(), sessionId: z.string(), sessionPath: z.string() })),
       listen("pi://session-removed", ({ payload }) => {
-        runtimePool().removeSummary(payload.hostId ?? "local", payload.sessionPath);
-        setSessions((current) => current.filter((session) => !runtimePool().isRemoved(session)));
+        archives.removed(payload.hostId ?? "local", payload.sessionPath, payload.sessionId);
+        const split = splitPane()?.session;
+        if (split && (split.hostId ?? "local") === (payload.hostId ?? "local") && (split.id === payload.sessionId || split.path === payload.sessionPath) && !archives.isPending(split)) closeSplitPane();
+        if (payload.sessionPath) runtimePool().removeSummary(payload.hostId ?? "local", payload.sessionPath);
+        setSessions((current) => current.filter((session) => !runtimePool().isRemoved(session) && !archives.isArchived(session)));
         void syncSessionIndex();
-      }, z.object({ hostId: z.string().optional(), sessionPath: z.string() })),
+      }, z.object({ hostId: z.string().optional(), sessionPath: z.string().nullish().transform((path) => path ?? undefined), sessionId: z.string().optional() })),
       listen("pi://daemon-error", ({ payload }) => addNotice({ title: `Connection · ${payload.hostId}`, message: payload.line }), z.object({ hostId: z.string(), line: z.string() })),
     ];
 

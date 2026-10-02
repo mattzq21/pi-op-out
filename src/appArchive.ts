@@ -1,4 +1,4 @@
-import { createSignal, type Accessor, type Setter } from "solid-js";
+import { batch, createSignal, type Accessor, type Setter } from "solid-js";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import { createRef, type RefObject } from "./lib/solid";
@@ -104,8 +104,6 @@ export function createConversationArchive(context: ArchiveContext) {
     };
 
     try {
-      if (capturedRuntimePool.isRunning(ownerTransport)) throw new Error("Stop or pause this conversation before archiving it");
-
       if (splitSession) closeSplitPane();
 
       if (!isActiveSession) await capturedRuntimePool.remove(session);
@@ -133,6 +131,38 @@ export function createConversationArchive(context: ArchiveContext) {
 
   return {
     archiveSession,
+    removed: (hostId: string, sessionPath: string | undefined, sessionId?: string) => {
+      const pool = runtimePool();
+      const matches = (session: SessionSummary) => (session.hostId ?? "local") === hostId && (session.id === sessionId || Boolean(sessionPath && session.path === sessionPath));
+      const summaries = pool.liveSessionSummaries().filter(matches);
+      const current = chatSession().state;
+      const selected = activeHostId() === hostId && (current.sessionId === sessionId || Boolean(sessionPath && current.sessionFile === sessionPath));
+      const id = sessionId ?? (selected ? current.sessionId : summaries[0]?.id);
+      if (id && archivePending().has(`${hostId}:${id}`)) return;
+      if (id) archivedSessionKeys.current.add(`${hostId}:${id}`);
+      for (const session of summaries) {
+        if (isSplitSession(session)) closeSplitPane();
+        removeDraft(`${hostId}:${session.id}`);
+        removeConversationTerminals(`${hostId}:${session.id}`);
+      }
+      if (selected) {
+        const previous = transport();
+        const key = `${hostId}:draft-${crypto.randomUUID()}`;
+        const replacement = pool.create({ hostId });
+        removeDraft(`${hostId}:${current.sessionId}`);
+        removeConversationTerminals(`${hostId}:${current.sessionId}`);
+        chatSession().discardPendingUpdates();
+        transportConversationKeys.current.set(replacement, key);
+        batch(() => {
+          setActiveCwd(undefined);
+          updateConnected(false);
+          activateConversationKey(key);
+          activateTransport(replacement);
+        });
+        void pool.release(previous).catch((reason) => addNotice({ title: "Could not close archived conversation", message: String(reason) })).finally(() => transportConversationKeys.current.delete(previous));
+      }
+      for (const session of summaries) void pool.remove(session).catch((reason) => addNotice({ title: "Could not close archived conversation", message: String(reason) }));
+    },
     restored: (hostId: string, sessionId: string) => archivedSessionKeys.current.delete(`${hostId}:${sessionId}`),
     isPending: (session: SessionSummary) => archivePending().has(`${session.hostId ?? "local"}:${session.id}`),
     isArchived: (session: SessionSummary) => archivedSessionKeys.current.has(`${session.hostId ?? "local"}:${session.id}`),

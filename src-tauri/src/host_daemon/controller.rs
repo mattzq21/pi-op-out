@@ -305,7 +305,7 @@ impl Host {
         if intent == "transfer" && (session.working() || session.compacting()) {
             return Err("The agent is running on another daemon. Wait for it to finish before transferring ownership.".into());
         }
-        if matches!(intent, "message" | "archive") {
+        if intent == "message" {
             session.retire().await?;
         }
         let saved = session.saved_state();
@@ -320,10 +320,13 @@ impl Host {
         }
         session.publish(json!({"type":"ownership_lost"}), None);
         if intent == "transfer-local" { return Ok(()); }
-        if session.working() || session.compacting() {
+        if intent != "archive" && (session.working() || session.compacting()) {
             let _ = session.raw(json!({"type":"abort"})).await;
         }
         session.stop().await;
+        if intent == "archive" {
+            self.registry().pending.remove(&session.key());
+        }
         self.registry().captures.entry(id.into()).or_default().insert(session.key());
         Ok(())
     }
@@ -397,6 +400,10 @@ impl Host {
         }
         if let Some(session) = self.find_session(&target.id).filter(|session| !session.transient()) {
             return session.execute(command.clone()).await;
+        }
+        if self.ownership().locate(&target.id, target.path.as_deref(), false, true)?.is_none() {
+            self.output(json!({"type":"session_removed","sessionId":target.id,"sessionPath":target.path}));
+            return Err("This conversation has been deleted or archived".into());
         }
         self.read_saved_conversation(&target, command)
     }

@@ -302,6 +302,7 @@ fn handle_packet(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str, packe
                 Some("event") => handle_event(app, connection, &packet),
                 Some("session_state") => handle_session_state(app, connection, host_id, &packet),
                 Some("session_closed") => handle_session_closed(app, connection, &packet),
+                Some("session_removed") => { let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionId":packet["sessionId"],"sessionPath":packet["sessionPath"]})); },
                 Some("turn_capture") => persist_capture(app, connection, host_id, packet.clone()),
                 _ => handle_notice(app, host_id, &packet),
             }
