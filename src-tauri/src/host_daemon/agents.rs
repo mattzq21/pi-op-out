@@ -1,15 +1,33 @@
 use super::protocol::Result;
 use serde_json::Value;
-use std::{path::Path, process::Stdio, time::Duration};
+use std::{path::{Path, PathBuf}, process::Stdio, time::Duration};
 use tokio::{io::AsyncWriteExt, process::Command};
+
+struct ResponseFile(PathBuf);
+
+impl ResponseFile {
+    fn new(home: &Path, storage: &str) -> Result<Self> {
+        let directory = home.join(storage).join("tmp");
+        crate::ensure_private_dir(&directory)?;
+        let file = Self(directory.join(format!("agent-definitions-{}.json", uuid::Uuid::new_v4())));
+        crate::settings_storage::atomic_write_private(&file.0, b"")?;
+        Ok(file)
+    }
+}
+
+impl Drop for ResponseFile {
+    fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
+}
 
 pub(super) async fn load(home: &Path, storage: &str, settings: &Value, initial: bool) -> Result<Value> {
     let path = home.join(storage).join("piop-define-agents/config.json");
+    let response = ResponseFile::new(home, storage)?;
     let mut child = Command::new("node")
         .args(["--input-type=module", "-", &settings.to_string()])
         .env("HOME", home)
         .env("PIOP_STORAGE_DIRECTORY", storage)
         .env("PIOP_AGENT_CONFIG_PATH", &path)
+        .env("PIOP_AGENT_RESPONSE_PATH", &response.0)
         .env("PIOP_GENERATED_EXTENSION_ROOT", crate::extensions::generated_extension_root()?)
         .env("PIOP_PI_EXECUTABLE", crate::environment::pi_executable())
         .env("PIOP_AGENT_INITIAL_LOAD", if initial { "1" } else { "0" })
@@ -24,7 +42,8 @@ pub(super) async fn load(home: &Path, storage: &str, settings: &Value, initial: 
     if !output.status.success() {
         return Err(format!("Could not load agent definitions: {}", String::from_utf8_lossy(&output.stderr).trim()));
     }
-    let definitions: Value = serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid agent definitions: {error}"))?;
+    let bytes = std::fs::read(&response.0).map_err(|error| format!("Could not read agent definitions: {error}"))?;
+    let definitions: Value = serde_json::from_slice(&bytes).map_err(|error| format!("Invalid agent definitions: {error}"))?;
     if !definitions["config"]["agents"].is_array() || !definitions["prompts"].is_object() {
         return Err("Invalid agent definitions".into());
     }

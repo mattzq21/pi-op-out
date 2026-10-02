@@ -85,27 +85,7 @@ async function importExtension(entry: string, importer: ExtensionImporter): Prom
   return module;
 }
 
-export async function validateExtensionModules(paths: string[], base: string, importer: ExtensionImporter) {
-  const loaded = new Set<string>();
-  const visiting: string[] = [];
-
-  async function visit(path: string, parent: string) {
-    const entry = await resolveExtensionEntry(path, parent, base);
-
-    if (visiting.includes(entry)) throw new Error(`Circular piop extension dependency: ${[...visiting, entry].join(" -> ")}`);
-
-    if (loaded.has(entry)) return;
-    visiting.push(entry);
-    const module = await importExtension(entry, importer);
-
-    for (const dependency of extensionPaths(module.extensions)) await visit(dependency, dirname(entry));
-    visiting.pop(); loaded.add(entry);
-  }
-
-  for (const path of paths) await visit(path, base);
-}
-
-export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
+export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importer: ExtensionImporter = path => import(path)) {
   let current: Group | undefined;
 
   function channel<A extends unknown[], R>(subscribe: (handler: (...args: A) => R) => () => void, fallback: () => R) {
@@ -405,7 +385,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
 
         if (loaded.has(entry)) return;
         visiting.push(entry);
-        const module = await importExtension(entry, path => import(path));
+        const module = await importExtension(entry, importer);
 
         for (const dependency of extensionPaths(module.extensions)) await load(dependency, dirname(entry));
         await module.default(api);

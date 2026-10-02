@@ -44,4 +44,4 @@ const agents = await build({
 
 const agentsPayload = gzipSync(agents.outputFiles[0].contents, { level: 9 }).toString("base64");
 
-await writeFile("src-tauri/resources/agent-definitions.bundle.mjs", `import { gunzipSync } from "node:zlib";\ntry { await import("data:text/javascript;base64," + gunzipSync(Buffer.from("${agentsPayload}", "base64")).toString("base64")); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }\n`);
+await writeFile("src-tauri/resources/agent-definitions.bundle.mjs", `import { gunzipSync } from "node:zlib";\ntry { await import("data:text/javascript;base64," + gunzipSync(Buffer.from("${agentsPayload}", "base64")).toString("base64")); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; } finally { process.exit(process.exitCode ?? 0); }\n`);
