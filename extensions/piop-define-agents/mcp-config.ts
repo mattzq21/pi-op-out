@@ -9,7 +9,7 @@ export type McpServers = Record<string, AgentMcpServerConfig>;
 export const nativeMcpSchema = Type.Record(Type.String(), Type.Unsafe<AgentMcpServerConfig>({ type: "object" }));
 
 export const legacyMcpSchema = Type.Array(Type.Object({
-  id: Type.String(), name: Type.String(), enabled: Type.Boolean(),
+  id: Type.String(), name: Type.String(), enabled: Type.Optional(Type.Boolean()),
   transport: Type.Optional(Type.String()), command: Type.Optional(Type.String()), args: Type.Optional(Type.String()),
   url: Type.Optional(Type.String()), headers: Type.Optional(Type.Union([Type.String(), Type.Record(Type.String(), Type.String())])),
   startupTimeoutSec: Type.Optional(Type.Number()), injectAgentId: Type.Optional(Type.Boolean()),
@@ -65,7 +65,7 @@ function legacyHeaders(server: LegacyMcpServer) {
 }
 
 function legacyConfig(server: LegacyMcpServer): AgentMcpServerConfig {
-  const options: Pick<AgentMcpServerConfig, "enabled" | "description" | "exposure" | "timeout" | "piopInjectAgentId"> = { enabled: server.enabled, description: server.name, exposure: "direct", timeout: 120 };
+  const options: Pick<AgentMcpServerConfig, "enabled" | "description" | "exposure" | "timeout" | "piopInjectAgentId"> = { enabled: server.enabled ?? true, description: server.name, exposure: "direct", timeout: 120 };
 
   if (server.injectAgentId) options.piopInjectAgentId = true;
 
