@@ -355,8 +355,18 @@ impl Session {
 
     fn send_event(&self, event: &Value, name: &str, targets: Vec<String>) {
         for runtime in targets {
-            if self.host.readonly(&runtime) && (name == "disconnected" || name == "extension_ui_request" && events::interactive(event)) {
-                continue;
+            if self.host.readonly(&runtime) {
+                if name == "disconnected" {
+                    let mut stopped = event.clone();
+                    stopped["type"] = json!("runtime_presence");
+                    stopped["isStreaming"] = json!(false);
+                    stopped["viewers"] = json!(self.state().views.iter().filter(|(_, view)| flag(view, "visible")).count());
+                    self.host.output(json!({"type":"event","runtimeId":runtime,"event":stopped}));
+                    continue;
+                }
+                if name == "extension_ui_request" && events::interactive(event) {
+                    continue;
+                }
             }
             self.host.output(json!({"type":"event","runtimeId":runtime,"event":event}));
         }
