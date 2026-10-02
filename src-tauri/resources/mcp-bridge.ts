@@ -58,21 +58,7 @@ export default function agentMcp(pi: ExtensionAPI) {
   const subscribe = pi.on as (event: ExtensionEvent["type"], handler: ExtensionHandler<never, unknown>) => () => void;
   createMcpExtension()({
     ...pi,
-    registerCommand(name, options) {
-      if (name !== "mcp") { pi.registerCommand(name, options);
-
-      return; }
-
-      pi.registerCommand(name, {
-        description: "Sign in to an MCP server with /mcp login [server]",
-        handler: async (args, ctx) => {
-          if (args.trim().split(/\s+/, 1)[0] !== "login") throw new Error("Manage MCP servers in agent settings. To sign in, use /mcp login [server].");
-          await ensureStarted(ctx);
-
-          return options.handler(args, ctx);
-        },
-      });
-    },
+    registerCommand() {},
     setActiveTools(names) {
       pi.setActiveTools(names.filter(name => codemodeEnabled || name !== "codemode"));
     },

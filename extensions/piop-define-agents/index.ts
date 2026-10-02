@@ -1,6 +1,6 @@
 import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState } from "./state.ts";
-import { Type, type TSchema, type Static } from "typebox";
-import { Check } from "typebox/value";
+import { Type } from "typebox";
+import { Check, Parse } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
 import { readDaemonDefinitions } from "./daemon-definitions.ts";
@@ -272,14 +272,6 @@ async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | un
 }
 
 function encode<T>(value: T) { return Buffer.from(JSON.stringify(value), "utf8").toString("base64url"); }
-
-function decode<S extends TSchema>(schema: S, value: string): Static<S> {
-  const decoded: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-
-  if (!Check(schema, decoded)) throw new Error("Invalid encoded agent configuration");
-
-  return decoded;
-}
 
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
 
@@ -677,16 +669,16 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (agent.codemode === false) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
     configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, desktopList(pi, "explicitOnlySkills"));
   });
-  pi.registerCommand("pi-define-agents-use", {
-    description: "Select a defined agent", handler: async (args, ctx) => {
-      const argument = args.trim(); let name = argument;
-
-      try { name = decode(Type.String(), argument); } catch { }
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "select_agent") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
+      const { agent: name } = Parse(Type.Object({ agent: Type.String() }), request.payload);
 
       if (!ctx.isIdle()) throw new Error("Wait for the current response before changing agents");
       await selectAgent(name, ctx);
-    }
-});
+    })();
+  });
 
   const selectAgent = async (name: string, ctx: ExtensionCommandContext) => {
     if (locked && currentAgent()) {
@@ -720,9 +712,11 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (skillsChanged) return reload(ctx);
   };
 
-  pi.registerCommand("pi-define-agents-config", {
-    description: "Update agent definitions", handler: async (args, ctx) => {
-      const supplied = decode(Type.Object({ agents: Type.Optional(Type.Array(agentSchema)) }), args.trim());
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "configure_agents") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
+      const { configuration: supplied } = Parse(Type.Object({ configuration: Type.Object({ agents: Type.Optional(Type.Array(agentSchema)) }) }), request.payload);
       const next = normalize({ ...supplied, webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
 
       for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
@@ -730,6 +724,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
       if (!daemonDefinitions) config = next;
       publish(ctx);
-    }
-});
+    })();
+  });
 }

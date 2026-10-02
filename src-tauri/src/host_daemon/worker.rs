@@ -174,10 +174,7 @@ impl Worker {
     fn receive(&self, mut event: Value) {
         if kind(&event) == "extension_ui_request"
             && event["method"] == "setStatus"
-            && matches!(
-                event["statusKey"].as_str(),
-                Some("pi-desktop-control-response" | "pi-desktop-pause-state")
-            )
+            && event["statusKey"] == "pi-desktop-pause-state"
         {
             let Some(encoded) = event["statusText"].as_str().and_then(|text| text.strip_prefix("json:")) else {
                 return;
@@ -197,15 +194,11 @@ impl Worker {
         let Some(id) = event["id"].as_str() else {
             return;
         };
-        let control = id.strip_suffix(":desktop-control");
-        if control.is_some() && event["success"] == true {
-            return;
-        }
         let request = self
             .pending
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .remove(control.unwrap_or(id));
+            .remove(id);
         if let Some(request) = request {
             let result = self.observer.response(event, &request);
             let _ = request.reply.send(result);

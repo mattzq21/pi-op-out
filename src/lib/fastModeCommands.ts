@@ -17,12 +17,12 @@ type FastModeConnection = {
 };
 
 export class FastModeCommands {
-  private statusCommand?: string;
+  private needsStatusRefresh = false;
   private commands = new Set<string>();
 
   constructor(private connection: FastModeConnection) {}
 
-  reset() { this.statusCommand = undefined; this.commands.clear(); }
+  reset() { this.needsStatusRefresh = false; this.commands.clear(); }
 
   afterCommand(command: RpcCommand, result?: z.infer<typeof commandListingSchema>) {
     if (command.type === "get_commands" && result) return this.discover(result.commands);
@@ -35,7 +35,7 @@ export class FastModeCommands {
     const localPackages = ["piop-openai-fast-mode", "pi-openai-fast-mode-piop"];
     const fastCommands = commands.filter(item => item.source === "extension" && /^fast(?::\d+)?$/.test(item.name) && [...localPackages, "pi-openai-fast-mode"].some(name => fromPackage(item, name)));
     this.commands = new Set(fastCommands.map(item => item.name));
-    this.statusCommand = fastCommands.some(item => localPackages.some(name => fromPackage(item, name))) ? undefined : commands.find(item => item.source === "extension" && item.name === "pi-desktop-fast-status")?.name;
+    this.needsStatusRefresh = fastCommands.length > 0 && !fastCommands.some(item => localPackages.some(name => fromPackage(item, name)));
     await this.refreshStatus(false);
   }
 
@@ -47,10 +47,10 @@ export class FastModeCommands {
   }
 
   private async refreshStatus(reload: boolean) {
-    if (!this.statusCommand) return;
+    if (!this.needsStatusRefresh) return;
 
     try {
-      await this.connection.send({ type: "prompt", message: `/${this.statusCommand}${reload ? " refresh" : ""}` });
+      await this.connection.send({ type: "fast_mode_status", reload });
     } catch {
       this.connection.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: "Fast mode status unavailable" });
     }

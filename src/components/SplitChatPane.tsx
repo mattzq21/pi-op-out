@@ -8,7 +8,7 @@ import { createDependencyEffect, createRef, type StateUpdate } from "../lib/soli
 
 import { X } from "lucide-solid";
 import { REVIEW_REQUEST_TITLE } from "../appSupport";
-import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY, encodeAgentValue } from "../lib/agentProtocol";
+import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
 import { definedAgentsCapabilitySchema } from "../lib/agentSchemas";
 import { z } from "zod";
 
@@ -52,7 +52,7 @@ export function SplitChatPane(componentProps: Props) {
     const configure = async () => {
       const runtimeSettings = capturedTransport.currentHostId() === "local" ? capturedSettings1 : await capturedTransport.loadHostSettings();
 
-      if (capturedFreshReview6) await capturedTransport.command({ type: "prompt", message: "/pi-orchestration-review-init" });
+      if (capturedFreshReview6) await capturedTransport.command({ type: "initialize_review" });
       await Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: runtimeSettings.autoRetry })]);
     };
 
@@ -313,7 +313,7 @@ export function SplitChatPane(componentProps: Props) {
 
   const agentDefinitionHost = () => componentProps.session.hostName || ((componentProps.session.hostId ?? "local") === "local" ? "Local" : componentProps.session.hostId);
 
-  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} gitDiffs={gitDiffs()} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} models={chatModels()} commands={session().commands} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), definedAgents()?.config.fastModeModels)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={componentProps.onDraftChange} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={branch} canRollback={componentProps.session.projectKind === "worktree"} onForkAndForget={forkAndForget} onAgent={(name) => void transport().command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(name)}` }).then(() => { transport().promptControls.reset();
+  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} gitDiffs={gitDiffs()} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} models={chatModels()} commands={session().commands} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), definedAgents()?.config.fastModeModels)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={componentProps.onDraftChange} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={branch} canRollback={componentProps.session.projectKind === "worktree"} onForkAndForget={forkAndForget} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
 
   return session().refresh(); }).catch(reportControlError)} onModel={(model) => transport().promptControls.model(model, transport().promptControls.state(session().state).thinkingLevel)} onToggleFastMode={() => transport().promptControls.toggle(statuses())} onThinking={(level) => transport().promptControls.thinking(level)} />);
 

@@ -61,13 +61,14 @@ function registerReviewMessaging(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", stop);
   pi.on("session_start", () => { reviewerId = undefined; });
-  pi.registerCommand("pi-orchestration-review-init", {
-    description: "Initialize reviewer tools",
-    handler: async (_args, ctx) => {
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "initialize_review") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
       if (!ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-review-parent")) throw new Error("Reviewer tools require a saved review session");
       reviewerId = ctx.sessionManager.getSessionId();
       pi.setActiveTools([...new Set([...pi.getActiveTools(), "message_main_chat"])]);
-    },
+    })();
   });
   pi.registerTool({
     name: "message_main_chat", label: "Message main chat",
@@ -122,16 +123,18 @@ export function registerReview(pi: ExtensionAPI) {
       openReview(ctx, record, settings.prompt);
     },
   });
-  pi.registerCommand("pi-orchestration-review-open", {
-    description: "Open a saved review belonging to this chat",
-    handler: async (args, ctx) => {
-      const entry = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.sessionId === args.trim());
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "open_review") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
+      const { reviewId } = Parse(Schema.Object({ reviewId: Schema.String() }), request.payload);
+      const entry = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.sessionId === reviewId);
 
       if (!entry || entry.type !== "custom") throw new Error("Review not found in this conversation");
       const record = Parse(reviewSchema, entry.data);
 
       if (record.parentSessionId !== ctx.sessionManager.getSessionId()) throw new Error("This review belongs to another conversation");
       openReview(ctx, record);
-    },
+    })();
   });
 }

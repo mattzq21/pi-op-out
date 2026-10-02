@@ -520,7 +520,7 @@ fn worktree_usage_guards_resolve_nested_paths_and_isolate_hosts_and_resource_typ
     assert!(validate_worktree_unused(&settings, "local", target, &unrelated, &runtime, &terminals.0).is_ok());
     runtime.active_agents.lock().unwrap().insert("agent".into(), AgentAddress {
         host_id:"remote".into(), session_id:Some("session".into()), session_path:None,
-        worktree:Some(nested.to_string_lossy().into_owned()), presence_id:None, working:false, messageable:true,
+        worktree:Some(nested.to_string_lossy().into_owned()), working:false, messageable:true,
     });
     assert!(validate_worktree_unused(&settings, "local", target, &[], &runtime, &terminals.0).is_ok());
     runtime.active_agents.lock().unwrap().get_mut("agent").unwrap().host_id = "local".into();

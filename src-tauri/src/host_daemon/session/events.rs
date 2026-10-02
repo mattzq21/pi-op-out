@@ -147,7 +147,7 @@ impl Session {
                 Err(error) => self.host.output(json!({"type":"diagnostic","line":error.to_string()})),
             },
             Some("pi-desktop-turn-capture") => self.receive_capture(parsed()),
-            Some("pi-desktop-worktree-presence") => self.receive_presence(parsed()),
+            Some("pi-desktop-worktree-root") => self.receive_worktree_root(parsed()),
             Some("piop-input-rejected") => {
                 if let Ok(rejection) = parsed() {
                     self.state().input_rejection = rejection;
@@ -170,12 +170,11 @@ impl Session {
         }
     }
 
-    fn receive_presence(&self, parsed: serde_json::Result<Value>) {
-        if let Ok(presence) = parsed {
+    fn receive_worktree_root(&self, parsed: serde_json::Result<Value>) {
+        if let Ok(root) = parsed {
             {
                 let mut state = self.state();
-                state.worktree = presence["worktree"].clone();
-                state.presence_id = presence["id"].clone();
+                state.worktree = root;
             }
             self.publish_state();
         }

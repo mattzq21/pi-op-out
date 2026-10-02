@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { modelSchema } from "./lib/responseSchemas";
 import { required } from "./lib/required";
-import { encodeAgentValue } from "./lib/agentProtocol";
 import { createMemo, type Accessor } from "solid-js";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { AgentState, AppSettings, DefinedAgentsCapability, Model } from "./types";
@@ -79,7 +78,7 @@ export function reassignTerminals(transport: NativeTransport, terminals: readonl
 }
 
 async function applyInherited(transport: NativeTransport, inherited: ProjectControls, models: Model[]) {
-  if (inherited.agent) await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(inherited.agent)}` });
+  if (inherited.agent) await transport.command({ type: "select_agent", agent: inherited.agent });
 
   if (inherited.model && models.some((model) => model.provider === required(inherited.model).provider && model.id === required(inherited.model).id)) {
     transport.promptControls.model(inherited.model);
@@ -102,7 +101,7 @@ async function applyDefaults(transport: NativeTransport, value: AppSettings, mod
   await transport.setFastMode(value.defaultFastMode);
 
   if (!current()) return;
-  await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(value.defaultAgent ?? "general")}` });
+  await transport.command({ type: "select_agent", agent: value.defaultAgent ?? "general" });
   transport.defaultsApplied();
 }
 

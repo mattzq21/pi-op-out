@@ -95,13 +95,13 @@ pub(super) fn expand_home(path: &str, home: &std::path::Path) -> PathBuf {
 
 pub(super) fn wire_command(command: &Value, id: &str) -> Value {
     let action = control_action(kind(command));
-    let extension = control_extension(kind(command));
+    let app_request = app_request_command(kind(command));
     let mut wire = command.clone();
     wire["id"] = json!(id);
-    if action.is_some() || extension.is_some() {
+    if action.is_some() || app_request.is_some() {
         let payload = action.map(|action| json!({"id":id,"action":action})).unwrap_or(wire);
-        json!({"type":"prompt","id":format!("{id}:desktop-control"),
-            "message":format!("/{} {}", extension.unwrap_or("pi-desktop-control"), payload)})
+        json!({"type":"piop_request","id":id,
+            "command":app_request.unwrap_or("control"), "payload":payload})
     } else {
         wire
     }
@@ -118,14 +118,11 @@ fn control_action(command: &str) -> Option<&'static str> {
     }
 }
 
-fn control_extension(command: &str) -> Option<&'static str> {
+fn app_request_command(command: &str) -> Option<&str> {
     match command {
-        "answer_question" => Some("piop-answer-question"),
-        "provider_auth_refresh" => Some("piop-provider-auth-refresh"),
-        "runtime_settings" => Some("piop-runtime-settings"),
-        "branch_checkpoint" => Some("pi-desktop-branch-checkpoint"),
-        "fork_and_forget" => Some("pi-desktop-fork-and-forget"),
-        "fork_after" => Some("pi-desktop-fork-after"),
+        "answer_question" | "provider_auth_refresh" | "runtime_settings" | "branch_checkpoint"
+        | "fork_and_forget" | "fork_after" | "select_agent" | "configure_agents"
+        | "initialize_review" | "open_review" | "fast_mode_status" => Some(command),
         _ => None,
     }
 }

@@ -255,7 +255,7 @@ export function ChatView(props: Props) {
     <ConversationContent />
   </main>;
 
-  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><ReviewNavigationContext.Provider value={async id => { if (!props.transport) throw new Error("Conversation is unavailable"); await props.transport.command({ type: "prompt", message: `/pi-orchestration-review-open ${id}` }); }}><ConversationShell /></ReviewNavigationContext.Provider></ConversationHostContext.Provider>;
+  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><ReviewNavigationContext.Provider value={async id => { if (!props.transport) throw new Error("Conversation is unavailable"); await props.transport.command({ type: "open_review", reviewId: id }); }}><ConversationShell /></ReviewNavigationContext.Provider></ConversationHostContext.Provider>;
 }
 
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };

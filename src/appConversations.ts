@@ -16,7 +16,6 @@ import { isAskUserRequest } from "./components/AskUserDialog";
 import { createConversationQuestions } from "./components/ConversationQuestions";
 import { type SessionAction } from "./components/SessionPanel";
 import type { MissingDirectoryRequest } from "./components/MissingDirectoryDialog";
-import { encodeAgentValue } from "./lib/agentProtocol";
 import { isConversationChanged } from "./lib/conversationChanged";
 import { initialWindowTarget,NativeTransport,openSessionWindow } from "./lib/nativeTransport";
 import { seedChatSelection } from "./lib/newChatSelection";
@@ -532,7 +531,7 @@ export function createAppConversations(preloadChat: () => void) {
   const setAgent = async (name: string) => {
     const capturedTransport = transport();
 
-    try { await capturedTransport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(name)}` }); capturedTransport.promptControls.reset(); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
+    try { await capturedTransport.command({ type: "select_agent", agent: name }); capturedTransport.promptControls.reset(); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
 
   const openProject = async (cwd: string, hostId: string, fromBranch = false, onActivate?: (destination: NativeTransport) => void) => {
     const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool(); const capturedComposerState = { ...composerState() };

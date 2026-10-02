@@ -13,7 +13,7 @@ const pauseSchema = Type.Object({ isPaused: Type.Literal(true) });
 
 const resumeSchema = Type.Object({ message: Type.String() });
 
-const controlSchema = Type.Object({ id: Type.Optional(Type.String()), action: Type.Optional(Type.String()) });
+const controlSchema = Type.Object({ action: Type.String() });
 
 interface PauseProbe { controller?: PauseController }
 
@@ -211,26 +211,16 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     else if (action !== "state") throw new Error(`Unknown desktop control: ${action}`);
   };
 
-  pi.registerCommand("pi-desktop-control", {
-    description: "Control piop pause and resume",
-    async handler(args, ctx) {
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "control") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
       controlContext = ctx;
-      let id: string | undefined;
-      let action = "";
-      let resumeMessage: string | undefined;
+      const control = Parse(controlSchema, request.payload);
+      const resumeMessage = await applyControl(control.action, ctx);
 
-      try {
-        const control = Parse(controlSchema, JSON.parse(args)); id = control.id; action = control.action ?? "";
-
-        if (!id || ctx.mode !== "rpc") throw new Error("Desktop control requires an RPC request");
-        resumeMessage = await applyControl(action, ctx);
-        const data = resumeMessage ? { isPaused, isPausing, resumeMessage } : { isPaused, isPausing };
-        ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, command: action, success: true, data })}`);
-      } catch (error) {
-        if (id) ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, command: action, success: false, error: error instanceof Error ? error.message : String(error) })}`);
-        else ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-      }
-    },
+      return resumeMessage ? { isPaused, isPausing, resumeMessage } : { isPaused, isPausing };
+    })();
   });
 
   return controller;

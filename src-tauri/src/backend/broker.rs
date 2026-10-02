@@ -114,17 +114,6 @@ pub(super) fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, strea
     respond_broker_request(app, broker, stream, method, path, body)
 }
 
-pub(super) fn worktree_agents(runtime: &PiRuntime, body: &[u8]) -> Result<Value, String> {
-    let value: Value = serde_json::from_slice(body).map_err(|_| "Invalid worktree request")?;
-    let id = value.get("id").and_then(Value::as_str).ok_or("Agent identity is required")?;
-    let agents = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?;
-    let caller = agents.values().find(|agent| agent.presence_id.as_deref() == Some(id)).ok_or("Could not identify this agent; try again")?;
-    let root = caller.worktree.as_deref().ok_or("Could not identify this worktree")?;
-    let others: Vec<_> = agents.values().filter(|agent| agent.presence_id.as_deref() != Some(id) && agent.host_id == caller.host_id && agent.working && agent.worktree.as_deref() == Some(root))
-        .map(|agent| json!({"sessionId":agent.session_id})).collect();
-    Ok(json!(others))
-}
-
 pub(super) fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|error| format!("Could not start session broker: {error}"))?;
     *broker.port.lock().map_err(|_| "Session broker lock was poisoned")? = listener.local_addr().map_err(|error| error.to_string())?.port();
@@ -220,7 +209,6 @@ fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
             serde_json::to_value(removed).map_err(|error| error.to_string())
             })
         })(),
-        ("POST", "/worktree-agents") => worktree_agents(&app.state::<PiRuntime>(), &body),
         ("POST", "/cancel") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid cancellation request".to_string())?;
             let request_id = value.get("requestId").and_then(Value::as_str).filter(|value| Uuid::parse_str(value).is_ok()).ok_or("requestId is required")?;

@@ -18,45 +18,6 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 }
 
 #[test]
-fn worktree_agent_lookup_includes_only_other_working_agents_on_the_same_host_and_root() {
-    let runtime = PiRuntime::default();
-    for (id, host, root, working) in [
-        ("caller", "local", Some("/project"), true),
-        ("peer", "local", Some("/project"), true),
-        ("idle", "local", Some("/project"), false),
-        ("remote", "remote", Some("/project"), true),
-        ("different", "local", Some("/other"), true),
-        ("no-root", "local", None, true),
-    ] {
-        runtime.active_agents.lock().unwrap().insert(id.into(), AgentAddress {
-            host_id: host.into(), session_id: Some(format!("session-{id}")), session_path: None,
-            worktree: root.map(str::to_owned), presence_id: Some(id.into()), working, messageable: true,
-        });
-    }
-    assert_eq!(worktree_agents(&runtime, br#"{"id":"caller"}"#).unwrap(), json!([{"sessionId":"session-peer"}]));
-    assert_eq!(worktree_agents(&runtime, br#"{"id":"peer"}"#).unwrap(), json!([{"sessionId":"session-caller"}]));
-    assert_eq!(worktree_agents(&runtime, br#"{"id":"remote"}"#).unwrap(), json!([]));
-    runtime.active_agents.lock().unwrap().get_mut("peer").unwrap().working = false;
-    assert_eq!(worktree_agents(&runtime, br#"{"id":"caller"}"#).unwrap(), json!([]));
-    assert_eq!(runtime.active_agents.lock().unwrap().len(), 6);
-}
-
-#[test]
-fn worktree_agent_lookup_reports_invalid_requests_and_unidentified_callers() {
-    let runtime = PiRuntime::default();
-    assert_eq!(worktree_agents(&runtime, b"not-json").unwrap_err(), "Invalid worktree request");
-    for body in [json!({}), json!({"id":42}), json!({"id":null}), json!([])] {
-        assert_eq!(worktree_agents(&runtime, body.to_string().as_bytes()).unwrap_err(), "Agent identity is required");
-    }
-    assert_eq!(worktree_agents(&runtime, br#"{"id":"missing"}"#).unwrap_err(), "Could not identify this agent; try again");
-    runtime.active_agents.lock().unwrap().insert("caller".into(), AgentAddress {
-        host_id: "local".into(), session_id: None, session_path: None, worktree: None,
-        presence_id: Some("caller".into()), working: false, messageable: false,
-    });
-    assert_eq!(worktree_agents(&runtime, br#"{"id":"caller"}"#).unwrap_err(), "Could not identify this worktree");
-}
-
-#[test]
 fn remote_snapshot_operations_reject_invalid_tokens_before_starting_ssh() {
     let host = RemoteHost { enabled: true, id: "remote".into(), name: "Remote".into(), target: "unused.invalid".into(), pi_path: "pi".into() };
     let valid = json!({"root":"/home/user/.piop/git-snapshots/pi-desktop-diff-one","tree":"a".repeat(40),"repositoryRoot":"/project"});

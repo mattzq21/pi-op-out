@@ -61,7 +61,6 @@ struct SessionState {
     transient: bool,
     pause_state: Value,
     worktree: Value,
-    presence_id: Value,
     reserved_path: Option<String>,
     startup_error: Option<String>,
     input_rejection: Value,
@@ -206,7 +205,6 @@ impl Session {
                 transient,
                 pause_state: Value::Null,
                 worktree: Value::Null,
-                presence_id: Value::Null,
                 reserved_path: None,
                 startup_error: None,
                 input_rejection: Value::Null,
@@ -415,7 +413,7 @@ impl Session {
                 return;
             }
             json!({"type":"session_state","sessionKey":state.key,"state":state.state,"working":state.working,
-                "worktree":state.worktree,"presenceId":state.presence_id,"messageable":messageable})
+                "worktree":state.worktree,"messageable":messageable})
         };
         self.host.output(packet);
     }

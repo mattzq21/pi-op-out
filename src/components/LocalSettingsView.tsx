@@ -7,7 +7,7 @@ import { Dynamic } from "solid-js/web";
 import { createDependencyEffect } from "../lib/solid";
 
 import { Monitor } from "lucide-solid";
-import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY, encodeAgentValue } from "../lib/agentProtocol";
+import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
 import { definedAgentsCapabilitySchema } from "../lib/agentSchemas";
 import { NativeTransport } from "../lib/nativeTransport";
 import { isMobile, listen } from "../lib/platform";
@@ -117,7 +117,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     else {
       const writer = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
       let agentsSaved = false;
-      const writeAgents = async (value: AgentConfig) => { await writer.command({ type: "prompt", message: `/pi-define-agents-config ${encodeAgentValue(value)}` }); };
+      const writeAgents = async (value: AgentConfig) => { await writer.command({ type: "configure_agents", configuration: value }); };
 
       const restoreAgents = async (cause: unknown) => {
         if (!agentsSaved || !capturedResources?.config) return;

@@ -1,5 +1,5 @@
 import { GitError, runGit } from "./git.ts";
-import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, requestIdSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
+import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
 import { resolvePromptHistory, recordRecoveredCheckpoints } from "./prompt-history.ts";
 import { Check } from "typebox/value";
 import { lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, writeFile } from "node:fs/promises";
@@ -588,24 +588,17 @@ export default function diffWatch(pi: ExtensionAPI) {
   pi.on("session_before_fork", async () => { await snapshotQueue; });
   pi.on("session_before_tree", async () => { await snapshotQueue; });
 
-  pi.registerCommand("pi-desktop-branch-checkpoint", {
-    description: "Create a worktree and conversation from a retained checkpoint",
-    async handler(args, ctx) {
-      let id: string | undefined;
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "branch_checkpoint") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
+      if (!Check(branchRequestSchema, request.payload)) throw new Error("Invalid checkpoint branch request");
+      const branch = request.payload;
+      const operation = snapshotQueue.then(() => branchCheckpoint(ctx, branch.entryId, branch.name, branch.afterResponse === true));
+      snapshotQueue = operation.then(() => undefined, () => undefined);
 
-      try {
-        const request = JSON.parse(args); id = Check(requestIdSchema, request) ? request.id : undefined;
-
-        if (ctx.mode !== "rpc" || !Check(branchRequestSchema, request)) throw new Error("Invalid checkpoint branch request");
-        const operation = snapshotQueue.then(() => branchCheckpoint(ctx, request.entryId, request.name, request.afterResponse === true));
-        snapshotQueue = operation.then(() => undefined, () => undefined);
-        const data = await operation;
-        ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, command: "branch_checkpoint", success: true, data })}`);
-      } catch (error) {
-        if (id) ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, command: "branch_checkpoint", success: false, error: error instanceof Error ? error.message : String(error) })}`);
-        else reportError(ctx, error);
-      }
-    },
+      return operation;
+    })();
   });
 
   pi.on("session_shutdown", async () => { await snapshotQueue; await pendingSnapshotCleanup?.(); pendingSnapshotCleanup = undefined; });

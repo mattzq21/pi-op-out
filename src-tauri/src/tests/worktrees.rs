@@ -406,7 +406,7 @@ fn active_agent_matching_accepts_id_or_path_but_excludes_other_hosts_and_message
         ("local", Some("other"), Some("/other.jsonl"), false, false),
         ("local", None, None, false, false),
     ] {
-        let agent = AgentAddress { host_id: host.into(), session_id: id.map(str::to_owned), session_path: path.map(str::to_owned), worktree: None, presence_id: None, working: false, messageable };
+        let agent = AgentAddress { host_id: host.into(), session_id: id.map(str::to_owned), session_path: path.map(str::to_owned), worktree: None, working: false, messageable };
         assert_eq!(agent_is_active(&session, &agent), expected, "host={host} id={id:?} path={path:?} messageable={messageable}");
     }
 }

@@ -132,7 +132,7 @@ const WORKTREE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 use pi_runtime::PiRuntime;
 
 #[derive(Clone)]
-struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String>, worktree: Option<String>, presence_id: Option<String>, working: bool, messageable: bool }
+struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String>, worktree: Option<String>, working: bool, messageable: bool }
 
 fn claims_dir() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY).join("session-claims");
@@ -188,7 +188,12 @@ fn exec_session_worker() -> Result<(), String> {
     let fd = claim.as_raw_fd();
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
     if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 { return Err(std::io::Error::last_os_error().to_string()); }
-    Err(Command::new(program).args(arguments).exec().to_string())
+    let mut command = if let Some(entry) = std::env::var_os("PIOP_RPC_ENTRY") {
+        let mut command = Command::new("node");
+        command.arg(entry).arg(program);
+        command
+    } else { Command::new(program) };
+    Err(command.args(arguments).exec().to_string())
 }
 
 #[cfg(not(unix))]
@@ -395,7 +400,7 @@ use pi_launch::{ remote_host, remote_login_command, session_identity, ssh, ssh_b
 #[cfg(test)]
 use pi_launch::{ create_local_ephemeral_fork, create_remote_ephemeral_fork, prepare_ephemeral_path, read_remote_session_header, remote_directory_path, remote_pi_path, remove_ephemeral_session, stage_extension_script, validate_remote_host};
 #[cfg(test)]
-use broker::{agent_is_active, broker_response, read_broker_line, resolve_agent, worktree_agents};
+use broker::{agent_is_active, broker_response, read_broker_line, resolve_agent};
 use session_index::{collect_host_sessions, create_temporary_chat, home_directory, list_directories, list_local_sessions, list_sessions, remove_temporary_chat, validate_project_directory};
 #[cfg(test)]
 use session_index::{create_local_temporary_chat, create_remote_temporary_chat, inspect_session_projects_with, list_local_directories, parse_remote_directories, parse_remote_session_metadata, query_remote_directories, query_remote_session_metadata, read_session_summaries, read_session_summaries_with, remote_directory_listing_script, remove_local_temporary_chat, remove_remote_temporary_chat, temporary_chat_id, update_remote_session_index, validate_local_project_directory, validate_remote_project_directory};
