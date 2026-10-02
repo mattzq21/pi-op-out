@@ -695,6 +695,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     description: "Update agent definitions", handler: async (args, ctx) => {
       const supplied = decode(Type.Object({ agents: Type.Optional(Type.Array(agentSchema)) }), args.trim());
       const next = normalize({ ...supplied, webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
+
       for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
 
       await writeConfig(next);
