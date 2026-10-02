@@ -156,7 +156,31 @@ impl Host {
         let ownership = ConversationOwnership::new(&host.home, storage, Arc::new(Callbacks(Arc::downgrade(&host)))).await?;
         let _ = host.ownership.set(ownership);
         host.services.bind(Arc::downgrade(&host));
+        host.watch_removals();
         Ok(host)
+    }
+
+    fn watch_removals(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        let mut stopped = self.ownership().shutdown_signal();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(2));
+            loop {
+                tokio::select! {
+                    _ = stopped.changed() => break,
+                    _ = interval.tick() => {
+                        let Some(host) = weak.upgrade() else { break; };
+                        let targets: HashMap<_, _> = host.registry().readonly.values()
+                            .map(|view| (view.id.clone(), view.path.clone())).collect();
+                        for (id, path) in targets {
+                            if host.ownership().removed(&id).unwrap_or(false) {
+                                host.output(json!({"type":"session_removed","sessionId":id,"sessionPath":path}));
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     pub fn registry(&self) -> MutexGuard<'_, Registry> {

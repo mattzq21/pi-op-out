@@ -364,6 +364,14 @@ impl ConversationOwnership {
         self.shutdown.send_replace(true);
     }
 
+    pub fn shutdown_signal(&self) -> watch::Receiver<bool> {
+        self.shutdown.subscribe()
+    }
+
+    pub fn removed(&self, id: &str) -> Result<bool> {
+        Ok(self.read(id)?.is_some_and(|record| flag(&record, "deleted")))
+    }
+
     async fn serve(&self, mut stream: TcpStream) {
         let request = tokio::time::timeout(Duration::from_secs(30), read_request(&mut stream, &self.token)).await;
         let status = match request {
