@@ -32,8 +32,6 @@ function configuredModel(registry: ModelRegistry, agent: Agent, name: string) {
   const [provider, ...parts] = name.split("/");
   const model = registry.find(provider, parts.join("/"));
 
-  if (!model && name && agent.extensions?.length) return;
-
   if (!model) throw new Error(`Agent "${agent.name}" cannot run because model ${name || "(unset)"} is unavailable`);
 
   return model;
@@ -45,21 +43,20 @@ export async function modelValidator() {
   const { ModelRegistry: Registry } = await import(pathToFileURL(join(directory, "dist/core/model-registry.js")).href);
   const { getAgentDir } = await import(pathToFileURL(join(directory, "dist/config.js")).href);
   const createRuntime = (): Promise<ModelRuntime> => Runtime.create({ allowModelNetwork: false });
-  const runtime = await createRuntime();
-  const accounts = await loadAccountProviders(join(getAgentDir(), "auth.json"), createRuntime);
-
-  for (const provider of accounts.values()) runtime.registerNativeProvider(provider);
-  const registry: ModelRegistry = new Registry(runtime);
   const discoverFast = createFastModeDiscovery();
   const configured = await configuredFastTargets(getAgentDir());
 
-  return async (agent: Agent, defaultModel: string) => {
+  return async (agent: Agent, defaultModel: string, activate: (registry: ModelRegistry) => Promise<void>) => {
+    const runtime = await createRuntime();
+    const accounts = await loadAccountProviders(join(getAgentDir(), "auth.json"), createRuntime);
+
+    for (const provider of accounts.values()) runtime.registerNativeProvider(provider);
+    const registry: ModelRegistry = new Registry(runtime);
+    await activate(registry);
     const name = agent.model.trim() || (agent.fastMode ? defaultModel.trim() : "");
 
     if (!name && !agent.fastMode) return;
     const model = configuredModel(registry, agent, name);
-
-    if (!model) return;
 
     if (!agent.fastMode) return;
     let unknown = false;
