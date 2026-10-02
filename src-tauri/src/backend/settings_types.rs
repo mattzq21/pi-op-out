@@ -91,8 +91,8 @@ pub(super) fn default_settings() -> AppSettings {
         default_fast_mode: false,
          default_model: DEFAULT_MODEL.into(), hidden_models: vec![], known_models: None, default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), context_window_cap_enabled: default_context_window_cap_enabled(), auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).chain([
-            json!({"name":"list_agents","description":"List agents by machine and session","enabled":true,"builtin":false}),
-            json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),
+            json!({"name":"list_agents","description":"List child agents and their status","enabled":true,"builtin":false}),
+            json!({"name":"send_message","description":"Deliver an agent mailbox message","enabled":true,"builtin":false}),
             json!({"name":"read_trace","description":"Extract clean user and final assistant messages from a Pi trace","enabled":true,"builtin":false}),
             codex_web_search_tool(),
         ]).collect(),

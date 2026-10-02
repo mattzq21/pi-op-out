@@ -121,6 +121,7 @@ fn control_action(command: &str) -> Option<&'static str> {
 fn control_extension(command: &str) -> Option<&'static str> {
     match command {
         "answer_question" => Some("piop-answer-question"),
+        "orchestration_message" => Some("piop-orchestration-message"),
         "provider_auth_refresh" => Some("piop-provider-auth-refresh"),
         "runtime_settings" => Some("piop-runtime-settings"),
         "branch_checkpoint" => Some("pi-desktop-branch-checkpoint"),

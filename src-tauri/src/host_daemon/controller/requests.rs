@@ -1,5 +1,13 @@
 use super::*;
 
+fn validate_delivery(packet: &Value) -> Result<()> {
+    let source = text(packet, "sourceSessionId");
+    if source.is_empty() || source == text(packet, "sessionKey") { return Err("Choose another conversation as the recipient".into()); }
+    let message = text(packet, "message");
+    if message.trim().is_empty() || message.len() > 100_000 { return Err("Message must contain 1–100000 bytes".into()); }
+    Ok(())
+}
+
 impl Host {
     pub async fn handle(self: &Arc<Self>, packet: Value) -> Result<Value> {
         let runtime = text(&packet, "runtimeId");
@@ -15,11 +23,18 @@ impl Host {
             "conversation_mutation" => return self.begin_mutation(&packet).await,
             "conversation_mutation_end" => return self.end_mutation(&packet),
             "configure" | "attach" | "shutdown" => return self.lifecycle(packet).await,
-            "retire" => return self.retire(&packet).await,
-            "session_command" => return self.direct_session_command(&packet).await,
+            "retire" | "session_command" | "orchestration" => return self.conversation_request(packet).await,
             _ => {}
         }
         self.runtime_command(packet, &runtime).await
+    }
+
+    async fn conversation_request(self: &Arc<Self>, packet: Value) -> Result<Value> {
+        match kind(&packet) {
+            "retire" => self.retire(&packet).await,
+            "session_command" => self.direct_session_command(&packet).await,
+            _ => self.orchestration(packet).await,
+        }
     }
 
     async fn lifecycle(self: &Arc<Self>, packet: Value) -> Result<Value> {
@@ -31,6 +46,71 @@ impl Host {
                 Ok(Value::Null)
             }
         }
+    }
+
+    async fn orchestration(self: &Arc<Self>, packet: Value) -> Result<Value> {
+        let id = text(&packet, "sessionKey");
+        if self.ownership().locate(&id, packet["sessionPath"].as_str(), false, true)?.is_none() {
+            return Err("This conversation has been deleted or archived".into());
+        }
+        let session = self.find_session(&id);
+        match text(&packet, "action").as_str() {
+            "read" => match session {
+                Some(session) => session.execute(json!({"type":"get_snapshot"})).await,
+                None => self.ownership().snapshot(&id, packet["sessionPath"].as_str()),
+            },
+            "interrupt" => self.orchestration_interrupt(&id, session).await,
+            "send" => self.orchestration_send(packet, session).await,
+            _ => Err("Unknown orchestration action".into()),
+        }
+    }
+
+    async fn orchestration_interrupt(&self, id: &str, session: Option<Arc<Session>>) -> Result<Value> {
+        let previous = if let Some(session) = session {
+            let running = session.working();
+            queue_command(&session, json!({"type":"abort"})).await?;
+            running
+        } else { false };
+        Ok(json!({"sessionId":id,"wasRunning":previous}))
+    }
+
+    async fn orchestration_send(self: &Arc<Self>, packet: Value, existing: Option<Arc<Session>>) -> Result<Value> {
+        let id = text(&packet, "sessionKey");
+        validate_delivery(&packet)?;
+        let runtime = format!("orchestration-{}", Uuid::new_v4());
+        let attached = existing.is_none();
+        if attached {
+            let result = self.attach(json!({"type":"attach","runtimeId":runtime,"clientId":packet["clientId"],
+                "sessionKey":id,"spec":packet["spec"],"cwd":packet["cwd"],"presence":{"visible":false}})).await?;
+            if !flag(&result, "owned") {
+                self.registry().attachments.remove(&runtime);
+                self.registry().readonly.remove(&runtime);
+                return Err(ownership_error());
+            }
+        }
+        let result = self.orchestration_deliver(&packet).await;
+        if attached {
+            let detached = self.orchestration_detach(&runtime).await;
+            if result.is_ok() { detached?; }
+        }
+        result
+    }
+
+    async fn orchestration_deliver(&self, packet: &Value) -> Result<Value> {
+        let session = self.find_session(&text(packet, "sessionKey")).ok_or("Conversation is no longer running")?;
+        if session.transient() || session.compacting() { return Err("Wait for conversation preparation or compaction to finish".into()); }
+        session.reconcile(false).await;
+        if let Some(error) = session.configuration_error() { return Err(error); }
+        session.execute(json!({"type":"orchestration_message","sourceSessionId":packet["sourceSessionId"],
+            "sourceHostId":packet["sourceHostId"],"message":packet["message"],"wake":packet["wake"]})).await
+    }
+
+    async fn orchestration_detach(&self, runtime: &str) -> Result<Value> {
+        self.registry().attachments.remove(runtime);
+        let session = self.registry().subscriptions.get(runtime).cloned();
+        if let Some(session) = session {
+            self.detach(&json!({"preserveRunning":true}), runtime, &session).await
+        } else { Ok(Value::Null) }
     }
 
     fn ownership_drained(&self, packet: &Value) -> Value {

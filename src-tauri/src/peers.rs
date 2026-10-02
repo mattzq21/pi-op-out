@@ -254,7 +254,7 @@ pub(crate) fn cancel_message(app: &AppHandle, request_id: &str) -> Result<(), St
 }
 
 pub(crate) fn local_broker_request(app: &AppHandle, path: &str, body: &Value) -> Result<Value, String> {
-    if !matches!(path, "/message" | "/cancel" | "/worktrees/create" | "/worktrees/remove" | "/terminals") || body["hostId"].as_str().is_some_and(|id| id != "local") { return Err("Peer broker requests must target this machine".into()); }
+    if !matches!(path, "/message" | "/cancel" | "/orchestration" | "/worktrees/create" | "/worktrees/remove" | "/terminals") || body["hostId"].as_str().is_some_and(|id| id != "local") { return Err("Peer broker requests must target this machine".into()); }
     let broker = app.state::<BrokerRuntime>();
     let (port, token) = broker_environment(&broker)?;
     let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|error| error.to_string())?;

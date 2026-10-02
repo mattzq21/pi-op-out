@@ -176,7 +176,7 @@ impl Worker {
             && event["method"] == "setStatus"
             && matches!(
                 event["statusKey"].as_str(),
-                Some("pi-desktop-control-response" | "pi-desktop-pause-state")
+                Some("pi-desktop-control-response" | "pi-desktop-pause-state" | "piop-orchestration-response")
             )
         {
             let Some(encoded) = event["statusText"].as_str().and_then(|text| text.strip_prefix("json:")) else {

@@ -3,7 +3,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export interface RuntimeSettingsRequest { settings?: { tools: string[]; skills: string[]; explicitOnlySkills?: string[] } }
 
-export interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[] }
+export interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; availableTools?: string[] }
 
 export interface McpToolsRequest { tools?: string[]; availableTools?: string[] }
 

@@ -344,7 +344,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   pi.on("tool_call", (event, ctx) => {
     const agent = currentAgent();
-    const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
+    const required: RequiredToolsRequest = { ctx, tools: [], availableTools: agent?.tools }; pi.events.emit("piop:required-tools", required);
     const allowed = agent && !activeToolError && new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools(true), ...required.tools]);
 
     if (!allowed || !allowed.has(event.toolName) || toolDisabledForAgent(event.toolName, agent)) {
@@ -564,7 +564,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (mcpError) return mcpError;
 
     if (agent.name !== "terminal-agent") tools.delete("lookup_terminals");
-    const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
+    const required: RequiredToolsRequest = { ctx, tools: [], availableTools: [...tools] }; pi.events.emit("piop:required-tools", required);
 
     for (const tool of required.tools) tools.add(tool);
     pi.setActiveTools([...tools].filter(name => agent.codemode !== false || name !== "codemode"));
@@ -593,7 +593,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
       activeToolError = agentToolError(pi, agent, extensions.tools());
       const mcpTools = currentMcpTools();
-      const required: RequiredToolsRequest = { ctx: request.ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
+      const required: RequiredToolsRequest = { ctx: request.ctx, tools: [], availableTools: agent.tools }; pi.events.emit("piop:required-tools", required);
       pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])].filter(name => agent.codemode !== false || name !== "codemode"));
       publish(request.ctx);
     });

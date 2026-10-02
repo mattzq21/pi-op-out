@@ -108,8 +108,8 @@ pub(super) fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, strea
     if !authorized { broker_response(stream, "401 Unauthorized", json!({"error":"Unauthorized"})); return Ok(()); }
     if content_length > BROKER_BODY_BYTES { broker_response(stream, "413 Payload Too Large", json!({"error":"Message is too large"})); return Ok(()); }
     let mut body = vec![0; content_length]; reader.read_exact(&mut body).map_err(|error| error.to_string())?;
-    if method == "POST" && path == "/message" {
-        return enqueue_broker_message(app, broker, stream, body);
+    if method == "POST" && matches!(path, "/message" | "/orchestration") {
+        return enqueue_broker_message(app, broker, stream, body, path == "/orchestration");
     }
     respond_broker_request(app, broker, stream, method, path, body)
 }
@@ -160,12 +160,15 @@ fn read_broker_headers(reader: &mut BufReader<TcpStream>, header_bytes: &mut usi
     Ok((authorized, content_length))
 }
 
-fn enqueue_broker_message(app: AppHandle, broker: BrokerRuntime, stream: TcpStream, body: Vec<u8>) -> Result<(), String> {
+fn enqueue_broker_message(app: AppHandle, broker: BrokerRuntime, stream: TcpStream, body: Vec<u8>, orchestration: bool) -> Result<(), String> {
         let mut count = broker.message_count.lock().map_err(|_| "Broker job count lock was poisoned")?;
         if *count >= BROKER_WORKERS || broker.closing.load(Ordering::SeqCst) { broker_response(stream, "503 Service Unavailable", json!({"error":"Session broker is busy"})); return Ok(()); }
         *count += 1; drop(count);
         thread::spawn(move || {
-            let result = process_broker_message(&app, &broker, &body);
+            let result = if orchestration {
+                serde_json::from_slice(&body).map_err(|_| "Invalid orchestration request".into())
+                    .and_then(|value| broker_orchestration(&app, &broker, value))
+            } else { process_broker_message(&app, &broker, &body) };
             if let Ok(mut count) = broker.message_count.lock() { *count = count.saturating_sub(1); }
             match result { Ok(data) => broker_response(stream, "200 OK", json!({"data":data})), Err(error) => broker_response(stream, "400 Bad Request", json!({"error":error})) }
         });
@@ -384,6 +387,33 @@ fn broker_agents(app: &AppHandle, broker: &BrokerRuntime) -> Result<Value, Strin
 
 fn broker_message_sessions(app: &AppHandle, session_index: &SessionIndexRuntime, host_id: &str) -> Result<Vec<SessionSummary>, String> {
     if host_id == "local" { list_local_sessions(session_index, &ensure_desktop_sessions_dir(&home_dir()?)?) } else { collect_sessions(app, session_index) }
+}
+
+fn broker_orchestration(app: &AppHandle, broker: &BrokerRuntime, value: Value) -> Result<Value, String> {
+    let host = value["hostId"].as_str().ok_or("hostId is required")?;
+    #[cfg(not(feature = "desktop"))]
+    if host != "local" { return peers::forward_broker(app, host, "/orchestration", value.clone()); }
+    let (id, action) = orchestration_target(&value)?;
+    let sessions = broker_message_sessions(app, &app.state::<SessionIndexRuntime>(), host)?;
+    let session = resolve_agent(&sessions, host, id)?;
+    let settings = load_app_settings(app.clone())?;
+    let runtime = app.state::<PiRuntime>();
+    let daemon = crate::daemon::connect(app, &runtime, broker, &settings, host)?;
+    let mut packet = json!({"type":"orchestration","action":action,"sessionKey":id,"sessionPath":session.path,
+        "sourceSessionId":value["sourceSessionId"],"sourceHostId":value["sourceHostId"],"message":value["message"],"wake":value["wake"],"clientId":value["clientId"]});
+    if action == "send" {
+        let command = build_pi_command(broker, &settings, host, PiLaunch::Rpc { cwd: Some(&session.cwd), session_path: Some(&session.path), session_id: None, fork_path: None, no_session: false }, daemon.remote_port)?;
+        packet["spec"] = crate::daemon::spec(&command);
+        packet["cwd"] = json!(session.cwd);
+    }
+    daemon.request(packet)
+}
+
+fn orchestration_target(value: &Value) -> Result<(&str, &str), String> {
+    let id = value["sessionId"].as_str().ok_or("sessionId is required")?;
+    let action = value["action"].as_str().ok_or("action is required")?;
+    if !matches!(action, "read" | "send" | "interrupt") { return Err("Unknown orchestration action".into()); }
+    Ok((id, action))
 }
 
 #[derive(Clone)]

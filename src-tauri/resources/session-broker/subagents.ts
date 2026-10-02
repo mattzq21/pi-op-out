@@ -9,11 +9,13 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
-import { cancelRequest, currentHost, request } from "./client.ts";
+import { currentHost } from "./client.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { goalTokens } from "./goal-state.ts";
 import { listenSubagentUsage, registerSubagentUsage } from "./subagent-usage.ts";
 import { registerSubagentMailbox } from "./subagent-mailbox.ts";
+import { interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
+import { setTimeout as delay } from "node:timers/promises";
 
 const SUBAGENT_RUN = "piop-subagent-run";
 
@@ -21,7 +23,7 @@ const SUBAGENT_PARENT = "piop-subagent-parent";
 
 const SUBAGENT_TIMEOUT_MS = 600_000;
 
-type SubagentTask = { task: string; name: string; agent?: string; sessionId?: string };
+type SubagentTask = { task: string; name: string; agent?: string; sessionId?: string; fork_turns?: string };
 
 const runSchema = Schema.Object({
   version: Schema.Literal(1), toolCallId: Schema.String(), parentSessionId: Schema.String(), sessionId: Schema.String(), sessionPath: Schema.String(),
@@ -87,6 +89,58 @@ async function subagentCompletion(run: SubagentRun, offset: number, reportUsage:
   return last;
 }
 
+function validateFork(task: SubagentTask) {
+  const forkTurns = task.fork_turns ?? "none";
+
+  if (forkTurns !== "none" && forkTurns !== "all" && !/^[1-9]\d*$/.test(forkTurns)) throw new Error("fork_turns must be none, all, or a positive turn count");
+
+  if (forkTurns === "all" && task.agent) throw new Error("A full history fork inherits the current agent profile");
+
+  return forkTurns;
+}
+
+function completedHistory(ctx: ExtensionContext) {
+  const branch = structuredClone(ctx.sessionManager.getBranch()).filter(entry => entry.type !== "custom");
+  const pending = new Map<string, number>();
+  branch.forEach((entry, index) => {
+    if (entry.type !== "message") return;
+
+    if (entry.message.role === "assistant") {
+      for (const part of entry.message.content) if (part.type === "toolCall") pending.set(part.id, index);
+    }
+
+    if (entry.message.role === "toolResult") pending.delete(entry.message.toolCallId);
+  });
+
+  return branch.slice(0, Math.min(branch.length, ...pending.values()));
+}
+
+function inheritedHistory(ctx: ExtensionContext, task: SubagentTask) {
+  const forkTurns = validateFork(task);
+  let retained = forkTurns === "none" ? [] : completedHistory(ctx);
+
+  if (forkTurns !== "all" && forkTurns !== "none") {
+    const starts = retained.flatMap((entry, index) => entry.type === "message" && entry.message.role === "user" ? [index] : []);
+    retained = retained.slice(starts[Math.max(0, starts.length - Number(forkTurns))] ?? 0);
+  }
+
+  return retained;
+}
+
+async function waitForSubagent(run: SubagentRun, signal: AbortSignal) {
+  const deadline = Date.now() + SUBAGENT_TIMEOUT_MS;
+
+  while (true) {
+    signal.throwIfAborted();
+    const snapshot = await sessionSnapshot(run.sessionId, run.hostId, signal);
+
+    if (snapshotStatus(snapshot) === "idle") return;
+
+    if (Date.now() >= deadline) throw new Error("Subagent timed out after ten minutes");
+    await delay(500, undefined, { signal });
+  }
+}
+
 async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: SubagentTask, toolCallId: string): Promise<SubagentRun> {
   const parentSessionId = ctx.sessionManager.getSessionId();
   const runs = ctx.sessionManager.getEntries().flatMap((entry) => entry.type === "custom" && entry.customType === SUBAGENT_RUN ? [Parse(runSchema, entry.data)] : []);
@@ -113,7 +167,11 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, status: "running", startedAt: Date.now() };
+  let retained = inheritedHistory(ctx, task);
   let parentId: string | null = null;
+  retained = retained.map(item => { const next = { ...item, parentId }; parentId = next.id;
+
+  return next; });
 
   const entry = (value: CustomEntryDraft | { type: "session_info"; name: string }) => { const id = randomUUID().slice(0, 8); const result = { ...value, id, parentId, timestamp }; parentId = id;
 
@@ -121,6 +179,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
 
   await writeSessionFile(sessionPath, [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: ctx.cwd },
+    ...retained,
     entry({ type: "session_info", name: `Subagent: ${task.name}` }),
     entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, parentSessionId, parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile.state }),
@@ -131,7 +190,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
 
 type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Set<string>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => void };
 
-async function dispatchSubagent(run: SubagentRun, requestId: string, execution: SubagentExecution) {
+async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution) {
   const { signal, pi, ctx } = execution;
   signal?.throwIfAborted();
   const offset = (await stat(run.sessionPath)).size;
@@ -149,18 +208,20 @@ async function dispatchSubagent(run: SubagentRun, requestId: string, execution: 
 
   const usageFailure = new AbortController();
   const requestSignal = signal ? AbortSignal.any([signal, usageFailure.signal]) : usageFailure.signal;
-  const closeUsage = scope.goalId ? await listenSubagentUsage(run.sessionPath, reportUsage, error => { usageFailure.abort(error); void cancelRequest(requestId); }) : async () => {};
+  const closeUsage = scope.goalId ? await listenSubagentUsage(run.sessionPath, reportUsage, error => { usageFailure.abort(error); }) : async () => {};
 
-  const abort = () => { void cancelRequest(requestId); };
+  const abort = () => { void interruptSession(run.sessionId, run.hostId).catch(() => undefined); };
 
   signal?.addEventListener("abort", abort, { once: true });
   let dispatched = false;
   let last: SubagentResponse | undefined;
 
   try {
-    await request("/message", { hostId: run.hostId, sessionId: run.sessionId, message: run.task, requestId, deadline: Date.now() + SUBAGENT_TIMEOUT_MS }, requestSignal, SUBAGENT_TIMEOUT_MS);
+    requestSignal.throwIfAborted();
+    await sendSessionMessage(ctx, run.sessionId, run.hostId, run.task, true);
+    await waitForSubagent(run, requestSignal);
     dispatched = true;
-  } catch (error) { await cancelRequest(requestId); throw error; }
+  } catch (error) { await interruptSession(run.sessionId, run.hostId).catch(() => undefined); throw error; }
   finally {
     signal?.removeEventListener("abort", abort);
 
@@ -187,7 +248,7 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
     active.add(run.sessionId); claimed = true;
     pi.appendEntry(SUBAGENT_RUN, { ...run }); publish(run);
     execution.ready();
-    await dispatchSubagent(run, randomUUID(), execution);
+    await dispatchSubagent(run, execution);
   } catch (error) {
     run.status = signal?.aborted ? "cancelled" : "failed";
     run.output = error instanceof Error ? error.message : String(error);
@@ -218,6 +279,107 @@ export function registerSubagents(pi: ExtensionAPI) {
   const active = new Set<string>();
   const pending = new Set<Promise<void>>();
   let controller = new AbortController();
+  const latestRuns = (ctx: ExtensionContext) => [...new Map(ctx.sessionManager.getEntries().flatMap<[string, SubagentRun]>(entry => entry.type === "custom" && entry.customType === SUBAGENT_RUN && Check(runSchema, entry.data) ? [[entry.data.sessionId, entry.data]] : [])).values()];
+
+  const targetRun = (ctx: ExtensionContext, target: string) => {
+    const runs = latestRuns(ctx).filter(run => run.sessionId === target || run.name === target || `/root/${run.name}` === target);
+
+    if (runs.length !== 1) throw new Error("Use a unique child session ID or task name from list_agents");
+
+    return runs[0];
+  };
+
+  const start = async (task: SubagentTask, toolCallId: string, ctx: ExtensionContext, signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+
+    if (ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === SUBAGENT_PARENT)) throw new Error("Children cannot spawn further agents in piop");
+
+    if (pending.size >= 4) throw new Error("All four subagent slots are occupied; wait for a child to finish");
+
+    if (!task.sessionId && latestRuns(ctx).some(run => run.name === task.name)) throw new Error("Task name already exists; use followup_task to reuse the child");
+    const results: SubagentRun[] = [];
+    const backgroundSignal = controller.signal;
+    await launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish(run) {
+      if (backgroundSignal.aborted || run.status === "running") return;
+      const notificationId = randomUUID();
+      const payload = subagentPayload([run]);
+      mailbox.notify(notificationId);
+      pi.sendMessage({ customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId }, display: true }, { triggerTurn: !ctx.isIdle(), deliverAs: "steer" });
+    } }, pending);
+
+    return { ...subagentPayload(results), isError: results.some(run => run.status === "failed" || run.status === "cancelled") };
+  };
+
+  const unsubscribeTools = pi.events.on("piop:required-tools", ({ ctx, tools, availableTools }) => {
+    const allowed = availableTools ?? pi.getActiveTools();
+    const child = ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === SUBAGENT_PARENT);
+
+    if (allowed.includes("subagent") || latestRuns(ctx).length) tools.push("spawn_agent", "followup_task", "interrupt_agent", "list_agents", "send_message", "wait_agent", "await_subagents");
+
+    if (child) tools.push("send_message", "wait_agent");
+
+    if (allowed.includes("send_message")) tools.push("send_message_to_thread", "read_thread", "wait_threads", "list_threads");
+  });
+
+  pi.on("session_shutdown", unsubscribeTools);
+  pi.registerTool({
+    name: "spawn_agent", label: "Spawn agent", exposure: "model-only",
+    description: "Start one background child and return its session ID. Up to four children may run concurrently; children cannot spawn grandchildren. Children share files and inherit the current profile/model unless agent selects a configured profile. fork_turns is none (default), all, or a positive number of recent user turns. Full forks inherit the profile. Final results arrive in the parent mailbox without starting an idle parent. Use followup_task for more work, send_message for updates, and wait_agent when blocked. Children are cancelled on parent close/switch and time out after ten minutes.",
+    parameters: Type.Object({ task_name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), message: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String()), fork_turns: Type.Optional(Type.String()) }),
+    async execute(id, params, signal, _update, ctx) { return start({ name: params.task_name, task: params.message, agent: params.agent, fork_turns: params.fork_turns }, id, ctx, signal); },
+  });
+  pi.registerTool({
+    name: "list_agents", label: "List child agents", exposure: "model-only", description: "List this parent's saved child sessions, task names and current status. /root/name and session IDs address children. Independent chats are listed by list_threads.",
+    parameters: Type.Object({}),
+    async execute(_id, _params, signal, _update, ctx) {
+      const agents = await Promise.all(latestRuns(ctx).map(async run => {
+        try { const snapshot = await sessionSnapshot(run.sessionId, run.hostId, signal);
+
+        return { sessionId: run.sessionId, task_name: `/root/${run.name}`, status: snapshotStatus(snapshot), lastRunStatus: run.status }; }
+        catch (error) { return { sessionId: run.sessionId, task_name: `/root/${run.name}`, status: "unavailable", error: String(error) }; }
+      }));
+
+      return { content: [{ type: "text", text: JSON.stringify(agents) }], details: { agents } };
+    },
+  });
+  pi.registerTool({
+    name: "send_message", label: "Message agent", exposure: "model-only", description: "Deliver an update to a child by session ID or task name, or to parent from a child. Steers a running recipient; an idle recipient receives mailbox content without starting a new turn. Use followup_task to wake a child. Returns acceptance, not a reply. Use send_message_to_thread for independent chats.",
+    parameters: Type.Object({ target: Type.String(), message: Type.String({ minLength: 1, maxLength: 100_000 }) }),
+    async execute(_id, params, signal, _update, ctx) {
+      const parent = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === SUBAGENT_PARENT);
+      const parentSchema = Schema.Object({ parentSessionId: Schema.String() });
+      const parentId = parent?.type === "custom" && Check(parentSchema, parent.data) ? parent.data.parentSessionId : undefined;
+      const id = parentId && (params.target === "parent" || params.target === "/root" || params.target === parentId) ? parentId : targetRun(ctx, params.target).sessionId;
+      const data = await sendSessionMessage(ctx, id, currentHost(), params.message, false, signal);
+
+      return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
+    },
+  });
+  pi.registerTool({
+    name: "followup_task", label: "Follow up with agent", exposure: "model-only", description: "Give an existing child more work. Starts an idle child or steers a running child. Preserves the child's profile and history. Its final response is delivered through the parent mailbox.",
+    parameters: Type.Object({ target: Type.String(), message: Type.String({ minLength: 1, maxLength: 100_000 }) }),
+    async execute(id, params, signal, _update, ctx) {
+      const run = targetRun(ctx, params.target);
+
+      if (active.has(run.sessionId)) {
+        const data = await sendSessionMessage(ctx, run.sessionId, run.hostId, params.message, true, signal);
+
+        return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
+      }
+
+      return start({ name: run.name, task: params.message, sessionId: run.sessionId }, id, ctx, signal);
+    },
+  });
+  pi.registerTool({
+    name: "interrupt_agent", label: "Interrupt agent", exposure: "model-only", description: "Stop a child's current turn without deleting its conversation. The child remains available for followup_task.",
+    parameters: Type.Object({ target: Type.String() }),
+    async execute(_id, params, signal, _update, ctx) {
+      const run = targetRun(ctx, params.target);
+      const data = await interruptSession(run.sessionId, run.hostId, signal);
+
+      return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
+    },
+  });
 
   const stop = async () => {
     controller.abort();
@@ -249,6 +411,8 @@ export function registerSubagents(pi: ExtensionAPI) {
       if (ctx.sessionManager.getEntries().some((entry) => entry.type === "custom" && entry.customType === SUBAGENT_PARENT)) throw new Error("Subagents cannot delegate further; return your findings to the parent");
 
       if (!params.tasks.length || params.tasks.length > 4 || params.tasks.some((task) => !task.task.trim() || !task.name.trim())) throw new Error("Provide 1–4 named, nonempty tasks");
+
+      if (pending.size + params.tasks.length > 4) throw new Error("At most four children may run concurrently");
       const resumed = params.tasks.flatMap((task) => task.sessionId ? [task.sessionId] : []);
 
       if (new Set(resumed).size !== resumed.length) throw new Error("A child can only receive one task at a time");
@@ -264,8 +428,8 @@ export function registerSubagents(pi: ExtensionAPI) {
 
         const payload = subagentPayload([run]);
         const notificationId = randomUUID();
-        pi.sendMessage({ customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId }, display: true }, { triggerTurn: false, deliverAs: "steer" });
         mailbox.notify(notificationId);
+        pi.sendMessage({ customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId }, display: true }, { triggerTurn: !ctx.isIdle(), deliverAs: "steer" });
       };
 
       await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));

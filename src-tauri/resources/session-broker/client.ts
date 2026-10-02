@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { Parse } from "typebox/value";
 
 interface BrokerRequest {
+  action?: string; sourceSessionId?: string; sourceHostId?: string; wake?: boolean;
   hostId?: string; sessionId?: string; id?: string; cwd?: string; name?: string; deleteBranch?: boolean;
   message?: string; requestId?: string; deadline?: number;
   terminalId?: string; generation?: string; offset?: number; maxBytes?: number;
