@@ -5,7 +5,7 @@ import { fileChangesSchema, pauseStateSchema, promptContextSchema, resumeContent
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up", "piop-review-link", "piop-html-preview"]);
 
 export function isContextInjection(message: { role?: string; customType?: string }) {
-  return message.role === "custom" && !SYSTEM_MESSAGES.has(message.customType ?? "") && !["pi-desktop-btw", "piop-subagent-result"].includes(message.customType ?? "");
+  return message.role === "custom" && !SYSTEM_MESSAGES.has(message.customType ?? "") && !["pi-desktop-btw", "piop-subagent-result", "piop-goal-summary", "piop-session-operation"].includes(message.customType ?? "");
 }
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
