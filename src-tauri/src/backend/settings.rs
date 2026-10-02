@@ -50,9 +50,6 @@ fn migrate_question_tool(settings: &mut AppSettings) {
 pub(super) fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = read_settings_at(&path)?;
-    for tool in session_operation_tools() {
-        if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
-    }
     merge_discovered_skills(&mut settings);
     Ok(settings)
 }
@@ -68,10 +65,17 @@ fn migrate_goal_tools(settings: &mut AppSettings) {
     }
 }
 
+fn initialize_session_tools(settings: &mut AppSettings) {
+    for tool in session_operation_tools() {
+        if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
+    }
+}
+
 pub(super) fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
     migrate_question_tool(&mut settings);
     migrate_goal_tools(&mut settings);
+    initialize_session_tools(&mut settings);
     if settings.default_agent == "voice-orchestrator" { settings.default_agent = default_agent(); }
     for (legacy, replacements) in [
         ("exec_command", &["read", "bash", "grep", "find", "ls"][..]),

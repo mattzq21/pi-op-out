@@ -14,6 +14,12 @@ pub fn run_daemon() -> Result<(), String> {
         let app = AppHandle::new();
         dictation::start(app.clone());
         start_session_broker(app.clone(), app.state::<BrokerRuntime>().inner().clone())?;
+        let startup = app.clone();
+        tokio::task::spawn_blocking(move || {
+            let settings = crate::settings::load_app_settings(startup.clone())?;
+            crate::extensions::prepare_defined_agents_extension()?;
+            crate::daemon::connect(&startup, &startup.state::<PiRuntime>(), &startup.state::<BrokerRuntime>(), &settings, "local").map(|_| ())
+        }).await.map_err(|error| error.to_string())??;
         mobile::start(app.clone())?;
         let clients = app.state::<daemon_clients::DaemonClients>();
         #[cfg(unix)]

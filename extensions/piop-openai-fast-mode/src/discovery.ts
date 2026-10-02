@@ -6,6 +6,8 @@ import { DEFAULT_SERVICE_TIER, type FastTarget } from "./types";
 
 type Model = NonNullable<ExtensionContext["model"]>;
 
+type DiscoveryContext = Pick<ExtensionContext, "modelRegistry" | "model">;
+
 type Catalog = Map<string, boolean>;
 
 type CachedCatalog = { expires: number; pending: Promise<Catalog> };
@@ -120,7 +122,7 @@ export function createFastModeDiscovery() {
     return new Map(entries.filter(entry => entry.provider === model.provider).map(entry => [entry.model, entry.supported]));
   }
 
-  async function catalog(ctx: ExtensionContext, model: Model): Promise<Catalog> {
+  async function catalog(ctx: DiscoveryContext, model: Model): Promise<Catalog> {
     const startup = await startupCatalog(model);
 
     if (startup) return startup;
@@ -157,7 +159,7 @@ export function createFastModeDiscovery() {
     } catch { return new Map(); }
   }
 
-  return async (ctx: ExtensionContext, configured: FastTarget[]): Promise<FastTarget[]> => {
+  return async (ctx: DiscoveryContext, configured: FastTarget[], onUnknown?: (model: Model) => void): Promise<FastTarget[]> => {
     const models = ctx.modelRegistry.getAvailable().filter(model => isSupportedProvider(model.provider));
 
     const currentModel = ctx.model;
@@ -176,6 +178,8 @@ export function createFastModeDiscovery() {
       return group.flatMap(model => {
         const supported = remote.get(model.id) ?? fastCapability(capabilitySchema.parse(model));
         const explicit = configured.find(target => target.provider === model.provider && target.model === model.id);
+
+        if (supported === undefined && (model.api === "openai-codex-responses" || !explicit)) onUnknown?.(model);
 
         if (!(supported ?? (model.api !== "openai-codex-responses" && !!explicit))) return [];
 

@@ -60,6 +60,9 @@ interface Props {
   onResume: () => void | Promise<void>;
   onOpenTerminal?: () => void;
   onAgent: (name: string) => void;
+  onReloadAgents?: () => Promise<void>;
+  agentHostLabel?: string;
+  agentReloadScope?: string;
   onModel: (model: Model) => void;
   onToggleFastMode: () => void | Promise<void>;
   onThinking: (level: string) => void;
@@ -142,6 +145,22 @@ function pasteShortcut(event: KeyboardEvent) {
 }
 
 export function Composer(props: Props) {
+  const [reloadingAgents, setReloadingAgents] = createSignal(false);
+  const [reloadError, setReloadError] = createSignal<string>();
+
+  createDependencyEffect(() => { setReloadError(undefined); setReloadingAgents(false); }, () => [props.agentReloadScope]);
+
+  const reloadAgents = async () => {
+    if (!props.onReloadAgents || reloadingAgents()) return;
+    const scope = props.agentReloadScope;
+
+    setReloadingAgents(true); setReloadError(undefined);
+
+    try { await props.onReloadAgents(); }
+    catch (error) { if (scope === props.agentReloadScope) setReloadError(error instanceof Error ? error.message : String(error)); }
+    finally { if (scope === props.agentReloadScope) setReloadingAgents(false); }
+  };
+
   const [visualProps, controlProps] = splitProps(props, ["toolbar"]);
   const composerFields = createMemoFields(() => composerDefaults(controlProps));
   const composer = () => composerFields;
@@ -499,7 +518,7 @@ export function Composer(props: Props) {
         const agentSelectionDisabled = () => composer().agentLocked || composer().streaming || controls().inputDisabled;
         const changeAgent = (name: string) => { if (!agentSelectionDisabled()) composer().onAgent(name); };
 
-        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : composer().activeAgent ?? "general"} value={composer().activeAgent ?? "general"} disabled={agentSelectionDisabled()} menuMinWidth={130} centered compact options={agentOptions()} onChange={changeAgent} />);
+        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : composer().activeAgent ?? "general"} value={composer().activeAgent ?? "general"} disabled={props.onReloadAgents ? controls().inputDisabled : agentSelectionDisabled()} menuMinWidth={130} centered compact options={agentOptions().map(option => ({ ...option, disabled: agentSelectionDisabled() || reloadingAgents() }))} onChange={changeAgent} footer={props.onReloadAgents && <><div class="agent-definitions-host">Definitions on {props.agentHostLabel ?? "Local"}</div><button type="button" title={`Reload definitions on ${props.agentHostLabel ?? "Local"} for sessions on this host`} disabled={reloadingAgents()} onClick={() => void reloadAgents()}>{reloadingAgents() ? "Reloading…" : "Reload"}</button>{reloadError() && <p role="alert">{reloadError()}</p>}</>} />);
         const renderFastModeIndicator = () => (fastModeSupported() && <button type="button" class={`fast-mode-indicator${fastModeEnabled() ? " active" : ""}`} aria-label="Fast mode" aria-description={(composer().fastModeStatus)} aria-pressed={fastModeEnabled()} aria-busy={togglingFastMode()} disabled={controls().inputDisabled || togglingFastMode()} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button>);
 
         const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName(required((composer().model))) : undefined} value={composer().model ? `${required((composer().model)).provider}/${required((composer().model)).id}` : ""} disabled={controls().inputDisabled} options={modelOptions()} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value);
@@ -631,7 +650,7 @@ function pickerDefaults({ label, selectedLabel, value, options, disabled, menuWi
   return { label, selectedLabel, value, options, disabled, menuWidth, centered, compact, onChange };
 }
 
-function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
+function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void; footer?: JSXElement }) {
   const pickerFields = createMemoFields(() => pickerDefaults(props));
   const picker = () => pickerFields;
   const [menuStyle, setMenuStyle] = createSignal<CSSProperties>();
@@ -699,7 +718,7 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
 
   return <div ref={element => { root.current = element; }} class="composer-picker" onBlur={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); trigger.current?.focus(); } else if (menuStyle() && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
     <button ref={element => { trigger.current = element; }} type="button" class="select-control composer-picker-trigger" aria-label={picker().label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle())} data-value={picker().value} data-options={picker().options.map((option) => option.value).join(" ")} disabled={picker().disabled} onClick={toggle}>{picker().selectedLabel ?? selectedOption()?.label ?? picker().label}</button>
-    {menuStyle() && <div class={`composer-picker-menu${picker().centered ? " centered" : ""}${picker().compact ? " compact" : ""}`} role="listbox" aria-label={`${picker().label} options`} style={(menuStyle())}>{picker().options.length === 0 && <div class="empty-small">No options available</div>}{<Key each={picker().options} by={(option) => `${option.detail ?? picker().label}:${option.value}`}>{(option, index) => <button ref={(element) => { optionRefs.current[index()] = element; }}  type="button" role="option" aria-selected={option().value === picker().value} tabIndex={isActive(index()) ? 0 : -1} data-value={option().value} disabled={picker().disabled || option().disabled} onFocus={() => setActiveIndex(index())} onClick={() => { if (picker().disabled || optionChosenRef.current) return; optionChosenRef.current = true; picker().onChange(option().value); close(); trigger.current?.focus(); }}><span>{option().label}</span>{option().detail && <small>{option().detail}</small>}</button>}</Key>}</div>}
+    {menuStyle() && <div class={`composer-picker-menu${picker().centered ? " centered" : ""}${picker().compact ? " compact" : ""}`} aria-label={`${picker().label} options`} style={(menuStyle())}><div role="listbox" aria-label={`${picker().label} options`}>{picker().options.length === 0 && <div class="empty-small">No options available</div>}{<Key each={picker().options} by={(option) => `${option.detail ?? picker().label}:${option.value}`}>{(option, index) => <button ref={(element) => { optionRefs.current[index()] = element; }}  type="button" role="option" aria-selected={option().value === picker().value} tabIndex={isActive(index()) ? 0 : -1} data-value={option().value} disabled={picker().disabled || option().disabled} onFocus={() => setActiveIndex(index())} onClick={() => { if (picker().disabled || optionChosenRef.current) return; optionChosenRef.current = true; picker().onChange(option().value); close(); trigger.current?.focus(); }}><span>{option().label}</span>{option().detail && <small>{option().detail}</small>}</button>}</Key>}</div>{props.footer && <div class="composer-picker-footer">{props.footer}</div>}</div>}
   </div>;
 }
 

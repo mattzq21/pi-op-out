@@ -8,6 +8,7 @@ impl Host {
             self.registry().attachments.remove(&runtime);
         }
         match name {
+            "agent_definitions" => return Ok(self.registry().agent_definitions.clone()),
             "conversation_owner" => return self.ownership().owns(&text(&packet, "sessionId"), &text(&packet, "clientId")).map(Value::Bool),
             "provider_auth" | "provider_auth_cancel_owner" => return self.services.handle(packet).await,
             "ownership_drained" => return Ok(self.ownership_drained(&packet)),
@@ -23,7 +24,7 @@ impl Host {
 
     async fn lifecycle(self: &Arc<Self>, packet: Value) -> Result<Value> {
         match kind(&packet) {
-            "configure" => self.configure(&packet["configuration"]).map(|_| Value::Null),
+            "configure" => self.configure(&packet["configuration"]).await.map(|_| Value::Null),
             "attach" => self.attach(packet).await,
             _ => {
                 self.shutdown().await;
@@ -125,6 +126,9 @@ impl Host {
         if name == "presence" {
             session.presence(runtime, packet["presence"].clone());
             return Ok(Value::Null);
+        }
+        if name == "command" && packet["command"]["type"] == "reload_agents" {
+            return self.reload_agents(runtime, &text(&packet["command"], "sessionId")).await;
         }
         self.session_command(session, runtime, packet["command"].clone()).await
     }

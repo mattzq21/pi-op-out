@@ -174,6 +174,15 @@ export class NativeTransport {
   constructor(target: NativeConnectionTarget = {}) { this.readOnly = target.readOnly === true; this.fresh = !target.sessionPath && !target.sessionId; this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
   currentHostId() { return this.hostId; }
   currentDaemonId() { return this.daemonId; }
+  reloadAgentDefinitions(sessionId: string) {
+    const version = this.connectionVersion;
+    const hostId = this.hostId;
+
+    return this.settings.runCommand(async () => {
+      if (!this.running || this.readOnly || version !== this.connectionVersion || hostId !== this.hostId) throw new Error("The session connection changed. Reload from its current host.");
+      await this.executeCommandNow({ type: "reload_agents", sessionId }, z.object({ success: z.literal(true), sessionId: z.literal(sessionId) }));
+    });
+  }
   currentCwd() { return this.cwd; }
   currentSessionPath() { return this.sessionPath; }
   isTemporaryChat() { return this.temporaryChat; }
