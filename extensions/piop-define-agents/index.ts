@@ -621,7 +621,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
 
-  const keepSnapshot = (locked: boolean) => !daemonDefinitions || locked;
+  const keepSnapshot = (locked: boolean, ctx: ExtensionContext) => !daemonDefinitions || locked || ctx.sessionManager.getBranch().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-parent");
 
   const restoreSession = async (ctx: ExtensionContext) => {
     restore(ctx);
@@ -635,7 +635,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
     locked = sessionIsLocked(states, branch);
 
-    if (!keepSnapshot(locked)) snapshot = undefined;
+    if (!keepSnapshot(locked, ctx)) snapshot = undefined;
 
     modelOverride = stored?.modelOverride;
     fastModeOverride = fastMode;
