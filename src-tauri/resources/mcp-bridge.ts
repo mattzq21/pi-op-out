@@ -58,6 +58,16 @@ export default function agentMcp(pi: ExtensionAPI) {
   const subscribe = pi.on as (event: ExtensionEvent["type"], handler: ExtensionHandler<never, unknown>) => () => void;
   createMcpExtension()({
     ...pi,
+    registerCommand(name, options) {
+      if (name !== "mcp") { pi.registerCommand(name, options);
+
+      return; }
+
+      pi.registerCommand(name, {
+        description: "Internal MCP loader reservation",
+        handler: () => { throw new Error("/mcp is unavailable in Piop. Manage MCP servers in agent settings."); },
+      });
+    },
     setActiveTools(names) {
       pi.setActiveTools(names.filter(name => codemodeEnabled || name !== "codemode"));
     },
