@@ -56,11 +56,17 @@ const validateExtensions = config.agents.some(agent => agent.extensions?.length)
 
 for (const agent of config.agents) {
   validateEffort(agent.name, agent.effort);
+  let extensionTools: string[] = [];
 
   if (validateExtensions) {
-    try { await validateExtensions(extensionPaths(agent.extensions), dirname(configPath)); }
+    try { extensionTools = await validateExtensions(extensionPaths(agent.extensions), dirname(configPath)); }
     catch (error) { throw new Error(`Agent "${agent.name}" cannot load its extensions: ${error instanceof Error ? error.message : String(error)}`); }
   }
+
+  const allowedTools = new Set([...settings.tools, ...extensionTools]);
+  const denied = agent.tools.filter(tool => !allowedTools.has(tool));
+
+  if (denied.length) throw new Error(`Agent "${agent.name}" cannot run because Pi does not allow its configured tools: ${denied.join(", ")}`);
 
   for (const path of [agent.path_systemprompt, agent.path_agentprompt].filter(Boolean)) {
     const resolved = resolvePromptPath(path);

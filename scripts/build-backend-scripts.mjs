@@ -1,6 +1,7 @@
 import { build } from "esbuild";
 import { writeFile } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
+import { agentCommandInventory } from "./agent-command-inventory.mjs";
 
 const scripts = ["cleanup-ephemeral-session", "session-descendants", "archive-conversations", "archive-worktree", "restore-archived-worktree", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "preserve-archive-checkpoints"];
 
@@ -36,6 +37,8 @@ const accountsModule = `import { gunzipSync as unpackProviderAccounts } from "no
 if (Buffer.byteLength(accountsModule) > 96 * 1024) throw new Error("Provider accounts exceeds the embedded script argument budget");
 
 await writeFile("src-tauri/resources/provider-accounts.bundle.mjs", accountsModule);
+
+await writeFile("src-tauri/resources/agent-commands.json", `${JSON.stringify(await agentCommandInventory(), null, 2)}\n`);
 
 const agents = await build({
   entryPoints: ["extensions/piop-define-agents/daemon-loader.ts"],

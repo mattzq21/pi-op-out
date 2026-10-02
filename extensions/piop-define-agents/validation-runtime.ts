@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { agentExtensions } from "./extension-loader.ts";
 import type { ExtensionAPI, ExtensionRuntime, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import commandNames from "../../src-tauri/resources/agent-commands.json";
 
 async function piEntry() {
   const executable = process.env.PIOP_PI_EXECUTABLE || "pi";
@@ -46,13 +47,17 @@ export async function extensionValidator(toolNames: string[]) {
     const runtime: ExtensionRuntime = createExtensionRuntime();
     const events = createEventBus();
     runtime.getAllTools = () => toolNames.map((name): ToolInfo => ({ name, description: "", parameters: Type.Object({}), exposure: "direct", sourceInfo: { path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" } }));
-    runtime.getCommands = () => [];
+    runtime.getCommands = () => commandNames.map(name => ({ name, source: "extension", sourceInfo: { path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" } }));
+    let tools: string[] = [];
 
     try {
       await loadExtensionFromFactory(async (pi: ExtensionAPI) => {
         const extensions = agentExtensions(pi, base, entry => loader.import(entry));
-        await extensions.prepare(paths);
+        const group = await extensions.prepare(paths);
+        tools = extensions.tools(group);
       }, base, events, runtime);
     } finally { events.clear(); }
+
+    return tools;
   };
 }
