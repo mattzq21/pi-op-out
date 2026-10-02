@@ -92,6 +92,7 @@ function messageTimestamp(source: WireMessage) {
 }
 
 function messageRole(source: WireMessage): ChatMessage['role'] {
+  if (source.role === "custom" && source.customType === "piop-review-feedback") return "tool";
   const isBtw = source.role === "custom" && source.customType === "pi-desktop-btw";
   const isSystemMessage = source.role === "custom" && SYSTEM_MESSAGES.has(String(source.customType));
 
@@ -108,6 +109,8 @@ export function normalizeMessage(message: Partial<WireMessage> | null | undefine
   const completionStamp = completedAt ? Date.parse(completedAt) : NaN;
 
   const normalized: ChatMessage = { ...source, id: messageIdentity(source, stamp, entryId, fallbackId), entryId, role: messageRole(source), toolStatus: source.role === "toolResult" ? (source.isError ? "error" : "done") : undefined, timestamp: stamp };
+
+  if (source.customType === "piop-review-feedback") { normalized.toolName = "review_feedback"; normalized.toolStatus = "done"; }
 
   if (Number.isFinite(completionStamp)) normalized.completedAt = completionStamp;
 

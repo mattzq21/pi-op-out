@@ -620,3 +620,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .agent-mcp-settings > .secondary-button { margin-top: 10px; }
 .model-bulk-actions { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 0; }
 .message-actions .fork-and-forget-button { margin-left: auto; }
+.split-pane-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.review-feedback-button { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font-size: 11px; }
+.review-feedback-button:hover:not(:disabled), .review-feedback-button[aria-pressed="true"] { background: var(--hover); }
+.review-feedback-button:disabled { opacity: .5; }

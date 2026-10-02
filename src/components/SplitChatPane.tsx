@@ -18,9 +18,8 @@ import { useChatSession } from "../lib/useChatSession";
 import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgentsCapability, ExtensionUiRequest, ImageAttachment, RpcEvent, SessionSummary } from "../types";
 
 import { branchMessages } from "../lib/messages";
+import { textOf } from "../lib/content";
 import { ChatView } from "./ChatView";
-
-const reviewMessageSchema = z.object({ message: z.string().refine(message => Boolean(message.trim()), "A message is required") });
 
 interface Props { onArchiveOriginal: (session: SessionSummary) => Promise<void>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; freshReview?: boolean; initialPrompt?: string; initialImages?: ImageAttachment[]; onMessageMain?: (message: string) => Promise<void>; onReady?: () => void; onFailed?: (cause: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 
@@ -44,20 +43,74 @@ export function SplitChatPane(componentProps: Props) {
   const [extensionFocusRequest, setExtensionFocusRequest] = createSignal(0);
   const reconnectRef = createRef<() => void>(() => undefined);
   const lifecycleRef = createRef(0);
-  const reviewDeliveries = new Map<string, Promise<string>>();
-  createDependencyEffect(() => { const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSettings1 = componentProps.settings; const capturedInitialPrompt2 = componentProps.initialPrompt; const capturedOnReady3 = componentProps.onReady; const capturedOnFailed4 = componentProps.onFailed; const capturedSession5 = componentProps.session; const capturedFreshReview6 = componentProps.freshReview; const messageMain = componentProps.onMessageMain; const capturedOnDialogTransportClosed7 = componentProps.onDialogTransportClosed; const capturedOnDialogResolved8 = componentProps.onDialogResolved; const capturedOnDialogRequest9 = componentProps.onDialogRequest; const capturedOnDraftChange10 = componentProps.onDraftChange; const capturedOnReleaseTransport11 = componentProps.onReleaseTransport;
+  const [initialPromptPending, setInitialPromptPending] = createSignal(Boolean(componentProps.initialPrompt));
+  const [feedbackQueued, setFeedbackQueued] = createSignal(false);
+  const [feedbackSending, setFeedbackSending] = createSignal(false);
+  const [sentFeedback, setSentFeedback] = createSignal<string>();
+  const reviewBusy = () => initialPromptPending() || session().state.isStreaming || session().state.isPaused || session().state.isPausing || session().state.isCompacting || session().state.pendingMessageCount > 0;
+
+  const reviewFeedback = createMemo(() => {
+    const messages = session().messages;
+
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+
+      if (message.role === "user") return undefined;
+
+      if (message.role !== "assistant") continue;
+
+      return !message.streaming && (message.stopReason === "stop" || message.stopReason === "length") && textOf(message.content).trim() ? message : undefined;
+    }
+
+    return undefined;
+  });
+
+  const feedbackKey = () => { const message = reviewFeedback();
+
+  return message ? `${session().state.sessionId}:${message.timestamp}:${textOf(message.content)}` : undefined; };
+
+  const deliverFeedback = async () => {
+    const message = reviewFeedback(); const messageMain = componentProps.onMessageMain; const key = feedbackKey();
+
+    if (!connected() || reviewBusy() || !message || !messageMain || feedbackSending() || sentFeedback() === key) return;
+    setFeedbackQueued(false); setFeedbackSending(true);
+
+    try { await messageMain(textOf(message.content)); setSentFeedback(key); }
+    catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setFeedbackSending(false); }
+  };
+
+  const clickFeedback = () => {
+    if (feedbackQueued()) { setFeedbackQueued(false);
+
+    return; }
+
+    if (reviewBusy()) setFeedbackQueued(true);
+    else void deliverFeedback();
+  };
+
+  createDependencyEffect(() => {
+    if (!feedbackQueued() || !connected() || reviewBusy()) return;
+    setFeedbackQueued(false);
+
+    if (reviewFeedback()) void deliverFeedback();
+    else setControlError("The review stopped without completed feedback. Run it again or finish the review before sending.");
+  }, () => [feedbackQueued(), connected(), reviewBusy(), reviewFeedback()]);
+  createDependencyEffect(() => { setFeedbackQueued(false); setSentFeedback(undefined); }, () => [componentProps.session.id]);
+  createDependencyEffect(() => { const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSettings1 = componentProps.settings; const capturedInitialPrompt2 = componentProps.initialPrompt; const capturedOnReady3 = componentProps.onReady; const capturedOnFailed4 = componentProps.onFailed; const capturedSession5 = componentProps.session; const capturedOnDialogTransportClosed7 = componentProps.onDialogTransportClosed; const capturedOnDialogResolved8 = componentProps.onDialogResolved; const capturedOnDialogRequest9 = componentProps.onDialogRequest; const capturedOnDraftChange10 = componentProps.onDraftChange; const capturedOnReleaseTransport11 = componentProps.onReleaseTransport;
     const lifecycle = ++lifecycleRef.current; let closing = false; let reconnecting = false; let connectedOnce = false;
     capturedRuntimePool0.setInteractive(capturedTransport, true);
 
     const configure = async () => {
       const runtimeSettings = capturedTransport.currentHostId() === "local" ? capturedSettings1 : await capturedTransport.loadHostSettings();
 
-      if (capturedFreshReview6) await capturedTransport.command({ type: "prompt", message: "/pi-orchestration-review-init" });
       await Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: runtimeSettings.autoRetry })]);
     };
 
     const sendInitialPrompt = async (initial: boolean) => {
       if (initial && capturedInitialPrompt2) { await capturedTransport.submitPrompt({ type: "prompt", message: (capturedInitialPrompt2), images: componentProps.initialImages }); }
+
+      if (initial) setInitialPromptPending(false);
 
       if (initial && !closing) capturedOnReady3?.();
     };
@@ -116,25 +169,6 @@ export function SplitChatPane(componentProps: Props) {
 
       const handleExtensionUiRequest = () => {
         const request = extensionUiSchema.parse(event);
-
-        if (request.method === "input" && request.title === "__piop_review_message_main__") {
-          let delivery = reviewDeliveries.get(request.id);
-
-          if (!delivery) {
-            delivery = Promise.resolve().then(async () => {
-              if (!capturedFreshReview6 || !messageMain) throw new Error("No main conversation is attached to this reviewer");
-              const { message } = reviewMessageSchema.parse(JSON.parse(request.placeholder || "{}"));
-              await messageMain(message);
-
-              return "delivered";
-            }).catch(reason => reason instanceof Error ? reason.message : String(reason));
-            reviewDeliveries.set(request.id, delivery);
-          }
-
-          void delivery.then(value => capturedTransport.command({ type: "extension_ui_response", id: request.id, value })).catch(reportControlError);
-
-          return;
-        }
 
         if (request.method === "input" && request.title === REVIEW_REQUEST_TITLE) {
           void capturedTransport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(reportControlError);
@@ -319,8 +353,12 @@ export function SplitChatPane(componentProps: Props) {
 
   const renderSplitControlError = () => (controlError() && <div class="split-control-error" role="alert"><span>{(controlError())}</span>{!connected() && <button onClick={() => { setControlError("Reconnecting…"); reconnectRef.current(); }}>Retry</button>}<button aria-label="Dismiss split pane error" onClick={() => setControlError(undefined)}>×</button></div>);
 
+  const feedbackLabel = () => feedbackSending() ? "Sending…" : feedbackQueued() ? "Cancel auto-send" : reviewBusy() ? "Send when done" : sentFeedback() && sentFeedback() === feedbackKey() ? "Feedback sent" : "Send feedback";
+  const feedbackDisabled = () => feedbackSending() || (!feedbackQueued() && (!connected() || (!reviewBusy() && (!reviewFeedback() || sentFeedback() === feedbackKey()))));
+  const renderReviewFeedback = () => componentProps.onMessageMain && <button type="button" class="review-feedback-button" aria-pressed={feedbackQueued()} disabled={feedbackDisabled()} onClick={clickFeedback}>{feedbackLabel()}</button>;
+
   return <section class="split-chat" aria-label={`Split conversation: ${componentProps.session.name}`}>
-    <header class="split-pane-header"><span><strong title={componentProps.session.name}>{componentProps.session.name}</strong><small title={componentProps.session.cwd}>{componentProps.session.project}</small></span><button class="split-pane-close" aria-label="Close split pane" title="Close split pane" onClick={componentProps.onClose}><X size={15} /></button></header>
+    <header class="split-pane-header"><span><strong title={componentProps.session.name}>{componentProps.session.name}</strong><small title={componentProps.session.cwd}>{componentProps.session.project}</small></span><div class="split-pane-actions">{renderReviewFeedback()}<button class="split-pane-close" aria-label="Close split pane" title="Close split pane" onClick={componentProps.onClose}><X size={15} /></button></div></header>
     {renderSplitPaneStatus()}
     {renderSplitControlError()}
     {notices().length > 0 && <div class="split-notices">{<Key each={notices()} by={(notice) => notice.id}>{(notice, _index) => <div class="error-toast" role="alert" ><strong>{notice().title}</strong><span>{notice().message}</span><button aria-label={`Dismiss ${notice().title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice().id))}>×</button></div>}</Key>}</div>}
