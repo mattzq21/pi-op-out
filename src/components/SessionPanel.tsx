@@ -60,7 +60,7 @@ export function SessionPanel(props: Props) {
   const panel = () => panelFields;
   const storedGroups = props.sidebar;
   const { collapsedProjects, customGroupsByKey, groupDestination, projectDetails, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
-  const { projectParent, moveProject } = storedGroups;
+  const { projectParent, moveProject, groupEntries, placeGroupEntry } = storedGroups;
   const siblingEntries = (parent?: string) => sidebarEntries().filter(token => projectParent(token.slice("group:".length)) === parent);
   const keyboardSidebarEntries = createMemo(() => siblingEntries().flatMap(token => [token, ...siblingEntries(token.slice("group:".length))]));
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
@@ -238,9 +238,10 @@ export function SessionPanel(props: Props) {
       if (!entryElement || !token || token === groupLayoutToken(projectKey)) return;
       const bounds = entryElement.getBoundingClientRect();
       const edge = y < bounds.top + bounds.height / 2 ? "before" : "after";
-      const parentKey = projectParent(token.slice("group:".length));
+      const parentKey = token.startsWith("session:") ? entryElement.dataset.projectKey : projectParent(token.slice("group:".length));
       if (parentKey && !groupDestination(projectKey)?.cwd) return;
-      const entries = siblingEntries(parentKey);
+      if (parentKey && !customGroupsByKey().has(parentKey)) return;
+      const entries = parentKey ? groupEntries(parentKey) : siblingEntries();
       const index = entries.indexOf(token);
 
       return { projectKey: RECENT_KEY, sessionKey: "", edge, parentKey, layoutBefore: edge === "before" ? token : entries[index + 1] ?? null };
@@ -321,11 +322,14 @@ export function SessionPanel(props: Props) {
           if ("session" in current) {
             moveSession(current, target.projectKey, target.sessionKey || undefined, target.edge);
 
-            if (target.layoutBefore !== undefined) placeSidebarEntry(groupLayoutToken(RECENT_KEY), target.layoutBefore);
+            if (target.layoutBefore !== undefined && target.parentKey) placeGroupEntry(target.parentKey, sourceToken, target.layoutBefore);
             expandProject(target.projectKey);
           } else {
             moveProject(current.projectKey, target.parentKey);
-            if (target.layoutBefore !== undefined) placeSidebarEntry(sourceToken, target.layoutBefore);
+            if (target.layoutBefore !== undefined) {
+              if (target.parentKey) placeGroupEntry(target.parentKey, sourceToken, target.layoutBefore);
+              else placeSidebarEntry(sourceToken, target.layoutBefore);
+            }
           }
         }
       }
@@ -357,11 +361,15 @@ export function SessionPanel(props: Props) {
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
       if (normalizedQuery() || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
       event.preventDefault();
-      const entries = siblingEntries(projectParent(projectKey)); const token = groupLayoutToken(projectKey); const index = entries.indexOf(token);
+      const parent = projectParent(projectKey);
+      const entries = parent ? groupEntries(parent) : siblingEntries(); const token = groupLayoutToken(projectKey); const index = entries.indexOf(token);
       const direction = event.key === "ArrowUp" ? -1 : 1;
 
       if (index + direction < 0 || index + direction >= entries.length) return;
-      placeSidebarEntry(token, direction < 0 ? entries[index - 1] : entries[index + 2] ?? null);
+      const before = direction < 0 ? entries[index - 1] : entries[index + 2] ?? null;
+
+      if (parent) placeGroupEntry(parent, token, before);
+      else placeSidebarEntry(token, before);
     },
     "aria-description": isFixedGroup(projectKey) ? "Always shown below project groups." : !normalizedQuery() ? "Drag to reorder or move a project into a group. Press Alt plus Up or Down to reorder." : undefined,
     "aria-keyshortcuts": !isFixedGroup(projectKey) && !normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown" : undefined,
@@ -397,7 +405,7 @@ export function SessionPanel(props: Props) {
 
     const renderArchiveButton = () => (<button class="session-archive" aria-busy={archiving()} aria-label={`${archiving() ? "Archiving" : "Archive"} ${session().name}`} title={!isSavedSession(session()) ? "Send a message before archiving this draft" : `${archiving() ? "Archiving" : "Archive"} ${session().name}`} disabled={archiving() || !isSavedSession(session())} onClick={() => void archive()}><Show when={archiving()} fallback={<Archive size={14} />}><LoaderCircle size={14} class="spinning" /></Show></button>);
 
-    return <div onMouseEnter={(event) => setTooltipAnchor(event.currentTarget)} onMouseLeave={() => setTooltipAnchor(undefined)} onFocusIn={(event) => setTooltipAnchor(event.currentTarget)} onFocusOut={() => setTooltipAnchor(undefined)} data-session-key={key()} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault();
+    return <div onMouseEnter={(event) => setTooltipAnchor(event.currentTarget)} onMouseLeave={() => setTooltipAnchor(undefined)} onFocusIn={(event) => setTooltipAnchor(event.currentTarget)} onFocusOut={() => setTooltipAnchor(undefined)} data-sidebar-token={sessionLayoutToken(key())} data-session-key={key()} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault();
 
       if (archiving()) return; const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session: session(), x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
       {renderSessionMain()}
@@ -430,7 +438,7 @@ export function SessionPanel(props: Props) {
     const renderNewGroup = () => (<Show when={newGroupName() !== undefined && !editingGroupId()}><section class="project custom-group-draft"><div class="project-label"><input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Group name" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "new-group-error" : undefined} placeholder="Group name" value={(newGroupName())} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div><div class="group-draft-or">OR</div><GroupProjectPicker transport={props.transport} settings={props.settings} hostId={panel().activeHostId} disabled={groupSaving()} project={groupProject()} onCancel={() => void finishGroup(true)} onSelect={createProjectGroup} />{groupDraftError() && <small id="new-group-error" class="group-error">{(groupDraftError())}</small>}</section></Show>);
     const renderEmptyConversations = () => (storedGroups.state && !filtered().length && <div class="empty-small">{normalizedQuery() ? `No conversations match “${panel().query.trim()}”.` : "No conversations yet."}</div>);
 
-    const renderGroups = (parentKey?: string): JSX.Element => <Key each={siblingEntries(parentKey).filter((token) => groupsByToken().has(token))} by={(token) => token}>{(token) => {
+    const renderGroups = (parentKey?: string, selectedTokens?: string[]): JSX.Element => <Key each={(selectedTokens ?? siblingEntries(parentKey)).filter((token) => groupsByToken().has(token))} by={(token) => token}>{(token) => {
         const group = () => required(groupsByToken().get(token())); const projectKey = group()[0]; const label = () => groupLabel(group()[1], group()[2], group()[3]); const collapsed = () => !normalizedQuery() && collapsedProjects().has(projectKey); const groupId = disclosureId(projectKey);
 
         const visibleSessions = createMemo<SessionSummary[]>((previous = []) => {
@@ -481,8 +489,15 @@ export function SessionPanel(props: Props) {
 
         return [renderDropZone(token(), parentKey), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${(draggedSession() || draggedProject()) && dropTarget()?.projectKey === projectKey && dropTarget()?.layoutBefore === undefined ? "drop-project" : ""}`} >
           {renderProjectHeading()}
-          <div id={groupId} class={!isFixedGroup(projectKey) ? "project-children" : undefined} hidden={collapsed()}><Key each={visibleSessions()} by={sessionKey}>{session => <SessionRow session={session()} projectKey={projectKey} />}</Key>
-            {customGroupsByKey().has(projectKey) && <div>{renderGroups(projectKey)}{renderDropZone(null, projectKey)}</div>}
+          <div id={groupId} class={!isFixedGroup(projectKey) ? "project-children" : undefined} hidden={collapsed()}>
+            <Show when={customGroupsByKey().has(projectKey)} fallback={<Key each={visibleSessions()} by={sessionKey}>{session => <SessionRow session={session()} projectKey={projectKey} />}</Key>}>
+              <Key each={groupEntries(projectKey)} by={entry => entry}>{entry => {
+                const session = () => visibleSessions().find(item => sessionLayoutToken(sessionKey(item)) === entry());
+
+                return entry().startsWith("group:") ? renderGroups(projectKey, [entry()]) : <Show when={session()}>{item => <>{renderDropZone(entry(), projectKey)}<SessionRow session={item()} projectKey={projectKey} /></>}</Show>;
+              }}</Key>
+              {renderDropZone(null, projectKey)}
+            </Show>
           </div>
         </section>];
       }}</Key>;

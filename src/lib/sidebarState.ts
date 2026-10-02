@@ -20,6 +20,7 @@ const SESSION_ORDERS_KEY = "pi-desktop-session-orders";
 
 const SIDEBAR_ORDER_KEY = "pi-desktop-sidebar-order";
 const PROJECT_GROUPS_KEY = "pi-desktop-project-groups";
+const GROUP_CHILD_ORDER_KEY = "pi-desktop-group-child-order";
 
 export const RECENT_KEY = "__pi-desktop-ungrouped__";
 
@@ -96,6 +97,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const [sessionOrders, setSessionOrders] = createSignal<Record<string, string[]>>(savedSessionOrders());
   const [sidebarOrder, setSidebarOrder] = createSignal<string[]>(savedSidebarOrder());
   const [projectGroups, setProjectGroups] = createSignal(readStoredJson(PROJECT_GROUPS_KEY, z.record(z.string(), z.string()), {}));
+  const [groupChildOrders, setGroupChildOrders] = createSignal(readStoredJson(GROUP_CHILD_ORDER_KEY, z.record(z.string(), z.array(z.string())), {}));
   const projectParent = (id: string) => {
     const parent = projectGroups()[id];
 
@@ -191,6 +193,14 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
       return next;
     });
+
+    if (customGroupsByKey().has(destinationKey)) {
+      const target = targetKey ? sessionLayoutToken(targetKey) : undefined;
+      const entries = groupEntries(destinationKey).filter(token => token !== sessionLayoutToken(drag.sessionKey));
+      const index = target ? entries.indexOf(target) : -1;
+      const before = index < 0 ? null : edge === "before" ? target ?? null : entries[index + 1] ?? null;
+      placeGroupEntry(destinationKey, sessionLayoutToken(drag.sessionKey), before);
+    }
 
     return storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
   };
@@ -326,6 +336,32 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   const sidebarEntries = createMemo(() => (orderedSidebarEntries(defaultSidebarEntries())));
 
+  const groupEntries = (id: string) => {
+    const entries = [
+      ...(displayedSessions().get(id) ?? []).map(session => sessionLayoutToken(sessionKey(session))),
+      ...sidebarEntries().filter(token => projectParent(token.slice("group:".length)) === id),
+    ];
+    const order = groupChildOrders()[id] ?? [];
+    const available = new Set(entries);
+    const known = new Set(order);
+
+    return [...order.filter(token => available.has(token)), ...entries.filter(token => !known.has(token))];
+  };
+
+  const placeGroupEntry = (id: string, token: string, before: string | null) => {
+    if (token === before) return;
+    const entries = groupEntries(id).filter(entry => entry !== token);
+    const index = before === null ? -1 : entries.indexOf(before);
+    entries.splice(index < 0 ? entries.length : index, 0, token);
+    setGroupChildOrders(current => {
+      const next = { ...current, [id]: entries };
+
+      try { localStorage.setItem(GROUP_CHILD_ORDER_KEY, JSON.stringify(next)); } catch { }
+
+      return next;
+    });
+  };
+
   const saveGroup = (name: string, id?: string, project?: Pick<SessionGroup, "cwd" | "hostId" | "hostName">) => {
     if (id) return storedGroups.change({ type: "rename", id, name });
 
@@ -338,6 +374,6 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     get state() { return storedGroups.state; }, get error() { return storedGroups.error; },
     sessions, collapsedProjects, customGroupsByKey, groupDestination, projectDetails,
     normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, groupedSessions: displayedSessions,
-    validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry, projectParent, moveProject,
+    validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry, projectParent, moveProject, groupEntries, placeGroupEntry,
   };
 }
