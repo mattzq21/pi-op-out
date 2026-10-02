@@ -68,6 +68,13 @@ try {
   await page.evaluate(() => window.appendMessage());
   await page.waitForTimeout(100);
   assert.ok(await gap() <= 2, 'returning to the bottom must resume following');
+  await page.evaluate(() => window.appendResponse());
+  await page.waitForTimeout(100);
+  const actions = await page.locator('.assistant-message .message-actions').last().boundingBox();
+  const composer = await page.locator('.composer-stack').boundingBox();
+  const clearance = composer.y - (actions.y + actions.height);
+  console.log('Response action bar clearance:', clearance);
+  assert.ok(clearance >= 22, 'leave space between the response action bar and composer');
   assert.deepEqual(errors, []);
   console.log('PASS: deferred history, new prompts, composer resize, and manual scrolling preserve the intended scroll position');
 } finally {

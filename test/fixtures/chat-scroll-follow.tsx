@@ -6,6 +6,7 @@ import '../../src/styles.css';
 const [messages, setMessages] = createSignal(Array.from({ length: 10 }, (_, index) => ({ id: String(index), role: 'user', content: 'Hello' })));
 const noop = () => {};
 window.appendMessage = () => setMessages(items => [...items, { id: String(items.length), role: 'user', content: 'Another prompt\n'.repeat(10) }]);
+window.appendResponse = () => setMessages(items => [...items, { id: String(items.length), role: 'assistant', content: 'Response complete' }]);
 render(() => <div style={{ height: '500px', display: 'flex' }}>
   <ChatView messages={messages()} state={{ model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'scroll', messageCount: messages().length, pendingMessageCount: 0 }}
     models={[]} commands={[]} thinkingLevels={[]} widgets={[]} statuses={{}}
