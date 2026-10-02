@@ -40,6 +40,9 @@ pub(super) struct Registry {
     pub readonly: HashMap<String, ReadonlyView>,
     pending: HashMap<String, Vec<Value>>,
     configuration: Option<Value>,
+    agent_definitions: Value,
+    agent_revision: u64,
+    requested_agent_revision: u64,
     drains: HashMap<String, oneshot::Sender<Result<()>>>,
     guards: HashMap<String, (Guard, String)>,
     captures: HashMap<String, HashSet<String>>,
@@ -51,6 +54,8 @@ pub(super) struct Registry {
 
 pub(super) struct Host {
     pub home: PathBuf,
+    storage: String,
+    configuration_gate: AsyncMutex<()>,
     state: Mutex<Registry>,
     ownership: OnceLock<Arc<ConversationOwnership>>,
     pub services: Arc<dyn Services>,
@@ -144,9 +149,13 @@ impl Host {
         services: Arc<dyn Services>,
         output: std::sync::mpsc::Sender<Value>,
     ) -> Result<Arc<Self>> {
+        let settings = crate::settings::read_settings_at(&home.join(storage).join("settings.json"))?;
+        let definitions = super::agents::load(&home, storage, &crate::extensions::runtime_settings(&settings), true).await?;
         let host = Arc::new_cyclic(|weak| Self {
             home,
-            state: Mutex::new(Registry::default()),
+            storage: storage.into(),
+            configuration_gate: AsyncMutex::new(()),
+            state: Mutex::new(Registry { agent_definitions: definitions, ..Registry::default() }),
             ownership: OnceLock::new(),
             services,
             output,
@@ -346,7 +355,7 @@ impl Host {
         Ok(())
     }
 
-    fn configure(self: &Arc<Self>, configuration: &Value) -> Result<()> {
+    async fn configure(self: &Arc<Self>, configuration: &Value) -> Result<()> {
         if configuration["agentRevision"]
             .as_u64()
             .is_none_or(|revision| revision > 9_007_199_254_740_991)
@@ -356,9 +365,20 @@ impl Host {
         {
             return Err("Invalid daemon configuration".into());
         }
+        let _gate = self.configuration_gate.lock().await;
+        let requested = configuration["agentRevision"].as_u64().unwrap_or(0);
+        let changed = requested != self.registry().requested_agent_revision;
+        let definitions = if changed { Some(super::agents::load(&self.home, &self.storage, &configuration["settings"], false).await?) } else { None };
         let sessions = {
             let mut registry = self.registry();
-            registry.configuration = Some(configuration.clone());
+            if let Some(definitions) = definitions {
+                registry.agent_definitions = definitions;
+                registry.agent_revision += 1;
+            }
+            registry.requested_agent_revision = requested;
+            let mut configuration = configuration.clone();
+            configuration["agentRevision"] = json!(registry.agent_revision);
+            registry.configuration = Some(configuration);
             registry.sessions.values().cloned().collect::<Vec<_>>()
         };
         for session in sessions {
@@ -366,6 +386,27 @@ impl Host {
             self.reconcile(session);
         }
         Ok(())
+    }
+
+    async fn reload_agents(self: &Arc<Self>) -> Result<Value> {
+        let _gate = self.configuration_gate.lock().await;
+        let settings = self.registry().configuration.as_ref().map(|value| value["settings"].clone()).ok_or("Daemon is not configured")?;
+        let definitions = super::agents::load(&self.home, &self.storage, &settings, false).await?;
+        let sessions = {
+            let mut registry = self.registry();
+            registry.agent_revision += 1;
+            let revision = registry.agent_revision;
+            registry.agent_definitions = definitions;
+            if let Some(configuration) = registry.configuration.as_mut() {
+                configuration["agentRevision"] = json!(revision);
+            }
+            registry.sessions.values().cloned().collect::<Vec<_>>()
+        };
+        for session in sessions {
+            session.publish(json!({"type":"settings_pending","pending":true}), None);
+            self.reconcile(session);
+        }
+        Ok(json!({"success":true}))
     }
 
     async fn readonly_command(&self, packet: &Value, target: ReadonlyView) -> Result<Value> {

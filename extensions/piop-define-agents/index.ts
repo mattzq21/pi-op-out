@@ -21,11 +21,13 @@ const sessionTools = ["subagent"];
 
 export type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean };
 
+type ConfigRuntime = { events: { emit(channel: "piop:runtime-settings", request: RuntimeSettingsRequest): void } };
+
 const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 
 const fallbackConfig: Config = { agents: [{ name: "general", model: development ? "openai-codex/gpt-6-luna" : "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 
-function defaultAgent(pi: ExtensionAPI): Agent {
+function defaultAgent(pi: ConfigRuntime): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
 
   if (desktopList(pi, "tools")?.includes("web_search")) agent.tools.push("web_search");
@@ -85,7 +87,7 @@ async function migrateAgentPrompt(agent: StoredAgent) {
   return agentPromptPath;
 }
 
-async function migratePrompts(stored: StoredConfig, pi: ExtensionAPI): Promise<Config> {
+async function migratePrompts(stored: StoredConfig, pi: ConfigRuntime): Promise<Config> {
   const agents = [];
 
   for (const agent of Array.isArray(stored.agents) ? stored.agents : []) {
@@ -107,7 +109,7 @@ function promptPath(agent: Agent): string {
   return agent.path_systemprompt;
 }
 
-function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
+function normalize(value: Partial<Config>, pi: ConfigRuntime): Config {
   for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.fastMode !== undefined && !Check(Type.Boolean(), agent.fastMode)) throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
 
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)).map((agent) => ({
@@ -129,12 +131,14 @@ function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
   return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, terminalAgentDefaultApplied: value.terminalAgentDefaultApplied === true };
 }
 
-async function readConfig(pi: ExtensionAPI): Promise<Config> {
-  await ensurePromptFile(DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT);
-  await ensureDefaultAgentPrompt();
+async function readConfig(pi: ConfigRuntime, supplied?: StoredConfig, initialize = true): Promise<Config> {
+  if (initialize) {
+    await ensurePromptFile(DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT);
+    await ensureDefaultAgentPrompt();
+  }
 
   try {
-    const stored = JSON.parse(await readFile(configPath, "utf8"));
+    const stored = supplied ?? JSON.parse(await readFile(configPath, "utf8"));
     const config = await migratePrompts(stored, pi);
 
     if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await writeConfig(config);
@@ -148,7 +152,7 @@ async function readConfig(pi: ExtensionAPI): Promise<Config> {
   return readConfig(pi);
 }
 
-function migrateSessionTools(config: Config, pi: ExtensionAPI) {
+function migrateSessionTools(config: Config, pi: ConfigRuntime) {
   const available = sessionTools.filter((tool) => desktopList(pi, "tools")?.includes(tool));
 
   if (config.sessionToolsDefaultApplied || !available.length) return false;
@@ -159,7 +163,7 @@ function migrateSessionTools(config: Config, pi: ExtensionAPI) {
   return true;
 }
 
-function migrateSubagents(config: Config, pi: ExtensionAPI) {
+function migrateSubagents(config: Config, pi: ConfigRuntime) {
   if (!config.subagentsDefaultApplied && desktopList(pi, "tools")?.includes("subagent")) {
     for (const agent of config.agents) if (!agent.tools.includes("subagent")) agent.tools.push("subagent");
     config.subagentsDefaultApplied = true;
@@ -170,7 +174,7 @@ function migrateSubagents(config: Config, pi: ExtensionAPI) {
   return false;
 }
 
-function migrateUserInput(config: Config, pi: ExtensionAPI) {
+function migrateUserInput(config: Config, pi: ConfigRuntime) {
   if (config.askerAgentDefaultApplied || !desktopList(pi, "tools")?.includes("request_user_input")) return false;
   const general = config.agents.find((agent) => agent.name === "general");
 
@@ -194,7 +198,7 @@ function migrateUserInput(config: Config, pi: ExtensionAPI) {
   return true;
 }
 
-function migrateTerminalAgent(config: Config, pi: ExtensionAPI) {
+function migrateTerminalAgent(config: Config, pi: ConfigRuntime) {
   if (config.terminalAgentDefaultApplied || !desktopList(pi, "tools")?.includes("lookup_terminals")) return false;
 
   if (!config.agents.some(agent => agent.name === "terminal-agent")) {
@@ -220,7 +224,7 @@ function migrateQuestionSnapshot(stored: AgentSnapshot | undefined) {
   return snapshot;
 }
 
-async function migrateDiagramist(config: Config, pi: ExtensionAPI) {
+async function migrateDiagramist(config: Config, pi: ConfigRuntime) {
   if (config.diagramistDefaultApplied) return false;
 
   if (!config.agents.some(agent => agent.name === "diagramist")) {
@@ -234,8 +238,8 @@ async function migrateDiagramist(config: Config, pi: ExtensionAPI) {
   return true;
 }
 
-async function loadConfig(pi: ExtensionAPI): Promise<Config> {
-  const config = await readConfig(pi);
+export async function loadConfig(pi: ConfigRuntime, supplied?: StoredConfig, initialize?: boolean): Promise<Config> {
+  const config = await readConfig(pi, supplied, initialize);
   let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi), await migrateDiagramist(config, pi), migrateUserInput(config, pi), migrateTerminalAgent(config, pi)].some(Boolean);
 
   for (const agent of config.agents) {
@@ -273,7 +277,7 @@ function decode<S extends TSchema>(schema: S, value: string): Static<S> {
 
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
 
-function desktopList(pi: ExtensionAPI, name: "tools" | "skills" | "explicitOnlySkills") { const request: RuntimeSettingsRequest = {}; pi.events.emit("piop:runtime-settings", request);
+function desktopList(pi: ConfigRuntime, name: "tools" | "skills" | "explicitOnlySkills") { const request: RuntimeSettingsRequest = {}; pi.events.emit("piop:runtime-settings", request);
 
 return request.settings?.[name]; }
 
@@ -305,7 +309,8 @@ function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options
 
 export default async function defineAgents(pi: ExtensionAPI) {
   const extensions = agentExtensions(pi, dirname(configPath));
-  let config = await loadConfig(pi);
+  const daemonDefinitions = await readDaemonDefinitions();
+  let config = daemonDefinitions ? daemonDefinitions.config : await loadConfig(pi);
   let active = "general";
   let snapshot: AgentSnapshot | undefined;
   let savedState: string | undefined;
@@ -413,7 +418,9 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const snapshotDefinition = (agent: Agent) => structuredClone({ ...agent, model: agent.model.trim() || runtimeDefaults?.model || "", effort: agent.effort.trim() || runtimeDefaults?.effort || "" });
 
   const persistAgentSnapshot = async (agent: Agent, persist: boolean) => {
-    if (snapshot?.version !== 2) snapshot = await snapshotPrompts(snapshotDefinition(agent), activeSystemPrompt, activeAgentPrompt);
+    if (daemonDefinitions && !snapshot) snapshot = { version: 1, definition: snapshotDefinition(agent), systemPrompt: activeSystemPrompt, agentPrompt: activeAgentPrompt };
+
+    if (!daemonDefinitions && snapshot?.version !== 2) snapshot = await snapshotPrompts(snapshotDefinition(agent), activeSystemPrompt, activeAgentPrompt);
 
     if (persist) saveState();
   };
@@ -428,7 +435,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     } else {
       const path = resolvePromptPath(agent.path_systemprompt);
 
-      try { activeSystemPrompt = await readFile(path, "utf8"); }
+      try { activeSystemPrompt = await readAgentPrompt(path); }
       catch (error) { pi.setActiveTools([]);
 
       return `Agent "${agent.name}" cannot read system prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
@@ -436,7 +443,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       if (agent.path_agentprompt) {
         const path = resolvePromptPath(agent.path_agentprompt);
 
-        try { activeAgentPrompt = await readFile(path, "utf8"); }
+        try { activeAgentPrompt = await readAgentPrompt(path); }
         catch (error) { pi.setActiveTools([]);
 
         return `Agent "${agent.name}" cannot read agent prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
@@ -446,6 +453,15 @@ export default async function defineAgents(pi: ExtensionAPI) {
     await persistAgentSnapshot(agent, persistSnapshot);
 
   };
+
+  async function readAgentPrompt(path: string) {
+    if (!daemonDefinitions || snapshot) return readFile(path, "utf8");
+    const prompt = daemonDefinitions?.prompts[path];
+
+    if (prompt === undefined) throw new Error(`Prompt is missing from daemon definitions: ${path}`);
+
+    return prompt;
+  }
 
   const validateFastMode = (agent: Agent, modelName: string | undefined, currentModel: string | undefined) => fastModeError(agent, agent.model.trim() || runtimeDefaults?.model || currentModel) || fastModeError(agent, modelName || currentModel);
 
@@ -602,6 +618,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
 
+  const keepSnapshot = (locked: boolean) => !daemonDefinitions || locked;
+
   const restoreSession = async (ctx: ExtensionContext) => {
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
@@ -613,6 +631,9 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (active === "voice-orchestrator") { active = "general"; snapshot = undefined; }
 
     locked = sessionIsLocked(states, branch);
+
+    if (!keepSnapshot(locked)) snapshot = undefined;
+
     modelOverride = stored?.modelOverride;
     fastModeOverride = fastMode;
     effortOverride = stored?.effortOverride;
@@ -699,8 +720,28 @@ export default async function defineAgents(pi: ExtensionAPI) {
       const supplied = decode(Type.Object({ agents: Type.Optional(Type.Array(agentSchema)) }), args.trim());
       const next = normalize({ ...supplied, webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
       await writeConfig(next);
-      config = next;
+
+      if (!daemonDefinitions) config = next;
       publish(ctx);
     }
 });
+}
+
+async function readDaemonDefinitions(): Promise<{ config: Config; prompts: Record<string, string> } | undefined> {
+  const broker = process.env.PI_DESKTOP_BROKER_URL;
+
+  if (!broker) return undefined;
+
+  const response = await fetch(`${broker}/agent-definitions`, {
+    headers: { Authorization: `Bearer ${process.env.PI_DESKTOP_BROKER_TOKEN || ""}` },
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!response.ok) throw new Error(`Could not read daemon agent definitions: HTTP ${response.status}`);
+  const result = await response.json();
+  const schema = Type.Object({ data: Type.Object({ config: Type.Object({ agents: Type.Array(agentSchema) }), prompts: Type.Record(Type.String(), Type.String()) }) });
+
+  if (!Check(schema, result)) throw new Error("Invalid daemon agent definitions");
+
+  return result.data;
 }

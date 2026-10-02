@@ -1,3 +1,4 @@
+mod agents;
 mod branching;
 mod catalogs;
 mod controller;

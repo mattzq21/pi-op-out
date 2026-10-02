@@ -119,8 +119,8 @@ pub(crate) fn update_settings(app: &AppHandle, runtime: &PiRuntime, settings: &A
     let daemons = runtime.connections.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.iter().map(|(host, daemon)| (host.clone(), daemon.clone())).collect::<Vec<_>>();
     for (host_id, daemon) in daemons {
         if let Err(error) = daemon.configure(runtime, settings, &host_id) {
-            daemon.disconnect(app, runtime); daemon.shutdown();
             let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":format!("Could not synchronize settings: {error}")}));
+            return Err(error);
         }
     }
     Ok(())
