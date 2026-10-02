@@ -45,7 +45,7 @@ button { cursor: pointer; }
 kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; padding: 2px 4px; border-radius: 4px; color: #99958d; }
 .session-scroll { overflow: auto; padding: 2px 8px 14px; flex: 1; }
 .project { margin: 8px 0 17px; }
-.group-projects { margin-left: 14px; border-left: 1px solid var(--line); padding-left: 4px; }
+.group-projects { margin-left: 14px; padding-left: 4px; }
 .sidebar-drop-zone { position: relative; z-index: 2; height: 8px; margin: -4px 0; }
 .sidebar-drop-zone.active:after { content: ""; position: absolute; left: 2px; right: 2px; top: 3px; height: 2px; border-radius: 2px; background: var(--accent); }
 .custom-group-draft .project-label { cursor: text; }
