@@ -77,6 +77,45 @@ function validate(value: Settings): Settings {
   return structuredClone(value);
 }
 
+function capabilitySummary(description: string) {
+  const summary = description.trim().split(/\n|[.!?](?:\s|$)/, 1)[0].replace(/\s+/g, " ");
+
+  return summary.length > 120 ? `${summary.slice(0, 117).replace(/\s+\S*$/, "")}...` : summary;
+}
+
+const abilitiesEntry = "piop-codemode-abilities";
+const abilitiesSchema = Type.Object({
+  tools: Type.Array(Type.String()),
+  batches: Type.Array(Type.Object({ text: Type.String(), timestamp: Type.Number() })),
+});
+
+function codemodeAbilities(pi: ExtensionAPI, ctx: ExtensionContext) {
+  const active = new Set(pi.getActiveTools());
+
+  if (!active.has("codemode")) return;
+  const entry = [...ctx.sessionManager.getBranch()].reverse().find((item) => item.type === "custom" && item.customType === abilitiesEntry);
+  const saved = entry?.type === "custom" && Check(abilitiesSchema, entry.data) ? entry.data : { tools: [], batches: [] };
+  const state = structuredClone(saved);
+  const known = new Set(state.tools);
+  const phrases = new Set<string>();
+
+  for (const tool of pi.getAllTools()) {
+    const exposure = tool.exposure ?? "direct";
+
+    if (tool.name === "codemode" || known.has(tool.name) || !(exposure === "codemode" || exposure === "deferred" || (exposure === "direct" && active.has(tool.name)))) continue;
+    state.tools.push(tool.name);
+    phrases.add(capabilitySummary(tool.description) || tool.name.replace(/_/g, " "));
+  }
+
+  if (phrases.size || !state.batches.length) {
+    const prefix = state.batches.length ? "Codemode's tools abilities also include: " : "Codemode's tools abilities include: ";
+    state.batches.push({ text: prefix + ([...phrases].join("; ") || "no tools currently available"), timestamp: Date.now() });
+    pi.appendEntry(abilitiesEntry, state);
+  }
+
+  return state.batches;
+}
+
 export default async function runtimeSettings(pi: ExtensionAPI) {
   const accountProviders = new Map();
 
@@ -119,6 +158,37 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     applyTools(ctx);
   });
   pi.on("resources_discover", () => process.env.PI_DEFINE_AGENTS_ACTIVE === "1" ? undefined : { skillPaths: current().skills });
+  pi.on("before_agent_start", (event, ctx) => {
+    const batches = codemodeAbilities(pi, ctx);
+
+    if (!batches) return;
+    const options = event.systemPromptOptions;
+    const instructions = options.sections?.codemode ?? pi.getAllTools().find((tool) => tool.name === "codemode")?.promptGuidelines?.join("\n");
+    options.sections = { ...options.sections, codemode: [instructions, batches[0].text].filter(Boolean).join("\n\n") };
+    options.toolGuidelines = { ...options.toolGuidelines, codemode: [] };
+
+    for (let index = 1; index < batches.length; index++) options.sections[`codemode_abilities_${index}`] = batches[index].text;
+
+    if (options.forceSystemPrompt !== undefined) options.forceSystemPrompt += `\n\n${Object.entries(options.sections).filter(([name]) => name === "codemode" || name.startsWith("codemode_abilities_")).map(([, value]) => value).join("\n\n")}`;
+  });
+  pi.on("context", (event, ctx) => {
+    const batches = codemodeAbilities(pi, ctx);
+
+    if (!batches) return;
+    const sections = Object.assign({}, ...event.messages.filter((message) => message.role === "system").map((message) => message.sections));
+    const messages = [...event.messages];
+
+    for (let index = 1; index < batches.length; index++) {
+      const name = `codemode_abilities_${index}`;
+
+      if (sections[name]) continue;
+      const batch = batches[index];
+      const position = messages.findIndex((message) => message.timestamp > batch.timestamp);
+      messages.splice(position < 0 ? messages.length : position, 0, { role: "system", content: "", sections: { [name]: `<${name}>\n${batch.text}\n</${name}>` }, timestamp: batch.timestamp });
+    }
+
+    return { messages };
+  });
   pi.on("before_agent_start", (event) => {
     if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1" || !current().explicitOnlySkills?.length) return;
     const normalize = (value: string) => resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value);
