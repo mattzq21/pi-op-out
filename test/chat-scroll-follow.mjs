@@ -81,6 +81,16 @@ try {
   const afterWheel = await page.locator('.assistant-message .message-actions').last().boundingBox();
   assert.ok(Math.abs(afterWheel.y - actions.y) <= 2, 'scrolling down at the bottom must not reveal more blank space');
   assert.deepEqual(errors, []);
+  await page.evaluate(() => window.startResponse());
+  await page.waitForTimeout(100);
+  await page.evaluate(() => window.finishResponse());
+  await page.waitForTimeout(200);
+  console.log('Remaining scroll after completion:', await gap());
+  assert.ok(await gap() <= 2, 'finishing a response must leave no further downward scroll');
+  const completedTop = await messages.evaluate(el => el.scrollTop);
+  await page.mouse.wheel(0, 600);
+  await page.waitForTimeout(100);
+  assert.ok(Math.abs(await messages.evaluate(el => el.scrollTop) - completedTop) <= 2, 'scrolling after completion must not expose extra space');
   console.log('PASS: deferred history, new prompts, composer resize, and manual scrolling preserve the intended scroll position');
 } finally {
   await browser.close();
