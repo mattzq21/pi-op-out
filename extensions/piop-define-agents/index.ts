@@ -113,7 +113,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
 
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)).map((agent) => ({
     name: agent.name, model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
-    fastMode: agent.fastMode, extensions: extensionPaths(agent.extensions),
+    fastMode: agent.fastMode, codemode: agent.codemode, extensions: extensionPaths(agent.extensions),
     path_systemprompt: promptPath(agent), path_agentprompt: Check(Type.String(), agent.path_agentprompt) ? agent.path_agentprompt.trim() : ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)).flatMap(item => item === "goal" ? ["get_goal", "create_goal", "update_goal"] : [item]) : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
@@ -330,12 +330,14 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   return (includeInactive ? request.availableTools : request.tools) ?? []; };
 
+  const toolDisabledForAgent = (name: string, agent: Agent | undefined) => name === "codemode" && agent?.codemode === false || name === "lookup_terminals" && agent?.name !== "terminal-agent";
+
   pi.on("tool_call", (event, ctx) => {
     const agent = currentAgent();
     const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
     const allowed = agent && !activeToolError && new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools(true), ...required.tools]);
 
-    if (!allowed || !allowed.has(event.toolName) || (event.toolName === "lookup_terminals" && agent?.name !== "terminal-agent")) {
+    if (!allowed || !allowed.has(event.toolName) || toolDisabledForAgent(event.toolName, agent)) {
       return { block: true, reason: `Tool ${event.toolName} is not allowed for agent ${agent?.name ?? active}` };
     }
   });
@@ -501,7 +503,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   const registerAgentMcp = async (agent: Agent, ctx: ExtensionContext, tools: Set<string>) => {
-    const selection: McpSelection = { servers: mcpServers(agent.mcpServers), agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
+    const selection: McpSelection = { codemode: agent.codemode, servers: mcpServers(agent.mcpServers), agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
     pi.events.emit("piop:mcp:select", selection);
 
     if (!selection.registered && Object.keys(selection.servers).length > 0) return `Agent "${agent.name}" cannot run because the MCP registration adapter is unavailable`;
@@ -545,7 +547,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
 
     for (const tool of required.tools) tools.add(tool);
-    pi.setActiveTools([...tools]);
+    pi.setActiveTools([...tools].filter(name => agent.codemode !== false || name !== "codemode"));
 
     return undefined;
   };
@@ -572,7 +574,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       activeToolError = agentToolError(pi, agent, extensions.tools());
       const mcpTools = currentMcpTools();
       const required: RequiredToolsRequest = { ctx: request.ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
-      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])]);
+      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])].filter(name => agent.codemode !== false || name !== "codemode"));
       publish(request.ctx);
     });
   });
@@ -646,6 +648,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const agent = currentAgent();
 
     if (!agent) return;
+
+    if (agent.codemode === false) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
     configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, desktopList(pi, "explicitOnlySkills"));
   });
   pi.registerCommand("pi-define-agents-use", {

@@ -7,7 +7,7 @@ export interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[] }
 
 export interface McpToolsRequest { tools?: string[]; availableTools?: string[] }
 
-export interface McpSelection { servers: McpServers; agentName: string; sessionId: string; registered?: Promise<string[]> }
+export interface McpSelection { codemode?: boolean; servers: McpServers; agentName: string; sessionId: string; registered?: Promise<string[]> }
 
 export interface AgentRefreshRequest { ctx: ExtensionContext; ready?: Promise<void> }
 
@@ -15,7 +15,7 @@ interface FastModeChange { enabled?: boolean }
 
 interface FastModelsChange { ctx: ExtensionContext }
 
-export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
+export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
 
 export type AgentSnapshot = { version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
 

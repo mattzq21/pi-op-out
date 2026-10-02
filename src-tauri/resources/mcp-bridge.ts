@@ -4,7 +4,7 @@ import type { TSchema } from "typebox";
 import { createMcpExtension, type BeforeAgentStartEvent, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type InputEvent, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
-type Selection = { servers: Record<string, McpServerConfig & { piopInjectAgentId?: boolean }>; agentName: string; sessionId: string; registered?: Promise<string[]> };
+type Selection = { servers: Record<string, McpServerConfig & { piopInjectAgentId?: boolean }>; codemode?: boolean; agentName: string; sessionId: string; registered?: Promise<string[]> };
 
 type ToolRequest = { tools?: string[]; availableTools?: string[] };
 
@@ -39,6 +39,7 @@ export default function agentMcp(pi: ExtensionAPI) {
   const identities = new Map<string, string>();
   const nativeToolNames = new Set<string>();
   let started = false;
+  let codemodeEnabled = true;
   let sessionStart: SessionStartEvent = { type: "session_start", reason: "startup" };
   let start: ExtensionHandler<SessionStartEvent> | undefined;
 
@@ -57,6 +58,9 @@ export default function agentMcp(pi: ExtensionAPI) {
   const subscribe = pi.on as (event: ExtensionEvent["type"], handler: ExtensionHandler<never, unknown>) => () => void;
   createMcpExtension()({
     ...pi,
+    setActiveTools(names) {
+      pi.setActiveTools(names.filter(name => codemodeEnabled || name !== "codemode"));
+    },
     on(event, handler) {
       if (event === "session_start") {
         // eslint-disable-next-line local/no-assertions -- The event discriminates pi's matching handler overload.
@@ -89,6 +93,10 @@ export default function agentMcp(pi: ExtensionAPI) {
 
   const stopSelection = pi.events.on("piop:mcp:select", selection => {
     try {
+      codemodeEnabled = selection.codemode !== false;
+
+      if (!codemodeEnabled) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
+
       for (const name of registrations.keys()) {
         if (Object.hasOwn(selection.servers, name)) continue;
         pi.unregisterMcpServer(name);

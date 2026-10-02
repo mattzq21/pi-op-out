@@ -13,7 +13,7 @@ export const DRAFT_STATE_ENV = "PIOP_AGENT_DRAFT_STATE";
 export type RuntimeDefaults = { model: string; effort: string };
 
 export const agentSchema = Type.Object({
-  name: Type.String(), model: Type.String(), effort: Type.String(), fastMode: Type.Optional(Type.Boolean()), extensions: Type.Optional(Type.Array(Type.String())),
+  name: Type.String(), model: Type.String(), effort: Type.String(), fastMode: Type.Optional(Type.Boolean()), codemode: Type.Optional(Type.Boolean()), extensions: Type.Optional(Type.Array(Type.String())),
   path_systemprompt: Type.String(), path_agentprompt: Type.String(), tools: Type.Array(Type.String()), skills: Type.Array(Type.String()), mcpServers: nativeMcpSchema,
 });
 
