@@ -77,6 +77,41 @@ function validate(value: Settings): Settings {
   return structuredClone(value);
 }
 
+function capabilitySummary(description: string) {
+  const summary = description.trim().split(/\n\s*\n/, 1)[0].replace(/\s+/g, " ");
+
+  return summary.length > 360 ? `${summary.slice(0, 357).trimEnd()}...` : summary;
+}
+
+function codemodeAppendix(pi: ExtensionAPI) {
+  const active = new Set(pi.getActiveTools());
+
+  if (!active.has("codemode")) return "";
+  const groups = new Map<string, { description?: string; tools: string[] }>();
+
+  for (const tool of pi.getAllTools()) {
+    const exposure = tool.exposure ?? "direct";
+
+    if (tool.name === "codemode" || !(exposure === "codemode" || exposure === "deferred" || (exposure === "direct" && active.has(tool.name)))) continue;
+    const namespace = tool.namespace?.name ?? "Session tools";
+    let group = groups.get(namespace);
+
+    if (!group) {
+      group = { description: tool.namespace?.description, tools: [] };
+      groups.set(namespace, group);
+    }
+
+    group.tools.push(`- ${JSON.stringify(tool.name)}: ${capabilitySummary(tool.description) || "No summary supplied; inspect this tool with describeTool before use."}`);
+  }
+
+  return [
+    "## Codemode capability appendix",
+    "Use this inventory to recognize what you can already do through codemode. Before building a workaround or reaching for shell commands or a separate integration, check for a tool that handles the task. These are brief summaries supplied by the tools, not complete usage instructions or permission to act.",
+    "Inside codemode, use searchTools(query) to discover relevant tools, describeTool(name) to inspect the full description and argument schema, and describeNamespace(name) for MCP/server guidance. Use the returned callable identifier with await tools.<identifier>(args); do not guess arguments from these summaries. Await calls, pass results between tools, and return only useful output with text(...) or image(...). Independent calls can run together; sequence calls that depend on earlier results. Codemode itself has no direct filesystem or network access; use the available tools for those capabilities.",
+    ...[...groups].map(([name, group]) => `### ${JSON.stringify(name)}${group.description ? ` — ${capabilitySummary(group.description)}` : ""}\n${group.tools.join("\n")}`),
+  ].join("\n\n");
+}
+
 export default async function runtimeSettings(pi: ExtensionAPI) {
   const accountProviders = new Map();
 
@@ -119,6 +154,15 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     applyTools(ctx);
   });
   pi.on("resources_discover", () => process.env.PI_DEFINE_AGENTS_ACTIVE === "1" ? undefined : { skillPaths: current().skills });
+  pi.on("before_agent_start", (event) => {
+    const appendix = codemodeAppendix(pi);
+
+    if (!appendix) return;
+    const options = event.systemPromptOptions;
+    options.appendSystemPrompt = [options.appendSystemPrompt, appendix].filter(Boolean).join("\n\n");
+
+    if (options.forceSystemPrompt !== undefined) options.forceSystemPrompt += `\n\n${appendix}`;
+  });
   pi.on("before_agent_start", (event) => {
     if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1" || !current().explicitOnlySkills?.length) return;
     const normalize = (value: string) => resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value);
