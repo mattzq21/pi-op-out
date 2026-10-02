@@ -4,7 +4,7 @@ import { createComputed,createMemo,createSignal,Show,type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type KeyboardEvent,type MouseEvent } from "../lib/solid";
 
-import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderOpen,LoaderCircle,MessageSquare,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
+import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderOpen,LoaderCircle,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
 import { openGroupDirectory } from "../lib/nativeTransport";
 import type { SessionGroup } from "../lib/sessionGroups";
 import { groupLayoutToken,isFixedGroup,RECENT_KEY,sessionKey,sessionLayoutToken,type DraggedSession,type SidebarState } from "../lib/sidebarState";
@@ -393,7 +393,7 @@ export function SessionPanel(props: Props) {
 
         return; }
 
-      panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><Show when={session().projectKind === "main"} fallback={<MessageSquare class="session-leading-icon" size={14} aria-hidden="true" />}><Folder class="session-leading-icon" size={14} aria-hidden="true" /></Show><strong>{session().name}</strong><span class="session-api-cost" title="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
+      panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><Show when={session().projectKind === "main"}><Folder class="session-leading-icon" size={14} aria-hidden="true" /></Show><strong>{session().name}</strong><span class="session-api-cost" title="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
 
     const renderArchiveButton = () => (<button class="session-archive" aria-busy={archiving()} aria-label={`${archiving() ? "Archiving" : "Archive"} ${session().name}`} title={!isSavedSession(session()) ? "Send a message before archiving this draft" : `${archiving() ? "Archiving" : "Archive"} ${session().name}`} disabled={archiving() || !isSavedSession(session())} onClick={() => void archive()}><Show when={archiving()} fallback={<Archive size={14} />}><LoaderCircle size={14} class="spinning" /></Show></button>);
 
