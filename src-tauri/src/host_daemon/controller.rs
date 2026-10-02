@@ -156,7 +156,31 @@ impl Host {
         let ownership = ConversationOwnership::new(&host.home, storage, Arc::new(Callbacks(Arc::downgrade(&host)))).await?;
         let _ = host.ownership.set(ownership);
         host.services.bind(Arc::downgrade(&host));
+        host.watch_removals();
         Ok(host)
+    }
+
+    fn watch_removals(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        let mut stopped = self.ownership().shutdown_signal();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(2));
+            loop {
+                tokio::select! {
+                    _ = stopped.changed() => break,
+                    _ = interval.tick() => {
+                        let Some(host) = weak.upgrade() else { break; };
+                        let targets: HashMap<_, _> = host.registry().readonly.values()
+                            .map(|view| (view.id.clone(), view.path.clone())).collect();
+                        for (id, path) in targets {
+                            if host.ownership().removed(&id).unwrap_or(false) {
+                                host.output(json!({"type":"session_removed","sessionId":id,"sessionPath":path}));
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     pub fn registry(&self) -> MutexGuard<'_, Registry> {
@@ -305,7 +329,7 @@ impl Host {
         if intent == "transfer" && (session.working() || session.compacting()) {
             return Err("The agent is running on another daemon. Wait for it to finish before transferring ownership.".into());
         }
-        if matches!(intent, "message" | "archive") {
+        if intent == "message" {
             session.retire().await?;
         }
         let saved = session.saved_state();
@@ -320,10 +344,13 @@ impl Host {
         }
         session.publish(json!({"type":"ownership_lost"}), None);
         if intent == "transfer-local" { return Ok(()); }
-        if session.working() || session.compacting() {
+        if intent != "archive" && (session.working() || session.compacting()) {
             let _ = session.raw(json!({"type":"abort"})).await;
         }
         session.stop().await;
+        if intent == "archive" {
+            self.registry().pending.remove(&session.key());
+        }
         self.registry().captures.entry(id.into()).or_default().insert(session.key());
         Ok(())
     }
@@ -397,6 +424,13 @@ impl Host {
         }
         if let Some(session) = self.find_session(&target.id).filter(|session| !session.transient()) {
             return session.execute(command.clone()).await;
+        }
+        if self.ownership().locate(&target.id, target.path.as_deref(), false, true)?.is_none() {
+            if self.ownership().removed(&target.id)? {
+                self.output(json!({"type":"session_removed","sessionId":target.id,"sessionPath":target.path}));
+                return Err("This conversation has been deleted or archived".into());
+            }
+            return Err("Conversation storage is temporarily unavailable; try again".into());
         }
         self.read_saved_conversation(&target, command)
     }

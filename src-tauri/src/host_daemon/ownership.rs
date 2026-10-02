@@ -364,6 +364,14 @@ impl ConversationOwnership {
         self.shutdown.send_replace(true);
     }
 
+    pub fn shutdown_signal(&self) -> watch::Receiver<bool> {
+        self.shutdown.subscribe()
+    }
+
+    pub fn removed(&self, id: &str) -> Result<bool> {
+        Ok(self.read(id)?.is_some_and(|record| flag(&record, "deleted")))
+    }
+
     async fn serve(&self, mut stream: TcpStream) {
         let request = tokio::time::timeout(Duration::from_secs(30), read_request(&mut stream, &self.token)).await;
         let status = match request {
@@ -393,7 +401,7 @@ fn optional_path(path: &Path) -> Result<Option<PathBuf>> {
 }
 
 fn claim_blocked(previous: &Value, client: &str, options: &Value) -> bool {
-    owned_by_other(previous, client) && !flag(options, "take") && !(flag(options, "archived") && flag(previous, "deleted"))
+    owned_by_other(previous, client) && !flag(options, "take") && !flag(options, "archive") && !(flag(options, "archived") && flag(previous, "deleted"))
 }
 
 fn owned_by_other(previous: &Value, client: &str) -> bool {
