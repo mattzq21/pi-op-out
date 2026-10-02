@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { TSchema } from "typebox";
-import { createMcpExtension, type BeforeAgentStartEvent, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type InputEvent, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
+import { createMcpExtension, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 type Selection = { servers: Record<string, McpServerConfig & { piopInjectAgentId?: boolean }>; codemode?: boolean; agentName: string; sessionId: string; registered?: Promise<string[]> };
@@ -43,7 +43,7 @@ export default function agentMcp(pi: ExtensionAPI) {
   let sessionStart: SessionStartEvent = { type: "session_start", reason: "startup" };
   let start: ExtensionHandler<SessionStartEvent> | undefined;
 
-  const startOnMessage = async (_event: InputEvent | BeforeAgentStartEvent, ctx: ExtensionContext) => {
+  const ensureStarted = async (ctx: ExtensionContext) => {
     if (started) return;
     started = true;
 
@@ -52,8 +52,8 @@ export default function agentMcp(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", event => { started = false; sessionStart = event; });
-  pi.on("input", startOnMessage);
-  pi.on("before_agent_start", startOnMessage);
+  pi.on("input", (_event, ctx) => ensureStarted(ctx));
+  pi.on("before_agent_start", (_event, ctx) => ensureStarted(ctx));
   // eslint-disable-next-line local/no-assertions -- Forward pi's overloaded event/handler pair unchanged.
   const subscribe = pi.on as (event: ExtensionEvent["type"], handler: ExtensionHandler<never, unknown>) => () => void;
   createMcpExtension()({
@@ -64,8 +64,13 @@ export default function agentMcp(pi: ExtensionAPI) {
       return; }
 
       pi.registerCommand(name, {
-        description: "Internal MCP loader reservation",
-        handler: () => { throw new Error("/mcp is unavailable in Piop. Manage MCP servers in agent settings."); },
+        description: "Sign in to an MCP server with /mcp login [server]",
+        handler: async (args, ctx) => {
+          if (args.trim().split(/\s+/, 1)[0] !== "login") throw new Error("Manage MCP servers in agent settings. To sign in, use /mcp login [server].");
+          await ensureStarted(ctx);
+
+          return options.handler(args, ctx);
+        },
       });
     },
     setActiveTools(names) {
