@@ -3,7 +3,7 @@ mod daemon_endpoint;
 mod desktop_daemon;
 mod client_settings;
 mod clipboard_image;
-use clipboard_image::read_clipboard_image;
+use clipboard_image::{configure_image_copy, read_clipboard_image};
 use client_settings::{load_client_settings, save_client_settings};
 use desktop_daemon::daemon_invoke;
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,7 @@ fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
         .title(APP_TITLE).inner_size(1280.0, 800.0).min_inner_size(900.0, 640.0)
         .build().map_err(|error| error.to_string())?;
     configure_dictation_microphone(&window)?;
+    configure_image_copy(&window)?;
     Ok(label)
 }
 
@@ -211,6 +212,7 @@ pub fn run() {
     builder.plugin(tauri_plugin_dialog::init()).manage(desktop_daemon::DesktopDaemon::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         for window in app.webview_windows().values() {
             configure_dictation_microphone(window)?;
+            configure_image_copy(window)?;
             let handle = app.handle().clone();
             let label = window.label().to_owned();
             tauri::async_runtime::spawn(async move {
