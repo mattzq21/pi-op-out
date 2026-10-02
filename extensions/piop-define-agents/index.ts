@@ -23,6 +23,8 @@ export type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessi
 
 type ConfigRuntime = { events: { emit(channel: "piop:runtime-settings", request: RuntimeSettingsRequest): void } };
 
+type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: typeof writeConfig };
+
 const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 
 const fallbackConfig: Config = { agents: [{ name: "general", model: development ? "openai-codex/gpt-6-luna" : "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
@@ -47,7 +49,7 @@ type StoredAgent = Omit<Agent, "path_systemprompt" | "path_agentprompt"> & { pat
 
 type StoredConfig = Omit<Config, "agents"> & { agents?: StoredAgent[] };
 
-async function migrateSystemPrompt(agent: StoredAgent) {
+async function migrateSystemPrompt(agent: StoredAgent, storage: ConfigStorage) {
   let path = agent.path_systemprompt;
 
   if (path === undefined) {
@@ -64,14 +66,14 @@ async function migrateSystemPrompt(agent: StoredAgent) {
     if (prompt !== undefined) {
       const hash = createHash("sha256").update(agent.name).update("\0").update(prompt).digest("hex");
       path = `sysprompt/${safeName(agent.name)}-${hash}.md`;
-      await ensurePromptFile(path, prompt);
+      await storage.ensurePromptFile(path, prompt);
     }
   }
 
   return path;
 }
 
-async function migrateAgentPrompt(agent: StoredAgent) {
+async function migrateAgentPrompt(agent: StoredAgent, storage: ConfigStorage) {
   let agentPromptPath = agent.path_agentprompt;
 
   if (agentPromptPath === undefined) {
@@ -80,20 +82,20 @@ async function migrateAgentPrompt(agent: StoredAgent) {
     if (Check(Type.String(), agent.agentsMd) && agent.agentsMd.trim()) {
       const hash = createHash("sha256").update(agent.name).update("\0").update(agent.agentsMd).digest("hex");
       agentPromptPath = `agentprompt/${safeName(agent.name)}-${hash}.md`;
-      await ensurePromptFile(agentPromptPath, agent.agentsMd);
+      await storage.ensurePromptFile(agentPromptPath, agent.agentsMd);
     }
   }
 
   return agentPromptPath;
 }
 
-async function migratePrompts(stored: StoredConfig, pi: ConfigRuntime): Promise<Config> {
+async function migratePrompts(stored: StoredConfig, pi: ConfigRuntime, storage: ConfigStorage): Promise<Config> {
   const agents = [];
 
   for (const agent of Array.isArray(stored.agents) ? stored.agents : []) {
     if (!Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)) continue;
-    const path = await migrateSystemPrompt(agent);
-    const agentPromptPath = await migrateAgentPrompt(agent);
+    const path = await migrateSystemPrompt(agent, storage);
+    const agentPromptPath = await migrateAgentPrompt(agent, storage);
     const { systemPrompt: _inline, developerPrompt: _legacy, agentsMd: _instructions, ...profile } = agent;
     agents.push({ ...profile, path_systemprompt: path, path_agentprompt: agentPromptPath });
   }
@@ -131,7 +133,7 @@ function normalize(value: Partial<Config>, pi: ConfigRuntime): Config {
   return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, terminalAgentDefaultApplied: value.terminalAgentDefaultApplied === true };
 }
 
-async function readConfig(pi: ConfigRuntime, supplied?: StoredConfig, initialize = true): Promise<Config> {
+async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
   if (initialize) {
     await ensurePromptFile(DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT);
     await ensureDefaultAgentPrompt();
@@ -139,17 +141,17 @@ async function readConfig(pi: ConfigRuntime, supplied?: StoredConfig, initialize
 
   try {
     const stored = supplied ?? JSON.parse(await readFile(configPath, "utf8"));
-    const config = await migratePrompts(stored, pi);
+    const config = await migratePrompts(stored, pi, storage);
 
-    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await writeConfig(config);
+    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await storage.writeConfig(config);
 
     return config;
   }
-  catch (error) { if (!Check(Type.Object({ code: Type.Literal("ENOENT") }), error)) throw error; }
+  catch (error) { if (!initialize || !Check(Type.Object({ code: Type.Literal("ENOENT") }), error)) throw error; }
 
-  await writeConfig(normalize({}, pi), true);
+  await storage.writeConfig(normalize({}, pi), true);
 
-  return readConfig(pi);
+  return readConfig(pi, undefined, initialize, storage);
 }
 
 function migrateSessionTools(config: Config, pi: ConfigRuntime) {
@@ -224,12 +226,12 @@ function migrateQuestionSnapshot(stored: AgentSnapshot | undefined) {
   return snapshot;
 }
 
-async function migrateDiagramist(config: Config, pi: ConfigRuntime) {
+async function migrateDiagramist(config: Config, pi: ConfigRuntime, storage: ConfigStorage) {
   if (config.diagramistDefaultApplied) return false;
 
   if (!config.agents.some(agent => agent.name === "diagramist")) {
     const path = "sysprompt/diagramist.md";
-    await ensurePromptFile(path, `${DEFAULT_SYSTEM_PROMPT}\n\nYou are diagramist. Explain systems, code, and data through clear, accurate diagrams. Inspect the relevant sources before depicting relationships, and distinguish observed behavior from proposed designs.`);
+    await storage.ensurePromptFile(path, `${DEFAULT_SYSTEM_PROMPT}\n\nYou are diagramist. Explain systems, code, and data through clear, accurate diagrams. Inspect the relevant sources before depicting relationships, and distinguish observed behavior from proposed designs.`);
     config.agents.push({ ...defaultAgent(pi), name: "diagramist", path_systemprompt: path, extensions: ["../piop-diagrams.ts"] });
   }
 
@@ -238,9 +240,11 @@ async function migrateDiagramist(config: Config, pi: ConfigRuntime) {
   return true;
 }
 
-export async function loadConfig(pi: ConfigRuntime, supplied?: StoredConfig, initialize?: boolean): Promise<Config> {
-  const config = await readConfig(pi, supplied, initialize);
-  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi), await migrateDiagramist(config, pi), migrateUserInput(config, pi), migrateTerminalAgent(config, pi)].some(Boolean);
+export async function loadConfig(pi: ConfigRuntime, supplied?: StoredConfig, initialize = true, storage: ConfigStorage = { ensurePromptFile, writeConfig }): Promise<Config> { return loadMigratedConfig(pi, supplied, initialize, storage); }
+
+async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
+  const config = await readConfig(pi, supplied, initialize, storage);
+  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi), await migrateDiagramist(config, pi, storage), migrateUserInput(config, pi), migrateTerminalAgent(config, pi)].some(Boolean);
 
   for (const agent of config.agents) {
     if (!agent.tools.some((tool) => tool === "exec_command" || tool === "apply_patch")) continue;
@@ -260,7 +264,7 @@ export async function loadConfig(pi: ConfigRuntime, supplied?: StoredConfig, ini
 
   if (retainedAgents.length !== config.agents.length) { config.agents = retainedAgents; changed = true; }
 
-  if (changed) await writeConfig(config);
+  if (changed) await storage.writeConfig(config);
 
   return config;
 }

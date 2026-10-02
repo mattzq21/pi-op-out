@@ -24,7 +24,9 @@ const sourceAgentSchema = Type.Object({
   systemPrompt: Type.Optional(Type.String()), agentsMd: Type.Optional(Type.String()), developerPrompt: Type.Optional(Type.String()),
 });
 
-await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
+const initialize = process.env.PIOP_AGENT_INITIAL_LOAD === "1";
+
+if (initialize) await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
 
 let stored;
 
@@ -47,11 +49,24 @@ try {
 
 const api = { events: { emit(_name: string, request: RuntimeSettingsRequest) { request.settings = settings; } } };
 
-const config = await loadConfig(api, stored, process.env.PIOP_AGENT_INITIAL_LOAD === "1");
+const prompts: Record<string, string> = {};
+
+const readOnlyStorage = {
+  async writeConfig() {},
+  async ensurePromptFile(path: string, contents: string) {
+    const resolved = resolvePromptPath(path);
+
+    try { prompts[resolved] ??= await readFile(resolved, "utf8"); }
+    catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      prompts[resolved] ??= contents;
+    }
+  },
+};
+
+const config = await loadConfig(api, stored, initialize, initialize ? undefined : readOnlyStorage);
 
 if (!Check(Type.Array(agentSchema), config.agents)) throw new Error("Invalid agent definitions");
-
-const prompts: Record<string, string> = {};
 
 if (!Check(Type.Array(Type.String()), settings.registeredTools)) throw new Error("Registered tool inventory is unavailable");
 
