@@ -1,4 +1,5 @@
-import { realpath, stat } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type * as SDK from "@earendil-works/pi-coding-agent";
@@ -57,6 +58,19 @@ async function directoryEntry(directory: string): Promise<string> {
   }
 
   throw new Error("Directory has no index.ts, index.js, index.mjs or index.cjs");
+}
+
+export async function resolveExtensionEntry(path: string, parent: string, base: string): Promise<string> {
+  path = bundledPath(path, parent, base);
+  const absolute = path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(parent, path);
+  let entry = await realpath(absolute);
+
+  if ((await stat(entry)).isDirectory()) entry = await directoryEntry(entry);
+
+  if (!(await stat(entry)).isFile()) throw new Error(`Extension is not a regular file: ${entry}`);
+  await access(entry, constants.R_OK);
+
+  return entry;
 }
 
 export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
@@ -353,9 +367,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
       const absolute = path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(parent, path);
 
       try {
-        let entry = await realpath(absolute);
-
-        if ((await stat(entry)).isDirectory()) entry = await directoryEntry(entry);
+        const entry = await resolveExtensionEntry(path, parent, baseDirectory);
 
         if (visiting.includes(entry)) throw new Error(`Circular piop extension dependency: ${[...visiting, entry].join(" -> ")}`);
 
