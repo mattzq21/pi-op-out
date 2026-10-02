@@ -8,7 +8,7 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, Pause, Split, Undo2, Wrench } from "lucide-solid";
 import { textOf, thinkingOf } from "../lib/content";
-import { cacheHitStats } from "../lib/messages";
+import { cacheHitStats, isContextInjection } from "../lib/messages";
 import type { turnDiff } from "../lib/turnDiff";
 import type { ChatMessage } from "../types";
 import { DiffViewer } from "./DiffViewer";
@@ -243,5 +243,5 @@ export function Message(componentProps: Props) {
     </article>);
   };
 
-  return <>{componentProps.message.customType === "piop-html-preview" ? <HtmlPreview details={componentProps.message.details} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : componentProps.message.customType === "piop-review-link" ? <ReviewLink details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
+  return <>{isContextInjection(componentProps.message) ? <details class="context-injection"><summary>{componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"}<ChevronRight size={12} aria-hidden="true" /></summary><div class="context-injection-content">{textOf(componentProps.message.content)}</div></details> : componentProps.message.customType === "piop-html-preview" ? <HtmlPreview details={componentProps.message.details} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : componentProps.message.customType === "piop-review-link" ? <ReviewLink details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
 }

@@ -14,7 +14,7 @@ import { ChevronRight, FolderGit2, LoaderCircle, X } from "lucide-solid";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { markStoppedPrompt, wasPromptStopped } from "../lib/stoppedPrompt";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
-import { cacheHitStats } from "../lib/messages";
+import { cacheHitStats, isContextInjection } from "../lib/messages";
 import { turnDiff } from "../lib/turnDiff";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, GitDiffSnapshots, ImageAttachment, Model, PromptContextInfo, SlashCommand } from "../types";
 import { NewChatBranchPicker } from "./NewChatBranchPicker";
@@ -303,7 +303,32 @@ function turnPromptContexts(messages: ChatMessage[]) {
   return contexts;
 }
 
+function associateQueuedContext(messages: ChatMessage[]) {
+  const contexts = new Map<number, ChatMessage[]>();
+
+  for (const message of messages) {
+    if (message.contextUserTimestamp === undefined) continue;
+    const matching = contexts.get(message.contextUserTimestamp) ?? [];
+    matching.push(message);
+    contexts.set(message.contextUserTimestamp, matching);
+  }
+
+  if (!contexts.size) return messages;
+
+  return messages.flatMap(message => {
+    if (message.contextUserTimestamp !== undefined) return [];
+    if (message.role !== "user" || message.timestamp === undefined) return [message];
+    const matching = contexts.get(message.timestamp);
+
+    if (!matching) return [message];
+    contexts.delete(message.timestamp);
+
+    return [message, ...matching];
+  });
+}
+
 function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
+  messages = associateQueuedContext(messages);
   const prefix = reusableTurns(messages, previous);
 
   if (prefix.start === messages.length && prefix.count === previous.length) return previous;
@@ -426,7 +451,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(componentProps.messages[finalIndex()].content) : ""));
 
   const intermediate = createMemo(() => (componentProps.messages.flatMap((message, index): ChatMessage[] => {
-    if (message.role === "user" || (message.role === "system" && message.customType !== "compaction")) return [];
+    if (message.role === "user" || isContextInjection(message) || (message.role === "system" && message.customType !== "compaction")) return [];
 
     if (index !== finalIndex()) return [message];
 
@@ -474,7 +499,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
     <MessageList messages={componentProps.messages.filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />
   </>)}>
-    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user")} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} showActions={false} /></div>
+    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user" && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} showActions={false} /></div>
   </Show>);
 
   const renderDiffViewer = () => (<Show when={componentProps.active || componentProps.paused || !finalMessage()}><DiffViewer {...changes()} /></Show>);
@@ -482,6 +507,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   return <section class="conversation-turn">
     {<Key each={userMessages()} by={(message) => message.id}>{(message, _index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
     {renderPromptContextBar()}
+    <MessageList messages={componentProps.messages.filter(isContextInjection)} expanded={false} />
     {renderActiveWorkContent()}
     {renderDiffViewer()}
   </section>;

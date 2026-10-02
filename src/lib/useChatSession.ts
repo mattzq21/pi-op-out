@@ -8,7 +8,7 @@ import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../
 import { chatSessionEventSchema, pendingMessagesSchema, type ChatSessionEvent } from "./chatSessionEventSchema";
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 import { contextUsageAfterCompaction } from "./contextUsage";
-import { appendFileChanges, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
+import { appendFileChanges, appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
 
@@ -315,6 +315,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
       if (marker) { resumeMarkers.current.add(marker); session.setMessages(checkpointLatestUser); }
 
+      if (entry.customType === "piop-queued-project-context") { liveRevision.current += 1; session.setMessages((current) => appendQueuedProjectContext(current, entry)); }
+
       if (entry.customType === "piop-file-changes") { liveRevision.current += 1; session.setMessages((current) => appendFileChanges(current, entry)); } }
     };
 
@@ -369,7 +371,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
       if (isResumeMessage(rawMessage, resumeMarkers.current)) return;
 
-      if (rawMessage.role === "custom" && rawMessage.display === false) return;
+      if (rawMessage.role === "custom" && rawMessage.display === false && !isContextInjection(rawMessage)) return;
       const liveId = messageLiveId(rawMessage, roleKey);
 
       if (event.type === "message_start") trackLiveId(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
