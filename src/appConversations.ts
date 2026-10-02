@@ -205,8 +205,8 @@ export function createAppConversations(preloadChat: () => void) {
         runtimePool().restoreSummary(payload.hostId, payload.sessionPath);
         void syncSessionIndex();
       }, z.object({ hostId: z.string(), sessionId: z.string(), sessionPath: z.string() })),
-      listen("pi://session-removed", ({ payload }) => {
-        archives.removed(payload.hostId ?? "local", payload.sessionPath, payload.sessionId);
+      listen("pi://session-removed", async ({ payload }) => {
+        if (!await archives.removed(payload.hostId ?? "local", payload.sessionPath, payload.sessionId)) return;
         const split = splitPane()?.session;
         if (split && (split.hostId ?? "local") === (payload.hostId ?? "local") && (split.id === payload.sessionId || split.path === payload.sessionPath) && !archives.isPending(split)) closeSplitPane();
         if (payload.sessionPath) runtimePool().removeSummary(payload.hostId ?? "local", payload.sessionPath);

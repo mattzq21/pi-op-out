@@ -174,7 +174,7 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
     }
     let item = history.get_mut(id).ok_or("Terminal is unavailable")?;
     let previous_session = item.session_id.clone();
-    if !session_owned(app, &previous_session, client, item.owner == owner)? {
+    if !(action == "close" && item.owner == owner) && !session_owned(app, &previous_session, client, item.owner == owner)? {
         return Err("Take ownership of this session before changing its terminals".into());
     }
     if action == "reassign" && !session_owned(app, session_id, client, true)? {
