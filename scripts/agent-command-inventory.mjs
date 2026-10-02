@@ -3,9 +3,9 @@ import { join } from "node:path";
 import ts from "typescript";
 
 export async function agentCommandInventory() {
-  const files = ["src-tauri/resources/mcp-bridge.ts"];
+  const files = [];
 
-  for (const root of ["extensions", "src-tauri/resources/session-broker"]) {
+  for (const root of ["extensions", "src-tauri/resources"]) {
     for (const path of await readdir(root, { recursive: true })) {
       if (path.endsWith(".ts") && !path.includes("node_modules")) files.push(join(root, path));
     }

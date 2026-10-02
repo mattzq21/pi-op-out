@@ -34,7 +34,7 @@ async function piDirectory() {
   throw new Error("Extension validation requires a Pi Node installation");
 }
 
-export async function extensionValidator(toolNames: string[]) {
+export async function extensionValidator(registeredToolNames: string[]) {
   const directory = await piDirectory();
   const loaderUrl = pathToFileURL(join(directory, "dist/core/extensions/jiti-static-loader.js")).href;
   const { createJiti } = await import(loaderUrl);
@@ -46,7 +46,7 @@ export async function extensionValidator(toolNames: string[]) {
   return async (paths: string[], base: string) => {
     const runtime: ExtensionRuntime = createExtensionRuntime();
     const events = createEventBus();
-    runtime.getAllTools = () => toolNames.map((name): ToolInfo => ({ name, description: "", parameters: Type.Object({}), exposure: "direct", sourceInfo: { path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" } }));
+    runtime.getAllTools = () => registeredToolNames.map((name): ToolInfo => ({ name, description: "", parameters: Type.Object({}), exposure: "direct", sourceInfo: { path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" } }));
     runtime.getCommands = () => commandNames.map(name => ({ name, source: "extension", sourceInfo: { path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" } }));
     let tools: string[] = [];
 

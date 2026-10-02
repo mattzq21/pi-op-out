@@ -52,7 +52,9 @@ if (!Check(Type.Array(agentSchema), config.agents)) throw new Error("Invalid age
 
 const prompts: Record<string, string> = {};
 
-const validateExtensions = config.agents.some(agent => agent.extensions?.length) ? await extensionValidator(settings.tools) : undefined;
+if (!Check(Type.Array(Type.String()), settings.registeredTools)) throw new Error("Registered tool inventory is unavailable");
+
+const validateExtensions = config.agents.some(agent => agent.extensions?.length) ? await extensionValidator(settings.registeredTools) : undefined;
 
 for (const agent of config.agents) {
   validateEffort(agent.name, agent.effort);
