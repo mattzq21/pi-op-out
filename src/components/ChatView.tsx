@@ -175,8 +175,8 @@ export function ChatView(props: Props) {
     if (props.readOnly || !composer) return;
 
     const updateLayout = () => {
-      composer.style.paddingLeft = `${messages.clientLeft}px`;
-      composer.style.paddingRight = `${messages.offsetWidth - messages.clientWidth - messages.clientLeft}px`;
+      composer.style.left = `${messages.clientLeft}px`;
+      composer.style.right = `${messages.offsetWidth - messages.clientWidth - messages.clientLeft}px`;
       messages.style.setProperty("--composer-height", `${composer.getBoundingClientRect().height}px`);
       scrollToLatest();
     };
@@ -194,8 +194,8 @@ export function ChatView(props: Props) {
     return () => {
       observer.disconnect();
       messages.style.removeProperty("--composer-height");
-      composer.style.removeProperty("padding-left");
-      composer.style.removeProperty("padding-right");
+      composer.style.removeProperty("left");
+      composer.style.removeProperty("right");
     };
   }, () => [props.readOnly, scrollToLatest]);
 
