@@ -209,6 +209,8 @@ export function createAppConversations(preloadChat: () => void) {
         if (!await archives.removed(payload.hostId ?? "local", payload.sessionPath, payload.sessionId)) return;
         const split = splitPane()?.session;
         if (split && (split.hostId ?? "local") === (payload.hostId ?? "local") && (split.id === payload.sessionId || split.path === payload.sessionPath) && !archives.isPending(split)) closeSplitPane();
+        const subagent = subagentPane();
+        if (subagent && subagent.hostId === (payload.hostId ?? "local") && (subagent.sessionId === payload.sessionId || subagent.sessionPath === payload.sessionPath)) closeSplitPane();
         if (payload.sessionPath) runtimePool().removeSummary(payload.hostId ?? "local", payload.sessionPath);
         setSessions((current) => current.filter((session) => !runtimePool().isRemoved(session) && !archives.isArchived(session)));
         void syncSessionIndex();
