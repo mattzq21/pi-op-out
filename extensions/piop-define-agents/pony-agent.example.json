@@ -9,7 +9,7 @@
       "tools": ["read", "bash", "edit", "write", "grep", "find", "ls"],
       "skills": [],
       "extensions": ["./pony-agent/index.ts"],
-      "mcpServers": []
+      "mcpServers": {}
     }
   ]
 }

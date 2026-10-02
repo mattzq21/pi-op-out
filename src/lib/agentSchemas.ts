@@ -1,16 +1,13 @@
 import { z } from "zod";
 
-export const mcpServerSchema = z.object({
-  id: z.string(), name: z.string(), transport: z.enum(["stdio", "http"]).optional(),
-  command: z.string().default(""), args: z.string().default(""), url: z.string().optional(), headers: z.string().optional(),
-  enabled: z.boolean(), startupTimeoutSec: z.number().optional(), injectAgentId: z.boolean().optional(),
-  status: z.enum(["starting", "connected", "stopped", "error"]).optional(), error: z.string().optional(),
-});
+import { mcpServersSchema } from "../../extensions/piop-define-agents/mcp-schema";
+
+export { mcpServerSchema, mcpServersSchema } from "../../extensions/piop-define-agents/mcp-schema";
 
 export const agentProfileSchema = z.object({
-  name: z.string(), model: z.string(), effort: z.string(), fastMode: z.boolean().optional(), extensions: z.array(z.string()).optional(),
+  name: z.string(), model: z.string(), effort: z.string(), fastMode: z.boolean().optional(), codemode: z.boolean().optional(), extensions: z.array(z.string()).optional(),
   path_systemprompt: z.string(), path_agentprompt: z.string(), tools: z.array(z.string()), skills: z.array(z.string()),
-  mcpServers: z.array(mcpServerSchema),
+  mcpServers: mcpServersSchema,
 });
 
 export const agentConfigSchema = z.object({ agents: z.array(agentProfileSchema), fastModeModels: z.array(z.string()).optional() });

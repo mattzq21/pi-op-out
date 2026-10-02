@@ -2,7 +2,9 @@ import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agent
 import { Type, type TSchema, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
-import { mcpServers } from "./mcp-config.ts";
+import { mcpServersSchema } from "./mcp-schema.ts";
+import { readDaemonDefinitions } from "./daemon-definitions.ts";
+import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
 import type { FastModeRequest } from "../piop-openai-fast-mode/src/types.ts";
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
@@ -27,7 +29,7 @@ type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: t
 
 const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 
-const fallbackConfig: Config = { agents: [{ name: "general", model: development ? "openai-codex/gpt-6-luna" : "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
+const fallbackConfig: Config = { agents: [{ name: "general", model: development ? "openai-codex/gpt-6-luna" : "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: {} }] };
 
 function defaultAgent(pi: ConfigRuntime): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
@@ -45,7 +47,7 @@ async function snapshotPrompts(definition: Agent, systemPrompt: string, agentPro
   } };
 }
 
-type StoredAgent = Omit<Agent, "path_systemprompt" | "path_agentprompt"> & { path_systemprompt?: string; path_agentprompt?: string; agentsMd?: string; systemPrompt?: string; developerPrompt?: string };
+type StoredAgent = Omit<Agent, "path_systemprompt" | "path_agentprompt" | "mcpServers"> & { mcpServers?: McpServers | LegacyMcpServer[]; path_systemprompt?: string; path_agentprompt?: string; agentsMd?: string; systemPrompt?: string; developerPrompt?: string };
 
 type StoredConfig = Omit<Config, "agents"> & { agents?: StoredAgent[] };
 
@@ -103,7 +105,7 @@ async function migratePrompts(stored: StoredConfig, pi: ConfigRuntime, storage: 
   return normalize({ ...stored, agents }, pi);
 }
 
-function promptPath(agent: Agent): string {
+function promptPath(agent: StoredAgent): string {
   if ("systemPrompt" in agent || "developerPrompt" in agent) throw new Error(`Agent "${agent.name}" must link a system prompt file using path_systemprompt`);
 
   if (!Check(Type.String({ pattern: "\\S" }), agent.path_systemprompt)) throw new Error(`Agent "${agent.name}" requires a nonempty path_systemprompt`);
@@ -111,12 +113,12 @@ function promptPath(agent: Agent): string {
   return agent.path_systemprompt;
 }
 
-function normalize(value: Partial<Config>, pi: ConfigRuntime): Config {
+function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAgent[] }, pi: ConfigRuntime): Config {
   for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.fastMode !== undefined && !Check(Type.Boolean(), agent.fastMode)) throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
 
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)).map((agent) => ({
     name: agent.name, model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
-    fastMode: agent.fastMode, extensions: extensionPaths(agent.extensions),
+    fastMode: agent.fastMode, codemode: agent.codemode, extensions: extensionPaths(agent.extensions),
     path_systemprompt: promptPath(agent), path_agentprompt: Check(Type.String(), agent.path_agentprompt) ? agent.path_agentprompt.trim() : ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)).flatMap(item => item === "goal" ? ["get_goal", "create_goal", "update_goal"] : [item]) : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
@@ -143,7 +145,7 @@ async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined,
     const stored = supplied ?? JSON.parse(await readFile(configPath, "utf8"));
     const config = await migratePrompts(stored, pi, storage);
 
-    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await storage.writeConfig(config);
+    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (Array.isArray(agent.mcpServers) || agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await storage.writeConfig(config);
 
     return config;
   }
@@ -334,16 +336,18 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const currentAgent = () => snapshot?.definition ?? findAgent(active);
 
-  const currentMcpTools = () => { const request: McpToolsRequest = {}; pi.events.emit("piop:mcp:tools", request);
+  const currentMcpTools = (includeInactive = false) => { const request: McpToolsRequest = {}; pi.events.emit("piop:mcp:tools", request);
 
-  return request.tools ?? []; };
+  return (includeInactive ? request.availableTools : request.tools) ?? []; };
+
+  const toolDisabledForAgent = (name: string, agent: Agent | undefined) => name === "codemode" && agent?.codemode === false || name === "lookup_terminals" && agent?.name !== "terminal-agent";
 
   pi.on("tool_call", (event, ctx) => {
     const agent = currentAgent();
     const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
-    const allowed = agent && !activeToolError && new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools(), ...required.tools]);
+    const allowed = agent && !activeToolError && new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools(true), ...required.tools]);
 
-    if (!allowed || !allowed.has(event.toolName) || (event.toolName === "lookup_terminals" && agent?.name !== "terminal-agent")) {
+    if (!allowed || !allowed.has(event.toolName) || toolDisabledForAgent(event.toolName, agent)) {
       return { block: true, reason: `Tool ${event.toolName} is not allowed for agent ${agent?.name ?? active}` };
     }
   });
@@ -518,24 +522,21 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   };
 
-  const connectAgentMcp = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean, tools: Set<string>) => {
-    if (connectMcp) {
-      const selection: McpSelection = { servers: mcpServers(agent.mcpServers), agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
-      pi.events.emit("piop:mcp:select", selection);
+  const registerAgentMcp = async (agent: Agent, ctx: ExtensionContext, tools: Set<string>) => {
+    const selection: McpSelection = { codemode: agent.codemode, servers: mcpServers(agent.mcpServers), agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
+    pi.events.emit("piop:mcp:select", selection);
 
-      if (!selection.ready && selection.servers.some((server) => server.enabled)) return `Agent "${agent.name}" cannot run because the MCP bridge is unavailable`;
+    if (!selection.registered && Object.keys(selection.servers).length > 0) return `Agent "${agent.name}" cannot run because the MCP registration adapter is unavailable`;
 
-      try { for (const tool of await (selection.ready ?? Promise.resolve([]))) tools.add(tool); }
-      catch (error) { pi.setActiveTools([]);
+    try { for (const tool of await (selection.registered ?? Promise.resolve([]))) tools.add(tool); }
+    catch (error) { pi.setActiveTools([]);
 
-      return `Agent "${agent.name}" could not connect its MCP servers:\n${error instanceof Error ? error.message : String(error)}`; }
-    }
-
+    return `Agent "${agent.name}" could not register its MCP servers:\n${error instanceof Error ? error.message : String(error)}`; }
   };
 
   const effectiveAgentFastMode = (agent: Agent) => fastModeOverride ?? agent.fastMode;
 
-  const activate = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot: boolean, applyFastMode: boolean | "restore") => {
+  const activate = async (agent: Agent, ctx: ExtensionContext, persistSnapshot: boolean, applyFastMode: boolean | "restore") => {
     const promptError = await prepareAgentPrompts(agent, persistSnapshot);
 
     if (promptError) return promptError;
@@ -557,9 +558,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     configureAgentEffort(agent);
 
     if (applyFastMode) pi.events.emit("piop:fast-mode", { apply: true, enabled: effectiveAgentFastMode(agent), restore: applyFastMode === "restore", ctx });
-    pi.setActiveTools([]);
-    const tools = new Set([...agent.tools, ...extensions.tools()]);
-    const mcpError = await connectAgentMcp(agent, ctx, connectMcp, tools);
+    const tools = new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools()]);
+    const mcpError = await registerAgentMcp(agent, ctx, tools);
 
     if (mcpError) return mcpError;
 
@@ -567,15 +567,15 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
 
     for (const tool of required.tools) tools.add(tool);
-    pi.setActiveTools([...tools]);
+    pi.setActiveTools([...tools].filter(name => agent.codemode !== false || name !== "codemode"));
 
     return undefined;
   };
 
-  const useAgent = async (name: string, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot = true, applyFastMode: boolean | "restore" = true) => {
+  const useAgent = async (name: string, ctx: ExtensionContext, persistSnapshot = true, applyFastMode: boolean | "restore" = true) => {
     restore(ctx);
     const agent = currentAgent();
-    activeToolError = agent ? await activate(agent, ctx, connectMcp, persistSnapshot, applyFastMode) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
+    activeToolError = agent ? await activate(agent, ctx, persistSnapshot, applyFastMode) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
 
     if (activeToolError) pi.setActiveTools([]);
     publish(ctx);
@@ -594,7 +594,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       activeToolError = agentToolError(pi, agent, extensions.tools());
       const mcpTools = currentMcpTools();
       const required: RequiredToolsRequest = { ctx: request.ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
-      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])]);
+      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])].filter(name => agent.codemode !== false || name !== "codemode"));
       publish(request.ctx);
     });
   });
@@ -641,7 +641,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     fastModeOverride = fastMode;
     effortOverride = stored?.effortOverride;
     publish(ctx);
-    const error = await useAgent(active, ctx, false, true, "restore");
+    const error = await useAgent(active, ctx, true, "restore");
 
     if (error) ctx.ui.notify(error, "warning");
     publish(ctx);
@@ -659,7 +659,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("input", async (event, ctx) => {
     if (!locked) { locked = true; publish(ctx); }
 
-    const error = await useAgent(active, ctx, true, true, false);
+    const error = await useAgent(active, ctx, true, false);
 
     if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error");
 
@@ -673,6 +673,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const agent = currentAgent();
 
     if (!agent) return;
+
+    if (agent.codemode === false) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
     configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, desktopList(pi, "explicitOnlySkills"));
   });
   pi.registerCommand("pi-define-agents-use", {
@@ -709,9 +711,9 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const previousSkills = currentSkillPaths();
     active = name; snapshot = undefined; modelOverride = undefined; effortOverride = undefined; fastModeOverride = undefined;
     const skillsChanged = JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths());
-    const activationError = await useAgent(active, ctx, false, false);
+    const activationError = await useAgent(active, ctx, false);
 
-    if (activationError) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; fastModeOverride = previousFastMode; await useAgent(active, ctx, false, false); throw new Error(activationError); }
+    if (activationError) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; fastModeOverride = previousFastMode; await useAgent(active, ctx, false); throw new Error(activationError); }
 
     saveState();
 
@@ -722,29 +724,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
     description: "Update agent definitions", handler: async (args, ctx) => {
       const supplied = decode(Type.Object({ agents: Type.Optional(Type.Array(agentSchema)) }), args.trim());
       const next = normalize({ ...supplied, webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
+
+      for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
       await writeConfig(next);
 
       if (!daemonDefinitions) config = next;
       publish(ctx);
     }
 });
-}
-
-async function readDaemonDefinitions(): Promise<{ config: Config; prompts: Record<string, string> } | undefined> {
-  const broker = process.env.PI_DESKTOP_BROKER_URL;
-
-  if (!broker) return undefined;
-
-  const response = await fetch(`${broker}/agent-definitions`, {
-    headers: { Authorization: `Bearer ${process.env.PI_DESKTOP_BROKER_TOKEN || ""}` },
-    signal: AbortSignal.timeout(30_000),
-  });
-
-  if (!response.ok) throw new Error(`Could not read daemon agent definitions: HTTP ${response.status}`);
-  const result = await response.json();
-  const schema = Type.Object({ data: Type.Object({ config: Type.Object({ agents: Type.Array(agentSchema) }), prompts: Type.Record(Type.String(), Type.String()) }) });
-
-  if (!Check(schema, result)) throw new Error("Invalid daemon agent definitions");
-
-  return result.data;
 }

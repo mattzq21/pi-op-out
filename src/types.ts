@@ -50,7 +50,7 @@ export interface ExtensionUiResponse { cancelled?: boolean; confirmed?: boolean;
 
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; thinkingLevelMap?: Record<string, JSONType>; contextWindow?: number; input?: ("text" | "image")[]; }
 
-export interface AgentProfile { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServer[]; }
+export interface AgentProfile { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServers; }
 
 export interface AgentConfig { agents: AgentProfile[]; fastModeModels?: string[]; }
 
@@ -68,7 +68,7 @@ export interface ToolConfig { name: string; description: string; enabled: boolea
 
 export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean; }
 
-export interface McpServer { id: string; name: string; transport?: "stdio" | "http"; command: string; args: string; url?: string; headers?: string; enabled: boolean; startupTimeoutSec?: number; injectAgentId?: boolean; status?: "starting" | "connected" | "stopped" | "error"; error?: string; }
+export type McpServers = import("zod").infer<typeof import("./lib/agentSchemas").mcpServersSchema>;
 
 export interface RemoteHost { enabled?: boolean; id: string; name: string; target: string; piPath: string; }
 

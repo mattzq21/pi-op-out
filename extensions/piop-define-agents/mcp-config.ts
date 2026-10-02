@@ -1,57 +1,93 @@
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
+import type { McpServerConfig } from "@earendil-works/pi-coding-agent";
 
-export type McpServer = { id: string; name: string; transport?: "stdio" | "http"; command?: string; args?: string; url?: string; headers?: string | Record<string, string>; enabled: boolean; startupTimeoutSec?: number; injectAgentId?: boolean };
+export type AgentMcpServerConfig = McpServerConfig & { piopInjectAgentId?: boolean };
 
-function validateIdentity(item: McpServer, ids: Set<string>) {
-  if (!Check(Type.Object({ id: Type.String() }), item) || !item.id.trim() || ids.has(item.id)) throw new Error("Each agent MCP server requires a unique id");
-  ids.add(item.id);
+export type McpServers = Record<string, AgentMcpServerConfig>;
 
-  if (!Check(Type.String(), item.name) || !item.name.trim()) throw new Error("MCP server name is required");
+export const nativeMcpSchema = Type.Record(Type.String(), Type.Unsafe<AgentMcpServerConfig>({ type: "object" }));
+
+export const legacyMcpSchema = Type.Array(Type.Object({
+  id: Type.String(), name: Type.String(), enabled: Type.Optional(Type.Boolean()),
+  transport: Type.Optional(Type.String()), command: Type.Optional(Type.String()), args: Type.Optional(Type.String()),
+  url: Type.Optional(Type.String()), headers: Type.Optional(Type.Union([Type.String(), Type.Record(Type.String(), Type.String())])),
+  startupTimeoutSec: Type.Optional(Type.Number()), injectAgentId: Type.Optional(Type.Boolean()),
+}));
+
+export type LegacyMcpServer = Static<typeof legacyMcpSchema>[number];
+
+function splitArgs(input = ""): string[] {
+  const result: string[] = [];
+  let current = ""; let quote: string | undefined; let escaped = false; let present = false;
+
+  const consume = (char: string) => {
+    if (escaped) { current += char; escaped = false; present = true;
+
+    return; }
+
+    if (char === "\\" && quote !== "'") { escaped = true; present = true;
+
+    return; }
+
+    if (quote) { if (char === quote) quote = undefined; else current += char;
+
+    return; }
+
+    if (char === "'" || char === '"') { quote = char; present = true;
+
+    return; }
+
+    if (/\s/.test(char)) { if (present) result.push(current); current = ""; present = false;
+
+    return; }
+
+    current += char; present = true;
+  };
+
+  for (const char of input) consume(char);
+
+  if (quote) throw new Error("Unterminated quote in legacy MCP arguments");
+
+  if (escaped) current += "\\";
+
+  if (present) result.push(current);
+
+  return result;
 }
 
-function validateOptions(item: McpServer) {
-  if (item.enabled !== undefined && !Check(Type.Boolean(), item.enabled)) throw new Error(`${item.name}: enabled must be a boolean`);
+function legacyHeaders(server: LegacyMcpServer) {
+  const headers = Check(Type.String(), server.headers) ? JSON.parse(server.headers || "{}") : server.headers ?? {};
 
-  if (item.injectAgentId !== undefined && !Check(Type.Boolean(), item.injectAgentId)) throw new Error(`${item.name}: injectAgentId must be a boolean`);
+  if (!Check(Type.Record(Type.String(), Type.String()), headers)) throw new Error(`${server.name}: headers must contain string values`);
 
-  if (item.startupTimeoutSec !== undefined && (!Number.isInteger(item.startupTimeoutSec) || item.startupTimeoutSec < 1 || item.startupTimeoutSec > 600)) throw new Error(`${item.name}: startup timeout must be between 1 and 600 seconds`);
+  return headers;
 }
 
-function validateStdio(item: McpServer) {
-  if (!Check(Type.String(), item.command) || !item.command.trim()) throw new Error(`${item.name}: command is required`);
+function legacyConfig(server: LegacyMcpServer): AgentMcpServerConfig {
+  const options: Pick<AgentMcpServerConfig, "enabled" | "description" | "exposure" | "timeout" | "piopInjectAgentId"> = { enabled: server.enabled ?? true, description: server.name, exposure: "direct", timeout: 120 };
 
-  if (item.args !== undefined && !Check(Type.String(), item.args)) throw new Error(`${item.name}: arguments must be a string`);
+  if (server.injectAgentId) options.piopInjectAgentId = true;
+
+  if (server.transport === "http") return { ...options, url: server.url ?? "", headers: legacyHeaders(server) };
+
+  if (server.transport !== undefined && server.transport !== "stdio") throw new Error(`${server.name}: unsupported MCP transport`);
+
+  return { ...options, command: server.command ?? "", args: splitArgs(server.args) };
 }
 
-function validateHttp(item: McpServer) {
-  const url = new URL(item.url ?? "");
+export function mcpServers(value: McpServers | LegacyMcpServer[] | undefined) {
+  if (value === undefined) return {};
 
-  if (!["http:", "https:"].includes(url.protocol)) throw new Error(`${item.name}: URL must use HTTP or HTTPS`);
-  const headers = Check(Type.String(), item.headers) ? JSON.parse(item.headers || "{}") : item.headers ?? {};
+  if (Check(nativeMcpSchema, value)) return structuredClone(value);
 
-  if (!Check(Type.Record(Type.String(), Type.String()), headers)) throw new Error(`${item.name}: headers must contain string values`);
-}
+  if (!Check(legacyMcpSchema, value)) throw new Error("MCP servers must be an object mapping server names to pi MCP configurations");
+  const servers = new Map<string, AgentMcpServerConfig>();
 
-function normalizedServer(item: McpServer, transport: "stdio" | "http"): McpServer {
-  return { id: item.id, name: item.name, transport, command: item.command ?? "", args: item.args ?? "", url: item.url, headers: Check(Type.Record(Type.String(), Type.Unknown()), item.headers) ? JSON.stringify(item.headers) : item.headers, enabled: item.enabled ?? true, startupTimeoutSec: item.startupTimeoutSec, injectAgentId: item.injectAgentId };
-}
+  for (const server of value) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(server.id) || servers.has(server.id)) throw new Error(`Invalid or duplicate MCP server name: ${server.id}`);
+    servers.set(server.id, legacyConfig(server));
+  }
 
-export function mcpServers(value: McpServer[] | undefined): McpServer[] {
-  if (value === undefined) return [];
-
-  if (!Array.isArray(value) || value.length > 32) throw new Error("An agent may define at most 32 MCP servers");
-  const ids = new Set<string>();
-
-  return value.map((item) => {
-    validateIdentity(item, ids);
-    validateOptions(item);
-    const transport = item.transport ?? "stdio";
-
-    if (transport === "stdio") validateStdio(item);
-    else if (transport === "http") validateHttp(item);
-    else throw new Error(`${item.name}: unsupported MCP transport`);
-
-    return normalizedServer(item, transport);
-  });
+  return Object.fromEntries(servers);
 }
