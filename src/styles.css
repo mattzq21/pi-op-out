@@ -403,7 +403,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
    does not reliably recolor selects in every desktop webview. */
 .app.dark .select-control,
 .app.dark .composer,
-.app.dark .session-item.active,
 .app.dark .conversation-menu,
 .app.dark .command-palette,
 .app.dark .composer-picker-menu,
@@ -431,8 +430,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .app.dark .search { border-color: var(--line); background: #1a1a18; }
 .app.dark kbd { border-color: var(--line); background: var(--dark-control); color: var(--muted); }
-.app.dark .session-item:hover { background: #ffffff09; }
-.app.dark .session-item.active { box-shadow: 0 1px 2px #0005; }
+.app.dark .session-item.active { border-color: var(--line); background-color: var(--dark-control); color: var(--ink); box-shadow: 0 1px 2px #0005; }
+.app.dark .session-item:hover { background-color: #ffffff09; }
 .app.dark .conversation-menu button:hover,
 .app.dark .command-palette button:hover,
 .app.dark .composer-picker-menu button:hover,
