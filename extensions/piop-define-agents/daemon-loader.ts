@@ -76,13 +76,14 @@ const validateModel = config.agents.some(agent => agent.model.trim() || agent.fa
 
 for (const agent of config.agents) {
   validateEffort(agent.name, agent.effort);
-  await validateModel?.(agent, settings.defaultModel ?? "");
   let extensionTools: string[] = [];
 
   if (validateExtensions) {
     try { extensionTools = await validateExtensions(extensionPaths(agent.extensions), dirname(configPath)); }
     catch (error) { throw new Error(`Agent "${agent.name}" cannot load its extensions: ${error instanceof Error ? error.message : String(error)}`); }
   }
+
+  await validateModel?.(agent, settings.defaultModel ?? "");
 
   const allowedTools = new Set([...settings.tools, ...extensionTools]);
   const denied = agent.tools.filter(tool => !allowedTools.has(tool));

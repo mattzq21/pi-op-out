@@ -28,6 +28,17 @@ async function configuredFastTargets(agentDir: string) {
   return targets;
 }
 
+function configuredModel(registry: ModelRegistry, agent: Agent, name: string) {
+  const [provider, ...parts] = name.split("/");
+  const model = registry.find(provider, parts.join("/"));
+
+  if (!model && name && agent.extensions?.length) return;
+
+  if (!model) throw new Error(`Agent "${agent.name}" cannot run because model ${name || "(unset)"} is unavailable`);
+
+  return model;
+}
+
 export async function modelValidator() {
   const directory = await piDirectory();
   const { ModelRuntime: Runtime } = await import(pathToFileURL(join(directory, "dist/core/model-runtime.js")).href);
@@ -46,10 +57,9 @@ export async function modelValidator() {
     const name = agent.model.trim() || (agent.fastMode ? defaultModel.trim() : "");
 
     if (!name && !agent.fastMode) return;
-    const [provider, ...parts] = name.split("/");
-    const model = registry.find(provider, parts.join("/"));
+    const model = configuredModel(registry, agent, name);
 
-    if (!model) throw new Error(`Agent "${agent.name}" cannot run because model ${name || "(unset)"} is unavailable`);
+    if (!model) return;
 
     if (!agent.fastMode) return;
     let unknown = false;
