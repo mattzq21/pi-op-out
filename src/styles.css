@@ -88,6 +88,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .session-tooltip svg { flex-shrink: 0; color: #aaa69d; }
 .session-tooltip > span > span { overflow-wrap: anywhere; min-width: 0; }
 .session-title-row { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+.session-directory-icon { flex-shrink: 0; align-self: center; }
 .session-copy strong { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 600; }
 .session-api-cost { display: none; flex: 0 0 auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
 .session-item:hover .session-api-cost, .session-item:focus-within .session-api-cost { display: inline; }
