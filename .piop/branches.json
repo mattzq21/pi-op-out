@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "branches": {
-    "main": { "letter": "X", "color": "#ef4444" },
-    "dev": { "letter": "D", "color": "#22c55e" },
-    "experimental": { "letter": "E", "color": "#eab308" }
-  }
-}
