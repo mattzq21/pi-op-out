@@ -43,7 +43,7 @@ pub(super) fn custom_config(request: &Value) -> Result<Value> {
         config["authHeader"] = json!(false);
     }
     if flag(request, "sessionAffinity") {
-        config["compat"] = json!({"sessionAffinityFormat":"openai"});
+        config["compat"] = json!({"sessionAffinityFormat":"openai","sendSessionAffinityHeaders":true});
     }
     Ok(config)
 }
