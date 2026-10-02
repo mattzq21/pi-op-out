@@ -303,7 +303,32 @@ function turnPromptContexts(messages: ChatMessage[]) {
   return contexts;
 }
 
+function associateQueuedContext(messages: ChatMessage[]) {
+  const contexts = new Map<number, ChatMessage[]>();
+
+  for (const message of messages) {
+    if (message.contextUserTimestamp === undefined) continue;
+    const matching = contexts.get(message.contextUserTimestamp) ?? [];
+    matching.push(message);
+    contexts.set(message.contextUserTimestamp, matching);
+  }
+
+  if (!contexts.size) return messages;
+
+  return messages.flatMap(message => {
+    if (message.contextUserTimestamp !== undefined) return [];
+    if (message.role !== "user" || message.timestamp === undefined) return [message];
+    const matching = contexts.get(message.timestamp);
+
+    if (!matching) return [message];
+    contexts.delete(message.timestamp);
+
+    return [message, ...matching];
+  });
+}
+
 function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
+  messages = associateQueuedContext(messages);
   const prefix = reusableTurns(messages, previous);
 
   if (prefix.start === messages.length && prefix.count === previous.length) return previous;

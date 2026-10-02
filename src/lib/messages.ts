@@ -154,7 +154,7 @@ export function appendQueuedProjectContext(messages: ChatMessage[], entry: PiEnt
 
   if (!context.success) return messages;
   const result = inPlace ? messages : messages.slice();
-  result.push(normalizeMessage({ role: "custom", customType: "pi-project-files-watch", ...context.data }, entry.id));
+  result.push({ ...normalizeMessage({ role: "custom", customType: "pi-project-files-watch", ...context.data }, entry.id), contextUserTimestamp: context.data.timestamp });
 
   return result;
 }

@@ -24,7 +24,7 @@ export interface HostStorage { hostId: string; hostName: string; categories: Sto
 
 export interface StorageReport { hosts: HostStorage[]; }
 
-export interface ChatMessage { contextCheckpoint?: boolean; }
+export interface ChatMessage { contextCheckpoint?: boolean; contextUserTimestamp?: number; }
 
 export interface ContextUsage { tokens: number | null; contextWindow: number; percent: number | null; }
 
