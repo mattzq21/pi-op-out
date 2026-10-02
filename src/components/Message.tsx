@@ -1,6 +1,7 @@
 import { z, type JSONType } from "zod";
 import { required } from "../lib/required";
 import { ReviewLink } from "./ReviewLink";
+import { HtmlPreview } from "./HtmlPreview";
 import { Key } from "@solid-primitives/keyed";
 import { type Accessor, createMemo, createSignal, Index } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
@@ -242,5 +243,5 @@ export function Message(componentProps: Props) {
     </article>);
   };
 
-  return <>{componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : componentProps.message.customType === "piop-review-link" ? <ReviewLink details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
+  return <>{componentProps.message.customType === "piop-html-preview" ? <HtmlPreview details={componentProps.message.details} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : componentProps.message.customType === "piop-review-link" ? <ReviewLink details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
 }

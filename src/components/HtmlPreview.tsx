@@ -1,0 +1,32 @@
+import { createMemo, Show } from "solid-js";
+import { z } from "zod";
+import { isMobile } from "../lib/platform";
+import "./html-preview.css";
+
+const previewSchema = z.object({ version: z.literal(1), html: z.string().min(1).max(512_000), title: z.string().min(1).max(120) });
+
+const policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+
+export function HtmlPreview(props: { details: unknown }) {
+  const preview = createMemo(() => previewSchema.safeParse(props.details));
+
+  const value = () => { const result = preview();
+
+  return result.success ? result.data : undefined; };
+
+  const document = createMemo(() => {
+    const preview = value();
+
+    if (isMobile || !preview) return undefined;
+
+    return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="referrer" content="no-referrer"><style>html,body{margin:0;min-height:100%;}body{background:white;color:black;}</style></head><body>${preview.html}</body></html>`;
+  });
+
+  return <Show when={value()} fallback={<p class="html-preview-error" role="status">HTML preview is unavailable.</p>}>{preview =>
+    <Show when={!isMobile} fallback={<div class="html-preview-placeholder" role="img" aria-label={`${preview().title}; available on desktop`}><strong>{preview().title}</strong><span>HTML preview · View on desktop</span></div>}>
+      <div class="html-preview" role="region" aria-label={preview().title} tabindex="0">
+        <iframe class="html-preview-frame" title={preview().title} width="720" height="720" sandbox="allow-scripts" referrerpolicy="no-referrer" srcdoc={document()} />
+      </div>
+    </Show>
+  }</Show>;
+}

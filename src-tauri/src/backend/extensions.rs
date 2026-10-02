@@ -42,7 +42,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 20] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 21] = [
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
     ("pause.ts", include_str!("../../resources/session-broker/pause.ts")),
@@ -56,6 +56,7 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 20] = [
     ("subagent-mailbox.ts", include_str!("../../resources/session-broker/subagent-mailbox.ts")),
     ("operations.ts", include_str!("../../resources/session-broker/operations.ts")),
     ("tools.ts", include_str!("../../resources/session-broker/tools.ts")),
+    ("html-preview.ts", include_str!("../../resources/session-broker/html-preview.ts")),
     ("goals.ts", include_str!("../../resources/session-broker/goals.ts")),
     ("review.ts", include_str!("../../resources/session-broker/review.ts")),
     ("goal-state.ts", include_str!("../../resources/session-broker/goal-state.ts")),
