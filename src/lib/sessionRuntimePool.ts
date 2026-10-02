@@ -212,7 +212,7 @@ export class SessionRuntimePool {
   create(target?: NativeConnectionTarget) {
     const transport = new NativeTransport(target); this.transports.add(transport);
 
-    if (transport.currentSessionPath()) void this.loadSavedDiffs(transport, required(transport.currentSessionPath()));
+    if (!target?.sessionId && transport.currentSessionPath()) void this.loadSavedDiffs(transport, required(transport.currentSessionPath()));
     transport.subscribe((event) => {
       this.retainMcpSession(transport, event);
       this.retainUserSession(transport, event);
