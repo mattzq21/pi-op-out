@@ -4,6 +4,10 @@ import { fileChangesSchema, pauseStateSchema, promptContextSchema, resumeContent
 
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up", "piop-review-link", "piop-html-preview"]);
 
+export function isContextInjection(message: { role?: string; customType?: string }) {
+  return message.role === "custom" && !SYSTEM_MESSAGES.has(message.customType ?? "") && !["pi-desktop-btw", "piop-subagent-result"].includes(message.customType ?? "");
+}
+
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
 
 const entryIdentitySchema = z.object({ id: z.string() });
@@ -145,6 +149,13 @@ function appendPromptContext(messages: ChatMessage[], entry: PiEntry) {
 }
 
 function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers: Set<string>) {
+  if (entry.customType === "piop-queued-project-context") {
+    const context = z.object({ timestamp: z.number(), content: z.string() }).safeParse(entry.data);
+
+    if (context.success) messages.push(normalizeMessage({ role: "custom", customType: "pi-project-files-watch", ...context.data }, entry.id));
+
+    return messages;
+  }
   if (entry.customType === "piop-file-changes") return appendFileChanges(messages, entry, true);
   const marker = resumeMarker(entry);
 
@@ -172,14 +183,14 @@ function compactionMessage(entry: PiEntry): ChatMessage {
 function visibleEntryMessage(entry: PiEntry, resumeMarkers: Set<string>): ChatMessage | undefined {
   if (entry.type === "compaction") return compactionMessage(entry);
 
-  if (entry.type === "custom_message" && entry.customType !== "pi-desktop-btw" && entry.display !== false) {
+  if (entry.type === "custom_message" && entry.customType !== "pi-desktop-btw" && (entry.display !== false || isContextInjection({ role: "custom", customType: entry.customType }))) {
     return normalizeMessage({ role: "custom", customType: entry.customType, details: entry.details, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp);
   }
 
   if (entry.type !== "message" || !entry.message || isResumeMessage(entry.message, resumeMarkers)) return undefined;
   const message = normalizeMessage(entry.message, entry.id, entry.timestamp);
 
-  return (["user", "assistant", "tool"] satisfies string[]).includes(message.role) ? message : undefined;
+  return (["user", "assistant", "tool"] satisfies string[]).includes(message.role) || isContextInjection(message) ? message : undefined;
 }
 
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {

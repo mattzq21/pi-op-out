@@ -8,7 +8,7 @@ import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../
 import { chatSessionEventSchema, pendingMessagesSchema, type ChatSessionEvent } from "./chatSessionEventSchema";
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 import { contextUsageAfterCompaction } from "./contextUsage";
-import { appendFileChanges, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
+import { appendFileChanges, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
 
@@ -369,7 +369,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
       if (isResumeMessage(rawMessage, resumeMarkers.current)) return;
 
-      if (rawMessage.role === "custom" && rawMessage.display === false) return;
+      if (rawMessage.role === "custom" && rawMessage.display === false && !isContextInjection(rawMessage)) return;
       const liveId = messageLiveId(rawMessage, roleKey);
 
       if (event.type === "message_start") trackLiveId(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
