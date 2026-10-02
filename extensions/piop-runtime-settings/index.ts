@@ -240,7 +240,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
       }
     },
   });
-  pi.registerCommand("piop-provider-auth-refresh", {
+  pi.registerCommand("pi-orchestration-provider-auth-refresh", {
     description: "Refresh models after a host provider login changes",
     handler: async (args, ctx) => {
       const request = Parse(idSchema, JSON.parse(args));
