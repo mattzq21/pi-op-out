@@ -46,6 +46,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .session-scroll { overflow: auto; padding: 2px 8px 14px; flex: 1; }
 .project { margin: 8px 0 17px; }
 .project-children { padding-left: 18px; }
+.project-children > .project { margin-block: 0; }
 .project-children > .session-item > .session-main { padding-left: 27px; }
 .project-children > .session-item .session-leading-icon { margin-left: -21px; }
 .project-children > .session-item .session-title-row > strong:first-child { margin-left: -21px; }
