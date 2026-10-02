@@ -1,9 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { writeSessionFile } from "./session-file.ts";
 import type { SessionAgentState, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type as Schema, type Static } from "typebox";
@@ -17,13 +18,20 @@ const fileErrorSchema = Schema.Object({ code: Schema.String() });
 
 type ReviewRecord = Static<typeof reviewSchema>;
 
-interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[] }
+const feedbackSchema = Schema.Object({ sessionId: Schema.String(), message: Schema.String({ minLength: 1 }) });
 
-declare module "@earendil-works/pi-coding-agent" {
-  interface EventBus {
-    on(channel: "piop:required-tools", handler: (request: RequiredToolsRequest) => void): () => void;
-    emit(channel: "piop:required-tools", request: RequiredToolsRequest): void;
-  }
+const feedbackDetailsSchema = Schema.Object({ toolCallId: Schema.String() });
+
+const runFile = promisify(execFile);
+
+async function requireReviewRepository(cwd: string) {
+  try {
+    const { stdout } = await runFile("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], { timeout: 5000 });
+
+    if (stdout.trim() === "true") return;
+  } catch { }
+
+  throw new Error("/review is only available in Git repository projects");
 }
 
 async function createReview(ctx: ExtensionContext, agentState: SessionAgentState): Promise<ReviewRecord> {
@@ -51,43 +59,6 @@ function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string) 
   }).finally(() => ctx.ui.setStatus("review", undefined));
 }
 
-function registerReviewMessaging(pi: ExtensionAPI) {
-  let reviewerId: string | undefined;
-  const isReviewer = (ctx: ExtensionContext) => reviewerId === ctx.sessionManager.getSessionId();
-
-  const stop = pi.events.on("piop:required-tools", request => {
-    if (isReviewer(request.ctx)) request.tools.push("message_main_chat");
-  });
-
-  pi.on("session_shutdown", stop);
-  pi.on("session_start", () => { reviewerId = undefined; });
-  pi.registerCommand("pi-orchestration-review-init", {
-    description: "Initialize reviewer tools",
-    handler: async (_args, ctx) => {
-      if (!ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-review-parent")) throw new Error("Reviewer tools require a saved review session");
-      reviewerId = ctx.sessionManager.getSessionId();
-      pi.setActiveTools([...new Set([...pi.getActiveTools(), "message_main_chat"])]);
-    },
-  });
-  pi.registerTool({
-    name: "message_main_chat", label: "Message main chat",
-    description: "Send review findings or a question to the main chat that opened this reviewer. Queues the message if the main agent is busy. Returns after delivery without waiting for a reply.",
-    parameters: Type.Object({ message: Type.String({ minLength: 1 }) }),
-    async execute(_id, params, signal, _update, ctx) {
-      signal?.throwIfAborted();
-
-      if (!isReviewer(ctx)) throw new Error("This tool is only available to the reviewer");
-
-      if (!params.message.trim()) throw new Error("A message is required");
-      const result = await ctx.ui.input("__piop_review_message_main__", JSON.stringify({ message: params.message }), { signal });
-
-      if (result !== "delivered") throw new Error(result || "Message delivery cancelled");
-
-      return { content: [{ type: "text", text: "Message delivered to the main chat." }], details: {} };
-    },
-  });
-}
-
 async function reviewSettings() {
   let settings: Static<typeof settingsSchema> = {};
 
@@ -103,7 +74,25 @@ async function reviewSettings() {
 }
 
 export function registerReview(pi: ExtensionAPI) {
-  registerReviewMessaging(pi);
+  pi.registerCommand("pi-orchestration-review-feedback", {
+    description: "Deliver feedback selected in the review pane",
+    handler: async (args, ctx) => {
+      const feedback = Parse(feedbackSchema, JSON.parse(args));
+      const review = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.sessionId === feedback.sessionId && entry.data.parentSessionId === ctx.sessionManager.getSessionId());
+
+      if (!review || !feedback.message.trim()) throw new Error("Feedback requires a review belonging to this conversation");
+      pi.sendMessage({ customType: "piop-review-feedback", content: feedback.message, display: true, details: { sessionId: feedback.sessionId, toolCallId: randomUUID() } }, { triggerTurn: true, deliverAs: "followUp" });
+    },
+  });
+  pi.on("context", event => ({ messages: event.messages.flatMap((message): typeof event.messages => {
+    if (message.role !== "custom" || message.customType !== "piop-review-feedback" || !Check(feedbackDetailsSchema, message.details)) return [message];
+    const toolCallId = message.details.toolCallId;
+
+    return [
+      { role: "assistant", content: [{ type: "toolCall", id: toolCallId, name: "review_feedback", arguments: {} }], api: "openai-responses", provider: "piop", model: "review", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: message.timestamp },
+      { role: "toolResult", toolCallId, toolName: "review_feedback", content: [{ type: "text", text: Parse(Schema.String(), message.content) }], isError: false, timestamp: message.timestamp },
+    ];
+  }) }));
   pi.registerCommand("review", {
     description: "Review this branch against its base in a side pane",
     handler: async (args, ctx) => {
@@ -111,6 +100,7 @@ export function registerReview(pi: ExtensionAPI) {
 
       return; }
 
+      await requireReviewRepository(ctx.cwd);
       const settings = await reviewSettings();
       const profile: SubagentProfileRequest = { agent: settings.agent };
       pi.events.emit("piop:agents:subagent", profile);

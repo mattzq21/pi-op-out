@@ -11,11 +11,10 @@
   "pi-desktop-fast-status",
   "pi-desktop-fork-after",
   "pi-desktop-fork-and-forget",
-  "pi-orchestration-review-init",
+  "pi-orchestration-provider-auth-refresh",
+  "pi-orchestration-review-feedback",
   "pi-orchestration-review-open",
   "piop-answer-question",
-  "piop-provider-auth-refresh",
   "piop-runtime-settings",
-  "remove-worktree",
   "review"
 ]

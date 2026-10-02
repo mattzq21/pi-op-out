@@ -642,7 +642,7 @@ export function createAppConversations(preloadChat: () => void) {
     return { agents: (definedAgents()?.config.agents ?? []), activeAgent: composerControls.agent(definedAgents()?.active), agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
 
   const chatModels = createMemo(() => chatSession().models.filter(model => !settings()?.hiddenModels.includes(`${model.provider}/${model.id}`)));
-  const chatCommands = createMemo<SlashCommand[]>(() => chatSession().commands);
+  const chatCommands = createMemo<SlashCommand[]>(() => chatSession().commands.filter(command => command.name !== "review" || Boolean(projectCwd() && isGitRepository())));
   const chatWidgets = createMemo(() => extensionStateIsCurrent() ? Object.values(widgets()).flat() : []);
   const dirlessPending = new Set<string>();
   const [missingDirectoryDialog, setMissingDirectoryDialog] = createSignal<MissingDirectoryRequest>();

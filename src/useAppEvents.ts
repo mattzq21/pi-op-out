@@ -140,7 +140,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
                   const parent = capturedOptions.transport;
 
                   if (parent.connectionTarget().sessionId !== payload.parentSessionId) throw new Error("The original main conversation is no longer connected");
-                  await parent.command({ type: "prompt", message: `[Message from code review]\n${message}`, streamingBehavior: "followUp" });
+                  await parent.command({ type: "prompt", message: `/pi-orchestration-review-feedback ${JSON.stringify({ sessionId: payload.sessionId, message })}` });
                 } },
             });
             capturedOptions.reviewImages.delete(capturedOptions.transport);

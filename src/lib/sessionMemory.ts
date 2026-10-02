@@ -225,6 +225,8 @@ export class SessionMemory {
   }
 
   private decorateMessage(message: ChatMessage): ChatMessage {
+    if (message.customType === "piop-review-feedback") return message;
+
     if (message.role !== "tool") return stripToolArguments(message);
     const id = message.deferredToolPayload ?? message.toolCallId ?? message.id;
     const loadToolPayload = message.loadToolPayload ?? (() => this.loadToolPayload(id));
