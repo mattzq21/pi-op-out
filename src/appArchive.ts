@@ -4,6 +4,7 @@ import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import { createRef, type RefObject } from "./lib/solid";
 import type { useChatSession } from "./lib/useChatSession";
 import type { SessionSummary } from "./types";
+import { isTemporaryChatCwd } from "./lib/sessionGroups";
 
 type ArchiveContext = {
   runtimePool: Accessor<SessionRuntimePool>;
@@ -79,7 +80,7 @@ export function createConversationArchive(context: ArchiveContext) {
     addNotice({ title: "Could not archive conversation", message: cause instanceof Error ? cause.message : String(cause) }); };
 
     const connectArchiveReplacement = async (hostId: string, conversationKey: string) => {
-      if (ownerTransport.isTemporaryChat()) {
+      if (ownerTransport.isTemporaryChat() || isTemporaryChatCwd(session.cwd)) {
         const nextTransport = capturedRuntimePool.create({ hostId }); transportConversationKeys.current.set(nextTransport, conversationKey);
 
         try {
