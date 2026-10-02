@@ -1,6 +1,7 @@
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { McpServerConfig } from "@earendil-works/pi-coding-agent";
+import { mcpServersSchema } from "./mcp-schema.ts";
 
 export type AgentMcpServerConfig = McpServerConfig & { piopInjectAgentId?: boolean };
 
@@ -76,10 +77,16 @@ function legacyConfig(server: LegacyMcpServer): AgentMcpServerConfig {
   return { ...options, command: server.command ?? "", args: splitArgs(server.args) };
 }
 
+function validatedServers(servers: McpServers): McpServers {
+  mcpServersSchema.parse(servers);
+
+  return structuredClone(servers);
+}
+
 export function mcpServers(value: McpServers | LegacyMcpServer[] | undefined) {
   if (value === undefined) return {};
 
-  if (Check(nativeMcpSchema, value)) return structuredClone(value);
+  if (Check(nativeMcpSchema, value)) return validatedServers(value);
 
   if (!Check(legacyMcpSchema, value)) throw new Error("MCP servers must be an object mapping server names to pi MCP configurations");
   const servers = new Map<string, AgentMcpServerConfig>();
@@ -89,5 +96,5 @@ export function mcpServers(value: McpServers | LegacyMcpServer[] | undefined) {
     servers.set(server.id, legacyConfig(server));
   }
 
-  return Object.fromEntries(servers);
+  return validatedServers(Object.fromEntries(servers));
 }
