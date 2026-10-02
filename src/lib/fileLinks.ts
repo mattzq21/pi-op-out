@@ -7,7 +7,6 @@ function fileButton(path: string, label: string) {
   button.type = "button";
   button.className = "file-link";
   button.dataset.fileReference = path;
-  button.title = `Open ${path} in Files`;
   button.textContent = label;
 
   return button;
@@ -20,7 +19,6 @@ function referenceLink(value: string) {
   const link = document.createElement("a");
   link.className = "message-link";
   link.href = url;
-  link.title = `Click to open in browser\n${url}`;
   link.textContent = value;
 
   return link;

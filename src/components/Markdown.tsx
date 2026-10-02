@@ -26,7 +26,7 @@ const parser = new Marked({
       const text = this.parser.parseInline(tokens);
       const url = webUrl(href);
 
-      return url ? `<a class="message-link" href="${escapeHtml(url)}" title="Click to open in browser&#10;${escapeHtml(url)}">${text}</a>` : `<span class="message-link"${fileReference(href) ? ` data-file-reference="${escapeHtml(href)}"` : ""} title="${escapeHtml(href)}">${text}</span>`;
+      return url ? `<a class="message-link" href="${escapeHtml(url)}">${text}</a>` : `<span class="message-link"${fileReference(href) ? ` data-file-reference="${escapeHtml(href)}"` : ""}>${text}</span>`;
     },
     code({ text, lang, raw }) {
       const language = lang?.split(/\s/)[0];
