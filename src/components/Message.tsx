@@ -161,12 +161,13 @@ export function Message(componentProps: Props) {
   const UserMessage = () => {
     const parts = createMemo(() => userMessageParts(textOf(componentProps.message.content)));
     const sentTime = createMemo(() => formatMessageTime(componentProps.message.timestamp));
+    const images = createMemo(() => Array.isArray(componentProps.message.content) ? componentProps.message.content.flatMap(part => part.type === "image" && part.data && part.mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part.mimeType) ? [part] : []) : []);
 
     return <article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
-      <div class="message-body">
-      {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.flatMap(part => part.type === "image" ? [part] : [])}>{(part, _index) => part().type === "image" && part().data && part().mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType) ? <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" /> : null}</Index>}
+      {images().length > 0 && <div class="user-message-images"><Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
+      {(parts().text || parts().skills.length > 0) && <div class="message-body">
       {<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}
-      </div>
+      </div>}
       <div class="message-actions">
         {sentTime() && <span class="message-time">{required(sentTime()).short}</span>}
         <MessageCopyButton state={copyState()} copy={copy} />
