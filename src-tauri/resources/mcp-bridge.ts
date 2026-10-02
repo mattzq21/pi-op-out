@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
+import type { TSchema } from "typebox";
 import { createMcpExtension, type BeforeAgentStartEvent, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type InputEvent, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
-type Selection = { servers: Record<string, McpServerConfig>; agentName: string; sessionId: string; registered?: Promise<string[]> };
+type Selection = { servers: Record<string, McpServerConfig & { piopInjectAgentId?: boolean }>; agentName: string; sessionId: string; registered?: Promise<string[]> };
 
 type ToolRequest = { tools?: string[]; availableTools?: string[] };
 
@@ -14,8 +17,26 @@ declare module "@earendil-works/pi-coding-agent" {
   }
 }
 
+function withAgentIdentity<TParams extends TSchema, TDetails, TState>(tool: ToolDefinition<TParams, TDetails, TState>, instance: string | undefined): ToolDefinition<TParams, TDetails, TState> {
+  const schema = z.object({ properties: z.record(z.string(), z.json()), required: z.array(z.string()).optional() }).safeParse(tool.parameters);
+
+  if (!instance || !schema.success || !z.object({ type: z.literal("string") }).safeParse(schema.data.properties.agent_id).success) return tool;
+  const parameters: TParams = { ...tool.parameters, properties: Object.fromEntries(Object.entries(schema.data.properties).filter(([key]) => key !== "agent_id")) };
+
+  if (schema.data.required) Object.assign(parameters, { required: schema.data.required.filter(key => key !== "agent_id") });
+
+  return {
+    ...tool,
+    parameters,
+    execute(id, params, signal, onUpdate, ctx) {
+      return tool.execute(id, Object.assign({}, params, { agent_id: instance }), signal, onUpdate, ctx);
+    },
+  };
+}
+
 export default function agentMcp(pi: ExtensionAPI) {
   const registrations = new Map<string, string>();
+  const identities = new Map<string, string>();
   const nativeToolNames = new Set<string>();
   let started = false;
   let sessionStart: SessionStartEvent = { type: "session_start", reason: "startup" };
@@ -48,7 +69,7 @@ export default function agentMcp(pi: ExtensionAPI) {
     },
     registerTool(tool) {
       nativeToolNames.add(tool.name);
-      pi.registerTool(tool);
+      pi.registerTool(withAgentIdentity(tool, identities.get(tool.namespace?.name ?? "")));
     },
   });
 
@@ -72,19 +93,25 @@ export default function agentMcp(pi: ExtensionAPI) {
         if (Object.hasOwn(selection.servers, name)) continue;
         pi.unregisterMcpServer(name);
         registrations.delete(name);
+        identities.delete(`mcp__${name.replaceAll("-", "_")}`);
       }
 
       for (const [name, supplied] of Object.entries(selection.servers)) {
-        const config = structuredClone(supplied);
+        const { piopInjectAgentId, ...config } = structuredClone(supplied);
+        const instance = `piop-${createHash("sha256").update(JSON.stringify([selection.sessionId, selection.agentName, name])).digest("hex").slice(0, 32)}`;
+        const namespace = `mcp__${name.replaceAll("-", "_")}`;
+
+        if (piopInjectAgentId) identities.set(namespace, instance); else identities.delete(namespace);
 
         if ("command" in config) {
-          const instance = `piop-${createHash("sha256").update(JSON.stringify([selection.sessionId, selection.agentName, name])).digest("hex").slice(0, 32)}`;
           config.env = { PIOP_CUA_INSTANCE_ID: instance, ...config.env };
         }
 
-        const serialized = JSON.stringify(config);
+        const serialized = JSON.stringify([config, piopInjectAgentId, instance]);
 
         if (registrations.get(name) === serialized) continue;
+
+        if (registrations.has(name)) pi.unregisterMcpServer(name);
         pi.registerMcpServer(name, config);
         registrations.set(name, serialized);
       }

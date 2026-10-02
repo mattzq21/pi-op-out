@@ -7,6 +7,7 @@ export const mcpServerSchema = z.object({
   url: z.string().url().optional(), headers: z.record(z.string(), z.string()).optional(),
   enabled: z.boolean().optional(), timeout: z.number().positive().optional(), description: z.string().optional(),
   exposure: mcpExposure.optional(), toolExposure: z.record(z.string(), mcpExposure).optional(),
+  piopInjectAgentId: z.boolean().optional(),
 }).passthrough().refine(value => Boolean(value.command?.trim() || value.url), "Each MCP server needs a command or URL");
 
 export const mcpServersSchema = z.record(z.string().regex(/^[a-zA-Z0-9_-]+$/, "Use letters, digits, underscores or hyphens for server names"), mcpServerSchema)

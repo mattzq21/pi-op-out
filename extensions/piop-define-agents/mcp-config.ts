@@ -2,9 +2,11 @@ import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { McpServerConfig } from "@earendil-works/pi-coding-agent";
 
-export type McpServers = Record<string, McpServerConfig>;
+export type AgentMcpServerConfig = McpServerConfig & { piopInjectAgentId?: boolean };
 
-export const nativeMcpSchema = Type.Record(Type.String(), Type.Unsafe<McpServerConfig>({ type: "object" }));
+export type McpServers = Record<string, AgentMcpServerConfig>;
+
+export const nativeMcpSchema = Type.Record(Type.String(), Type.Unsafe<AgentMcpServerConfig>({ type: "object" }));
 
 export const legacyMcpSchema = Type.Array(Type.Object({
   id: Type.String(), name: Type.String(), enabled: Type.Boolean(),
@@ -62,11 +64,10 @@ function legacyHeaders(server: LegacyMcpServer) {
   return headers;
 }
 
-function legacyConfig(server: LegacyMcpServer): McpServerConfig {
-  if (server.injectAgentId) throw new Error(`${server.name}: automatic agent_id tool arguments are not supported by pi MCP. Configure the server to use PIOP_CUA_INSTANCE_ID instead.`);
-  const options: Pick<McpServerConfig, "enabled" | "description" | "exposure" | "timeout"> = { enabled: server.enabled, description: server.name, exposure: "direct" };
+function legacyConfig(server: LegacyMcpServer): AgentMcpServerConfig {
+  const options: Pick<AgentMcpServerConfig, "enabled" | "description" | "exposure" | "timeout" | "piopInjectAgentId"> = { enabled: server.enabled, description: server.name, exposure: "direct", timeout: 120 };
 
-  if (server.startupTimeoutSec !== undefined) options.timeout = server.startupTimeoutSec;
+  if (server.injectAgentId) options.piopInjectAgentId = true;
 
   if (server.transport === "http") return { ...options, url: server.url ?? "", headers: legacyHeaders(server) };
 
@@ -81,7 +82,7 @@ export function mcpServers(value: McpServers | LegacyMcpServer[] | undefined) {
   if (Check(nativeMcpSchema, value)) return structuredClone(value);
 
   if (!Check(legacyMcpSchema, value)) throw new Error("MCP servers must be an object mapping server names to pi MCP configurations");
-  const servers = new Map<string, McpServerConfig>();
+  const servers = new Map<string, AgentMcpServerConfig>();
 
   for (const server of value) {
     if (!/^[a-zA-Z0-9_-]+$/.test(server.id) || servers.has(server.id)) throw new Error(`Invalid or duplicate MCP server name: ${server.id}`);
