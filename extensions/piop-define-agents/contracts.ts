@@ -1,13 +1,13 @@
-import type { McpServer } from "./mcp-config.ts";
+import type { McpServers } from "./mcp-config.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export interface RuntimeSettingsRequest { settings?: { tools: string[]; skills: string[]; explicitOnlySkills?: string[] } }
 
 export interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[] }
 
-export interface McpToolsRequest { tools?: string[] }
+export interface McpToolsRequest { tools?: string[]; availableTools?: string[] }
 
-export interface McpSelection { servers: McpServer[]; agentName: string; sessionId: string; ready?: Promise<string[]> }
+export interface McpSelection { servers: McpServers; agentName: string; sessionId: string; registered?: Promise<string[]> }
 
 export interface AgentRefreshRequest { ctx: ExtensionContext; ready?: Promise<void> }
 
@@ -15,7 +15,7 @@ interface FastModeChange { enabled?: boolean }
 
 interface FastModelsChange { ctx: ExtensionContext }
 
-export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServer[] };
+export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
 
 export type AgentSnapshot = { version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
 

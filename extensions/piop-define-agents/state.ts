@@ -1,7 +1,8 @@
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SessionAgentState } from "./contracts.ts";
+import { nativeMcpSchema, legacyMcpSchema, mcpServers } from "./mcp-config.ts";
 
 export const STATE_ENTRY = "pi-define-agents-state";
 
@@ -11,21 +12,16 @@ export const DRAFT_STATE_ENV = "PIOP_AGENT_DRAFT_STATE";
 
 export type RuntimeDefaults = { model: string; effort: string };
 
-const serverSchema = Type.Object({
-  id: Type.String(), name: Type.String(), enabled: Type.Boolean(), transport: Type.Optional(Type.Union([Type.Literal("stdio"), Type.Literal("http")])),
-  command: Type.Optional(Type.String()), args: Type.Optional(Type.String()), url: Type.Optional(Type.String()),
-  headers: Type.Optional(Type.Union([Type.String(), Type.Record(Type.String(), Type.String())])),
-  startupTimeoutSec: Type.Optional(Type.Number()), injectAgentId: Type.Optional(Type.Boolean()),
-});
-
 export const agentSchema = Type.Object({
   name: Type.String(), model: Type.String(), effort: Type.String(), fastMode: Type.Optional(Type.Boolean()), extensions: Type.Optional(Type.Array(Type.String())),
-  path_systemprompt: Type.String(), path_agentprompt: Type.String(), tools: Type.Array(Type.String()), skills: Type.Array(Type.String()), mcpServers: Type.Array(serverSchema),
+  path_systemprompt: Type.String(), path_agentprompt: Type.String(), tools: Type.Array(Type.String()), skills: Type.Array(Type.String()), mcpServers: nativeMcpSchema,
 });
 
+const storedAgentSchema = Type.Object({ ...agentSchema.properties, mcpServers: Type.Union([nativeMcpSchema, legacyMcpSchema]) });
+
 const snapshotSchema = Type.Union([
-  Type.Object({ version: Type.Literal(2), definition: agentSchema }),
-  Type.Object({ version: Type.Literal(1), definition: agentSchema, systemPrompt: Type.String(), agentPrompt: Type.String() }),
+  Type.Object({ version: Type.Literal(2), definition: storedAgentSchema }),
+  Type.Object({ version: Type.Literal(1), definition: storedAgentSchema, systemPrompt: Type.String(), agentPrompt: Type.String() }),
 ]);
 
 const stateSchema = Type.Object({
@@ -80,10 +76,17 @@ function restoredFastMode(branch: Branch) {
 }
 
 export function readAgentState(branch: Branch, session: string) {
-  const states = branch.flatMap(entry => entry.type === "custom" && entry.customType === STATE_ENTRY && Check(stateSchema, entry.data) ? [entry.data] : []);
+  const states = branch.flatMap(entry => entry.type === "custom" && entry.customType === STATE_ENTRY && Check(stateSchema, entry.data) ? [normalizeState(entry.data)] : []);
   const persisted = states.at(-1);
   const identity = persisted ? persistedAgentIdentity(persisted) : undefined;
-  const stored = draftAgentState(session, identity) ?? persisted;
+  const draft = draftAgentState(session, identity);
+  const stored = draft ? normalizeState(draft) : persisted;
 
   return { states, stored, identity, fastMode: stored?.fastModeOverride ?? restoredFastMode(branch) };
+}
+
+function normalizeState(state: Static<typeof stateSchema>): SessionAgentState {
+  const snapshot = state.snapshot;
+
+  return { ...state, snapshot: snapshot && { ...snapshot, definition: { ...snapshot.definition, mcpServers: mcpServers(snapshot.definition.mcpServers) } } };
 }
