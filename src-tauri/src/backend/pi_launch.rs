@@ -193,6 +193,8 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {provider_accounts} > "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs""#);
     let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && printf %s {rtk_license} > "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts" "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE""#);
     let mut remote = remote;
+    let mcp_schema = shell_quote(include_str!("../../../extensions/piop-define-agents/mcp-schema.ts"));
+    remote.push_str(&format!(r#" && printf %s {mcp_schema} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/mcp-schema.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/mcp-schema.ts""#));
     let agent_state = shell_quote(include_str!("../../../extensions/piop-define-agents/state.ts"));
     remote.push_str(&format!(r#" && printf %s {agent_state} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/state.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/state.ts""#));
     for (name, content) in [

@@ -1,17 +1,8 @@
 import { z } from "zod";
 
-const mcpExposure = z.enum(["direct", "deferred", "codemode", "codemode-deferred", "hidden"]);
+import { mcpServersSchema } from "../../extensions/piop-define-agents/mcp-schema";
 
-export const mcpServerSchema = z.object({
-  command: z.string().optional(), args: z.array(z.string()).optional(), env: z.record(z.string(), z.string()).optional(), cwd: z.string().optional(),
-  url: z.string().url().optional(), headers: z.record(z.string(), z.string()).optional(),
-  enabled: z.boolean().optional(), timeout: z.number().positive().optional(), description: z.string().optional(),
-  exposure: mcpExposure.optional(), toolExposure: z.record(z.string(), mcpExposure).optional(),
-  piopInjectAgentId: z.boolean().optional(),
-}).passthrough().refine(value => Boolean(value.command?.trim() || value.url), "Each MCP server needs a command or URL");
-
-export const mcpServersSchema = z.record(z.string().regex(/^[a-zA-Z0-9_-]+$/, "Use letters, digits, underscores or hyphens for server names"), mcpServerSchema)
-  .refine(value => new Set(Object.keys(value).map(name => name.replaceAll("-", "_"))).size === Object.keys(value).length, "MCP server names must not differ only by hyphens and underscores");
+export { mcpServerSchema, mcpServersSchema } from "../../extensions/piop-define-agents/mcp-schema";
 
 export const agentProfileSchema = z.object({
   name: z.string(), model: z.string(), effort: z.string(), fastMode: z.boolean().optional(), extensions: z.array(z.string()).optional(),

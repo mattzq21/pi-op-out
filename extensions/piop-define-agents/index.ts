@@ -2,6 +2,7 @@ import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agent
 import { Type, type TSchema, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
+import { mcpServersSchema } from "./mcp-schema.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
 import type { FastModeRequest } from "../piop-openai-fast-mode/src/types.ts";
@@ -694,6 +695,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     description: "Update agent definitions", handler: async (args, ctx) => {
       const supplied = decode(Type.Object({ agents: Type.Optional(Type.Array(agentSchema)) }), args.trim());
       const next = normalize({ ...supplied, webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
+      for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
+
       await writeConfig(next);
       config = next;
       publish(ctx);

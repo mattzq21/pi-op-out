@@ -1,7 +1,7 @@
 import { stableSnapshot, settingsSnapshot, agentEditsSnapshot, settingKeys } from "../lib/settingsSnapshots";
 import { required } from "../lib/required";
 import { AgentTools } from "./AgentTools";
-import { McpSettings } from "./McpSettings";
+import { McpSettings, type McpEditorDraft } from "./McpSettings";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
@@ -64,7 +64,8 @@ export function SettingsView(props: SettingsViewProps) {
   const modelName = createMemo(() => accountModelNameLookup(settingsProps().models));
   const providerHostId = createMemo(() => settingsProps().providerHostId);
   const [saving, setSaving] = createSignal(false);
-  const [mcpError, setMcpError] = createSignal<string>();
+  const [mcpDrafts, setMcpDrafts] = createSignal<Array<McpEditorDraft | undefined>>([]);
+  const mcpError = createMemo(() => mcpDrafts().find(item => item?.error)?.error);
   createDependencyEffect(() => {
     const capturedSettingsProps = { ...settingsProps() }; const capturedSaving = saving();
  capturedSettingsProps.onSavingChange?.(capturedSaving);
@@ -97,7 +98,7 @@ export function SettingsView(props: SettingsViewProps) {
   const currentAgentConfig = createMemo(() => (hasAgentConfigDraft() ? { agents: agentDrafts().map(item => item.extensions ? { ...item, extensions: item.extensions.map(path => path.trim()).filter(Boolean) } : item), fastModeModels: agentConfig()?.fastModeModels } : undefined));
   const currentSnapshot = createMemo(() => (settingsSnapshot(draft(), currentAgentConfig())));
   const currentSnapshotRef = createRef(currentSnapshot()); createComputed(() => { currentSnapshotRef.current = currentSnapshot(); });
-  const agentConfigDirty = createMemo(() => (agentEditsSnapshot(currentAgentConfig()) !== baselineAgentConfig()));
+  const agentConfigDirty = createMemo(() => (Boolean(mcpError()) || agentEditsSnapshot(currentAgentConfig()) !== baselineAgentConfig()));
   const dirty = createMemo(() => (settingsSnapshot(draft()) !== baselineSettings() || agentConfigDirty()));
   const [settingsConflict, setSettingsConflict] = createSignal(false);
   const [agentsConflict, setAgentsConflict] = createSignal(false);
@@ -137,6 +138,7 @@ export function SettingsView(props: SettingsViewProps) {
   const reloadLatest = () => {
     setDraft(structuredClone(settingsProps().settings));
     setBaselineValue(structuredClone(settingsProps().settings));
+    setMcpDrafts([]);
     setAgentDrafts(structuredClone(agentConfig()?.agents ?? []));
     setHasAgentConfigDraft(agentConfig() !== undefined);
     setBaselineAgentConfig(agentEditsSnapshot(agentConfig()));
@@ -160,6 +162,7 @@ export function SettingsView(props: SettingsViewProps) {
     const selectedName = agentDrafts()[agentIndex()]?.name;
     const selectedIndex = next?.agents.findIndex(item => item.name === selectedName) ?? -1;
     setHasAgentConfigDraft(next !== undefined);
+    setMcpDrafts([]);
     setAgentDrafts(next?.agents ?? []);
     setAgentIndex(selectedIndex >= 0 ? selectedIndex : firstAgentIndex(next?.agents ?? []));
     setBaselineAgentConfig(agentEditsSnapshot(next));
@@ -218,7 +221,7 @@ export function SettingsView(props: SettingsViewProps) {
 
   const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return;
 
-  if (draft().defaultAgent === agent().name) patch({ defaultAgent: "general" }); const next = agentDrafts().filter((_, index) => index !== agentIndex()); setAgentDrafts(next); setAgentIndex(firstAgentIndex(next)); };
+  if (draft().defaultAgent === agent().name) patch({ defaultAgent: "general" }); const next = agentDrafts().filter((_, index) => index !== agentIndex()); setMcpDrafts(current => current.filter((_, index) => index !== agentIndex())); setAgentDrafts(next); setAgentIndex(firstAgentIndex(next)); };
 
   const agentLevels = (item: AgentProfile) => {
     const model = settingsProps().models.find((model) => `${model.provider}/${model.id}` === (item.model || draft().defaultModel));
@@ -416,7 +419,9 @@ export function SettingsView(props: SettingsViewProps) {
               {renderAgentDefaults()}
               {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agentprompt ?? ""} onInput={(event) => updateAgent({ path_agentprompt: event.target.value })} /></label>
               <label class="field"><span>piop extensions (one path per line)</span><textarea aria-label="Agent piop extensions" placeholder="/path/to/extension.ts" value={(agent().extensions ?? []).join("\n")} onInput={(event) => updateAgent({ extensions: event.target.value.split("\n") })} onBlur={() => updateAgent({ extensions: (agent().extensions ?? []).map(path => path.trim()).filter(Boolean) })} /></label>
-              <AgentAllowlist title="Tools"><AgentTools tools={draft().tools} selected={agent().tools} onChange={tools => updateAgent({ tools })} /></AgentAllowlist><AgentAllowlist title="Skills">{<Key each={draft().skills} by={(skill) => skill.path}>{(skill, _index) => <label ><input type="checkbox" aria-label={`Allow ${skill().name}`} checked={agent().skills.includes(skill().path)} onInput={() => toggleAgentResource("skills", skill().path)} />{skill().name}</label>}</Key>}</AgentAllowlist><McpSettings agentName={agent().name} value={agent().mcpServers} onChange={mcpServers => updateAgent({ mcpServers })} onError={setMcpError} />
+              <AgentAllowlist title="Tools"><AgentTools tools={draft().tools} selected={agent().tools} onChange={tools => updateAgent({ tools })} /></AgentAllowlist><AgentAllowlist title="Skills">{<Key each={draft().skills} by={(skill) => skill.path}>{(skill, _index) => <label ><input type="checkbox" aria-label={`Allow ${skill().name}`} checked={agent().skills.includes(skill().path)} onInput={() => toggleAgentResource("skills", skill().path)} />{skill().name}</label>}</Key>}</AgentAllowlist><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => { const next = [...current]; next[agentIndex()] = value;
+
+ return next; })} onChange={mcpServers => updateAgent({ mcpServers })} />
             </div></Show>);
           };
 
