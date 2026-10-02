@@ -11,6 +11,7 @@ pub(super) async fn load(home: &Path, storage: &str, settings: &Value, initial: 
         .env("PIOP_STORAGE_DIRECTORY", storage)
         .env("PIOP_AGENT_CONFIG_PATH", &path)
         .env("PIOP_GENERATED_EXTENSION_ROOT", crate::extensions::generated_extension_root()?)
+        .env("PIOP_PI_EXECUTABLE", crate::environment::pi_executable())
         .env("PIOP_AGENT_INITIAL_LOAD", if initial { "1" } else { "0" })
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .kill_on_drop(true).spawn().map_err(|error| format!("Could not load agent definitions: {error}"))?;

@@ -73,6 +73,38 @@ export async function resolveExtensionEntry(path: string, parent: string, base: 
   return entry;
 }
 
+type ExtensionModule = { default: SDK.ExtensionFactory; extensions?: string[] };
+
+export type ExtensionImporter = (entry: string) => Promise<ExtensionModule>;
+
+async function importExtension(entry: string, importer: ExtensionImporter): Promise<ExtensionModule> {
+  const module = await importer(entry);
+
+  if (!(module.default instanceof Function)) throw new Error(`Expected a default piop extension factory: ${entry}`);
+
+  return module;
+}
+
+export async function validateExtensionModules(paths: string[], base: string, importer: ExtensionImporter) {
+  const loaded = new Set<string>();
+  const visiting: string[] = [];
+
+  async function visit(path: string, parent: string) {
+    const entry = await resolveExtensionEntry(path, parent, base);
+
+    if (visiting.includes(entry)) throw new Error(`Circular piop extension dependency: ${[...visiting, entry].join(" -> ")}`);
+
+    if (loaded.has(entry)) return;
+    visiting.push(entry);
+    const module = await importExtension(entry, importer);
+
+    for (const dependency of extensionPaths(module.extensions)) await visit(dependency, dirname(entry));
+    visiting.pop(); loaded.add(entry);
+  }
+
+  for (const path of paths) await visit(path, base);
+}
+
 export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
   let current: Group | undefined;
 
@@ -373,9 +405,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
 
         if (loaded.has(entry)) return;
         visiting.push(entry);
-        const module = await import(entry);
-
-        if (!(module.default instanceof Function)) throw new Error("Expected a default piop extension factory");
+        const module = await importExtension(entry, path => import(path));
 
         for (const dependency of extensionPaths(module.extensions)) await load(dependency, dirname(entry));
         await module.default(api);
