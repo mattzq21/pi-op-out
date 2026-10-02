@@ -197,14 +197,6 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     return details;
   });
 
-  const groupBranchBadge = (id: string) => {
-    const group = savedGroupsById().get(id);
-    const session = branchGroupDetails().get(id);
-    const branch = group?.branch ?? (session && firstOrderBranch(session));
-
-    return branch ? { branch, appearance: session?.branchAppearance ?? group?.branchAppearance } : undefined;
-  };
-
   const groupDestination = (id: string) => {
     const group = savedGroupsById().get(id);
     const session = branchGroupDetails().get(id);
@@ -319,7 +311,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   return {
     get state() { return storedGroups.state; }, get error() { return storedGroups.error; },
-    sessions, collapsedProjects, customGroupsByKey, groupBranchBadge, groupDestination, projectDetails,
+    sessions, collapsedProjects, customGroupsByKey, groupDestination, projectDetails,
     normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, groupedSessions: displayedSessions,
     validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry,
   };

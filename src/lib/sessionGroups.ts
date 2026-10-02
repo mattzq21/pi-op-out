@@ -10,7 +10,7 @@ import { z } from "zod";
 import { stringsSchema, validItems } from "./messageSchemas";
 import { readStoredJson } from "./storedJson";
 
-export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; branch?: string; branchAppearance?: SessionSummary["branchAppearance"]; }
+export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; branch?: string; }
 
 export const DIRLESS_KEY = "__pi-desktop-dirless__";
 
@@ -135,12 +135,12 @@ function sessionGroupSeed(session: SessionSummary): SessionGroupSeed {
 
   return {
     sessionKey: `${hostId}:${session.id}`,
-    project: { id: branchGroupId(session), name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd, hostId, hostName: session.hostName ?? session.hostId ?? "Local", projectKind, branch: firstOrderBranch(session), branchAppearance: session.branchAppearance },
+    project: { id: branchGroupId(session), name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd, hostId, hostName: session.hostName ?? session.hostId ?? "Local", projectKind, branch: firstOrderBranch(session) },
   };
 }
 
 function sessionGroupSeedInputs(session: SessionSummary) {
-  return [session.id, session.hostId, session.cwd, session.projectRoot, session.project, session.hostName, session.projectKind, session.branch, JSON.stringify(session.branchAppearance)];
+  return [session.id, session.hostId, session.cwd, session.projectRoot, session.project, session.hostName, session.projectKind, session.branch];
 }
 
 function sessionGroupSeeds(sessions: Accessor<SessionSummary[]>) {
