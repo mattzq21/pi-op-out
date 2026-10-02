@@ -26,9 +26,7 @@ export const responseCommitSchema = Type.Object({ commit: commitSchema });
 
 export const resumeSchema = Type.Object({ message: Type.String() });
 
-export const branchRequestSchema = Type.Object({ id: Type.String(), entryId: Type.String(), name: Type.String(), afterResponse: Type.Optional(Type.Unknown()) });
-
-export const requestIdSchema = Type.Object({ id: Type.String() });
+export const branchRequestSchema = Type.Object({ entryId: Type.String(), name: Type.String(), afterResponse: Type.Optional(Type.Unknown()) });
 
 export const queuedContextSchema = Type.Object({ timestamp: Type.Number(), content: Type.String() });
 

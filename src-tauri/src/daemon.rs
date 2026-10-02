@@ -225,7 +225,7 @@ fn handle_session_state(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str
                                 agent.working = packet["working"].as_bool().unwrap_or(false);
                             }
                         }
-                        agents.insert(key, AgentAddress { host_id: host_id.to_owned(), session_id: state["sessionId"].as_str().map(str::to_owned), session_path: state["sessionFile"].as_str().map(str::to_owned), worktree: packet["worktree"].as_str().map(str::to_owned), presence_id: packet["presenceId"].as_str().map(str::to_owned), working: packet["working"].as_bool().unwrap_or(false), messageable: packet["messageable"].as_bool().unwrap_or(false) });
+                        agents.insert(key, AgentAddress { host_id: host_id.to_owned(), session_id: state["sessionId"].as_str().map(str::to_owned), session_path: state["sessionFile"].as_str().map(str::to_owned), worktree: packet["worktree"].as_str().map(str::to_owned), working: packet["working"].as_bool().unwrap_or(false), messageable: packet["messageable"].as_bool().unwrap_or(false) });
                     };
                     let _ = app.emit("pi://sessions-changed", ());
 }

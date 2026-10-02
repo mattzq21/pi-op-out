@@ -2,7 +2,7 @@ import type { ChatMessage, FileChangeSnapshot } from "../types";
 import { z } from "zod";
 import { fileChangesSchema, pauseStateSchema, promptContextSchema, resumeContentSchema, resumeMarkerSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 
-const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up", "piop-review-link", "piop-html-preview"]);
+const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "piop-review-link", "piop-html-preview"]);
 
 export function isContextInjection(message: { role?: string; customType?: string }) {
   return message.role === "custom" && !SYSTEM_MESSAGES.has(message.customType ?? "") && !["pi-desktop-btw", "piop-subagent-result", "piop-goal-summary", "piop-session-operation"].includes(message.customType ?? "");

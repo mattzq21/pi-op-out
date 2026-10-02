@@ -36,19 +36,19 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
     let path = dir.join("runtime-settings.ts");
+    atomic_write_private(&dir.join("app-rpc.cjs"), include_str!("../../resources/app-rpc.cjs").as_bytes())?;
     atomic_write_private(&dir.join("provider-accounts.mjs"), include_str!("../../resources/provider-accounts.bundle.mjs").as_bytes())?;
     atomic_write_private(&path, include_str!("../../../extensions/piop-runtime-settings/index.ts").as_bytes())?;
     atomic_write_private(&dir.join("runtime-settings.json"), &serde_json::to_vec(&runtime_settings(settings)).map_err(|error| error.to_string())?)?;
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 21] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 20] = [
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
     ("pause.ts", include_str!("../../resources/session-broker/pause.ts")),
     ("fast-mode.ts", include_str!("../../resources/session-broker/fast-mode.ts")),
     ("turn-capture.ts", include_str!("../../resources/session-broker/turn-capture.ts")),
-    ("catch-up.ts", include_str!("../../resources/session-broker/catch-up.ts")),
     ("session-file.ts", include_str!("../../resources/session-broker/session-file.ts")),
     ("fork.ts", include_str!("../../resources/session-broker/fork.ts")),
     ("subagents.ts", include_str!("../../resources/session-broker/subagents.ts")),

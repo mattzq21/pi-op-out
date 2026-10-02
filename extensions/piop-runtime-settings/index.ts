@@ -3,7 +3,7 @@ import { Check, Parse } from "typebox/value";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { formatSkillsForPrompt, getAgentDir, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { loadAccountProviders } from "./provider-accounts.mjs";
 
@@ -17,9 +17,16 @@ type Settings = {
 
 type Update = { ctx: ExtensionContext; ready?: Promise<void> };
 
-const key = Symbol.for("piop.runtime-settings");
+interface AppRequest { command: string; payload: unknown; ctx: ExtensionCommandContext; ready?: Promise<unknown> }
 
-const replyKey = Symbol.for("piop.runtime-settings.reply");
+declare module "@earendil-works/pi-coding-agent" {
+  interface EventBus {
+    on(channel: "piop:rpc", handler: (request: AppRequest) => void): () => void;
+    emit(channel: "piop:rpc", request: AppRequest): void;
+  }
+}
+
+const key = Symbol.for("piop.runtime-settings");
 
 const bootKey = Symbol.for("piop.runtime-settings.boot");
 
@@ -30,9 +37,7 @@ const settingsSchema = Type.Object({
   contextWindowCap: Type.Integer({ minimum: 1000, maximum: Number.MAX_SAFE_INTEGER }), contextWindowCapEnabled: Type.Boolean(),
 });
 
-const requestSchema = Type.Object({ id: Type.String(), settings: Type.Optional(Type.Unknown()), reloadAgents: Type.Optional(Type.Boolean()) });
-
-const idSchema = Type.Object({ id: Type.String() });
+const requestSchema = Type.Object({ settings: Type.Optional(Type.Unknown()), reloadAgents: Type.Optional(Type.Boolean()) });
 
 const settingsPatchSchema = Type.Record(Type.String(), Type.Unknown());
 
@@ -42,12 +47,6 @@ function storedSettings() {
   const value = Object.getOwnPropertyDescriptor(globalThis, key)?.value;
 
   return Check(settingsSchema, value) ? value : undefined;
-}
-
-function reply(value: string) {
-  const handler = Object.getOwnPropertyDescriptor(globalThis, replyKey)?.value;
-
-  if (handler instanceof Function) handler(value);
 }
 
 type RuntimeSettingsRequest = { settings?: Settings };
@@ -117,6 +116,7 @@ function codemodeAbilities(pi: ExtensionAPI, ctx: ExtensionContext) {
 }
 
 export default async function runtimeSettings(pi: ExtensionAPI) {
+  setGlobal(Symbol.for("piop.app-rpc"), (request: AppRequest) => pi.events.emit("piop:rpc", request));
   const accountProviders = new Map();
 
   const refreshAccounts = async () => {
@@ -146,8 +146,6 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", (_event, ctx) => {
-    setGlobal(replyKey, (value: string) => ctx.ui.setStatus("pi-desktop-control-response", value));
-
     if (Object.getOwnPropertyDescriptor(globalThis, bootKey)?.value !== true) {
       const inherited = pi.getFlag("piop-runtime-settings");
 
@@ -211,51 +209,46 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     await request.ready;
   };
 
-  pi.registerCommand("piop-runtime-settings", {
-    description: "Apply saved Piop runtime settings",
-    handler: async (args, ctx) => {
-      const request = Parse(requestSchema, JSON.parse(args));
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "runtime_settings") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
+      const settingsRequest = Parse(requestSchema, request.payload);
       const previous = current();
 
       try {
         if (ctx.mode !== "rpc" || !ctx.isIdle()) throw new Error("Runtime settings require an idle RPC session");
-        const patch = request.settings ?? {};
+        const patch = settingsRequest.settings ?? {};
 
         if (!Check(settingsPatchSchema, patch)) throw new Error("Invalid runtime settings");
         const next = validate({ ...previous, ...patch });
         setGlobal(key, next);
 
-        if (request.reloadAgents || skillsChanged(previous, next)) {
+        if (settingsRequest.reloadAgents || skillsChanged(previous, next)) {
           await ctx.reload();
         } else {
           applyTools(ctx);
 
           if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:refresh", ctx);
         }
-
-        reply(`json:${JSON.stringify({ type: "response", id: request.id, command: "runtime_settings", success: true })}`);
       } catch (error) {
         setGlobal(key, previous);
-        reply(`json:${JSON.stringify({ type: "response", id: request.id, command: "runtime_settings", success: false, error: error instanceof Error ? error.message : String(error) })}`);
+        throw error;
       }
-    },
+    })();
   });
-  pi.registerCommand("pi-orchestration-provider-auth-refresh", {
-    description: "Refresh models after a host provider login changes",
-    handler: async (args, ctx) => {
-      const request = Parse(idSchema, JSON.parse(args));
-
-      if (ctx.mode !== "rpc") return;
-
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "provider_auth_refresh") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
       try {
         await refreshAccounts();
         await ctx.modelRegistry.refresh({ allowNetwork: false });
         pi.events.emit("piop:models-refreshed", { ctx });
-        ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id: request.id, command: "provider_auth_refresh", success: true })}`);
       } catch {
-        ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id: request.id, command: "provider_auth_refresh", success: false, error: "Could not refresh provider models. Reopen the conversation to retry." })}`);
+        throw new Error("Could not refresh provider models. Reopen the conversation to retry.");
       }
-    },
+    })();
   });
   pi.on("session_shutdown", () => { unsubscribe(); });
 }

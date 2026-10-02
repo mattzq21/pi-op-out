@@ -1,20 +1,7 @@
 [
-  "catch-up",
   "cost",
   "fast",
   "goal",
   "loop-detection",
-  "pi-define-agents-config",
-  "pi-define-agents-use",
-  "pi-desktop-branch-checkpoint",
-  "pi-desktop-control",
-  "pi-desktop-fast-status",
-  "pi-desktop-fork-after",
-  "pi-desktop-fork-and-forget",
-  "pi-orchestration-provider-auth-refresh",
-  "pi-orchestration-review-feedback",
-  "pi-orchestration-review-open",
-  "piop-answer-question",
-  "piop-runtime-settings",
   "review"
 ]

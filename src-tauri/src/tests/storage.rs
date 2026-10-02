@@ -157,7 +157,7 @@ fn session_deletion_checks_active_path_and_identity_and_preserves_invalid_traces
     for use_path in [true, false] {
         runtime.active_agents.lock().unwrap().insert("active".into(), AgentAddress {
             host_id: "local".into(), session_id: Some(if use_path { "different" } else { "one" }.into()),
-            session_path: use_path.then(|| path.to_string_lossy().into_owned()), worktree: None, presence_id: None, working: false, messageable: false,
+            session_path: use_path.then(|| path.to_string_lossy().into_owned()), worktree: None, working: false, messageable: false,
         });
         assert_eq!(delete_session_files(&runtime, path.to_str().unwrap(), "local", None, &root, false).unwrap_err(), "Close the session before deleting it");
         assert_eq!(fs::read_to_string(&path).unwrap(), content);
@@ -185,7 +185,7 @@ fn session_deletion_only_blocks_owned_matching_sessions_on_the_same_host() {
             host_id: if same_host { "local" } else { "remote" }.into(),
             session_id: Some(if same_id { "one" } else { "other" }.into()),
             session_path: Some(if same_path { path.clone() } else { root.join("other.jsonl") }.to_string_lossy().into_owned()),
-            worktree: None, presence_id: None, working: false, messageable,
+            worktree: None, working: false, messageable,
         });
         let result = delete_session_files(&runtime, path.to_str().unwrap(), "local", None, &root, false);
         let blocked = blocks_deletion(messageable, same_host, same_path, same_id);

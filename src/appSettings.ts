@@ -3,7 +3,6 @@ import { settingsChangeSchema } from "./lib/responseSchemas";
 import { required } from "./lib/required";
 import type { Accessor } from "solid-js";
 import { createSignal } from "solid-js";
-import { encodeAgentValue } from "./lib/agentProtocol";
 import { saveClientSettings,withClientSettings } from "./lib/clientSettings";
 import { ConversationChangedError } from "./lib/conversationChanged";
 import { recordSeenModels } from "./lib/modelVisibility";
@@ -85,7 +84,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
 
       try {
         await writer.connect(undefined, undefined, undefined, undefined, true);
-        await writer.command({ type: "prompt", message: `/pi-define-agents-config ${encodeAgentValue(configuration)}` });
+        await writer.command({ type: "configure_agents", configuration: configuration });
       } finally { await writer.dispose(); }
     };
 

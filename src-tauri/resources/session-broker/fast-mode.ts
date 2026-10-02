@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { Type, type Static } from "typebox";
-import { Check } from "typebox/value";
+import { Check, Parse } from "typebox/value";
 
 const fastConfigSchema = Type.Object({ enabled: Type.Boolean(), targets: Type.Array(Type.Object({ provider: Type.String(), model: Type.String() })) });
 
@@ -55,13 +55,16 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
     publish(ctx);
   };
 
-  pi.registerCommand("pi-desktop-fast-status", {
-    description: "Read Fast Mode status for piop", handler: (args, ctx) => {
-      const next = queue.then(() => refresh(ctx, args.trim() === "refresh"));
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "fast_mode_status") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
+      const { reload } = Parse(Type.Object({ reload: Type.Boolean() }), request.payload);
+      const next = queue.then(() => refresh(ctx, reload));
       queue = next.catch(() => undefined);
 
       return next;
-    }
+    })();
   });
   pi.on("session_start", () => { loaded = false; config = undefined; available = false; });
   pi.on("model_select", (event, ctx) => { if (ctx.mode === "rpc" && loaded) publish(ctx, event.model); });

@@ -74,15 +74,16 @@ async function reviewSettings() {
 }
 
 export function registerReview(pi: ExtensionAPI) {
-  pi.registerCommand("pi-orchestration-review-feedback", {
-    description: "Deliver feedback selected in the review pane",
-    handler: async (args, ctx) => {
-      const feedback = Parse(feedbackSchema, JSON.parse(args));
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "review_feedback") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
+      const feedback = Parse(feedbackSchema, request.payload);
       const review = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.sessionId === feedback.sessionId && entry.data.parentSessionId === ctx.sessionManager.getSessionId());
 
       if (!review || !feedback.message.trim()) throw new Error("Feedback requires a review belonging to this conversation");
       pi.sendMessage({ customType: "piop-review-feedback", content: feedback.message, display: true, details: { sessionId: feedback.sessionId, toolCallId: randomUUID() } }, { triggerTurn: true, deliverAs: "followUp" });
-    },
+    })();
   });
   pi.on("context", event => ({ messages: event.messages.flatMap((message): typeof event.messages => {
     if (message.role !== "custom" || message.customType !== "piop-review-feedback" || !Check(feedbackDetailsSchema, message.details)) return [message];
@@ -112,16 +113,18 @@ export function registerReview(pi: ExtensionAPI) {
       openReview(ctx, record, settings.prompt);
     },
   });
-  pi.registerCommand("pi-orchestration-review-open", {
-    description: "Open a saved review belonging to this chat",
-    handler: async (args, ctx) => {
-      const entry = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.sessionId === args.trim());
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "open_review") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
+      const { reviewId } = Parse(Schema.Object({ reviewId: Schema.String() }), request.payload);
+      const entry = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.sessionId === reviewId);
 
       if (!entry || entry.type !== "custom") throw new Error("Review not found in this conversation");
       const record = Parse(reviewSchema, entry.data);
 
       if (record.parentSessionId !== ctx.sessionManager.getSessionId()) throw new Error("This review belongs to another conversation");
       openReview(ctx, record);
-    },
+    })();
   });
 }

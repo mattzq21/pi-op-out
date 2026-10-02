@@ -1,6 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import { Type as Schema, type Static } from "typebox";
-import { Check, Parse } from "typebox/value";
+import { Parse } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const ENTRY = "piop-async-question";
@@ -13,11 +13,9 @@ const answersSchema = Schema.Record(Schema.String(), Schema.Object({ answers: Sc
 
 const requestSchema = Schema.Object({ id: Schema.String(), questions: Schema.Array(questionSchema), resolved: Schema.Optional(Schema.Boolean()), answers: Schema.Optional(answersSchema) });
 
-const commandSchema = Schema.Object({ id: Schema.String(), requestId: Schema.String(), action: Schema.Union([Schema.Literal("prepare"), Schema.Literal("resolve")]), value: Schema.Optional(Schema.String()), cancelled: Schema.Optional(Schema.Boolean()) });
+const commandSchema = Schema.Object({ requestId: Schema.String(), action: Schema.Union([Schema.Literal("prepare"), Schema.Literal("resolve")]), value: Schema.Optional(Schema.String()), cancelled: Schema.Optional(Schema.Boolean()) });
 
 const responseSchema = Schema.Object({ answers: Schema.Optional(answersSchema) });
-
-const commandIdSchema = Schema.Object({ id: Schema.String() });
 
 type Question = Static<typeof questionSchema>;
 
@@ -96,32 +94,22 @@ export function registerRequestUserInput(pi: ExtensionAPI) {
       return { content: [{ type: "text", text: '{"accepted":true}' }], details: { accepted: true } };
     },
   });
-  pi.registerCommand("piop-answer-question", {
-    description: "Deliver a response to a saved question",
-    async handler(args, ctx) {
-      let id: string | undefined;
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "answer_question") return;
+    const ctx = request.ctx;
+    request.ready = (async () => {
+      const command = Parse(commandSchema, request.payload);
+      const item = requests(ctx).get(command.requestId);
 
-      try {
-        const value = JSON.parse(args);
-        id = Check(commandIdSchema, value) ? value.id : undefined;
-        const command = Parse(commandSchema, value);
+      if (!item) throw new Error("This question is not part of the current conversation");
+      const response = item.resolved ? { answers: item.answers, message: undefined } : answerRequest(item, command);
 
-        if (!id || ctx.mode !== "rpc") throw new Error("Question responses require an RPC request");
-
-        const item = requests(ctx).get(command.requestId);
-
-        if (!item) throw new Error("This question is not part of the current conversation");
-        const response = item.resolved ? { answers: item.answers, message: undefined } : answerRequest(item, command);
-
-        if (command.action === "resolve" && !item.resolved) {
-          pi.appendEntry(ENTRY, { ...item, resolved: true, answers: response.answers });
-          publish(ctx);
-        }
-
-        ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, success: true, data: { message: response.message } })}`);
-      } catch (error) {
-        if (id) ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, success: false, error: String(error) })}`);
+      if (command.action === "resolve" && !item.resolved) {
+        pi.appendEntry(ENTRY, { ...item, resolved: true, answers: response.answers });
+        publish(ctx);
       }
-    },
+
+      return { message: response.message };
+    })();
   });
 }
