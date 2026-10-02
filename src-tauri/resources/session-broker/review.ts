@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { writeSessionFile } from "./session-file.ts";
 import type { SessionAgentState, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type as Schema, type Static } from "typebox";
@@ -19,6 +21,18 @@ type ReviewRecord = Static<typeof reviewSchema>;
 const feedbackSchema = Schema.Object({ sessionId: Schema.String(), message: Schema.String({ minLength: 1 }) });
 
 const feedbackDetailsSchema = Schema.Object({ toolCallId: Schema.String() });
+
+const runFile = promisify(execFile);
+
+async function requireReviewRepository(cwd: string) {
+  try {
+    const { stdout } = await runFile("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], { timeout: 5000 });
+
+    if (stdout.trim() === "true") return;
+  } catch { }
+
+  throw new Error("/review is only available in Git repository projects");
+}
 
 async function createReview(ctx: ExtensionContext, agentState: SessionAgentState): Promise<ReviewRecord> {
   const header = ctx.sessionManager.getHeader();
@@ -86,6 +100,7 @@ export function registerReview(pi: ExtensionAPI) {
 
       return; }
 
+      await requireReviewRepository(ctx.cwd);
       const settings = await reviewSettings();
       const profile: SubagentProfileRequest = { agent: settings.agent };
       pi.events.emit("piop:agents:subagent", profile);
