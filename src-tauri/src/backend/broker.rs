@@ -199,7 +199,7 @@ fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
             broker_worktree_operation(&broker, &value, |cancelled| {
             let settings = load_app_settings(app.clone())?;
             let created = create_git_worktree(app.clone(), cwd.into(), name.into(), Some(host_id.into()))?;
-            let group = session_groups::SessionGroup { id: format!("{host_id}:{}", created.path), name: created.branch.clone(), cwd: Some(created.path.clone()), host_id: Some(host_id.into()), host_name: Some(settings.hosts.iter().find(|host| host.id == host_id).map(|host| host.name.clone()).unwrap_or_else(|| host_id.into())), project_kind: Some(ProjectKind::Worktree), branch: None, branch_appearance: None };
+            let group = session_groups::SessionGroup { id: format!("{host_id}:{}", created.path), name: created.branch.clone(), cwd: Some(created.path.clone()), host_id: Some(host_id.into()), host_name: Some(settings.hosts.iter().find(|host| host.id == host_id).map(|host| host.name.clone()).unwrap_or_else(|| host_id.into())), project_kind: Some(ProjectKind::Worktree), branch: None };
             let group_error = change_session_groups(app.clone(), session_groups::GroupChange::Project { project: group, key: None }).err();
             let setup = run_worktree_scripts(&settings, cwd, &created.path, host_id, cancelled, WorktreeScriptPhase::Setup);
             Ok(json!({"path":created.path,"branch":created.branch,"setupError":setup.err(),"groupError":group_error}))

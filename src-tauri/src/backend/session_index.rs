@@ -20,12 +20,6 @@ use crate::pi_launch::{local_launch_directory, remote_directory_path, remote_hos
 use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
 
-pub(super) fn branch_appearance(bytes: &[u8], branch: Option<&str>) -> Option<Value> {
-    let config: Value = serde_json::from_slice(bytes).ok()?;
-    if config["version"] != 1 { return None; }
-    config.get("branches")?.get(branch?).filter(|value| value.is_object()).cloned()
-}
-
 fn unix_timestamp(time: SystemTime) -> u64 { time.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs() }
 
 fn inspect_session_projects(index: &SessionIndexRuntime, sessions: &mut [SessionSummary], host: Option<&RemoteHost>) -> Result<(), String> {
@@ -67,40 +61,34 @@ pub(super) fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut
     directories.sort();
     let script = r#"previous_git_dir=
     for path do
-        if [ ! -d "$path" ]; then printf 'missing\000\000\000\000\000'; continue; fi
-        git_dir=$(git -C "$path" rev-parse --absolute-git-dir 2>/dev/null) || { printf 'no-repo\000\000\000\000\000'; continue; }
+        if [ ! -d "$path" ]; then printf 'missing\000\000\000\000'; continue; fi
+        git_dir=$(git -C "$path" rev-parse --absolute-git-dir 2>/dev/null) || { printf 'no-repo\000\000\000\000'; continue; }
         if [ "$git_dir" != "$previous_git_dir" ] || [ -n "${GIT_DIR+x}${GIT_WORK_TREE+x}${GIT_COMMON_DIR+x}" ]; then
-            common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || { printf 'unknown\000\000\000\000\000'; continue; }
+            common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || { printf 'unknown\000\000\000\000'; continue; }
             if [ "$git_dir" = "$common_dir" ]; then project_kind=main; else project_kind=worktree; fi
             project_root=$(git -C "$path" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
             branch=$(git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=$(git -C "$path" rev-parse --short HEAD 2>/dev/null | sed 's/^/Detached at /')
-            appearance=
-            if [ -n "$project_root" ] && [ -f "$project_root/.piop/branches.json" ]; then
-                appearance=$(head -c 32768 "$project_root/.piop/branches.json" 2>/dev/null | tr -d '\000'; printf '.')
-                appearance="${appearance%.}"
-            fi
             worktree_root=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)
             previous_git_dir=$git_dir
         fi
-        printf '%s\000%s\000%s\000%s\000%s\000' "$project_kind" "$project_root" "$branch" "$appearance" "$worktree_root"
+        printf '%s\000%s\000%s\000%s\000' "$project_kind" "$project_root" "$branch" "$worktree_root"
     done"#;
     let mut projects = HashMap::new();
     for (batch, output) in inspect_project_batches(&directories, script, &mut command)? {
         if !output.status.success() { return Err(format!("Could not inspect session projects: {}", String::from_utf8_lossy(&output.stderr).trim())); }
         let fields = output.stdout.strip_suffix(&[0]).ok_or("Incomplete session project details")?.split(|byte| *byte == 0).collect::<Vec<_>>();
-        if fields.len() != batch.len() * 5 { return Err("Could not inspect every session project".into()); }
-        for (path, details) in batch.iter().zip(fields.chunks_exact(5)) {
+        if fields.len() != batch.len() * 4 { return Err("Could not inspect every session project".into()); }
+        for (path, details) in batch.iter().zip(fields.chunks_exact(4)) {
             let flag = details[0];
             let project_root = (!details[1].is_empty()).then(|| String::from_utf8_lossy(details[1]).into_owned());
             let branch = (!details[2].is_empty()).then(|| String::from_utf8_lossy(details[2]).into_owned());
-            let appearance = branch_appearance(details[3], branch.as_deref().and_then(|name| name.split('|').next()));
-            let worktree_root = (!details[4].is_empty()).then(|| String::from_utf8_lossy(details[4]).into_owned());
+            let worktree_root = (!details[3].is_empty()).then(|| String::from_utf8_lossy(details[3]).into_owned());
             let kind = project_kind_from_flag(flag);
-            projects.insert(path.clone(), (flag != b"missing", kind, project_root, branch, appearance, worktree_root));
+            projects.insert(path.clone(), (flag != b"missing", kind, project_root, branch, worktree_root));
         }
     }
     for session in sessions {
-        if let Some((exists, kind, project_root, branch, appearance, worktree_root)) = projects.get(session.cwd.as_str()) { session.cwd_exists = *exists; session.project_kind = *kind; session.project_root = project_root.clone(); session.branch = branch.clone(); session.branch_appearance = appearance.clone(); session.worktree_root = worktree_root.clone(); }
+        if let Some((exists, kind, project_root, branch, worktree_root)) = projects.get(session.cwd.as_str()) { session.cwd_exists = *exists; session.project_kind = *kind; session.project_root = project_root.clone(); session.branch = branch.clone(); session.worktree_root = worktree_root.clone(); }
     }
     Ok(())
 }
@@ -134,7 +122,7 @@ pub(super) fn read_session_summaries_with(candidates: &[(String, String, u64, u6
             let Some((_, fingerprint, modified_at, _)) = batch.iter().find(|item| item.0 == path) else { continue };
             let string = |key| value.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
             let cwd = string("cwd"); let project = Path::new(&cwd).file_name().and_then(|name| name.to_str()).unwrap_or("Workspace").to_owned();
-            let summary = SessionSummary { group_id: None, subagent_parent_id: value.get("subagentParentId").and_then(Value::as_str).map(str::to_owned), id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, branch: None, branch_appearance: None, worktree_root: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, last_message_at: value.get("lastMessageAt").and_then(Value::as_u64).unwrap_or(0), api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
+            let summary = SessionSummary { group_id: None, subagent_parent_id: value.get("subagentParentId").and_then(Value::as_str).map(str::to_owned), id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, branch: None, worktree_root: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, last_message_at: value.get("lastMessageAt").and_then(Value::as_u64).unwrap_or(0), api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
             result.insert(path.to_owned(), CachedSession { fingerprint: fingerprint.clone(), summary });
         }
         cursor = end;

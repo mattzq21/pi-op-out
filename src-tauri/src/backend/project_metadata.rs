@@ -4,7 +4,6 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
-use serde_json::Value;
 use crate::{ProjectKind, RemoteHost, SessionSummary, MAX_REMOTE_HOSTS};
 
 const MAX_AGE: Duration = Duration::from_secs(15);
@@ -15,7 +14,6 @@ struct ProjectDetails {
     kind: Option<ProjectKind>,
     root: Option<String>,
     branch: Option<String>,
-    appearance: Option<Value>,
     worktree: Option<String>,
     checked: Instant,
     fingerprint: Fingerprint,
@@ -24,12 +22,12 @@ struct ProjectDetails {
 impl ProjectDetails {
     fn new(session: &SessionSummary, local: bool) -> Self {
         Self { exists: session.cwd_exists, kind: session.project_kind, root: session.project_root.clone(),
-            branch: session.branch.clone(), appearance: session.branch_appearance.clone(), worktree: session.worktree_root.clone(),
-            checked: Instant::now(), fingerprint: if local { fingerprint(&session.cwd, session.project_root.as_deref()) } else { Vec::new() } }
+            branch: session.branch.clone(), worktree: session.worktree_root.clone(),
+            checked: Instant::now(), fingerprint: if local { fingerprint(&session.cwd) } else { Vec::new() } }
     }
 
     fn fresh(&self, cwd: &str, local: bool) -> bool {
-        self.checked.elapsed() < MAX_AGE && (!local || self.fingerprint == fingerprint(cwd, self.root.as_deref()))
+        self.checked.elapsed() < MAX_AGE && (!local || self.fingerprint == fingerprint(cwd))
     }
 
     fn apply(&self, session: &mut SessionSummary) {
@@ -37,7 +35,6 @@ impl ProjectDetails {
         session.project_kind = self.kind;
         session.project_root = self.root.clone();
         session.branch = self.branch.clone();
-        session.branch_appearance = self.appearance.clone();
         session.worktree_root = self.worktree.clone();
     }
 }
@@ -103,7 +100,7 @@ fn stamp(path: PathBuf) -> (PathBuf, Option<(SystemTime, u64)>) {
     (path, value)
 }
 
-fn fingerprint(cwd: &str, root: Option<&str>) -> Fingerprint {
+fn fingerprint(cwd: &str) -> Fingerprint {
     let cwd = Path::new(cwd).canonicalize().unwrap_or_else(|_| PathBuf::from(cwd));
     let mut result = vec![stamp(cwd.clone())];
     for parent in cwd.ancestors() {
@@ -114,7 +111,6 @@ fn fingerprint(cwd: &str, root: Option<&str>) -> Fingerprint {
             git_fingerprint(&parent.join(pointer), &mut result); break;
         }
     }
-    if let Some(root) = root { result.push(stamp(Path::new(root).join(".piop/branches.json"))); }
     result
 }
 

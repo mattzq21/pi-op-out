@@ -12,7 +12,6 @@ import type { SessionSummary } from "../types";
 import { GroupProjectPicker, type GroupProject } from "./GroupProjectPicker";
 import type { NativeTransport } from "../lib/nativeTransport";
 import type { AppSettings } from "../types";
-import { BranchIcon } from "./BranchIcon";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 import { SessionTooltip } from "./SessionTooltip";
 
@@ -60,7 +59,7 @@ export function SessionPanel(props: Props) {
   const panelFields = createMemoFields(() => sessionPanelDefaults(props));
   const panel = () => panelFields;
   const storedGroups = props.sidebar;
-  const { collapsedProjects, customGroupsByKey, groupBranchBadge, groupDestination, projectDetails, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
+  const { collapsedProjects, customGroupsByKey, groupDestination, projectDetails, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
   const keyboardSidebarEntries = sidebarEntries;
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = createSignal<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
@@ -439,7 +438,7 @@ export function SessionPanel(props: Props) {
             const renderGroupNameInput = () => (<input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "rename-group-error" : undefined} value={newGroupName() ?? ""} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />);
 
             return (isEditingGroup(projectKey) ? <div class="project-label">{renderGroupNameInput()}{groupDraftError() && <small id="rename-group-error" class="group-error">{(groupDraftError())}</small>}</div> : <>
-              <button class="project-disclosure" aria-label={disclosureLabel()} aria-expanded={!collapsed()} aria-controls={groupId} onClick={() => toggleProject(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} /></button><button class="project-label" disabled={Boolean(normalizedQuery())} {...projectDragProps(projectKey)}><Show when={groupBranchBadge(projectKey)}>{(badge) => <span class="group-branch-badge" title={badge().branch}><BranchIcon branch={badge().branch} appearance={badge().appearance} /></span>}</Show>{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
+              <button class="project-disclosure" aria-label={disclosureLabel()} aria-expanded={!collapsed()} aria-controls={groupId} onClick={() => toggleProject(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} /></button><button class="project-label" disabled={Boolean(normalizedQuery())} {...projectDragProps(projectKey)}>{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
               {!isFixedGroup(projectKey) && <div class="project-actions">
                 {customGroupsByKey().has(projectKey) && <button aria-label={`Rename group ${label()}`} title="Rename group" onClick={() => editGroup(required(customGroupsByKey().get(projectKey)))}><Pencil size={12} /></button>}
                 <button aria-label={`New chat in ${label()}`} title="New chat in group" onClick={() => {

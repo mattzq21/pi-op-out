@@ -225,8 +225,6 @@ struct SessionSummary {
     #[serde(default)]
     branch: Option<String>,
     #[serde(default)]
-    branch_appearance: Option<Value>,
-    #[serde(default)]
     worktree_root: Option<String>,
     #[serde(skip)]
     modified_at: u64,

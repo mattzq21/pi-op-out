@@ -94,7 +94,7 @@ fn assignment_lookup_handles_absent_and_unreadable_storage_without_mutating_sess
 }
 
 fn project(id: &str, name: &str, cwd: Option<&str>) -> SessionGroup {
-    SessionGroup { id: id.into(), name: name.into(), cwd: cwd.map(str::to_owned), host_id: Some("local".into()), host_name: None, project_kind: None, branch: None, branch_appearance: None }
+    SessionGroup { id: id.into(), name: name.into(), cwd: cwd.map(str::to_owned), host_id: Some("local".into()), host_name: None, project_kind: None, branch: None }
 }
 
 #[test]
