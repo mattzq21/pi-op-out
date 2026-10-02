@@ -75,6 +75,11 @@ try {
   const clearance = composer.y - (actions.y + actions.height);
   console.log('Response action bar clearance:', clearance);
   assert.ok(clearance >= 22, 'leave space between the response action bar and composer');
+  await page.mouse.move(450, 150);
+  await page.mouse.wheel(0, 600);
+  await page.waitForTimeout(200);
+  const afterWheel = await page.locator('.assistant-message .message-actions').last().boundingBox();
+  assert.ok(Math.abs(afterWheel.y - actions.y) <= 2, 'scrolling down at the bottom must not reveal more blank space');
   assert.deepEqual(errors, []);
   console.log('PASS: deferred history, new prompts, composer resize, and manual scrolling preserve the intended scroll position');
 } finally {
