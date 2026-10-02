@@ -209,9 +209,10 @@ export function ChatView(props: Props) {
       oncapture:keydown={(event) => { if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) followLatest.current = false; }}
       onScroll={(event) => {
         const element = event.currentTarget;
+        const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
 
-        if (element.scrollTop < lastScrollTop.current) followLatest.current = false;
-        else if (element.scrollTop > lastScrollTop.current) followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
+        if (atBottom) followLatest.current = true;
+        else if (element.scrollTop !== lastScrollTop.current) followLatest.current = false;
         lastScrollTop.current = element.scrollTop;
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>πop</span></div>}
