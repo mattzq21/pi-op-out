@@ -2,7 +2,7 @@ import type { ChatMessage, FileChangeSnapshot } from "../types";
 import { z } from "zod";
 import { fileChangesSchema, pauseStateSchema, promptContextSchema, resumeContentSchema, resumeMarkerSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 
-const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up", "piop-review-link"]);
+const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up", "piop-review-link", "piop-html-preview"]);
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
 
