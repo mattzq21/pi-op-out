@@ -7,6 +7,13 @@ const previewSchema = z.object({ version: z.literal(1), html: z.string().min(1).
 
 const policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 
+function isolatedDocument(html: string) {
+  const content = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="referrer" content="no-referrer"><style>html,body{margin:0;min-height:100%;}body{background:white;color:black;}</style></head><body>${html}</body></html>`;
+  const source = content.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
+  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="referrer" content="no-referrer"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;}iframe{display:block;width:100%;height:100%;border:0;}</style></head><body><iframe title="HTML preview content" sandbox="allow-scripts" referrerpolicy="no-referrer" srcdoc="${source}"></iframe></body></html>`;
+}
+
 export function HtmlPreview(props: { details: unknown }) {
   const preview = createMemo(() => previewSchema.safeParse(props.details));
 
@@ -19,7 +26,7 @@ export function HtmlPreview(props: { details: unknown }) {
 
     if (isMobile || !preview) return undefined;
 
-    return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="referrer" content="no-referrer"><style>html,body{margin:0;min-height:100%;}body{background:white;color:black;}</style></head><body>${preview.html}</body></html>`;
+    return isolatedDocument(preview.html);
   });
 
   return <Show when={value()} fallback={<p class="html-preview-error" role="status">HTML preview is unavailable.</p>}>{preview =>
