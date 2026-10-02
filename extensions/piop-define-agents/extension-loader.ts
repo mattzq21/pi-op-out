@@ -521,5 +521,5 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     }
   }
 
-  return { prepare, activate, tools, stop: () => stop(current) };
+  return { prepare, activate, tools, shutdown: (ctx: ExtensionContext) => shutdown(current, ctx), stop: () => stop(current) };
 }

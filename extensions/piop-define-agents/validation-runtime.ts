@@ -6,6 +6,8 @@ import { agentExtensions } from "./extension-loader.ts";
 import type { ExtensionAPI, ExtensionRuntime, ModelRegistry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import commandNames from "../../src-tauri/resources/agent-commands.json";
+import { bindValidationSession } from "./validation-session.ts";
+import type { Agent } from "./contracts.ts";
 
 async function piEntry() {
   const executable = process.env.PIOP_PI_EXECUTABLE || "pi";
@@ -44,23 +46,22 @@ export async function extensionValidator(registeredToolNames: string[]) {
   const { createEventBus } = await import(pathToFileURL(join(directory, "dist/core/event-bus.js")).href);
   const { ExtensionRunner } = await import(pathToFileURL(join(directory, "dist/core/extensions/runner.js")).href);
   const { SessionManager } = await import(pathToFileURL(join(directory, "dist/core/session-manager.js")).href);
+  const { SettingsManager } = await import(pathToFileURL(join(directory, "dist/core/settings-manager.js")).href);
 
-  return async (paths: string[], base: string, registry: ModelRegistry) => {
+  return async (paths: string[], base: string, registry: ModelRegistry, agent: Agent, validate: () => Promise<void>) => {
     const runtime: ExtensionRuntime = createExtensionRuntime();
     const events = createEventBus();
     runtime.getAllTools = () => registeredToolNames.map((name): ToolInfo => ({ name, description: "", parameters: Type.Object({}), exposure: "direct", sourceInfo: { path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" } }));
     runtime.getCommands = () => commandNames.map(name => ({ name, source: "extension", sourceInfo: { path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" } }));
-    runtime.registerProvider = (name, config) => registry.registerProvider(name, config);
-    runtime.registerNativeProvider = provider => registry.registerProvider(provider);
-    runtime.unregisterProvider = name => registry.unregisterProvider(name);
-    runtime.registerVirtualModel = definition => registry.registerVirtualModel(definition);
-    runtime.unregisterVirtualModel = (provider, id) => registry.unregisterVirtualModel(provider, id);
-    const runner = new ExtensionRunner([], runtime, base, SessionManager.inMemory(base), registry);
-    runtime.createContext = () => runner.createContext();
+    const session = SessionManager.inMemory(base);
+    const runner = new ExtensionRunner([], runtime, base, session, registry);
+    bindValidationSession(runtime, runner, session, registry, agent, SettingsManager.create(base).getSettings());
     let tools: string[] = [];
     let activate = async () => {};
 
     let stop = () => {};
+
+    let shutdown = async () => {};
 
     try {
       await loadExtensionFromFactory(async (pi: ExtensionAPI) => {
@@ -68,10 +69,15 @@ export async function extensionValidator(registeredToolNames: string[]) {
         const group = await extensions.prepare(paths);
         activate = () => extensions.activate(group, runner.createContext());
         stop = extensions.stop;
+        shutdown = () => extensions.shutdown(runner.createContext());
         tools = extensions.tools(group);
       }, base, events, runtime);
       await activate();
-    } finally { stop(); events.clear(); runtime.invalidate(); }
+      await validate();
+    } finally {
+      try { await shutdown(); }
+      finally { stop(); events.clear(); runtime.invalidate(); }
+    }
 
     return tools;
   };

@@ -78,10 +78,10 @@ for (const agent of config.agents) {
   validateEffort(agent.name, agent.effort);
   let extensionTools: string[] = [];
 
-  await validateModel(agent, settings.defaultModel ?? "", async registry => {
-    if (!validateExtensions) return;
+  await validateModel(agent, settings.defaultModel ?? "", async (registry, validate) => {
+    if (!validateExtensions) return validate();
 
-    try { extensionTools = await validateExtensions(extensionPaths(agent.extensions), dirname(configPath), registry); }
+    try { extensionTools = await validateExtensions(extensionPaths(agent.extensions), dirname(configPath), registry, agent, validate); }
     catch (error) { throw new Error(`Agent "${agent.name}" cannot load its extensions: ${error instanceof Error ? error.message : String(error)}`); }
   });
 

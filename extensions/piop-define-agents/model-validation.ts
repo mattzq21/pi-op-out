@@ -46,25 +46,26 @@ export async function modelValidator() {
   const discoverFast = createFastModeDiscovery();
   const configured = await configuredFastTargets(getAgentDir());
 
-  return async (agent: Agent, defaultModel: string, activate: (registry: ModelRegistry) => Promise<void>) => {
+  return async (agent: Agent, defaultModel: string, activate: (registry: ModelRegistry, validate: () => Promise<void>) => Promise<void>) => {
     const runtime = await createRuntime();
     const accounts = await loadAccountProviders(join(getAgentDir(), "auth.json"), createRuntime);
 
     for (const provider of accounts.values()) runtime.registerNativeProvider(provider);
     const registry: ModelRegistry = new Registry(runtime);
-    await activate(registry);
-    const name = agent.model.trim() || (agent.fastMode ? defaultModel.trim() : "");
+    await activate(registry, async () => {
+      const name = agent.model.trim() || (agent.fastMode ? defaultModel.trim() : "");
 
-    if (!name && !agent.fastMode) return;
-    const model = configuredModel(registry, agent, name);
+      if (!name && !agent.fastMode) return;
+      const model = configuredModel(registry, agent, name);
 
-    if (!agent.fastMode) return;
-    let unknown = false;
+      if (!agent.fastMode) return;
+      let unknown = false;
 
-    const targets = await discoverFast({ modelRegistry: registry, model }, configured, candidate => {
-      if (candidate.provider === model.provider && candidate.id === model.id) unknown = true;
+      const targets = await discoverFast({ modelRegistry: registry, model }, configured, candidate => {
+        if (candidate.provider === model.provider && candidate.id === model.id) unknown = true;
+      });
+
+      if (!unknown && !targets.some(target => target.provider === model.provider && target.model === model.id)) throw new Error(`Agent "${agent.name}" cannot enable Fast mode for model ${name}`);
     });
-
-    if (!unknown && !targets.some(target => target.provider === model.provider && target.model === model.id)) throw new Error(`Agent "${agent.name}" cannot enable Fast mode for model ${name}`);
   };
 }
