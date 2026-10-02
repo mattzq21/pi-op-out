@@ -22,7 +22,7 @@ ${i.join(`
       `)}else Ks?k.write(`
         if (${U}.issues.length) {${I(U,G)}
         }
-
+        
         if (${U}.value === undefined) {
           if (${Dt}) {
             newResult[${G}] = undefined;
