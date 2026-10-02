@@ -148,14 +148,19 @@ function appendPromptContext(messages: ChatMessage[], entry: PiEntry) {
   if (context.success) messages[userIndex] = { ...messages[userIndex], promptContext: context.data };
 }
 
+export function appendQueuedProjectContext(messages: ChatMessage[], entry: PiEntry, inPlace = false): ChatMessage[] {
+  if (entry.type !== "custom" || entry.customType !== "piop-queued-project-context" || messages.some(message => message.id === entry.id)) return messages;
+  const context = z.object({ timestamp: z.number(), content: z.string() }).safeParse(entry.data);
+
+  if (!context.success) return messages;
+  const result = inPlace ? messages : messages.slice();
+  result.push(normalizeMessage({ role: "custom", customType: "pi-project-files-watch", ...context.data }, entry.id));
+
+  return result;
+}
+
 function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers: Set<string>) {
-  if (entry.customType === "piop-queued-project-context") {
-    const context = z.object({ timestamp: z.number(), content: z.string() }).safeParse(entry.data);
-
-    if (context.success) messages.push(normalizeMessage({ role: "custom", customType: "pi-project-files-watch", ...context.data }, entry.id));
-
-    return messages;
-  }
+  if (entry.customType === "piop-queued-project-context") return appendQueuedProjectContext(messages, entry, true);
   if (entry.customType === "piop-file-changes") return appendFileChanges(messages, entry, true);
   const marker = resumeMarker(entry);
 
