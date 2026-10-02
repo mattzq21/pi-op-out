@@ -1,18 +1,9 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const MAX_HTML_BYTES = 512_000;
-
-interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[] }
-
-declare module "@earendil-works/pi-coding-agent" {
-  interface EventBus {
-    on(channel: "piop:required-tools", handler: (request: RequiredToolsRequest) => void): () => void;
-    emit(channel: "piop:required-tools", request: RequiredToolsRequest): void;
-  }
-}
 
 async function readHtml(path: string, cwd: string, signal?: AbortSignal) {
   const file = await open(resolve(cwd, path), "r");
@@ -54,8 +45,6 @@ async function previewHtml(params: { html?: string; path?: string }, cwd: string
 }
 
 export function registerHtmlPreview(pi: ExtensionAPI) {
-  const stop = pi.events.on("piop:required-tools", request => { request.tools.push("render_html"); });
-  pi.on("session_shutdown", stop);
   pi.registerTool({
     name: "render_html", label: "Render HTML",
     description: "Display self-contained HTML in the piop chat harness. Supply exactly one of html or path (UTF-8 file on this agent's host, relative to the current working directory or absolute). Desktop displays a fixed 720×720 CSS-pixel viewport; mobile displays only a small placeholder. Inline CSS and JavaScript are supported in an isolated sandbox. Embed assets as data URLs; external resources, network requests, relative file assets, and access to the harness are unavailable. Maximum 512,000 UTF-8 bytes. The HTML is saved as a snapshot in the conversation.",
