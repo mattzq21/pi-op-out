@@ -240,7 +240,7 @@ pub(super) fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
     prepare_agent_configuration(&legacy_dir)?;
     let path = dir.join("index.ts");
     for (name, source) in [
-        ("mcp-schema.ts", include_str!("../../../extensions/piop-define-agents/mcp-schema.ts")),
+        ("mcp-schema.ts", include_str!("../../resources/mcp-schema.bundle.mjs")),
         ("mcp-config.ts", include_str!("../../../extensions/piop-define-agents/mcp-config.ts")),
         ("extension-loader.ts", include_str!("../../../extensions/piop-define-agents/extension-loader.ts")),
         ("state.ts", include_str!("../../../extensions/piop-define-agents/state.ts")),
