@@ -157,12 +157,18 @@ pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, s
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let client = app.state::<PiRuntime>();
     let _lifecycle = client.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
-    let mut paths: Vec<String> = session_descendants(&app, &host_id, &session_path, false, false)?.into_iter().map(|(path, _)| path).collect();
-    paths.push(session_path);
-    let mut mutations = Vec::new();
-    for path in &paths {
-        mutations.push(conversation_ownership::MutationGuard::acquire(&app, &host_id, path, &client_id, false, "archive")?);
-        retire_archived_session(&app, &client, &host_id, path)?;
+    let mut mutations = vec![conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "archive")?];
+    retire_archived_session(&app, &client, &host_id, &session_path)?;
+    let mut paths = vec![session_path.clone()];
+    loop {
+        let descendants: Vec<_> = session_descendants(&app, &host_id, &session_path, false, false)?.into_iter()
+            .map(|(path, _)| path).filter(|path| !paths.contains(path)).collect();
+        if descendants.is_empty() { break; }
+        for path in descendants {
+            mutations.push(conversation_ownership::MutationGuard::acquire(&app, &host_id, &path, &client_id, false, "archive")?);
+            retire_archived_session(&app, &client, &host_id, &path)?;
+            paths.push(path);
+        }
     }
     let settings = load_app_settings(app.clone())?;
     let session_ids = paths.iter().map(|path| session_identity(&settings, &host_id, path)).collect::<Result<Vec<_>, _>>()?;
