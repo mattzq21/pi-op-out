@@ -19,7 +19,7 @@ async function piEntry() {
   throw new Error("Pi is unavailable for extension validation");
 }
 
-async function piDirectory() {
+export async function piDirectory() {
   let directory = dirname(await piEntry());
 
   while (directory !== dirname(directory)) {

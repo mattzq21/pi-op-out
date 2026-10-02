@@ -8,6 +8,7 @@ import { configPath, resolvePromptPath } from "./prompts.ts";
 import type { RuntimeSettingsRequest } from "./contracts.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
+import { modelValidator } from "./model-validation.ts";
 
 const settings = JSON.parse(process.argv[2] || "{}");
 
@@ -56,8 +57,11 @@ if (!Check(Type.Array(Type.String()), settings.registeredTools)) throw new Error
 
 const validateExtensions = config.agents.some(agent => agent.extensions?.length) ? await extensionValidator(settings.registeredTools) : undefined;
 
+const validateModel = config.agents.some(agent => agent.model.trim() || agent.fastMode) ? await modelValidator() : undefined;
+
 for (const agent of config.agents) {
   validateEffort(agent.name, agent.effort);
+  await validateModel?.(agent, settings.defaultModel ?? "");
   let extensionTools: string[] = [];
 
   if (validateExtensions) {
