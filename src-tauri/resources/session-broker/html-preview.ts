@@ -47,7 +47,7 @@ async function previewHtml(params: { html?: string; path?: string }, cwd: string
 export function registerHtmlPreview(pi: ExtensionAPI) {
   pi.registerTool({
     name: "render_html", label: "Render HTML",
-    description: "Display self-contained HTML in the piop chat harness. Supply exactly one of html or path (UTF-8 file on this agent's host, relative to the current working directory or absolute). Desktop displays a fixed 720×720 CSS-pixel viewport; mobile displays only a small placeholder. Inline CSS and JavaScript are supported in an isolated sandbox. Embed assets as data URLs; external resources, network requests, relative file assets, and access to the harness are unavailable. Maximum 512,000 UTF-8 bytes. The HTML is saved as a snapshot in the conversation.",
+    description: "Display self-contained HTML in the piop chat harness. Use a dark theme only. Supply exactly one of html or path (UTF-8 file on this agent's host, relative to the current working directory or absolute). Desktop displays a fixed 720×720 CSS-pixel viewport; mobile displays only a small placeholder. Inline CSS and JavaScript are supported in an isolated sandbox. Embed assets as data URLs; external resources, network requests, relative file assets, and access to the harness are unavailable. Maximum 512,000 UTF-8 bytes. The HTML is saved as a snapshot in the conversation.",
     parameters: Type.Object({
       html: Type.Optional(Type.String({ minLength: 1, description: "HTML document or fragment to display." })),
       path: Type.Optional(Type.String({ minLength: 1, description: "Path to a self-contained HTML file on this host." })),
