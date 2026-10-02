@@ -71,7 +71,7 @@ export function watchBackend(command, args, options, root) {
     if (!filename || closing) return;
     const name = String(filename);
 
-    if (name.endsWith(".bundle.mjs") || name.split(/[\\/]/).some(part => ["node_modules", "target", ".git", "binaries", "gen"].includes(part))) return;
+    if (name.endsWith(".bundle.mjs") || name.split(/[\\/]/).some(part => ["node_modules", "target", ".git", "binaries", "gen", "agent-commands.json"].includes(part))) return;
     pending = true;
     clearTimeout(timer);
     timer = setTimeout(() => void restart(), 400);
