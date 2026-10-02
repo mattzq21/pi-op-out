@@ -159,7 +159,7 @@ export function createFastModeDiscovery() {
     } catch { return new Map(); }
   }
 
-  return async (ctx: DiscoveryContext, configured: FastTarget[]): Promise<FastTarget[]> => {
+  return async (ctx: DiscoveryContext, configured: FastTarget[], onUnknown?: (model: Model) => void): Promise<FastTarget[]> => {
     const models = ctx.modelRegistry.getAvailable().filter(model => isSupportedProvider(model.provider));
 
     const currentModel = ctx.model;
@@ -178,6 +178,8 @@ export function createFastModeDiscovery() {
       return group.flatMap(model => {
         const supported = remote.get(model.id) ?? fastCapability(capabilitySchema.parse(model));
         const explicit = configured.find(target => target.provider === model.provider && target.model === model.id);
+
+        if (supported === undefined && (model.api === "openai-codex-responses" || !explicit)) onUnknown?.(model);
 
         if (!(supported ?? (model.api !== "openai-codex-responses" && !!explicit))) return [];
 

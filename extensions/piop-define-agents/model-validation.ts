@@ -52,8 +52,12 @@ export async function modelValidator() {
     if (!model) throw new Error(`Agent "${agent.name}" cannot run because model ${name || "(unset)"} is unavailable`);
 
     if (!agent.fastMode) return;
-    const targets = await discoverFast({ modelRegistry: registry, model }, configured);
+    let unknown = false;
 
-    if (!targets.some(target => target.provider === model.provider && target.model === model.id)) throw new Error(`Agent "${agent.name}" cannot enable Fast mode for model ${name}`);
+    const targets = await discoverFast({ modelRegistry: registry, model }, configured, candidate => {
+      if (candidate.provider === model.provider && candidate.id === model.id) unknown = true;
+    });
+
+    if (!unknown && !targets.some(target => target.provider === model.provider && target.model === model.id)) throw new Error(`Agent "${agent.name}" cannot enable Fast mode for model ${name}`);
   };
 }
