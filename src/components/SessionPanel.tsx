@@ -1,6 +1,6 @@
 import { required } from "../lib/required";
 import { Key } from "@solid-primitives/keyed";
-import { createComputed,createMemo,createSignal,Show } from "solid-js";
+import { createComputed,createMemo,createSignal,Show,type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type KeyboardEvent,type MouseEvent } from "../lib/solid";
 
@@ -22,7 +22,7 @@ interface Props { transport: NativeTransport; settings: AppSettings; isArchiving
 
 type CustomGroup = SessionGroup;
 
-interface DropTarget { projectKey: string; sessionKey: string; edge: "before" | "after"; layoutBefore?: string | null; }
+interface DropTarget { projectKey: string; sessionKey: string; edge: "before" | "after"; layoutBefore?: string | null; parentKey?: string; }
 
 type DraggedItem = DraggedSession | { projectKey: string };
 
@@ -61,7 +61,9 @@ export function SessionPanel(props: Props) {
   const panel = () => panelFields;
   const storedGroups = props.sidebar;
   const { collapsedProjects, customGroupsByKey, groupBranchBadge, groupDestination, projectDetails, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
-  const keyboardSidebarEntries = sidebarEntries;
+  const { projectParent, moveProject } = storedGroups;
+  const siblingEntries = (parent?: string) => sidebarEntries().filter(token => projectParent(token.slice("group:".length)) === parent);
+  const keyboardSidebarEntries = createMemo(() => siblingEntries().flatMap(token => [token, ...siblingEntries(token.slice("group:".length))]));
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = createSignal<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [removingGroup, setRemovingGroup] = createSignal<{ id: string; name: string }>();
@@ -86,8 +88,7 @@ export function SessionPanel(props: Props) {
   const autoScrollFrameRef = createRef<number | undefined>(undefined);
   const dragPointerRef = createRef<{ x: number; y: number } | undefined>(undefined);
   const groupedSessionsRef = createRef<Map<string, SessionSummary[]>>(new Map());
-  const sidebarEntriesRef = createRef<string[]>([]);
-  createComputed(() => { groupedSessionsRef.current = storedGroups.groupedSessions(); sidebarEntriesRef.current = sidebarEntries(); });
+  createComputed(() => { groupedSessionsRef.current = storedGroups.groupedSessions(); });
   const removeMouseListenersRef = createRef<() => void>(() => { });
 
   const closeMenu = (restoreFocus = false) => { const target = groupMenu()?.returnFocus ?? menu()?.returnFocus; setMenu(undefined); setGroupMenu(undefined);
@@ -227,15 +228,23 @@ export function SessionPanel(props: Props) {
     };
 
     const projectDropTarget = (hit: Element | null, y: number, projectKey: string): DropTarget | undefined => {
+      const heading = hit?.closest<HTMLElement>("[data-drop-project-key]");
+      const destination = heading?.dataset.dropProjectKey;
+      if (destination && customGroupsByKey().has(destination) && groupDestination(projectKey)?.cwd) {
+        return { projectKey: destination, sessionKey: "", edge: "after", parentKey: destination };
+      }
       const entryElement = hit?.closest<HTMLElement>("section[data-sidebar-token], .session-item[data-sidebar-token]");
       const token = entryElement?.dataset.sidebarToken;
 
       if (!entryElement || !token || token === groupLayoutToken(projectKey)) return;
       const bounds = entryElement.getBoundingClientRect();
       const edge = y < bounds.top + bounds.height / 2 ? "before" : "after";
-      const index = sidebarEntriesRef.current.indexOf(token);
+      const parentKey = projectParent(token.slice("group:".length));
+      if (parentKey && !groupDestination(projectKey)?.cwd) return;
+      const entries = siblingEntries(parentKey);
+      const index = entries.indexOf(token);
 
-      return { projectKey: RECENT_KEY, sessionKey: "", edge, layoutBefore: edge === "before" ? token : sidebarEntriesRef.current[index + 1] ?? null };
+      return { projectKey: RECENT_KEY, sessionKey: "", edge, parentKey, layoutBefore: edge === "before" ? token : entries[index + 1] ?? null };
     };
 
     const emptyProjectDrop = (hit: Element | null): DropTarget | undefined => {
@@ -251,7 +260,10 @@ export function SessionPanel(props: Props) {
       const sessionElement = hit?.closest<HTMLElement>(".session-item[data-session-key]");
 
       if (sidebarDropZone) {
-        nextTarget = { projectKey: RECENT_KEY, sessionKey: "", edge: "after", layoutBefore: sidebarDropZone.dataset.sidebarEnd === "true" ? null : required(sidebarDropZone.dataset.sidebarBefore) };
+        const parentKey = sidebarDropZone.dataset.sidebarParent;
+        if ("session" in current || !parentKey || groupDestination(current.projectKey)?.cwd) {
+          nextTarget = { projectKey: parentKey ?? RECENT_KEY, sessionKey: "", edge: "after", parentKey, layoutBefore: sidebarDropZone.dataset.sidebarEnd === "true" ? null : required(sidebarDropZone.dataset.sidebarBefore) };
+        }
       } else if (!("session" in current)) {
         nextTarget = projectDropTarget(hit, y, current.projectKey);
       } else if (sessionElement && sessionElement.dataset.sessionKey !== current.sessionKey) {
@@ -312,7 +324,10 @@ export function SessionPanel(props: Props) {
 
             if (target.layoutBefore !== undefined) placeSidebarEntry(groupLayoutToken(RECENT_KEY), target.layoutBefore);
             expandProject(target.projectKey);
-          } else if (target.layoutBefore !== undefined) placeSidebarEntry(sourceToken, target.layoutBefore);
+          } else {
+            moveProject(current.projectKey, target.parentKey);
+            if (target.layoutBefore !== undefined) placeSidebarEntry(sourceToken, target.layoutBefore);
+          }
         }
       }
 
@@ -343,13 +358,13 @@ export function SessionPanel(props: Props) {
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
       if (normalizedQuery() || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
       event.preventDefault();
-      const entries = sidebarEntriesRef.current; const token = groupLayoutToken(projectKey); const index = entries.indexOf(token);
+      const entries = siblingEntries(projectParent(projectKey)); const token = groupLayoutToken(projectKey); const index = entries.indexOf(token);
       const direction = event.key === "ArrowUp" ? -1 : 1;
 
       if (index + direction < 0 || index + direction >= entries.length) return;
       placeSidebarEntry(token, direction < 0 ? entries[index - 1] : entries[index + 2] ?? null);
     },
-    "aria-description": isFixedGroup(projectKey) ? "Always shown below project groups." : !normalizedQuery() ? "Drag to reorder. Press Alt plus Up or Down to reorder." : undefined,
+    "aria-description": isFixedGroup(projectKey) ? "Always shown below project groups." : !normalizedQuery() ? "Drag to reorder or move a project into a group. Press Alt plus Up or Down to reorder." : undefined,
     "aria-keyshortcuts": !isFixedGroup(projectKey) && !normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown" : undefined,
   });
 
@@ -408,7 +423,7 @@ export function SessionPanel(props: Props) {
 
   const menuActions = createMemo(() => (contextMenu()));
   const isEditingGroup = (projectKey: string) => customGroupsByKey().has(projectKey) && editingGroupId() === customGroupsByKey().get(projectKey)?.id;
-  const renderDropZone = (beforeToken: string | null) => (<div  data-sidebar-drop-zone data-sidebar-before={beforeToken ?? undefined} data-sidebar-end={beforeToken === null ? true : undefined} class={`sidebar-drop-zone ${dropTarget()?.layoutBefore === beforeToken ? "active" : ""}`} />);
+  const renderDropZone = (beforeToken: string | null, parentKey?: string) => (<div data-sidebar-drop-zone data-sidebar-parent={parentKey} data-sidebar-before={beforeToken ?? undefined} data-sidebar-end={beforeToken === null ? true : undefined} class={`sidebar-drop-zone ${dropTarget()?.layoutBefore === beforeToken && dropTarget()?.parentKey === parentKey ? "active" : ""}`} />);
 
   const renderSessionScroll = () => {
     const renderGroupError = () => ((storedGroups.error || groupActionError()) && <p class="group-error" role="alert">{storedGroups.error || groupActionError()}</p>);
@@ -416,11 +431,7 @@ export function SessionPanel(props: Props) {
     const renderNewGroup = () => (<Show when={newGroupName() !== undefined && !editingGroupId()}><section class="project custom-group-draft"><div class="project-label"><input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Group name" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "new-group-error" : undefined} placeholder="Group name" value={(newGroupName())} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div><div class="group-draft-or">OR</div><GroupProjectPicker transport={props.transport} settings={props.settings} hostId={panel().activeHostId} disabled={groupSaving()} project={groupProject()} onCancel={() => void finishGroup(true)} onSelect={createProjectGroup} />{groupDraftError() && <small id="new-group-error" class="group-error">{(groupDraftError())}</small>}</section></Show>);
     const renderEmptyConversations = () => (storedGroups.state && !filtered().length && <div class="empty-small">{normalizedQuery() ? `No conversations match “${panel().query.trim()}”.` : "No conversations yet."}</div>);
 
-    return (<div ref={element => { sessionScrollRef.current = element; }} class="session-scroll">
-      {renderGroupError()}
-      {renderGroupLoading()}
-      {renderNewGroup()}
-      {<Key each={sidebarEntries().filter((token) => groupsByToken().has(token))} by={(token) => token}>{(token) => {
+    const renderGroups = (parentKey?: string): JSX.Element => <Key each={siblingEntries(parentKey).filter((token) => groupsByToken().has(token))} by={(token) => token}>{(token) => {
         const group = () => required(groupsByToken().get(token())); const projectKey = group()[0]; const label = () => groupLabel(group()[1], group()[2], group()[3]); const collapsed = () => !normalizedQuery() && collapsedProjects().has(projectKey); const groupId = disclosureId(projectKey);
 
         const visibleSessions = createMemo<SessionSummary[]>((previous = []) => {
@@ -469,11 +480,19 @@ export function SessionPanel(props: Props) {
           </div>);
         };
 
-        return [renderDropZone(token()), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${draggedSession() && dropTarget()?.projectKey === projectKey && dropTarget()?.layoutBefore === undefined ? "drop-project" : ""}`} >
+        return [renderDropZone(token(), parentKey), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${(draggedSession() || draggedProject()) && dropTarget()?.projectKey === projectKey && dropTarget()?.layoutBefore === undefined ? "drop-project" : ""}`} >
           {renderProjectHeading()}
-          <div id={groupId} hidden={collapsed()}><Key each={visibleSessions()} by={sessionKey}>{session => <SessionRow session={session()} projectKey={projectKey} />}</Key></div>
+          <div id={groupId} hidden={collapsed()}><Key each={visibleSessions()} by={sessionKey}>{session => <SessionRow session={session()} projectKey={projectKey} />}</Key>
+            {customGroupsByKey().has(projectKey) && <div class="group-projects">{renderGroups(projectKey)}{renderDropZone(null, projectKey)}</div>}
+          </div>
         </section>];
-      }}</Key>}
+      }}</Key>;
+
+    return (<div ref={element => { sessionScrollRef.current = element; }} class="session-scroll">
+      {renderGroupError()}
+      {renderGroupLoading()}
+      {renderNewGroup()}
+      {renderGroups()}
       {sidebarEntries().length > 0 && renderDropZone(null)}
       {renderEmptyConversations()}
     </div>);
