@@ -1,8 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type as Schema } from "typebox";
 import { Check } from "typebox/value";
-import { resolve } from "node:path";
-import { currentHost, request, MESSAGE_TIMEOUT_MS } from "./client.ts";
 import { forkConversation } from "./fork.ts";
 
 const branchRequestSchema = Schema.Object({ id: Schema.String(), entryId: Schema.String() });
@@ -58,22 +56,5 @@ export function registerForkAndForget(pi: ExtensionAPI) {
         else ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
     },
-  });
-}
-
-export function registerSessionOperations(pi: ExtensionAPI) {
-  const remove = (cwd: string, deleteBranch = false, signal?: AbortSignal) => request("/worktrees/remove", { hostId: currentHost(), cwd, deleteBranch }, signal, MESSAGE_TIMEOUT_MS);
-
-  const report = async <T,>(ctx: ExtensionContext, operation: () => Promise<T>) => {
-    try { pi.sendMessage({ customType: "piop-session-operation", content: JSON.stringify(await operation(), null, 2), display: true }, { triggerTurn: false }); }
-    catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
-  };
-
-  pi.registerCommand("remove-worktree", {
-    description: "Remove unused clean worktree, keeping its branch: /remove-worktree path", handler: async (args, ctx) => report(ctx, () => {
-      if (!args.trim()) throw new Error("Usage: /remove-worktree path");
-
-      return remove(resolve(ctx.cwd, args.trim()));
-    })
   });
 }
