@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ExtensionAPI, McpServerConfig } from "@earendil-works/pi-coding-agent";
+import { createMcpExtension, type BeforeAgentStartEvent, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type InputEvent, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
 
 type Selection = { servers: Record<string, McpServerConfig>; agentName: string; sessionId: string; registered?: Promise<string[]> };
 
@@ -16,9 +16,44 @@ declare module "@earendil-works/pi-coding-agent" {
 
 export default function agentMcp(pi: ExtensionAPI) {
   const registrations = new Map<string, string>();
+  const nativeToolNames = new Set<string>();
+  let started = false;
+  let sessionStart: SessionStartEvent = { type: "session_start", reason: "startup" };
+  let start: ExtensionHandler<SessionStartEvent> | undefined;
+
+  const startOnMessage = async (_event: InputEvent | BeforeAgentStartEvent, ctx: ExtensionContext) => {
+    if (started) return;
+    started = true;
+
+    try { await start?.(sessionStart, ctx); }
+    catch (error) { started = false; throw error; }
+  };
+
+  pi.on("session_start", event => { started = false; sessionStart = event; });
+  pi.on("input", startOnMessage);
+  pi.on("before_agent_start", startOnMessage);
+  // eslint-disable-next-line local/no-assertions -- Forward pi's overloaded event/handler pair unchanged.
+  const subscribe = pi.on as (event: ExtensionEvent["type"], handler: ExtensionHandler<never, unknown>) => () => void;
+  createMcpExtension()({
+    ...pi,
+    on(event, handler) {
+      if (event === "session_start") {
+        // eslint-disable-next-line local/no-assertions -- The event discriminates pi's matching handler overload.
+        start = handler as ExtensionHandler<SessionStartEvent>;
+
+        return () => { start = undefined; };
+      }
+
+      return subscribe(event, handler);
+    },
+    registerTool(tool) {
+      nativeToolNames.add(tool.name);
+      pi.registerTool(tool);
+    },
+  });
 
   const nativeTools = () => pi.getAllTools().filter(tool =>
-    tool.exposure !== "hidden" && ["builtin:mcp", "builtin:codemode", "builtin:tool-search"].includes(tool.sourceInfo?.path ?? ""));
+    tool.exposure !== "hidden" && (nativeToolNames.has(tool.name) || ["builtin:mcp", "builtin:codemode", "builtin:tool-search"].includes(tool.sourceInfo?.path ?? "")));
 
   const activeTools = () => {
     const active = new Set(pi.getActiveTools());

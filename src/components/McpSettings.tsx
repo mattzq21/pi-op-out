@@ -30,7 +30,7 @@ export function McpSettings(props: { agentName: string; value: McpServers; onCha
 
   return <section class="agent-mcp-settings">
     <h3>MCP servers</h3>
-    <p>Server entries use pi’s mcpServers format. Connections start when the chat opens. Servers from pi’s user and project mcp.json files are also available.</p>
+    <p>Server entries use pi’s mcpServers format. Connections start when you send the first message. Servers from pi’s user and project mcp.json files are also available.</p>
     <label class="field"><span>Server configuration (JSON)</span>
       <textarea rows={14} spellcheck={false} aria-label="MCP server configuration" aria-invalid={Boolean(error())} value={text()} onInput={event => change(event.currentTarget.value)} />
     </label>
