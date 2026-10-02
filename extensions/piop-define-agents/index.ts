@@ -1,4 +1,4 @@
-import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState } from "./state.ts";
+import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState } from "./state.ts";
 import { Type, type TSchema, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
@@ -506,8 +506,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const effort = effortOverride || agent.effort.trim() || runtimeDefaults?.effort;
 
     if (effort && effort !== pi.getThinkingLevel()) {
-      const levels: Array<Parameters<ExtensionAPI["setThinkingLevel"]>[0]> = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-      const level = levels.find(value => value === effort);
+      const level = agentThinkingLevels.find(value => value === effort);
 
       if (!level) throw new Error(`Unknown thinking level: ${effort}`);
       applyingAgentEffort = level; pi.setThinkingLevel(level);

@@ -3,11 +3,17 @@ import { dirname } from "node:path";
 import { Check } from "typebox/value";
 import { Type } from "typebox";
 import { loadConfig } from "./index.ts";
-import { agentSchema } from "./state.ts";
+import { agentSchema, agentThinkingLevels } from "./state.ts";
 import { configPath, resolvePromptPath } from "./prompts.ts";
 import type { RuntimeSettingsRequest } from "./contracts.ts";
 
 const settings = JSON.parse(process.argv[2] || "{}");
+
+function validateEffort(name: string, value: string | undefined) {
+  const effort = value?.trim();
+
+  if (effort && !agentThinkingLevels.some(level => level === effort)) throw new Error(`Agent "${name}" has an unknown thinking level: ${effort}`);
+}
 
 const sourceAgentSchema = Type.Object({
   ...Type.Partial(Type.Omit(agentSchema, ["mcpServers"])).properties,
@@ -27,6 +33,7 @@ try {
 
   for (const agent of stored.agents) {
     if (!Check(sourceAgentSchema, agent)) throw new Error("Invalid agent definition: check names, prompts, tools, skills and options");
+    validateEffort(agent.name, agent.effort);
 
     if (names.has(agent.name)) throw new Error(`Duplicate agent name: ${agent.name}`);
     names.add(agent.name);
@@ -44,6 +51,8 @@ if (!Check(Type.Array(agentSchema), config.agents)) throw new Error("Invalid age
 const prompts: Record<string, string> = {};
 
 for (const agent of config.agents) {
+  validateEffort(agent.name, agent.effort);
+
   for (const path of [agent.path_systemprompt, agent.path_agentprompt].filter(Boolean)) {
     const resolved = resolvePromptPath(path);
     prompts[resolved] ??= await readFile(resolved, "utf8");

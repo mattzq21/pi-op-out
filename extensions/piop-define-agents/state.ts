@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SessionAgentState } from "./contracts.ts";
 
 export const STATE_ENTRY = "pi-define-agents-state";
@@ -10,6 +10,8 @@ export const DEFAULTS_ENV = "PI_DEFINE_AGENTS_RUNTIME_DEFAULTS";
 export const DRAFT_STATE_ENV = "PIOP_AGENT_DRAFT_STATE";
 
 export type RuntimeDefaults = { model: string; effort: string };
+
+export const agentThinkingLevels: Array<Parameters<ExtensionAPI["setThinkingLevel"]>[0]> = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 const serverSchema = Type.Object({
   id: Type.String(), name: Type.String(), enabled: Type.Boolean(), transport: Type.Optional(Type.Union([Type.Literal("stdio"), Type.Literal("http")])),
