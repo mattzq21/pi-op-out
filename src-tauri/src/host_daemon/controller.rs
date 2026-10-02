@@ -426,8 +426,11 @@ impl Host {
             return session.execute(command.clone()).await;
         }
         if self.ownership().locate(&target.id, target.path.as_deref(), false, true)?.is_none() {
-            self.output(json!({"type":"session_removed","sessionId":target.id,"sessionPath":target.path}));
-            return Err("This conversation has been deleted or archived".into());
+            if self.ownership().removed(&target.id)? {
+                self.output(json!({"type":"session_removed","sessionId":target.id,"sessionPath":target.path}));
+                return Err("This conversation has been deleted or archived".into());
+            }
+            return Err("Conversation storage is temporarily unavailable; try again".into());
         }
         self.read_saved_conversation(&target, command)
     }
