@@ -22,6 +22,7 @@ use uuid::Uuid;
 
 pub(super) trait SessionHost: Send + Sync {
     fn output(&self, packet: Value);
+    fn record_tool_failure(&self, _record: Value) {}
     fn configuration(&self) -> Option<Value>;
     fn readonly_views(&self, identity: &str) -> Vec<String>;
     fn readonly(&self, runtime: &str) -> bool;
@@ -49,6 +50,7 @@ struct SessionState {
     dialogs: Vec<(String, Dialog)>,
     live_messages: Vec<(String, Value)>,
     tools: Vec<(String, Value)>,
+    tool_calls: HashMap<String, Value>,
     sequence: u64,
     state_revision: u64,
     content_revision: u64,
@@ -193,6 +195,7 @@ impl Session {
                 dialogs: Vec::new(),
                 live_messages: Vec::new(),
                 tools: Vec::new(),
+                tool_calls: HashMap::new(),
                 sequence: 0,
                 state_revision: 0,
                 content_revision: 0,
