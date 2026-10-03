@@ -11,6 +11,7 @@ mod queue;
 mod services;
 mod session;
 mod tool_payload;
+mod tool_failures;
 mod worker;
 
 use futures_util::FutureExt;

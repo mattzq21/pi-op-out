@@ -27,6 +27,7 @@ pub(super) fn state_change(name: &str) -> bool {
 
 impl Session {
     pub(super) fn receive(&self, mut event: Value) {
+        self.record_tool_failure(&event);
         if !self.ephemeral && (kind(&event) == "agent_settled" || (kind(&event) == "message_end" && event["message"]["role"] == "assistant")) {
             crate::session_registry::record(&self.state().state, self.cwd.as_deref());
         }
@@ -49,6 +50,29 @@ impl Session {
         self.queue.receive(event);
     }
 
+    fn record_tool_failure(&self, event: &Value) {
+        let (call, result) = match kind(event) {
+            "tool_execution_end" if flag(event, "isError") => (event, &event["result"]),
+            "message_end" if event["message"]["role"] == "toolResult" && flag(&event["message"], "isError") => {
+                (&event["message"], &event["message"])
+            }
+            _ => return,
+        };
+        let Some(id) = call["toolCallId"].as_str().filter(|id| !id.is_empty()) else { return; };
+        let record = {
+            let state = self.state();
+            let running = state.tools.iter().find(|(key, _)| key == id).map(|(_, tool)| tool);
+            let requested = state.tool_calls.get(id);
+            let input = call.get("args").filter(|value| !value.is_null())
+                .or_else(|| running.and_then(|tool| tool.get("args")))
+                .or_else(|| requested.and_then(|tool| tool.get("arguments")));
+            json!({"session":state.key,"epoch":self.epoch,"cwd":self.cwd,"model":state.state["model"],
+                "toolCallId":id,"toolName":call.get("toolName").or_else(|| running.and_then(|tool| tool.get("toolName"))).or_else(|| requested.and_then(|tool| tool.get("name"))),
+                "input":input,"result":result,"failureKind":super::super::payload::tool_failure_kind(result)})
+        };
+        self.host.record_tool_failure(record);
+    }
+
     fn retain_live(&self, event: &Value) {
         let name = kind(event);
         {
@@ -63,6 +87,7 @@ impl Session {
                     state.working = false;
                     state.live_messages.clear();
                     state.tools.clear();
+                    state.tool_calls.clear();
                 }
                 "compaction_start" | "auto_compaction_start" => state.compacting = true,
                 "compaction_end" | "auto_compaction_end" => state.compacting = false,
@@ -294,7 +319,19 @@ fn retain_message(state: &mut SessionState, event: &Value) {
                 set(&mut state.live_messages, role, next);
             }
         }
-        "message_end" => state.live_messages.retain(|(role, _)| event["message"]["role"] != *role),
+        "message_end" => {
+            let message = &event["message"];
+            if message["role"] == "assistant" {
+                for call in message["content"].as_array().into_iter().flatten().filter(|part| kind(part) == "toolCall") {
+                    if let Some(id) = call["id"].as_str() {
+                        state.tool_calls.insert(id.into(), call.clone());
+                    }
+                }
+            } else if message["role"] == "toolResult" {
+                if let Some(id) = message["toolCallId"].as_str() { state.tool_calls.remove(id); }
+            }
+            state.live_messages.retain(|(role, _)| message["role"] != *role);
+        }
         "tool_execution_start" | "tool_execution_update" => {
             let id = text(event, "toolCallId");
             let mut tool = state

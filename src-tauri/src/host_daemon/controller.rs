@@ -67,6 +67,14 @@ pub(super) struct Host {
 struct Callbacks(Weak<Host>);
 
 impl SessionHost for Callbacks {
+    fn record_tool_failure(&self, record: Value) {
+        if let Some(host) = self.0.upgrade() {
+            let path = host.home.join(&host.storage).join("tool-failures.sqlite");
+            if let Err(error) = super::tool_failures::record(&path, &record) {
+                host.output(json!({"type":"diagnostic","line":format!("Could not record tool failure: {error}")}));
+            }
+        }
+    }
     fn output(&self, packet: Value) {
         if let Some(host) = self.0.upgrade() {
             host.output(packet);

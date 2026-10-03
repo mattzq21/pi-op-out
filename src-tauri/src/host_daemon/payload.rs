@@ -71,7 +71,7 @@ fn defer_tool_result(value: &mut Value) {
     }
 }
 
-fn tool_failure_kind(result: &Value) -> &'static str {
+pub(super) fn tool_failure_kind(result: &Value) -> &'static str {
     let invalid_use = |text: &str| {
         let text = text.trim();
         text.starts_with("Validation failed for tool ")
