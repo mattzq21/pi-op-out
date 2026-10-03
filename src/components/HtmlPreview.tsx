@@ -4,6 +4,7 @@ import { isMobile } from "../lib/platform";
 import "./html-preview.css";
 
 const previewSchema = z.object({ version: z.literal(1), html: z.string().min(1).max(512_000), title: z.string().min(1).max(120) });
+const previewSizes = [{ screenWidth: 2560, size: 750 }, { screenWidth: 1920, size: 600 }];
 
 const policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 
@@ -15,7 +16,7 @@ function isolatedDocument(html: string) {
 }
 
 export function HtmlPreview(props: { details: unknown }) {
-  const screenSize = () => typeof window !== "undefined" && window.screen?.width >= 2560 ? 750 : 600;
+  const screenSize = () => previewSizes.find(({ screenWidth }) => typeof window !== "undefined" && window.screen?.width >= screenWidth)?.size ?? 600;
   const [size, setSize] = createSignal(screenSize());
   onMount(() => {
     const updateSize = () => setSize(screenSize());

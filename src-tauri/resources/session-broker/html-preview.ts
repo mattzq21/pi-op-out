@@ -4,6 +4,7 @@ import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const MAX_HTML_BYTES = 512_000;
+const PREVIEW_SIZES = [{ screenWidth: 2560, size: 750 }, { screenWidth: 1920, size: 600 }];
 
 async function readHtml(path: string, cwd: string, signal?: AbortSignal) {
   const file = await open(resolve(cwd, path), "r");
@@ -70,7 +71,7 @@ export function registerHtmlPreview(pi: ExtensionAPI) {
     if (request.command !== "html_preview_viewport") return;
     request.ready = Promise.resolve().then(() => {
       const width = request.payload?.screenWidth;
-      const next = typeof width === "number" && Number.isFinite(width) && width >= 2560 ? 750 : 600;
+      const next = typeof width === "number" && Number.isFinite(width) ? PREVIEW_SIZES.find(({ screenWidth }) => width >= screenWidth)?.size ?? 600 : 600;
       Object.defineProperty(globalThis, viewportKey, { value: next, configurable: true });
 
       if (next !== size) { size = next; defineTool(); }
