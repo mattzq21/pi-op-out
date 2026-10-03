@@ -81,7 +81,7 @@ function MessageCopyButton(componentProps: { state: "idle" | "copied" | "error";
 }
 
 function ToolLabel(componentProps: { message: ChatMessage; toolCount: number; status: string }) {
-  return <><Wrench size={14} /><span><strong>{componentProps.message.toolName || "tool"}{componentProps.toolCount > 1 ? ` x${componentProps.toolCount}` : ""}</strong><small>{componentProps.status === "running" ? "Running…" : componentProps.status === "error" ? "Failed" : componentProps.status === "unfinished" ? "Unfinished" : "Completed"}</small></span></>;
+  return <>{componentProps.message.toolName !== "codemode" && <Wrench size={14} />}<span><strong>{componentProps.message.toolName || "tool"}{componentProps.toolCount > 1 ? ` x${componentProps.toolCount}` : ""}</strong><small>{componentProps.status === "running" ? "Running…" : componentProps.status === "error" ? "Failed" : componentProps.status === "unfinished" ? "Unfinished" : "Completed"}</small></span></>;
 }
 
 function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; error?: string; retry: () => void }) {
