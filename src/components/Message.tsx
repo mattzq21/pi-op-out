@@ -92,7 +92,7 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
 
   return <>
       {input() !== undefined && <div class="tool-payload"><div class="tool-payload-label">In</div><div class="tool-input" aria-label="Tool arguments"><pre>{(input())}</pre></div></div>}
-      {Boolean(componentProps.message.nestedCalls?.calls.length) && <div class="tool-payload" role="group" aria-label="Nested tool calls"><Key each={componentProps.message.nestedCalls?.calls ?? []} by={call => call.id}>{call => <ToolResult debug
+      {Boolean(componentProps.message.nestedCalls?.calls.length) && <div class="tool-payload nested-tool-calls" role="group" aria-label="Nested tool calls"><Key each={componentProps.message.nestedCalls?.calls ?? []} by={call => call.id}>{call => <ToolResult debug
         status={call().status === "ok" ? "done" : call().status === "error" ? "error" : componentProps.message.toolStatus === "running" && !componentProps.message.nestedCalls?.complete ? "running" : "unfinished"}
         message={{ id: call().id, role: "tool", toolName: call().name, toolInput: call().arguments, content: call().error ?? "" }}
       />}</Key></div>}
