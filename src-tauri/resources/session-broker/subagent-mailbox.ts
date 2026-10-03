@@ -94,7 +94,6 @@ export function registerSubagentMailbox(pi: ExtensionAPI) {
   });
 
   return {
-    notify(id: string) { pending.add(id); wake("mailbox"); },
     reset() { pending.clear(); wake("cancelled"); },
   };
 }

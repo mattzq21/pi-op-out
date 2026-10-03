@@ -29,6 +29,13 @@ const requestIdSchema = Schema.Object({ id: Schema.String() });
 
 const deliveredSchema = Schema.Object({ customType: Schema.Literal("piop-agent-message"), details: Schema.Object({ notificationId: Schema.String() }) });
 
+const mailboxMessageSchema = Schema.Object({ details: Schema.Object({ notificationId: Schema.String() }) });
+
+export function sendAgentMailbox(pi: ExtensionAPI, message: Parameters<ExtensionAPI["sendMessage"]>[0], notificationId: string) {
+  pi.sendMessage(message, { triggerTurn: false });
+  pi.events.emit("piop:agent-mail", { notificationId });
+}
+
 export async function sessionSnapshot(sessionId: string, hostId: string, signal?: AbortSignal) {
   return Parse(snapshotSchema, await request("/orchestration", { action: "read", sessionId, hostId }, signal, 30_000));
 }
@@ -125,19 +132,18 @@ async function poll(target: Target, signal?: AbortSignal) {
     latestAssistantMessage: changed && last ? { id: last.id, text: text.slice(0, 2000), truncated: text.length > 2000, stopReason: message?.stopReason, error: message?.errorMessage } : undefined };
 }
 
-async function deliver(pi: ExtensionAPI, ctx: ExtensionContext, delivery: Static<typeof deliverySchema>, started: () => number, pending: Map<string, string>, unread: Set<string>) {
+async function deliver(pi: ExtensionAPI, ctx: ExtensionContext, delivery: Static<typeof deliverySchema>, started: () => number, pending: Map<string, string>) {
   const notificationId = randomUUID();
   const starting = ctx.isIdle() && delivery.wake !== false;
   const previousStarts = started();
-  pi.events.emit("piop:agent-mail", { notificationId });
   const content = JSON.stringify({ notificationId, sourceSessionId: delivery.sourceSessionId, sourceHostId: delivery.sourceHostId, message: delivery.message });
 
   if (starting) {
+    pi.events.emit("piop:agent-mail", { notificationId });
     pending.set(content, notificationId);
     pi.sendUserMessage(content, { deliverAs: "steer" });
   } else {
-    unread.add(notificationId);
-    pi.sendMessage({ customType: "piop-agent-message", content, display: true, details: { notificationId } }, { triggerTurn: false });
+    sendAgentMailbox(pi, { customType: "piop-agent-message", content, display: true, details: { notificationId } }, notificationId);
   }
 
   const deadline = Date.now() + 10_000;
@@ -177,6 +183,8 @@ function registerDelivery(pi: ExtensionAPI) {
   let starts = 0;
   const pending = new Map<string, string>();
   const unread = new Set<string>();
+  const unsubscribeMail = pi.events.on("piop:agent-mail", event => { unread.add(event.notificationId); });
+  pi.on("session_shutdown", unsubscribeMail);
   pi.on("agent_start", () => { starts++; });
   pi.on("session_start", () => { pending.clear(); unread.clear(); });
   pi.on("session_shutdown", () => { pending.clear(); unread.clear(); });
@@ -206,7 +214,7 @@ function registerDelivery(pi: ExtensionAPI) {
         const delivery = Parse(deliverySchema, input);
 
         if (ctx.mode !== "rpc") throw new Error("Agent delivery requires an RPC request");
-        const data = await deliver(pi, ctx, delivery, () => starts, pending, unread);
+        const data = await deliver(pi, ctx, delivery, () => starts, pending);
         ctx.ui.setStatus("piop-orchestration-response", `json:${JSON.stringify({ type: "response", id, command: "orchestration_message", success: true, data })}`);
       } catch (error) {
         if (id) ctx.ui.setStatus("piop-orchestration-response", `json:${JSON.stringify({ type: "response", id, command: "orchestration_message", success: false, error: String(error) })}`);
@@ -222,11 +230,12 @@ function registerDelivery(pi: ExtensionAPI) {
     const model = ctx.model;
 
     return { messages: event.messages.flatMap<ContextEvent["messages"][number]>(message => {
-      if (Check(deliveredSchema, message)) unread.delete(message.details.notificationId);
       const delivered = message.role === "user" && Check(deliveredSchema, message);
       const custom = message.role === "custom" && ["piop-agent-message", "piop-subagent-result"].includes(message.customType);
 
       if (!delivered && !custom) return [message];
+
+      if (Check(mailboxMessageSchema, message)) unread.delete(message.details.notificationId);
       const toolCallId = `agent_delivery_${createHash("sha256").update(JSON.stringify([message.timestamp, message.content])).digest("hex").slice(0, 24)}`;
 
       return [

@@ -15,7 +15,7 @@ import { writeSessionFile } from "./session-file.ts";
 import { goalTokens } from "./goal-state.ts";
 import { listenSubagentUsage, registerSubagentUsage } from "./subagent-usage.ts";
 import { registerSubagentMailbox } from "./subagent-mailbox.ts";
-import { interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
+import { interruptSession, sendAgentMailbox, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { setTimeout as delay } from "node:timers/promises";
 
 const SUBAGENT_RUN = "piop-subagent-run";
@@ -439,8 +439,7 @@ export function registerSubagents(pi: ExtensionAPI) {
       if (backgroundSignal.aborted || run.status === "running") return;
       const notificationId = randomUUID();
       const payload = subagentPayload([run]);
-      mailbox.notify(notificationId);
-      pi.sendMessage({ customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId }, display: true }, { triggerTurn: !ctx.isIdle(), deliverAs: "steer" });
+      sendAgentMailbox(pi, { customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId }, display: true }, notificationId);
     } }, pending);
 
     return { ...subagentPayload(results), isError: results.some(run => run.status === "failed" || run.status === "cancelled") };
@@ -603,8 +602,7 @@ export function registerSubagents(pi: ExtensionAPI) {
 
         const payload = subagentPayload([run]);
         const notificationId = randomUUID();
-        mailbox.notify(notificationId);
-        pi.sendMessage({ customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId }, display: true }, { triggerTurn: !ctx.isIdle(), deliverAs: "steer" });
+        sendAgentMailbox(pi, { customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId }, display: true }, notificationId);
       };
 
       await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, reportDescendants, signal: backgroundSignal, publish }, pending)));
