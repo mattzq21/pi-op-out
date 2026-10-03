@@ -45,6 +45,12 @@ function executionStopped(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>)
   return !isStreaming && !isCompacting && !isPausing;
 }
 
+async function interruptionComplete(sessionId: string, hostId: string, retired: boolean, signal?: AbortSignal) {
+  if (retired) return true;
+
+  return executionStopped(await sessionSnapshot(sessionId, hostId, signal));
+}
+
 export async function interruptSession(sessionId: string, hostId: string, signal?: AbortSignal) {
   let failures = 0;
 
@@ -55,7 +61,9 @@ export async function interruptSession(sessionId: string, hostId: string, signal
       const receipt = await request("/orchestration", { action: "interrupt", sessionId, hostId }, signal, 30_000);
       const completed = Check(Schema.Object({ completed: Schema.Literal(true) }), receipt);
 
-      if (completed && executionStopped(await sessionSnapshot(sessionId, hostId, signal))) return receipt;
+      const retired = Check(Schema.Object({ retired: Schema.Literal(true) }), receipt);
+
+      if (completed && await interruptionComplete(sessionId, hostId, retired, signal)) return receipt;
       failures = 0;
     } catch (error) {
       signal?.throwIfAborted();

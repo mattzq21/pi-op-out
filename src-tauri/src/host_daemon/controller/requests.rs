@@ -50,6 +50,7 @@ impl Host {
 
     async fn orchestration(self: &Arc<Self>, packet: Value) -> Result<Value> {
         let id = text(&packet, "sessionKey");
+        if text(&packet, "action") == "interrupt" { return self.orchestration_cancel(&id).await; }
         if self.ownership().locate(&id, packet["sessionPath"].as_str(), false, true)?.is_none() {
             return Err("This conversation has been deleted or archived".into());
         }
@@ -59,10 +60,21 @@ impl Host {
                 Some(session) => session.execute(json!({"type":"get_snapshot"})).await,
                 None => self.ownership().snapshot(&id, packet["sessionPath"].as_str()),
             },
-            "interrupt" => self.orchestration_interrupt(&id, session).await,
             "send" => self.orchestration_send(packet, session).await,
             _ => Err("Unknown orchestration action".into()),
         }
+    }
+
+    async fn orchestration_cancel(&self, id: &str) -> Result<Value> {
+        let session = self.find_session(id);
+        if session.is_some() { return self.orchestration_interrupt(id, session).await; }
+        if self.ownership().locate(id, None, false, true)?.is_some() {
+            return self.orchestration_interrupt(id, None).await;
+        }
+        if self.ownership().removed(id)? || self.ownership().locate(id, None, true, true)?.is_some() {
+            return Ok(json!({"sessionId":id,"completed":true,"retired":true}));
+        }
+        Err("Cannot confirm that this conversation has stopped or been retired".into())
     }
 
     async fn orchestration_interrupt(&self, id: &str, session: Option<Arc<Session>>) -> Result<Value> {
@@ -107,7 +119,7 @@ impl Host {
         if session.transient() || session.compacting() { return Err("Wait for conversation preparation or compaction to finish".into()); }
         session.reconcile(false).await;
         if let Some(error) = session.configuration_error() { return Err(error); }
-        session.execute(json!({"type":"orchestration_message","sourceSessionId":packet["sourceSessionId"],
+        queue_command(&session, json!({"type":"orchestration_message","sourceSessionId":packet["sourceSessionId"],
             "sourceHostId":packet["sourceHostId"],"message":packet["message"],"wake":packet["wake"]})).await
     }
 

@@ -252,15 +252,17 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
 
 type ActiveSubagent = { controller: AbortController; done: Promise<void> };
 
+class SubagentRetiredError extends Error {}
+
 type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Map<string, ActiveSubagent>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => void; reportDescendants: (tokens: number, ctx: ExtensionContext) => Promise<void> };
 
 async function confirmSubagentStopped(run: SubagentRun, ctx: ExtensionContext) {
   let notified = false;
 
   while (true) {
-    try { await interruptSession(run.sessionId, run.hostId);
+    try { const receipt = await interruptSession(run.sessionId, run.hostId);
 
-    return; } catch (error) {
+    return Check(Schema.Object({ retired: Schema.Literal(true) }), receipt); } catch (error) {
       if (!notified) ctx.ui.notify(`Cancellation is not confirmed for ${run.name}; continuing to retry: ${String(error)}`, "error");
       notified = true;
       await delay(2000);
@@ -302,7 +304,7 @@ async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution) 
     await waitForSubagent(run, requestSignal);
     dispatched = true;
   } catch (error) {
-    if (submitted) await confirmSubagentStopped(run, ctx);
+    if (submitted && await confirmSubagentStopped(run, ctx)) throw new SubagentRetiredError("Subagent was archived or deleted; its worker has stopped");
     throw error;
   }
   finally {
@@ -336,7 +338,7 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
     execution.ready();
     await dispatchSubagent(run, { ...execution, signal });
   } catch (error) {
-    run.status = signal?.aborted ? "cancelled" : "failed";
+    run.status = signal.aborted || error instanceof SubagentRetiredError ? "cancelled" : "failed";
     run.output = error instanceof Error ? error.message : String(error);
   }
 

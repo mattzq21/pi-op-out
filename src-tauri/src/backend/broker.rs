@@ -394,6 +394,12 @@ fn broker_orchestration(app: &AppHandle, broker: &BrokerRuntime, value: Value) -
     #[cfg(not(feature = "desktop"))]
     if host != "local" { return peers::forward_broker(app, host, "/orchestration", value.clone()); }
     let (id, action) = orchestration_target(&value)?;
+    if action == "interrupt" {
+        let settings = load_app_settings(app.clone())?;
+        let runtime = app.state::<PiRuntime>();
+        let daemon = crate::daemon::connect(app, &runtime, broker, &settings, host)?;
+        return daemon.request(json!({"type":"orchestration","action":action,"sessionKey":id}));
+    }
     let sessions = broker_message_sessions(app, &app.state::<SessionIndexRuntime>(), host)?;
     let session = resolve_agent(&sessions, host, id)?;
     let settings = load_app_settings(app.clone())?;

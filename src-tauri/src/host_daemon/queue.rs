@@ -421,6 +421,9 @@ impl SessionQueue {
     }
 
     async fn serial_command(&self, command: Value, name: &str) -> Result<Value> {
+        if name == "orchestration_message" && command["wake"] != false && self.held() {
+            return self.resume_command(command, name).await;
+        }
         if name == "pause" {
             self.hold().await?;
             let result = self.execute(command).await;
@@ -442,7 +445,7 @@ impl SessionQueue {
         let revision = self.state().inference_revision;
         let slash = text(&command, "message").starts_with('/');
         let result = self.execute(command).await?;
-        if name == "resume" || !slash || self.state().inference_revision != revision {
+        if matches!(name, "resume" | "orchestration_message") || !slash || self.state().inference_revision != revision {
             self.restore().await?;
         }
         Ok(result)
