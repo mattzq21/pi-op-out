@@ -446,15 +446,43 @@ export function registerSubagents(pi: ExtensionAPI) {
     },
   });
 
-  const stop = async () => {
+  let stopping: Promise<void> | undefined;
+  let detachAbort = () => {};
+
+  const stop = () => {
+    if (stopping) return stopping;
     controller.abort();
     mailbox.reset();
-    await Promise.allSettled([...pending]);
-    controller = new AbortController();
+    stopping = Promise.allSettled([...pending]).then(() => {
+      controller = new AbortController();
+      stopping = undefined;
+    });
+
+    return stopping;
   };
 
+  const cancel = () => { void stop(); };
+
+  const unsubscribeCancellation = pi.events.on("piop:cancel-preparation", cancel);
+
+  pi.on("agent_start", async (_event, ctx) => {
+    await stopping;
+    detachAbort();
+    const signal = ctx.signal;
+    signal?.addEventListener("abort", cancel, { once: true });
+    detachAbort = () => signal?.removeEventListener("abort", cancel);
+
+    if (signal?.aborted) await stop();
+  });
+  pi.on("agent_before_settle", async (event, ctx) => {
+    if (event.outcome === "aborted" || ctx.signal?.aborted) { await stop();
+
+    return; }
+
+    if (subagentParent(ctx)) while (pending.size) await Promise.allSettled([...pending]);
+  });
   pi.on("session_before_switch", stop);
-  pi.on("session_shutdown", stop);
+  pi.on("session_shutdown", async () => { detachAbort(); unsubscribeCancellation(); await stop(); });
   pi.registerTool({
     name: "await_subagents", label: "Await all subagents", exposure: "model-only",
     description: "Wait until every pending subagent has finished, successfully or with an error. No parameters, timeout, or early return on input or cancellation. Returns immediately if no subagents are pending. Subagent results are delivered separately in the conversation.",
