@@ -36,7 +36,7 @@ async function claimChannel(path: string) {
   return open(path, "wx", 0o600);
 }
 
-async function receiveUsage(request: IncomingMessage, response: ServerResponse, token: string, report: (total: number) => void) {
+async function receiveUsage(request: IncomingMessage, response: ServerResponse, token: string, report: (total: number) => void | Promise<void>) {
   if (request.method !== "POST" || request.url !== "/usage" || request.headers.authorization !== `Bearer ${token}`) {
     response.writeHead(403).end();
 
@@ -59,11 +59,11 @@ async function receiveUsage(request: IncomingMessage, response: ServerResponse, 
 
   return; }
 
-  report(usage.total);
+  await report(usage.total);
   response.writeHead(204).end();
 }
 
-export async function listenSubagentUsage(path: string, report: (total: number) => void, failed: (cause: unknown) => void) {
+export async function listenSubagentUsage(path: string, report: (total: number) => void | Promise<void>, failed: (cause: unknown) => void) {
   const token = randomUUID();
 
   const server = createServer((request, response) => {
@@ -75,7 +75,6 @@ export async function listenSubagentUsage(path: string, report: (total: number) 
   let owned = false;
 
   const close = async () => {
-    server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
 
     if (owned) await rm(channelPath(path), { force: true });
@@ -116,14 +115,19 @@ export function registerSubagentUsage(pi: ExtensionAPI) {
   let channel: Channel | undefined;
   let total = 0;
   let pending = Promise.resolve();
-  pi.on("session_start", async (_event, ctx) => { await pending.catch(() => undefined); channel = undefined; total = 0; channel = await loadChannel(ctx); });
+  pi.on("session_start", async () => { await pending.catch(() => undefined); channel = undefined; total = 0; });
 
   const report = (tokens: number, ctx: ExtensionContext) => {
-    if (!channel || !tokens) return;
-    total += tokens;
-    const target = channel;
-    const body = JSON.stringify({ total });
+    if (!tokens) return pending;
     pending = pending.catch(() => undefined).then(async () => {
+      const target = await loadChannel(ctx);
+
+      if (target?.token !== channel?.token) total = 0;
+      channel = target;
+
+      if (!target) return;
+      total += tokens;
+      const body = JSON.stringify({ total });
       const response = await fetch(`http://127.0.0.1:${target.port}/usage`, { method: "POST", headers: { Authorization: `Bearer ${target.token}`, "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(5000) });
 
       if (!response.ok) throw new Error(`Subagent usage delivery failed: HTTP ${response.status}`);
@@ -135,4 +139,6 @@ export function registerSubagentUsage(pi: ExtensionAPI) {
   pi.on("message_end", (event, ctx) => { if (event.message.role === "assistant") return report(goalTokens(event.message.usage), ctx); });
   pi.on("session_compact", (event, ctx) => report(goalTokens(event.compactionEntry.usage), ctx));
   pi.on("session_shutdown", () => pending);
+
+  return report;
 }

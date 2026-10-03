@@ -43,7 +43,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 20] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 22] = [
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
     ("pause.ts", include_str!("../../resources/session-broker/pause.ts")),
@@ -52,6 +52,8 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 20] = [
     ("session-file.ts", include_str!("../../resources/session-broker/session-file.ts")),
     ("fork.ts", include_str!("../../resources/session-broker/fork.ts")),
     ("subagents.ts", include_str!("../../resources/session-broker/subagents.ts")),
+    ("orchestration.ts", include_str!("../../resources/session-broker/orchestration.ts")),
+    ("agent-profiles.ts", include_str!("../../resources/session-broker/agent-profiles.ts")),
     ("subagent-usage.ts", include_str!("../../resources/session-broker/subagent-usage.ts")),
     ("subagent-mailbox.ts", include_str!("../../resources/session-broker/subagent-mailbox.ts")),
     ("operations.ts", include_str!("../../resources/session-broker/operations.ts")),
@@ -247,6 +249,7 @@ pub(super) fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
         ("state.ts", include_str!("../../../extensions/piop-define-agents/state.ts")),
         ("daemon-definitions.ts", include_str!("../../../extensions/piop-define-agents/daemon-definitions.ts")),
         ("prompts.ts", include_str!("../../../extensions/piop-define-agents/prompts.ts")),
+        ("profiles.ts", include_str!("../../../extensions/piop-define-agents/profiles.ts")),
         ("../piop-diagrams.ts", include_str!("../../../extensions/piop-diagrams/index.ts")),
         ("index.ts", include_str!("../../../extensions/piop-define-agents/index.ts")),
     ] { atomic_write_private(&dir.join(name), source.as_bytes())?; }

@@ -221,6 +221,7 @@ impl Session {
         let mut snapshot_state = request.snapshot_state.clone();
         snapshot_state["isStreaming"] = json!(state.working);
         snapshot_state["viewers"] = json!(state.views.iter().filter(|(_, view)| flag(view, "visible")).count());
+        snapshot_state["needsInput"] = json!(state.dialogs.iter().any(|(_, dialog)| !dialog.answering));
         snapshot_state["pendingMessageCount"] = json!(array(&queue, "steering").len() + array(&queue, "followUp").len());
         Ok(
             json!({"history":data,"revision":format!("{}:{}",self.epoch,state.content_revision),"sequence":state.sequence,"stateRevision":state.state_revision,

@@ -105,6 +105,7 @@ export function registerReview(pi: ExtensionAPI) {
       const settings = await reviewSettings();
       const profile: SubagentProfileRequest = { agent: settings.agent };
       pi.events.emit("piop:agents:subagent", profile);
+      await profile.ready;
 
       if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${settings.agent}`);
       const record = await createReview(ctx, profile.state);

@@ -12,6 +12,7 @@ import { registerBrokerTools } from "./session-broker/tools.ts";
 import { registerGoals } from "./session-broker/goals.ts";
 import { registerReview } from "./session-broker/review.ts";
 import { registerHtmlPreview } from "./session-broker/html-preview.ts";
+import { registerOrchestration } from "./session-broker/orchestration.ts";
 
 export { desktopPauseContext, registerPauseControl, type PauseController } from "./session-broker/pause.ts";
 
@@ -37,6 +38,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerFastModeStatus(pi);
   registerForkAndForget(pi);
   registerSubagents(pi);
+  registerOrchestration(pi);
   registerRequestUserInput(pi);
   registerBrokerTools(pi);
   registerGoals(pi);

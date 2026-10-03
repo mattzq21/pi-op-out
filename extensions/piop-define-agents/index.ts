@@ -4,6 +4,7 @@ import { Check, Parse } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
 import { readDaemonDefinitions } from "./daemon-definitions.ts";
+import { selectedProfileState } from "./profiles.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
 import type { FastModeRequest } from "../piop-openai-fast-mode/src/types.ts";
@@ -336,7 +337,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   pi.on("tool_call", (event, ctx) => {
     const agent = currentAgent();
-    const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
+    const required: RequiredToolsRequest = { ctx, tools: [], availableTools: agent?.tools }; pi.events.emit("piop:required-tools", required);
     const allowed = agent && !activeToolError && new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools(true), ...required.tools]);
 
     if (!allowed || !allowed.has(event.toolName) || toolDisabledForAgent(event.toolName, agent)) {
@@ -347,13 +348,24 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const stopSubagentProfiles = pi.events.on("piop:agents:subagent", (request) => {
     const agent = request.agent ? findAgent(request.agent) : currentAgent();
 
-    if (!agent) { request.error = "Choose a configured agent profile";
+    if (!agent) { request.error = `Unknown agent profile ${request.agent ?? "(current)"}. Available profiles: ${config.agents.map(agent => agent.name).join(", ")}`;
 
     return; }
 
-    request.state = request.agent
-      ? { active: agent.name, locked: false }
-      : { active: agent.name, locked: false, snapshot: snapshot && structuredClone(snapshot), modelOverride: modelOverride || agent.model || runtimeDefaults?.model, effortOverride: pi.getThinkingLevel(), fastModeOverride };
+    if (!request.agent) {
+      request.state = { active: agent.name, locked: false, snapshot: snapshot && structuredClone(snapshot), modelOverride: modelOverride || agent.model || runtimeDefaults?.model, effortOverride: pi.getThinkingLevel(), fastModeOverride };
+
+      return;
+    }
+
+    request.ready = selectedProfileState(pi, agent, path => readAgentPrompt(path, true))
+      .then(state => { request.state = state; })
+      .catch(error => { request.error = `Cannot load agent profile ${agent.name}: ${String(error)}`; });
+  });
+
+  const stopProfileCatalog = pi.events.on("piop:agents:profiles", request => {
+    request.active = currentAgent()?.name;
+    request.profiles = config.agents.map(agent => ({ name: agent.name, model: agent.model, effort: agent.effort, fastMode: agent.fastMode, tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers), path_systemprompt: agent.path_systemprompt, path_agentprompt: agent.path_agentprompt }));
   });
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
@@ -458,8 +470,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   };
 
-  async function readAgentPrompt(path: string) {
-    if (!daemonDefinitions || snapshot) return readFile(path, "utf8");
+  async function readAgentPrompt(path: string, fromCatalog = false) {
+    if (!daemonDefinitions || snapshot && !fromCatalog) return readFile(path, "utf8");
     const prompt = daemonDefinitions?.prompts[path];
 
     if (prompt === undefined) throw new Error(`Prompt is missing from daemon definitions: ${path}`);
@@ -560,7 +572,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (mcpError) return mcpError;
 
     if (agent.name !== "terminal-agent") tools.delete("lookup_terminals");
-    const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
+    const required: RequiredToolsRequest = { ctx, tools: [], availableTools: [...tools] }; pi.events.emit("piop:required-tools", required);
 
     for (const tool of required.tools) tools.add(tool);
     pi.setActiveTools([...tools].filter(name => agent.codemode !== false || name !== "codemode"));
@@ -589,7 +601,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
       activeToolError = agentToolError(pi, agent, extensions.tools());
       const mcpTools = currentMcpTools();
-      const required: RequiredToolsRequest = { ctx: request.ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
+      const required: RequiredToolsRequest = { ctx: request.ctx, tools: [], availableTools: agent.tools }; pi.events.emit("piop:required-tools", required);
       pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])].filter(name => agent.codemode !== false || name !== "codemode"));
       publish(request.ctx);
     });
@@ -603,7 +615,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
 
   const stopFastModelChanges = pi.events.on("piop:fast-mode-models-changed", ({ ctx }) => publish(ctx));
-  pi.on("session_shutdown", () => { stopSubagentProfiles(); stopRefresh(); stopReload(); stopFastModeChanges(); stopFastModelChanges(); extensions.stop(); });
+  pi.on("session_shutdown", () => { stopSubagentProfiles(); stopProfileCatalog(); stopRefresh(); stopReload(); stopFastModeChanges(); stopFastModelChanges(); extensions.stop(); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`;
 
   if (applyingAgentModel === model) { applyingAgentModel = undefined;

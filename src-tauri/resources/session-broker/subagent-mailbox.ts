@@ -7,7 +7,7 @@ type Activity = "mailbox" | "input" | "cancelled" | "timeout";
 
 const notificationSchema = Schema.Object({ notificationId: Schema.String() });
 
-interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[] }
+interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; availableTools?: string[] }
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
@@ -58,11 +58,17 @@ export function registerSubagentMailbox(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", unsubscribe);
+  const unsubscribeMail = pi.events.on("piop:agent-mail", event => { pending.add(event.notificationId); wake("mailbox"); });
+  pi.on("session_shutdown", unsubscribeMail);
   pi.on("input", event => {
     if (event.source !== "extension") wake("input");
   });
   pi.on("context", event => {
     for (const message of event.messages) {
+      const delivered = Schema.Object({ customType: Schema.Literal("piop-agent-message"), details: notificationSchema });
+
+      if (Check(delivered, message)) { pending.delete(message.details.notificationId); continue; }
+
       if (message.role !== "custom" || message.customType !== "piop-subagent-result") continue;
       const details = message.details;
 
@@ -88,7 +94,6 @@ export function registerSubagentMailbox(pi: ExtensionAPI) {
   });
 
   return {
-    notify(id: string) { pending.add(id); wake("mailbox"); },
     reset() { pending.clear(); wake("cancelled"); },
   };
 }
