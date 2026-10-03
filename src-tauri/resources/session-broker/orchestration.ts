@@ -125,7 +125,7 @@ async function poll(target: Target, signal?: AbortSignal) {
     latestAssistantMessage: changed && last ? { id: last.id, text: text.slice(0, 2000), truncated: text.length > 2000, stopReason: message?.stopReason, error: message?.errorMessage } : undefined };
 }
 
-async function deliver(pi: ExtensionAPI, ctx: ExtensionContext, delivery: Static<typeof deliverySchema>, started: () => number, pending: Map<string, string>) {
+async function deliver(pi: ExtensionAPI, ctx: ExtensionContext, delivery: Static<typeof deliverySchema>, started: () => number, pending: Map<string, string>, unread: Set<string>) {
   const notificationId = randomUUID();
   const starting = ctx.isIdle() && delivery.wake !== false;
   const previousStarts = started();
@@ -136,7 +136,8 @@ async function deliver(pi: ExtensionAPI, ctx: ExtensionContext, delivery: Static
     pending.set(content, notificationId);
     pi.sendUserMessage(content, { deliverAs: "steer" });
   } else {
-    pi.sendMessage({ customType: "piop-agent-message", content, display: true, details: { notificationId } }, { triggerTurn: !ctx.isIdle(), deliverAs: "steer" });
+    unread.add(notificationId);
+    pi.sendMessage({ customType: "piop-agent-message", content, display: true, details: { notificationId } }, { triggerTurn: false });
   }
 
   const deadline = Date.now() + 10_000;
@@ -175,8 +176,15 @@ function validateTargets(targets: Target[], ctx: ExtensionContext) {
 function registerDelivery(pi: ExtensionAPI) {
   let starts = 0;
   const pending = new Map<string, string>();
+  const unread = new Set<string>();
   pi.on("agent_start", () => { starts++; });
-  pi.on("session_shutdown", () => pending.clear());
+  pi.on("session_start", () => { pending.clear(); unread.clear(); });
+  pi.on("session_shutdown", () => { pending.clear(); unread.clear(); });
+  pi.on("agent_before_settle", (event, ctx) => {
+    if (event.outcome === "aborted" || ctx.signal?.aborted || !unread.size || !event.context.canContinue) return;
+
+    return { continue: true };
+  });
   pi.on("message_end", event => {
     if (event.message.role !== "user") return;
     const text = messageText(event.message);
@@ -198,7 +206,7 @@ function registerDelivery(pi: ExtensionAPI) {
         const delivery = Parse(deliverySchema, input);
 
         if (ctx.mode !== "rpc") throw new Error("Agent delivery requires an RPC request");
-        const data = await deliver(pi, ctx, delivery, () => starts, pending);
+        const data = await deliver(pi, ctx, delivery, () => starts, pending, unread);
         ctx.ui.setStatus("piop-orchestration-response", `json:${JSON.stringify({ type: "response", id, command: "orchestration_message", success: true, data })}`);
       } catch (error) {
         if (id) ctx.ui.setStatus("piop-orchestration-response", `json:${JSON.stringify({ type: "response", id, command: "orchestration_message", success: false, error: String(error) })}`);
@@ -214,6 +222,7 @@ function registerDelivery(pi: ExtensionAPI) {
     const model = ctx.model;
 
     return { messages: event.messages.flatMap<ContextEvent["messages"][number]>(message => {
+      if (Check(deliveredSchema, message)) unread.delete(message.details.notificationId);
       const delivered = message.role === "user" && Check(deliveredSchema, message);
       const custom = message.role === "custom" && ["piop-agent-message", "piop-subagent-result"].includes(message.customType);
 
