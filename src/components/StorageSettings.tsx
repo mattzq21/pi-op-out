@@ -16,9 +16,9 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
   "archived-project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects retained only by archived session checkpoints", icon: GitBranch, item: "ref" },
   "git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
   "archived-git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
-  "temporary-chats": { name: "Chit-chats", description: "Working directories for chit-chats", icon: FolderClock, item: "directory" },
+  "temporary-chats": { name: "No-project workdirs", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
   "worktrees": { name: "Worktrees", description: "Working copies, including dependencies and build outputs", icon: GitBranch, item: "worktree" },
-  "archived-worktrees": { name: "Chit-chats", description: "Working directories for chit-chats", icon: FolderClock, item: "directory" },
+  "archived-worktrees": { name: "No-project workdirs", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
   "other-storage": { name: "Other storage", description: "Settings, caches, logs, and other piop files", icon: HardDrive, item: "directory" },
 };
 

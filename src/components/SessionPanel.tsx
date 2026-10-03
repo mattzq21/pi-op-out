@@ -6,7 +6,7 @@ import { createDependencyEffect,createMemoFields,createRef,cssPixels,type Keyboa
 
 import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderOpen,LoaderCircle,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
 import { openGroupDirectory } from "../lib/nativeTransport";
-import { isTemporaryChatCwd, type SessionGroup } from "../lib/sessionGroups";
+import type { SessionGroup } from "../lib/sessionGroups";
 import { groupLayoutToken,isFixedGroup,RECENT_KEY,sessionKey,sessionLayoutToken,type DraggedSession,type SidebarState } from "../lib/sidebarState";
 import type { SessionSummary } from "../types";
 import { GroupProjectPicker, type GroupProject } from "./GroupProjectPicker";
@@ -32,7 +32,6 @@ const actions: ReadonlyArray<readonly [SessionAction, typeof AppWindow, string]>
 ];
 
 function projectKindLabel(session: SessionSummary) {
-  if (isTemporaryChatCwd(session.cwd)) return "Chit-chat";
   const kind = session.projectKind;
 
   return kind === "main" ? "Main checkout" : kind === "worktree" ? "Git worktree" : kind === "no-repo" ? "No Git repository" : session.cwdExists === false ? "Directory unavailable" : "Project directory";
