@@ -1,9 +1,52 @@
-use rusqlite::{params, Connection, TransactionBehavior};
-use serde_json::Value;
-use std::{fs::OpenOptions, path::Path, time::Duration};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use serde_json::{json, Value};
+use std::{fs::OpenOptions, path::{Path, PathBuf}, sync::{mpsc, Mutex}, time::Duration};
 
-pub(super) fn record(path: &Path, record: &Value) -> Result<(), String> {
-    write(path, record).map_err(|error| error.to_string())
+pub(super) struct Writer {
+    sender: Mutex<Option<mpsc::Sender<Value>>>,
+    finished: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+}
+
+impl Writer {
+    pub fn start(path: PathBuf, output: mpsc::Sender<Value>) -> Result<Self, String> {
+        let (sender, records) = mpsc::channel::<Value>();
+        let (finished, completion) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new().name("piop-tool-failures".into()).spawn(move || {
+            for record in records {
+                if let Err(error) = write(&path, &record) {
+                    let _ = output.send(json!({"type":"diagnostic","line":format!("Could not record tool failure: {error}")}));
+                }
+            }
+            let _ = finished.send(());
+        }).map_err(|error| error.to_string())?;
+        Ok(Self { sender: Mutex::new(Some(sender)), finished: tokio::sync::Mutex::new(Some(completion)) })
+    }
+
+    pub fn record(&self, record: Value) -> Result<(), String> {
+        let sender = self.sender.lock().unwrap_or_else(|error| error.into_inner());
+        sender.as_ref().ok_or("Tool failure writer has stopped")?
+            .send(record).map_err(|_| "Tool failure writer disconnected".into())
+    }
+
+    pub async fn shutdown(&self) -> Result<(), String> {
+        self.sender.lock().unwrap_or_else(|error| error.into_inner()).take();
+        let mut finished = self.finished.lock().await;
+        if let Some(completion) = finished.take() {
+            completion.await.map_err(|_| "Tool failure writer stopped before draining its queue")?;
+        }
+        Ok(())
+    }
+}
+
+fn merge_missing(original: &mut Value, additional: Value) {
+    if let (Value::Object(original), Value::Object(additional)) = (original, additional) {
+        for (key, value) in additional {
+            match original.entry(key) {
+                serde_json::map::Entry::Vacant(entry) => { entry.insert(value); }
+                serde_json::map::Entry::Occupied(mut entry) => merge_missing(entry.get_mut(), value),
+            }
+        }
+    }
 }
 
 fn write(path: &Path, record: &Value) -> Result<(), Box<dyn std::error::Error>> {
@@ -41,6 +84,17 @@ fn write(path: &Path, record: &Value) -> Result<(), Box<dyn std::error::Error>> 
             UNIQUE (epoch, tool_call_id)
         );",
     )?;
+    let previous: Option<String> = transaction.query_row(
+        "SELECT result FROM tool_failures WHERE epoch = ?1 AND tool_call_id = ?2",
+        params![record["epoch"].as_str(), record["toolCallId"].as_str()],
+        |row| row.get(0),
+    ).optional()?;
+    let mut result = record["result"].clone();
+    if let Some(previous) = previous {
+        let mut original = serde_json::from_str(&previous)?;
+        merge_missing(&mut original, result);
+        result = original;
+    }
     let json = |key: &str| record.get(key).filter(|value| !value.is_null()).map(Value::to_string);
     transaction.execute(
         "INSERT INTO tool_failures
@@ -53,7 +107,7 @@ fn write(path: &Path, record: &Value) -> Result<(), Box<dyn std::error::Error>> 
             failure_kind = excluded.failure_kind",
         params![record["session"].as_str(), record["epoch"].as_str(), record["cwd"].as_str(),
             json("model"), record["toolCallId"].as_str(), record["toolName"].as_str(),
-            json("input"), record["result"].to_string(), record["failureKind"].as_str()],
+            json("input"), result.to_string(), record["failureKind"].as_str()],
     )?;
     transaction.execute(
         "DELETE FROM tool_failures WHERE id NOT IN (SELECT id FROM tool_failures ORDER BY id DESC LIMIT 500)",
