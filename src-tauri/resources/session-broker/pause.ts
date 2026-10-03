@@ -166,7 +166,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
         const version = generation;
         pauseStopped = false; isPausing = true; persistPause(true); isPaused = false; publishPause();
         pauseOperation = (async () => {
-          try { ctx.abort(); await waitForIdle(ctx, version); }
+          try { pi.events.emit("piop:cancel-preparation", {}); ctx.abort(); await waitForIdle(ctx, version); }
           finally { if (version === generation) { isPaused = !pauseStopped; isPausing = false; pauseOperation = undefined; publishPause(); } }
         })();
       }
