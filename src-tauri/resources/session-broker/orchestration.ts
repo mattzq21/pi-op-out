@@ -39,6 +39,12 @@ export async function sendSessionMessage(ctx: ExtensionContext, sessionId: strin
   return request("/orchestration", { action: "send", sessionId, hostId, message, wake, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost() }, signal, 60_000);
 }
 
+function executionStopped(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {
+  const { isStreaming, isCompacting, isPausing } = snapshot.state;
+
+  return !isStreaming && !isCompacting && !isPausing;
+}
+
 export async function interruptSession(sessionId: string, hostId: string, signal?: AbortSignal) {
   let failures = 0;
 
@@ -49,7 +55,7 @@ export async function interruptSession(sessionId: string, hostId: string, signal
       const receipt = await request("/orchestration", { action: "interrupt", sessionId, hostId }, signal, 30_000);
       const completed = Check(Schema.Object({ completed: Schema.Literal(true) }), receipt);
 
-      if (completed && snapshotStatus(await sessionSnapshot(sessionId, hostId, signal)) === "idle") return receipt;
+      if (completed && executionStopped(await sessionSnapshot(sessionId, hostId, signal))) return receipt;
       failures = 0;
     } catch (error) {
       signal?.throwIfAborted();
