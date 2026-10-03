@@ -203,15 +203,15 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .tool-event strong { color: var(--ink); font-family: "DM Sans"; }
 .tool-event small { font: 10px "DM Sans"; }
 .tool-event pre { margin: 3px 0 0; max-height: 260px; overflow: auto; padding: 0; white-space: pre-wrap; font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
-.tool-event.done pre { max-height: 7.75em; overflow-y: auto; }
+.tool-event.done > .tool-payload > .tool-output pre { max-height: 7.75em; overflow-y: auto; }
 .tool-payload { margin-top: 8px; }
 .tool-payload-label { margin-bottom: 4px; color: var(--muted); font-size: 11px; }
 .tool-input, .tool-output { padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: color-mix(in srgb, var(--paper) 85%, black); }
 .tool-event .tool-input pre { margin: 0; max-height: none; overflow-wrap: anywhere; }
-.tool-event.running .tool-summary { color: #d5b79d; }
-.tool-event.error .tool-summary { color: #d99e91; }
+.tool-event.running > .tool-summary { color: #d5b79d; }
+.tool-event.error > .tool-summary { color: #d99e91; }
 .tool-chevron { flex: 0 0 auto; transition: transform .15s; }
-.tool-event[open] .tool-chevron { transform: rotate(90deg); }
+.tool-event[open] > .tool-summary > .tool-chevron { transform: rotate(90deg); }
 .work-group { margin: 0 0 8px; color: var(--muted); }
 .work-group > summary { display: flex; align-items: center; gap: 4px; width: fit-content; padding: 0; min-height: 20px; list-style: none; cursor: pointer; font: 12px/18px "DM Sans"; }
 .work-group > summary::-webkit-details-marker { display: none; }
