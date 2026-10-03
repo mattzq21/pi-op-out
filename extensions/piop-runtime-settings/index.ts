@@ -15,7 +15,7 @@ type Settings = {
   contextWindowCapEnabled: boolean;
 };
 
-type Update = { ctx: ExtensionContext; ready?: Promise<void> };
+type Update = { ctx: ExtensionCommandContext; ready?: Promise<void> };
 
 interface AppRequest { command: string; payload: unknown; ctx: ExtensionCommandContext; ready?: Promise<unknown> }
 
@@ -246,7 +246,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     if (original && original !== filtered) return { systemPrompt: event.systemPrompt.replace(original, filtered) };
   });
 
-  const update = async (event: string, ctx: ExtensionContext) => {
+  const update = async (event: string, ctx: ExtensionCommandContext) => {
     const request: Update = { ctx };
     pi.events.emit(event, request);
 
@@ -270,7 +270,8 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
         setGlobal(key, next);
 
         if (settingsRequest.reloadAgents || skillsChanged(previous, next)) {
-          await ctx.reload();
+          if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:reload", ctx);
+          else await ctx.reload();
         } else {
           applyTools(ctx);
 

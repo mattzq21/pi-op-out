@@ -1,5 +1,5 @@
 import type { McpServers } from "./mcp-config.ts";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 export interface RuntimeSettingsRequest { settings?: { tools: string[]; skills: string[]; explicitOnlySkills?: string[] } }
 
@@ -10,6 +10,8 @@ export interface McpToolsRequest { tools?: string[]; availableTools?: string[] }
 export interface McpSelection { codemode?: boolean; servers: McpServers; agentName: string; sessionId: string; registered?: Promise<string[]> }
 
 export interface AgentRefreshRequest { ctx: ExtensionContext; ready?: Promise<void> }
+
+export interface AgentReloadRequest { ctx: ExtensionCommandContext; ready?: Promise<void> }
 
 interface FastModeChange { enabled?: boolean }
 
@@ -29,6 +31,8 @@ declare module "@earendil-works/pi-coding-agent" {
     emit(channel: "piop:agents:subagent", request: SubagentProfileRequest): void;
     on(channel: "piop:agents:refresh", handler: (request: AgentRefreshRequest) => void): () => void;
     emit(channel: "piop:agents:refresh", request: AgentRefreshRequest): void;
+    on(channel: "piop:agents:reload", handler: (request: AgentReloadRequest) => void): () => void;
+    emit(channel: "piop:agents:reload", request: AgentReloadRequest): void;
     on(channel: "piop:fast-mode-changed", handler: (event: FastModeChange) => void): () => void;
     emit(channel: "piop:fast-mode-changed", event: FastModeChange): void;
     on(channel: "piop:fast-mode-models-changed", handler: (event: FastModelsChange) => void): () => void;

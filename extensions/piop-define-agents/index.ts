@@ -402,6 +402,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
     try { await ctx.reload(); } finally { reloading = false; }
   };
 
+  const stopReload = pi.events.on("piop:agents:reload", (request) => {
+    request.ready = Promise.resolve().then(() => reload(request.ctx));
+  });
+
   const saveRuntimeDefaults = (value: RuntimeDefaults) => { runtimeDefaults = value; process.env[DEFAULTS_ENV] = JSON.stringify({ ...value, session: runtimeSession }); };
 
   const restore = (ctx: ExtensionContext) => {
@@ -599,7 +603,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
 
   const stopFastModelChanges = pi.events.on("piop:fast-mode-models-changed", ({ ctx }) => publish(ctx));
-  pi.on("session_shutdown", () => { stopSubagentProfiles(); stopRefresh(); stopFastModeChanges(); stopFastModelChanges(); extensions.stop(); });
+  pi.on("session_shutdown", () => { stopSubagentProfiles(); stopRefresh(); stopReload(); stopFastModeChanges(); stopFastModelChanges(); extensions.stop(); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`;
 
   if (applyingAgentModel === model) { applyingAgentModel = undefined;
