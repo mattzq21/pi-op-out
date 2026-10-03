@@ -4,6 +4,7 @@ import { Check } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
 import { readDaemonDefinitions } from "./daemon-definitions.ts";
+import { selectedProfileState } from "./profiles.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
 import type { FastModeRequest } from "../piop-openai-fast-mode/src/types.ts";
@@ -355,13 +356,24 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const stopSubagentProfiles = pi.events.on("piop:agents:subagent", (request) => {
     const agent = request.agent ? findAgent(request.agent) : currentAgent();
 
-    if (!agent) { request.error = "Choose a configured agent profile";
+    if (!agent) { request.error = `Unknown agent profile ${request.agent ?? "(current)"}. Available profiles: ${config.agents.map(agent => agent.name).join(", ")}`;
 
     return; }
 
-    request.state = request.agent
-      ? { active: agent.name, locked: false }
-      : { active: agent.name, locked: false, snapshot: snapshot && structuredClone(snapshot), modelOverride: modelOverride || agent.model || runtimeDefaults?.model, effortOverride: pi.getThinkingLevel(), fastModeOverride };
+    if (!request.agent) {
+      request.state = { active: agent.name, locked: false, snapshot: snapshot && structuredClone(snapshot), modelOverride: modelOverride || agent.model || runtimeDefaults?.model, effortOverride: pi.getThinkingLevel(), fastModeOverride };
+
+      return;
+    }
+
+    request.ready = selectedProfileState(pi, agent, path => readAgentPrompt(path, true))
+      .then(state => { request.state = state; })
+      .catch(error => { request.error = `Cannot load agent profile ${agent.name}: ${String(error)}`; });
+  });
+
+  const stopProfileCatalog = pi.events.on("piop:agents:profiles", request => {
+    request.active = currentAgent()?.name;
+    request.profiles = config.agents.map(agent => ({ name: agent.name, model: agent.model, effort: agent.effort, fastMode: agent.fastMode, tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers), path_systemprompt: agent.path_systemprompt, path_agentprompt: agent.path_agentprompt }));
   });
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
@@ -462,8 +474,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   };
 
-  async function readAgentPrompt(path: string) {
-    if (!daemonDefinitions || snapshot) return readFile(path, "utf8");
+  async function readAgentPrompt(path: string, fromCatalog = false) {
+    if (!daemonDefinitions || snapshot && !fromCatalog) return readFile(path, "utf8");
     const prompt = daemonDefinitions?.prompts[path];
 
     if (prompt === undefined) throw new Error(`Prompt is missing from daemon definitions: ${path}`);
@@ -607,7 +619,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
 
   const stopFastModelChanges = pi.events.on("piop:fast-mode-models-changed", ({ ctx }) => publish(ctx));
-  pi.on("session_shutdown", () => { stopSubagentProfiles(); stopRefresh(); stopFastModeChanges(); stopFastModelChanges(); extensions.stop(); });
+  pi.on("session_shutdown", () => { stopSubagentProfiles(); stopProfileCatalog(); stopRefresh(); stopFastModeChanges(); stopFastModelChanges(); extensions.stop(); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`;
 
   if (applyingAgentModel === model) { applyingAgentModel = undefined;

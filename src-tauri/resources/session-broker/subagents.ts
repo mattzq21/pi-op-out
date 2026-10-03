@@ -2,7 +2,7 @@ import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft 
 import { Type } from "@earendil-works/pi-ai";
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
-import type { SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
+import { resolveAgentProfile } from "./agent-profiles.ts";
 import type { GoalScope } from "./goals.ts";
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -29,6 +29,7 @@ const runSchema = Schema.Object({
   version: Schema.Literal(1), toolCallId: Schema.String(), parentSessionId: Schema.String(), sessionId: Schema.String(), sessionPath: Schema.String(),
   hostId: Schema.String(), name: Schema.String(), task: Schema.String(), status: Schema.Union([Schema.Literal("running"), Schema.Literal("completed"), Schema.Literal("failed"), Schema.Literal("cancelled")]),
   startedAt: Schema.Number(), endedAt: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.String()), apiCost: Schema.Optional(Schema.Number()),
+  agent: Schema.Optional(Schema.String()),
 });
 
 const usageSchema = Schema.Object({ input: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.Number()), cacheWrite: Schema.Optional(Schema.Number()), cost: Schema.Optional(Schema.Object({ total: Schema.Optional(Schema.Number()) })) });
@@ -94,8 +95,6 @@ function validateFork(task: SubagentTask) {
 
   if (forkTurns !== "none" && forkTurns !== "all" && !/^[1-9]\d*$/.test(forkTurns)) throw new Error("fork_turns must be none, all, or a positive turn count");
 
-  if (forkTurns === "all" && task.agent) throw new Error("A full history fork inherits the current agent profile");
-
   return forkTurns;
 }
 
@@ -118,6 +117,8 @@ function completedHistory(ctx: ExtensionContext) {
 function inheritedHistory(ctx: ExtensionContext, task: SubagentTask) {
   const forkTurns = validateFork(task);
   let retained = forkTurns === "none" ? [] : completedHistory(ctx);
+
+  if (task.agent) retained = retained.filter(entry => entry.type !== "model_change" && entry.type !== "thinking_level_change");
 
   if (forkTurns !== "all" && forkTurns !== "none") {
     const starts = retained.flatMap((entry, index) => entry.type === "message" && entry.message.role === "user" ? [index] : []);
@@ -157,16 +158,11 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   const header = ctx.sessionManager.getHeader();
 
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before delegating work");
-  const profile: SubagentProfileRequest = { agent: task.agent };
-  pi.events.emit("piop:agents:subagent", profile);
-
-  if (profile.error) throw new Error(profile.error);
-
-  if (!profile.state) throw new Error("Agent profiles are unavailable");
+  const profile = await resolveAgentProfile(pi, task.agent);
   const sessionId = randomUUID();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
-  const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, status: "running", startedAt: Date.now() };
+  const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, agent: profile.active, status: "running", startedAt: Date.now() };
   let retained = inheritedHistory(ctx, task);
   let parentId: string | null = null;
   retained = retained.map(item => { const next = { ...item, parentId }; parentId = next.id;
@@ -182,7 +178,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
     ...retained,
     entry({ type: "session_info", name: `Subagent: ${task.name}` }),
     entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, parentSessionId, parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task } }),
-    entry({ type: "custom", customType: "pi-define-agents-state", data: profile.state }),
+    entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
   ]);
 
   return run;
@@ -260,7 +256,7 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
 }
 
 function subagentPayload(runs: SubagentRun[]): AgentToolResult<{ version: 1; runs: SubagentRun[] }> {
-  return { content: [{ type: "text", text: runs.map((run) => `${run.name}: ${run.status}\nSession: ${run.hostId}/${run.sessionId}\nTranscript: ${run.sessionPath}${run.output ? `\n${run.output}` : ""}`).join("\n\n") }], details: { version: 1, runs: structuredClone(runs) } };
+  return { content: [{ type: "text", text: runs.map((run) => `${run.name}: ${run.status}\nAgent profile: ${run.agent ?? "original profile"}\nSession: ${run.hostId}/${run.sessionId}\nTranscript: ${run.sessionPath}${run.output ? `\n${run.output}` : ""}`).join("\n\n") }], details: { version: 1, runs: structuredClone(runs) } };
 }
 
 function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "ready">, pending: Set<Promise<void>>) {
@@ -314,18 +310,18 @@ export function registerSubagents(pi: ExtensionAPI) {
     const allowed = availableTools ?? pi.getActiveTools();
     const child = ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === SUBAGENT_PARENT);
 
-    if (allowed.includes("subagent") || latestRuns(ctx).length) tools.push("spawn_agent", "followup_task", "interrupt_agent", "list_agents", "send_message", "wait_agent", "await_subagents");
+    if (allowed.includes("subagent") || latestRuns(ctx).length) tools.push("spawn_agent", "followup_task", "interrupt_agent", "list_agents", "list_agent_profiles", "send_message", "wait_agent", "await_subagents");
 
     if (child) tools.push("send_message", "wait_agent");
 
-    if (allowed.includes("send_message")) tools.push("send_message_to_thread", "read_thread", "wait_threads", "list_threads");
+    if (allowed.includes("send_message")) tools.push("send_message_to_thread", "read_thread", "wait_threads", "list_threads", "create_thread", "list_agent_profiles");
   });
 
   pi.on("session_shutdown", unsubscribeTools);
   pi.registerTool({
     name: "spawn_agent", label: "Spawn agent", exposure: "model-only",
-    description: "Start one background child and return its session ID. Up to four children may run concurrently; children cannot spawn grandchildren. Children share files and inherit the current profile/model unless agent selects a configured profile. fork_turns is none (default), all, or a positive number of recent user turns. Full forks inherit the profile. Final results arrive in the parent mailbox without starting an idle parent. Use followup_task for more work, send_message for updates, and wait_agent when blocked. Children are cancelled on parent close/switch and time out after ten minutes.",
-    parameters: Type.Object({ task_name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), message: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String()), fork_turns: Type.Optional(Type.String()) }),
+    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. Profile choice is independent of fork_turns: none (default), all, or a positive number of recent user turns. Up to four children run concurrently; children cannot spawn grandchildren. Files are shared. Final results arrive in the parent mailbox without starting an idle parent. Use followup_task for more work, send_message for updates, and wait_agent when blocked. Children are cancelled on parent close/switch and time out after ten minutes.",
+    parameters: Type.Object({ task_name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), message: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1, description: "Exact configured profile name from list_agent_profiles; omit to inherit the caller" })), fork_turns: Type.Optional(Type.String()) }),
     async execute(id, params, signal, _update, ctx) { return start({ name: params.task_name, task: params.message, agent: params.agent, fork_turns: params.fork_turns }, id, ctx, signal); },
   });
   pi.registerTool({
@@ -335,7 +331,7 @@ export function registerSubagents(pi: ExtensionAPI) {
       const agents = await Promise.all(latestRuns(ctx).map(async run => {
         try { const snapshot = await sessionSnapshot(run.sessionId, run.hostId, signal);
 
-        return { sessionId: run.sessionId, task_name: `/root/${run.name}`, status: snapshotStatus(snapshot), lastRunStatus: run.status }; }
+        return { sessionId: run.sessionId, task_name: `/root/${run.name}`, agent: run.agent, status: snapshotStatus(snapshot), lastRunStatus: run.status }; }
         catch (error) { return { sessionId: run.sessionId, task_name: `/root/${run.name}`, status: "unavailable", error: String(error) }; }
       }));
 

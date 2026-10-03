@@ -196,6 +196,8 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let mcp_schema = shell_quote(include_str!("../../resources/mcp-schema.bundle.mjs"));
     remote.push_str(&format!(r#" && printf %s {mcp_schema} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/mcp-schema.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/mcp-schema.ts""#));
     let agent_state = shell_quote(include_str!("../../../extensions/piop-define-agents/state.ts"));
+    let agent_profiles = shell_quote(include_str!("../../../extensions/piop-define-agents/profiles.ts"));
+    remote.push_str(&format!(r#" && printf %s {agent_profiles} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/profiles.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/profiles.ts""#));
     remote.push_str(&format!(r#" && printf %s {agent_state} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/state.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/state.ts""#));
     let daemon_definitions = shell_quote(include_str!("../../../extensions/piop-define-agents/daemon-definitions.ts"));
     remote.push_str(&format!(r#" && printf %s {daemon_definitions} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/daemon-definitions.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/daemon-definitions.ts""#));
