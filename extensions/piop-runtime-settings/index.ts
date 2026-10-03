@@ -3,7 +3,7 @@ import { Check, Parse } from "typebox/value";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { formatSkillsForPrompt, getAgentDir, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { loadAccountProviders } from "./provider-accounts.mjs";
 
@@ -116,8 +116,42 @@ function codemodeAbilities(pi: ExtensionAPI, ctx: ExtensionContext) {
   return state.batches;
 }
 
+function replacePromptText(value: unknown, prompt: string, replacement: string): unknown {
+  if (typeof value === "string") return value === prompt ? replacement : value;
+
+  if (Array.isArray(value)) return value.map((item) => replacePromptText(item, prompt, replacement));
+
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, replacePromptText(item, prompt, replacement)]));
+
+  return value;
+}
+
+function updateProviderPrompt(payload: unknown, prompt: string, replacement: string) {
+  if (!Check(Type.Record(Type.String(), Type.Unknown()), payload)) return;
+  const updated = { ...payload };
+
+  for (const key of ["instructions", "system", "systemInstruction"]) {
+    if (key in updated) updated[key] = replacePromptText(updated[key], prompt, replacement);
+  }
+
+  for (const key of ["messages", "input"]) {
+    const messages = updated[key];
+
+    if (!Array.isArray(messages)) continue;
+    updated[key] = messages.map((message) => Check(Type.Object({ role: Type.Union([Type.Literal("system"), Type.Literal("developer")]) }), message)
+      ? replacePromptText(message, prompt, replacement) : message);
+  }
+
+  const config = updated.config;
+
+  if (Check(Type.Record(Type.String(), Type.Unknown()), config) && "systemInstruction" in config) updated.config = { ...config, systemInstruction: replacePromptText(config.systemInstruction, prompt, replacement) };
+
+  return updated;
+}
+
 export default async function runtimeSettings(pi: ExtensionAPI) {
   const accountProviders = new Map();
+  let promptOptions: BuildSystemPromptOptions | undefined;
 
   const refreshAccounts = async () => {
     const existing = new Map(accountProviders);
@@ -159,6 +193,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
   });
   pi.on("resources_discover", () => process.env.PI_DEFINE_AGENTS_ACTIVE === "1" ? undefined : { skillPaths: current().skills });
   pi.on("before_agent_start", (event, ctx) => {
+    promptOptions = event.systemPromptOptions;
     const batches = codemodeAbilities(pi, ctx);
 
     if (!batches) return;
@@ -171,7 +206,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
 
     if (options.forceSystemPrompt !== undefined) options.forceSystemPrompt += `\n\n${Object.entries(options.sections).filter(([name]) => name === "codemode" || name.startsWith("codemode_abilities_")).map(([, value]) => value).join("\n\n")}`;
   });
-  pi.on("context", (event, ctx) => {
+  pi.on("context_with_system", (event, ctx) => {
     const batches = codemodeAbilities(pi, ctx);
 
     if (!batches) return;
@@ -188,6 +223,16 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     }
 
     return { messages };
+  });
+  pi.on("before_provider_request", (event, ctx) => {
+    if (promptOptions?.forceSystemPrompt === undefined) return;
+    const batches = codemodeAbilities(pi, ctx);
+    const prompt = ctx.getSystemPrompt();
+    const additions = batches?.slice(1).filter((batch) => !prompt.includes(batch.text)).map((batch) => batch.text);
+
+    if (!prompt || !additions?.length) return;
+
+    return updateProviderPrompt(event.payload, prompt, `${prompt}\n\n${additions.join("\n\n")}`);
   });
   pi.on("before_agent_start", (event) => {
     if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1" || !current().explicitOnlySkills?.length) return;
