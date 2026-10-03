@@ -8,10 +8,12 @@ export const entrySchema = z.object({
   timestamp: z.string().optional(), tokensBefore: z.number().optional(),
 });
 
-export const pendingMessagesSchema = z.array(z.object({
+export const pendingMessageSchema = z.object({
   id: z.string(), message: z.string(), behavior: z.enum(["steer", "followUp"]),
-  images: z.array(imageSchema).optional(), retry: z.boolean().optional(),
-})).optional();
+  images: z.array(imageSchema.omit({ data: true })).optional(), retry: z.boolean().optional(),
+});
+
+export const pendingMessagesSchema = z.array(pendingMessageSchema).optional();
 
 export const chatSessionEventSchema = z.looseObject({
   type: z.string(),

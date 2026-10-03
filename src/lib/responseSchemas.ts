@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { rpcEventSchema, rpcCommandSchema } from "./rpcSchemas";
-import { entrySchema } from "./chatSessionEventSchema";
+import { entrySchema, pendingMessageSchema } from "./chatSessionEventSchema";
 import { gitDiffSnapshotSchema } from "./diffSchemas";
 
-export { z, rpcEventSchema, rpcCommandSchema, entrySchema, gitDiffSnapshotSchema };
+export { z, rpcEventSchema, rpcCommandSchema, entrySchema, gitDiffSnapshotSchema, pendingMessageSchema };
 
 export const voidResultSchema = z.unknown().transform(() => undefined);
 
@@ -54,8 +54,6 @@ export const opencodeGoUsageSchema = z.object({ rolling: usageWindowSchema, week
 export const directoryListingSchema = z.object({ path: z.string(), parent: z.string().optional(), directories: z.array(z.string()) });
 
 export const imageAttachmentSchema = z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string(), name: z.string().optional() });
-
-export const pendingMessageSchema = z.object({ id: z.string(), message: z.string(), behavior: z.union([z.literal("steer"), z.literal("followUp")]), images: z.array(imageAttachmentSchema).optional(), retry: z.boolean().optional() });
 
 export const modelSchema = z.object({ provider: z.string(), id: z.string(), name: z.string().optional(), reasoning: z.boolean().optional(), thinkingLevelMap: z.record(z.string(), z.json()).optional(), contextWindow: z.number().optional(), input: z.array(z.union([z.literal("text"), z.literal("image")])).optional() });
 
