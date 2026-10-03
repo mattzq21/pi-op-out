@@ -4,7 +4,7 @@ import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { currentHost, request } from "./client.ts";
+import { BrokerRequestError, currentHost, request } from "./client.ts";
 import { createProfileSession, registerAgentProfiles } from "./agent-profiles.ts";
 
 const messageSchema = Schema.Object({ role: Schema.String(), content: Schema.Optional(Schema.Unknown()), toolName: Schema.Optional(Schema.String()), customType: Schema.Optional(Schema.String()), stopReason: Schema.Optional(Schema.String()), errorMessage: Schema.Optional(Schema.String()) });
@@ -40,7 +40,26 @@ export async function sendSessionMessage(ctx: ExtensionContext, sessionId: strin
 }
 
 export async function interruptSession(sessionId: string, hostId: string, signal?: AbortSignal) {
-  return request("/orchestration", { action: "interrupt", sessionId, hostId }, signal, 30_000);
+  let failures = 0;
+
+  while (true) {
+    signal?.throwIfAborted();
+
+    try {
+      const receipt = await request("/orchestration", { action: "interrupt", sessionId, hostId }, signal, 30_000);
+      const completed = Check(Schema.Object({ completed: Schema.Literal(true) }), receipt);
+
+      if (completed && snapshotStatus(await sessionSnapshot(sessionId, hostId, signal)) === "idle") return receipt;
+      failures = 0;
+    } catch (error) {
+      signal?.throwIfAborted();
+
+      if (!(error instanceof BrokerRequestError) || !error.transient) throw error;
+      failures++;
+    }
+
+    await delay(250 * 2 ** Math.min(failures, 4) + Math.random() * 250, undefined, { signal });
+  }
 }
 
 export function branchEntries(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {

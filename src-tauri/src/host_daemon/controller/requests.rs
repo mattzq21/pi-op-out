@@ -66,12 +66,18 @@ impl Host {
     }
 
     async fn orchestration_interrupt(&self, id: &str, session: Option<Arc<Session>>) -> Result<Value> {
-        let previous = if let Some(session) = session {
-            let running = session.working();
-            queue_command(&session, json!({"type":"abort"})).await?;
-            running
-        } else { false };
-        Ok(json!({"sessionId":id,"wasRunning":previous}))
+        let Some(session) = session else { return Ok(json!({"sessionId":id,"completed":true})); };
+        let mut pending = session.orchestration_interrupt.lock().await;
+        if pending.as_ref().is_some_and(|task| task.is_finished()) {
+            let task = pending.take().ok_or("Missing interruption task")?;
+            task.await.map_err(|error| error.to_string())??;
+            return Ok(json!({"sessionId":id,"completed":true}));
+        }
+        if pending.is_none() {
+            let target = session.clone();
+            *pending = Some(tokio::spawn(async move { target.queue.interrupt_delegation().await }));
+        }
+        Ok(json!({"sessionId":id,"completed":false}))
     }
 
     async fn orchestration_send(self: &Arc<Self>, packet: Value, existing: Option<Arc<Session>>) -> Result<Value> {

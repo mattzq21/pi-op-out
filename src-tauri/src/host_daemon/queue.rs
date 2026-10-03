@@ -394,6 +394,13 @@ impl SessionQueue {
         Ok(())
     }
 
+    pub async fn interrupt_delegation(&self) -> Result<Value> {
+        let (cancelled, _gate) = tokio::join!(self.execute(json!({"type":"cancel_preparation"})), self.gate.lock());
+        cancelled?;
+        self.hold().await?;
+        self.execute(json!({"type":"abort"})).await
+    }
+
     pub async fn command(&self, command: Value) -> Result<Value> {
         let name = kind(&command).to_owned();
         if name == "abort" {

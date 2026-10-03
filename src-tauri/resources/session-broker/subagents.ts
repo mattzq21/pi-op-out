@@ -250,7 +250,23 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   return run;
 }
 
-type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Set<string>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => void; reportDescendants: (tokens: number, ctx: ExtensionContext) => Promise<void> };
+type ActiveSubagent = { controller: AbortController; done: Promise<void> };
+
+type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Map<string, ActiveSubagent>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => void; reportDescendants: (tokens: number, ctx: ExtensionContext) => Promise<void> };
+
+async function confirmSubagentStopped(run: SubagentRun, ctx: ExtensionContext) {
+  let notified = false;
+
+  while (true) {
+    try { await interruptSession(run.sessionId, run.hostId);
+
+    return; } catch (error) {
+      if (!notified) ctx.ui.notify(`Cancellation is not confirmed for ${run.name}; continuing to retry: ${String(error)}`, "error");
+      notified = true;
+      await delay(2000);
+    }
+  }
+}
 
 async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution) {
   const { signal, pi, ctx } = execution;
@@ -275,21 +291,21 @@ async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution) 
   const requestSignal = signal ? AbortSignal.any([signal, usageFailure.signal]) : usageFailure.signal;
   const closeUsage = await listenSubagentUsage(run.sessionPath, reportUsage, error => { usageFailure.abort(error); });
 
-  const abort = () => { void interruptSession(run.sessionId, run.hostId).catch(() => undefined); };
-
-  signal?.addEventListener("abort", abort, { once: true });
   let dispatched = false;
+  let submitted = false;
   let last: SubagentResponse | undefined;
 
   try {
     requestSignal.throwIfAborted();
+    submitted = true;
     await sendSessionMessage(ctx, run.sessionId, run.hostId, run.task, true);
     await waitForSubagent(run, requestSignal);
     dispatched = true;
-  } catch (error) { await interruptSession(run.sessionId, run.hostId).catch(() => undefined); throw error; }
+  } catch (error) {
+    if (submitted) await confirmSubagentStopped(run, ctx);
+    throw error;
+  }
   finally {
-    signal?.removeEventListener("abort", abort);
-
     try { await closeUsage(); last = await subagentCompletion(run, offset, reportUsage); }
     catch (error) { if (dispatched) throw error; }
   }
@@ -299,7 +315,12 @@ async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution) 
 }
 
 async function executeSubagent(task: SubagentTask, execution: SubagentExecution) {
-  const { pi, ctx, toolCallId, active, results, signal, publish } = execution;
+  const { pi, ctx, toolCallId, active, results, publish } = execution;
+  const controller = new AbortController();
+  const signal = execution.signal ? AbortSignal.any([execution.signal, controller.signal]) : controller.signal;
+  let finished = () => {};
+
+  const done = new Promise<void>(resolve => { finished = resolve; });
   const run: SubagentRun = { version: 1, toolCallId, parentSessionId: ctx.sessionManager.getSessionId(), sessionId: task.sessionId ?? "", sessionPath: "", hostId: currentHost(), name: task.name, task: task.task, status: "running", startedAt: Date.now() };
   results.push(run);
   let claimed = false;
@@ -310,10 +331,10 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
 
     if (active.has(child.sessionId)) throw new Error("This subagent is already running");
     Object.assign(run, child);
-    active.add(run.sessionId); claimed = true;
+    active.set(run.sessionId, { controller, done }); claimed = true;
     pi.appendEntry(SUBAGENT_RUN, { ...run }); publish(run);
     execution.ready();
-    await dispatchSubagent(run, execution);
+    await dispatchSubagent(run, { ...execution, signal });
   } catch (error) {
     run.status = signal?.aborted ? "cancelled" : "failed";
     run.output = error instanceof Error ? error.message : String(error);
@@ -321,7 +342,9 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
 
   if (claimed) active.delete(run.sessionId);
   run.endedAt = Date.now();
-  pi.appendEntry(SUBAGENT_RUN, { ...run }); publish(run);
+
+  try { pi.appendEntry(SUBAGENT_RUN, { ...run }); publish(run); }
+  finally { finished(); }
 }
 
 function subagentPayload(runs: SubagentRun[]): AgentToolResult<{ version: 1; runs: SubagentRun[] }> {
@@ -341,7 +364,7 @@ function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "
 export function registerSubagents(pi: ExtensionAPI) {
   const reportDescendants = registerSubagentUsage(pi);
   const mailbox = registerSubagentMailbox(pi);
-  const active = new Set<string>();
+  const active = new Map<string, ActiveSubagent>();
   const pending = new Set<Promise<void>>();
   let controller = new AbortController();
   const latestRuns = (ctx: ExtensionContext) => [...new Map(ctx.sessionManager.getEntries().flatMap<[string, SubagentRun]>(entry => entry.type === "custom" && entry.customType === SUBAGENT_RUN && Check(runSchema, entry.data) ? [[entry.data.sessionId, entry.data]] : [])).values()];
@@ -427,6 +450,7 @@ export function registerSubagents(pi: ExtensionAPI) {
       const run = targetRun(ctx, params.target);
 
       if (active.has(run.sessionId)) {
+        active.get(run.sessionId)?.controller.signal.throwIfAborted();
         const data = await sendSessionMessage(ctx, run.sessionId, run.hostId, params.message, true, signal);
 
         return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
@@ -440,6 +464,15 @@ export function registerSubagents(pi: ExtensionAPI) {
     parameters: Type.Object({ target: Type.String() }),
     async execute(_id, params, signal, _update, ctx) {
       const run = targetRun(ctx, params.target);
+      const running = active.get(run.sessionId);
+
+      if (running) {
+        running.controller.abort();
+        await running.done;
+
+        return { content: [{ type: "text", text: "Child launch and delegated work stopped." }], details: { sessionId: run.sessionId, completed: true } };
+      }
+
       const data = await interruptSession(run.sessionId, run.hostId, signal);
 
       return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
