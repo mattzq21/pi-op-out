@@ -9,7 +9,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
-import { currentHost, request } from "./client.ts";
+import { BrokerRequestError, currentHost, request } from "./client.ts";
 import { createdWorktreeSchema } from "./fork.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { goalTokens } from "./goal-state.ts";
@@ -67,6 +67,8 @@ const usageSchema = Schema.Object({ input: Schema.Optional(Schema.Number()), out
 
 const transcriptEntrySchema = Schema.Object({ type: Schema.String(), usage: Schema.Optional(usageSchema), message: Schema.Optional(Schema.Unknown()) });
 
+const descendantUsageSchema = Schema.Object({ type: Schema.Literal("custom"), customType: Schema.Literal("piop-subagent-usage"), data: Schema.Object({ tokens: Schema.Integer({ minimum: 0 }) }) });
+
 const assistantSchema = Schema.Object({ role: Schema.Literal("assistant"), stopReason: Schema.String(), errorMessage: Schema.Optional(Schema.String()), content: Schema.Array(Schema.Unknown()), usage: Schema.Optional(usageSchema) });
 
 const textSchema = Schema.Object({ type: Schema.Literal("text"), text: Schema.String() });
@@ -92,7 +94,7 @@ function subagentEntryCost(usage: Static<typeof usageSchema> | undefined) {
   return amount !== undefined && Number.isFinite(amount) ? Math.max(0, amount) : 0;
 }
 
-async function subagentCompletion(run: SubagentRun, offset: number, reportUsage: (tokens: number) => void) {
+async function subagentCompletion(run: SubagentRun, offset: number, reportUsage: (tokens: number) => Promise<void>) {
   let last: SubagentResponse | undefined;
   let cost = 0;
   let tokens = 0;
@@ -105,6 +107,8 @@ async function subagentCompletion(run: SubagentRun, offset: number, reportUsage:
 
       try { entry = JSON.parse(line); } catch { continue; }
 
+      if (Check(descendantUsageSchema, entry)) { tokens += entry.data.tokens; continue; }
+
       if (!Check(transcriptEntrySchema, entry)) continue;
 
       if (entry.type !== "message") { tokens += goalTokens(entry.usage); cost += subagentEntryCost(entry.usage); continue; }
@@ -114,7 +118,7 @@ async function subagentCompletion(run: SubagentRun, offset: number, reportUsage:
       cost += subagentEntryCost(last.usage);
       tokens += goalTokens(last.usage);
     }
-  } finally { lines.close(); input.destroy(); reportUsage(tokens); }
+  } finally { lines.close(); input.destroy(); await reportUsage(tokens); }
 
   run.apiCost = cost;
 
@@ -161,15 +165,28 @@ function inheritedHistory(ctx: ExtensionContext, task: SubagentTask) {
 
 async function waitForSubagent(run: SubagentRun, signal: AbortSignal) {
   const deadline = Date.now() + SUBAGENT_TIMEOUT_MS;
+  let failures = 0;
 
   while (true) {
     signal.throwIfAborted();
-    const snapshot = await sessionSnapshot(run.sessionId, run.hostId, signal);
-
-    if (snapshotStatus(snapshot) === "idle") return;
 
     if (Date.now() >= deadline) throw new Error("Subagent timed out after ten minutes");
-    await delay(500, undefined, { signal });
+
+    try {
+      const snapshot = await sessionSnapshot(run.sessionId, run.hostId, AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, deadline - Date.now()))]));
+      failures = 0;
+
+      if (snapshotStatus(snapshot) === "idle") return;
+    } catch (error) {
+      signal.throwIfAborted();
+
+      if (Date.now() >= deadline) throw new Error("Subagent timed out after ten minutes");
+
+      if (!(error instanceof BrokerRequestError) || !error.transient) throw error;
+      failures++;
+    }
+
+    await delay(Math.min(500 * 2 ** Math.min(failures, 4) + Math.random() * 250, Math.max(0, deadline - Date.now())), undefined, { signal });
   }
 }
 
@@ -233,7 +250,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   return run;
 }
 
-type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Set<string>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => void };
+type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Set<string>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => void; reportDescendants: (tokens: number, ctx: ExtensionContext) => Promise<void> };
 
 async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution) {
   const { signal, pi, ctx } = execution;
@@ -244,16 +261,19 @@ async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution) 
   await scope.ready;
   let reported = 0;
 
-  const reportUsage = (total: number) => {
+  const reportUsage = async (total: number) => {
     const tokens = Math.max(0, total - reported);
     reported = Math.max(reported, total);
 
-    if (tokens) pi.events.emit("piop:goal-usage", { goalId: scope.goalId, tokens, ctx });
+    if (!tokens) return;
+    pi.appendEntry("piop-subagent-usage", { tokens });
+    pi.events.emit("piop:goal-usage", { goalId: scope.goalId, tokens, ctx });
+    await execution.reportDescendants(tokens, ctx);
   };
 
   const usageFailure = new AbortController();
   const requestSignal = signal ? AbortSignal.any([signal, usageFailure.signal]) : usageFailure.signal;
-  const closeUsage = scope.goalId ? await listenSubagentUsage(run.sessionPath, reportUsage, error => { usageFailure.abort(error); }) : async () => {};
+  const closeUsage = await listenSubagentUsage(run.sessionPath, reportUsage, error => { usageFailure.abort(error); });
 
   const abort = () => { void interruptSession(run.sessionId, run.hostId).catch(() => undefined); };
 
@@ -319,7 +339,7 @@ function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "
 }
 
 export function registerSubagents(pi: ExtensionAPI) {
-  registerSubagentUsage(pi);
+  const reportDescendants = registerSubagentUsage(pi);
   const mailbox = registerSubagentMailbox(pi);
   const active = new Set<string>();
   const pending = new Set<Promise<void>>();
@@ -345,7 +365,7 @@ export function registerSubagents(pi: ExtensionAPI) {
     if (!task.sessionId && latestRuns(ctx).some(run => run.name === task.name)) throw new Error("Task name already exists; use followup_task to reuse the child");
     const results: SubagentRun[] = [];
     const backgroundSignal = controller.signal;
-    await launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish(run) {
+    await launchSubagent(task, { pi, ctx, toolCallId, active, results, reportDescendants, signal: backgroundSignal, publish(run) {
       if (backgroundSignal.aborted || run.status === "running") return;
       const notificationId = randomUUID();
       const payload = subagentPayload([run]);
@@ -477,7 +497,7 @@ export function registerSubagents(pi: ExtensionAPI) {
         pi.sendMessage({ customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId }, display: true }, { triggerTurn: !ctx.isIdle(), deliverAs: "steer" });
       };
 
-      await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
+      await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, reportDescendants, signal: backgroundSignal, publish }, pending)));
       pi.setActiveTools([...new Set([...pi.getActiveTools(), "wait_agent", "await_subagents"])]);
 
       return { ...subagentPayload(results), isError: results.some((run) => run.status === "failed" || run.status === "cancelled") };

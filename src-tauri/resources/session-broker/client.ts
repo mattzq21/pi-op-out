@@ -17,6 +17,10 @@ const token = process.env.PI_DESKTOP_BROKER_TOKEN;
 
 export const MESSAGE_TIMEOUT_MS = 120_000;
 
+export class BrokerRequestError extends Error {
+  constructor(message: string, readonly transient: boolean) { super(message); }
+}
+
 export async function cancelRequest(requestId: string) {
   if (!url || !token) return;
   await fetch(`${url}/cancel`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ requestId }), signal: AbortSignal.timeout(5_000) }).catch(() => undefined);
@@ -29,9 +33,15 @@ function requestOptions(body: BrokerRequest | undefined, signal: AbortSignal) {
 async function brokerResponse(response: Response) {
   const result = Parse(responseSchema, await response.json());
 
-  if (!response.ok || result.error) throw new Error(result.error || `Session broker returned HTTP ${response.status}`);
+  if (!response.ok || result.error) throw new BrokerRequestError(result.error || `Session broker returned HTTP ${response.status}`, [408, 429].includes(response.status) || response.status >= 500);
 
   return result.data;
+}
+
+function requestError(message: string, transient: boolean, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+
+  if (transient) throw new BrokerRequestError(message, true);
 }
 
 export async function request(path: string, body?: BrokerRequest, signal?: AbortSignal, timeoutMs = 10_000) {
@@ -51,7 +61,11 @@ export async function request(path: string, body?: BrokerRequest, signal?: Abort
     const response = await fetch(`${url}${path}`, requestOptions(body, controller.signal));
 
     return await brokerResponse(response);
-  } catch (error) { if (operationId) await cancelRequest(operationId); throw error; }
+  } catch (error) {
+    if (operationId) await cancelRequest(operationId);
+    requestError(String(error), controller.signal.aborted || error instanceof TypeError, signal);
+    throw error;
+  }
   finally { clearTimeout(timeout); controller.signal.removeEventListener("abort", cancelOperation); signal?.removeEventListener("abort", abort); }
 }
 
