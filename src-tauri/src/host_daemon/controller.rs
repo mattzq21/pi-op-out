@@ -50,6 +50,8 @@ pub(super) struct Registry {
     release_gates: HashMap<String, Arc<AsyncMutex<()>>>,
     dialog_gates: HashMap<String, Arc<AsyncMutex<()>>>,
     session_gates: HashMap<String, Arc<AsyncMutex<()>>>,
+    deliveries: HashMap<String, HashSet<String>>,
+    cancelled_deliveries: HashSet<String>,
 }
 
 pub(super) struct Host {

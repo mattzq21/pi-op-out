@@ -256,11 +256,11 @@ class SubagentRetiredError extends Error {}
 
 type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Map<string, ActiveSubagent>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => void; reportDescendants: (tokens: number, ctx: ExtensionContext) => Promise<void> };
 
-async function confirmSubagentStopped(run: SubagentRun, ctx: ExtensionContext) {
+async function confirmSubagentStopped(run: SubagentRun, ctx: ExtensionContext, deliveryId: string) {
   let notified = false;
 
   while (true) {
-    try { const receipt = await interruptSession(run.sessionId, run.hostId);
+    try { const receipt = await interruptSession(run.sessionId, run.hostId, undefined, deliveryId);
 
     return Check(Schema.Object({ retired: Schema.Literal(true) }), receipt); } catch (error) {
       if (!notified) ctx.ui.notify(`Cancellation is not confirmed for ${run.name}; continuing to retry: ${String(error)}`, "error");
@@ -295,16 +295,17 @@ async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution) 
 
   let dispatched = false;
   let submitted = false;
+  const deliveryId = randomUUID();
   let last: SubagentResponse | undefined;
 
   try {
     requestSignal.throwIfAborted();
     submitted = true;
-    await sendSessionMessage(ctx, run.sessionId, run.hostId, run.task, true);
+    await sendSessionMessage(ctx, run.sessionId, run.hostId, run.task, true, undefined, deliveryId);
     await waitForSubagent(run, requestSignal);
     dispatched = true;
   } catch (error) {
-    if (submitted && await confirmSubagentStopped(run, ctx)) throw new SubagentRetiredError("Subagent was archived or deleted; its worker has stopped");
+    if (submitted && await confirmSubagentStopped(run, ctx, deliveryId)) throw new SubagentRetiredError("Subagent was archived or deleted; its worker has stopped");
     throw error;
   }
   finally {

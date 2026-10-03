@@ -1,5 +1,17 @@
 use super::*;
 
+struct DeliveryGuard { host: Arc<Host>, session: String, delivery: String }
+
+impl Drop for DeliveryGuard {
+    fn drop(&mut self) {
+        let mut registry = self.host.registry();
+        if let Some(deliveries) = registry.deliveries.get_mut(&self.session) {
+            deliveries.remove(&self.delivery);
+            if deliveries.is_empty() { registry.deliveries.remove(&self.session); }
+        }
+    }
+}
+
 fn validate_delivery(packet: &Value) -> Result<()> {
     let source = text(packet, "sourceSessionId");
     if source.is_empty() || source == text(packet, "sessionKey") { return Err("Choose another conversation as the recipient".into()); }
@@ -50,7 +62,12 @@ impl Host {
 
     async fn orchestration(self: &Arc<Self>, packet: Value) -> Result<Value> {
         let id = text(&packet, "sessionKey");
-        if text(&packet, "action") == "interrupt" { return self.orchestration_cancel(&id).await; }
+        if text(&packet, "action") == "interrupt" {
+            if self.cancel_deliveries(&id, packet["deliveryId"].as_str()) {
+                return Ok(json!({"sessionId":id,"completed":false}));
+            }
+            return self.orchestration_cancel(&id).await;
+        }
         if self.ownership().locate(&id, packet["sessionPath"].as_str(), false, true)?.is_none() {
             return Err("This conversation has been deleted or archived".into());
         }
@@ -63,6 +80,14 @@ impl Host {
             "send" => self.orchestration_send(packet, session).await,
             _ => Err("Unknown orchestration action".into()),
         }
+    }
+
+    fn cancel_deliveries(&self, id: &str, delivery: Option<&str>) -> bool {
+        let mut registry = self.registry();
+        if let Some(delivery) = delivery { registry.cancelled_deliveries.insert(delivery.into()); }
+        let pending = registry.deliveries.get(id).cloned().unwrap_or_default();
+        registry.cancelled_deliveries.extend(pending.iter().cloned());
+        !pending.is_empty()
     }
 
     async fn orchestration_cancel(&self, id: &str) -> Result<Value> {
@@ -95,6 +120,14 @@ impl Host {
     async fn orchestration_send(self: &Arc<Self>, packet: Value, existing: Option<Arc<Session>>) -> Result<Value> {
         let id = text(&packet, "sessionKey");
         validate_delivery(&packet)?;
+        let delivery = text(&packet, "deliveryId");
+        if Uuid::parse_str(&delivery).is_err() { return Err("A valid deliveryId is required".into()); }
+        {
+            let mut registry = self.registry();
+            if registry.cancelled_deliveries.contains(&delivery) { return Err("Agent delivery was cancelled".into()); }
+            if !registry.deliveries.entry(id.clone()).or_default().insert(delivery.clone()) { return Err("Agent delivery is already pending".into()); }
+        }
+        let _delivery = DeliveryGuard { host: self.clone(), session: id.clone(), delivery };
         let runtime = format!("orchestration-{}", Uuid::new_v4());
         let attached = existing.is_none();
         if attached {
@@ -119,6 +152,7 @@ impl Host {
         if session.transient() || session.compacting() { return Err("Wait for conversation preparation or compaction to finish".into()); }
         session.reconcile(false).await;
         if let Some(error) = session.configuration_error() { return Err(error); }
+        if self.registry().cancelled_deliveries.contains(&text(packet, "deliveryId")) { return Err("Agent delivery was cancelled".into()); }
         queue_command(&session, json!({"type":"orchestration_message","sourceSessionId":packet["sourceSessionId"],
             "sourceHostId":packet["sourceHostId"],"message":packet["message"],"wake":packet["wake"]})).await
     }

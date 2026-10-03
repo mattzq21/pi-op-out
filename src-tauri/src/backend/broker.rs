@@ -161,10 +161,12 @@ fn read_broker_headers(reader: &mut BufReader<TcpStream>, header_bytes: &mut usi
 }
 
 fn enqueue_broker_message(app: AppHandle, broker: BrokerRuntime, stream: TcpStream, body: Vec<u8>, orchestration: bool) -> Result<(), String> {
+        let delivery = if orchestration { BrokerDelivery::register(&broker, &body)? } else { None };
         let mut count = broker.message_count.lock().map_err(|_| "Broker job count lock was poisoned")?;
         if *count >= BROKER_WORKERS || broker.closing.load(Ordering::SeqCst) { broker_response(stream, "503 Service Unavailable", json!({"error":"Session broker is busy"})); return Ok(()); }
         *count += 1; drop(count);
         thread::spawn(move || {
+            let _delivery = delivery;
             let result = if orchestration {
                 serde_json::from_slice(&body).map_err(|_| "Invalid orchestration request".into())
                     .and_then(|value| broker_orchestration(&app, &broker, value))
@@ -392,13 +394,17 @@ fn broker_message_sessions(app: &AppHandle, session_index: &SessionIndexRuntime,
 fn broker_orchestration(app: &AppHandle, broker: &BrokerRuntime, value: Value) -> Result<Value, String> {
     let host = value["hostId"].as_str().ok_or("hostId is required")?;
     #[cfg(not(feature = "desktop"))]
-    if host != "local" { return peers::forward_broker(app, host, "/orchestration", value.clone()); }
+    if host != "local" {
+        let result = peers::forward_broker(app, host, "/orchestration", value.clone())?;
+        return broker_interruption_status(broker, &value, result);
+    }
     let (id, action) = orchestration_target(&value)?;
     if action == "interrupt" {
         let settings = load_app_settings(app.clone())?;
         let runtime = app.state::<PiRuntime>();
         let daemon = crate::daemon::connect(app, &runtime, broker, &settings, host)?;
-        return daemon.request(json!({"type":"orchestration","action":action,"sessionKey":id}));
+        let result = daemon.request(json!({"type":"orchestration","action":action,"sessionKey":id,"deliveryId":value["deliveryId"]}))?;
+        return broker_interruption_status(broker, &value, result);
     }
     let sessions = broker_message_sessions(app, &app.state::<SessionIndexRuntime>(), host)?;
     let session = resolve_agent(&sessions, host, id)?;
@@ -406,13 +412,24 @@ fn broker_orchestration(app: &AppHandle, broker: &BrokerRuntime, value: Value) -
     let runtime = app.state::<PiRuntime>();
     let daemon = crate::daemon::connect(app, &runtime, broker, &settings, host)?;
     let mut packet = json!({"type":"orchestration","action":action,"sessionKey":id,"sessionPath":session.path,
-        "sourceSessionId":value["sourceSessionId"],"sourceHostId":value["sourceHostId"],"message":value["message"],"wake":value["wake"],"clientId":value["clientId"]});
+        "sourceSessionId":value["sourceSessionId"],"sourceHostId":value["sourceHostId"],"message":value["message"],"wake":value["wake"],"clientId":value["clientId"],"deliveryId":value["deliveryId"]});
     if action == "send" {
         let command = build_pi_command(broker, &settings, host, PiLaunch::Rpc { cwd: Some(&session.cwd), session_path: Some(&session.path), session_id: None, fork_path: None, no_session: false }, daemon.remote_port)?;
         packet["spec"] = crate::daemon::spec(&command);
         packet["cwd"] = json!(session.cwd);
     }
     daemon.request(packet)
+}
+
+fn broker_interruption_status(broker: &BrokerRuntime, request: &Value, mut result: Value) -> Result<Value, String> {
+    if request["action"] == "interrupt" {
+        let host = request["hostId"].as_str().ok_or("hostId is required")?;
+        let id = request["sessionId"].as_str().ok_or("sessionId is required")?;
+        if broker.deliveries.lock().map_err(|_| "Broker delivery lock was poisoned")?.contains_key(&format!("{host}\0{id}")) {
+            result["completed"] = json!(false);
+        }
+    }
+    Ok(result)
 }
 
 fn orchestration_target(value: &Value) -> Result<(&str, &str), String> {
@@ -426,6 +443,7 @@ fn orchestration_target(value: &Value) -> Result<(&str, &str), String> {
 pub(super) struct BrokerRuntime {
     closing: Arc<AtomicBool>,
     message_count: Arc<Mutex<usize>>,
+    deliveries: Arc<Mutex<HashMap<String, usize>>>,
     pub(super) port: Arc<Mutex<u16>>,
     pub(super) token: String,
     pub(super) busy: Arc<Mutex<HashSet<String>>>,
@@ -437,7 +455,7 @@ pub(super) struct BrokerRuntime {
 impl Default for BrokerRuntime {
     fn default() -> Self {
         Self {
-            closing: Arc::new(AtomicBool::new(false)), message_count: Arc::new(Mutex::new(0)),
+            closing: Arc::new(AtomicBool::new(false)), message_count: Arc::new(Mutex::new(0)), deliveries: Arc::new(Mutex::new(HashMap::new())),
             port: Arc::new(Mutex::new(0)),
             token: Uuid::new_v4().to_string(),
             busy: Arc::new(Mutex::new(HashSet::new())),
@@ -449,6 +467,30 @@ impl Default for BrokerRuntime {
 }
 
 pub(super) struct BusyAgent { key: String, busy: Arc<Mutex<HashSet<String>>> }
+
+struct BrokerDelivery { key: String, pending: Arc<Mutex<HashMap<String, usize>>> }
+
+impl BrokerDelivery {
+    fn register(broker: &BrokerRuntime, body: &[u8]) -> Result<Option<Self>, String> {
+        let value: Value = serde_json::from_slice(body).map_err(|_| "Invalid orchestration request")?;
+        if value["action"] != "send" { return Ok(None); }
+        let host = value["hostId"].as_str().ok_or("hostId is required")?;
+        let id = value["sessionId"].as_str().ok_or("sessionId is required")?;
+        let key = format!("{host}\0{id}");
+        *broker.deliveries.lock().map_err(|_| "Broker delivery lock was poisoned")?.entry(key.clone()).or_default() += 1;
+        Ok(Some(Self { key, pending: broker.deliveries.clone() }))
+    }
+}
+
+impl Drop for BrokerDelivery {
+    fn drop(&mut self) {
+        let mut pending = self.pending.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(count) = pending.get_mut(&self.key) {
+            *count -= 1;
+            if *count == 0 { pending.remove(&self.key); }
+        }
+    }
+}
 
 impl Drop for BusyAgent {
     fn drop(&mut self) { if let Ok(mut busy) = self.busy.lock() { busy.remove(&self.key); } }

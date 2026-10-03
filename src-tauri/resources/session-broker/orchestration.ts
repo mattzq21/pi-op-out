@@ -33,10 +33,10 @@ export async function sessionSnapshot(sessionId: string, hostId: string, signal?
   return Parse(snapshotSchema, await request("/orchestration", { action: "read", sessionId, hostId }, signal, 30_000));
 }
 
-export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal) {
+export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal, deliveryId = randomUUID()) {
   if (sessionId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation as the recipient");
 
-  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost() }, signal, 60_000);
+  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost() }, signal, 60_000);
 }
 
 function executionStopped(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {
@@ -51,14 +51,14 @@ async function interruptionComplete(sessionId: string, hostId: string, retired: 
   return executionStopped(await sessionSnapshot(sessionId, hostId, signal));
 }
 
-export async function interruptSession(sessionId: string, hostId: string, signal?: AbortSignal) {
+export async function interruptSession(sessionId: string, hostId: string, signal?: AbortSignal, deliveryId?: string) {
   let failures = 0;
 
   while (true) {
     signal?.throwIfAborted();
 
     try {
-      const receipt = await request("/orchestration", { action: "interrupt", sessionId, hostId }, signal, 30_000);
+      const receipt = await request("/orchestration", { action: "interrupt", sessionId, hostId, deliveryId }, signal, 30_000);
       const completed = Check(Schema.Object({ completed: Schema.Literal(true) }), receipt);
 
       const retired = Check(Schema.Object({ retired: Schema.Literal(true) }), receipt);
