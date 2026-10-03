@@ -23,13 +23,40 @@ const SUBAGENT_PARENT = "piop-subagent-parent";
 
 const SUBAGENT_TIMEOUT_MS = 600_000;
 
+const MAX_DELEGATION_DEPTH = 2;
+
+const parentSchema = Schema.Object({
+  parentSessionId: Schema.String(), depth: Schema.Optional(Schema.Integer({ minimum: 1 })),
+  taskPath: Schema.Optional(Schema.String()), parentTaskPath: Schema.Optional(Schema.String()),
+});
+
+function subagentParent(ctx: ExtensionContext) {
+  const entry = ctx.sessionManager.getEntries().find(item => item.type === "custom" && item.customType === SUBAGENT_PARENT);
+
+  return entry?.type === "custom" ? Parse(parentSchema, entry.data) : undefined;
+}
+
+function delegationScope(ctx: ExtensionContext) {
+  const parent = subagentParent(ctx);
+
+  return { depth: parent ? parent.depth ?? 1 : 0, taskPath: parent ? parent.taskPath ?? `/root/${ctx.sessionManager.getSessionId()}` : "/root" };
+}
+
+function requireDelegation(ctx: ExtensionContext) {
+  const scope = delegationScope(ctx);
+
+  if (scope.depth >= MAX_DELEGATION_DEPTH) throw new Error("Delegation is limited to two levels: root → child → grandchild. Return your findings to the parent.");
+
+  return scope;
+}
+
 type SubagentTask = { task: string; name: string; agent?: string; sessionId?: string; fork_turns?: string };
 
 const runSchema = Schema.Object({
   version: Schema.Literal(1), toolCallId: Schema.String(), parentSessionId: Schema.String(), sessionId: Schema.String(), sessionPath: Schema.String(),
   hostId: Schema.String(), name: Schema.String(), task: Schema.String(), status: Schema.Union([Schema.Literal("running"), Schema.Literal("completed"), Schema.Literal("failed"), Schema.Literal("cancelled")]),
   startedAt: Schema.Number(), endedAt: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.String()), apiCost: Schema.Optional(Schema.Number()),
-  agent: Schema.Optional(Schema.String()),
+  agent: Schema.Optional(Schema.String()), taskPath: Schema.Optional(Schema.String()),
 });
 
 const usageSchema = Schema.Object({ input: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.Number()), cacheWrite: Schema.Optional(Schema.Number()), cost: Schema.Optional(Schema.Object({ total: Schema.Optional(Schema.Number()) })) });
@@ -143,6 +170,7 @@ async function waitForSubagent(run: SubagentRun, signal: AbortSignal) {
 }
 
 async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: SubagentTask, toolCallId: string): Promise<SubagentRun> {
+  const scope = requireDelegation(ctx);
   const parentSessionId = ctx.sessionManager.getSessionId();
   const runs = ctx.sessionManager.getEntries().flatMap((entry) => entry.type === "custom" && entry.customType === SUBAGENT_RUN ? [Parse(runSchema, entry.data)] : []);
 
@@ -162,7 +190,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   const sessionId = randomUUID();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
-  const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, agent: profile.active, status: "running", startedAt: Date.now() };
+  const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, taskPath: `${scope.taskPath}/${task.name}`, agent: profile.active, status: "running", startedAt: Date.now() };
   let retained = inheritedHistory(ctx, task);
   let parentId: string | null = null;
   retained = retained.map(item => { const next = { ...item, parentId }; parentId = next.id;
@@ -177,7 +205,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: ctx.cwd },
     ...retained,
     entry({ type: "session_info", name: `Subagent: ${task.name}` }),
-    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, parentSessionId, parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task } }),
+    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, parentSessionId, parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
   ]);
 
@@ -276,9 +304,10 @@ export function registerSubagents(pi: ExtensionAPI) {
   const pending = new Set<Promise<void>>();
   let controller = new AbortController();
   const latestRuns = (ctx: ExtensionContext) => [...new Map(ctx.sessionManager.getEntries().flatMap<[string, SubagentRun]>(entry => entry.type === "custom" && entry.customType === SUBAGENT_RUN && Check(runSchema, entry.data) ? [[entry.data.sessionId, entry.data]] : [])).values()];
+  const taskPath = (ctx: ExtensionContext, run: SubagentRun) => run.taskPath ?? `${delegationScope(ctx).taskPath}/${run.name}`;
 
   const targetRun = (ctx: ExtensionContext, target: string) => {
-    const runs = latestRuns(ctx).filter(run => run.sessionId === target || run.name === target || `/root/${run.name}` === target);
+    const runs = latestRuns(ctx).filter(run => run.sessionId === target || run.name === target || taskPath(ctx, run) === target);
 
     if (runs.length !== 1) throw new Error("Use a unique child session ID or task name from list_agents");
 
@@ -288,7 +317,7 @@ export function registerSubagents(pi: ExtensionAPI) {
   const start = async (task: SubagentTask, toolCallId: string, ctx: ExtensionContext, signal?: AbortSignal) => {
     signal?.throwIfAborted();
 
-    if (ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === SUBAGENT_PARENT)) throw new Error("Children cannot spawn further agents in piop");
+    requireDelegation(ctx);
 
     if (pending.size >= 4) throw new Error("All four subagent slots are occupied; wait for a child to finish");
 
@@ -320,19 +349,19 @@ export function registerSubagents(pi: ExtensionAPI) {
   pi.on("session_shutdown", unsubscribeTools);
   pi.registerTool({
     name: "spawn_agent", label: "Spawn agent", exposure: "model-only",
-    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. Profile choice is independent of fork_turns: none (default), all, or a positive number of recent user turns. Up to four children run concurrently; children cannot spawn grandchildren. Files are shared. Final results arrive in the parent mailbox without starting an idle parent. Use followup_task for more work, send_message for updates, and wait_agent when blocked. Children are cancelled on parent close/switch and time out after ten minutes.",
+    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. Profile choice is independent of fork_turns: none (default), all, or a positive number of recent user turns. Up to four children per parent run concurrently. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Files are shared. Final results arrive in the parent mailbox without starting an idle parent. Use followup_task for more work, send_message for updates, and wait_agent when blocked. Children are cancelled on parent close/switch and time out after ten minutes.",
     parameters: Type.Object({ task_name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), message: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1, description: "Exact configured profile name from list_agent_profiles; omit to inherit the caller" })), fork_turns: Type.Optional(Type.String()) }),
     async execute(id, params, signal, _update, ctx) { return start({ name: params.task_name, task: params.message, agent: params.agent, fork_turns: params.fork_turns }, id, ctx, signal); },
   });
   pi.registerTool({
-    name: "list_agents", label: "List child agents", exposure: "model-only", description: "List this parent's saved child sessions, task names and current status. /root/name and session IDs address children. Independent chats are listed by list_threads.",
+    name: "list_agents", label: "List child agents", exposure: "model-only", description: "List this parent's saved child sessions, task paths and current status. Returned paths (such as /root/child/grandchild), local task names and session IDs address children. Independent chats are listed by list_threads.",
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _update, ctx) {
       const agents = await Promise.all(latestRuns(ctx).map(async run => {
         try { const snapshot = await sessionSnapshot(run.sessionId, run.hostId, signal);
 
-        return { sessionId: run.sessionId, task_name: `/root/${run.name}`, agent: run.agent, status: snapshotStatus(snapshot), lastRunStatus: run.status }; }
-        catch (error) { return { sessionId: run.sessionId, task_name: `/root/${run.name}`, status: "unavailable", error: String(error) }; }
+        return { sessionId: run.sessionId, task_name: taskPath(ctx, run), agent: run.agent, status: snapshotStatus(snapshot), lastRunStatus: run.status }; }
+        catch (error) { return { sessionId: run.sessionId, task_name: taskPath(ctx, run), status: "unavailable", error: String(error) }; }
       }));
 
       return { content: [{ type: "text", text: JSON.stringify(agents) }], details: { agents } };
@@ -342,10 +371,9 @@ export function registerSubagents(pi: ExtensionAPI) {
     name: "send_message", label: "Message agent", exposure: "model-only", description: "Deliver an update to a child by session ID or task name, or to parent from a child. Steers a running recipient; an idle recipient receives mailbox content without starting a new turn. Use followup_task to wake a child. Returns acceptance, not a reply. Use send_message_to_thread for independent chats.",
     parameters: Type.Object({ target: Type.String(), message: Type.String({ minLength: 1, maxLength: 100_000 }) }),
     async execute(_id, params, signal, _update, ctx) {
-      const parent = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === SUBAGENT_PARENT);
-      const parentSchema = Schema.Object({ parentSessionId: Schema.String() });
-      const parentId = parent?.type === "custom" && Check(parentSchema, parent.data) ? parent.data.parentSessionId : undefined;
-      const id = parentId && (params.target === "parent" || params.target === "/root" || params.target === parentId) ? parentId : targetRun(ctx, params.target).sessionId;
+      const parent = subagentParent(ctx);
+      const parentTargets = parent ? ["parent", parent.parentTaskPath ?? "/root", parent.parentSessionId] : [];
+      const id = parent && parentTargets.includes(params.target) ? parent.parentSessionId : targetRun(ctx, params.target).sessionId;
       const data = await sendSessionMessage(ctx, id, currentHost(), params.message, false, signal);
 
       return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
@@ -399,12 +427,12 @@ export function registerSubagents(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent", label: "Subagents",
     exposure: "model-only",
-    description: "Delegate 1–4 independent tasks in the background. Returns child session IDs once created, without waiting for results. Completion or failure is queued in the parent mailbox and does not start a new parent turn. Continue independent work while children run; call await_subagents to wait until all children finish, or wait_agent to wait for mailbox activity. Each child has a fresh context, a saved transcript visible in piop, and the current working directory (files are shared). Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Child agents cannot delegate further. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
+    description: "Delegate 1–4 independent tasks in the background. Returns child session IDs once created, without waiting for results. Completion or failure is queued in the parent mailbox and does not start a new parent turn. Continue independent work while children run; call await_subagents to wait until all children finish, or wait_agent to wait for mailbox activity. Each child has a fresh context, a saved transcript visible in piop, and the current working directory (files are shared). Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
     parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1, maxLength: 120 }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })), sessionId: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 4 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
 
-      if (ctx.sessionManager.getEntries().some((entry) => entry.type === "custom" && entry.customType === SUBAGENT_PARENT)) throw new Error("Subagents cannot delegate further; return your findings to the parent");
+      requireDelegation(ctx);
 
       if (!params.tasks.length || params.tasks.length > 4 || params.tasks.some((task) => !task.task.trim() || !task.name.trim())) throw new Error("Provide 1–4 named, nonempty tasks");
 
