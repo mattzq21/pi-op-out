@@ -24,7 +24,7 @@ const GROUP_CHILD_ORDER_KEY = "pi-desktop-group-child-order";
 
 export const RECENT_KEY = "__pi-desktop-ungrouped__";
 
-const RECENT_LABEL = "Recent";
+const RECENT_LABEL = "Chit chats";
 
 export const isFixedGroup = (key: string) => key === RECENT_KEY || key === DIRLESS_KEY;
 
