@@ -81,7 +81,17 @@ export function createConversationArchive(context: ArchiveContext) {
     addNotice({ title: "Could not archive conversation", message: cause instanceof Error ? cause.message : String(cause) }); };
 
     const connectArchiveReplacement = async (hostId: string, conversationKey: string) => {
-      if (ownerTransport.isTemporaryChat() || isTemporaryChatCwd(session.cwd)) {
+      let replacementCwd = session.projectRoot || ownerTransport.currentCwd();
+      if (replacementCwd && !ownerTransport.isTemporaryChat() && !isTemporaryChatCwd(session.cwd)) {
+        try { replacementCwd = await ownerTransport.validateProjectDirectory(replacementCwd, hostId, true); }
+        catch { replacementCwd = undefined; }
+      }
+      if (!ownsConversationUi(ownerTransport, conversationKey)) {
+        await capturedRuntimePool.release(ownerTransport);
+        transportConversationKeys.current.delete(ownerTransport);
+        return;
+      }
+      if (!replacementCwd || ownerTransport.isTemporaryChat() || isTemporaryChatCwd(session.cwd)) {
         const nextTransport = capturedRuntimePool.create({ hostId }); transportConversationKeys.current.set(nextTransport, conversationKey);
 
         try {
@@ -93,7 +103,7 @@ export function createConversationArchive(context: ArchiveContext) {
           transportConversationKeys.current.delete(nextTransport); void capturedRuntimePool.release(nextTransport);
           addNotice({ title: "Conversation archived, but a new conversation could not start", message: reason instanceof Error ? reason.message : String(reason) }); void syncSessionIndex();
         }
-      } else try { const replacement = capturedRuntimePool.create({ cwd: session.projectRoot || ownerTransport.currentCwd(), hostId }); transportConversationKeys.current.set(replacement, conversationKey); activateTransport(replacement); await capturedRuntimePool.release(ownerTransport); }
+      } else try { const replacement = capturedRuntimePool.create({ cwd: replacementCwd, hostId }); transportConversationKeys.current.set(replacement, conversationKey); setActiveCwd(replacementCwd); activateTransport(replacement); await capturedRuntimePool.release(ownerTransport); }
       catch (reason) { addNotice({ title: "Conversation archived, but a new conversation could not start", message: reason instanceof Error ? reason.message : String(reason) }); void syncSessionIndex(); }
     };
 
