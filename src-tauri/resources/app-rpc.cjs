@@ -44,9 +44,7 @@ function appInput(dispatch) {
   stdin.on("end", () => { if (pending) input.write(pending); input.end(); });
 }
 
-async function dispatch(command, session) {
-  const output = value => process.stdout.write(`${JSON.stringify(value)}\n`);
-
+async function dispatch(command, session, output) {
   try {
     const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.app-rpc"))?.value;
 
@@ -66,6 +64,8 @@ async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const root = runtimeRoot(executable);
   const { AgentSession } = await import(pathToFileURL(join(root, "dist/index.js")).href);
+  const { writeRawStdout } = await import(pathToFileURL(join(root, "dist/core/output-guard.js")).href);
+  const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);
   let session;
   const bind = AgentSession.prototype.bindExtensions;
   AgentSession.prototype.bindExtensions = async function (...bindings) {
@@ -73,7 +73,7 @@ async function main() {
     session = this;
   };
 
-  appInput(command => dispatch(command, session));
+  appInput(command => dispatch(command, session, output));
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
   await import(pathToFileURL(join(root, "dist/cli.js")).href);
 }
