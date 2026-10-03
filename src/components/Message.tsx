@@ -81,7 +81,7 @@ function MessageCopyButton(componentProps: { state: "idle" | "copied" | "error";
 }
 
 function ToolLabel(componentProps: { message: ChatMessage; toolCount: number; status: string }) {
-  return <><Wrench size={14} /><span><strong>{componentProps.message.toolName || "tool"}{componentProps.toolCount > 1 ? ` x${componentProps.toolCount}` : ""}</strong><small>{componentProps.status === "running" ? "Running…" : componentProps.status === "error" ? "Failed" : "Completed"}</small></span></>;
+  return <>{componentProps.message.toolName !== "codemode" && <Wrench size={14} />}<span><strong>{componentProps.message.toolName || "tool"}{componentProps.toolCount > 1 ? ` x${componentProps.toolCount}` : ""}</strong><small>{componentProps.status === "running" ? "Running…" : componentProps.status === "error" ? "Failed" : componentProps.status === "unfinished" ? "Unfinished" : "Completed"}</small></span></>;
 }
 
 function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; error?: string; retry: () => void }) {
@@ -92,8 +92,11 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
 
   return <>
       {input() !== undefined && <div class="tool-payload"><div class="tool-payload-label">In</div><div class="tool-input" aria-label="Tool arguments"><pre>{(input())}</pre></div></div>}
+      {Boolean(componentProps.message.nestedCalls?.calls.length) && <div class="tool-payload nested-tool-calls" role="group" aria-label="Nested tool calls"><Key each={componentProps.message.nestedCalls?.calls ?? []} by={call => call.id}>{call => <ToolResult debug
+        status={call().status === "ok" ? "done" : call().status === "error" ? "error" : componentProps.message.toolStatus === "running" && !componentProps.message.nestedCalls?.complete ? "running" : "unfinished"}
+        message={{ id: call().id, role: "tool", toolName: call().name, toolInput: call().arguments, content: call().error ?? "" }}
+      />}</Key></div>}
       {output() && <div class="tool-payload"><div class="tool-payload-label">Out</div><div class="tool-output" aria-label="Tool output"><pre>{output()}</pre></div></div>}
-      {componentProps.message.nestedCalls && <div class="tool-payload"><div class="tool-payload-label">Nested calls</div><div class="tool-output" aria-label="Nested tool calls"><pre>{JSON.stringify(componentProps.message.nestedCalls, null, 2)}</pre></div></div>}
     {componentProps.loading && <div role="status">Loading tool input and output…</div>}
     {componentProps.error && <div role="alert">{(componentProps.error)} <button onClick={componentProps.retry}>Retry</button></div>}
     {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.filter((part) => part.type === "image")}>{(part) => part().type === "image" && part().data && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType ?? "") ? <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Tool result" /> : null}</Index>}
@@ -101,7 +104,7 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
   </>;
 }
 
-function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug">) {
+function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug"> & { status?: "running" | "done" | "error" | "unfinished" }) {
   const isSubagent = () => componentProps.message.toolName === "subagent";
   const runs = createMemo(() => componentProps.message.toolName === "subagent" ? subagentRuns(componentProps.message.details) : []);
   const [open, setOpen] = createSignal(false);
@@ -129,7 +132,7 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
 
     return () => { active = false; clearInterval(timer); };
   }, () => [open(), retry(), isSubagent()]);
-  const status = createMemo(() => (componentProps.message.toolStatus ?? "done"));
+  const status = createMemo(() => (componentProps.status ?? componentProps.message.toolStatus ?? "done"));
   const label = createMemo(() => (<ToolLabel message={componentProps.message} toolCount={componentProps.toolCount ?? 1} status={status()} />));
 
   return <>{!componentProps.debug && !isSubagent() ? (<div class={`tool-event ${status()}`}><div class="tool-summary">{label()}</div></div>) : (<details class={`tool-event ${status()}`} open={open()} onToggle={(event) => setOpen(event.currentTarget.open)}>

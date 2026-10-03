@@ -84,7 +84,7 @@ export default function agentMcp(pi: ExtensionAPI) {
   const activeTools = () => {
     const active = new Set(pi.getActiveTools());
 
-    return nativeTools().filter(tool => active.has(tool.name)).map(tool => tool.name);
+    return nativeTools().filter(tool => tool.name === "codemode" ? codemodeEnabled : active.has(tool.name)).map(tool => tool.name);
   };
 
   const stopTools = pi.events.on("piop:mcp:tools", request => {
