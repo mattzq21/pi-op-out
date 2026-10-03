@@ -121,7 +121,7 @@ export class NativeTransport {
   private presenceCleanup?: () => void;
   setVisible(visible: boolean) { this.visible = visible; this.publishPresence(); }
   private presence() {
-    const presence = { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus() };
+    const presence = { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus(), screenWidth: window.screen?.width ?? 0 };
 
     return this.readOnly ? { ...presence, readOnly: true } : presence;
   }
@@ -334,8 +334,8 @@ export class NativeTransport {
     if (version === this.connectionVersion) {
       this.running = true;
       this.presenceCleanup?.();
-      window.addEventListener("focus", this.publishPresence); window.addEventListener("blur", this.publishPresence); document.addEventListener("visibilitychange", this.publishPresence);
-      this.presenceCleanup = () => { window.removeEventListener("focus", this.publishPresence); window.removeEventListener("blur", this.publishPresence); document.removeEventListener("visibilitychange", this.publishPresence); };
+      window.addEventListener("focus", this.publishPresence); window.addEventListener("blur", this.publishPresence); window.addEventListener("resize", this.publishPresence); document.addEventListener("visibilitychange", this.publishPresence);
+      this.presenceCleanup = () => { window.removeEventListener("focus", this.publishPresence); window.removeEventListener("blur", this.publishPresence); window.removeEventListener("resize", this.publishPresence); document.removeEventListener("visibilitychange", this.publishPresence); };
 
       this.publishPresence();
     }
@@ -379,7 +379,7 @@ export class NativeTransport {
     command = this.fastMode.normalize(command);
 
     try {
-      const result = await call("pi_command", { runtimeId: this.runtimeId, command });
+      const result = await call("pi_command", { runtimeId: this.runtimeId, command: { ...command, clientScreenWidth: window.screen?.width ?? 0 } });
       this.retainCommandSession(command, commandSessionSchema.parse(result));
       this.resetChangedSession(command, z.object({ cancelled: z.boolean().optional() }).catch({}).parse(result));
       const fastModeUpdate = this.fastMode.afterCommand(command, command.type === "get_commands" ? commandListingSchema.parse(result) : undefined);

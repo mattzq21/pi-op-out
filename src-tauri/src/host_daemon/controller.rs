@@ -548,6 +548,9 @@ impl Host {
         if matches!(kind(&command), "fork" | "fork_after" | "clone" | "new_session" | "switch_session") {
             return super::branching::switch(self, &session, runtime, command).await;
         }
+        if command["clientScreenWidth"].is_number() {
+            session.raw(json!({"type":"html_preview_viewport","screenWidth":command["clientScreenWidth"]})).await?;
+        }
         queue_command(&session, command).await
     }
 

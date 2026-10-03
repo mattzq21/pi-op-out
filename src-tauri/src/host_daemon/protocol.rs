@@ -122,7 +122,7 @@ fn app_request_command(command: &str) -> Option<&str> {
     match command {
         "orchestration_message" | "answer_question" | "provider_auth_refresh" | "runtime_settings" | "branch_checkpoint"
         | "fork_and_forget" | "fork_after" | "select_agent" | "configure_agents"
-        | "review_feedback" | "open_review" | "fast_mode_status" => Some(command),
+        | "review_feedback" | "open_review" | "fast_mode_status" | "html_preview_viewport" => Some(command),
         _ => None,
     }
 }

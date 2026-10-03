@@ -108,6 +108,9 @@ impl Attachment {
         let session = self.session(host, guard).await?;
         *opened = Some(session.clone());
         session.execute(json!({"type":"get_state"})).await?;
+        if self.packet["presence"]["screenWidth"].is_number() {
+            session.raw(json!({"type":"html_preview_viewport","screenWidth":self.packet["presence"]["screenWidth"]})).await?;
+        }
         self.assert_current(host)?;
         session.set_client_id(text(&self.packet, "clientId"));
         host.registry().readonly.remove(&self.runtime);
