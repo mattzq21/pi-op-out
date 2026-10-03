@@ -163,7 +163,7 @@ function inheritedHistory(ctx: ExtensionContext, task: SubagentTask) {
   return retained;
 }
 
-async function waitForSubagent(run: SubagentRun, signal: AbortSignal) {
+async function waitForSubagent(run: SubagentRun, signal: AbortSignal, lifecycle: ActiveSubagent) {
   const deadline = Date.now() + SUBAGENT_TIMEOUT_MS;
   let failures = 0;
 
@@ -173,10 +173,11 @@ async function waitForSubagent(run: SubagentRun, signal: AbortSignal) {
     if (Date.now() >= deadline) throw new Error("Subagent timed out after ten minutes");
 
     try {
+      const revision = lifecycle.revision;
       const snapshot = await sessionSnapshot(run.sessionId, run.hostId, AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, deadline - Date.now()))]));
       failures = 0;
 
-      if (snapshotStatus(snapshot) === "idle") return;
+      if (finishObservedRun(snapshotStatus(snapshot), revision, lifecycle)) return;
     } catch (error) {
       signal.throwIfAborted();
 
@@ -250,7 +251,30 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   return run;
 }
 
-type ActiveSubagent = { controller: AbortController; done: Promise<void> };
+type ActiveSubagent = { controller: AbortController; done: Promise<void>; ready: Promise<void>; started: () => void; closing: boolean; revision: number; pendingDeliveries: number; deliveryIds: Set<string> };
+
+function finishObservedRun(status: string, revision: number, lifecycle: ActiveSubagent) {
+  if (status !== "idle" || revision !== lifecycle.revision || lifecycle.pendingDeliveries) return false;
+  lifecycle.closing = true;
+
+  return true;
+}
+
+async function deliverFollowup(ctx: ExtensionContext, run: SubagentRun, lifecycle: ActiveSubagent, message: string, signal?: AbortSignal): Promise<AgentToolResult<unknown>> {
+  lifecycle.controller.signal.throwIfAborted();
+  signal?.throwIfAborted();
+  lifecycle.revision++;
+  lifecycle.pendingDeliveries++;
+  const deliveryId = randomUUID();
+  lifecycle.deliveryIds.add(deliveryId);
+
+  try {
+    const data = await sendSessionMessage(ctx, run.sessionId, run.hostId, message, true, signal, deliveryId);
+
+    return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
+  } catch (error) { lifecycle.controller.abort(error); throw error; }
+  finally { lifecycle.revision++; lifecycle.pendingDeliveries--; }
+}
 
 class SubagentRetiredError extends Error {}
 
@@ -270,7 +294,7 @@ async function confirmSubagentStopped(run: SubagentRun, ctx: ExtensionContext, d
   }
 }
 
-async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution) {
+async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution, lifecycle: ActiveSubagent) {
   const { signal, pi, ctx } = execution;
   signal?.throwIfAborted();
   const offset = (await stat(run.sessionPath)).size;
@@ -296,18 +320,31 @@ async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution) 
   let dispatched = false;
   let submitted = false;
   const deliveryId = randomUUID();
+  lifecycle.deliveryIds.add(deliveryId);
   let last: SubagentResponse | undefined;
 
   try {
     requestSignal.throwIfAborted();
     submitted = true;
     await sendSessionMessage(ctx, run.sessionId, run.hostId, run.task, true, undefined, deliveryId);
-    await waitForSubagent(run, requestSignal);
+    lifecycle.started();
+
+    await waitForSubagent(run, requestSignal, lifecycle);
     dispatched = true;
   } catch (error) {
-    if (submitted && await confirmSubagentStopped(run, ctx, deliveryId)) throw new SubagentRetiredError("Subagent was archived or deleted; its worker has stopped");
+    lifecycle.closing = true;
+
+    if (submitted) {
+      const retired: boolean[] = [];
+
+      for (const id of lifecycle.deliveryIds) retired.push(await confirmSubagentStopped(run, ctx, id));
+
+      if (retired.some(Boolean)) throw new SubagentRetiredError("Subagent was archived or deleted; its worker has stopped");
+    }
+
     throw error;
   }
+
   finally {
     try { await closeUsage(); last = await subagentCompletion(run, offset, reportUsage); }
     catch (error) { if (dispatched) throw error; }
@@ -323,7 +360,11 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
   const signal = execution.signal ? AbortSignal.any([execution.signal, controller.signal]) : controller.signal;
   let finished = () => {};
 
+  let started = () => {};
+
   const done = new Promise<void>(resolve => { finished = resolve; });
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  const lifecycle: ActiveSubagent = { controller, done, ready, started, closing: false, revision: 0, pendingDeliveries: 0, deliveryIds: new Set() };
   const run: SubagentRun = { version: 1, toolCallId, parentSessionId: ctx.sessionManager.getSessionId(), sessionId: task.sessionId ?? "", sessionPath: "", hostId: currentHost(), name: task.name, task: task.task, status: "running", startedAt: Date.now() };
   results.push(run);
   let claimed = false;
@@ -334,14 +375,17 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
 
     if (active.has(child.sessionId)) throw new Error("This subagent is already running");
     Object.assign(run, child);
-    active.set(run.sessionId, { controller, done }); claimed = true;
+    active.set(run.sessionId, lifecycle); claimed = true;
     pi.appendEntry(SUBAGENT_RUN, { ...run }); publish(run);
     execution.ready();
-    await dispatchSubagent(run, { ...execution, signal });
+    await dispatchSubagent(run, { ...execution, signal }, lifecycle);
   } catch (error) {
     run.status = signal.aborted || error instanceof SubagentRetiredError ? "cancelled" : "failed";
     run.output = error instanceof Error ? error.message : String(error);
   }
+
+  lifecycle.closing = true;
+  started();
 
   if (claimed) active.delete(run.sessionId);
   run.endedAt = Date.now();
@@ -452,11 +496,13 @@ export function registerSubagents(pi: ExtensionAPI) {
     async execute(id, params, signal, _update, ctx) {
       const run = targetRun(ctx, params.target);
 
-      if (active.has(run.sessionId)) {
-        active.get(run.sessionId)?.controller.signal.throwIfAborted();
-        const data = await sendSessionMessage(ctx, run.sessionId, run.hostId, params.message, true, signal);
+      const running = active.get(run.sessionId);
 
-        return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
+      if (running) {
+        await running.ready;
+
+        if (!running.closing) return deliverFollowup(ctx, run, running, params.message, signal);
+        await running.done;
       }
 
       return start({ name: run.name, task: params.message, sessionId: run.sessionId }, id, ctx, signal);
