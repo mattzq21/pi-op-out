@@ -1,4 +1,4 @@
-import { createMemo, Show } from "solid-js";
+import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { z } from "zod";
 import { isMobile } from "../lib/platform";
 import "./html-preview.css";
@@ -15,6 +15,18 @@ function isolatedDocument(html: string) {
 }
 
 export function HtmlPreview(props: { details: unknown }) {
+  const screenSize = () => typeof window !== "undefined" && window.screen?.width >= 2560 ? 750 : 600;
+  const [size, setSize] = createSignal(screenSize());
+  onMount(() => {
+    const updateSize = () => setSize(screenSize());
+    updateSize();
+    window.addEventListener("resize", updateSize);
+    window.addEventListener("focus", updateSize);
+    onCleanup(() => {
+      window.removeEventListener("resize", updateSize);
+      window.removeEventListener("focus", updateSize);
+    });
+  });
   const preview = createMemo(() => previewSchema.safeParse(props.details));
 
   const value = () => { const result = preview();
@@ -31,8 +43,8 @@ export function HtmlPreview(props: { details: unknown }) {
 
   return <Show when={value()} fallback={<p class="html-preview-error" role="status">HTML preview is unavailable.</p>}>{preview =>
     <Show when={!isMobile} fallback={<div class="html-preview-placeholder" role="img" aria-label={`${preview().title}; available on desktop`}><strong>{preview().title}</strong><span>HTML preview · View on desktop</span></div>}>
-      <div class="html-preview" role="region" aria-label={preview().title} tabindex="0">
-        <iframe class="html-preview-frame" title={preview().title} width="720" height="720" sandbox="allow-scripts" referrerpolicy="no-referrer" srcdoc={document()} />
+      <div class="html-preview" style={{ "--html-preview-size": `${size()}px` }} role="region" aria-label={preview().title} tabindex="0">
+        <iframe class="html-preview-frame" title={preview().title} width={size()} height={size()} sandbox="allow-scripts" referrerpolicy="no-referrer" srcdoc={document()} />
       </div>
     </Show>
   }</Show>;

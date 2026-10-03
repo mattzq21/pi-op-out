@@ -47,7 +47,7 @@ async function previewHtml(params: { html?: string; path?: string }, cwd: string
 export function registerHtmlPreview(pi: ExtensionAPI) {
   pi.registerTool({
     name: "render_html", label: "Render HTML",
-    description: "Display self-contained HTML in the piop chat harness. Use a dark theme only. Supply exactly one of html or path (UTF-8 file on this agent's host, relative to the current working directory or absolute). Desktop displays a fixed 720×720 CSS-pixel viewport; mobile displays only a small placeholder. Inline CSS and JavaScript are supported in an isolated sandbox. Embed assets as data URLs; external resources, network requests, relative file assets, and access to the harness are unavailable. Maximum 512,000 UTF-8 bytes. The HTML is saved as a snapshot in the conversation.",
+    description: "Display self-contained HTML in the piop chat harness. Use a dark theme only. Supply exactly one of html or path (UTF-8 file on this agent's host, relative to the current working directory or absolute). Desktop displays a centered square viewport sized by the client's screen width: 750×750 CSS pixels on screens at least 2560 CSS pixels wide, otherwise 600×600 (including 1980-wide screens and the default). Make content adapt to either viewport size. Mobile displays only a small placeholder. Inline CSS and JavaScript are supported in an isolated sandbox. Embed assets as data URLs; external resources, network requests, relative file assets, and access to the harness are unavailable. Maximum 512,000 UTF-8 bytes. The HTML is saved as a snapshot in the conversation.",
     parameters: Type.Object({
       html: Type.Optional(Type.String({ minLength: 1, description: "HTML document or fragment to display." })),
       path: Type.Optional(Type.String({ minLength: 1, description: "Path to a self-contained HTML file on this host." })),
@@ -60,7 +60,7 @@ export function registerHtmlPreview(pi: ExtensionAPI) {
       const title = params.title?.trim() || "HTML preview";
       pi.sendMessage({ customType: "piop-html-preview", content: title, display: true, details: { version: 1, html, title } }, { triggerTurn: false });
 
-      return { content: [{ type: "text", text: `Displayed ${title} in the chat (720×720 on desktop; placeholder on mobile).` }], details: {} };
+      return { content: [{ type: "text", text: `Displayed ${title} in the chat (600×600 on desktop, or 750×750 on client screens at least 2560 CSS pixels wide; placeholder on mobile).` }], details: {} };
     },
   });
 }
