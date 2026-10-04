@@ -17,6 +17,7 @@ import type { ChatMessage } from "../types";
 import { DiffViewer } from "./DiffViewer";
 import { IconButton } from "./IconButton";
 import { Markdown } from "./Markdown";
+import { WorkingIndicator } from "./WorkingIndicator";
 import { ZoomableImage } from "./ZoomableImage";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
 import type { FileReference } from "../lib/projectFiles";
@@ -211,7 +212,7 @@ export function Message(componentProps: Props) {
     const renderMessageBody = () => {
       const renderResponse = () => <Markdown onOpenFile={componentProps.onOpenFile} streaming={streaming()}>{output()}</Markdown>;
       const renderMessageFailure = () => (failureState().failure && <div class="message-failure" role="status"><CircleAlert size={14} /><span>{(failureState().failure)}</span>{componentProps.onRetry && <button disabled={(componentProps.retrying === undefined ? false : componentProps.retrying)} onClick={(componentProps.onRetry)}>{(componentProps.retrying === undefined ? false : componentProps.retrying) ? "Retrying…" : "Retry"}</button>}</div>);
-      const renderStreamCaret = () => (streaming() && <span class="stream-caret" />);
+      const renderStreamCaret = () => (streaming() && !componentProps.paused && <WorkingIndicator />);
 
       const renderMessageActions = () => {
         const renderToolFailureRate = () => componentProps.debug && <ToolFailureMeter stats={componentProps.toolFailures} />;

@@ -48,7 +48,7 @@ impl QueueState {
             }
         }
         let pending: Vec<_> = pending.iter().cloned().map(|mut item| {
-            if let Some(images) = item["images"].as_array_mut() {
+            if let Some(images) = item.get_mut("images").and_then(Value::as_array_mut) {
                 for image in images { if let Some(fields) = image.as_object_mut() { fields.remove("data"); } }
             }
             item

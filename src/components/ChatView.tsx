@@ -23,6 +23,7 @@ import { ConversationQuestions } from "./ConversationQuestions";
 import { DeferredTurn } from "./DeferredTurn";
 import { DiffViewer } from "./DiffViewer";
 import { Message } from "./Message";
+import { WorkingIndicator } from "./WorkingIndicator";
 import { toolFailureStats } from "../lib/toolFailureStats";
 import { PromptContextBar } from "./PromptContextBar";
 import { ConversationHostContext } from "../lib/subagentNavigation";
@@ -503,7 +504,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
     <MessageList messages={componentProps.messages.filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />
   </>)}>
-    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user" && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} showActions={false} /></div>
+    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user" && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} showActions={false} />{componentProps.active && !componentProps.paused && !componentProps.messages.some(message => message.role === "assistant" && message.streaming && !invisibleAssistant(message)) && <WorkingIndicator />}</div>
   </Show>);
 
   const renderDiffViewer = () => (<Show when={componentProps.active || componentProps.paused || !finalMessage()}><DiffViewer {...changes()} /></Show>);
