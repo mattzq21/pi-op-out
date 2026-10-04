@@ -1,8 +1,7 @@
-import { build } from "esbuild";
-import { writeFile } from "node:fs/promises";
+import { buildBundle } from "./incremental-build.mjs";
 import { gzipSync } from "node:zlib";
 
-await build({
+await buildBundle({
   entryPoints: ["src-tauri/resources/mcp-bridge.ts"],
   outfile: "src-tauri/resources/mcp-bridge.bundle.mjs",
   bundle: true,
@@ -12,9 +11,9 @@ await build({
   minify: true,
   legalComments: "none",
   external: ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"],
-});
+}, "src-tauri/resources/mcp-bridge.bundle.mjs", { script: import.meta.url });
 
-const schema = await build({
+await buildBundle({
   entryPoints: ["extensions/piop-define-agents/mcp-schema.ts"],
   bundle: true,
   platform: "node",
@@ -22,13 +21,12 @@ const schema = await build({
   target: "node20",
   minify: true,
   legalComments: "none",
-  write: false,
-});
+}, "src-tauri/resources/mcp-schema.bundle.mjs", { script: import.meta.url, transform(content) {
+  const payload = gzipSync(content, { level: 9 }).toString("base64");
 
-const payload = gzipSync(schema.outputFiles[0].contents, { level: 9 }).toString("base64");
+  const source = `import { gunzipSync } from "node:zlib";\nconst { mcpServerSchema, mcpServersSchema } = await import("data:text/javascript;base64," + gunzipSync(Buffer.from("${payload}", "base64")).toString("base64"));\nexport { mcpServerSchema, mcpServersSchema };\n`;
 
-const source = `import { gunzipSync } from "node:zlib";\nconst { mcpServerSchema, mcpServersSchema } = await import("data:text/javascript;base64," + gunzipSync(Buffer.from("${payload}", "base64")).toString("base64"));\nexport { mcpServerSchema, mcpServersSchema };\n`;
+  if (Buffer.byteLength(source) > 96 * 1024) throw new Error("MCP schema exceeds the embedded script argument budget");
 
-if (Buffer.byteLength(source) > 96 * 1024) throw new Error("MCP schema exceeds the embedded script argument budget");
-
-await writeFile("src-tauri/resources/mcp-schema.bundle.mjs", source);
+  return source;
+} });

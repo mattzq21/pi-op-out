@@ -1,0 +1,67 @@
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { build, version } from "esbuild";
+
+const cacheDirectory = "node_modules/.cache/piop-extension-builds";
+const helper = fileURLToPath(import.meta.url);
+
+async function readOptional(path) {
+  try { return await readFile(path); } catch (error) {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+const hash = content => createHash("sha256").update(content).digest("hex");
+
+async function fingerprint(paths) {
+  return Promise.all([...new Set(paths)].sort().map(async path => {
+    const content = await readOptional(path);
+    return [path, content === undefined ? null : hash(content)];
+  }));
+}
+
+export async function buildArtifact({ output, inputs, key }, generate) {
+  const configuration = (await readdir(".")).filter(path => path === "package.json" || path === "package-lock.json" || /^tsconfig.*\.json$/.test(path));
+  const fixedInputs = [...inputs, helper, ...configuration];
+  const signature = JSON.stringify([version, process.version, key, [...fixedInputs].sort()]);
+  const cachePath = `${cacheDirectory}/${hash(output)}.json`;
+  const saved = await readOptional(cachePath);
+  let cached;
+  try { cached = saved && JSON.parse(saved.toString()); } catch { }
+
+  if (cached?.signature === signature && Array.isArray(cached.dependencies)) {
+    const current = await fingerprint([...fixedInputs, ...cached.dependencies]);
+    const outputContent = await readOptional(output);
+
+    if (JSON.stringify(current) === JSON.stringify(cached.inputs) && outputContent !== undefined && hash(outputContent) === cached.outputHash) {
+      console.log(`Unchanged: ${output}`);
+      return;
+    }
+  }
+
+  const { content, dependencies = [] } = await generate();
+  const outputContent = Buffer.from(content);
+  const previous = await readOptional(output);
+
+  if (!previous?.equals(outputContent)) {
+    await mkdir(dirname(output), { recursive: true });
+    await writeFile(output, outputContent);
+  }
+
+  const record = { signature, dependencies, inputs: await fingerprint([...fixedInputs, ...dependencies]), outputHash: hash(outputContent) };
+  await mkdir(cacheDirectory, { recursive: true });
+  const temporary = `${cachePath}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporary, JSON.stringify(record));
+  await rename(temporary, cachePath);
+  console.log(`Built: ${output}`);
+}
+
+export async function buildBundle(options, output, { script, transform = content => content }) {
+  await buildArtifact({ output, inputs: [fileURLToPath(script)], key: options }, async () => {
+    const result = await build({ ...options, write: false, metafile: true });
+    return { content: transform(result.outputFiles[0].contents), dependencies: Object.keys(result.metafile.inputs) };
+  });
+}

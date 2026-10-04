@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import ts from "typescript";
 
-export async function agentCommandInventory() {
+export async function agentCommandInputs() {
   const files = [];
 
   for (const root of ["extensions", "src-tauri/resources"]) {
@@ -11,6 +11,11 @@ export async function agentCommandInventory() {
     }
   }
 
+  return files.sort();
+}
+
+export async function agentCommandInventory(files) {
+  files ??= await agentCommandInputs();
   const names = new Set();
 
   function visit(node) {
