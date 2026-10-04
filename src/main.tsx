@@ -1,5 +1,6 @@
 import { required } from "./lib/required";
 import { render } from "solid-js/web";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import App from "./App";
 import { MobileApp } from "./components/MobileApp";
 import { isMobile } from "./lib/platform";
@@ -18,4 +19,15 @@ const removeTextEditingShortcuts = installTextEditingShortcuts();
 
 const dispose = render(() => isMobile ? <MobileApp /> : <App />, required(document.getElementById("root")));
 
-if (import.meta.hot) import.meta.hot.dispose(() => { dispose(); removeTextEditingShortcuts(); });
+if (import.meta.hot) {
+  const reloadDaemon = () => {
+    if (isTauri()) void invoke("reload_development_window").catch(error => console.error("Could not reload after restarting the daemon:", error));
+    else window.location.reload();
+  };
+
+  import.meta.hot.on("piop:daemon-restarted", reloadDaemon);
+  import.meta.hot.dispose(() => {
+    import.meta.hot?.off("piop:daemon-restarted", reloadDaemon);
+    dispose(); removeTextEditingShortcuts();
+  });
+}

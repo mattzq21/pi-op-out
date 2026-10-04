@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -26,4 +26,14 @@ const extension = process.platform === 'win32' ? '.exe' : '';
 
 mkdirSync(new URL('../src-tauri/binaries/', import.meta.url), { recursive: true });
 
-copyFileSync(new URL(`../src-tauri/target/${debug ? 'debug' : 'release'}/piopd${extension}`, import.meta.url), new URL(`../src-tauri/binaries/piopd-${triple}${extension}`, import.meta.url));
+const source = new URL(`../src-tauri/target/${debug ? 'debug' : 'release'}/piopd${extension}`, import.meta.url);
+const destination = new URL(`../src-tauri/binaries/piopd-${triple}${extension}`, import.meta.url);
+let unchanged = false;
+
+try {
+  unchanged = statSync(destination).size === statSync(source).size && readFileSync(destination).equals(readFileSync(source));
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error;
+}
+
+if (!unchanged) copyFileSync(source, destination);
