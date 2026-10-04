@@ -15,12 +15,15 @@ const development = args[0] === "dev" || (args[0] === "build" && args.includes("
 
 const configOverrides = development ? { productName: "Piop Dev", identifier: "dev.pi.desktop.debug" } : {};
 
+let devPort;
+
 async function developmentPort() {
   const root = realpathSync(new URL("../", import.meta.url));
   const preferred = 20000 + createHash("sha256").update(root).digest().readUInt32BE(0) % 40000;
 
   for (let attempt = 0; attempt <= 32; attempt++) {
     const requested = attempt === 32 ? 0 : 20000 + (preferred - 20000 + attempt) % 40000;
+
     const port = await new Promise((resolve, reject) => {
       const server = createServer();
       server.once("error", error => error.code === "EADDRINUSE" ? resolve(undefined) : reject(error));
@@ -43,12 +46,12 @@ async function developmentPort() {
 if (args[0] === "dev") {
   const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
-  const port = await developmentPort();
+  devPort = await developmentPort();
 
   Object.assign(configOverrides, {
     build: {
-      beforeDevCommand: `npm run build:extensions && node scripts/build-daemon.mjs --debug && src-tauri/target/debug/piopd${process.platform === "win32" ? ".exe" : ""} stop && npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
-      devUrl: `http://127.0.0.1:${port}`,
+      beforeDevCommand: null,
+      devUrl: `http://127.0.0.1:${devPort}`,
     },
     app: { windows: config.app.windows.map((window) => ({ ...window, focus: false })) },
   });
@@ -71,8 +74,8 @@ if (windowBounds) {
   env.PI_WINDOW_BOUNDS = JSON.stringify(windowBounds);
 }
 
-if (args[0] === "dev" && !args.includes("--no-watch")) {
-  watchBackend(tauri, [...args, "--no-watch"], { stdio: "inherit", env }, fileURLToPath(new URL("../", import.meta.url)));
+if (args[0] === "dev") {
+  await watchBackend(tauri, args.includes("--no-watch") ? args : [...args, "--no-watch"], { stdio: "inherit", env }, fileURLToPath(new URL("../", import.meta.url)), { port: devPort, watch: !args.includes("--no-watch") });
 } else {
   const child = spawn(tauri, args, { stdio: "inherit", env });
   child.once("error", (error) => { console.error(error.message); process.exitCode = 1; });

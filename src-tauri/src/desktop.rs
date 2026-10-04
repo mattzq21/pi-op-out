@@ -180,6 +180,16 @@ const LOAD_ERROR_HTML: &str = r#"<!doctype html>
 </html>"#;
 
 #[cfg(feature = "desktop")]
+#[tauri::command]
+async fn reload_development_window(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    if !DEVELOPMENT { return Err("Development reload is unavailable".into()); }
+    let daemon = app.state::<desktop_daemon::DesktopDaemon>();
+    daemon.close_window(&app, window.label()).await;
+    daemon.connect(&app, window.label()).await?;
+    window.reload().map_err(|error| error.to_string())
+}
+
+#[cfg(feature = "desktop")]
 pub fn run() {
     let mut context = tauri::generate_context!();
     if DEVELOPMENT {
@@ -234,7 +244,7 @@ pub fn run() {
             window.show()?;
         }
         Ok(())
-    }).invoke_handler(tauri::generate_handler![daemon_invoke, load_client_settings, save_client_settings, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![daemon_invoke, reload_development_window, load_client_settings, save_client_settings, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
             let app = app.clone(); let label = label.clone();
             tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&app, &label).await; });
