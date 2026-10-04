@@ -48,7 +48,9 @@ function formatMessageTime(timestamp?: number) {
   if (Number.isNaN(date.getTime())) return undefined;
 
   return {
-    short: shortMessageTime.format(date),
+    short: Date.now() - timestamp < 24 * 60 * 60 * 1000
+      ? shortMessageTime.format(date)
+      : fullMessageTime.format(date),
     full: fullMessageTime.format(date),
   };
 }
