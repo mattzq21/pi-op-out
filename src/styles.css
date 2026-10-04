@@ -273,7 +273,9 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .app .composer-actions .composer-picker-trigger[aria-label="Thinking level"],
 .app .composer-picker-menu[aria-label="Thinking level options"] button:not(:disabled) { color: color-mix(in srgb, var(--ink) 75%, #000); }
 .composer-picker-footer { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line); }
-.agent-definitions-host { padding: 3px 8px; color: var(--muted); font-size: 11px; }
+.agent-definitions-host { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 3px 8px; color: var(--muted); font-size: 11px; }
+.agent-definitions-host > span { font-size: inherit; font-weight: inherit; }
+.composer-picker-menu .agent-definitions-reload { width: 22px; min-height: 22px; flex: 0 0 22px; display: flex; align-items: center; justify-content: center; padding: 0; color: var(--muted); }
 .composer-picker-footer p { max-width: 280px; margin: 5px 8px; color: #a54e38; font-size: 12px; overflow-wrap: anywhere; }
 .session-cache-hit { margin-left: 5px; color: var(--muted); font: 10px "DM Sans"; white-space: nowrap; }.session-cache-hit.low { color: #d77865; }
 .composer-bar .composer-picker-trigger:is([aria-label="Model"], [aria-label="Thinking level"]) { padding-inline: 1px; }
