@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, version } from "esbuild";
 
-const cacheDirectory = "node_modules/.cache/piop-extension-builds";
+const cacheDirectory = ".trace/extension-builds";
 
 const helper = fileURLToPath(import.meta.url);
 

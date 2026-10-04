@@ -14,6 +14,7 @@ const developmentBranch = (() => {
 })();
 
 export default defineConfig({
+  cacheDir: ".trace/vite",
   plugins: [solid()],
   define: { __PIOP_DEVELOPMENT_BRANCH__: JSON.stringify(developmentBranch) },
   clearScreen: false,
