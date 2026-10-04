@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { copyDependencies } from "./copy-dependencies.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
@@ -53,6 +53,7 @@ function requiresLocalInstall(manifest, lock) {
 
 async function populate(entry, manifest, lock, npmrc) {
   if (await optional(join(entry, "ready"))) return;
+  console.log("Shared npm cache miss. Installing dependencies…");
   await mkdir(cacheRoot, { recursive: true });
   const temporary = join(cacheRoot, "install-" + randomUUID());
   await mkdir(temporary, { mode: 0o700 });
@@ -84,7 +85,9 @@ async function materialize(entry, key) {
   await mkdir(join(root, ".trace"), { recursive: true });
 
   try {
-    await cp(join(entry, "node_modules"), temporary, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
+    console.log("Copying shared npm dependencies into this worktree…");
+    const started = performance.now();
+    await copyDependencies(join(entry, "node_modules"), temporary);
     let moved = false;
 
     try { await rename(localModules, backup); moved = true; } catch (error) {
@@ -99,6 +102,7 @@ async function materialize(entry, key) {
 
     await writeFile(stamp, key);
     await rm(backup, { recursive: true, force: true });
+    console.log(`Reused shared npm dependencies in ${((performance.now() - started) / 1000).toFixed(1)}s.`);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -137,6 +141,5 @@ if (requiresLocalInstall(packageJson, lockJson) || Object.keys(packageJson.scrip
     const entry = join(cacheRoot, key);
     await populate(entry, manifest, lock, npmrc);
     await materialize(entry, key);
-    console.log("Reused shared npm dependencies.");
   }
 }
