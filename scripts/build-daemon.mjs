@@ -1,5 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -37,3 +40,23 @@ try {
 }
 
 if (!unchanged) copyFileSync(source, destination);
+
+if (process.argv.includes('--install')) {
+  const binDirectory = join(homedir(), '.local', 'bin');
+  const installed = join(binDirectory, `piopd${extension}`);
+  const temporary = join(binDirectory, `.piopd-${randomUUID()}${extension}`);
+  mkdirSync(binDirectory, { recursive: true });
+
+  try {
+    copyFileSync(source, temporary);
+    renameSync(temporary, installed);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+
+  console.log(`Installed ${installed}`);
+
+  if (!(process.env.PATH ?? '').split(delimiter).some(directory => resolve(directory) === binDirectory)) {
+    console.warn(`Add ${binDirectory} to your PATH to run piopd directly.`);
+  }
+}

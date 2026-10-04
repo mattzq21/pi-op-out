@@ -30,7 +30,7 @@
     "test:e2e:manual": "node scripts/wdio-manual.mjs",
     "tauri": "node scripts/tauri.mjs",
     "build:mobile": "tsc -b && vite build --mode mobile --outDir dist-mobile",
-    "build:daemon": "npm run build:extensions && cargo build --locked --manifest-path src-tauri/Cargo.toml --release --no-default-features --features daemon --bin piopd",
+    "build:daemon": "npm run build:extensions && node scripts/build-daemon.mjs --install",
     "daemon": "npm run build:daemon && src-tauri/target/release/piopd start",
     "daemon:dev": "npm run build:extensions && node scripts/build-daemon.mjs --debug && src-tauri/target/debug/piopd start",
     "android:sync": "npm run build:mobile && cap sync android",
