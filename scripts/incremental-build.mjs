@@ -5,7 +5,15 @@ import { fileURLToPath } from "node:url";
 import { build, version } from "esbuild";
 
 const cacheDirectory = "node_modules/.cache/piop-extension-builds";
+
 const helper = fileURLToPath(import.meta.url);
+
+export async function buildInParallel(builds) {
+  const results = await Promise.allSettled(builds);
+  const failures = results.filter(result => result.status === "rejected").map(result => result.reason);
+
+  if (failures.length) throw new AggregateError(failures, "Extension builds failed");
+}
 
 async function readOptional(path) {
   try { return await readFile(path); } catch (error) {
@@ -19,8 +27,23 @@ const hash = content => createHash("sha256").update(content).digest("hex");
 async function fingerprint(paths) {
   return Promise.all([...new Set(paths)].sort().map(async path => {
     const content = await readOptional(path);
+
     return [path, content === undefined ? null : hash(content)];
   }));
+}
+
+async function isCurrent(cachePath, signature, fixedInputs, output) {
+  const saved = await readOptional(cachePath);
+  let cached;
+
+  try { cached = saved && JSON.parse(saved.toString()); } catch { }
+
+  if (cached?.signature !== signature || !Array.isArray(cached.dependencies)) return false;
+
+  const current = await fingerprint([...fixedInputs, ...cached.dependencies]);
+  const outputContent = await readOptional(output);
+
+  return JSON.stringify(current) === JSON.stringify(cached.inputs) && outputContent !== undefined && hash(outputContent) === cached.outputHash;
 }
 
 export async function buildArtifact({ output, inputs, key }, generate) {
@@ -28,18 +51,11 @@ export async function buildArtifact({ output, inputs, key }, generate) {
   const fixedInputs = [...inputs, helper, ...configuration];
   const signature = JSON.stringify([version, process.version, key, [...fixedInputs].sort()]);
   const cachePath = `${cacheDirectory}/${hash(output)}.json`;
-  const saved = await readOptional(cachePath);
-  let cached;
-  try { cached = saved && JSON.parse(saved.toString()); } catch { }
 
-  if (cached?.signature === signature && Array.isArray(cached.dependencies)) {
-    const current = await fingerprint([...fixedInputs, ...cached.dependencies]);
-    const outputContent = await readOptional(output);
+  if (await isCurrent(cachePath, signature, fixedInputs, output)) {
+    console.log(`Unchanged: ${output}`);
 
-    if (JSON.stringify(current) === JSON.stringify(cached.inputs) && outputContent !== undefined && hash(outputContent) === cached.outputHash) {
-      console.log(`Unchanged: ${output}`);
-      return;
-    }
+    return;
   }
 
   const { content, dependencies = [] } = await generate();
@@ -62,6 +78,7 @@ export async function buildArtifact({ output, inputs, key }, generate) {
 export async function buildBundle(options, output, { script, transform = content => content }) {
   await buildArtifact({ output, inputs: [fileURLToPath(script)], key: options }, async () => {
     const result = await build({ ...options, write: false, metafile: true });
+
     return { content: transform(result.outputFiles[0].contents), dependencies: Object.keys(result.metafile.inputs) };
   });
 }

@@ -11,7 +11,7 @@
     "lint:rust:complexity": "node scripts/lint-rust-complexity.mjs",
     "build": "npm run build:extensions && tsc -b && vite build",
     "build:icons": "node scripts/build-icons.mjs",
-    "build:extensions": "npm run build:mcp-bridge && npm run build:fast-mode && npm run build:backend-scripts",
+    "build:extensions": "node scripts/build-extensions.mjs",
     "build:backend-scripts": "node scripts/build-backend-scripts.mjs",
     "build:fast-mode": "node scripts/build-fast-mode.mjs",
     "build:mcp-bridge": "node scripts/build-mcp-bridge.mjs",

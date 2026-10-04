@@ -75,9 +75,8 @@ export async function watchBackend(command, args, options, root, { port, watch =
   };
 
   const prepareDaemon = async () => {
-    for (const script of ["build-mcp-bridge.mjs", "build-fast-mode.mjs", "build-backend-scripts.mjs", "build-daemon.mjs"]) {
-      await run(process.execPath, [join(root, "scripts", script), ...(script === "build-daemon.mjs" ? ["--debug"] : [])]);
-    }
+    await run(process.execPath, [join(root, "scripts/build-extensions.mjs")]);
+    await run(process.execPath, [join(root, "scripts/build-daemon.mjs"), "--debug"]);
 
     await run(daemon, ["stop"]);
     daemonManaged = true;
