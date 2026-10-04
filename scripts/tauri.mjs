@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { selectWindowBounds } from "./window-placement.mjs";
@@ -14,17 +15,35 @@ const development = args[0] === "dev" || (args[0] === "build" && args.includes("
 
 const configOverrides = development ? { productName: "Piop Dev", identifier: "dev.pi.desktop.debug" } : {};
 
+async function developmentPort() {
+  const root = realpathSync(new URL("../", import.meta.url));
+  const preferred = 20000 + createHash("sha256").update(root).digest().readUInt32BE(0) % 40000;
+
+  for (let attempt = 0; attempt <= 32; attempt++) {
+    const requested = attempt === 32 ? 0 : 20000 + (preferred - 20000 + attempt) % 40000;
+    const port = await new Promise((resolve, reject) => {
+      const server = createServer();
+      server.once("error", error => error.code === "EADDRINUSE" ? resolve(undefined) : reject(error));
+      server.listen(requested, "127.0.0.1", () => {
+        const address = z.object({ port: z.number().int().min(1).max(65535) }).safeParse(server.address());
+        server.close(error => {
+          if (error) reject(error);
+          else if (address.success) resolve(address.data.port);
+          else reject(new Error("Could not allocate a development port"));
+        });
+      });
+    });
+
+    if (port !== undefined) return port;
+  }
+
+  throw new Error("Could not allocate a development port");
+}
+
 if (args[0] === "dev") {
   const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
-  const port = await new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = z.object({ port: z.number().int().min(1).max(65535) }).safeParse(server.address());
-      server.close(() => address.success ? resolve(address.data.port) : reject(new Error("Could not allocate a development port")));
-    });
-  });
+  const port = await developmentPort();
 
   Object.assign(configOverrides, {
     build: {
