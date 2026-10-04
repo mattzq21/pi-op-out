@@ -36,6 +36,7 @@
     "android:sync": "npm run build:mobile && cap sync android",
     "android:open": "npm run android:sync && cap open android",
     "android:build": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "android:debug-connection": "node scripts/mobile-debug-connection.mjs",
     "reinstall": "node scripts/reinstall-mobile.mjs",
     "test:mobile": "node --test test/mobile/*.test.mjs",
     "test:mobile:ui": "node test/mobile-ui.mjs"

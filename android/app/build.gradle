@@ -3,6 +3,9 @@ apply plugin: 'com.android.application'
 android {
     namespace = "dev.pi.mobile"
     compileSdk = rootProject.ext.compileSdkVersion
+    buildFeatures {
+        buildConfig true
+    }
     defaultConfig {
         applicationId "dev.pi.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
