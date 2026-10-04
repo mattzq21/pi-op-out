@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,7 +41,36 @@ async function localReady(key) {
 
   if (saved?.toString() !== key) return false;
 
+  try {
+    if ((await realpath(localModules)) !== (await realpath(join(cacheRoot, key, "node_modules")))) return false;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+
+    return false;
+  }
+
   return npm(["ls", "--all"], root, true).status === 0;
+}
+
+async function makeImmutable(entry) {
+  const marker = entry + ".immutable";
+
+  if (await optional(marker)) return;
+  console.log("Making shared npm dependencies read-only…");
+  const result = spawnSync("chmod", ["-R", "a-w", "--", entry], { stdio: "inherit" });
+
+  if (result.error) throw result.error;
+
+  if (result.status !== 0) throw new Error("Could not protect shared npm dependencies");
+  await writeFile(marker, "immutable");
+}
+
+async function detachSharedInstallation() {
+  try {
+    if ((await lstat(localModules)).isSymbolicLink()) await unlink(localModules);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
 }
 
 function requiresLocalInstall(manifest, lock) {
@@ -53,6 +81,7 @@ function requiresLocalInstall(manifest, lock) {
 
 async function populate(entry, manifest, lock, npmrc) {
   if (await optional(join(entry, "ready"))) return;
+  console.log("Shared npm cache miss. Installing dependencies…");
   await mkdir(cacheRoot, { recursive: true });
   const temporary = join(cacheRoot, "install-" + randomUUID());
   await mkdir(temporary, { mode: 0o700 });
@@ -84,7 +113,9 @@ async function materialize(entry, key) {
   await mkdir(join(root, ".trace"), { recursive: true });
 
   try {
-    await cp(join(entry, "node_modules"), temporary, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
+    console.log("Linking shared npm dependencies into this worktree…");
+    const started = performance.now();
+    await symlink(join(entry, "node_modules"), temporary, "dir");
     let moved = false;
 
     try { await rename(localModules, backup); moved = true; } catch (error) {
@@ -99,6 +130,7 @@ async function materialize(entry, key) {
 
     await writeFile(stamp, key);
     await rm(backup, { recursive: true, force: true });
+    console.log(`Reused shared npm dependencies in ${((performance.now() - started) / 1000).toFixed(1)}s.`);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -114,8 +146,9 @@ const packageJson = JSON.parse(manifest);
 
 const lockJson = JSON.parse(lock);
 
-if (requiresLocalInstall(packageJson, lockJson) || Object.keys(packageJson.scripts ?? {}).some(name => ["preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare"].includes(name))) {
+if (process.platform === "win32" || requiresLocalInstall(packageJson, lockJson) || Object.keys(packageJson.scripts ?? {}).some(name => ["preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare"].includes(name))) {
   await rm(stamp, { force: true });
+  await detachSharedInstallation();
 
   if (npm(["ls", "--all"], root, true).status !== 0) {
     const result = npm(["install", "--prefer-offline", "--no-audit", "--no-fund"], root);
@@ -136,7 +169,7 @@ if (requiresLocalInstall(packageJson, lockJson) || Object.keys(packageJson.scrip
   if (!(await localReady(key))) {
     const entry = join(cacheRoot, key);
     await populate(entry, manifest, lock, npmrc);
+    await makeImmutable(entry);
     await materialize(entry, key);
-    console.log("Reused shared npm dependencies.");
   }
 }

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, searchForWorkspaceRoot } from "vite";
 import solid from "vite-plugin-solid";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
@@ -20,6 +21,9 @@ export default defineConfig({
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_ENV_"],
   server: {
+    fs: {
+      allow: [searchForWorkspaceRoot(projectRoot), ...(existsSync(`${projectRoot}/node_modules`) ? [realpathSync(`${projectRoot}/node_modules`)] : [])],
+    },
     watch: {
       ignored: ["**/src-tauri/target/**"]
     }
