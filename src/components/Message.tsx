@@ -40,6 +40,8 @@ function userMessageParts(content: string) {
 
 const shortMessageTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
 
+const recentMessageTime = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
 const fullMessageTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 function formatMessageTime(timestamp?: number) {
@@ -48,10 +50,14 @@ function formatMessageTime(timestamp?: number) {
 
   if (Number.isNaN(date.getTime())) return undefined;
 
+  const age = Date.now() - timestamp;
+
   return {
-    short: Date.now() - timestamp < 24 * 60 * 60 * 1000
+    short: age < 24 * 60 * 60 * 1000
       ? shortMessageTime.format(date)
-      : fullMessageTime.format(date),
+      : age < 365 * 24 * 60 * 60 * 1000
+        ? recentMessageTime.format(date)
+        : fullMessageTime.format(date),
     full: fullMessageTime.format(date),
   };
 }
