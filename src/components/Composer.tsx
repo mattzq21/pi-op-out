@@ -499,9 +499,9 @@ export function Composer(props: Props) {
 
   const renderStreamBanner = () => {
     const statusText = () => stopping() ? "Stopping…" : controlAction() === "resume" ? "Resuming…" : composer().pausing || controlAction() === "pause" ? "Pausing…" : composer().compacting ? "Compacting context…" : composer().paused ? "Paused · Completed turns saved" : undefined;
-    const renderStreamStatus = () => (<span class="stream-status" role="status">{statusText() && (composer().paused ? <Pause size={11} /> : <span class="pulse" />)}{statusText()}{composer().queued > 0 && `${statusText() ? " · " : ""}${composer().queued} queued`}</span>);
+    const renderStreamStatus = () => (<span class="stream-status" role="status">{composer().paused ? <Pause size={11} /> : <span class="pulse" />}{statusText()}</span>);
 
-    return (<Show when={statusText() || composer().streaming && composer().queued > 0}><div class={`stream-banner${composer().paused ? " paused" : ""}`}>
+    return (<Show when={statusText()}><div class={`stream-banner${composer().paused ? " paused" : ""}`}>
       {renderStreamStatus()}
     </div></Show>);
   };
