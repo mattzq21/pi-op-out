@@ -164,7 +164,12 @@ export class NativeTransport {
   private temporaryChat = false;
   private temporaryChatUsed = false;
   private terminalActivity = false;
+  private preparedTerminalIds = new Set<string>();
   hasTerminalActivity() { return this.terminalActivity; }
+  isPreparedTerminal(terminalId: string) { return this.preparedTerminalIds.has(terminalId); }
+  markTerminalActivity(cwd = this.cwd, hostId = this.hostId) {
+    if (cwd && cwd === this.cwd && hostId === this.hostId) { this.terminalActivity = true; this.temporaryChatUsed = true; }
+  }
   private readonly fastMode = new ConversationCommands({
     command: async command => { await this.command(command); },
     send: async command => { await call("pi_command", { runtimeId: this.runtimeId, command }); },
@@ -449,8 +454,9 @@ export class NativeTransport {
   async prepareTemporaryChat(hostId: string) { const chat = await call("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" }, z.object({ cwd: z.string(), sessionId: z.string() })); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false;
 
   return chat.cwd; }
-  startTerminal(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId = this.hostId) {
-    if (cwd === this.cwd && hostId === this.hostId) { this.terminalActivity = true; this.temporaryChatUsed = true; }
+  startTerminal(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId = this.hostId, preparation = false) {
+    if (preparation) this.preparedTerminalIds.add(terminalId);
+    else this.markTerminalActivity(cwd, hostId);
 
     return nativeTerminals.start(terminalId, sessionKey, cwd, cols, rows, hostId);
   }

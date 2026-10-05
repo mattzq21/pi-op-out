@@ -34,6 +34,12 @@ export function createTerminalController({ transport, sessionTransport, conversa
     terminalHostId: terminalTarget()?.hostId ?? location().hostId,
   }));
 
+  createEffect(() => {
+    if (!terminalOpen()) return;
+    const { terminalCwd, terminalHostId } = terminalLocationState();
+    sessionTransport(terminalSessionId())?.markTerminalActivity(terminalCwd, terminalHostId);
+  });
+
   const state = createMemoFields(() => {
     const sessionTerminals = terminalsBySession()[terminalSessionId()] ?? initialTerminals(terminalSessionId());
     const activeTerminal = sessionTerminals.tabs.find(terminal => terminal.id === sessionTerminals.activeId) ?? sessionTerminals.tabs[0];
@@ -67,6 +73,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     let buffered: TerminalEvent[] = [];
     let pending: Promise<void> | undefined;
     let reportedError = false;
+    let synchronized = false;
     const refresh = () => {
       if (pending) { dirty = true; return pending; }
       pending = nativeTerminals.list(key, hostId).then(tabs => {
@@ -85,11 +92,12 @@ export function createTerminalController({ transport, sessionTransport, conversa
             if (!tab.placeholder && !tab.generation && !merged.some(value => value.id === tab.id) && (!tab.started || startingTerminals.current.has(tab.id))) merged.push(tab);
           }
           if (!merged.length) {
-            if (previous?.tabs.some(tab => tab.generation)) { setPrepareTerminal(false); setTerminalOpen(false); }
+            if (synchronized && previous?.tabs.some(tab => tab.generation)) { setPrepareTerminal(false); setTerminalOpen(false); }
             return { ...current, [key]: initialTerminals(key) };
           }
           return { ...current, [key]: { activeId: merged.some(tab => tab.id === previous?.activeId) ? previous!.activeId : merged[0].id, tabs: merged } };
         });
+        synchronized = true;
         setReadySession(key);
         reportedError = false;
       }).catch(reason => {
@@ -162,7 +170,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     if (terminalOutputFrame.current === undefined) terminalOutputFrame.current = window.setTimeout(flushTerminalOutput, 16);
   };
 
-  const startTerminal = async (terminalId: string, cols: number, rows: number) => { const capturedTerminalSessionId = terminalSessionId(); const capturedTerminalLocationState = { ...terminalLocationState() }; const capturedTransport = transport();
+  const startTerminal = async (terminalId: string, cols: number, rows: number) => { const capturedTerminalSessionId = terminalSessionId(); const capturedTerminalLocationState = { ...terminalLocationState() }; const capturedTransport = sessionTransport(capturedTerminalSessionId) ?? transport(); const preparation = !terminalOpen();
 
     if (!owned() || startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
     const sessionKey = capturedTerminalSessionId;
@@ -189,7 +197,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
     return; }
 
-    try { await capturedTransport.startTerminal(terminalId, sessionKey, cwd, cols, rows, capturedTerminalLocationState.terminalHostId); await refreshShared(); } catch (reason) { setTerminalsBySession((current) => { const session = current[sessionKey];
+    try { await capturedTransport.startTerminal(terminalId, sessionKey, cwd, cols, rows, capturedTerminalLocationState.terminalHostId, preparation); await refreshShared(); } catch (reason) { setTerminalsBySession((current) => { const session = current[sessionKey];
 
     return session ? { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: false, exited: true } : terminal) } } : current; }); queueTerminalOutput(terminalId, `\r\nCould not start terminal: ${String(reason)}\r\n`); } finally { startingTerminals.current.delete(terminalId); }
   };
@@ -235,7 +243,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
   };
 
   onCleanup(flushOutput);
-  const conversationTerminalIds = (key: string) => terminalsBySession()[key]?.tabs.map(terminal => terminal.id) ?? [];
+  const conversationTerminalIds = (key: string) => terminalsBySession()[key]?.tabs.filter(terminal => !terminal.placeholder || terminal.started).map(terminal => terminal.id) ?? [];
   const allTerminalIds = () => Object.values(terminalsBySession()).flatMap(session => session.tabs.map(terminal => terminal.id));
   const draftTerminalIds = () => Object.entries(terminalsBySession()).filter(([key]) => key.slice(key.lastIndexOf(":") + 1).startsWith("draft-")).flatMap(([, session]) => session.tabs.map(terminal => terminal.id));
 
