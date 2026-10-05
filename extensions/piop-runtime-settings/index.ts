@@ -3,8 +3,8 @@ import { Check, Parse } from "typebox/value";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { formatSkillsForPrompt, getAgentDir, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionContext, ExtensionCommandContext, InputEvent, InputEventResult } from "@earendil-works/pi-coding-agent";
+import { formatDimensionNote, formatSkillsForPrompt, getAgentDir, ModelRuntime, resizeImage } from "@earendil-works/pi-coding-agent";
 import { loadAccountProviders } from "./provider-accounts.mjs";
 
 type Settings = {
@@ -148,6 +148,35 @@ function updateProviderPrompt(payload: unknown, prompt: string, replacement: str
   return updated;
 }
 
+async function resizeLargeAttachment(image: NonNullable<InputEvent["images"]>[number], model: NonNullable<ExtensionContext["model"]>) {
+  const resized = await resizeImage(Buffer.from(image.data, "base64"), image.mimeType, {
+    ...model.inputLimits?.images?.resize, maxWidth: 2000, maxHeight: 2000,
+  });
+
+  if (!resized || (resized.originalWidth <= 2560 && resized.originalHeight <= 2560)) return;
+
+  return { image: { ...image, data: resized.data, mimeType: resized.mimeType }, note: formatDimensionNote(resized) };
+}
+
+async function resizeLargeAttachments(event: InputEvent, ctx: ExtensionContext): Promise<InputEventResult | undefined> {
+  if (!event.images || !ctx.model) return;
+
+  if (!ctx.model.input.includes("image")) return;
+  const images: NonNullable<InputEvent["images"]> = [];
+  const notes: string[] = [];
+
+  for (const image of event.images) {
+    const resized = await resizeLargeAttachment(image, ctx.model);
+    images.push(resized?.image ?? image);
+
+    if (resized?.note) notes.push(resized.note);
+  }
+
+  if (!notes.length) return;
+
+  return { action: "transform", text: [event.text, ...notes].filter(Boolean).join("\n\n"), images };
+}
+
 function configureImageLimits(pi: ExtensionAPI) {
   type Model = NonNullable<ExtensionContext["model"]>;
 
@@ -168,7 +197,13 @@ function configureImageLimits(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => { apply(ctx); });
   pi.on("model_select", (event, ctx) => { apply(ctx); applyModel(event.model); });
-  pi.on("input", (_event, ctx) => { apply(ctx); });
+  pi.on("input", async (event, ctx) => {
+    apply(ctx);
+
+    if (pi.getSettings().images?.autoResize === false) return;
+
+    return resizeLargeAttachments(event, ctx);
+  });
   pi.on("before_agent_start", (_event, ctx) => { apply(ctx); });
   const unsubscribe = pi.events.on("piop:models-refreshed", ({ ctx }) => { apply(ctx); });
 
