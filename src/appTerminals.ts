@@ -321,9 +321,9 @@ export function createTerminalController({ transport, sessionTransport, conversa
   };
 
   createDependencyEffect(() => {
-    if (isMobile || !ready() || !owned() || !state.activeTerminal.inputDraft) return;
+    if (isMobile || !terminalOpen() || !ready() || !owned() || !state.activeTerminal.inputDraft) return;
     void nativeTerminals.write(state.activeTerminal.id, "", "adopt_draft").catch(reason => addNotice({ title: "Could not restore terminal input", message: String(reason) }));
-  }, () => [ready(), owned(), state.activeTerminal.id, state.activeTerminal.inputDraft]);
+  }, () => [terminalOpen(), ready(), owned(), state.activeTerminal.id, state.activeTerminal.inputDraft]);
 
   return {
     terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, prepareTerminal, owned, takeOwnership,
