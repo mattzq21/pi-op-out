@@ -51,10 +51,10 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const [owned, setOwned] = createSignal(false);
   createEffect(() => {
     const owner = sessionTransport(terminalSessionId());
-    setOwned(owner?.ownsConversation() ?? false);
+    setOwned(owner?.hasConfirmedOwnership() ?? false);
     const stop = owner?.subscribe(event => {
-      if (event.type === "ownership_acquired" || event.type === "ownership_lost") {
-        setOwned(owner.ownsConversation());
+      if (event.type === "ownership_acquired" || event.type === "ownership_lost" || event.type === "disconnected") {
+        setOwned(owner.hasConfirmedOwnership());
         void refreshShared();
       }
     });
@@ -150,7 +150,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     onCleanup(() => { cancelled = true; unlisten?.(); buffered = []; setReadySession(undefined); });
   });
   const takeOwnership = async () => {
-    try { const owner = sessionTransport(terminalSessionId()); if (!owner) throw new Error("Session is unavailable"); await owner.takeOwnership(); setOwned(owner.ownsConversation()); await refreshShared(); }
+    try { const owner = sessionTransport(terminalSessionId()); if (!owner) throw new Error("Session is unavailable"); await owner.takeOwnership(); setOwned(owner.hasConfirmedOwnership()); await refreshShared(); }
     catch (reason) { addNotice({ title: "Could not take session ownership", message: String(reason) }); }
   };
   const queuedTerminalOutput = createRef(new Map<string, QueuedTerminalOutput>());
@@ -172,14 +172,14 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
   const startTerminal = async (terminalId: string, cols: number, rows: number) => { const capturedTerminalSessionId = terminalSessionId(); const capturedTerminalLocationState = { ...terminalLocationState() }; const capturedTransport = sessionTransport(capturedTerminalSessionId) ?? transport(); const preparation = !terminalOpen();
 
-    if (!owned() || startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
+    if (!owned() || !capturedTransport.hasConfirmedOwnership() || startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
     const sessionKey = capturedTerminalSessionId;
 
     if (state.activeTerminal.placeholder) {
       await refreshShared();
       const tab = terminalsBySession()[sessionKey]?.tabs.find(value => value.id === terminalId);
 
-      if (!owned() || !ready() || terminalSessionId() !== sessionKey || !tab?.placeholder) {
+      if (!owned() || !capturedTransport.hasConfirmedOwnership() || !ready() || terminalSessionId() !== sessionKey || !tab?.placeholder) {
         startingTerminals.current.delete(terminalId);
 
         return;

@@ -94,6 +94,7 @@ export class NativeTransport {
   }
   private owns = true;
   ownsConversation() { return this.owns; }
+  hasConfirmedOwnership() { return this.running && this.owns; }
   async takeOwnership() {
     if (this.readOnly) throw new Error("This view is read-only");
     await this.command({ type: "take_ownership" });
@@ -334,10 +335,10 @@ export class NativeTransport {
 
     if (version !== this.connectionVersion || !attached) throw new Error("The conversation disconnected while starting. Reconnect to try again.");
     this.daemonId = attached.daemonId;
-    this.connectedOwnership(attached);
 
     if (version === this.connectionVersion) {
       this.running = true;
+      this.connectedOwnership(attached);
       this.presenceCleanup?.();
       window.addEventListener("focus", this.publishPresence); window.addEventListener("blur", this.publishPresence); window.addEventListener("resize", this.publishPresence); document.addEventListener("visibilitychange", this.publishPresence);
       this.presenceCleanup = () => { window.removeEventListener("focus", this.publishPresence); window.removeEventListener("blur", this.publishPresence); window.removeEventListener("resize", this.publishPresence); document.removeEventListener("visibilitychange", this.publishPresence); };
@@ -350,7 +351,8 @@ export class NativeTransport {
     this.owns = !this.readOnly && attached?.owned !== false;
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
-  async disconnect(discardBlank = false) { ++this.connectionVersion; this.running = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
+  async disconnect(discardBlank = false) { const owned = this.hasConfirmedOwnership(); ++this.connectionVersion; this.running = false; this.owns = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
+    if (owned) this.emit({ type: "ownership_lost" });
 
   return this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId, discardBlank }, z.boolean())); }
   reconnectForSettings(settings: AppSettings) { return this.settings.reconnect(settings); }
