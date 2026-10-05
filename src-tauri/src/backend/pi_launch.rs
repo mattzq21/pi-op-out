@@ -21,7 +21,7 @@ use crate::worktree_setup::{ensure_desktop_sessions_dir, run_limited, shell_quot
 use crate::environment::home_dir;
 use crate::environment::pi_executable;
 use crate::settings::{load_app_settings};
-use crate::extensions::{SESSION_BROKER_MODULES, LEGACY_FILE_CHANGE_ASSETS, LOOP_DETECTION_ASSETS, generated_extension_root, prepare_codex_web_search_extension, prepare_context_bar_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_diff_watch_extension, prepare_fast_mode_extension, prepare_loop_detection_extension, prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_rtk_extension, prepare_runtime_settings, prepare_session_broker, prepare_session_cost_limit_extension, prepare_trace_reader, runtime_settings};
+use crate::extensions::{SESSION_BROKER_MODULES, LEGACY_FILE_CHANGE_ASSETS, LOOP_DETECTION_ASSETS, EXCALIDRAW_ASSETS, generated_extension_root, prepare_codex_web_search_extension, prepare_context_bar_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_diff_watch_extension, prepare_fast_mode_extension, prepare_loop_detection_extension, prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_rtk_extension, prepare_runtime_settings, prepare_session_broker, prepare_session_cost_limit_extension, prepare_trace_reader, runtime_settings};
 
 pub(super) fn saved_remote_host(app: AppHandle, host_id: Option<String>) -> Result<Option<RemoteHost>, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
@@ -195,10 +195,17 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {app_rpc} > "$HOME/{STORAGE_DIRECTORY}/app-rpc.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/app-rpc.cjs""#);
     let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && printf %s {rtk_license} > "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts" "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE""#);
     let mut remote = remote;
+    remote.push_str(&format!(r#" && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw/references" && chmod 700 "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw" "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw/references""#));
+    for (name, content) in EXCALIDRAW_ASSETS {
+        let content = shell_quote(content);
+        remote.push_str(&format!(r#" && printf %s {content} > "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw/{name}" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw/{name}""#));
+    }
     let mcp_schema = shell_quote(include_str!("../../resources/mcp-schema.bundle.mjs"));
     remote.push_str(&format!(r#" && printf %s {mcp_schema} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/mcp-schema.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/mcp-schema.ts""#));
     let agent_state = shell_quote(include_str!("../../../extensions/piop-define-agents/state.ts"));
     let agent_profiles = shell_quote(include_str!("../../../extensions/piop-define-agents/profiles.ts"));
+    let excalidraw_profile = shell_quote(include_str!("../../../extensions/piop-define-agents/excalidraw.ts"));
+    remote.push_str(&format!(r#" && printf %s {excalidraw_profile} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/excalidraw.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/excalidraw.ts""#));
     remote.push_str(&format!(r#" && printf %s {agent_profiles} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/profiles.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/profiles.ts""#));
     remote.push_str(&format!(r#" && printf %s {agent_state} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/state.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/state.ts""#));
     let daemon_definitions = shell_quote(include_str!("../../../extensions/piop-define-agents/daemon-definitions.ts"));

@@ -5,6 +5,7 @@ import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYS
 import { mcpServersSchema } from "./mcp-schema.ts";
 import { readDaemonDefinitions } from "./daemon-definitions.ts";
 import { selectedProfileState } from "./profiles.ts";
+import { migrateExcalidrawAgent } from "./excalidraw.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
 import type { FastModeRequest } from "../piop-openai-fast-mode/src/types.ts";
@@ -22,11 +23,11 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["subagent"];
 
-export type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean };
+export type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
 
 type ConfigRuntime = { events: { emit(channel: "piop:runtime-settings", request: RuntimeSettingsRequest): void } };
 
-type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: typeof writeConfig };
+export type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: typeof writeConfig };
 
 const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 
@@ -133,7 +134,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
   const agents = unique.some((agent) => agent.name === "general") ? unique : [defaultAgent(pi), ...unique];
 
-  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, terminalAgentDefaultApplied: value.terminalAgentDefaultApplied === true };
+  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, terminalAgentDefaultApplied: value.terminalAgentDefaultApplied === true, excalidrawAgentDefaultApplied: value.excalidrawAgentDefaultApplied === true };
 }
 
 async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
@@ -162,7 +163,7 @@ function migrateSessionTools(config: Config, pi: ConfigRuntime) {
 
   if (config.sessionToolsDefaultApplied || !available.length) return false;
 
-  for (const agent of config.agents) agent.tools = [...new Set([...agent.tools, ...available])];
+  for (const agent of config.agents) if (agent.name !== "excalidraw-agent") agent.tools = [...new Set([...agent.tools, ...available])];
   config.sessionToolsDefaultApplied = true;
 
   return true;
@@ -170,7 +171,7 @@ function migrateSessionTools(config: Config, pi: ConfigRuntime) {
 
 function migrateSubagents(config: Config, pi: ConfigRuntime) {
   if (!config.subagentsDefaultApplied && desktopList(pi, "tools")?.includes("subagent")) {
-    for (const agent of config.agents) if (!agent.tools.includes("subagent")) agent.tools.push("subagent");
+    for (const agent of config.agents) if (agent.name !== "excalidraw-agent" && !agent.tools.includes("subagent")) agent.tools.push("subagent");
     config.subagentsDefaultApplied = true;
 
     return true;
@@ -247,7 +248,7 @@ export async function loadConfig(pi: ConfigRuntime, supplied?: StoredConfig, ini
 
 async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
   const config = await readConfig(pi, supplied, initialize, storage);
-  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi), await migrateDiagramist(config, pi, storage), migrateUserInput(config, pi), migrateTerminalAgent(config, pi)].some(Boolean);
+  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi), await migrateDiagramist(config, pi, storage), migrateUserInput(config, pi), migrateTerminalAgent(config, pi), await migrateExcalidrawAgent(config, storage)].some(Boolean);
 
   for (const agent of config.agents) {
     if (!agent.tools.some((tool) => tool === "exec_command" || tool === "apply_patch")) continue;
@@ -258,7 +259,7 @@ async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | un
   }
 
   if (!config.webSearchDefaultApplied && desktopList(pi, "tools")?.includes("web_search")) {
-    for (const agent of config.agents) if (!agent.tools.includes("web_search")) agent.tools.push("web_search");
+    for (const agent of config.agents.filter(agent => agent.name !== "excalidraw-agent")) if (!agent.tools.includes("web_search")) agent.tools.push("web_search");
     config.webSearchDefaultApplied = true;
     changed = true;
   }

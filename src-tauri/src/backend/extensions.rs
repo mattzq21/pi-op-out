@@ -235,10 +235,25 @@ fn prepare_agent_configuration(legacy_dir: &Path) -> Result<(), String> {
     migrate_agent_config(&config_dir.join("config.json"), legacy_dir)
 }
 
+pub(super) const EXCALIDRAW_ASSETS: [(&str, &str); 3] = [
+    ("SKILL.md", include_str!("../../../extensions/piop-excalidraw/SKILL.md")),
+    ("references/cheatsheet.md", include_str!("../../../extensions/piop-excalidraw/references/cheatsheet.md")),
+    ("LICENSE", include_str!("../../../extensions/piop-excalidraw/LICENSE")),
+];
+
+fn prepare_agent_directories(dir: &Path) -> Result<(), String> {
+    ensure_private_dir(dir)?;
+    let excalidraw = home_dir()?.join(STORAGE_DIRECTORY).join("piop-excalidraw");
+    ensure_private_dir(&excalidraw)?;
+    ensure_private_dir(&excalidraw.join("references"))?;
+    for (name, source) in EXCALIDRAW_ASSETS { atomic_write_private(&excalidraw.join(name), source.as_bytes())?; }
+    Ok(())
+}
+
 pub(super) fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
     migrate_extension_directory("pi-define-agents", "piop-define-agents")?;
     let dir = generated_extension_root()?.join("piop-define-agents");
-    ensure_private_dir(&dir)?;
+    prepare_agent_directories(&dir)?;
     let legacy_dir = home_dir()?.join(".pi/agent/extensions/pi-define-agents");
     prepare_agent_configuration(&legacy_dir)?;
     let path = dir.join("index.ts");
@@ -250,6 +265,7 @@ pub(super) fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
         ("daemon-definitions.ts", include_str!("../../../extensions/piop-define-agents/daemon-definitions.ts")),
         ("prompts.ts", include_str!("../../../extensions/piop-define-agents/prompts.ts")),
         ("profiles.ts", include_str!("../../../extensions/piop-define-agents/profiles.ts")),
+        ("excalidraw.ts", include_str!("../../../extensions/piop-define-agents/excalidraw.ts")),
         ("../piop-diagrams.ts", include_str!("../../../extensions/piop-diagrams/index.ts")),
         ("index.ts", include_str!("../../../extensions/piop-define-agents/index.ts")),
     ] { atomic_write_private(&dir.join(name), source.as_bytes())?; }
