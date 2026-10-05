@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { z } from "zod";
 import { nativeCall } from "../lib/nativeCall";
 import { fileReference, type FileProject } from "../lib/projectFiles";
-import { ZoomableImage } from "./ZoomableImage";
+import { ImageLoading, ZoomableImage } from "./ZoomableImage";
 
 export const ConversationImageProject = createContext<Accessor<FileProject | undefined>>(() => undefined);
 
@@ -27,7 +27,7 @@ function LinkedImage(props: { project: FileProject; path: string; label: string 
     return undefined; }
   });
 
-  return <Show when={!failed() && image()} fallback={<span role="status">{props.label}: {failed() ? "Image unavailable" : "Loading image…"}</span>}>
+  return <Show when={!failed() && image()} fallback={<Show when={failed()} fallback={<ImageLoading />}><span role="status">{props.label}: Image unavailable</span></Show>}>
     {src => <ZoomableImage src={src()} alt={props.label} onError={() => setFailed(true)} />}
   </Show>;
 }

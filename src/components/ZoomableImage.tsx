@@ -1,6 +1,6 @@
 import { required } from "../lib/required";
 import { createSignal, Show } from "solid-js";
-import { X } from "lucide-solid";
+import { LoaderCircle, X } from "lucide-solid";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import "./zoomable-image.css";
 
@@ -91,12 +91,23 @@ function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
   </dialog>;
 }
 
+export function ImageLoading() {
+  return <span class="image-loading" role="status"><LoaderCircle size={18} aria-hidden="true" /><span>Loading image…</span></span>;
+}
+
 export function ZoomableImage(props: { src: string; alt: string; onError?: () => void }) {
   const [open, setOpen] = createSignal(false);
+  const [state, setState] = createSignal<"loading" | "ready" | "error">("loading");
+
+  createDependencyEffect(() => { setState("loading"); setOpen(false); }, () => [props.src]);
+
+  const failed = () => { setState("error"); props.onError?.(); };
 
   return <>
-    <button type="button" class="image-preview" aria-label={`Enlarge image: ${props.alt}`} onClick={() => setOpen(true)}>
-      <img src={props.src} alt={props.alt} onError={props.onError} />
+    <button type="button" class="image-preview" classList={{ loading: state() === "loading" }} disabled={state() !== "ready"} aria-busy={state() === "loading"} aria-label={`${state() === "loading" ? "Loading image" : state() === "error" ? "Image unavailable" : "Enlarge image"}: ${props.alt}`} onClick={() => setOpen(true)}>
+      <img src={props.src} alt={props.alt} hidden={state() !== "ready"} onLoad={() => setState("ready")} onError={failed} />
+      <Show when={state() === "loading"}><ImageLoading /></Show>
+      <Show when={state() === "error"}><span class="image-loading" role="status">Image unavailable</span></Show>
     </button>
     <Show when={open()}><ImageViewer src={props.src} alt={props.alt} onClose={() => setOpen(false)} /></Show>
   </>;

@@ -1,5 +1,11 @@
 .image-preview { display: block; max-width: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; touch-action: manipulation; }
 .image-preview img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; }
+.image-preview img[hidden] { display: none; }
+.image-preview.loading { cursor: progress; }
+.image-loading { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 80px; padding: 12px; color: var(--muted); font: inherit; }
+.image-loading svg { flex-shrink: 0; animation: image-loading-spin 1s linear infinite; }
+@keyframes image-loading-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .image-loading svg { animation: none; } }
 .image-preview:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .image-preview:active { opacity: .8; }
 .image-viewer { position: fixed; inset: 0; box-sizing: border-box; width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); border: 0; background: rgb(21 21 21 / 75%); color: #fff; overflow: hidden; }
