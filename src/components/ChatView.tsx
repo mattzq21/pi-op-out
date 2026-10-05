@@ -38,6 +38,12 @@ function canRetry(props: Props, ownsConversation: boolean) {
 
 
 export function ChatView(props: Props) {
+  const imageProject = () => {
+    const cwd = props.projectCwd ?? (props.state.sessionId ? props.transport?.currentCwd() : undefined);
+
+    return cwd ? { cwd, hostId: props.transport?.currentHostId() ?? "local" } : undefined;
+  };
+
   const agentDefinitionHost = () => props.agentHostLabel ?? props.transport?.currentHostId();
   const agentReloadScope = () => `${props.transport?.currentHostId()}:${props.state.sessionId}`;
 
@@ -250,7 +256,7 @@ export function ChatView(props: Props) {
     };
 
     return (<div class="conversation-content">
-      <ConversationImageProject.Provider value={() => props.projectCwd ? { cwd: props.projectCwd, hostId: props.transport?.currentHostId() ?? "local" } : undefined}><MessagesSection /></ConversationImageProject.Provider>
+      <ConversationImageProject.Provider value={imageProject}><MessagesSection /></ConversationImageProject.Provider>
       <ComposerStack />
     </div>);
   };
