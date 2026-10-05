@@ -12,6 +12,7 @@ import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, Pause, Split, Undo2
 import { textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, isContextInjection } from "../lib/messages";
 import { ToolFailureMeter } from "./ToolFailureMeter";
+import { CacheIcon } from "./CacheIcon";
 import type { ToolFailureStats } from "../lib/toolFailureStats";
 import type { turnDiff } from "../lib/turnDiff";
 import type { ChatMessage } from "../types";
@@ -250,7 +251,7 @@ export function Message(componentProps: Props) {
         const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label="Fork" title="Fork" disabled={branching() || forgetting()} onClick={() => void branch()}><Split size={14} /></button>);
         const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button fork-and-forget-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} title="Fork from here and archive original chat" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
         const renderBranchAndForgetAction = () => (componentProps.canRollback && componentProps.onForkAndForget && <button class="branch-button rollback-and-forget-button" aria-label="Branch and forget from here" title="Branch from here into a new worktree and archive original chat" disabled={branching() || forgetting()} onClick={() => void forkAndForget(true)}><FolderGit2 size={14} /></button>);
-        const renderCacheHitRate = () => ((componentProps.debug === undefined ? false : componentProps.debug) && metadata().cache && <span class={`cache-hit-rate${required((metadata().cache)).low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${required((metadata().cache)).rate}%, ${required((metadata().cache)).cachedTokens}/${required((metadata().cache)).promptTokens}`}>Cache {required((metadata().cache)).rate}%<span class="cache-fraction-tooltip" aria-hidden="true"><span>{cacheTokenDigits(required((metadata().cache)).cachedTokens)}</span><span>{cacheTokenDigits(required((metadata().cache)).promptTokens)}</span></span></span>);
+        const renderCacheHitRate = () => ((componentProps.debug === undefined ? false : componentProps.debug) && metadata().cache && <span class={`cache-hit-rate${required((metadata().cache)).low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${required((metadata().cache)).rate}%, ${required((metadata().cache)).cachedTokens}/${required((metadata().cache)).promptTokens}`}><CacheIcon rate={required((metadata().cache)).rate} />{required((metadata().cache)).rate}%<span class="cache-fraction-tooltip" aria-hidden="true"><span>{cacheTokenDigits(required((metadata().cache)).cachedTokens)}</span><span>{cacheTokenDigits(required((metadata().cache)).promptTokens)}</span></span></span>);
 
         const showActions = () => (componentProps.showActions === undefined ? true : componentProps.showActions) && !streaming() && (output().trim().length > 0 || componentProps.message.stopReason === "aborted" || componentProps.onForkAndForget || componentProps.onCreateWorktree);
 

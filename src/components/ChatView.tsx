@@ -327,6 +327,7 @@ function associateQueuedContext(messages: ChatMessage[]) {
 
   return messages.flatMap(message => {
     if (message.contextUserTimestamp !== undefined) return [];
+
     if (message.role !== "user" || message.timestamp === undefined) return [message];
     const matching = contexts.get(message.timestamp);
 
@@ -519,7 +520,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   return <section class="conversation-turn">
     {<Key each={userMessages()} by={(message) => message.id}>{(message, _index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
     {renderPromptContextBar()}
-    <MessageList messages={componentProps.messages.filter(isContextInjection)} expanded={false} />
+    {componentProps.debug && <MessageList messages={componentProps.messages.filter(isContextInjection)} expanded={false} debug={componentProps.debug} />}
     {renderActiveWorkContent()}
     {renderDiffViewer()}
   </section>;
