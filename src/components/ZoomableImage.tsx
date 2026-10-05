@@ -2,6 +2,7 @@ import { required } from "../lib/required";
 import { createSignal, Show } from "solid-js";
 import { LoaderCircle, X } from "lucide-solid";
 import { createDependencyEffect, createRef } from "../lib/solid";
+import { imageTouchGestures } from "./imageTouchGestures";
 import "./zoomable-image.css";
 
 function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
@@ -75,12 +76,19 @@ function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
     dialog?.showModal();
     dialog?.addEventListener("wheel", zoomImage, { passive: false });
 
-    return () => { dialog?.removeEventListener("wheel", zoomImage); dialog?.close(); returnFocus?.focus({ preventScroll: true }); };
+    const removeTouchGestures = contentRef.current && imageTouchGestures(contentRef.current, {
+      image: () => imageRef.current,
+      expanded,
+      setZoom,
+      suppressClick: () => { suppressClick.current = true; },
+    });
+
+    return () => { removeTouchGestures?.(); dialog?.removeEventListener("wheel", zoomImage); dialog?.close(); returnFocus?.focus({ preventScroll: true }); };
   }, () => []);
 
   return <dialog ref={element => { dialogRef.current = element; }} class="image-viewer" aria-label={props.alt} onClick={props.onClose} onCancel={event => { event.preventDefault(); props.onClose(); }} onClose={props.onClose}>
     <div class="image-viewer-toolbar">
-      <span class="image-viewer-zoom-hint"><span class="image-viewer-desktop-hint">Ctrl + scroll to zoom{zoom() !== undefined ? ` · ${Math.round(required(zoom()) * 100)}%` : ""}</span><span class="image-viewer-touch-hint">Tap image to toggle full size</span></span>
+      <span class="image-viewer-zoom-hint"><span class="image-viewer-desktop-hint">Ctrl + scroll to zoom</span><span class="image-viewer-touch-hint">Pinch to zoom · Drag to pan</span>{zoom() !== undefined ? ` · ${Math.round(required(zoom()) * 100)}%` : ""}</span>
       <button type="button" autofocus aria-label="Close image" title="Close image"><X size={22} /></button>
     </div>
     <div ref={element => { contentRef.current = element; }} class="image-viewer-content">
