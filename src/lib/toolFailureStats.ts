@@ -14,7 +14,6 @@ export function toolFailureStats(messages: ChatMessage[]) {
 
   const total = completed.size;
 
-  if (!total) return undefined;
   let failed = 0, invalidUse = 0;
 
   for (const message of completed.values()) {
@@ -24,7 +23,7 @@ export function toolFailureStats(messages: ChatMessage[]) {
     if (message.toolFailureKind === "invalid-use") invalidUse++;
   }
 
-  return { total, failed, invalidUse, other: failed - invalidUse, rate: Math.round(failed / total * 100) };
+  return { total, failed, invalidUse, other: failed - invalidUse, rate: total ? Math.round(failed / total * 100) : 0 };
 }
 
 export type ToolFailureStats = NonNullable<ReturnType<typeof toolFailureStats>>;
