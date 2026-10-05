@@ -88,7 +88,7 @@ fn remote_snapshot_patch_and_discard_use_only_owned_storage() {
     fs::write(repository.0.join("file"), "before\n").unwrap();
     test_git(&repository.0, &["add", "file"]); test_git(&repository.0, &["commit", "-m", "Initial"]);
     let capture = || {
-        let script = format!("require(\u{27}node:os\u{27}).homedir = () => process.argv[1];\n{}", include_str!("../../resources/capture-git-tree.cjs"));
+        let script = format!("const fixtureHome = process.argv[1]; process.argv.splice(1, 1); require(\u{27}node:os\u{27}).homedir = () => fixtureHome;\n{}", include_str!("../../resources/capture-git-tree.cjs"));
         let mut command = Command::new("node"); command.arg("-e").arg(script).arg(&home.0).current_dir(&repository.0).env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY);
         query_remote_git_tree(&mut command, "fixture").unwrap().unwrap()
     };
@@ -108,6 +108,16 @@ fn remote_snapshot_patch_and_discard_use_only_owned_storage() {
         }
         _ => panic!("remote patch lost its repository location"),
     }
+    fs::write(repository.0.join("huge.txt"), format!("{}\n", "x".repeat(200)).repeat(25_000)).unwrap();
+    fs::write(repository.0.join("image.png"), [137, 80, 78, 71, 0, 1, 2, 3]).unwrap();
+    fs::write(repository.0.join("icon.svg"), "<svg>\n<path/>\n</svg>\n").unwrap();
+    let with_assets = capture();
+    let snapshot = load_remote_git_diff_between(&before, &with_assets, "fixture", shell).unwrap().unwrap();
+    let GitDiffSnapshot::Located { patch, .. } = snapshot else { panic!("remote patch lost its repository location") };
+    assert!(patch.contains("huge.txt")); assert!(patch.contains("piop diff omitted: large"));
+    assert!(patch.contains("image.png")); assert!(patch.contains("piop diff omitted: binary"));
+    assert!(patch.contains("+<svg>\n+<path/>\n+</svg>")); assert!(patch.contains("-before\n+after"));
+    assert!(!patch.contains(&"x".repeat(200))); assert!(patch.len() < 1024);
     let outside = home.0.join("pi-desktop-diff-outside"); fs::create_dir(&outside).unwrap();
     fs::write(outside.join("precious"), "keep").unwrap();
     let mut escaped: Value = serde_json::from_str(&before).unwrap(); escaped["root"] = json!(outside);
@@ -120,7 +130,7 @@ fn remote_snapshot_patch_and_discard_use_only_owned_storage() {
         assert!(load_remote_git_diff_between(&before, &escaped.to_string(), "fixture", shell).is_err());
     }
     assert_eq!(fs::read_to_string(outside.join("precious")).unwrap(), "keep");
-    for token in [&before, &after] {
+    for token in [&before, &after, &with_assets] {
         let snapshot: GitSnapshotToken = serde_json::from_str(token).unwrap();
         discard_remote_git_tree(token, "fixture", shell).unwrap();
         assert!(!Path::new(&snapshot.root).exists());

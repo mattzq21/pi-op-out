@@ -1,9 +1,6 @@
 import type { DiffFile, DiffLine } from './diff';
 import { decodeGitPath, displayPath } from './diffPaths';
-
-const MAX_INPUT_CHARS = 4 * 1024 * 1024;
-
-const MAX_LINES = 10_000;
+import { diffBytes, isDiffAsset, MAX_DIFF_FILE_BYTES, MAX_DIFF_FILE_LINES, MAX_DIFF_PREVIEW_BYTES, MAX_DIFF_PREVIEW_LINES } from './diffPolicy';
 
 const MAX_LINE_CHARS = 20_000;
 
@@ -13,7 +10,10 @@ export class DiffParser {
   private inHunk = false;
   private oldLine?: number;
   private newLine?: number;
-  private renderedLines = 0;
+  private previewLines = 0;
+  private previewBytes = 0;
+  private fileBytes = 0;
+  private fileLines = 0;
   private gitPaths = false;
   private oldRemaining = 0;
   private newRemaining = 0;
@@ -23,14 +23,43 @@ export class DiffParser {
   constructor(fallbackPath?: string) { this.fallbackPath = fallbackPath; }
 
   private pushLine(line: DiffLine) {
-    if (!this.file || this.renderedLines >= MAX_LINES) return;
-    this.file.lines.push(line.text.length > MAX_LINE_CHARS ? { ...line, text: `${line.text.slice(0, MAX_LINE_CHARS)}…` } : line);
-    this.renderedLines++;
+    if (!this.file || this.file.omitted) return;
+
+    if (line.kind !== 'meta') {
+      this.fileLines++; this.previewLines++; this.previewBytes += diffBytes(line.text);
+
+      if (this.fileLines > MAX_DIFF_FILE_LINES) this.omit('large');
+
+      if (this.previewLines > MAX_DIFF_PREVIEW_LINES || this.previewBytes > MAX_DIFF_PREVIEW_BYTES || line.text.length > MAX_LINE_CHARS) {
+        this.file.previewOmitted = true; this.file.lines = [];
+      }
+    }
+
+    if (!this.file.previewOmitted && !this.file.omitted) this.file.lines.push(line);
+  }
+
+  private omit(reason: 'binary' | 'large') {
+    if (!this.file) return;
+
+    this.file.omitted = reason; this.file.previewOmitted = true;
+    this.file.lines = []; this.file.additions = 0; this.file.deletions = 0;
+  }
+
+  private finishFile() {
+    if (!this.file) return;
+
+    if (isDiffAsset(this.file.path)) this.omit('binary');
+
+    if (this.file.status === 'modified' && this.file.oldPath && this.file.oldPath !== this.file.path) this.file.status = 'renamed';
   }
 
   private startFile(path: string) {
-    this.file = { id: `${this.files.length}:${path}`, path, lines: [], additions: 0, deletions: 0 };
+    this.finishFile();
+    this.file = { id: `${this.files.length}:${path}`, path, status: 'modified', lines: [], additions: 0, deletions: 0 };
     this.files.push(this.file); this.inHunk = false; this.oldLine = undefined; this.newLine = undefined;
+    this.previewLines = 0; this.previewBytes = 0; this.fileBytes = 0; this.fileLines = 0;
+
+    if (isDiffAsset(path)) this.omit('binary');
   }
 
   private gitHeader(text: string) {
@@ -45,6 +74,9 @@ export class DiffParser {
 
     if (operation) {
       this.startFile(operation[2]); this.gitPaths = false; this.codex = true;
+
+      if (this.file) this.file.status = operation[1] === 'Add File' ? 'added' : operation[1] === 'Delete File' ? 'deleted' : 'modified';
+
       this.inHunk = operation[1] === 'Add File'; this.newLine = this.inHunk ? 1 : undefined;
       this.pushLine({ kind: 'meta', text });
 
@@ -55,6 +87,7 @@ export class DiffParser {
 
     if (text.startsWith('*** Move to: ') && this.file) {
       this.file.oldPath = this.file.path; this.file.path = text.slice(13);
+      this.file.status = 'renamed';
       this.pushLine({ kind: 'meta', text });
 
       return true;
@@ -89,6 +122,8 @@ export class DiffParser {
   private filePath(text: string) {
     if (this.inHunk || !this.file || !(text.startsWith('+++ ') || text.startsWith('--- '))) return false;
     const path = decodeGitPath(text.slice(4).split('\t')[0]);
+
+    if (path === '/dev/null') this.file.status = text.startsWith('--- ') ? 'added' : 'deleted';
 
     if (path !== '/dev/null') {
       this.file.path = this.gitPaths ? path.replace(/^[ab]\//, '') : path;
@@ -134,7 +169,7 @@ export class DiffParser {
   }
 
   private countChange(kind: DiffLine['kind']) {
-    if (!this.file) return;
+    if (!this.file || this.file.omitted) return;
 
     if (kind === 'add') this.file.additions++;
 
@@ -146,14 +181,14 @@ export class DiffParser {
 
     if (text.startsWith('+')) {
       this.pushLine({ kind: 'add', text: text.slice(1), newLine: this.newLine });
-      this.advanceNewLine(); this.file.additions++;
+      this.advanceNewLine(); this.countChange('add');
 
       return true;
     }
 
     if (text.startsWith('-')) {
       this.pushLine({ kind: 'delete', text: text.slice(1), oldLine: this.oldLine });
-      this.advanceOldLine(); this.file.deletions++;
+      this.advanceOldLine(); this.countChange('delete');
 
       return true;
     }
@@ -168,8 +203,21 @@ export class DiffParser {
   private advanceOldLine() { if (this.oldLine !== undefined) this.oldLine++; this.oldRemaining--; }
   private advanceNewLine() { if (this.newLine !== undefined) this.newLine++; this.newRemaining--; }
 
+  private operationMetadata(text: string) {
+    if (!this.file) return;
+
+    if (text.startsWith('new file mode ')) this.file.status = 'added';
+
+    if (text.startsWith('deleted file mode ')) this.file.status = 'deleted';
+
+    if (/^(?:Binary files |GIT binary patch$|piop diff omitted: binary$)/.test(text)) this.omit('binary');
+
+    if (text === 'piop diff omitted: large') this.omit('large');
+  }
+
   private metadata(text: string) {
     if (!this.file) return;
+    this.operationMetadata(text);
 
     if (text.startsWith('rename from ')) this.file.oldPath = decodeGitPath(text.slice(12));
 
@@ -183,26 +231,27 @@ export class DiffParser {
     this.prepareFile(text, nextIsNewFile);
 
     if (!this.file) return;
+    this.fileBytes += text.length > MAX_DIFF_FILE_BYTES ? MAX_DIFF_FILE_BYTES + 1 : diffBytes(text) + 1;
+
+    if (this.fileBytes > MAX_DIFF_FILE_BYTES) this.omit('large');
 
     if (this.filePath(text) || this.hunkHeader(text) || this.numberedLine(text) || this.changeLine(text)) return;
     this.metadata(text);
   }
 
   parse(patch: string) {
-    const bounded = patch.slice(0, MAX_INPUT_CHARS);
+    for (let start = 0; start < patch.length;) {
+      const newline = patch.indexOf('\n', start);
+      const end = newline < 0 ? patch.length : newline;
+      const text = patch.slice(start, end);
 
-    for (let start = 0; start < bounded.length;) {
-      const newline = bounded.indexOf('\n', start);
-      const end = newline < 0 ? bounded.length : newline;
-      const text = bounded.slice(start, end);
-
-      if (text) this.consume(text, text.startsWith('--- ') && bounded.startsWith('+++ ', end + 1));
+      if (text) this.consume(text, text.startsWith('--- ') && patch.startsWith('+++ ', end + 1));
       start = end + 1;
 
-      while (bounded.charCodeAt(start) === 10) start++;
+      while (patch.charCodeAt(start) === 10) start++;
     }
 
-    if (patch.length > bounded.length || this.renderedLines >= MAX_LINES) this.files.at(-1)?.lines.push({ kind: 'meta', text: 'Diff display truncated for performance.' });
+    this.finishFile();
 
     return this.files;
   }

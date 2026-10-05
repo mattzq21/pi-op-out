@@ -56,14 +56,14 @@ async function mcpBridge() {
 }
 
 async function backendScripts() {
-  const scripts = ["cleanup-ephemeral-session", "session-descendants", "archive-conversations", "archive-worktree", "restore-archived-worktree", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "preserve-archive-checkpoints"];
+  const scripts = ["cleanup-ephemeral-session", "session-descendants", "archive-conversations", "archive-worktree", "restore-archived-worktree", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "preserve-archive-checkpoints", "capture-git-diff"];
 
   const commandInputs = await agentCommandInputs();
 
   await buildInParallel([
     ...scripts.map(async name => {
       await buildBundle({
-        entryPoints: [`src-tauri/resources/${name}.cjs`],
+        entryPoints: [`src-tauri/resources/${name}.${name === "capture-git-diff" ? "ts" : "cjs"}`],
         bundle: true,
         platform: "node",
         format: "iife",

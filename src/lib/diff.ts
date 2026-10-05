@@ -4,7 +4,7 @@ export type DiffPart = { text: string; changed: boolean };
 
 export type DiffLine = { kind: "add" | "delete" | "context" | "meta"; text: string; oldLine?: number; newLine?: number; parts?: DiffPart[] };
 
-export type DiffFile = { id: string; path: string; oldPath?: string; lines: DiffLine[]; additions: number; deletions: number };
+export type DiffFile = { id: string; path: string; oldPath?: string; status: 'added' | 'deleted' | 'modified' | 'renamed'; omitted?: 'binary' | 'large'; previewOmitted?: boolean; lines: DiffLine[]; additions: number; deletions: number };
 
 const MAX_ANNOTATED_LINE_CHARS = 4_000;
 

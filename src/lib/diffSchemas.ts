@@ -14,6 +14,8 @@ const diffLineSchema = z.object({
 
 export const diffFileSchema = z.object({
   id: z.string(), path: z.string(), oldPath: z.string().optional(), lines: z.array(diffLineSchema),
+  status: z.enum(['added', 'deleted', 'modified', 'renamed']).catch('modified'),
+  omitted: z.enum(['binary', 'large']).optional(), previewOmitted: z.boolean().optional(),
   additions: z.coerce.number().catch(0), deletions: z.coerce.number().catch(0),
 });
 

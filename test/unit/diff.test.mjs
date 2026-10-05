@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseDiff } from '../../src/lib/diff.ts';
 import { turnDiff } from '../../src/lib/turnDiff.ts';
+import { GitDiffFilter } from '../../src/lib/diffPolicy.ts';
 
 const patch = (path, before = 'const value = 1;', after = 'const value = 2;') => `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-${before}\n+${after}\n`;
 
@@ -31,7 +32,9 @@ test('diffs support renames, quoted Unicode paths, binary files, creation and de
   const [unicode] = parseDiff('diff --git "a/caf\\303\\251" "b/caf\\303\\251"');
   assert.equal(unicode.path, 'café');
   assert.equal(parseDiff('diff --git a/a "b/a\\tb\\nc\\rd\\\\e\\\"f\\q🦆"')[0].path, 'a\tb\nc\rd\\e"fq🦆');
-  assert.equal(parseDiff('diff --git a/a b/a\nBinary files a/a and b/a differ')[0].lines[0].kind, 'meta');
+  const [binary] = parseDiff('diff --git a/a b/a\nBinary files a/a and b/a differ');
+  assert.equal(binary.omitted, 'binary');
+  assert.deepEqual(binary.lines, []);
   const [created] = parseDiff('--- /dev/null\n+++ new.txt\tdate\n@@ -0,0 +1 @@\n+new');
   assert.equal(created.path, 'new.txt');
   assert.equal(created.additions, 1);
@@ -89,14 +92,36 @@ test('intraline matching skips unrelated or excessive pairs and retains unchange
 });
 
 test('diff rendering limits oversized input, lines and line counts', () => {
+  for (const count of [999, 1000, 1001, 25000, 25001]) {
+    const input = `diff --git a/large.txt b/large.txt\nnew file mode 100644\n@@ -0,0 +1,${count} @@\n` + '+x\n'.repeat(count) + patch('small.ts');
+    const filter = new GitDiffFilter();
+
+    for (let offset = 0; offset < input.length; offset += 17) filter.write(input.slice(offset, offset + 17));
+
+    for (const value of [input, filter.finish()]) {
+      const [large, small] = parseDiff(value);
+      assert.equal(large.status, 'added');
+      assert.equal(large.additions, count > 25000 ? 0 : count);
+      assert.equal(large.lines.filter(line => line.kind === 'add').length, count > 1000 ? 0 : count);
+      assert.equal(large.omitted, count > 25000 ? 'large' : undefined);
+      assert.equal(small.additions, 1);
+      assert.equal(small.lines[2].text, 'const value = 2;');
+    }
+  }
+
   const [longLine] = parseDiff(patch('a', 'old', 'x'.repeat(20001)));
-  assert.equal(longLine.lines[2].text, 'x'.repeat(20000) + '…');
+  assert.equal(longLine.previewOmitted, true);
+  assert.deepEqual(longLine.lines, []);
+  assert.equal(longLine.additions, 1);
   const [many] = parseDiff('diff --git a/a b/a\n@@ -0,0 +1,10002 @@\n' + '+x\n'.repeat(10002));
-  assert.equal(many.lines.length, 10001);
+  assert.deepEqual(many.lines, []);
+  assert.equal(many.previewOmitted, true);
   assert.equal(many.additions, 10002);
-  assert.match(many.lines.at(-1).text, /truncated/);
-  const [bounded] = parseDiff('diff --git a/a b/a\n' + 'x'.repeat(4 * 1024 * 1024));
-  assert.match(bounded.lines.at(-1).text, /truncated/);
+  const [bounded, later] = parseDiff('diff --git a/a b/a\n' + 'x'.repeat(4 * 1024 * 1024) + '\n' + patch('later.ts'));
+  assert.equal(bounded.omitted, 'large');
+  assert.deepEqual(bounded.lines, []);
+  assert.equal(later.additions, 1);
+  assert.equal(later.lines[2].text, 'const value = 2;');
 });
 
 test('turn diffs render daemon snapshots and tolerate absent patches', () => {

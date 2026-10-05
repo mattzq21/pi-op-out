@@ -4,7 +4,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use uuid::Uuid;
-use crate::{GitDiffSnapshot, MAX_GIT_CHANGED_PATHS, MAX_GIT_FILE_BYTES, MAX_GIT_PATCH_BYTES, MAX_GIT_PATH_LIST_BYTES, MAX_GIT_SNAPSHOT_BYTES, STORAGE_DIRECTORY};
+use crate::{GitDiffSnapshot, MAX_GIT_CHANGED_PATHS, MAX_GIT_FILE_BYTES, MAX_GIT_PATCH_BYTES, MAX_GIT_PATH_LIST_BYTES, MAX_GIT_SNAPSHOT_BYTES, STORAGE_DIRECTORY, node_command};
 use crate::worktree_setup::{GitSnapshotToken, run_limited};
 use crate::environment::home_dir;
 
@@ -112,7 +112,7 @@ pub(super) fn local_git_diff_with(cwd: &str, base_token: &str,
 pub(super) fn local_git_diff_between(cwd: &str, base: &GitSnapshotToken, current: &GitSnapshotToken) -> Result<Option<GitDiffSnapshot>, String> {
     let Some((_, repository_objects)) = git_root_and_objects(cwd)? else { return Ok(None) };
     let alternates = std::env::join_paths([Path::new(&base.root).join("objects"), repository_objects]).map_err(|error| error.to_string())?;
-    let mut command = Command::new("git"); command.args(["-C", &current.repository_root, "diff", "--no-relative", "--no-color", "--no-ext-diff", "--find-renames", &base.tree, &current.tree, "--"])
+    let mut command = node_command(); command.current_dir(&current.repository_root).args(["-e", include_str!("../../resources/capture-git-diff.bundle.mjs"), &base.tree, &current.tree])
         .env("GIT_OBJECT_DIRECTORY", Path::new(&current.root).join("objects")).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates);
     let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, "Git patch is too large")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }

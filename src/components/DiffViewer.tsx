@@ -5,8 +5,11 @@ import { FileDiff, Files } from "lucide-solid";
 import type { turnDiff } from "../lib/turnDiff";
 import { diffFileSchema } from "../lib/diffSchemas";
 import { stringsSchema, validItems } from "../lib/messageSchemas";
+import type { DiffFile as ParsedDiffFile } from "../lib/diff";
 
 const diffFilesSchema = validItems(diffFileSchema).catch([]);
+
+const fileStatus = (file: Pick<ParsedDiffFile, 'status'>) => ({ added: '+file', deleted: '−file', modified: 'modified', renamed: 'renamed' })[file.status];
 
 export function DiffViewer(componentProps: ReturnType<typeof turnDiff>) {
   const [previewId, setPreviewId] = createSignal<string>();
@@ -19,7 +22,18 @@ export function DiffViewer(componentProps: ReturnType<typeof turnDiff>) {
 
   let activeChip: HTMLButtonElement | undefined;
   let previewElement: HTMLElement | undefined;
-  const openPreview = (id: string, chip: HTMLButtonElement) => { cancelClose(); activeChip = chip; setPreviewId(id); };
+
+  const openPreview = (id: string, chip: HTMLButtonElement) => {
+    const file = safeFiles().find(file => file.id === id);
+
+    if (!file || file.omitted || file.previewOmitted || !file.lines.some(line => line.kind !== 'meta')) {
+      closePreview();
+
+      return;
+    }
+
+    cancelClose(); activeChip = chip; setPreviewId(id);
+  };
 
   onCleanup(cancelClose);
   let filesElement: HTMLDivElement | undefined;
@@ -66,16 +80,16 @@ export function DiffViewer(componentProps: ReturnType<typeof turnDiff>) {
   });
   const safeFiles = createMemo(() => diffFilesSchema.parse(componentProps.files));
   const safeWarnings = createMemo(() => stringsSchema.catch([]).parse(componentProps.warnings));
-  const preview = createMemo(() => (safeFiles().find((file) => file.id === previewId())));
-  const previewLines = createMemo(() => preview()?.lines.filter(line => line.kind !== "meta" || line.text === "Diff display truncated for performance.") ?? []);
+  const preview = createMemo(() => (safeFiles().find((file) => file.id === previewId() && !file.omitted && !file.previewOmitted && file.lines.some(line => line.kind !== 'meta'))));
+  const previewLines = createMemo(() => preview()?.lines.filter(line => line.kind !== "meta") ?? []);
   const additions = createMemo(() => (safeFiles().reduce((total, file) => total + file.additions, 0)));
   const deletions = createMemo(() => (safeFiles().reduce((total, file) => total + file.deletions, 0)));
 
   return <>{!safeFiles().length && !safeWarnings().length ? (null) : (<section class="diff-viewer" aria-label="File changes">
-    <div class="diff-summary"><FileDiff size={16} /><strong>Changes</strong><span><Files size={13} />{safeFiles().length} {safeFiles().length === 1 ? "file" : "files"}</span><em class="diff-additions">+{additions()}</em><em class="diff-deletions">−{deletions()}</em></div>
+    <div class="diff-summary"><FileDiff size={16} /><strong>Changes</strong><span><Files size={13} />{safeFiles().length} {safeFiles().length === 1 ? "file" : "files"}</span><Show when={additions() || deletions()}><em class="diff-additions">+{additions()}</em><em class="diff-deletions">−{deletions()}</em></Show></div>
     {<Key each={safeWarnings()} by={(warning) => warning}>{(warning, _index) => <div class="diff-line meta" >{warning()}</div>}</Key>}
     <div ref={filesElement} class="diff-files" onMouseLeave={closePreview} onFocusOut={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) closePreview(); }}>
-      <nav aria-label="Changed files">{<Key each={safeFiles()} by={(file) => file.id}>{(file, _index) => <button class="diff-file-chip" type="button"  title={file().path} onMouseEnter={event => openPreview(file().id, event.currentTarget)} onMouseLeave={scheduleClose} onFocus={event => openPreview(file().id, event.currentTarget)}><span>{file().path}</span><small><b>+{file().additions}</b> <i>−{file().deletions}</i></small></button>}</Key>}</nav>
+      <nav aria-label="Changed files">{<Key each={safeFiles()} by={(file) => file.id}>{(file, _index) => <button class="diff-file-chip" type="button"  title={file().path} onMouseEnter={event => openPreview(file().id, event.currentTarget)} onMouseLeave={scheduleClose} onFocus={event => openPreview(file().id, event.currentTarget)}><span>{file().path}</span><small><Show when={!file().omitted && (file().additions || file().deletions)} fallback={fileStatus(file())}><b>+{file().additions}</b> <i>−{file().deletions}</i></Show></small></button>}</Key>}</nav>
       <Show when={preview()}>{file => <section ref={previewElement} class="diff-file" onMouseEnter={cancelClose} onMouseLeave={scheduleClose} onFocusIn={cancelClose} style={{ top: placement().below ? "100%" : "auto", bottom: placement().below ? "auto" : "100%" }}>
         <header><span>{file().path}</span><small><b>+{file().additions}</b><i>−{file().deletions}</i></small></header>
         <div class="diff-stream" style={{ "max-height": `${placement().height}px` }} tabIndex={0} aria-label={`${file().path} diff`}><div class="diff-code">{<Index each={previewLines()}>{(line, _index) => <div class={`diff-line ${line().kind}`} ><span>{line().oldLine ?? ""}</span><span>{line().newLine ?? ""}</span><code><span class="diff-sign">{line().kind === "add" ? "+" : line().kind === "delete" ? "−" : line().kind === "context" ? " " : ""}</span>{line().parts ? <Index each={line().parts}>{(part, _partIndex) => <span class={`diff-token${part().changed ? " changed" : ""}`} >{part().text}</span>}</Index> : <span class={line().kind === "add" || line().kind === "delete" ? "diff-token changed" : undefined}>{line().text}</span>}</code></div>}</Index>}</div></div>
