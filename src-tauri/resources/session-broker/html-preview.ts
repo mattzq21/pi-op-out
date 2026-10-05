@@ -4,7 +4,8 @@ import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const MAX_HTML_BYTES = 512_000;
-const PREVIEW_SIZES = [{ screenWidth: 2560, size: 750 }, { screenWidth: 1920, size: 600 }];
+
+const previewSize = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 600;
 
 async function readHtml(path: string, cwd: string, signal?: AbortSignal) {
   const file = await open(resolve(cwd, path), "r");
@@ -47,7 +48,7 @@ async function previewHtml(params: { html?: string; path?: string }, cwd: string
 
 export function registerHtmlPreview(pi: ExtensionAPI) {
   const viewportKey = Symbol.for("piop.html-preview-size");
-  let size = Object.getOwnPropertyDescriptor(globalThis, viewportKey)?.value === 750 ? 750 : 600;
+  let size = previewSize(Object.getOwnPropertyDescriptor(globalThis, viewportKey)?.value);
   const defineTool = () => pi.registerTool({
     name: "render_html", label: "Render HTML",
     description: `Display self-contained HTML in the piop chat harness. Use a dark theme only. Supply exactly one of html or path (UTF-8 file on this agent's host, relative to the current working directory or absolute). The current client's desktop preview is a centered ${size}×${size} CSS-pixel viewport. Design the HTML to fit these exact dimensions. Mobile displays only a small placeholder. Inline CSS and JavaScript are supported in an isolated sandbox. Embed assets as data URLs; external resources, network requests, relative file assets, and access to the harness are unavailable. Maximum 512,000 UTF-8 bytes. The HTML is saved as a snapshot in the conversation.`,
@@ -70,8 +71,7 @@ export function registerHtmlPreview(pi: ExtensionAPI) {
   pi.events.on("piop:rpc", request => {
     if (request.command !== "html_preview_viewport") return;
     request.ready = Promise.resolve().then(() => {
-      const width = request.payload?.screenWidth;
-      const next = typeof width === "number" && Number.isFinite(width) ? PREVIEW_SIZES.find(({ screenWidth }) => width >= screenWidth)?.size ?? 600 : 600;
+      const next = previewSize(request.payload?.size);
       Object.defineProperty(globalThis, viewportKey, { value: next, configurable: true });
 
       if (next !== size) { size = next; defineTool(); }

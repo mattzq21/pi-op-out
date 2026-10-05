@@ -9,7 +9,7 @@ import { NativeSettings } from "./nativeSettings";
 import { nativeTerminals } from "./nativeTerminals";
 import { ConversationCommands } from "./conversationCommands";
 import { commandListingSchema } from "./fastModeCommands";
-import { listen, type UnlistenFn } from "./platform";
+import { htmlPreviewSize, listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
 import { nativeConnectionTargetSchema, restoredSessionTarget } from "./sessionResume";
 import type { GroupChange, SessionGroup, SessionGroups, SessionGroupSeed } from "./sessionGroups";
@@ -122,7 +122,7 @@ export class NativeTransport {
   private presenceCleanup?: () => void;
   setVisible(visible: boolean) { this.visible = visible; this.publishPresence(); }
   private presence() {
-    const presence = { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus(), screenWidth: window.screen?.width ?? 0 };
+    const presence = { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus(), htmlPreviewSize: htmlPreviewSize() };
 
     return this.readOnly ? { ...presence, readOnly: true } : presence;
   }
@@ -386,7 +386,7 @@ export class NativeTransport {
     command = this.fastMode.normalize(command);
 
     try {
-      const result = await call("pi_command", { runtimeId: this.runtimeId, command: { ...command, clientScreenWidth: window.screen?.width ?? 0 } });
+      const result = await call("pi_command", { runtimeId: this.runtimeId, command: { ...command, clientHtmlPreviewSize: htmlPreviewSize() } });
       this.retainCommandSession(command, commandSessionSchema.parse(result));
       this.resetChangedSession(command, z.object({ cancelled: z.boolean().optional() }).catch({}).parse(result));
       const fastModeUpdate = this.fastMode.afterCommand(command, command.type === "get_commands" ? commandListingSchema.parse(result) : undefined);
