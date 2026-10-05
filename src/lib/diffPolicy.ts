@@ -27,18 +27,29 @@ export class GitDiffFilter {
   private skippingLine = false;
   private retainedBytes = 0;
 
-  private omit(reason: 'binary' | 'large') {
-    if (!this.file) return;
+  private omit(reason: 'binary' | 'large', file = this.file) {
+    if (!file) return;
 
-    if (this.file.omitted !== 'binary') this.file.omitted = reason;
-    this.file.body = [];
+    if (file.omitted !== 'binary') file.omitted = reason;
+    file.body = [];
   }
 
   private finishFile() {
     if (!this.file || this.file.omitted) return;
 
-    if (this.retainedBytes + this.file.bytes > MAX_RETAINED_PATCH_BYTES) this.omit('large');
-    else this.retainedBytes += this.file.bytes;
+    this.retainedBytes += this.file.bytes;
+
+    while (this.retainedBytes > MAX_RETAINED_PATCH_BYTES) {
+      const largest = this.files.reduce<FilterFile | undefined>((largest, file) => {
+        if (file.omitted || (largest && file.bytes <= largest.bytes)) return largest;
+
+        return file;
+      }, undefined);
+
+      if (!largest) return;
+      this.retainedBytes -= largest.bytes;
+      this.omit('large', largest);
+    }
   }
 
   private consume(line: string) {
