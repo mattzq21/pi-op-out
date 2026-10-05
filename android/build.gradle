@@ -17,6 +17,11 @@ buildscript {
 
 apply from: "variables.gradle"
 
+subprojects {
+    if (projectDir.toPath().startsWith(rootProject.projectDir.toPath())) return
+    layout.buildDirectory.set(rootProject.layout.buildDirectory.dir("dependencies/${project.name}"))
+}
+
 allprojects {
     repositories {
         google()
