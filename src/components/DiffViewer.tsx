@@ -11,6 +11,8 @@ const diffFilesSchema = validItems(diffFileSchema).catch([]);
 
 const fileStatus = (file: Pick<ParsedDiffFile, 'status'>) => ({ added: '+file', deleted: '−file', modified: 'modified', renamed: 'renamed' })[file.status];
 
+const canPreview = (file: ParsedDiffFile | undefined) => !!file && !file.omitted && !file.previewOmitted && file.lines.some(line => line.kind !== 'meta');
+
 export function DiffViewer(componentProps: ReturnType<typeof turnDiff>) {
   const [previewId, setPreviewId] = createSignal<string>();
   let closeTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -26,7 +28,7 @@ export function DiffViewer(componentProps: ReturnType<typeof turnDiff>) {
   const openPreview = (id: string, chip: HTMLButtonElement) => {
     const file = safeFiles().find(file => file.id === id);
 
-    if (!file || file.omitted || file.previewOmitted || !file.lines.some(line => line.kind !== 'meta')) {
+    if (!canPreview(file)) {
       closePreview();
 
       return;
@@ -80,7 +82,7 @@ export function DiffViewer(componentProps: ReturnType<typeof turnDiff>) {
   });
   const safeFiles = createMemo(() => diffFilesSchema.parse(componentProps.files));
   const safeWarnings = createMemo(() => stringsSchema.catch([]).parse(componentProps.warnings));
-  const preview = createMemo(() => (safeFiles().find((file) => file.id === previewId() && !file.omitted && !file.previewOmitted && file.lines.some(line => line.kind !== 'meta'))));
+  const preview = createMemo(() => (safeFiles().find((file) => file.id === previewId() && canPreview(file))));
   const previewLines = createMemo(() => preview()?.lines.filter(line => line.kind !== "meta") ?? []);
   const additions = createMemo(() => (safeFiles().reduce((total, file) => total + file.additions, 0)));
   const deletions = createMemo(() => (safeFiles().reduce((total, file) => total + file.deletions, 0)));
