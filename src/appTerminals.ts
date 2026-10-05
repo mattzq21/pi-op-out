@@ -25,6 +25,9 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const terminalSessionId = createMemo(() => terminalConversationKey(terminalTarget(), conversationKey()));
   const terminalSessionIdRef = createRef(terminalSessionId());
   createComputed(() => { terminalSessionIdRef.current = terminalSessionId(); });
+  const [prepareTerminal, setPrepareTerminal] = createSignal(true);
+  createDependencyEffect(() => { setPrepareTerminal(true); }, () => [terminalSessionId()]);
+  createEffect(() => { if (terminalOpen()) setPrepareTerminal(true); });
 
   const terminalLocationState = createMemo(() => ({
     terminalCwd: terminalTarget()?.cwd ?? location().cwd,
@@ -57,7 +60,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
   createEffect(() => {
     const key = terminalSessionId();
     const hostId = terminalLocationState().terminalHostId;
-    if (!terminalOpen()) return;
+    if (!terminalLocationState().terminalCwd) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     let dirty = false;
@@ -82,7 +85,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
             if (!tab.placeholder && !tab.generation && !merged.some(value => value.id === tab.id) && (!tab.started || startingTerminals.current.has(tab.id))) merged.push(tab);
           }
           if (!merged.length) {
-            if (previous?.tabs.some(tab => tab.generation)) setTerminalOpen(false);
+            if (previous?.tabs.some(tab => tab.generation)) { setPrepareTerminal(false); setTerminalOpen(false); }
             return { ...current, [key]: initialTerminals(key) };
           }
           return { ...current, [key]: { activeId: merged.some(tab => tab.id === previous?.activeId) ? previous!.activeId : merged[0].id, tabs: merged } };
@@ -217,7 +220,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     return; }
     finally { closingTerminals.current.delete(terminalId); }
 
-    if (closingLast && terminalSessionIdRef.current === panelTarget && terminalPanelRevision.current === panelRevision) setTerminalOpen(false);
+    if (closingLast && terminalSessionIdRef.current === panelTarget && terminalPanelRevision.current === panelRevision) { setPrepareTerminal(false); setTerminalOpen(false); }
     const sessionKey = panelTarget;
     setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey); const removedIndex = session.tabs.findIndex((terminal) => terminal.id === terminalId); const tabs = session.tabs.filter((terminal) => terminal.id !== terminalId); const next = { ...current };
 
@@ -315,7 +318,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
   }, () => [ready(), owned(), state.activeTerminal.id, state.activeTerminal.inputDraft]);
 
   return {
-    terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, owned, takeOwnership,
+    terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, prepareTerminal, owned, takeOwnership,
     viewKey: createMemo(() => `${terminalSessionId()}:${state.activeTerminal.id}:${state.activeTerminal.generation ?? ""}`),
     startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal,
     queueTerminalOutput, flushOutput, exited, conversationTerminalIds, allTerminalIds, draftTerminalIds,

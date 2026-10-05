@@ -80,7 +80,6 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     }
 
     instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
-    requestAnimationFrame(() => { if (terminal.current === instance && !componentProps.ownershipRequired) instance.focus(); });
     const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value); });
     let cursorFrame: number | undefined;
 
@@ -168,6 +167,19 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     resizeToHost.current?.();
   }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired, componentProps.started, componentProps.exited]);
 
+  createDependencyEffect(() => {
+    const instance = terminal.current;
+
+    if (!instance) return;
+    if (componentProps.visible === false) { instance.blur(); return; }
+    resizeToHost.current?.();
+    const frame = requestAnimationFrame(() => {
+      if (terminal.current === instance && componentProps.visible !== false && !componentProps.ownershipRequired) instance.focus();
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, () => [componentProps.visible, componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired]);
+
   createDependencyEffect(() => { const capturedOutputEnd0 = componentProps.outputEnd; const capturedOutput1 = componentProps.output;
     const instance = terminal.current;
 
@@ -194,7 +206,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
   }, () => [componentProps.output, componentProps.outputEnd]);
   createDependencyEffect(() => {
     const capturedActiveId0 = componentProps.activeId;
- tabRefs.current.get(capturedActiveId0)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, () => [componentProps.activeId, componentProps.terminals.length]);
+    if (componentProps.visible !== false) tabRefs.current.get(capturedActiveId0)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, () => [componentProps.visible, componentProps.activeId, componentProps.terminals.length]);
 
   const canAdd = createMemo(() => (componentProps.terminals.length < 8));
   let takingOwnership = false;
