@@ -57,7 +57,7 @@ if (args[0] === "dev") {
   });
 }
 
-if (args[0] === "build" && development) configOverrides.build = { beforeBuildCommand: "node scripts/build-desktop.mjs --debug" };
+if (args[0] === "build" && development) configOverrides.build = { beforeBuildCommand: "node scripts/build.mjs --debug" };
 
 if (development) args.splice(1, 0, "--config", JSON.stringify(configOverrides));
 
