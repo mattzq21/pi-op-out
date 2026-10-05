@@ -15,6 +15,17 @@ export function imageFileReference(value: string) {
 
 export const imageReference = (slot: HTMLElement) => imageFileReference(slot.dataset.fileReference ?? "");
 
+function removeImageReference(slot: HTMLElement, root: HTMLElement) {
+  let parent = slot.parentElement;
+  slot.remove();
+
+  while (parent && parent !== root && !parent.children.length && !parent.textContent?.trim()) {
+    const next = parent.parentElement;
+    parent.remove();
+    parent = next;
+  }
+}
+
 function LinkedImage(props: { project: FileProject; path: string; label: string }) {
   const [failed, setFailed] = createSignal(false);
 
@@ -36,7 +47,7 @@ export function markdownImages() {
   let mounts: Array<{ path: string; label: string; project: string; host: HTMLSpanElement; dispose: () => void }> = [];
 
   return {
-    update(root: HTMLElement, project?: FileProject) {
+    update(root: HTMLElement, target: HTMLElement, project?: FileProject) {
       const next: typeof mounts = [];
 
       if (project) for (const slot of root.querySelectorAll<HTMLElement>("[data-file-reference]")) {
@@ -46,21 +57,22 @@ export function markdownImages() {
         const label = slot.textContent || reference.path;
         const key = JSON.stringify(project);
         const previous = mounts[next.length];
+        removeImageReference(slot, root);
 
         if (previous?.path === reference.path && previous.label === label && previous.project === key) {
-          slot.replaceWith(previous.host);
           next.push(previous);
           continue;
         }
 
         const host = document.createElement("span");
         host.className = "linked-message-image";
-        slot.replaceWith(host);
         const dispose = render(() => <LinkedImage project={project} path={reference.path} label={label} />, host);
         next.push({ path: reference.path, label, project: key, host, dispose });
       }
 
-      mounts.filter(mount => !next.includes(mount)).forEach(mount => mount.dispose());
+      mounts.filter(mount => !next.includes(mount)).forEach(mount => { mount.dispose(); mount.host.remove(); });
+      next.forEach((mount, index) => { if (target.children[index] !== mount.host) target.insertBefore(mount.host, target.children[index] ?? null); });
+      target.hidden = next.length === 0;
       mounts = next;
     },
     dispose() { mounts.forEach(mount => mount.dispose()); mounts = []; },

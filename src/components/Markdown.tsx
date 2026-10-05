@@ -11,7 +11,7 @@ import { webUrl } from "../lib/webLinks";
 import { diagramFenceClosed } from "../lib/diagrams";
 import { markdownBlocks } from "./markdownBlocks";
 import { streamingMarkdown } from "./streamingMarkdown";
-import { imageFileReference } from "./markdownImages";
+import { imageFileReference, markdownImages } from "./markdownImages";
 import { markdownHooks, markdownTokenizer } from "../lib/markdownTokenizer";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]));
@@ -77,7 +77,9 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let root: HTMLDivElement | undefined;
+  let imageRoot: HTMLDivElement | undefined;
   const blocks = markdownBlocks();
+  const images = markdownImages();
   createEffect(() => {
     let html: string[];
 
@@ -87,9 +89,22 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
       html = [`<pre>${escapeHtml(props.children)}</pre>`];
     }
 
-    if (root) blocks.update(root, html, props.imageProject);
+    if (!root || !imageRoot) return;
+
+    const container = document.createElement("div");
+
+    const sections = html.map(value => {
+      const section = document.createElement("div");
+      section.innerHTML = value;
+      container.append(section);
+
+      return section;
+    });
+
+    images.update(container, imageRoot, props.imageProject);
+    blocks.update(root, sections.map(section => section.innerHTML));
   });
-  onCleanup(() => blocks.dispose());
+  onCleanup(() => { images.dispose(); blocks.dispose(); });
   const [menuElement, setMenuElement] = createSignal<HTMLDivElement>();
   onCleanup(() => timers.forEach(clearTimeout));
   const close = (restoreFocus = false) => { if (restoreFocus) menu()?.returnFocus?.focus({ preventScroll: true }); setMenu(undefined); };
@@ -201,6 +216,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
   };
 
   return <>
+    <div ref={imageRoot} class="assistant-message-images" hidden />
     <div ref={root} class="markdown-content" onClick={click} onContextMenu={contextMenu} onAuxClick={event => event.preventDefault()} />
     <Show when={menu()}>{current => <Portal mount={root?.closest(".app") ?? document.body}>
       <div ref={setMenuElement} class="conversation-menu link-context-menu" role="menu" aria-label="Link actions" style={{ left: `${current().x}px`, top: `${current().y}px` }} onContextMenu={event => event.preventDefault()}>
