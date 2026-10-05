@@ -27,6 +27,8 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
     let connections = Arc::new(Semaphore::new(8));
     let jobs = Arc::new(Semaphore::new(16));
     tailscale_auth::start(app.clone(), events.clone(), connections.clone(), jobs.clone())?;
+    #[cfg(debug_assertions)]
+    start_debug(app.clone(), events.clone(), connections.clone(), jobs.clone())?;
     crate::platform::async_runtime::spawn(async move {
         let Ok(listener) = tokio::net::TcpListener::from_std(listener) else { return; };
         while let Ok((stream, _)) = listener.accept().await {
@@ -39,6 +41,30 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
         }
     });
     eprintln!("Piop daemon listening on {bind} (TLS proxy required)");
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn start_debug(app: AppHandle, events: broadcast::Sender<Value>, connections: Arc<Semaphore>, jobs: Arc<Semaphore>) -> Result<(), String> {
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+    listener.set_nonblocking(true).map_err(|error| error.to_string())?;
+    let address = listener.local_addr().map_err(|error| error.to_string())?;
+    let endpoint = json!({"url":format!("ws://{address}"), "protocol":1});
+    atomic_write_private(&daemon_endpoint::directory()?.join("debug-mobile.json"), &serde_json::to_vec(&endpoint).map_err(|error| error.to_string())?)?;
+    crate::platform::async_runtime::spawn(async move {
+        let Ok(listener) = tokio::net::TcpListener::from_std(listener) else { return; };
+        while let Ok((stream, _)) = listener.accept().await {
+            let Ok(permit) = connections.clone().try_acquire_owned() else { continue; };
+            let app = app.clone(); let events = events.clone(); let jobs = jobs.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                let config = WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE)).max_frame_size(Some(MAX_MESSAGE));
+                if let Ok(Ok(socket)) = tokio::time::timeout(Duration::from_secs(10), tokio_tungstenite::accept_async_with_config(stream, Some(config))).await {
+                    let _ = serve_connection(app, socket, events, jobs).await;
+                }
+            });
+        }
+    });
     Ok(())
 }
 
@@ -173,7 +199,10 @@ async fn detach_connection(app: AppHandle, owner: String, mut pending: tokio::ta
 }
 
 async fn send_ready<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(socket: &mut tokio_tungstenite::WebSocketStream<S>) -> Result<(), String> {
-    let message = Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon", "peerProtocol":1, "daemonId":daemon_endpoint::identity()?}).to_string().into());
+    let packet = json!({"type":"ready", "protocol":1, "backend":"daemon", "peerProtocol":1, "daemonId":daemon_endpoint::identity()?});
+    #[cfg(debug_assertions)]
+    let packet = { let mut packet = packet; packet["debugProcessId"] = json!(std::process::id()); packet };
+    let message = Message::Text(packet.to_string().into());
     socket.send(message).await.map_err(|error| error.to_string())
 }
 

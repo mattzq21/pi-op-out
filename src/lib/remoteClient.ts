@@ -1,5 +1,6 @@
 import { z, type JSONType } from "zod";
 import { jsonResultSchema, remotePacketSchema, type NativeArguments, type RemotePacket } from "./transportSchemas";
+import { isMobileDebugConnection } from "./mobileDebug";
 
 export interface HostConnection { url: string }
 
@@ -10,7 +11,7 @@ type Pending = { resolve: (value: JSONType | undefined) => void; reject: (error:
 export function validateHost(connection: HostConnection): string {
   const url = new URL(connection.url);
 
-  if (url.protocol !== "wss:") throw new Error("Use a secure wss:// address for your Piop host.");
+  if (url.protocol !== "wss:" && !isMobileDebugConnection(url.href)) throw new Error("Use a secure wss:// address for your Piop host.");
 
   if (url.username || url.password || url.search || url.hash) throw new Error("The host address must not contain credentials, a query, or a fragment.");
 
@@ -39,7 +40,7 @@ export class RemoteClient {
       const settleResolve = () => { if (!settled) { settled = true; resolve(); } };
 
       const timer = setTimeout(() => { reject(new Error("Connection timed out. Check the host address and Tailscale Serve.")); socket.close(); }, 15000);
-      socket.onopen = () => socket.send(JSON.stringify({ type: "authenticate", mode: "tailscale" }));
+      socket.onopen = () => { if (!isMobileDebugConnection(validateHost(connection))) socket.send(JSON.stringify({ type: "authenticate", mode: "tailscale" })); };
       socket.onmessage = ({ data }) => {
         if (this.socket !== socket) return;
         let message: RemotePacket;

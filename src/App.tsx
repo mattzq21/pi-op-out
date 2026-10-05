@@ -149,7 +149,7 @@ export default function App() {
 
   const renderMissingDirectoryDialog = () => missingDirectoryDialog() && <Rerun on={() => missingDirectoryDialog()}>{() => <MissingDirectoryDialog request={required(missingDirectoryDialog())} />}</Rerun>;
 
-  return <SubagentNavigationContext.Provider value={openSubagent}>{!settings() ? (<AppLoading error={error()} />) : (<div class={`app dark ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
+  return <SubagentNavigationContext.Provider value={openSubagent}>{!settings() ? (<AppLoading error={error()} />) : (<div role="region" aria-label={connected() && !error() ? "Conversation workspace ready" : "Conversation workspace connecting"} class={`app dark ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
     {!mobileSidebarOpen() && renderMobileSidebarToggle()}
     {renderMobileSidebarBackdrop()}
     {import.meta.env.MODE === "e2e" && <div class="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
