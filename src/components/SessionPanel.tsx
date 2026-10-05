@@ -6,6 +6,7 @@ import { createDependencyEffect,createMemoFields,createRef,cssPixels,type Keyboa
 
 import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderOpen,LoaderCircle,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
 import { openGroupDirectory } from "../lib/nativeTransport";
+import { isMobile } from "../lib/platform";
 import type { SessionGroup } from "../lib/sessionGroups";
 import { groupLayoutToken,isFixedGroup,RECENT_KEY,sessionKey,sessionLayoutToken,type DraggedSession,type SidebarState } from "../lib/sidebarState";
 import type { SessionSummary } from "../types";
@@ -423,7 +424,7 @@ export function SessionPanel(props: Props) {
     const menuItems = groupMenu() ? [
       { label: "Open directory", Icon: FolderOpen, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) { setGroupActionError(undefined); void openGroupDirectory(groupDirectory.cwd, groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } } },
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: required((groupMenu())).projectKey, name: required((groupMenu())).label }) },
-    ] : menu() ? actions.flatMap(([action, Icon, label]) => !["copy-id", "open-rollout"].includes(action) || panel().debug ? [{ label, Icon, disabled: props.isArchiving(required(menu()).session) || (action === "open-rollout" && !required(menu()).session.path), run: () => panel().onAction(required((menu())).session, action) }] : []) : [];
+    ] : menu() ? actions.flatMap(([action, Icon, label]) => (!isMobile || action !== "new-window") && (!["copy-id", "open-rollout"].includes(action) || panel().debug) ? [{ label, Icon, disabled: props.isArchiving(required(menu()).session) || (action === "open-rollout" && !required(menu()).session.path), run: () => panel().onAction(required((menu())).session, action) }] : []) : [];
 
     return { activeMenu, menuItems };
   };
