@@ -15,17 +15,6 @@ export function imageFileReference(value: string) {
 
 export const imageReference = (slot: HTMLElement) => imageFileReference(slot.dataset.fileReference ?? "");
 
-function removeImageReference(slot: HTMLElement, root: HTMLElement) {
-  let parent = slot.parentElement;
-  slot.remove();
-
-  while (parent && parent !== root && !parent.children.length && !parent.textContent?.trim()) {
-    const next = parent.parentElement;
-    parent.remove();
-    parent = next;
-  }
-}
-
 function LinkedImage(props: { project: FileProject; path: string; label: string }) {
   const [failed, setFailed] = createSignal(false);
 
@@ -57,7 +46,6 @@ export function markdownImages() {
         const label = slot.textContent || reference.path;
         const key = JSON.stringify(project);
         const previous = mounts[next.length];
-        removeImageReference(slot, root);
 
         if (previous?.path === reference.path && previous.label === label && previous.project === key) {
           next.push(previous);
@@ -74,6 +62,15 @@ export function markdownImages() {
       next.forEach((mount, index) => { if (target.children[index] !== mount.host) target.insertBefore(mount.host, target.children[index] ?? null); });
       target.hidden = next.length === 0;
       mounts = next;
+    },
+    open(path: string) {
+      const mount = mounts.find(image => image.path === path);
+      const preview = mount?.host.querySelector<HTMLButtonElement>("button.image-preview");
+
+      if (!preview || preview.disabled) return false;
+      preview.click();
+
+      return true;
     },
     dispose() { mounts.forEach(mount => mount.dispose()); mounts = []; },
   };

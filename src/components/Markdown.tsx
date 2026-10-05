@@ -164,6 +164,8 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
   const openFileLink = (link: HTMLButtonElement) => {
     const reference = fileReference(link.dataset.fileReference ?? "");
 
+    if (reference && images.open(reference.path)) return;
+
     if (reference) props.onOpenFile?.(reference);
   };
 
