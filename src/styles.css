@@ -159,7 +159,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .literal-skill-content { white-space: pre-wrap; }
 .markdown-content .file-link { display: inline; appearance: none; border: 0; border-radius: 3px; padding: 0 2px; background: var(--accent-08); color: var(--accent); font: inherit; line-height: inherit; text-align: inherit; vertical-align: baseline; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent); text-underline-offset: 3px; cursor: pointer; }
 .markdown-content .file-link:hover { background: var(--accent-14); text-decoration-color: currentColor; }
-.markdown-content .file-link:focus-visible { outline: none; background: var(--accent-14); text-decoration-color: currentColor; text-decoration-thickness: 2px; }
+.markdown-content .file-link:focus-visible { outline: none; }
 .message-body > p:has(+ .message-actions) { margin-bottom: 0; }
 .markdown-content { display: contents; }
 :is(.reasoning-text, .work-group-content .message-body, .active-work-content .message-body) > .markdown-content > :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote) { margin-top: 0; margin-bottom: 3px; }
