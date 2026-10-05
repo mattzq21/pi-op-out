@@ -87,6 +87,7 @@ export function ChatView(props: Props) {
   const composerStack = createRef<HTMLDivElement>(null);
   const messages = () => props.messages;
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), previous), []);
+  const hasSentPrompt = createMemo(() => messages().some((message) => message.role === "user"));
 
   const sessionUsage = createMemo(() => {
     let input = 0, cacheRead = 0, cacheWrite = 0;
@@ -100,8 +101,8 @@ export function ChatView(props: Props) {
     return { input, cacheRead, cacheWrite };
   });
 
-  const sessionCache = createMemo(() => (cacheHitStats(sessionUsage())));
-  const sessionToolFailures = createMemo(() => props.debug ? toolFailureStats(messages()) : undefined);
+  const sessionCache = createMemo(() => hasSentPrompt() ? cacheHitStats(sessionUsage()) : undefined);
+  const sessionToolFailures = createMemo(() => props.debug && hasSentPrompt() ? toolFailureStats(messages()) : undefined);
   const pendingSubmission = createMemo(() => chatSubmission(props.transport));
   createComputed(() => acknowledgeChatSubmission(props.transport, messages()));
   const [submittedMessage, setSubmittedMessage] = createSignal<ChatMessage>();
