@@ -148,7 +148,40 @@ function updateProviderPrompt(payload: unknown, prompt: string, replacement: str
   return updated;
 }
 
+function configureImageLimits(pi: ExtensionAPI) {
+  type Model = NonNullable<ExtensionContext["model"]>;
+
+  const originals = new Map<Model, Model["inputLimits"]>();
+
+  const applyModel = (model: Model | undefined) => {
+    if (!model?.input.includes("image")) return;
+
+    if (!originals.has(model)) originals.set(model, model.inputLimits);
+    const limits = model.inputLimits;
+    model.inputLimits = { ...limits, images: { ...limits?.images, resize: { ...limits?.images?.resize, maxWidth: 2560, maxHeight: 2560 } } };
+  };
+
+  const apply = (ctx: ExtensionContext) => {
+    for (const model of ctx.modelRegistry.getAll()) applyModel(model);
+    applyModel(ctx.model);
+  };
+
+  pi.on("session_start", (_event, ctx) => { apply(ctx); });
+  pi.on("model_select", (event, ctx) => { apply(ctx); applyModel(event.model); });
+  pi.on("input", (_event, ctx) => { apply(ctx); });
+  pi.on("before_agent_start", (_event, ctx) => { apply(ctx); });
+  const unsubscribe = pi.events.on("piop:models-refreshed", ({ ctx }) => { apply(ctx); });
+
+  pi.on("session_shutdown", () => {
+    unsubscribe();
+
+    for (const [model, limits] of originals) model.inputLimits = limits;
+    originals.clear();
+  });
+}
+
 export default async function runtimeSettings(pi: ExtensionAPI) {
+  configureImageLimits(pi);
   setGlobal(Symbol.for("piop.app-rpc"), (request: AppRequest) => pi.events.emit("piop:rpc", request));
   const accountProviders = new Map();
   let promptOptions: BuildSystemPromptOptions | undefined;
