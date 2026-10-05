@@ -39,6 +39,27 @@ function userMessageParts(content: string) {
   return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
 }
 
+function imageContextParts(content: string, hasImages: boolean) {
+  const lines = content.trimEnd().split("\n");
+  const notes: string[] = [];
+
+  if (hasImages) while (lines.length) {
+    const line = lines[lines.length - 1];
+
+    if (!line.trim() && notes.length) { lines.pop(); continue; }
+
+    if (!/^\[Image: original \d+x\d+, displayed at \d+x\d+\. Multiply coordinates by \d+(?:\.\d+)? to map to original image\.\]$/.test(line)) break;
+    notes.unshift(line);
+    lines.pop();
+  }
+
+  return { text: notes.length ? lines.join("\n").trimEnd() : content, notes: notes.join("\n\n") };
+}
+
+function ContextInjection(props: { title: string; content: string }) {
+  return <details class="context-injection"><summary>{props.title}<ChevronRight size={12} aria-hidden="true" /></summary><div class="context-injection-content">{props.content}</div></details>;
+}
+
 const shortMessageTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
 
 const recentMessageTime = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -177,11 +198,12 @@ export function Message(componentProps: Props) {
   };
 
   const UserMessage = () => {
-    const parts = createMemo(() => userMessageParts(textOf(componentProps.message.content)));
     const sentTime = createMemo(() => formatMessageTime(componentProps.message.timestamp));
     const images = createMemo(() => Array.isArray(componentProps.message.content) ? componentProps.message.content.flatMap(part => part.type === "image" && part.data && part.mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part.mimeType) ? [part] : []) : []);
+    const imageContext = createMemo(() => imageContextParts(textOf(componentProps.message.content), images().length > 0));
+    const parts = createMemo(() => userMessageParts(imageContext().text));
 
-    return <article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
+    return <><article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
       {images().length > 0 && <div class="user-message-images"><Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
       {(parts().text || parts().skills.length > 0) && <div class="message-body">
       {<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}
@@ -191,7 +213,7 @@ export function Message(componentProps: Props) {
         <MessageCopyButton state={copyState()} copy={copy} />
         {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy message</span>}
       </div>
-    </article>;
+    </article>{imageContext().notes && <ContextInjection title="Image context" content={imageContext().notes} />}</>;
   };
 
   const renderAssistantMessage = () => {
@@ -262,5 +284,5 @@ export function Message(componentProps: Props) {
     </article>);
   };
 
-  return <>{componentProps.message.customType === "piop-agent-message" ? <AgentDelivery message={componentProps.message} /> : isContextInjection(componentProps.message) ? <details class="context-injection"><summary>{componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"}<ChevronRight size={12} aria-hidden="true" /></summary><div class="context-injection-content">{textOf(componentProps.message.content)}</div></details> : componentProps.message.customType === "piop-html-preview" ? <HtmlPreview details={componentProps.message.details} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : componentProps.message.customType === "piop-review-link" ? <ReviewLink details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
+  return <>{componentProps.message.customType === "piop-agent-message" ? <AgentDelivery message={componentProps.message} /> : isContextInjection(componentProps.message) ? <ContextInjection title={componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"} content={textOf(componentProps.message.content)} /> : componentProps.message.customType === "piop-html-preview" ? <HtmlPreview details={componentProps.message.details} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : componentProps.message.customType === "piop-review-link" ? <ReviewLink details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
 }
