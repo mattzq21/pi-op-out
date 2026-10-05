@@ -199,7 +199,10 @@ async fn detach_connection(app: AppHandle, owner: String, mut pending: tokio::ta
 }
 
 async fn send_ready<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(socket: &mut tokio_tungstenite::WebSocketStream<S>) -> Result<(), String> {
-    let message = Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon", "peerProtocol":1, "daemonId":daemon_endpoint::identity()?}).to_string().into());
+    let packet = json!({"type":"ready", "protocol":1, "backend":"daemon", "peerProtocol":1, "daemonId":daemon_endpoint::identity()?});
+    #[cfg(debug_assertions)]
+    let packet = { let mut packet = packet; packet["debugProcessId"] = json!(std::process::id()); packet };
+    let message = Message::Text(packet.to_string().into());
     socket.send(message).await.map_err(|error| error.to_string())
 }
 

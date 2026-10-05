@@ -22,11 +22,12 @@ export function MobileApp() {
   const retryDelay = createRef(2000);
   const reconnectEnabled = createRef(autoReconnect()); createComputed(() => { reconnectEnabled.current = autoReconnect(); });
   const intentionalDisconnect = createRef(false);
+  const activeDebugAddress = createRef<string | undefined>(undefined);
   const connectRef = createRef<(address: string, label?: string) => Promise<void>>(async () => {});
 
   const scheduleReconnect = () => {
     clearTimeout(retry.current);
-    const last = localStorage.getItem("piop-mobile-host");
+    const last = activeDebugAddress.current ?? localStorage.getItem("piop-mobile-host");
 
     if (!reconnectEnabled.current || intentionalDisconnect.current || !last) return;
     retry.current = setTimeout(() => { void connectRef.current(last); }, retryDelay.current);
@@ -53,6 +54,7 @@ export function MobileApp() {
   };
 
   const connect = async (address: string, label = "") => {
+    if (address !== activeDebugAddress.current) activeDebugAddress.current = undefined;
     const attempt = ++generation.current;
     clearTimeout(retry.current); setConnecting(true); setError("");
 
@@ -67,7 +69,7 @@ export function MobileApp() {
       if (attempt !== generation.current) return;
       remoteClient.close(); setError(reason instanceof Error ? reason.message : String(reason));
 
-      if (address === localStorage.getItem("piop-mobile-host")) scheduleReconnect();
+      if (address === activeDebugAddress.current || address === localStorage.getItem("piop-mobile-host")) scheduleReconnect();
     } finally { if (attempt === generation.current) setConnecting(false); }
   };
 
@@ -79,6 +81,7 @@ export function MobileApp() {
     void loadMobileDebugConnection().then((debugUrl) => {
       if (generation.current !== startupGeneration) return;
       if (debugUrl) {
+        activeDebugAddress.current = debugUrl;
         setAutoReconnect(true); setUrl(debugUrl);
         void connectRef.current(debugUrl);
       } else {

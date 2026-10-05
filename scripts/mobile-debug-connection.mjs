@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,7 @@ for (const byte of Buffer.from(manifest)) key = BigInt.asUintN(64, (key ^ BigInt
 
 const endpointFile = join(homedir(), ".piop-dev", "daemons", key.toString(16).padStart(16, "0"), "debug-mobile.json");
 const daemon = join(manifest, "target", "debug", "piopd");
+const builtIdentity = createHash("sha256").update(readFileSync(daemon)).digest("hex");
 const result = spawnSync(daemon, ["start"], { cwd: project, stdio: ["ignore", "ignore", "inherit"] });
 
 if (result.error || result.status !== 0) {
@@ -27,7 +29,7 @@ async function ready(url) {
     socket.addEventListener("message", ({ data }) => {
       try {
         const packet = JSON.parse(String(data));
-        finish(packet.type === "ready" && packet.protocol === 1 && packet.backend === "daemon");
+        finish(packet.type === "ready" && packet.protocol === 1 && packet.backend === "daemon" ? packet : false);
       } catch { finish(false); }
     }, { once: true });
     socket.addEventListener("error", () => finish(false), { once: true });
@@ -36,6 +38,7 @@ async function ready(url) {
 }
 
 let connection;
+let outdatedBuild = false;
 const deadline = Date.now() + 10000;
 
 while (Date.now() < deadline) {
@@ -43,15 +46,31 @@ while (Date.now() < deadline) {
     const endpoint = JSON.parse(readFileSync(endpointFile, "utf8"));
     const url = new URL(endpoint.url);
 
-    if (endpoint.protocol === 1 && url.protocol === "ws:" && url.hostname === "127.0.0.1" && url.port && await ready(url.href)) {
-      url.hostname = "10.0.2.2";
-      connection = url.href;
-      break;
+    if (endpoint.protocol === 1 && url.protocol === "ws:" && url.hostname === "127.0.0.1" && url.port) {
+      const packet = await ready(url.href);
+
+      if (packet) {
+        let runningIdentity;
+
+        if (Number.isSafeInteger(packet.debugProcessId) && packet.debugProcessId > 0) {
+          try { runningIdentity = createHash("sha256").update(readFileSync(`/proc/${packet.debugProcessId}/exe`)).digest("hex"); } catch { }
+        }
+
+        if (runningIdentity !== builtIdentity) {
+          outdatedBuild = true;
+          break;
+        }
+
+        url.hostname = "10.0.2.2";
+        connection = url.href;
+        break;
+      }
     }
   } catch { }
   await delay(200);
 }
 
+if (outdatedBuild) throw new Error("The running worktree daemon does not match the rebuilt binary; restart it before connecting.");
 if (!connection) throw new Error("The worktree daemon has no live debug mobile endpoint. Rebuild it, stop the old daemon, and start it again.");
 
 process.stdout.write(JSON.stringify({
