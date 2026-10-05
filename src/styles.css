@@ -176,6 +176,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 @media (pointer: coarse) { .message-time { opacity: 1; } }
 .cache-hit-rate { margin-left: 5px; color: var(--muted); font: 10px "DM Sans"; }.cache-hit-rate.low { color: #d77865; }
 .cache-hit-rate { position: relative; }
+.cache-hit-rate, .session-cache-hit { display: inline-flex; align-items: center; gap: 4px; }
+.cache-icon { width: 20px; height: 20px; flex: 0 0 auto; color: var(--muted); }
 .cache-fraction-tooltip { position: absolute; z-index: 10; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); display: none; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); text-align: center; font: 12px/1.4 "DM Sans"; font-variant-numeric: tabular-nums; pointer-events: none; }
 .cache-fraction-tooltip { width: max-content; white-space: nowrap; }
 .cache-fraction-tooltip > span { display: block; }
