@@ -75,7 +75,6 @@ export async function watchBackend(command, args, options, root, { port, watch =
   };
 
   const prepareDaemon = async () => {
-    await run(process.execPath, [join(root, "scripts/build-extensions.mjs")]);
     await run(process.execPath, [join(root, "scripts/build-daemon.mjs"), "--debug"]);
 
     await run(daemon, ["stop"]);

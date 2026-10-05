@@ -57,7 +57,7 @@ if (args[0] === "dev") {
   });
 }
 
-if (args[0] === "build" && development) configOverrides.build = { beforeBuildCommand: "npm run build && node scripts/build-daemon.mjs --debug" };
+if (args[0] === "build" && development) configOverrides.build = { beforeBuildCommand: "npm run build && node scripts/build-daemon.mjs --debug --skip-extensions" };
 
 if (development) args.splice(1, 0, "--config", JSON.stringify(configOverrides));
 

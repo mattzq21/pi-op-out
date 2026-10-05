@@ -2,12 +2,14 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
 const debug = process.argv.includes('--debug');
+
+if (!process.argv.includes('--skip-extensions')) run(process.execPath, ['scripts/build-extensions.mjs']);
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', ...options });
@@ -29,32 +31,47 @@ const extension = process.platform === 'win32' ? '.exe' : '';
 
 mkdirSync(new URL('../src-tauri/binaries/', import.meta.url), { recursive: true });
 
-const source = new URL(`../src-tauri/target/${debug ? 'debug' : 'release'}/piopd${extension}`, import.meta.url);
-const destination = new URL(`../src-tauri/binaries/piopd-${triple}${extension}`, import.meta.url);
-let unchanged = false;
+const source = fileURLToPath(new URL(`../src-tauri/target/${debug ? 'debug' : 'release'}/piopd${extension}`, import.meta.url));
 
-try {
-  unchanged = statSync(destination).size === statSync(source).size && readFileSync(destination).equals(readFileSync(source));
-} catch (error) {
-  if (error.code !== 'ENOENT') throw error;
-}
+const destination = fileURLToPath(new URL(`../src-tauri/binaries/piopd-${triple}${extension}`, import.meta.url));
 
-if (!unchanged) copyFileSync(source, destination);
+const sourceStats = statSync(source);
 
-if (process.argv.includes('--install')) {
-  const binDirectory = join(homedir(), '.local', 'bin');
-  const installed = join(binDirectory, `piopd${extension}`);
-  const temporary = join(binDirectory, `.piopd-${randomUUID()}${extension}`);
-  mkdirSync(binDirectory, { recursive: true });
+let sourceContent;
+
+function copyIfChanged(target) {
+  try {
+    const targetStats = statSync(target);
+
+    if (targetStats.size === sourceStats.size && (process.platform === 'win32' || (targetStats.mode & 0o111) === (sourceStats.mode & 0o111))) {
+      sourceContent ??= readFileSync(source);
+
+      if (readFileSync(target).equals(sourceContent)) return false;
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+
+  const temporary = join(dirname(target), `.piopd-${randomUUID()}${extension}`);
 
   try {
     copyFileSync(source, temporary);
-    renameSync(temporary, installed);
+    renameSync(temporary, target);
   } finally {
     rmSync(temporary, { force: true });
   }
 
-  console.log(`Installed ${installed}`);
+  return true;
+}
+
+copyIfChanged(destination);
+
+if (process.argv.includes('--install')) {
+  const binDirectory = join(homedir(), '.local', 'bin');
+  const installed = join(binDirectory, `piopd${extension}`);
+  mkdirSync(binDirectory, { recursive: true });
+
+  console.log(`${copyIfChanged(installed) ? 'Installed' : 'Unchanged:'} ${installed}`);
 
   if (!(process.env.PATH ?? '').split(delimiter).some(directory => resolve(directory) === binDirectory)) {
     console.warn(`Add ${binDirectory} to your PATH to run piopd directly.`);

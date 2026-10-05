@@ -7,7 +7,7 @@
     "features": ["desktop"],
     "beforeDevCommand": "node scripts/build-daemon.mjs --debug && npm run dev",
     "devUrl": "http://localhost:1423",
-    "beforeBuildCommand": "npm run build && node scripts/build-daemon.mjs",
+    "beforeBuildCommand": "npm run build && node scripts/build-daemon.mjs --skip-extensions",
     "frontendDist": "../dist"
   },
   "app": {
