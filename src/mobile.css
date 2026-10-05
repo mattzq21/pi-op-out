@@ -32,7 +32,15 @@ html[data-mobile] .conversation-unowned .composer-interaction { opacity: 1; }
 .mobile-host-actions button, .mobile-connect button[type="button"] { min-height: 40px; padding: 8px 12px; border: 1px solid #48453e; border-radius: 8px; background: #24231f; color: #eee; }
 .mobile-connect [role=alert] { color: #f19b89; }
 .mobile-connect .primary-button { min-height: 48px; }
-.mobile-reconnect-banner { position: fixed; z-index: 25; top: calc(56px + env(safe-area-inset-top)); left: 8px; right: 8px; display: flex; align-items: center; gap: 12px; padding: 12px; background: #24231f; color: #eee; border: 1px solid #48453e; border-radius: 8px; }
+.mobile-tailscale-status { display: grid; gap: 12px; padding: 14px; border: 1px solid #48453e; border-radius: 9px; background: #24231f; }
+.mobile-tailscale-status strong { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.mobile-tailscale-status p { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: #aaa69e; }
+.mobile-tailscale-dot { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: #aaa69e; }
+.mobile-tailscale-status[data-state="active"] .mobile-tailscale-dot { background: #81c995; }
+.mobile-tailscale-status[data-state="off"] .mobile-tailscale-dot, .mobile-tailscale-status[data-state="missing"] .mobile-tailscale-dot { background: #f19b89; }
+.mobile-tailscale-status[data-state="other-vpn"] .mobile-tailscale-dot, .mobile-tailscale-status[data-state="unknown"] .mobile-tailscale-dot { background: #e8bd65; }
+.mobile-reconnect-banner { position: fixed; z-index: 25; top: calc(56px + env(safe-area-inset-top)); left: 8px; right: 8px; display: grid; gap: 12px; max-height: calc(var(--mobile-height, 100dvh) - 100px); overflow-y: auto; padding: 12px; background: #24231f; color: #eee; border: 1px solid #48453e; border-radius: 8px; }
+.mobile-reconnect-banner > [role="status"] { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .mobile-reconnect-banner button { flex-shrink: 0; min-height: 44px; }
 html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner { z-index: 17; }
 .mobile-host-button { display: none; position: fixed; z-index: 15; bottom: max(6px, env(safe-area-inset-bottom)); left: 8px; font-size: 11px; border: 1px solid #48453e; border-radius: 5px; background: #24231f; color: #ccc; padding: 5px; }

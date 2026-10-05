@@ -9,6 +9,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ClientPreferencesPlugin.class);
         registerPlugin(DebugConnectionPlugin.class);
+        registerPlugin(TailscaleStatusPlugin.class);
         super.onCreate(savedInstanceState);
         if (BuildConfig.DEBUG) {
             getBridge().getWebView().getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);

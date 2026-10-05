@@ -7,6 +7,7 @@ import App from "../App";
 import { readMobileHosts, removeMobileHost, saveMobileHost } from "../lib/mobileHosts";
 import { remoteClient, validateHost } from "../lib/remoteClient";
 import { loadMobileDebugConnection } from "../lib/mobileDebug";
+import { MobileTailscaleStatus } from "./MobileTailscaleStatus";
 
 export function MobileApp() {
   const [url, setUrl] = createSignal((() => localStorage.getItem("piop-mobile-host") ?? "")());
@@ -80,12 +81,14 @@ export function MobileApp() {
     const startupGeneration = generation.current;
     void loadMobileDebugConnection().then((debugUrl) => {
       if (generation.current !== startupGeneration) return;
+
       if (debugUrl) {
         activeDebugAddress.current = debugUrl;
         setAutoReconnect(true); setUrl(debugUrl);
         void connectRef.current(debugUrl);
       } else {
         const last = localStorage.getItem("piop-mobile-host");
+
         if (reconnectEnabled.current && last) retry.current = setTimeout(() => { void connectRef.current(last); }, 0);
       }
     }).catch((reason) => { if (generation.current === startupGeneration) setError(String(reason)); });
@@ -119,7 +122,7 @@ export function MobileApp() {
 
   const saveDisabled = () => connecting() || !url().trim();
   const showConnectionNotice = () => !connected() || Boolean(error());
-  const renderConnectionNotice = () => showConnectionNotice() && <div class="mobile-reconnect-banner" role="status">{error() || "Reconnecting…"}<button disabled={connecting() || disconnecting()} onClick={() => { if (connected()) void disconnect(); else void connect(url()); }}>{connected() ? "Retry disconnect" : connecting() ? "Connecting…" : "Reconnect"}</button></div>;
+  const renderConnectionNotice = () => showConnectionNotice() && <div class="mobile-reconnect-banner"><div role="status">{error() || "Reconnecting…"}<button disabled={connecting() || disconnecting()} onClick={() => { if (connected()) void disconnect(); else void connect(url()); }}>{connected() ? "Retry disconnect" : connecting() ? "Connecting…" : "Reconnect"}</button></div>{!connected() && <MobileTailscaleStatus />}</div>;
   const savedHostValue = () => hosts().some((host) => host.url === url()) ? url() : "";
 
   return <>{workspaceOpen() ? (<><App />{renderConnectionNotice()}<button class="mobile-host-button" aria-label="Disconnect from host" disabled={disconnecting()} onClick={() => void disconnect()}>Host</button></>) : (<main class="mobile-connect dark"><form onSubmit={(event) => { event.preventDefault(); intentionalDisconnect.current = false; retryDelay.current = 2000; void connect(url(), name()); }}>
@@ -133,6 +136,7 @@ export function MobileApp() {
 
     if (!enabled) clearTimeout(retry.current); }} />Automatically reconnect to last host</label>
     <p class="mobile-connect-hint">Connect this device and the host to the same Tailscale account, then enter the host’s Tailscale Serve wss:// address.</p>
+    <MobileTailscaleStatus />
     {error() && <p role="alert">{error()}</p>}
     <button class="primary-button" disabled={connecting()}>{connecting() ? "Connecting…" : "Connect to workspace"}</button>
     {connecting() && <button type="button" onClick={disconnect}>Cancel</button>}
