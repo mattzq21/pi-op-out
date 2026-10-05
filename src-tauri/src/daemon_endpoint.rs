@@ -15,6 +15,43 @@ pub(crate) fn directory() -> Result<PathBuf, String> {
 }
 
 pub(crate) fn path() -> Result<PathBuf, String> { Ok(directory()?.join("daemon.json")) }
+
+#[cfg(all(debug_assertions, not(feature = "desktop")))]
+pub(crate) fn debug_runtime() -> Result<Value, String> {
+    static RUNTIME: std::sync::OnceLock<Result<Value, String>> = std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let binary = if cfg!(target_os = "linux") { PathBuf::from("/proc/self/exe") } else { executable.clone() };
+        let extension_root = crate::extensions::generated_extension_root()?;
+        Ok(json!({
+            "processId":std::process::id(),
+            "project":Path::new(env!("CARGO_MANIFEST_DIR")).parent(),
+            "executable":executable,
+            "buildIdentity":debug_binary_identity(&binary)?,
+            "profileHome":home_dir()?,
+            "daemonDirectory":directory()?,
+            "daemonLog":directory()?.join("daemon.log"),
+            "extensionRoot":extension_root,
+            "runtimeSettingsPath":extension_root.join("runtime-settings.json")
+        }))
+    }).clone()
+}
+
+#[cfg(all(debug_assertions, not(feature = "desktop")))]
+fn debug_binary_identity(path: &Path) -> Result<String, String> {
+    use sha2::Digest;
+    use std::io::Read;
+    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut hash = sha2::Sha256::new();
+    let mut buffer = [0u8; 65_536];
+    loop {
+        let length = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if length == 0 { break; }
+        hash.update(&buffer[..length]);
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
+
 pub(crate) fn read() -> Result<Endpoint, String> {
     serde_json::from_slice(&fs::read(path()?).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
 }

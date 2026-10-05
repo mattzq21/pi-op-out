@@ -23,6 +23,10 @@ pub(super) async fn dispatch_peer(app: AppHandle, owner: String, command: String
 }
 
 async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Value) -> Result<Value, String> {
+    #[cfg(debug_assertions)]
+    if command == "debug_runtime" {
+        return tokio::task::spawn_blocking(daemon_endpoint::debug_runtime).await.map_err(|error| error.to_string())?;
+    }
     if let Some(id) = args.get("runtimeId").and_then(Value::as_str) {
         crate::pi_runtime::ensure_runtime_owner(&app.state::<PiRuntime>(), id, &owner)?;
     }
