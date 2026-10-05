@@ -54,6 +54,7 @@ export function markdownImages() {
         }
 
         const host = document.createElement("span");
+        host.className = "linked-message-image";
         slot.replaceWith(host);
         const dispose = render(() => <LinkedImage project={project} path={reference.path} label={label} />, host);
         next.push({ path: reference.path, label, project: key, host, dispose });

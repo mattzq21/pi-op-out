@@ -152,8 +152,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .copy-feedback { color: #e69582; font-size: 12px; font-weight: 400; }.code-block > .copy-feedback { position: absolute; top: 9px; right: 42px; }
 .user-message { display: flex; flex-direction: column; align-items: flex-end; gap: 0; }
 .user-message-images { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 82%; margin-bottom: 8px; }
-.user-message-images > .image-preview { width: 80px; height: 80px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; }
-.user-message-images > .image-preview img { width: 100%; height: 100%; object-fit: cover; }
 .user-message .message-body { width: fit-content; max-width: min(82%, 600px); padding: 10px 13px; border: 1px solid #ddd9d1; border-radius: 12px 4px 12px 12px; background: #efede7; font-weight: 500; color: var(--ink); }
 .message-body table { display: block; width: max-content; max-width: 100%; overflow-x: auto; }
 .message-body th, .message-body td { min-width: 5rem; overflow-wrap: normal; word-break: normal; }
