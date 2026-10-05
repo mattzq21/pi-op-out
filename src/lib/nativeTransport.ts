@@ -94,6 +94,7 @@ export class NativeTransport {
   }
   private owns = true;
   ownsConversation() { return this.owns; }
+  hasConfirmedOwnership() { return this.running && this.owns; }
   async takeOwnership() {
     if (this.readOnly) throw new Error("This view is read-only");
     await this.command({ type: "take_ownership" });
@@ -164,7 +165,12 @@ export class NativeTransport {
   private temporaryChat = false;
   private temporaryChatUsed = false;
   private terminalActivity = false;
+  private preparedTerminalIds = new Set<string>();
   hasTerminalActivity() { return this.terminalActivity; }
+  isPreparedTerminal(terminalId: string) { return this.preparedTerminalIds.has(terminalId); }
+  markTerminalActivity(cwd = this.cwd, hostId = this.hostId) {
+    if (cwd && cwd === this.cwd && hostId === this.hostId) { this.terminalActivity = true; this.temporaryChatUsed = true; }
+  }
   private readonly fastMode = new ConversationCommands({
     command: async command => { await this.command(command); },
     send: async command => { await call("pi_command", { runtimeId: this.runtimeId, command }); },
@@ -329,10 +335,10 @@ export class NativeTransport {
 
     if (version !== this.connectionVersion || !attached) throw new Error("The conversation disconnected while starting. Reconnect to try again.");
     this.daemonId = attached.daemonId;
-    this.connectedOwnership(attached);
 
     if (version === this.connectionVersion) {
       this.running = true;
+      this.connectedOwnership(attached);
       this.presenceCleanup?.();
       window.addEventListener("focus", this.publishPresence); window.addEventListener("blur", this.publishPresence); window.addEventListener("resize", this.publishPresence); document.addEventListener("visibilitychange", this.publishPresence);
       this.presenceCleanup = () => { window.removeEventListener("focus", this.publishPresence); window.removeEventListener("blur", this.publishPresence); window.removeEventListener("resize", this.publishPresence); document.removeEventListener("visibilitychange", this.publishPresence); };
@@ -345,7 +351,8 @@ export class NativeTransport {
     this.owns = !this.readOnly && attached?.owned !== false;
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
-  async disconnect(discardBlank = false) { ++this.connectionVersion; this.running = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
+  async disconnect(discardBlank = false) { const owned = this.hasConfirmedOwnership(); ++this.connectionVersion; this.running = false; this.owns = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
+    if (owned) this.emit({ type: "ownership_lost" });
 
   return this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId, discardBlank }, z.boolean())); }
   reconnectForSettings(settings: AppSettings) { return this.settings.reconnect(settings); }
@@ -449,8 +456,9 @@ export class NativeTransport {
   async prepareTemporaryChat(hostId: string) { const chat = await call("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" }, z.object({ cwd: z.string(), sessionId: z.string() })); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false;
 
   return chat.cwd; }
-  startTerminal(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId = this.hostId) {
-    if (cwd === this.cwd && hostId === this.hostId) { this.terminalActivity = true; this.temporaryChatUsed = true; }
+  startTerminal(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId = this.hostId, preparation = false) {
+    if (preparation) this.preparedTerminalIds.add(terminalId);
+    else this.markTerminalActivity(cwd, hostId);
 
     return nativeTerminals.start(terminalId, sessionKey, cwd, cols, rows, hostId);
   }

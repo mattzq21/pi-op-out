@@ -25,11 +25,20 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const terminalSessionId = createMemo(() => terminalConversationKey(terminalTarget(), conversationKey()));
   const terminalSessionIdRef = createRef(terminalSessionId());
   createComputed(() => { terminalSessionIdRef.current = terminalSessionId(); });
+  const [prepareTerminal, setPrepareTerminal] = createSignal(true);
+  createDependencyEffect(() => { setPrepareTerminal(true); }, () => [terminalSessionId()]);
+  createEffect(() => { if (terminalOpen()) setPrepareTerminal(true); });
 
   const terminalLocationState = createMemo(() => ({
     terminalCwd: terminalTarget()?.cwd ?? location().cwd,
     terminalHostId: terminalTarget()?.hostId ?? location().hostId,
   }));
+
+  createEffect(() => {
+    if (!terminalOpen()) return;
+    const { terminalCwd, terminalHostId } = terminalLocationState();
+    sessionTransport(terminalSessionId())?.markTerminalActivity(terminalCwd, terminalHostId);
+  });
 
   const state = createMemoFields(() => {
     const sessionTerminals = terminalsBySession()[terminalSessionId()] ?? initialTerminals(terminalSessionId());
@@ -42,10 +51,10 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const [owned, setOwned] = createSignal(false);
   createEffect(() => {
     const owner = sessionTransport(terminalSessionId());
-    setOwned(owner?.ownsConversation() ?? false);
+    setOwned(owner?.hasConfirmedOwnership() ?? false);
     const stop = owner?.subscribe(event => {
-      if (event.type === "ownership_acquired" || event.type === "ownership_lost") {
-        setOwned(owner.ownsConversation());
+      if (event.type === "ownership_acquired" || event.type === "ownership_lost" || event.type === "disconnected") {
+        setOwned(owner.hasConfirmedOwnership());
         void refreshShared();
       }
     });
@@ -57,13 +66,14 @@ export function createTerminalController({ transport, sessionTransport, conversa
   createEffect(() => {
     const key = terminalSessionId();
     const hostId = terminalLocationState().terminalHostId;
-    if (!terminalOpen()) return;
+    if (!terminalLocationState().terminalCwd) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     let dirty = false;
     let buffered: TerminalEvent[] = [];
     let pending: Promise<void> | undefined;
     let reportedError = false;
+    let synchronized = false;
     const refresh = () => {
       if (pending) { dirty = true; return pending; }
       pending = nativeTerminals.list(key, hostId).then(tabs => {
@@ -82,11 +92,12 @@ export function createTerminalController({ transport, sessionTransport, conversa
             if (!tab.placeholder && !tab.generation && !merged.some(value => value.id === tab.id) && (!tab.started || startingTerminals.current.has(tab.id))) merged.push(tab);
           }
           if (!merged.length) {
-            if (previous?.tabs.some(tab => tab.generation)) setTerminalOpen(false);
+            if (synchronized && previous?.tabs.some(tab => tab.generation)) { setPrepareTerminal(false); setTerminalOpen(false); }
             return { ...current, [key]: initialTerminals(key) };
           }
           return { ...current, [key]: { activeId: merged.some(tab => tab.id === previous?.activeId) ? previous!.activeId : merged[0].id, tabs: merged } };
         });
+        synchronized = true;
         setReadySession(key);
         reportedError = false;
       }).catch(reason => {
@@ -139,7 +150,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     onCleanup(() => { cancelled = true; unlisten?.(); buffered = []; setReadySession(undefined); });
   });
   const takeOwnership = async () => {
-    try { const owner = sessionTransport(terminalSessionId()); if (!owner) throw new Error("Session is unavailable"); await owner.takeOwnership(); setOwned(owner.ownsConversation()); await refreshShared(); }
+    try { const owner = sessionTransport(terminalSessionId()); if (!owner) throw new Error("Session is unavailable"); await owner.takeOwnership(); setOwned(owner.hasConfirmedOwnership()); await refreshShared(); }
     catch (reason) { addNotice({ title: "Could not take session ownership", message: String(reason) }); }
   };
   const queuedTerminalOutput = createRef(new Map<string, QueuedTerminalOutput>());
@@ -159,16 +170,16 @@ export function createTerminalController({ transport, sessionTransport, conversa
     if (terminalOutputFrame.current === undefined) terminalOutputFrame.current = window.setTimeout(flushTerminalOutput, 16);
   };
 
-  const startTerminal = async (terminalId: string, cols: number, rows: number) => { const capturedTerminalSessionId = terminalSessionId(); const capturedTerminalLocationState = { ...terminalLocationState() }; const capturedTransport = transport();
+  const startTerminal = async (terminalId: string, cols: number, rows: number) => { const capturedTerminalSessionId = terminalSessionId(); const capturedTerminalLocationState = { ...terminalLocationState() }; const capturedTransport = sessionTransport(capturedTerminalSessionId) ?? transport(); const preparation = !terminalOpen();
 
-    if (!owned() || startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
+    if (!owned() || !capturedTransport.hasConfirmedOwnership() || startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
     const sessionKey = capturedTerminalSessionId;
 
     if (state.activeTerminal.placeholder) {
       await refreshShared();
       const tab = terminalsBySession()[sessionKey]?.tabs.find(value => value.id === terminalId);
 
-      if (!owned() || !ready() || terminalSessionId() !== sessionKey || !tab?.placeholder) {
+      if (!owned() || !capturedTransport.hasConfirmedOwnership() || !ready() || terminalSessionId() !== sessionKey || !tab?.placeholder) {
         startingTerminals.current.delete(terminalId);
 
         return;
@@ -186,7 +197,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
     return; }
 
-    try { await capturedTransport.startTerminal(terminalId, sessionKey, cwd, cols, rows, capturedTerminalLocationState.terminalHostId); await refreshShared(); } catch (reason) { setTerminalsBySession((current) => { const session = current[sessionKey];
+    try { await capturedTransport.startTerminal(terminalId, sessionKey, cwd, cols, rows, capturedTerminalLocationState.terminalHostId, preparation); await refreshShared(); } catch (reason) { setTerminalsBySession((current) => { const session = current[sessionKey];
 
     return session ? { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: false, exited: true } : terminal) } } : current; }); queueTerminalOutput(terminalId, `\r\nCould not start terminal: ${String(reason)}\r\n`); } finally { startingTerminals.current.delete(terminalId); }
   };
@@ -217,7 +228,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     return; }
     finally { closingTerminals.current.delete(terminalId); }
 
-    if (closingLast && terminalSessionIdRef.current === panelTarget && terminalPanelRevision.current === panelRevision) setTerminalOpen(false);
+    if (closingLast && terminalSessionIdRef.current === panelTarget && terminalPanelRevision.current === panelRevision) { setPrepareTerminal(false); setTerminalOpen(false); }
     const sessionKey = panelTarget;
     setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey); const removedIndex = session.tabs.findIndex((terminal) => terminal.id === terminalId); const tabs = session.tabs.filter((terminal) => terminal.id !== terminalId); const next = { ...current };
 
@@ -232,7 +243,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
   };
 
   onCleanup(flushOutput);
-  const conversationTerminalIds = (key: string) => terminalsBySession()[key]?.tabs.map(terminal => terminal.id) ?? [];
+  const conversationTerminalIds = (key: string) => terminalsBySession()[key]?.tabs.filter(terminal => !terminal.placeholder || terminal.started).map(terminal => terminal.id) ?? [];
   const allTerminalIds = () => Object.values(terminalsBySession()).flatMap(session => session.tabs.map(terminal => terminal.id));
   const draftTerminalIds = () => Object.entries(terminalsBySession()).filter(([key]) => key.slice(key.lastIndexOf(":") + 1).startsWith("draft-")).flatMap(([, session]) => session.tabs.map(terminal => terminal.id));
 
@@ -310,12 +321,12 @@ export function createTerminalController({ transport, sessionTransport, conversa
   };
 
   createDependencyEffect(() => {
-    if (isMobile || !ready() || !owned() || !state.activeTerminal.inputDraft) return;
+    if (isMobile || !terminalOpen() || !ready() || !owned() || !state.activeTerminal.inputDraft) return;
     void nativeTerminals.write(state.activeTerminal.id, "", "adopt_draft").catch(reason => addNotice({ title: "Could not restore terminal input", message: String(reason) }));
-  }, () => [ready(), owned(), state.activeTerminal.id, state.activeTerminal.inputDraft]);
+  }, () => [terminalOpen(), ready(), owned(), state.activeTerminal.id, state.activeTerminal.inputDraft]);
 
   return {
-    terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, owned, takeOwnership,
+    terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, prepareTerminal, owned, takeOwnership,
     viewKey: createMemo(() => `${terminalSessionId()}:${state.activeTerminal.id}:${state.activeTerminal.generation ?? ""}`),
     startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal,
     queueTerminalOutput, flushOutput, exited, conversationTerminalIds, allTerminalIds, draftTerminalIds,

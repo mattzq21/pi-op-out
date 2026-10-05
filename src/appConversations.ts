@@ -158,7 +158,7 @@ export function createAppConversations(preloadChat: () => void) {
   const composerFields = createMemoFields(composerValues);
   const composerState = () => composerFields;
   const terminalViewKey = terminals.viewKey;
-  const activateConversationKey = (key: string) => { setArchivesOpen(false); activeConversationKeyRef.current = key; setActiveConversationKey(key); };
+  const activateConversationKey = (key: string) => { setArchivesOpen(false); if (key !== activeConversationKeyRef.current) setTerminalTarget(undefined); activeConversationKeyRef.current = key; setActiveConversationKey(key); };
 
   createDependencyEffect(() => {
     const capturedRuntimePool = runtimePool();

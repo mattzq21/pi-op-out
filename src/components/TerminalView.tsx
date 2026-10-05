@@ -2,6 +2,7 @@ import { lazy } from "solid-js";
 import { isMobile } from "../lib/platform";
 
 export interface TerminalViewProps {
+  visible?: boolean;
   ownershipRequired?: boolean; onTakeOwnership?: () => Promise<void>;
   inputDraft?: string; onDraft: (value: string) => void;
   onResize?: (cols: number, rows: number) => Promise<void>;

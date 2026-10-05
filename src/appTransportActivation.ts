@@ -81,19 +81,20 @@ export function createTransportActivation(context: ActivationContext) {
 
   const discardTransport = (previousTransport: NativeTransport, previousKey: string | undefined) => {
       discardDraft(previousTransport, previousKey);
+      let closingTerminals = Promise.resolve([] as PromiseSettledResult<void>[]);
 
       if (previousKey) {
         const terminalIds = conversationTerminalIds(previousKey);
 
-        if (terminalIds.length) void Promise.allSettled(terminalIds.map((id) => previousTransport.closeTerminal(id)));
+        closingTerminals = Promise.allSettled(terminalIds.map((id) => previousTransport.closeTerminal(id)));
         forgetTerminals(previousKey);
       }
 
-      void runtimePool().release(previousTransport).finally(() => transportConversationKeys.current.delete(previousTransport));
+      void closingTerminals.then(() => runtimePool().release(previousTransport)).finally(() => transportConversationKeys.current.delete(previousTransport));
   };
 
   const shouldDiscard = (previous: NativeTransport, next: NativeTransport, hasUnsentWork: boolean) => previous !== next && !runtimePool().isRetained(previous) && !chatSession().state.isStreaming && emptyConversation() && !hasUnsentWork;
-  const hasDraftWork = (owner: NativeTransport, key: string | undefined) => transportHasDraft(owner, key) || owner.hasTerminalActivity() || Boolean(key && conversationTerminalIds(key).length);
+  const hasDraftWork = (owner: NativeTransport, key: string | undefined) => transportHasDraft(owner, key) || owner.hasTerminalActivity() || Boolean(key && conversationTerminalIds(key).some(id => !owner.isPreparedTerminal(id)));
 
   return (nextTransport: NativeTransport) => {
     const previousTransport = transport();
