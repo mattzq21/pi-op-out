@@ -23,6 +23,7 @@ import { ConversationQuestions } from "./ConversationQuestions";
 import { DeferredTurn } from "./DeferredTurn";
 import { DiffViewer } from "./DiffViewer";
 import { Message } from "./Message";
+import { ConversationImageProject } from "./markdownImages";
 import { WorkingIndicator } from "./WorkingIndicator";
 import { toolFailureStats } from "../lib/toolFailureStats";
 import { PromptContextBar } from "./PromptContextBar";
@@ -249,7 +250,7 @@ export function ChatView(props: Props) {
     };
 
     return (<div class="conversation-content">
-      <MessagesSection />
+      <ConversationImageProject.Provider value={() => props.projectCwd ? { cwd: props.projectCwd, hostId: props.transport?.currentHostId() ?? "local" } : undefined}><MessagesSection /></ConversationImageProject.Provider>
       <ComposerStack />
     </div>);
   };

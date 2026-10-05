@@ -4,7 +4,8 @@ import { ReviewLink } from "./ReviewLink";
 import { HtmlPreview } from "./HtmlPreview";
 import { AgentDelivery } from "./AgentDelivery";
 import { Key } from "@solid-primitives/keyed";
-import { type Accessor, createMemo, createSignal, Index } from "solid-js";
+import { type Accessor, createMemo, createSignal, Index, useContext } from "solid-js";
+import { ConversationImageProject } from "./markdownImages";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, Pause, Split, Undo2, Wrench } from "lucide-solid";
@@ -155,6 +156,7 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
 }
 
 export function Message(componentProps: Props) {
+  const imageProject = useContext(ConversationImageProject);
   const [copyState, setCopyState] = createSignal<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = createSignal(false);
   const branchingRef = createRef(false);
@@ -216,7 +218,7 @@ export function Message(componentProps: Props) {
     };
 
     const renderMessageBody = () => {
-      const renderResponse = () => <Markdown onOpenFile={componentProps.onOpenFile} streaming={streaming()}>{output()}</Markdown>;
+      const renderResponse = () => <Markdown imageProject={imageProject()} onOpenFile={componentProps.onOpenFile} streaming={streaming()}>{output()}</Markdown>;
       const renderMessageFailure = () => (failureState().failure && <div class="message-failure" role="status"><CircleAlert size={14} /><span>{(failureState().failure)}</span>{componentProps.onRetry && <button disabled={(componentProps.retrying === undefined ? false : componentProps.retrying)} onClick={(componentProps.onRetry)}>{(componentProps.retrying === undefined ? false : componentProps.retrying) ? "Retrying…" : "Retry"}</button>}</div>);
       const renderStreamCaret = () => (streaming() && !componentProps.paused && <WorkingIndicator />);
 

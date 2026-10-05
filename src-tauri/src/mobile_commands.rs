@@ -66,6 +66,7 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("list_directories", handle_list_directories),
     ("list_project_files", handle_list_project_files),
     ("read_project_file", handle_read_project_file),
+    ("read_image_file", handle_read_image_file),
     ("save_project_file", handle_save_project_file),
     ("is_git_repository", handle_is_git_repository),
     ("git_branch", handle_git_branch),
@@ -275,6 +276,12 @@ fn handle_list_project_files(_app: AppHandle, _owner: String, args: Value) -> Co
 fn handle_read_project_file(_app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || project_files::read(&argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_read_image_file(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || project_files::read_image(app, &argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?, &argument::<String>(&args, "hostId")?)).await.map_err(|error| error.to_string())?
     })
 }
 

@@ -91,12 +91,12 @@ function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
   </dialog>;
 }
 
-export function ZoomableImage(props: { src: string; alt: string }) {
+export function ZoomableImage(props: { src: string; alt: string; onError?: () => void }) {
   const [open, setOpen] = createSignal(false);
 
   return <>
     <button type="button" class="image-preview" aria-label={`Enlarge image: ${props.alt}`} onClick={() => setOpen(true)}>
-      <img src={props.src} alt={props.alt} />
+      <img src={props.src} alt={props.alt} onError={props.onError} />
     </button>
     <Show when={open()}><ImageViewer src={props.src} alt={props.alt} onClose={() => setOpen(false)} /></Show>
   </>;

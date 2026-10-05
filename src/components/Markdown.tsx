@@ -5,12 +5,13 @@ import { Marked } from "marked";
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
-import { fileReference, type FileReference } from "../lib/projectFiles";
+import { fileReference, type FileProject, type FileReference } from "../lib/projectFiles";
 import { detectFileLinks } from "../lib/fileLinks";
 import { webUrl } from "../lib/webLinks";
 import { diagramFenceClosed } from "../lib/diagrams";
 import { markdownBlocks } from "./markdownBlocks";
 import { streamingMarkdown } from "./streamingMarkdown";
+import { imageFileReference } from "./markdownImages";
 import { markdownHooks, markdownTokenizer } from "../lib/markdownTokenizer";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]));
@@ -21,7 +22,7 @@ const parser = new Marked({
   hooks: markdownHooks,
   renderer: {
     html: ({ text }) => escapeHtml(text),
-    image: ({ text }) => `<span class="message-image-placeholder" role="img" aria-label="${escapeHtml(text || "Blocked remote image")}">[Image: ${escapeHtml(text || "blocked")}]</span>`,
+    image: ({ href, text }) => `<span class="message-image-placeholder" role="img"${fileReference(href) ? ` data-file-reference="${escapeHtml(href)}"` : ""} aria-label="${escapeHtml(text || "Blocked remote image")}">[Image: ${escapeHtml(text || "blocked")}]</span>`,
     link({ href, tokens }) {
       const text = this.parser.parseInline(tokens);
       const url = webUrl(href);
@@ -51,7 +52,7 @@ export function markdownHtml(source: string, streaming = false, detectFiles = fa
   }
 }
 
-function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean) {
+function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean, allowFile?: (value: string) => boolean) {
   if (!purifier || purifierWindow !== window) { purifier = DOMPurify(window); purifierWindow = window; }
 
   const sanitized = purifier.sanitize(streaming ? html : html.replaceAll('data-complete="false"', 'data-complete="true"'), {
@@ -61,7 +62,7 @@ function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean
     RETURN_DOM_FRAGMENT: true,
   });
 
-  if (detectFiles) return detectFileLinks(sanitized);
+  if (detectFiles) return detectFileLinks(sanitized, allowFile);
   const template = document.createElement("template");
   template.content.append(sanitized);
 
@@ -70,8 +71,8 @@ function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean
 
 type LinkMenu = { href: string; x: number; y: number; returnFocus?: HTMLElement };
 
-export function Markdown(props: { children: string; streaming?: boolean; onOpenFile?: (file: FileReference) => void }) {
-  const renderMarkdown = streamingMarkdown(parser, sanitizeMarkdown);
+export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; onOpenFile?: (file: FileReference) => void }) {
+  const renderMarkdown = streamingMarkdown(parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, props.onOpenFile ? undefined : value => Boolean(imageFileReference(value))));
   const [error, setError] = createSignal<string>();
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -80,13 +81,13 @@ export function Markdown(props: { children: string; streaming?: boolean; onOpenF
   createEffect(() => {
     let html: string[];
 
-    try { html = renderMarkdown(props.children, Boolean(props.streaming), Boolean(props.onOpenFile)); }
+    try { html = renderMarkdown(props.children, Boolean(props.streaming), Boolean(props.onOpenFile || props.imageProject)); }
     catch (error) {
       if (!(error instanceof RangeError)) throw error;
       html = [`<pre>${escapeHtml(props.children)}</pre>`];
     }
 
-    if (root) blocks.update(root, html);
+    if (root) blocks.update(root, html, props.imageProject);
   });
   onCleanup(() => blocks.dispose());
   const [menuElement, setMenuElement] = createSignal<HTMLDivElement>();

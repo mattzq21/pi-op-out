@@ -12,10 +12,10 @@ function fileButton(path: string, label: string) {
   return button;
 }
 
-function referenceLink(value: string) {
+function referenceLink(value: string, allowFile: (value: string) => boolean) {
   const url = webUrl(value);
 
-  if (!url) return looksLikeFile(value) ? fileButton(value, value) : undefined;
+  if (!url) return looksLikeFile(value) && allowFile(value) ? fileButton(value, value) : undefined;
   const link = document.createElement("a");
   link.className = "message-link";
   link.href = url;
@@ -32,14 +32,14 @@ function referenceText(value: string) {
   return value.slice(0, end);
 }
 
-function linkText(node: Text) {
+function linkText(node: Text, allowFile: (value: string) => boolean) {
   const text = node.data;
   let fragment: DocumentFragment | undefined;
   let end = 0;
 
   for (const match of text.matchAll(/[^\s<>"'`()[\]{},;]+/g)) {
     const candidate = referenceText(match[0]);
-    const link = referenceLink(candidate);
+    const link = referenceLink(candidate, allowFile);
 
     if (!link) continue;
     fragment ??= document.createDocumentFragment();
@@ -52,34 +52,38 @@ function linkText(node: Text) {
   node.replaceWith(fragment);
 }
 
-function linkExplicitPaths(root: DocumentFragment) {
+function linkExplicitPaths(root: DocumentFragment, allowFile: (value: string) => boolean) {
   for (const link of root.querySelectorAll<HTMLElement>("span[data-file-reference]")) {
     const path = required(link.dataset.fileReference);
 
-    if (!fileReference(path)) continue;
+    if (!fileReference(path) || !allowFile(path)) continue;
     const button = fileButton(path, "");
     button.append(...link.childNodes);
     link.replaceWith(button);
   }
 }
 
-export function detectFileLinks(html: string | DocumentFragment) {
+export function detectFileLinks(html: string | DocumentFragment, allowFile = (_value: string) => true) {
   const template = document.createElement("template");
 
   if (html instanceof DocumentFragment) template.content.append(html);
   else template.innerHTML = html;
-  linkFileReferences(template.content);
+  linkFileReferences(template.content, allowFile);
 
   return template.innerHTML;
 }
 
-export function linkFileReferences(root: DocumentFragment) {
-  linkExplicitPaths(root);
+export function linkFileReferences(root: DocumentFragment, allowFile = (_value: string) => true) {
+  return linkAllowedFileReferences(root, allowFile);
+}
+
+function linkAllowedFileReferences(root: DocumentFragment, allowFile: (value: string) => boolean) {
+  linkExplicitPaths(root, allowFile);
 
   for (const code of root.querySelectorAll("code")) {
     if (code.closest("pre, a, button")) continue;
     const path = code.textContent ?? "";
-    const link = referenceLink(path);
+    const link = referenceLink(path, allowFile);
 
     if (link) code.replaceChildren(link);
   }
@@ -91,7 +95,7 @@ export function linkFileReferences(root: DocumentFragment) {
     if (node instanceof Text && !node.parentElement?.closest("pre, code, a, button")) nodes.push(node);
   }
 
-  for (const node of nodes) linkText(node);
+  for (const node of nodes) linkText(node, allowFile);
 
   return root;
 }
