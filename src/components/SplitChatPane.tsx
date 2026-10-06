@@ -361,7 +361,7 @@ export function SplitChatPane(componentProps: Props) {
   const renderReviewFeedback = () => componentProps.onMessageMain && <button type="button" class="review-feedback-button" aria-pressed={feedbackQueued()} disabled={feedbackDisabled()} onClick={clickFeedback}>{feedbackLabel()}</button>;
 
   return <section class="split-chat" aria-label={`Split conversation: ${componentProps.session.name}`}>
-    <header class="split-pane-header"><span><strong title={componentProps.session.name}>{componentProps.session.name}</strong><small title={componentProps.session.cwd}>{componentProps.session.project}</small></span><div class="split-pane-actions">{renderReviewFeedback()}<button class="split-pane-close" aria-label="Close split pane" title="Close split pane" onClick={componentProps.onClose}><X size={15} /></button></div></header>
+    <header class="split-pane-header"><span><strong data-tooltip={componentProps.session.name}>{componentProps.session.name}</strong><small data-tooltip={componentProps.session.cwd}>{componentProps.session.project}</small></span><div class="split-pane-actions">{renderReviewFeedback()}<button class="split-pane-close" aria-label="Close split pane" data-tooltip="Close split pane" onClick={componentProps.onClose}><X size={15} /></button></div></header>
     {renderSplitPaneStatus()}
     {renderSplitControlError()}
     {notices().length > 0 && <div class="split-notices">{<Key each={notices()} by={(notice) => notice.id}>{(notice, _index) => <div class="error-toast" role="alert" ><strong>{notice().title}</strong><span>{notice().message}</span><button aria-label={`Dismiss ${notice().title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice().id))}>×</button></div>}</Key>}</div>}

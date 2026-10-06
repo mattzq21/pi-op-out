@@ -88,7 +88,7 @@ function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
 
   return <dialog ref={element => { dialogRef.current = element; }} class="image-viewer" aria-label={props.alt} onClick={props.onClose} onCancel={event => { event.preventDefault(); props.onClose(); }} onClose={props.onClose}>
     <div class="image-viewer-toolbar">
-      <button type="button" autofocus aria-label="Close image" title="Close image"><X size={22} /></button>
+      <button type="button" autofocus aria-label="Close image" data-tooltip="Close image"><X size={22} /></button>
     </div>
     <div ref={element => { contentRef.current = element; }} class="image-viewer-content">
       <button type="button" class="image-viewer-image" classList={{ "full-size": expanded(), dragging: dragging() }} aria-label={expanded() ? "Fit image to screen" : "View image at full size"} onClick={clickImage}>

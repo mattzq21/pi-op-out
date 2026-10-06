@@ -29,7 +29,7 @@ export function ContextTokenDiagram(props: { tokens: number; style: JSX.CSSPrope
   });
 
   return <>
-    <button ref={button} type="button" class="prompt-context-diagram" title={label()} aria-label={label()}
+    <button ref={button} type="button" class="prompt-context-diagram" data-tooltip={label()} aria-label={label()}
       aria-describedby={position() ? id : undefined} onClick={toggle} onBlur={close}
       onKeyDown={event => { if (event.key === "Escape") close(); }}>
       <span class="prompt-context-wheel" style={props.style} aria-hidden="true" />

@@ -58,7 +58,7 @@ export function ResizableTerminalPanel(componentProps: { children: JSXElement })
       aria-valuemin={MIN_HEIGHT}
       aria-valuemax={maxHeight()}
       aria-valuenow={visibleHeight()}
-      title="Drag to resize terminal panel; double-click to reset"
+      data-tooltip="Drag to resize terminal panel; double-click to reset"
       onPointerDown={(event) => {
         if (event.button !== 0 || !event.isPrimary) return;
         event.preventDefault();

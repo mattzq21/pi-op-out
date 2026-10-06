@@ -69,7 +69,7 @@ export function NewChatWorktreePicker(props: { transport: NativeTransport; listi
 
   onCleanup(unregister);
 
-  return <><div class="project-picker"><button type="button" class="selected" aria-label="Choose worktree" aria-haspopup="dialog" aria-expanded={open()} title={props.listing.path} disabled={props.disabled || pending()} onClick={() => setOpen(true)}><FolderGit2 size={14} />{createNew() ? "Create new worktree" : "Local"}</button></div>
+  return <><div class="project-picker"><button type="button" class="selected" aria-label="Choose worktree" aria-haspopup="dialog" aria-expanded={open()} data-tooltip={props.listing.path} disabled={props.disabled || pending()} onClick={() => setOpen(true)}><FolderGit2 size={14} />{createNew() ? "Create new worktree" : "Local"}</button></div>
     <Show when={open()}><WorktreeOptions local={!createNew()} pending={pending()} error={error()} onLocal={() => choose(false)} onCreate={() => choose(true)} onClose={() => setOpen(false)} /></Show>
     <Show when={error() && !open()}><small role="alert">{error()}</small></Show>
   </>;

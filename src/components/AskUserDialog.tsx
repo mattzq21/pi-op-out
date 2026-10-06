@@ -71,7 +71,7 @@ export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: stri
   const write = (notes: string) => update({ selected: -1, notes });
 
   return <section class="ask-user-dialog" aria-labelledby={titleId} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); void respond({ cancelled: true }); } }}>
-    <header class="ask-user-header"><CircleHelp size={13} /><span title={props.owner}>Question</span>
+    <header class="ask-user-header"><CircleHelp size={13} /><span data-tooltip={props.owner}>Question</span>
       <Show when={questions.length > 1}><span class="ask-user-progress">{index() + 1} of {questions.length}</span></Show>
       <button type="button" class="ask-user-close" aria-label="Close question" disabled={busy()} onClick={() => void respond({ cancelled: true })}><X size={14} /></button>
     </header>
@@ -81,7 +81,7 @@ export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: stri
       <h2 id={titleId}>{question().question}</h2>
       <fieldset disabled={busy()} class="ask-user-options" aria-labelledby={titleId}>
         <For each={question().options}>{(option, optionIndex) =>
-          <button type="button" class="ask-user-option" classList={{ suggested: optionIndex() === 0 && !answer().notes }} title={option.description} onClick={() => choose(optionIndex())}>
+          <button type="button" class="ask-user-option" classList={{ suggested: optionIndex() === 0 && !answer().notes }} data-tooltip={option.description} onClick={() => choose(optionIndex())}>
             <span class="ask-user-number" aria-hidden="true">{optionIndex() + 1}</span>
             <span class="ask-user-label">{option.label}</span><ArrowRight class="ask-user-arrow" size={16} />
           </button>

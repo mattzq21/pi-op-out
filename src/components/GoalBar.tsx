@@ -51,16 +51,16 @@ export function GoalBar<T>(props: { value?: string; disabled: boolean; onCommand
 
   return <Show when={goal()}>{current => <section class="goal-bar" aria-label="Conversation goal">
     <div class="goal-bar-row">
-      <span class="goal-bar-status" title={labels[current().status]}>/goal</span>
-      <span class="goal-bar-objective" title={current().objective}>{current().objective}</span>
-      <span class="goal-bar-time" title="Active time">{duration(current().elapsedMs)}</span>
-      <button type="button" title="Clear goal" aria-label="Clear goal" disabled={props.disabled || busy()} onClick={() => void run("clear")}><Trash2 size={14} /></button>
+      <span class="goal-bar-status" data-tooltip={labels[current().status]}>/goal</span>
+      <span class="goal-bar-objective" data-tooltip={current().objective}>{current().objective}</span>
+      <span class="goal-bar-time" data-tooltip="Active time">{duration(current().elapsedMs)}</span>
+      <button type="button" data-tooltip="Clear goal" aria-label="Clear goal" disabled={props.disabled || busy()} onClick={() => void run("clear")}><Trash2 size={14} /></button>
       <Show when={current().status !== "complete"}>
-        <button type="button" title={current().status === "active" ? "Pause goal" : "Resume goal"} aria-label={current().status === "active" ? "Pause goal" : "Resume goal"} disabled={props.disabled || busy()} onClick={() => void run(current().status === "active" ? "pause" : "resume")}>
+        <button type="button" data-tooltip={current().status === "active" ? "Pause goal" : "Resume goal"} aria-label={current().status === "active" ? "Pause goal" : "Resume goal"} disabled={props.disabled || busy()} onClick={() => void run(current().status === "active" ? "pause" : "resume")}>
           <Show when={current().status === "active"} fallback={<CirclePlay size={14} />}><CirclePause size={14} /></Show>
         </button>
       </Show>
-      <button type="button" title="Edit goal" aria-label="Edit goal" disabled={props.disabled || busy()} onClick={() => void run("edit")}>
+      <button type="button" data-tooltip="Edit goal" aria-label="Edit goal" disabled={props.disabled || busy()} onClick={() => void run("edit")}>
         <Pencil size={13} />
       </button>
     </div>
