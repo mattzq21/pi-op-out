@@ -171,8 +171,13 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     const instance = terminal.current;
 
     if (!instance) return;
-    if (componentProps.visible === false) { instance.blur(); return; }
+
+    if (componentProps.visible === false) { instance.blur();
+
+      return; }
+
     resizeToHost.current?.();
+
     const frame = requestAnimationFrame(() => {
       if (terminal.current === instance && componentProps.visible !== false && !componentProps.ownershipRequired) instance.focus();
     });
@@ -206,6 +211,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
   }, () => [componentProps.output, componentProps.outputEnd]);
   createDependencyEffect(() => {
     const capturedActiveId0 = componentProps.activeId;
+
     if (componentProps.visible !== false) tabRefs.current.get(capturedActiveId0)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, () => [componentProps.visible, componentProps.activeId, componentProps.terminals.length]);
 
   const canAdd = createMemo(() => (componentProps.terminals.length < 8));

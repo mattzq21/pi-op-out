@@ -54,7 +54,12 @@ export async function fixture(t) {
 
   const loader = (await import(pathToFileURL(join(dir, 'extension-loader.mjs')))).agentExtensions(pi, dir);
 
-  return { dir, pi, ctx, loader, file, emit, commands, tools, entries, messages, statuses, activeTools: () => activeTools };
+  const rpc = (command, payload) => { const request = { command, payload, ctx }; pi.events.emit('piop:rpc', request);
+
+    return request.ready;
+  };
+
+  return { dir, pi, ctx, loader, file, emit, rpc, commands, tools, entries, messages, statuses, activeTools: () => activeTools };
 }
 
 test('nested dependencies load once and share the universal context', async t => {
@@ -124,13 +129,13 @@ test('RPC agent selection rejects broken dependencies and keeps previous selecti
   await f.file('good.mjs', `export default pi => pi.registerTool({ name: 'extra', execute: async () => 'ok' });`);
   await f.file('bad.mjs', `export const extensions = ['./missing.mjs']; export default () => {};`);
   await f.file('startup.mjs', `export default pi => pi.on('session_start', () => { throw Error('startup failure'); });`);
-  const agent = (name, extensions = []) => ({ name, extensions, path_systemprompt: 'prompt.md', path_agentprompt: '', model: '', effort: 'high', tools: [], skills: [], mcpServers: [] });
+  const agent = (name, extensions = []) => ({ name, extensions, path_systemprompt: 'prompt.md', path_agentprompt: '', model: '', effort: 'high', tools: [], skills: [], mcpServers: {} });
   await f.file('config.json', JSON.stringify({ agents: [agent('general'), agent('good', ['good.mjs']), agent('bad', ['bad.mjs']), agent('startup', ['startup.mjs'])], webSearchDefaultApplied: true }));
   const previous = { ...process.env };
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
   const define = (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default;
   await define(f.pi); await f.emit('session_start');
-  const select = name => f.commands.get('pi-define-agents-use').handler(name, f.ctx);
+  const select = name => f.rpc('select_agent', { agent: name });
   await select('good');
   assert.deepEqual(f.activeTools(), ['extra']);
   const entriesBefore = structuredClone(f.entries);
@@ -177,7 +182,7 @@ test('event bus unsubscription and agent shutdown release active listeners', asy
 test('a failed restored agent blocks input while global config edits preserve the session snapshot', async t => {
   const f = await fixture(t);
   await f.file('prompt.md', 'Prompt');
-  const agent = { name: 'general', extensions: ['missing.mjs'], path_systemprompt: 'prompt.md', path_agentprompt: '', model: '', effort: 'high', tools: [], skills: [], mcpServers: [] };
+  const agent = { name: 'general', extensions: ['missing.mjs'], path_systemprompt: 'prompt.md', path_agentprompt: '', model: '', effort: 'high', tools: [], skills: [], mcpServers: {} };
   await f.file('config.json', JSON.stringify({ agents: [agent], webSearchDefaultApplied: true }));
   const previous = { ...process.env };
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
@@ -185,8 +190,8 @@ test('a failed restored agent blocks input while global config edits preserve th
   await f.emit('session_start');
   assert.deepEqual(await f.emit('input', { text: 'Never infer' }), { action: 'handled' });
   assert.deepEqual(f.activeTools(), []);
-  const config = Buffer.from(JSON.stringify({ agents: [{ ...agent, extensions: ['other-missing.mjs'] }] })).toString('base64url');
-  await f.commands.get('pi-define-agents-config').handler(config, f.ctx);
+  const config = { agents: [{ ...agent, extensions: ['other-missing.mjs'] }] };
+  await f.rpc('configure_agents', { configuration: config });
   assert.deepEqual(JSON.parse(await readFile(join(f.dir, 'config.json'), 'utf8')).agents[0].extensions, ['other-missing.mjs']);
   assert.deepEqual(await f.emit('input', { text: 'Still unavailable' }), { action: 'handled' });
   assert.match(JSON.parse(f.statuses.get('piop-input-rejected')).error, /missing.mjs/);
@@ -222,7 +227,7 @@ async function invalidAgentFixture(t, position, source) {
   await f.file('parent.mjs', `export const extensions = ['./child.mjs']; ${valid('parent')}`);
   const dependencies = position === 'parent' ? `export const extensions = ['./child.mjs']; ` : '';
   await f.file(invalidPath, dependencies + source);
-  const agent = (name, extensions) => ({ name, extensions, path_systemprompt: 'prompt.md', path_agentprompt: '', model: '', effort: 'high', tools: [], skills: [], mcpServers: [] });
+  const agent = (name, extensions) => ({ name, extensions, path_systemprompt: 'prompt.md', path_agentprompt: '', model: '', effort: 'high', tools: [], skills: [], mcpServers: {} });
   await f.file('config.json', JSON.stringify({ agents: [agent('general', ['stable.mjs']), agent('invalid', [rootPath])], webSearchDefaultApplied: true }));
   const previous = { ...process.env };
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
@@ -235,7 +240,7 @@ async function invalidAgentFixture(t, position, source) {
 async function assertRejectedExtensionGroup(f, scenario) {
   const entries = structuredClone(f.entries);
   const configuration = await readFile(join(f.dir, 'config.json'), 'utf8');
-  await assert.rejects(f.commands.get('pi-define-agents-use').handler('invalid', f.ctx), reason => {
+  await assert.rejects(f.rpc('select_agent', { agent: 'invalid' }), reason => {
     assert.match(reason.message, scenario.error);
 
     if (scenario.name.startsWith("startup")) {
@@ -286,7 +291,7 @@ async function sessionAgentFixture(t) {
   const previous = { ...process.env };
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
   await f.file('prompt.md', 'Prompt');
-  const agent = name => ({ name, path_systemprompt: 'prompt.md', path_agentprompt: '', model: '', effort: 'high', tools: [], skills: [], mcpServers: [] });
+  const agent = name => ({ name, path_systemprompt: 'prompt.md', path_agentprompt: '', model: '', effort: 'high', tools: [], skills: [], mcpServers: {} });
   await f.file('config.json', JSON.stringify({ agents: [agent('general'), agent('reviewer')], webSearchDefaultApplied: true }));
   let effort = 'high';
   f.pi.getThinkingLevel = () => effort;
@@ -298,7 +303,7 @@ async function sessionAgentFixture(t) {
   return true; };
 
   await (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default(f.pi);
-  f.select = name => f.commands.get('pi-define-agents-use').handler(name, f.ctx);
+  f.select = name => f.rpc('select_agent', { agent: name });
   f.capability = () => JSON.parse(Buffer.from(f.statuses.get('pi-define-agents').slice(5), 'base64url'));
 
   return f;
@@ -348,7 +353,7 @@ test('legacy conversations retain their fixed agent when global definitions chan
   assert.equal(f.capability().locked, true);
   const config = JSON.parse(await readFile(join(f.dir, 'config.json'), 'utf8'));
   config.agents = config.agents.filter(agent => agent.name !== 'reviewer');
-  await f.commands.get('pi-define-agents-config').handler(Buffer.from(JSON.stringify(config)).toString('base64url'), f.ctx);
+  await f.rpc('configure_agents', { configuration: config });
   assert.equal(f.capability().active, 'reviewer');
   assert.equal(f.capability().saved, true);
   await assert.rejects(f.select('general'), /agent is fixed/);

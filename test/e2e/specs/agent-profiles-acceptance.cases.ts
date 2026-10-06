@@ -1,7 +1,6 @@
 import { $, browser, expect } from "@wdio/globals";
 import { readFileSync, writeFileSync } from "node:fs";
 
-import { decodeAgentValue } from "../../../src/lib/agentProtocol.js";
 import { agentConfigSchema } from "../../../src/lib/agentSchemas.js";
 import { app } from "../pageobjects/app.page.js";
 import { installedAgentConfigPath, mockBackend, backendCalls, resetBackend, resetApp, emitPiEvent, defaultSettings, acceptanceAgents, enableAgents, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
@@ -33,15 +32,12 @@ describe("Agent profiles acceptance", () => {
     await expect(app.settingsSection("Agents")).toBeDisplayed();
   });
 
-  it("selects an agent by sending the agent use command", async () => {
-    await mockBackend({ "pi_command:prompt": {} });
+  it("selects an agent through the agent RPC", async () => {
+    await mockBackend({ "pi_command:select_agent": {} });
     await app.chooseComposerOption("Agent", "reviewer");
 
-    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => String(args.command?.message).startsWith("/pi-define-agents-use ")));
-    const message = (await backendCalls()).find(({ args }) => String(args.command?.message).startsWith("/pi-define-agents-use "))?.args.command?.message;
-
-    if (!message) throw new Error("Agent selection command was not recorded");
-    expect(decodeAgentValue(message.slice("/pi-define-agents-use ".length))).toBe("reviewer");
+    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "select_agent"));
+    expect((await backendCalls()).find(({ args }) => args.command?.type === "select_agent")?.args.command).toMatchObject({ type: "select_agent", agent: "reviewer" });
   });
 
   it("creates an agent with inherited resources and editable instructions", async () => {
@@ -79,11 +75,11 @@ describe("Agent profiles acceptance", () => {
     await $('button[aria-label="Remove release-reviewer"]').click();
   });
 
-  it("saves the encoded agent configuration using a sessionless writer", async () => {
+  it("saves agent configuration using a sessionless writer", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({
       ...connectedSessionResponses("agents-save"),
-      "pi_command:set_model": {}, "pi_command:prompt": {}, save_app_settings: { settings }, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: settings,
+      "pi_command:set_model": {}, "pi_command:configure_agents": {}, save_app_settings: { settings }, stop_pi: false, start_pi: {}, list_sessions: [], load_app_settings: settings,
     });
     await emitPiEvent({ type: "session_switched" });
     await enableAgents();
@@ -95,10 +91,8 @@ describe("Agent profiles acceptance", () => {
 
     await app.saveSettingsButton.click();
     await expect(app.saveSettingsButton).toHaveText("Saved");
-    const prompt = (await backendCalls()).find(({ args }) => String(args.command?.message).startsWith("/pi-define-agents-config "))?.args.command;
-
-    if (!prompt?.message) throw new Error("Agent configuration command was not recorded");
-    const saved = agentConfigSchema.parse(decodeAgentValue(prompt.message.slice("/pi-define-agents-config ".length)));
+    const command = (await backendCalls()).find(({ args }) => args.command?.type === "configure_agents")?.args.command;
+    const saved = agentConfigSchema.parse(command?.configuration);
     expect(saved.agents.find((agent) => agent.name === "reviewer")?.path_agentprompt).toBe("review-acceptance.md");
     expect((await backendCalls()).filter(({ command }) => command === "save_app_settings")).toHaveLength(1);
     expect((await backendCalls()).some(({ command }) => command === "stop_pi")).toBe(true);
@@ -166,9 +160,9 @@ describe("Agent profiles acceptance", () => {
     const capability = acceptanceAgents();
     await mockBackend({
       ...connectedSessionResponses("agents-rollback"),
-      load_app_settings: settings, save_app_settings: { settings }, start_pi: {}, stop_pi: {},
+      load_app_settings: settings, save_app_settings: { settings }, start_pi: {}, stop_pi: false,
       "pi_command:set_model": {},
-      "pi_command:prompt": { error: "Agent configuration was rejected" },
+      "pi_command:configure_agents": { error: "Agent configuration was rejected" },
     });
     await emitPiEvent({ type: "session_switched" });
     await enableAgents(capability);
@@ -185,9 +179,7 @@ describe("Agent profiles acceptance", () => {
     expect(settingsWrites).toHaveLength(0);
 
     const configurations = calls.flatMap(({ args }) => {
-      const message = args.command?.message;
-
-      return message?.startsWith("/pi-define-agents-config ") ? [agentConfigSchema.parse(decodeAgentValue(message.slice("/pi-define-agents-config ".length)))] : [];
+      return args.command?.type === "configure_agents" ? [agentConfigSchema.parse(args.command.configuration)] : [];
     });
 
     expect(configurations).toHaveLength(1);

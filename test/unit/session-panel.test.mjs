@@ -117,7 +117,7 @@ describe('conversation sidebar', () => {
     await key(document.activeElement, 'Home'); assert.equal(document.activeElement.textContent, 'Open in new window');
     await key(document.activeElement, 'ArrowDown'); assert.equal(document.activeElement.textContent, 'Rename conversation'); await click(document.activeElement);
     assert.deepEqual(actions, [[props.sessions[1], 'rename']]); await dom.flushFrames(); assert.equal(document.activeElement, row('a'));
-    await menu('b'); await dom.flushFrames(); assert.equal(document.activeElement.textContent, 'Split pane'); await key(document.activeElement, 'Escape'); assert.equal(document.querySelector('[role=menu]'), null);
+    await menu('b'); await dom.flushFrames(); assert.equal(document.activeElement.textContent, 'Open in new window'); await key(document.activeElement, 'Escape'); assert.equal(document.querySelector('[role=menu]'), null);
   });
 
   test('collapsed groups persist and search temporarily reveals matching conversations', async () => {
@@ -139,9 +139,9 @@ describe('conversation sidebar', () => {
 
   test('new groups reject reserved names, save trimmed names and allow renaming', async () => {
     let handled = 0; await render({ createGroupRequest: 1, onCreateGroupHandled: () => handled++ }); await dom.flushFrames(); assert.equal(handled, 1);
-    await key(control('New session group name'), 'Enter'); assert.match(document.querySelector('#new-group-error').textContent, /Enter a group name/);
-    await enterText(control('New session group name'), 'Recent'); await key(control('New session group name'), 'Enter'); assert.match(document.querySelector('#new-group-error').textContent, /already uses/);
-    await enterText(control('New session group name'), '  Research  '); await key(control('New session group name'), 'Enter'); assert.deepEqual(changes.at(-1), { type: 'create', name: 'Research' });
+    await key(control('Group name'), 'Enter'); assert.match(document.querySelector('#new-group-error').textContent, /Enter a group name/);
+    await enterText(control('Group name'), 'Chit chats'); await key(control('Group name'), 'Enter'); assert.match(document.querySelector('#new-group-error').textContent, /already uses/);
+    await enterText(control('Group name'), '  Research  '); await key(control('Group name'), 'Enter'); assert.deepEqual(changes.at(-1), { type: 'create', name: 'Research' });
     await click(control('Rename group Research')); await enterText(control('Rename session group'), 'Notes'); await key(control('Rename session group'), 'Enter'); assert.deepEqual(changes.at(-1), { type: 'rename', id: 'custom', name: 'Notes' });
   });
 
@@ -192,30 +192,31 @@ describe('conversation sidebar', () => {
     assert.deepEqual(JSON.parse(localStorage.getItem('pi-desktop-sidebar-order')), ['session:local:b', 'session:local:a']);
   });
 
-  test('group actions route directory and worktree requests and surface native errors', async () => {
-    const created = []; responses.set('open_project_directory', new Error('directory missing'));
-    await render({ onCreateWorktree: (...args) => created.push(args) });
+  test('group actions open directories and surface native errors', async () => {
+    responses.set('open_project_directory', new Error('directory missing'));
+    await render();
     await click(control('Group actions for repo')); await click(menuAction('Open directory')); assert.match(document.querySelector('[role=alert]').textContent, /directory missing/);
     assert.deepEqual(nativeCalls.find(call => call.command === 'open_project_directory').args, { cwd: '/repo', hostId: 'local' });
-    await click(control('Group actions for repo')); await click(menuAction('Create worktree')); assert.deepEqual(created, [['/repo', 'local']]);
+    await click(control('Group actions for repo')); assert.equal(menuAction('Create worktree'), undefined); assert.ok(menuAction('Forget group'));
   });
 
-  test('worktree deletion checks conversation roots and blocks deletion while chats depend on it', async () => {
-    groups.groups[0].projectKind = 'worktree'; responses.set('git_worktree_roots', ['/repo', '/repo', '/elsewhere']);
-    await render({ sessions: props.sessions.map(item => ({ ...item, projectKind: 'worktree' })), onDeleteWorktree: async () => { throw new Error('1 conversation is still using this worktree'); } });
-    await click(control('Group actions for repo')); await click(menuAction('Delete worktree…'));
-    await click(document.querySelector('dialog .primary-button'));
-    assert.match(document.querySelector('dialog [role=alert]').textContent, /1 conversation/); assert.equal(document.querySelector('dialog .primary-button').disabled, false);
+  test('forgetting a group requires confirmation and leaves chats and directories intact', async () => {
+    const deleted = [];
+    await render({ onDeleteWorktree: async (...args) => deleted.push(args) });
+    await click(control('Group actions for repo')); await click(menuAction('Forget group'));
+    assert.match(document.querySelector('dialog').textContent, /No chats or directories will be deleted/);
     await click(document.querySelector('dialog button')); assert.equal(document.querySelector('dialog'), null);
-    responses.set('git_worktree_roots', [null]); await click(control('Group actions for repo')); await click(menuAction('Delete worktree…')); assert.match(document.querySelector('[role=alert]').textContent, /Could not resolve/); assert.equal(document.querySelector('dialog'), null);
+    await click(control('Group actions for repo')); await click(menuAction('Forget group')); await click(document.querySelector('dialog .primary-button'));
+    assert.equal(document.querySelector('dialog'), null); assert.ok(row('a')); assert.ok(row('b'));
+    assert.deepEqual(deleted, []); assert.deepEqual(changes.at(-1), { type: 'remove', id: 'local:/repo' });
   });
 
-  test('worktree deletion passes branch preference and reports a subsequent group cleanup failure', async () => {
-    groups.groups[0].projectKind = 'worktree'; responses.set('git_worktree_roots', ['/repo']); const deleted = [];
-    await render({ sessions: [], onDeleteWorktree: async (...args) => deleted.push(args) });
-    await click(control('Group actions for repo')); await click(menuAction('Delete worktree…')); await click(document.querySelector('dialog input[type=checkbox]'));
+  test('failed group removal preserves the group and allows retry', async () => {
+    await render();
+    await click(control('Group actions for repo')); await click(menuAction('Forget group'));
     responses.set('change_session_groups', new Error('storage unavailable'));
     await click(document.querySelector('dialog .primary-button'));
-    assert.deepEqual(deleted, [['/repo', 'local', true]]); assert.equal(document.querySelector('dialog'), null); assert.match(document.querySelector('[role=alert]').textContent, /storage unavailable/);
+    assert.match(document.querySelector('dialog [role=alert]').textContent, /storage unavailable/); assert.ok(row('a')); assert.ok(row('b'));
+    responses.delete('change_session_groups'); await click(document.querySelector('dialog .primary-button')); assert.equal(document.querySelector('dialog'), null); assert.ok(row('a')); assert.ok(row('b'));
   });
 });

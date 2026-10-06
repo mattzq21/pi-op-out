@@ -152,24 +152,29 @@ fn retire_archived_session(app: &AppHandle, client: &PiRuntime, host_id: &str, s
     Ok(())
 }
 
+fn archive_session_paths(app: &AppHandle, client: &PiRuntime, host_id: &str, session_path: &str, client_id: &str) -> Result<(Vec<String>, Vec<conversation_ownership::MutationGuard>), String> {
+    let mut mutations = vec![conversation_ownership::MutationGuard::acquire(app, host_id, session_path, client_id, false, "archive")?];
+    retire_archived_session(app, client, host_id, session_path)?;
+    let mut paths = vec![session_path.to_owned()];
+    loop {
+        let descendants: Vec<_> = session_descendants(app, host_id, session_path, false, false)?.into_iter()
+            .map(|(path, _)| path).filter(|path| !paths.contains(path)).collect();
+        if descendants.is_empty() { break; }
+        for path in descendants {
+            mutations.push(conversation_ownership::MutationGuard::acquire(app, host_id, &path, client_id, false, "archive")?);
+            retire_archived_session(app, client, host_id, &path)?;
+            paths.push(path);
+        }
+    }
+    Ok((paths, mutations))
+}
+
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, mut terminal_ids: Vec<String>, client_id: String) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let client = app.state::<PiRuntime>();
     let _lifecycle = client.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
-    let mut mutations = vec![conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "archive")?];
-    retire_archived_session(&app, &client, &host_id, &session_path)?;
-    let mut paths = vec![session_path.clone()];
-    loop {
-        let descendants: Vec<_> = session_descendants(&app, &host_id, &session_path, false, false)?.into_iter()
-            .map(|(path, _)| path).filter(|path| !paths.contains(path)).collect();
-        if descendants.is_empty() { break; }
-        for path in descendants {
-            mutations.push(conversation_ownership::MutationGuard::acquire(&app, &host_id, &path, &client_id, false, "archive")?);
-            retire_archived_session(&app, &client, &host_id, &path)?;
-            paths.push(path);
-        }
-    }
+    let (paths, mutations) = archive_session_paths(&app, &client, &host_id, &session_path, &client_id)?;
     let settings = load_app_settings(app.clone())?;
     let session_ids = paths.iter().map(|path| session_identity(&settings, &host_id, path)).collect::<Result<Vec<_>, _>>()?;
     terminal_ids.extend(terminal_lookup::session_terminals(&runtime, &host_id, &session_ids)?);
@@ -251,47 +256,68 @@ fn session_store_root(archived: bool) -> Result<PathBuf, String> {
     Ok(if archived { home.join(STORAGE_DIRECTORY).join("archived") } else { desktop_sessions_dir(&home) })
 }
 
-fn delete_stored_sessions(app: AppHandle, runtime: &PiRuntime, session_paths: Vec<String>, host_id: Option<String>, archived: bool, client_id: String) -> Result<Vec<String>, String> {
-    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
-    let host_id = host_id.unwrap_or_else(|| "local".into());
-    let settings = load_app_settings(app.clone())?;
-    if session_paths.is_empty() { return Err("Select at least one conversation to delete".into()); }
+type DeletionPaths = (Vec<(String, bool)>, Vec<conversation_ownership::MutationGuard>);
+
+fn initial_deletion_paths(app: &AppHandle, settings: &AppSettings, host_id: &str, session_paths: Vec<String>, archived: bool, client_id: &str) -> Result<DeletionPaths, String> {
     let mut mutations = Vec::new();
     let mut paths = Vec::new();
     for session_path in session_paths {
-        let path = stored_session_file(&settings, &host_id, &session_path, archived)?;
+        let path = stored_session_file(settings, host_id, &session_path, archived)?;
         if paths.iter().any(|(existing, _)| existing == &path) { continue; }
-        mutations.push(conversation_ownership::MutationGuard::acquire(&app, &host_id, &path, &client_id, archived, "delete")?);
+        mutations.push(conversation_ownership::MutationGuard::acquire(app, host_id, &path, client_id, archived, "delete")?);
         paths.push((path, archived));
     }
+    Ok((paths, mutations))
+}
+
+fn acquire_deletion_descendants(app: &AppHandle, host_id: &str, client_id: &str, paths: &mut Vec<(String, bool)>, mutations: &mut Vec<conversation_ownership::MutationGuard>) -> Result<(), String> {
     let roots = paths.clone();
     loop {
         let mut children = Vec::new();
         for (path, archived) in &roots {
-            children.extend(session_descendants(&app, &host_id, path, *archived, true)?);
+            children.extend(session_descendants(app, host_id, path, *archived, true)?);
         }
         let mut added = false;
         for (child, child_archived) in children {
             if paths.iter().any(|(path, _)| path == &child) { continue; }
-            mutations.push(conversation_ownership::MutationGuard::acquire(&app, &host_id, &child, &client_id, child_archived, "delete")?);
+            mutations.push(conversation_ownership::MutationGuard::acquire(app, host_id, &child, client_id, child_archived, "delete")?);
             paths.push((child, child_archived));
             added = true;
         }
         if !added { break; }
     }
+    Ok(())
+}
+
+fn deletion_targets(settings: &AppSettings, host_id: &str, paths: &[(String, bool)]) -> Result<Vec<serde_json::Value>, String> {
     let mut targets = Vec::new();
-    for (path, archived) in &paths {
-        let path = stored_session_file(&settings, &host_id, path, *archived)?;
+    for (path, archived) in paths {
+        let path = stored_session_file(settings, host_id, path, *archived)?;
         targets.push(json!({"path":path,"area":if *archived { "archived" } else { "sessions" },"root":if host_id == "local" { Some(session_store_root(*archived)?) } else { None }}));
     }
-    let host = if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) };
-    delete_session_targets(runtime, &targets, &host_id, host.as_ref())?;
+    Ok(targets)
+}
+
+fn finish_deleted_sessions(app: &AppHandle, host_id: &str, paths: &[(String, bool)], mutations: Vec<conversation_ownership::MutationGuard>) {
     for ((path, _), mutation) in paths.iter().zip(mutations) {
         if let Err(error) = mutation.finish_committed() {
             eprintln!("Conversation deletion committed, but ownership cleanup failed for {path}: {error}");
         }
         let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":path}));
     }
+}
+
+fn delete_stored_sessions(app: AppHandle, runtime: &PiRuntime, session_paths: Vec<String>, host_id: Option<String>, archived: bool, client_id: String) -> Result<Vec<String>, String> {
+    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    let settings = load_app_settings(app.clone())?;
+    if session_paths.is_empty() { return Err("Select at least one conversation to delete".into()); }
+    let (mut paths, mut mutations) = initial_deletion_paths(&app, &settings, &host_id, session_paths, archived, &client_id)?;
+    acquire_deletion_descendants(&app, &host_id, &client_id, &mut paths, &mut mutations)?;
+    let targets = deletion_targets(&settings, &host_id, &paths)?;
+    let host = if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) };
+    delete_session_targets(runtime, &targets, &host_id, host.as_ref())?;
+    finish_deleted_sessions(&app, &host_id, &paths, mutations);
     Ok(paths.into_iter().map(|(path, _)| path).collect())
 }
 
@@ -430,18 +456,23 @@ pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host
     let script = include_str!("../../resources/recover-missing-session.cjs");
     let relocate = include_str!("../../resources/relocate-session.bundle.mjs");
     let registry = include_str!("../../resources/session-registry.cjs");
-    let mut command = if host_id == "local" {
-        let mut command = node_command(); command.args(["-e", script, &arguments, relocate, registry]); command
-    } else {
-        let mut command = ssh(remote_host(&settings, &host_id)?);
-        command.arg(remote_login_command(&format!("node -e {} {} {} {}", shell_quote(script), shell_quote(&arguments), shell_quote(relocate), shell_quote(registry)))); command
-    };
+    let mut command = directory_recovery_command(&settings, &host_id, script, &arguments, relocate, registry)?;
     let result = run_directory_recovery(&mut command)?;
     if let Some(mutation) = mutation {
         mutation.finish()?;
         let _ = app.emit("pi://sessions-changed", ());
     }
     Ok(result)
+}
+
+fn directory_recovery_command(settings: &AppSettings, host_id: &str, script: &str, arguments: &str, relocate: &str, registry: &str) -> Result<Command, String> {
+    let command = if host_id == "local" {
+        let mut command = node_command(); command.args(["-e", script, arguments, relocate, registry]); command
+    } else {
+        let mut command = ssh(remote_host(settings, host_id)?);
+        command.arg(remote_login_command(&format!("node -e {} {} {} {}", shell_quote(script), shell_quote(arguments), shell_quote(relocate), shell_quote(registry)))); command
+    };
+    Ok(command)
 }
 
 fn run_directory_recovery(command: &mut Command) -> Result<serde_json::Value, String> {

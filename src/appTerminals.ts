@@ -5,14 +5,24 @@ import type { NativeTransport } from "./lib/nativeTransport";
 import { createDependencyEffect, createMemoFields, createRef } from "./lib/solid";
 import { isMobile } from "./lib/platform";
 import { appendTerminalOutput, TERMINAL_OUTPUT_LIMIT } from "./lib/terminalOutput";
-import { nativeTerminals, type TerminalEvent } from "./lib/nativeTerminals";
+import { nativeTerminals, type SharedTerminal, type TerminalEvent } from "./lib/nativeTerminals";
+
+function appendSharedTerminalEvent(session: SessionTerminals, tab: SessionTerminals["tabs"][number], event: TerminalEvent): SessionTerminals | "resync" {
+  if (event.type !== "terminal_output" || event.outputEnd === undefined || event.data === undefined || event.outputEnd <= tab.outputEnd) return session;
+  const start = event.outputEnd - event.data.length;
+
+  if (start > tab.outputEnd) return "resync";
+  const data = event.data.slice(tab.outputEnd - start);
+
+  return { ...session, tabs: session.tabs.map(value => value.id === tab.id ? { ...value, ...appendTerminalOutput(value.output, value.outputEnd, data, data.length) } : value) };
+}
 
 type TerminalContext = {
   transport: Accessor<NativeTransport>;
   sessionTransport: (key: string) => NativeTransport | undefined;
   conversationKey: Accessor<string>;
   location: Accessor<{ cwd?: string; hostId: string }>;
-  addNotice: (notice: { title: string; message: string }) => void;
+  addNotice: (notice: { title: string; message: string }) => (() => void) | void;
 };
 
 export function createTerminalController({ transport, sessionTransport, conversationKey, location, addNotice }: TerminalContext) {
@@ -52,20 +62,24 @@ export function createTerminalController({ transport, sessionTransport, conversa
   createEffect(() => {
     const owner = sessionTransport(terminalSessionId());
     setOwned(owner?.hasConfirmedOwnership() ?? false);
+
     const stop = owner?.subscribe(event => {
       if (event.type === "ownership_acquired" || event.type === "ownership_lost" || event.type === "disconnected") {
         setOwned(owner.hasConfirmedOwnership());
         void refreshShared();
       }
     });
+
     onCleanup(() => stop?.());
   });
   const [readySession, setReadySession] = createSignal<string>();
   const ready = () => readySession() === terminalSessionId();
   let refreshShared = async () => {};
+
   createEffect(() => {
     const key = terminalSessionId();
     const hostId = terminalLocationState().terminalHostId;
+
     if (!terminalLocationState().terminalCwd) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
@@ -73,86 +87,141 @@ export function createTerminalController({ transport, sessionTransport, conversa
     let buffered: TerminalEvent[] = [];
     let pending: Promise<void> | undefined;
     let reportedError = false;
+    let dismissError: (() => void) | undefined;
     let synchronized = false;
+
+    const mergeSharedTabs = (tabs: SharedTerminal[], previous?: SessionTerminals) => {
+      const merged: SessionTerminals["tabs"] = tabs.map(tab => {
+        queuedTerminalOutput.current.delete(tab.id);
+        const old = previous?.tabs.find(value => value.id === tab.id && value.generation === tab.generation);
+
+        return old && old.outputEnd > tab.outputEnd
+          ? { ...old, ...tab, output: old.output, outputEnd: old.outputEnd }
+          : { ...old, ...tab };
+      });
+
+      for (const tab of previous?.tabs ?? []) {
+        if (!tab.placeholder && !tab.generation && !merged.some(value => value.id === tab.id) && (!tab.started || startingTerminals.current.has(tab.id))) merged.push(tab);
+      }
+
+      return merged;
+    };
+
     const refresh = () => {
-      if (pending) { dirty = true; return pending; }
+      if (pending) { dirty = true;
+
+        return pending; }
+
       pending = nativeTerminals.list(key, hostId).then(tabs => {
         if (cancelled) return;
         setTerminalsBySession(current => {
           const previous = current[key];
-          const merged: SessionTerminals["tabs"] = tabs.map(tab => {
-            queuedTerminalOutput.current.delete(tab.id);
-            const old = previous?.tabs.find(value => value.id === tab.id && value.generation === tab.generation);
 
-            return old && old.outputEnd > tab.outputEnd
-              ? { ...old, ...tab, output: old.output, outputEnd: old.outputEnd }
-              : { ...old, ...tab };
-          });
-          for (const tab of previous?.tabs ?? []) {
-            if (!tab.placeholder && !tab.generation && !merged.some(value => value.id === tab.id) && (!tab.started || startingTerminals.current.has(tab.id))) merged.push(tab);
-          }
+          const merged = mergeSharedTabs(tabs, previous);
+
           if (!merged.length) {
             if (synchronized && previous?.tabs.some(tab => tab.generation)) { setPrepareTerminal(false); setTerminalOpen(false); }
+
             return { ...current, [key]: initialTerminals(key) };
           }
-          return { ...current, [key]: { activeId: merged.some(tab => tab.id === previous?.activeId) ? previous!.activeId : merged[0].id, tabs: merged } };
+
+          return { ...current, [key]: { activeId: merged.find(tab => tab.id === previous?.activeId)?.id ?? merged[0].id, tabs: merged } };
         });
         synchronized = true;
         setReadySession(key);
+        dismissError?.();
+        dismissError = undefined;
         reportedError = false;
       }).catch(reason => {
         if (!cancelled) {
           setReadySession(undefined);
-          if (!reportedError) addNotice({ title: "Could not sync terminals", message: String(reason) });
+
+          if (!reportedError) {
+            const dismiss = addNotice({ title: "Could not sync terminals", message: String(reason) });
+
+            if (dismiss) dismissError = dismiss;
+          }
+
           reportedError = true;
         }
       }).finally(() => {
         pending = undefined;
+
         if (cancelled) return;
         const events = buffered; buffered = [];
+
         for (const event of events) handleEvent(event);
+
         if (dirty) { dirty = false; void refresh(); }
       });
+
       return pending;
     };
-    refreshShared = async () => { await pending; if (!cancelled) await refresh(); };
+
+    refreshShared = async () => { await pending;
+
+      if (!cancelled) await refresh(); };
+
     const handleEvent = (event: TerminalEvent) => {
       if (cancelled || (event.hostId ?? "local") !== hostId || event.sessionId !== key.slice(key.lastIndexOf(":") + 1)) return;
-      if (event.type === "terminal_changed") { void refresh(); return; }
+
+      if (event.type === "terminal_changed") { void refresh();
+
+        return; }
+
       if (pending) {
         if (buffered.length < 512) buffered.push(event); else dirty = true;
+
         return;
       }
+
       let resync = false;
       setTerminalsBySession(current => {
         const session = current[key];
         const tab = session?.tabs.find(value => value.id === event.terminalId);
-        if (!tab || tab.generation !== event.generation) { resync = true; return current; }
+
+        if (!tab || tab.generation !== event.generation) { resync = true;
+
+          return current; }
+
         if (event.type === "terminal_draft") {
           return { ...current, [key]: { ...session, tabs: session.tabs.map(value => value.id === tab.id ? { ...value, inputDraft: event.data ?? "" } : value) } };
         }
+
         if (event.type === "terminal_exit") {
           return { ...current, [key]: { ...session, tabs: session.tabs.map(value => value.id === tab.id ? { ...value, exited: true } : value) } };
         }
-        if (event.type !== "terminal_output" || event.outputEnd === undefined || event.data === undefined || event.outputEnd <= tab.outputEnd) return current;
-        const start = event.outputEnd - event.data.length;
-        if (start > tab.outputEnd) { resync = true; return current; }
-        const data = event.data.slice(tab.outputEnd - start);
-        return { ...current, [key]: { ...session, tabs: session.tabs.map(value => value.id === tab.id ? { ...value, ...appendTerminalOutput(value.output, value.outputEnd, data, data.length) } : value) } };
+
+        const updated = appendSharedTerminalEvent(session, tab, event);
+
+        if (updated === "resync") { resync = true;
+
+          return current; }
+
+        return updated === session ? current : { ...current, [key]: updated };
       });
+
       if (resync) void refresh();
     };
+
     void nativeTerminals.listen(handleEvent).then(stop => {
-      if (cancelled) { stop(); return; }
+      if (cancelled) { stop();
+
+        return; }
+
       unlisten = stop;
       void refresh();
     }).catch(reason => { if (!cancelled) addNotice({ title: "Could not subscribe to terminals", message: String(reason) }); });
-    onCleanup(() => { cancelled = true; unlisten?.(); buffered = []; setReadySession(undefined); });
+    onCleanup(() => { cancelled = true; unlisten?.(); dismissError?.(); buffered = []; setReadySession(undefined); });
   });
+
   const takeOwnership = async () => {
-    try { const owner = sessionTransport(terminalSessionId()); if (!owner) throw new Error("Session is unavailable"); await owner.takeOwnership(); setOwned(owner.hasConfirmedOwnership()); await refreshShared(); }
+    try { const owner = sessionTransport(terminalSessionId());
+
+      if (!owner) throw new Error("Session is unavailable"); await owner.takeOwnership(); setOwned(owner.hasConfirmedOwnership()); await refreshShared(); }
     catch (reason) { addNotice({ title: "Could not take session ownership", message: String(reason) }); }
   };
+
   const queuedTerminalOutput = createRef(new Map<string, QueuedTerminalOutput>());
   const terminalOutputFrame = createRef<number | undefined>(undefined);
 
@@ -170,20 +239,23 @@ export function createTerminalController({ transport, sessionTransport, conversa
     if (terminalOutputFrame.current === undefined) terminalOutputFrame.current = window.setTimeout(flushTerminalOutput, 16);
   };
 
+  const preparePlaceholder = async (terminalId: string, sessionKey: string, owner: NativeTransport) => {
+    if (!state.activeTerminal.placeholder) return true;
+    await refreshShared();
+    const tab = terminalsBySession()[sessionKey]?.tabs.find(value => value.id === terminalId);
+
+    return owned() && owner.hasConfirmedOwnership() && ready() && terminalSessionId() === sessionKey && Boolean(tab?.placeholder);
+  };
+
   const startTerminal = async (terminalId: string, cols: number, rows: number) => { const capturedTerminalSessionId = terminalSessionId(); const capturedTerminalLocationState = { ...terminalLocationState() }; const capturedTransport = sessionTransport(capturedTerminalSessionId) ?? transport(); const preparation = !terminalOpen();
 
     if (!owned() || !capturedTransport.hasConfirmedOwnership() || startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
     const sessionKey = capturedTerminalSessionId;
 
-    if (state.activeTerminal.placeholder) {
-      await refreshShared();
-      const tab = terminalsBySession()[sessionKey]?.tabs.find(value => value.id === terminalId);
+    if (!await preparePlaceholder(terminalId, sessionKey, capturedTransport)) {
+      startingTerminals.current.delete(terminalId);
 
-      if (!owned() || !capturedTransport.hasConfirmedOwnership() || !ready() || terminalSessionId() !== sessionKey || !tab?.placeholder) {
-        startingTerminals.current.delete(terminalId);
-
-        return;
-      }
+      return;
     }
 
     setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey);
@@ -229,6 +301,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     finally { closingTerminals.current.delete(terminalId); }
 
     if (closingLast && terminalSessionIdRef.current === panelTarget && terminalPanelRevision.current === panelRevision) { setPrepareTerminal(false); setTerminalOpen(false); }
+
     const sessionKey = panelTarget;
     setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey); const removedIndex = session.tabs.findIndex((terminal) => terminal.id === terminalId); const tabs = session.tabs.filter((terminal) => terminal.id !== terminalId); const next = { ...current };
 

@@ -41,6 +41,7 @@ export class RemoteClient {
 
       const timer = setTimeout(() => { reject(new Error("Connection timed out. Check the host address and Tailscale Serve.")); socket.close(); }, 15000);
       socket.onopen = () => { if (!isMobileDebugConnection(validateHost(connection))) socket.send(JSON.stringify({ type: "authenticate", mode: "tailscale" })); };
+
       socket.onmessage = ({ data }) => {
         if (this.socket !== socket) return;
         let message: RemotePacket;

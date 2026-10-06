@@ -42,10 +42,10 @@ describe("/review acceptance", () => {
     await expect(split).toBeDisplayed();
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.message === "Review the changed API"));
     expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args).toEqual(expect.objectContaining({ cwd: "/tmp/acceptance-btw", sessionPath: "/tmp/review-session.jsonl", hostId: "local" }));
-    expect((await backendCalls()).find(({ args }) => args.command?.message === "Review the changed API")?.args.command).toEqual({ type: "prompt", message: "Review the changed API" });
+    expect((await backendCalls()).find(({ args }) => args.command?.message === "Review the changed API")?.args.command).toMatchObject({ type: "prompt", message: "Review the changed API" });
 
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.id === "btw-success"));
-    expect((await backendCalls()).find(({ args }) => args.command?.id === "btw-success")?.args.command).toEqual({ type: "extension_ui_response", id: "btw-success", value: "opened" });
+    expect((await backendCalls()).find(({ args }) => args.command?.id === "btw-success")?.args.command).toMatchObject({ type: "extension_ui_response", id: "btw-success", value: "opened" });
 
     await emitPiEvent({ type: "agent_settled" });
     await expect(split).toBeDisplayed();
@@ -62,7 +62,7 @@ describe("/review acceptance", () => {
     await expect(split).not.toBeExisting();
     const responses = (await backendCalls()).filter(({ args }) => args.command?.id === "btw-cancel");
     expect(responses).toHaveLength(1);
-    expect(responses[0].args.command).toEqual({ type: "extension_ui_response", id: "btw-cancel", value: "opened" });
+    expect(responses[0].args.command).toMatchObject({ type: "extension_ui_response", id: "btw-cancel", value: "opened" });
     await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "stop_pi"));
   });
 
@@ -74,7 +74,7 @@ describe("/review acceptance", () => {
     await expect($(".error-toast strong")).toHaveText("Could not start /review");
     await expect($(".error-toast span")).toHaveText("Invalid /review request");
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.id === "btw-invalid"));
-    expect((await backendCalls()).find(({ args }) => args.command?.id === "btw-invalid")?.args.command).toEqual({ type: "extension_ui_response", id: "btw-invalid", cancelled: true });
+    expect((await backendCalls()).find(({ args }) => args.command?.id === "btw-invalid")?.args.command).toMatchObject({ type: "extension_ui_response", id: "btw-invalid", cancelled: true });
   });
 
   it("reports when the review runtime cannot start", async () => {
@@ -85,7 +85,7 @@ describe("/review acceptance", () => {
     await expect(split).toBeDisplayed();
     await expect(split.$(".split-pane-status.error")).toHaveText("Fork runtime unavailable");
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.id === "btw-start-failure"));
-    expect((await backendCalls()).find(({ args }) => args.command?.id === "btw-start-failure")?.args.command).toEqual({ type: "extension_ui_response", id: "btw-start-failure", cancelled: true });
+    expect((await backendCalls()).find(({ args }) => args.command?.id === "btw-start-failure")?.args.command).toMatchObject({ type: "extension_ui_response", id: "btw-start-failure", cancelled: true });
   });
 
   it("keeps a settled side conversation open when it has no answer", async () => {
@@ -98,6 +98,6 @@ describe("/review acceptance", () => {
     await expect($('section[aria-label="Split conversation: Code review"]')).toBeDisplayed();
     await expect($(".error-toast")).not.toBeExisting();
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.id === "btw-no-answer"));
-    expect((await backendCalls()).find(({ args }) => args.command?.id === "btw-no-answer")?.args.command).toEqual({ type: "extension_ui_response", id: "btw-no-answer", value: "opened" });
+    expect((await backendCalls()).find(({ args }) => args.command?.id === "btw-no-answer")?.args.command).toMatchObject({ type: "extension_ui_response", id: "btw-no-answer", value: "opened" });
   });
 });

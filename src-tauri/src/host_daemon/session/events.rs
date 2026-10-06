@@ -300,6 +300,18 @@ impl Session {
     }
 }
 
+fn retain_tool_calls(state: &mut SessionState, message: &Value) {
+            if message["role"] == "assistant" {
+                for call in message["content"].as_array().into_iter().flatten().filter(|part| kind(part) == "toolCall") {
+                    if let Some(id) = call["id"].as_str() {
+                        state.tool_calls.insert(id.into(), call.clone());
+                    }
+                }
+            } else if message["role"] == "toolResult" {
+                if let Some(id) = message["toolCallId"].as_str() { state.tool_calls.remove(id); }
+            }
+}
+
 fn retain_message(state: &mut SessionState, event: &Value) {
     match kind(event) {
         "message_start" => set(&mut state.live_messages, text(&event["message"], "role"), event["message"].clone()),
@@ -321,15 +333,7 @@ fn retain_message(state: &mut SessionState, event: &Value) {
         }
         "message_end" => {
             let message = &event["message"];
-            if message["role"] == "assistant" {
-                for call in message["content"].as_array().into_iter().flatten().filter(|part| kind(part) == "toolCall") {
-                    if let Some(id) = call["id"].as_str() {
-                        state.tool_calls.insert(id.into(), call.clone());
-                    }
-                }
-            } else if message["role"] == "toolResult" {
-                if let Some(id) = message["toolCallId"].as_str() { state.tool_calls.remove(id); }
-            }
+            retain_tool_calls(state, message);
             state.live_messages.retain(|(role, _)| message["role"] != *role);
         }
         "tool_execution_start" | "tool_execution_update" => {

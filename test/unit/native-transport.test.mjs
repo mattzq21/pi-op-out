@@ -3,6 +3,7 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { emit } from '@tauri-apps/api/event';
 import * as native from '../../src/lib/nativeTransport.ts';
+import { appSettings } from '../settings-fixture.mjs';
 
 describe('native transport', () => {
 let calls, responses, transports;
@@ -48,7 +49,7 @@ test('explicit disconnect and unmount share one completed disposal', async () =>
 });
 
 test('client preference updates preserve newer daemon settings', async () => {
-  const current = { hosts: [], keybindings: {}, defaultModel: 'new/model', knownModels: ['old/model'] };
+  const current = appSettings({ defaultModel: 'new/model', knownModels: ['old/model'] });
   responses.set('load_app_settings', current);
   responses.set('save_app_settings', ({ settings }) => ({ settings }));
   responses.set('load_client_settings', null);
@@ -80,7 +81,7 @@ test('transport shares concurrent connects, publishes presence and cleans up lis
   assert.equal(client.needsDefaults(), true);
   assert.equal(commands('start_pi')[0].args.cwd, '/repo');
   client.setVisible(true);
-  assert.deepEqual(commands('pi_presence').at(-1).args.presence, { visible: true, focused: true });
+  assert.deepEqual(commands('pi_presence').at(-1).args.presence, { visible: true, focused: true, screenWidth: 0 });
   document.visibilityState = 'hidden';
   document.dispatchEvent(new Event('visibilitychange'));
   assert.equal(commands('pi_presence').at(-1).args.presence.visible, false);
@@ -207,7 +208,7 @@ test('compact prompts become commands while ordinary prompts and state updates r
   await client.command({ type: 'prompt', message: '/compact   keep the decisions  ' });
   await client.command({ type: 'prompt', message: '/compact' });
   await client.command({ type: 'prompt', message: '/compactly' });
-  assert.deepEqual(rpc('compact').map(call => call.args.command), [{ type: 'compact', customInstructions: 'keep the decisions' }, { type: 'compact' }]);
+  assert.deepEqual(rpc('compact').map(call => call.args.command), [{ type: 'compact', customInstructions: 'keep the decisions', clientScreenWidth: 0 }, { type: 'compact', clientScreenWidth: 0 }]);
   assert.equal(rpc('prompt')[0].args.command.message, '/compactly');
   responses.set('pi_command:get_state', { sessionFile: '/session', sessionId: 'id' });
   await client.command({ type: 'get_state' });
@@ -222,7 +223,7 @@ test('compact prompts become commands while ordinary prompts and state updates r
   await client.command({ type: 'fork' });
   assert.equal(client.connectionTarget().sessionId, undefined);
   await client.changePendingMessage('pending', { type: 'remove' });
-  assert.deepEqual(rpc('change_pending')[0].args.command, { type: 'change_pending', id: 'pending', action: { type: 'remove' } });
+  assert.deepEqual(rpc('change_pending')[0].args.command, { type: 'change_pending', id: 'pending', action: { type: 'remove' }, clientScreenWidth: 0 });
 });
 
 test('diagnostics retain the last five matching stderr lines and augment connection failures only', async () => {
@@ -250,11 +251,12 @@ test('fast-mode discovery uses package provenance and refreshes compatibility st
     { name: 'pi-desktop-fast-status', source: 'extension' },
   ] });
   await client.setFastMode(true);
-  assert.deepEqual(rpc('prompt').map(call => call.args.command.message), ['/pi-desktop-fast-status', '/fast:2 on', '/pi-desktop-fast-status refresh']);
+  assert.deepEqual(rpc('prompt').map(call => call.args.command.message), ['/fast:2 on']);
+  assert.deepEqual(rpc('fast_mode_status').map(call => call.args.command.reload), [false, true]);
   await client.setFastMode(false);
   assert.ok(rpc('prompt').some(call => call.args.command.message === '/fast:2 off'));
   await client.command({ type: 'prompt', message: '/fast:2 toggle' });
-  assert.equal(rpc('prompt').at(-1).args.command.message, '/pi-desktop-fast-status refresh');
+  assert.equal(rpc('fast_mode_status').at(-1).args.command.reload, true);
   responses.set('pi_command:get_commands', { commands: [{ name: 'fast', source: 'extension', sourceInfo: { source: 'npm:pi-openai-fast-mode-piop' } }] });
   await client.setFastMode(true);
   assert.equal(rpc('prompt').at(-1).args.command.message, '/fast on');
@@ -262,8 +264,8 @@ test('fast-mode discovery uses package provenance and refreshes compatibility st
 
 test('settings save rolls back persisted values and connection after reconnect failure', async () => {
   const client = transport({ cwd: '/repo', hostId: 'remote', sessionId: 'id' });
-  const previous = { hosts: [{ id: 'remote', target: 'before' }], keybindings: {}, hiddenModels: [], knownModels: [], debugMode: false };
-  const next = { ...previous, hosts: [{ id: 'remote', target: 'after' }] };
+  const previous = appSettings({ hosts: [{ id: 'remote', name: 'Remote', piPath: 'pi', target: 'before' }] });
+  const next = { ...previous, hosts: [{ ...previous.hosts[0], target: 'after' }] };
   responses.set('load_app_settings', previous);
   responses.set('save_app_settings', ({ settings }) => ({ settings, reconnect: true }));
   let attempts = 0;
@@ -354,12 +356,13 @@ test('e2e response overrides log mocked calls, reject errors and fall through to
   const client = transport();
   assert.deepEqual(await client.command({ type: 'prompt', message: 'hello' }), { accepted: true });
   await assert.rejects(native.loadStorageReport(), /failed/);
-  responses.set('list_sessions', ['real']);
-  assert.deepEqual(await client.listSessions(), ['real']);
+  const sessions = [{ id: 'real', path: '/real', name: 'Real', project: 'repo', cwd: '/repo', preview: '', messageCount: 1, lastMessageAt: 1, apiCost: 0 }];
+  responses.set('list_sessions', sessions);
+  assert.deepEqual(await client.listSessions(), sessions);
   assert.deepEqual(JSON.parse(callField.value).map(call => call.mocked), [true, true, false]);
   assert.equal(rpc('prompt').length, 0);
   responseField.value = ''; callField.value = '';
-  assert.deepEqual(await client.listSessions(), ['real']);
+  assert.deepEqual(await client.listSessions(), sessions);
 });
 
 test('settings failures notify subscribers and can be retried with another save', async () => {
@@ -385,7 +388,7 @@ test('legacy fast-status failures become visible status events without failing c
   const events = [];
   client.subscribe(event => events.push(event));
   responses.set('pi_command:get_commands', { commands: [{ name: 'fast', source: 'extension', sourceInfo: { source: 'npm:pi-openai-fast-mode' } }, { name: 'pi-desktop-fast-status', source: 'extension' }] });
-  responses.set('pi_command:prompt', new Error('status failed'));
+  responses.set('pi_command:fast_mode_status', new Error('status failed'));
   await client.command({ type: 'get_commands' });
   assert.ok(events.some(event => event.statusKey === 'pi-desktop-fast-mode' && event.statusText === 'Fast mode status unavailable'));
 });

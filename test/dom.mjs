@@ -22,7 +22,7 @@ export function installDom() {
 
   const values = { window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage, navigator: dom.window.navigator };
 
-  for (const key of ['HTMLElement', 'HTMLHeadElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'Node', 'Text', 'NodeFilter', 'MutationObserver', 'KeyboardEvent', 'MouseEvent', 'Event', 'AbortController', 'AbortSignal']) values[key] = dom.window[key];
+  for (const key of ['HTMLElement', 'HTMLHeadElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'Node', 'Text', 'DocumentFragment', 'NodeFilter', 'MutationObserver', 'KeyboardEvent', 'MouseEvent', 'Event', 'AbortController', 'AbortSignal']) values[key] = dom.window[key];
   values.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
   values.CustomEvent = dom.window.CustomEvent;
   const frames = new Map(); let frame = 0;

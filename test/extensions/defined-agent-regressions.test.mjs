@@ -100,8 +100,9 @@ test('subagents inherit the active snapshot and overrides, while named profiles 
   current.state.snapshot.definition.tools.push('mutated');
   assert.deepEqual(f.pi.getActiveTools(), ['read']);
   const next = {}; f.pi.events.emit('piop:agents:subagent', next); assert.deepEqual(next.state.snapshot.definition.tools, ['read']);
-  const named = { agent: 'reviewer' }; f.pi.events.emit('piop:agents:subagent', named); assert.deepEqual(named.state, { active: 'reviewer', locked: false });
-  const missing = { agent: 'missing' }; f.pi.events.emit('piop:agents:subagent', missing); assert.equal(missing.error, 'Choose a configured agent profile'); assert.equal(missing.state, undefined);
+  const named = { agent: 'reviewer' }; f.pi.events.emit('piop:agents:subagent', named); await named.ready;
+  assert.equal(named.state.active, 'reviewer'); assert.equal(named.state.locked, false); assert.equal(named.state.snapshot.definition.name, 'reviewer'); assert.equal(named.state.snapshot.systemPrompt, 'System instructions'); assert.deepEqual(named.state.snapshot.definition.tools, ['read']);
+  const missing = { agent: 'missing' }; f.pi.events.emit('piop:agents:subagent', missing); await missing.ready; assert.equal(missing.error, 'Unknown agent profile missing. Available profiles: general, reviewer'); assert.equal(missing.state, undefined);
   await f.emit('session_shutdown');
   const stopped = {}; f.pi.events.emit('piop:agents:subagent', stopped); assert.deepEqual(stopped, {});
 });
@@ -117,7 +118,7 @@ test('legacy prompt filenames keep interior underscores and strip all boundary s
 
 test('fast-mode support recognizes numbered provider accounts without rewriting model IDs', async t => {
   const model = { provider: 'test--piop-account-12', id: 'default' };
-  const f = await agentFixture(t, { model, models: [model], fastModels: ['test/default'], config: configured([profile('general', { model: `${model.provider}/${model.id}`, fastMode: true })]) });
+  const f = await agentFixture(t, { model, models: [model], fastModels: [`${model.provider}/${model.id}`], config: configured([profile('general', { model: `${model.provider}/${model.id}`, fastMode: true })]) });
   await f.load(); await f.start();
   assert.deepEqual(f.notices, []); assert.deepEqual(f.pi.getActiveTools(), ['read']);
   assert.deepEqual(await f.input('hello'), { action: 'continue' });

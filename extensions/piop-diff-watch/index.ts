@@ -1,4 +1,5 @@
 import { GitError, runGit } from "./git.ts";
+import { pinPromptHistory } from "./pin-checkpoints.ts";
 import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
 import { resolvePromptHistory, recordRecoveredCheckpoints } from "./prompt-history.ts";
 import { Check } from "typebox/value";
@@ -284,25 +285,6 @@ async function capturePrompt(root: string, sessionId: string, key: string, captu
 
 function resolvePromptCommit(root: string, owner: string, key: string) {
   return resolveRef(root, promptRef(owner, key)).catch(() => undefined);
-}
-
-async function pinPromptHistory(root: string | undefined, sessionId: string, entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, sourceOwner?: string) {
-  const checkpoints = entries.flatMap((entry) => entry.type === "custom" && entry.customType === PROMPT_ENTRY
-    && Check(checkpointSchema, entry.data) ? [entry.data] : []);
-
-  for (const checkpoint of checkpoints) {
-    const target = promptRef(sessionId, checkpoint.key);
-    const source = promptRef(sourceOwner ?? checkpoint.owner, checkpoint.key);
-    const repositories = new Set([root, checkpoint.repositoryRoot].filter((repository): repository is string => Boolean(repository)));
-
-    for (const repository of repositories) {
-      if (await resolveRef(repository, target) === checkpoint.commit) break;
-
-      if (await resolveRef(repository, source) !== checkpoint.commit) continue;
-      await runGit(repository, ["update-ref", "--stdin"], {}, ["start", `verify ${source} ${checkpoint.commit}`, `create ${target} ${checkpoint.commit}`, "prepare", "commit", ""].join("\n"));
-      break;
-    }
-  }
 }
 
 async function checkpointWorktreeTarget(root: string, branch: string) {

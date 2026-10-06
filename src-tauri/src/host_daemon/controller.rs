@@ -347,7 +347,7 @@ impl Host {
     }
 
     async fn release_owned_session(&self, id: &str, intent: &str, session: Arc<Session>) -> Result<()> {
-        if intent == "transfer" && (session.working() || session.compacting()) {
+        if transfer_blocked(intent, &session) {
             return Err("The agent is running on another daemon. Wait for it to finish before transferring ownership.".into());
         }
         if intent == "message" {
@@ -365,7 +365,7 @@ impl Host {
         }
         session.publish(json!({"type":"ownership_lost"}), None);
         if intent == "transfer-local" { return Ok(()); }
-        if intent != "archive" && (session.working() || session.compacting()) {
+        if released_session_needs_abort(intent, &session) {
             let _ = session.raw(json!({"type":"abort"})).await;
         }
         session.stop().await;
@@ -460,22 +460,24 @@ impl Host {
             .cloned().ok_or_else(|| "The session changed. Reload agent definitions from its current host.".into())
     }
 
-    async fn readonly_command(&self, packet: &Value, target: ReadonlyView) -> Result<Value> {
-        let runtime = text(packet, "runtimeId");
-        if kind(packet) == "detach" {
+    async fn detach_readonly(&self, runtime: &str) -> Result<Value> {
             let session = {
                 let mut registry = self.registry();
-                registry.readonly.remove(&runtime);
-                registry.attachments.remove(&runtime);
-                registry.subscriptions.remove(&runtime)
+                registry.readonly.remove(runtime);
+                registry.attachments.remove(runtime);
+                registry.subscriptions.remove(runtime)
             };
             if let Some(session) = session {
-                session.detach_view(&runtime);
+                session.detach_view(runtime);
                 session.finish_detach(false, true).await;
                 self.release_unused(&session).await?;
             }
-            return Ok(json!({"stopped":false}));
-        }
+            Ok(json!({"stopped":false}))
+    }
+
+    async fn readonly_command(&self, packet: &Value, target: ReadonlyView) -> Result<Value> {
+        let runtime = text(packet, "runtimeId");
+        if kind(packet) == "detach" { return self.detach_readonly(&runtime).await; }
         if kind(packet) == "presence" {
             if let Some(session) = self.find_session(&target.id) { session.presence(&runtime, packet["presence"].clone()); }
             return Ok(Value::Null);
@@ -625,3 +627,7 @@ pub(super) async fn queue_command(session: &Session, mut command: Value) -> Resu
     }
     session.queue.command(command).await
 }
+
+fn transfer_blocked(intent: &str, session: &Session) -> bool { intent == "transfer" && (session.working() || session.compacting()) }
+
+fn released_session_needs_abort(intent: &str, session: &Session) -> bool { intent != "archive" && (session.working() || session.compacting()) }

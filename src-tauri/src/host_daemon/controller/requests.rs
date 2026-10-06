@@ -30,8 +30,7 @@ impl Host {
         match name {
             "agent_definitions" => return Ok(self.registry().agent_definitions.clone()),
             "conversation_owner" => return self.ownership().owns(&text(&packet, "sessionId"), &text(&packet, "clientId"), flag(&packet, "allowReleased")).map(Value::Bool),
-            "provider_auth" | "provider_auth_cancel_owner" => return self.services.handle(packet).await,
-            "ownership_drained" => return Ok(self.ownership_drained(&packet)),
+            "provider_auth" | "provider_auth_cancel_owner" | "ownership_drained" => return self.service_request(packet).await,
             "conversation_mutation" => return self.begin_mutation(&packet).await,
             "conversation_mutation_end" => return self.end_mutation(&packet),
             "configure" | "attach" | "shutdown" => return self.lifecycle(packet).await,
@@ -39,6 +38,11 @@ impl Host {
             _ => {}
         }
         self.runtime_command(packet, &runtime).await
+    }
+
+    async fn service_request(&self, packet: Value) -> Result<Value> {
+        if kind(&packet) == "ownership_drained" { return Ok(self.ownership_drained(&packet)); }
+        self.services.handle(packet).await
     }
 
     async fn conversation_request(self: &Arc<Self>, packet: Value) -> Result<Value> {
@@ -117,16 +121,21 @@ impl Host {
         Ok(json!({"sessionId":id,"completed":false}))
     }
 
+    fn reserve_delivery(&self, id: &str, delivery: &str) -> Result<()> {
+        if Uuid::parse_str(delivery).is_err() { return Err("A valid deliveryId is required".into()); }
+        {
+            let mut registry = self.registry();
+            if registry.cancelled_deliveries.contains(delivery) { return Err("Agent delivery was cancelled".into()); }
+            if !registry.deliveries.entry(id.to_owned()).or_default().insert(delivery.to_owned()) { return Err("Agent delivery is already pending".into()); }
+        }
+        Ok(())
+    }
+
     async fn orchestration_send(self: &Arc<Self>, packet: Value, existing: Option<Arc<Session>>) -> Result<Value> {
         let id = text(&packet, "sessionKey");
         validate_delivery(&packet)?;
         let delivery = text(&packet, "deliveryId");
-        if Uuid::parse_str(&delivery).is_err() { return Err("A valid deliveryId is required".into()); }
-        {
-            let mut registry = self.registry();
-            if registry.cancelled_deliveries.contains(&delivery) { return Err("Agent delivery was cancelled".into()); }
-            if !registry.deliveries.entry(id.clone()).or_default().insert(delivery.clone()) { return Err("Agent delivery is already pending".into()); }
-        }
+        self.reserve_delivery(&id, &delivery)?;
         let _delivery = DeliveryGuard { host: self.clone(), session: id.clone(), delivery };
         let runtime = format!("orchestration-{}", Uuid::new_v4());
         let attached = existing.is_none();
@@ -257,10 +266,7 @@ impl Host {
         }
         if name == "presence" {
             session.presence(runtime, packet["presence"].clone());
-            let presence = &packet["presence"];
-            if flag(presence, "visible") && flag(presence, "focused") && presence["screenWidth"].is_number() {
-                session.raw(json!({"type":"html_preview_viewport","screenWidth":presence["screenWidth"]})).await?;
-            }
+            update_viewport(&session, &packet["presence"]).await?;
             return Ok(Value::Null);
         }
         if name == "command" && packet["command"]["type"] == "reload_agents" {
@@ -292,4 +298,11 @@ impl Host {
         self.release_unused(session).await?;
         Ok(result)
     }
+}
+
+async fn update_viewport(session: &Session, presence: &Value) -> Result<()> {
+            if flag(presence, "visible") && flag(presence, "focused") && presence["screenWidth"].is_number() {
+                session.raw(json!({"type":"html_preview_viewport","screenWidth":presence["screenWidth"]})).await?;
+            }
+    Ok(())
 }

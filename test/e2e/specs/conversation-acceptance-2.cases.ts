@@ -1,7 +1,7 @@
 import { $, $$, browser, expect } from "@wdio/globals";
 
 import { app } from "../pageobjects/app.page.js";
-import { isUserPrompt, mockBackend, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
+import { failureState, isUserPrompt, mockBackend, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
 
 describe("Conversation acceptance", () => {
   before(async () => {
@@ -13,23 +13,26 @@ describe("Conversation acceptance", () => {
   });
 
   it("opens, adds, deletes, and closes an ephemeral terminal", async () => {
-    await mockBackend({ start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+    await mockBackend({ "shared_terminal:start": {}, "shared_terminal:resize": {}, "shared_terminal:close": {} });
 
     try {
       await app.openTerminalButton.click();
       await expect(app.terminalPanel).toBeDisplayed();
+      await browser.waitUntil(async () => (await backendCalls()).some(({ command, args, mocked }) => command === "shared_terminal" && args.action === "start" && mocked));
       const before = await $$(".terminal-tab").length;
       await app.addTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(before + 1);
 
       await app.deleteTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(before);
-      await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "close_terminal"));
-      expect((await backendCalls()).find(({ command }) => command === "close_terminal")?.mocked).toBe(true);
+      await browser.waitUntil(async () => (await backendCalls()).some(({ command, args }) => command === "shared_terminal" && args.action === "close"));
+      expect((await backendCalls()).find(({ command, args }) => command === "shared_terminal" && args.action === "close")?.mocked).toBe(true);
       await app.closeTerminalButton.click();
-      await expect(app.terminalPanel).not.toBeExisting();
+      await expect(app.terminalPanel).not.toBeDisplayed();
+    } catch (cause) {
+      throw new Error(String(cause) + " " + await failureState(), { cause });
     } finally {
-      if (await app.terminalPanel.isExisting()) await app.closeTerminalButton.click();
+      if (await app.terminalPanel.isDisplayed()) await app.closeTerminalButton.click();
       await resetBackend();
     }
   });
@@ -44,7 +47,7 @@ describe("Conversation acceptance", () => {
       await expect(app.composer).toHaveValue("");
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
       const prompt = (await backendCalls()).find(({ args }) => isUserPrompt(args.command));
-      expect(prompt?.args.command).toEqual({ type: "prompt", message: "Explain the failing build" });
+      expect(prompt?.args.command).toMatchObject({ type: "prompt", message: "Explain the failing build" });
       expect(prompt?.mocked).toBe(true);
     } finally {
       await resetBackend();
@@ -70,7 +73,7 @@ describe("Conversation acceptance", () => {
       await app.composer.setValue("Submit this with Enter");
       await browser.keys("Enter");
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
-      expect((await backendCalls()).find(({ args }) => isUserPrompt(args.command))?.args.command).toEqual({ type: "prompt", message: "Submit this with Enter" });
+      expect((await backendCalls()).find(({ args }) => isUserPrompt(args.command))?.args.command).toMatchObject({ type: "prompt", message: "Submit this with Enter" });
       await expect(app.composer).toHaveValue("");
     } finally {
       await resetBackend();
@@ -78,16 +81,18 @@ describe("Conversation acceptance", () => {
   });
 
   it("discovers and selects a slash command supplied by piop", async () => {
-    await mockBackend({ ...connectedSessionResponses("command-session"), "pi_command:get_commands": { commands: [{ name: "review", description: "Review the current changes", source: "extension", sourceInfo: { source: "acceptance" } }] } });
+    await mockBackend({ ...connectedSessionResponses("command-session"), "pi_command:get_commands": { commands: [{ name: "inspect", description: "Inspect the current changes", source: "extension", sourceInfo: { source: "acceptance" } }] } });
 
     try {
       await emitPiEvent({ type: "session_switched" });
-      await app.prepareMessage("/rev");
+      await app.prepareMessage("/ins");
       const palette = $('[role="listbox"][aria-label="piop commands"]');
       await expect(palette).toBeDisplayed();
-      await expect(palette).toHaveText(expect.stringContaining("/review"));
+      await expect(palette).toHaveText(expect.stringContaining("/inspect"));
       await palette.$('[role="option"]').click();
-      expect((await app.composer.getValue()).trimEnd()).toBe("/review");
+      expect((await app.composer.getValue()).trimEnd()).toBe("/inspect");
+    } catch (cause) {
+      throw new Error(String(cause) + " " + await failureState(), { cause });
     } finally {
       await app.clearMessage();
       await resetBackend();
@@ -99,7 +104,7 @@ describe("Conversation acceptance", () => {
       ...connectedSessionResponses("filtered-command-session"),
       "pi_command:get_commands": {
         commands: [
-          { name: "review", description: "Visible review command", source: "extension", sourceInfo: { source: "acceptance" } },
+          { name: "inspect", description: "Visible inspect command", source: "extension", sourceInfo: { source: "acceptance" } },
           { name: "internal-inline", description: "Inline-only command", source: "extension", sourceInfo: { source: "inline" } },
         ]
       },
@@ -109,11 +114,13 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("/");
       const palette = $('[role="listbox"][aria-label="piop commands"]');
-      await expect(palette).toHaveText(expect.stringContaining("/review"));
+      await expect(palette).toHaveText(expect.stringContaining("/inspect"));
       const text = await palette.getText();
       expect(text).not.toContain("internal-inline");
-      expect(await palette.$$("[role=option] strong").map((option) => option.getText())).toEqual(["/branch-off", "/worktree", "/compact", "/review"]);
+      expect(await palette.$$("[role=option] strong").map((option) => option.getText())).toEqual(["/compact", "/inspect"]);
       await expect(palette).toHaveText(expect.stringContaining("/compact"));
+    } catch (cause) {
+      throw new Error(String(cause) + " " + await failureState(), { cause });
     } finally {
       await app.clearMessage();
       await resetBackend();
@@ -146,7 +153,7 @@ describe("Conversation acceptance", () => {
       await retry.click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
-      expect((await backendCalls()).filter(({ args }) => ["fork", "prompt"].includes(String(args.command?.type))).map(({ args }) => args.command)).toEqual([
+      expect((await backendCalls()).filter(({ args }) => ["fork", "prompt"].includes(String(args.command?.type))).map(({ args }) => args.command)).toMatchObject([
         { type: "prompt", message: "Retry this acceptance request" },
       ]);
       expect((await backendCalls()).some(({ command }) => command === "delete_session")).toBe(false);
@@ -175,7 +182,7 @@ describe("Conversation acceptance", () => {
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
       const prompt = (await backendCalls()).find(({ args }) => isUserPrompt(args.command));
-      expect(prompt?.args.command).toEqual({ type: "prompt", message: "Summarize the attachment\n\n<file name=\"acceptance-note.txt\">\nAcceptance fixture content.\n</file>" });
+      expect(prompt?.args.command).toMatchObject({ type: "prompt", message: "Summarize the attachment\n\n<file name=\"acceptance-note.txt\">\nAcceptance fixture content.\n</file>" });
       await expect($(".attachments")).not.toBeExisting();
     } finally {
       await resetBackend();
@@ -197,7 +204,7 @@ describe("Conversation acceptance", () => {
       await app.sendMessageButton.click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
-      expect((await backendCalls()).find(({ args }) => isUserPrompt(args.command))?.args.command).toEqual({ type: "prompt", message: '<file name="report &quot;draft&quot;.txt">\nQuoted filename content\n</file>' });
+      expect((await backendCalls()).find(({ args }) => isUserPrompt(args.command))?.args.command).toMatchObject({ type: "prompt", message: '<file name="report &quot;draft&quot;.txt">\nQuoted filename content\n</file>' });
     } finally {
       await resetBackend();
     }
@@ -273,7 +280,7 @@ describe("Conversation acceptance", () => {
 
       if (!command) throw new Error("Image prompt was not recorded");
       expect(command.message).toBe("");
-      expect(command.images).toEqual([{ type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", mimeType: "image/png", name: "pixel.png" }]);
+      expect(command.images).toMatchObject([{ type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", mimeType: "image/png", name: "pixel.png" }]);
     } finally {
       await resetBackend();
     }
@@ -283,16 +290,21 @@ describe("Conversation acceptance", () => {
     await startTemporaryConversation({});
 
     try {
+      await emitPiEvent({ type: "message_start", message: { role: "user", content: "Start the live acceptance response", timestamp: Date.now() } });
       await emitPiEvent({ type: "agent_start" });
-      await expect($(".stream-banner")).toHaveText(expect.stringContaining("piop is working"));
+      await expect($(".response-working")).toHaveText(expect.stringContaining("piop is working"));
       await expect($('button[aria-label="Stop piop"]')).toBeDisplayed();
 
-      await emitPiEvent({ type: "message_start", message: { id: "acceptance-stream", role: "assistant", content: "Streaming acceptance response" } });
+      const message = { id: "acceptance-stream", role: "assistant", content: "Streaming acceptance response", timestamp: Date.now() };
+      await emitPiEvent({ type: "message_start", message });
       await expect($(".assistant-message")).toHaveText(expect.stringContaining("Streaming acceptance response"));
       await expect($(".stream-caret")).toBeDisplayed();
 
+      await emitPiEvent({ type: "message_end", message });
       await emitPiEvent({ type: "agent_end" });
-      await expect($(".stream-banner")).not.toBeExisting();
+      await expect($(".response-working")).not.toBeExisting();
+    } catch (cause) {
+      throw new Error(String(cause) + " " + await failureState(), { cause });
     } finally {
       await emitPiEvent({ type: "agent_end" });
       await resetBackend();

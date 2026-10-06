@@ -2,12 +2,17 @@ import { voidResultSchema } from "./responseSchemas";
 import { nativeCall, type NativeCall } from "./nativeCall";
 import { z } from "zod";
 import { isMobile, listen } from "./platform";
+import { whenBranchesSettled } from "./branchActivity";
 
 const terminalEventSchema = z.object({ type: z.string().optional(), hostId: z.string().optional(), sessionId: z.string().optional(), terminalId: z.string().optional(), generation: z.string().optional(), outputEnd: z.number().optional(), data: z.string().optional() }).catch({});
+
 export type TerminalEvent = z.infer<typeof terminalEventSchema>;
 
 const sharedTerminalsSchema = z.array(z.object({ id: z.string(), output: z.string().nullable(), outputEnd: z.number(), inputDraft: z.string().optional(), generation: z.string(), owned: z.boolean(), started: z.boolean(), exited: z.boolean() }));
-type SharedTerminal = z.infer<typeof sharedTerminalsSchema>[number] & { output: string };
+
+export type SharedTerminal = z.infer<typeof sharedTerminalsSchema>[number] & { output: string };
+
+type TerminalCommandOptions = { sessionKey?: string; cwd?: string; cols?: number; rows?: number; data?: string };
 
 class NativeTerminals {
   private writes = new Map<string, Promise<void>>();
@@ -16,6 +21,7 @@ class NativeTerminals {
   private transcripts = new Map<string, { generation: string; outputEnd: number; output: string; sessionKey: string; hostId: string }>();
   private cacheRevision = 0;
   private reassignments = new Map<string, Promise<void>>();
+  private terminalReassignments = new Map<string, Promise<void>>();
 
   constructor(private call: NativeCall) {}
 
@@ -23,7 +29,7 @@ class NativeTerminals {
     return listen("pi://event", event => { if (event.payload.type?.startsWith("terminal_")) onEvent(event.payload); }, terminalEventSchema);
   }
 
-  private command(action: string, terminalId: string, args: Record<string, unknown> = {}) {
+  private command(action: string, terminalId: string, args: TerminalCommandOptions = {}) {
     return this.call("shared_terminal", { action, sharedTerminalId: terminalId, hostId: this.hosts.get(terminalId) ?? "local", ...args }, voidResultSchema);
   }
 
@@ -33,19 +39,23 @@ class NativeTerminals {
     const cached = new Map([...this.transcripts].filter(([, value]) => value.sessionKey === sessionKey && value.hostId === hostId));
     const known = Object.fromEntries([...cached].map(([id, value]) => [id, { generation: value.generation, outputEnd: value.outputEnd }]));
     const response = await this.call("shared_terminal", { action: "list", sessionKey, hostId, known }, sharedTerminalsSchema);
+
     if (revision !== this.cacheRevision) return this.list(sessionKey, hostId);
     const terminals = response.map(terminal => ({ ...terminal, output: terminal.output ?? cached.get(terminal.id)?.output ?? "" }));
     const ids = new Set(terminals.map(terminal => terminal.id));
+
     for (const [id, value] of this.transcripts) {
       if (value.sessionKey === sessionKey && value.hostId === hostId && !ids.has(id)) {
         this.transcripts.delete(id);
         this.hosts.delete(id);
       }
     }
+
     for (const terminal of terminals) {
       this.transcripts.set(terminal.id, { ...terminal, sessionKey, hostId });
       this.hosts.set(terminal.id, hostId);
     }
+
     return terminals;
   }
 
@@ -64,7 +74,9 @@ class NativeTerminals {
     const starting = this.starts.get(terminalId);
 
     const next = (this.writes.get(terminalId) ?? Promise.resolve()).catch(() => undefined)
-      .then(() => starting).then(() => this.command(action, terminalId, { data }));
+      .then(() => starting).then(() => whenBranchesSettled())
+      .then(() => this.terminalReassignments.get(terminalId))
+      .then(() => this.command(action, terminalId, { data }));
 
     this.writes.set(terminalId, next);
     const clear = () => { if (this.writes.get(terminalId) === next) this.writes.delete(terminalId); };
@@ -76,30 +88,51 @@ class NativeTerminals {
 
   resize(terminalId: string, cols: number, rows: number) {
     const starting = this.starts.get(terminalId);
+
     const next = (this.writes.get(terminalId) ?? Promise.resolve()).catch(() => undefined)
-      .then(() => starting).then(() => this.command("resize", terminalId, { cols, rows }));
+      .then(() => starting).then(() => whenBranchesSettled())
+      .then(() => this.terminalReassignments.get(terminalId))
+      .then(() => this.command("resize", terminalId, { cols, rows }));
+
     this.writes.set(terminalId, next);
     const clear = () => { if (this.writes.get(terminalId) === next) this.writes.delete(terminalId); };
+
     void next.then(clear, clear);
 
     return next;
   }
 
   reassign(terminalId: string, sessionKey: string) {
-    const pending = Promise.all([this.starts.get(terminalId), this.reassignments.get(sessionKey)])
+    const pending = Promise.all([
+      this.starts.get(terminalId),
+      this.reassignments.get(sessionKey)?.catch(() => undefined),
+      this.terminalReassignments.get(terminalId)?.catch(() => undefined),
+    ])
       .then(() => this.command("reassign", terminalId, { sessionKey }))
       .then(() => {
         this.cacheRevision += 1;
         const cached = this.transcripts.get(terminalId);
+
         if (cached) this.transcripts.set(terminalId, { ...cached, sessionKey });
       });
+
     this.reassignments.set(sessionKey, pending);
-    const clear = () => { if (this.reassignments.get(sessionKey) === pending) this.reassignments.delete(sessionKey); };
+    this.terminalReassignments.set(terminalId, pending);
+
+    const clear = () => {
+      if (this.reassignments.get(sessionKey) === pending) this.reassignments.delete(sessionKey);
+
+      if (this.terminalReassignments.get(terminalId) === pending) this.terminalReassignments.delete(terminalId);
+    };
+
     void pending.then(clear, clear);
+
     return pending;
   }
 
   async close(terminalId: string) {
+    await whenBranchesSettled();
+    await this.terminalReassignments.get(terminalId)?.catch(() => undefined);
     await this.starts.get(terminalId)?.catch(() => undefined);
     await this.writes.get(terminalId)?.catch(() => undefined);
     this.writes.delete(terminalId);

@@ -125,6 +125,15 @@ fn session_owned(app: &AppHandle, session_id: &str, client: &str, draft_owned: b
     Ok(daemon.request(json!({"type":"conversation_owner","sessionId":session_id,"clientId":client,"allowReleased":allow_released}))?.as_bool() == Some(true))
 }
 
+struct SharedTerminalRequest<'a> {
+    app: &'a AppHandle,
+    runtime: &'a TerminalRuntime,
+    request: &'a Value,
+    owner: String,
+    client: &'a str,
+    session_id: &'a str,
+}
+
 pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Result<Value, String> {
     let runtime = app.state::<TerminalRuntime>();
     let action = request["action"].as_str().ok_or("Missing terminal action")?;
@@ -134,104 +143,156 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
         discard_drafts(&runtime, &owner_prefix)?;
         return Ok(Value::Null);
     }
-    let owner = format!("{owner_prefix}{}", request["clientId"].as_str().ok_or("Missing session client")?);
+    let client = request["clientId"].as_str().ok_or("Missing session client")?;
     let session_key = request["sessionKey"].as_str().unwrap_or_default();
     let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);
-    let client = request["clientId"].as_str().ok_or("Missing session client")?;
-    if action == "list" {
-        let owned = session_owned(app, session_id, client, true, false)?;
-        let history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
-        let mut entries: Vec<_> = history.iter().filter(|(_, item)| item.session_id == session_id && item.host_id == "local").collect();
-        entries.sort_by_key(|(_, item)| item.creation_order);
-        return Ok(json!(entries.into_iter().map(|(id, item)| {
-            let known = &request["known"][id];
-            let unchanged = known["generation"].as_str() == Some(item.generation.to_string().as_str()) && known["outputEnd"].as_u64() == Some(item.text_end);
-            json!({"id":id,"output":if unchanged { Value::Null } else { json!(item.output) },"outputEnd":item.text_end,"inputDraft":item.input_draft,
-                "generation":item.generation.to_string(),"owned":owned && (!session_id.starts_with("draft-") || item.owner == owner),"started":true,"exited":!item.running})
-        }).collect::<Vec<_>>()));
-    }
+    let context = SharedTerminalRequest { app, runtime: &runtime, request, owner: format!("{owner_prefix}{client}"), client, session_id };
+    if action == "list" { return shared_list(&context); }
     let id = request["sharedTerminalId"].as_str().ok_or("Missing terminal ID")?;
-    if action == "start" {
-        if !session_owned(app, session_id, client, true, false)? { return Err("Take ownership of this session before changing its terminals".into()); }
-        {
-            let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime unavailable")?;
-            let mut history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
-            if history.get(id).is_some_and(|item| item.session_id != session_id) { return Err("Terminal belongs to another session".into()); }
-            if let Some(item) = history.get_mut(id) { item.owner = owner.clone(); }
-            if let Some(process) = processes.get_mut(id) { process.window_label = owner.clone(); }
-        }
-        start_terminal_for_owner(app.clone(), owner, runtime, StartTerminalOptions {
-            terminal_id: id.into(), session_key: format!("local:{session_id}"), cwd: request["cwd"].as_str().ok_or("Missing working directory")?.into(),
-            cols: dimension(request, "cols")?, rows: dimension(request, "rows")?, host_id: Some("local".into()),
-        })?;
-        changed(app, session_id);
-        return Ok(Value::Null);
-    }
+    if action == "start" { return shared_start(&context, id); }
+    shared_update(&context, id, action)
+}
+
+fn shared_list(context: &SharedTerminalRequest<'_>) -> Result<Value, String> {
+    let owned = session_owned(context.app, context.session_id, context.client, true, false)?;
+    shared_entries(context.runtime, context.session_id, &context.owner, context.request, owned)
+}
+
+fn shared_entries(runtime: &TerminalRuntime, session_id: &str, owner: &str, request: &Value, owned: bool) -> Result<Value, String> {
+    adopt_listed_terminals(runtime, session_id, owner, owned)?;
+    let history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
+    let mut entries: Vec<_> = history.iter().filter(|(_, item)| item.session_id == session_id && item.host_id == "local").collect();
+    entries.sort_by_key(|(_, item)| item.creation_order);
+    Ok(json!(entries.into_iter().map(|(id, item)| {
+        let known = &request["known"][id];
+        let unchanged = known["generation"].as_str() == Some(item.generation.to_string().as_str()) && known["outputEnd"].as_u64() == Some(item.text_end);
+        json!({"id":id,"output":if unchanged { Value::Null } else { json!(item.output) },"outputEnd":item.text_end,"inputDraft":item.input_draft,
+            "generation":item.generation.to_string(),"owned":owned && (!session_id.starts_with("draft-") || item.owner == owner),"started":true,"exited":!item.running})
+    }).collect::<Vec<_>>()))
+}
+
+fn adopt_listed_terminals(runtime: &TerminalRuntime, session_id: &str, owner: &str, owned: bool) -> Result<(), String> {
+    if !owned || session_id.starts_with("draft-") { return Ok(()); }
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime unavailable")?;
     let mut history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
-    if action == "close" && !history.contains_key(id) && !processes.contains_key(id) {
-        return Ok(Value::Null);
+    for (id, item) in history.iter_mut().filter(|(_, item)| item.session_id == session_id && item.host_id == "local") {
+        item.owner = owner.into();
+        if let Some(process) = processes.get_mut(id) { process.window_label = owner.into(); }
     }
-    let item = history.get_mut(id).ok_or("Terminal is unavailable")?;
-    let previous_session = item.session_id.clone();
-    if !(action == "close" && item.owner == owner) && !session_owned(app, &previous_session, client, item.owner == owner, action == "reassign" && item.owner == owner)? {
+    Ok(())
+}
+
+fn shared_start(context: &SharedTerminalRequest<'_>, id: &str) -> Result<Value, String> {
+    if !session_owned(context.app, context.session_id, context.client, true, false)? { return Err("Take ownership of this session before changing its terminals".into()); }
+    adopt_shared_terminal(context, id)?;
+    start_terminal_for_owner(context.app.clone(), context.owner.clone(), context.app.state::<TerminalRuntime>(), StartTerminalOptions {
+        terminal_id: id.into(), session_key: format!("local:{}", context.session_id), cwd: context.request["cwd"].as_str().ok_or("Missing working directory")?.into(),
+        cols: dimension(context.request, "cols")?, rows: dimension(context.request, "rows")?, host_id: Some("local".into()),
+    })?;
+    changed(context.app, context.session_id);
+    Ok(Value::Null)
+}
+
+fn adopt_shared_terminal(context: &SharedTerminalRequest<'_>, id: &str) -> Result<(), String> {
+        let mut processes = context.runtime.processes.lock().map_err(|_| "Terminal runtime unavailable")?;
+        let mut history = context.runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
+        if history.get(id).is_some_and(|item| item.session_id != context.session_id) { return Err("Terminal belongs to another session".into()); }
+        if let Some(item) = history.get_mut(id) { item.owner = context.owner.clone(); }
+        if let Some(process) = processes.get_mut(id) { process.window_label = context.owner.clone(); }
+    Ok(())
+}
+
+fn shared_access(context: &SharedTerminalRequest<'_>, item: &Transcript, action: &str) -> Result<(), String> {
+    let same_owner = item.owner == context.owner;
+    if action == "close" && same_owner { return Ok(()); }
+    let allow_released = action == "reassign" && same_owner;
+    if !session_owned(context.app, &item.session_id, context.client, same_owner, allow_released)? {
         return Err("Take ownership of this session before changing its terminals".into());
     }
-    if action == "reassign" && !session_owned(app, session_id, client, true, false)? {
+    if action == "reassign" && !session_owned(context.app, context.session_id, context.client, true, false)? {
         return Err("Take ownership of the destination session first".into());
     }
+    Ok(())
+}
+
+fn missing_closed_terminal(action: &str, id: &str, history: &HashMap<String, Transcript>, processes: &HashMap<String, TerminalProcess>) -> bool {
+    action == "close" && !history.contains_key(id) && !processes.contains_key(id)
+}
+
+fn shared_update(context: &SharedTerminalRequest<'_>, id: &str, action: &str) -> Result<Value, String> {
+    let mut processes = context.runtime.processes.lock().map_err(|_| "Terminal runtime unavailable")?;
+    let mut history = context.runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
+    if missing_closed_terminal(action, id, &history, &processes) { return Ok(Value::Null); }
+    let item = history.get_mut(id).ok_or("Terminal is unavailable")?;
+    let previous_session = item.session_id.clone();
+    shared_access(context, item, action)?;
+    let closed = match action {
+        "reassign" => { reassign_shared(item, &mut processes, id, context.session_id); None },
+        "close" => { history.remove(id); processes.remove(id) },
+        _ => { shared_running_action(context, id, action, item, &processes)?; None },
+    };
+    drop(history);
+    drop(processes);
+    finish_shared_update(context, action, &previous_session, closed);
+    Ok(Value::Null)
+}
+
+fn reassign_shared(item: &mut Transcript, processes: &mut HashMap<String, TerminalProcess>, id: &str, session_id: &str) {
+    item.session_id = session_id.into();
+    if let Some(process) = processes.get_mut(id) { process.session_key = format!("local:{session_id}"); }
+}
+
+fn finish_shared_update(context: &SharedTerminalRequest<'_>, action: &str, previous_session: &str, closed: Option<TerminalProcess>) {
+    if let Some(mut process) = closed { let _ = process.child.kill(); let _ = process.child.wait(); }
+    if action == "close" || action == "reassign" { changed(context.app, previous_session); }
+    if action == "reassign" && context.session_id != previous_session { changed(context.app, context.session_id); }
+}
+
+fn shared_running_action(context: &SharedTerminalRequest<'_>, id: &str, action: &str, item: &mut Transcript, processes: &HashMap<String, TerminalProcess>) -> Result<(), String> {
     match action {
         "draft" => {
-            let data = request["data"].as_str().ok_or("Missing terminal draft")?;
+            let data = context.request["data"].as_str().ok_or("Missing terminal draft")?;
             if data.len() > 1024 * 1024 { return Err("Terminal draft exceeds 1 MiB".into()); }
             item.input_draft = data.into();
-            let _ = app.emit("pi://event", json!({"type":"terminal_draft","terminalId":id,
-                "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),"data":data}));
+            emit_shared_draft(context.app, item, id, data);
         }
-        "write" | "write_with_draft" | "adopt_draft" => {
-            let data = request["data"].as_str().ok_or("Missing terminal input")?;
-            if data.len() > 1024 * 1024 { return Err("Terminal input exceeds 1 MiB".into()); }
-            let draft = if action == "write" { "" } else { item.input_draft.as_str() };
-            let input = format!("{draft}{data}");
-            processes.get(id).ok_or("Terminal is not running")?.writer.try_send(input).map_err(|_| "Terminal input is busy".to_string())?;
-            if action != "write" && !item.input_draft.is_empty() {
-                item.input_draft.clear();
-                let _ = app.emit("pi://event", json!({"type":"terminal_draft","terminalId":id,
-                    "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),"data":""}));
-            }
-        }
-        "resize" => {
-            let cols = dimension(request, "cols")?;
-            let rows = dimension(request, "rows")?;
-            let master = &processes.get(id).ok_or("Terminal is not running")?.master;
-            let size = master.get_size().map_err(|error| error.to_string())?;
-            if size.cols == cols && size.rows == rows { return Ok(Value::Null); }
-            master.resize(PtySize { cols, rows, pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
-            let data = format!("\u{1b}[8;{rows};{cols}t");
-            item.append(&data);
-            let _ = app.emit("pi://event", json!({"type":"terminal_output","terminalId":id,
-                "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),
-                "outputEnd":item.text_end,"data":data}));
-        }
-        "reassign" => {
-            item.session_id = session_id.into();
-            if let Some(process) = processes.get_mut(id) { process.session_key = format!("local:{session_id}"); }
-            drop(history);
-            drop(processes);
-            changed(app, &previous_session);
-            if session_id != previous_session { changed(app, session_id); }
-        }
-        "close" => {
-            let process = processes.remove(id);
-            history.remove(id);
-            drop(history);
-            drop(processes);
-            if let Some(mut process) = process { let _ = process.child.kill(); let _ = process.child.wait(); }
-            changed(app, &previous_session);
-        }
+        "write" | "write_with_draft" | "adopt_draft" => shared_write(context, id, action, item, processes)?,
+        "resize" => shared_resize(context, id, item, processes)?,
         _ => return Err("Unknown terminal action".into()),
     }
-    Ok(Value::Null)
+    Ok(())
+}
+
+fn emit_shared_draft(app: &AppHandle, item: &Transcript, id: &str, data: &str) {
+    let _ = app.emit("pi://event", json!({"type":"terminal_draft","terminalId":id,
+        "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),"data":data}));
+}
+
+fn shared_write(context: &SharedTerminalRequest<'_>, id: &str, action: &str, item: &mut Transcript, processes: &HashMap<String, TerminalProcess>) -> Result<(), String> {
+    let data = context.request["data"].as_str().ok_or("Missing terminal input")?;
+    if data.len() > 1024 * 1024 { return Err("Terminal input exceeds 1 MiB".into()); }
+    let draft = if action == "write" { "" } else { item.input_draft.as_str() };
+    processes.get(id).ok_or("Terminal is not running")?.writer.try_send(format!("{draft}{data}")).map_err(|_| "Terminal input is busy".to_string())?;
+    if action != "write" && !item.input_draft.is_empty() {
+        item.input_draft.clear();
+        emit_shared_draft(context.app, item, id, "");
+    }
+    Ok(())
+}
+
+fn shared_resize(context: &SharedTerminalRequest<'_>, id: &str, item: &mut Transcript, processes: &HashMap<String, TerminalProcess>) -> Result<(), String> {
+    let cols = dimension(context.request, "cols")?;
+    let rows = dimension(context.request, "rows")?;
+    let master = &processes.get(id).ok_or("Terminal is not running")?.master;
+    let size = master.get_size().map_err(|error| error.to_string())?;
+    if size.cols == cols && size.rows == rows { return Ok(()); }
+    master.resize(PtySize { cols, rows, pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
+    let data = format!("\u{1b}[8;{rows};{cols}t");
+    item.append(&data);
+    let _ = context.app.emit("pi://event", json!({"type":"terminal_output","terminalId":id,
+        "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),
+        "outputEnd":item.text_end,"data":data}));
+    Ok(())
 }
 
 fn dimension(request: &Value, key: &str) -> Result<u16, String> {
@@ -277,4 +338,38 @@ fn read_page(item: &Transcript, id: &str, request: &Value) -> Result<Value, Stri
     result["hasMore"] = json!(end < item.output.len());
     result["truncated"] = json!(requested < available);
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listed_owned_terminal_moves_with_reconnected_owner() {
+        let runtime = TerminalRuntime::default();
+        let generation = Uuid::new_v4();
+        start(&runtime, "restored", "local:source", "/tmp", "local", "old-connection", generation).unwrap();
+        start(&runtime, "unrelated", "local:other", "/tmp", "local", "old-connection", Uuid::new_v4()).unwrap();
+        record(&runtime.history, "restored", "$ preserved\n");
+        let listed = shared_entries(&runtime, "source", "new-connection", &json!({}), true).unwrap();
+        assert_eq!(listed[0]["output"], "$ preserved\n");
+        assert_eq!(listed[0]["generation"], generation.to_string());
+        assert_eq!(listed[0]["owned"], true);
+        reassign(&runtime, "new-connection", "restored", "local:child").unwrap();
+        assert!(reassign(&runtime, "old-connection", "restored", "local:wrong").is_err());
+        assert_eq!(runtime.history.lock().unwrap()["restored"].session_id, "child");
+        assert!(owned_by(&runtime.history.lock().unwrap()["unrelated"], "old-connection"));
+    }
+
+    #[test]
+    fn listing_unowned_or_draft_terminals_preserves_original_connection() {
+        for (session_id, owned) in [("saved", false), ("draft-reconnected", true)] {
+            let runtime = TerminalRuntime::default();
+            start(&runtime, "original", session_id, "/tmp", "local", "original-connection", Uuid::new_v4()).unwrap();
+            let listed = shared_entries(&runtime, session_id, "another-connection", &json!({}), owned).unwrap();
+            assert_eq!(listed[0]["owned"], false);
+            assert!(reassign(&runtime, "another-connection", "original", "local:wrong").is_err());
+            assert!(owned_by(&runtime.history.lock().unwrap()["original"], "original-connection"));
+        }
+    }
 }

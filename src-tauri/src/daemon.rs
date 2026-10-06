@@ -287,6 +287,13 @@ fn update_agent_event(app: &AppHandle, packet: &Value) {
     }
 }
 
+fn handle_response(connection: &Daemon, packet: &Value) {
+    if let Some(sender) = packet["id"].as_str().and_then(|id| connection.pending.lock().ok()?.remove(id)) {
+        let result = if let Some(error) = packet["error"].as_str() { Err(error.into()) } else { Ok(packet["data"].clone()) };
+        let _ = sender.send(result);
+    }
+}
+
 fn handle_packet(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str, packet: Value) {
             match packet["type"].as_str() {
                 Some("ownership_drain") => {
@@ -296,9 +303,7 @@ fn handle_packet(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str, packe
                         let _ = connection.notify(json!({"type":"ownership_drained","requestId":packet["id"],"error":error}));
                     });
                 },
-                Some("response") => if let Some(sender) = packet["id"].as_str().and_then(|id| connection.pending.lock().ok()?.remove(id)) {
-                    let _ = sender.send(if let Some(error) = packet["error"].as_str() { Err(error.into()) } else { Ok(packet["data"].clone()) });
-                },
+                Some("response") => handle_response(connection, &packet),
                 Some("event") => handle_event(app, connection, &packet),
                 Some("session_state") => handle_session_state(app, connection, host_id, &packet),
                 Some("session_closed") => handle_session_closed(app, connection, &packet),

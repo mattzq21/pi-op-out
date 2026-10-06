@@ -8,6 +8,7 @@ export async function writeSessionFile(path: string, entries: unknown[]) {
   try {
     try { await file.writeFile(entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n"); }
     finally { await file.close(); }
+
     await link(temporary, path);
   } finally { await rm(temporary, { force: true }); }
 }

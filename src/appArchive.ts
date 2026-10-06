@@ -29,6 +29,10 @@ type ArchiveContext = {
   addNotice: (notice: { title: string; message: string }) => void;
 };
 
+function temporaryConversation(owner: NativeTransport, session: SessionSummary) {
+  return owner.isTemporaryChat() || isTemporaryChatCwd(session.cwd);
+}
+
 export function createConversationArchive(context: ArchiveContext) {
   const { runtimePool, transport, chatSession, activeHostId, activeTransportRef, activeConversationKeyRef, transportConversationKeys, isSelectedSession, isSplitSession, conversationTerminalIds, removeConversationTerminals, removeDraft, setSessions, setActiveCwd, activateTransport, activateConversationKey, updateConnected, closeSplitPane, syncSessionIndex, addNotice } = context;
   const [archivePending, setArchivePending] = createSignal(new Set<string>());
@@ -80,36 +84,59 @@ export function createConversationArchive(context: ArchiveContext) {
 
     addNotice({ title: "Could not archive conversation", message: cause instanceof Error ? cause.message : String(cause) }); };
 
+    const startTemporaryReplacement = async (hostId: string, conversationKey: string) => {
+      const nextTransport = capturedRuntimePool.create({ hostId });
+      transportConversationKeys.current.set(nextTransport, conversationKey);
+
+      try {
+        const cwd = await nextTransport.prepareTemporaryChat(hostId);
+
+        if (!ownsConversationUi(ownerTransport, archivedSessionKey)) {
+          transportConversationKeys.current.delete(nextTransport);
+          void capturedRuntimePool.release(nextTransport);
+        } else batch(() => { setActiveCwd(cwd); activateConversationKey(conversationKey); activateTransport(nextTransport); });
+
+        void capturedRuntimePool.release(ownerTransport).finally(() => transportConversationKeys.current.delete(ownerTransport));
+      } catch (reason) {
+        transportConversationKeys.current.delete(nextTransport);
+        void capturedRuntimePool.release(nextTransport);
+        addNotice({ title: "Conversation archived, but a new conversation could not start", message: reason instanceof Error ? reason.message : String(reason) });
+        void syncSessionIndex();
+      }
+    };
+
     const connectArchiveReplacement = async (hostId: string, conversationKey: string) => {
       let replacementCwd = session.projectRoot || ownerTransport.currentCwd();
-      if (replacementCwd && !ownerTransport.isTemporaryChat() && !isTemporaryChatCwd(session.cwd)) {
+      const temporary = temporaryConversation(ownerTransport, session);
+
+      if (replacementCwd && !temporary) {
         try { replacementCwd = await ownerTransport.validateProjectDirectory(replacementCwd, hostId, true); }
         catch { replacementCwd = undefined; }
       }
-      if (!ownsConversationUi(ownerTransport, conversationKey)) {
+
+      if (!ownsConversationUi(ownerTransport, archivedSessionKey)) {
         await capturedRuntimePool.release(ownerTransport);
         transportConversationKeys.current.delete(ownerTransport);
+
         return;
       }
-      if (!replacementCwd || ownerTransport.isTemporaryChat() || isTemporaryChatCwd(session.cwd)) {
-        const nextTransport = capturedRuntimePool.create({ hostId }); transportConversationKeys.current.set(nextTransport, conversationKey);
 
-        try {
-          const cwd = await nextTransport.prepareTemporaryChat(hostId);
+      if (!replacementCwd || temporary) return startTemporaryReplacement(hostId, conversationKey);
 
-          if (activeTransportRef.current !== ownerTransport || activeConversationKeyRef.current !== conversationKey) { transportConversationKeys.current.delete(nextTransport); void capturedRuntimePool.release(nextTransport); void capturedRuntimePool.release(ownerTransport).finally(() => transportConversationKeys.current.delete(ownerTransport)); }
-          else { setActiveCwd(cwd); activateTransport(nextTransport); void capturedRuntimePool.release(ownerTransport).finally(() => transportConversationKeys.current.delete(ownerTransport)); }
-        } catch (reason) {
-          transportConversationKeys.current.delete(nextTransport); void capturedRuntimePool.release(nextTransport);
-          addNotice({ title: "Conversation archived, but a new conversation could not start", message: reason instanceof Error ? reason.message : String(reason) }); void syncSessionIndex();
-        }
-      } else try { const replacement = capturedRuntimePool.create({ cwd: replacementCwd, hostId }); transportConversationKeys.current.set(replacement, conversationKey); setActiveCwd(replacementCwd); activateTransport(replacement); await capturedRuntimePool.release(ownerTransport); }
-      catch (reason) { addNotice({ title: "Conversation archived, but a new conversation could not start", message: reason instanceof Error ? reason.message : String(reason) }); void syncSessionIndex(); }
+      try {
+        const replacement = capturedRuntimePool.create({ cwd: replacementCwd, hostId });
+        transportConversationKeys.current.set(replacement, conversationKey);
+        batch(() => { setActiveCwd(replacementCwd); activateConversationKey(conversationKey); activateTransport(replacement); });
+        await capturedRuntimePool.release(ownerTransport);
+      } catch (reason) {
+        addNotice({ title: "Conversation archived, but a new conversation could not start", message: reason instanceof Error ? reason.message : String(reason) });
+        void syncSessionIndex();
+      }
     };
 
     const replaceArchivedConversation = async () => {
       const hostId = capturedActiveHostId; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`;
-      transportConversationKeys.current.set(capturedTransport, conversationKey); activateConversationKey(conversationKey); capturedSession.discardPendingUpdates(); capturedSession.setMessages([]);
+      capturedSession.discardPendingUpdates(); capturedSession.setMessages([]);
       capturedSession.setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, isPaused: false, isPausing: false, activity: undefined, contextUsage: undefined }));
       await connectArchiveReplacement(hostId, conversationKey);
     };
@@ -140,54 +167,80 @@ export function createConversationArchive(context: ArchiveContext) {
     return;
   };
 
+  const selectedRemovedSession = (hostId: string, sessionPath: string | undefined, sessionId: string | undefined) => {
+    const current = chatSession().state;
+
+    return activeHostId() === hostId && (current.sessionId === sessionId || Boolean(sessionPath && current.sessionFile === sessionPath));
+  };
+
+  const closeRemovedTerminals = async (keys: Set<string>) => {
+    const terminalIds = new Set([...keys].flatMap(conversationTerminalIds));
+    const owner = transport();
+    const closed = await Promise.allSettled([...terminalIds].map(id => owner.closeTerminal(id)));
+    const failed = closed.find(result => result.status === "rejected");
+
+    if (failed?.status === "rejected") {
+      addNotice({ title: "Could not close archived conversation terminals", message: String(failed.reason) });
+
+      return false;
+    }
+
+    for (const key of keys) removeConversationTerminals(key);
+
+    return true;
+  };
+
+  const replaceRemovedConversation = (pool: SessionRuntimePool, hostId: string) => {
+    const previous = transport();
+    const key = hostId + ":draft-" + crypto.randomUUID();
+    const replacement = pool.create({ hostId });
+    removeDraft(hostId + ":" + chatSession().state.sessionId);
+    chatSession().discardPendingUpdates();
+    transportConversationKeys.current.set(replacement, key);
+    batch(() => {
+      setActiveCwd(undefined); updateConnected(false);
+      activateConversationKey(key); activateTransport(replacement);
+    });
+    void pool.release(previous).catch(reason => addNotice({ title: "Could not close archived conversation", message: String(reason) })).finally(() => transportConversationKeys.current.delete(previous));
+  };
+
+  const finishRemovedConversation = (pool: SessionRuntimePool, hostId: string, sessionPath: string | undefined, sessionId: string | undefined, summaries: SessionSummary[], id: string | undefined) => {
+    if (id) archivedSessionKeys.current.add(hostId + ":" + id);
+
+    for (const session of summaries) {
+      if (isSplitSession(session)) closeSplitPane();
+      removeDraft(hostId + ":" + session.id);
+    }
+
+    if (selectedRemovedSession(hostId, sessionPath, sessionId)) replaceRemovedConversation(pool, hostId);
+
+    for (const session of summaries) void pool.remove(session).catch(reason => addNotice({ title: "Could not close archived conversation", message: String(reason) }));
+  };
+
   return {
     archiveSession,
     removed: async (hostId: string, sessionPath: string | undefined, sessionId?: string) => {
       const pool = runtimePool();
       const matches = (session: SessionSummary) => (session.hostId ?? "local") === hostId && (session.id === sessionId || Boolean(sessionPath && session.path === sessionPath));
       const summaries = pool.liveSessionSummaries().filter(matches);
-      let current = chatSession().state;
-      let selected = activeHostId() === hostId && (current.sessionId === sessionId || Boolean(sessionPath && current.sessionFile === sessionPath));
+      const current = chatSession().state;
+      const selected = selectedRemovedSession(hostId, sessionPath, sessionId);
       const id = sessionId ?? (selected ? current.sessionId : summaries[0]?.id);
+
       if (id && archivePending().has(`${hostId}:${id}`)) return true;
       const removalKey = `${hostId}:${id ?? sessionPath}`;
+
       if (removalPending.has(removalKey)) return false;
       removalPending.add(removalKey);
+
       try {
         const keys = new Set(summaries.map((session) => `${hostId}:${session.id}`));
+
         if (id) keys.add(`${hostId}:${id}`);
-        const terminalIds = new Set([...keys].flatMap(conversationTerminalIds));
-        const terminalTransport = transport();
-        const closed = await Promise.allSettled([...terminalIds].map((terminalId) => terminalTransport.closeTerminal(terminalId)));
-        const failed = closed.find((result) => result.status === "rejected");
-        if (failed?.status === "rejected") {
-          addNotice({ title: "Could not close archived conversation terminals", message: String(failed.reason) });
-          return false;
-        }
-        for (const key of keys) removeConversationTerminals(key);
-        current = chatSession().state;
-        selected = activeHostId() === hostId && (current.sessionId === sessionId || Boolean(sessionPath && current.sessionFile === sessionPath));
-        if (id) archivedSessionKeys.current.add(`${hostId}:${id}`);
-        for (const session of summaries) {
-          if (isSplitSession(session)) closeSplitPane();
-          removeDraft(`${hostId}:${session.id}`);
-        }
-        if (selected) {
-          const previous = transport();
-          const key = `${hostId}:draft-${crypto.randomUUID()}`;
-          const replacement = pool.create({ hostId });
-          removeDraft(`${hostId}:${current.sessionId}`);
-          chatSession().discardPendingUpdates();
-          transportConversationKeys.current.set(replacement, key);
-          batch(() => {
-            setActiveCwd(undefined);
-            updateConnected(false);
-            activateConversationKey(key);
-            activateTransport(replacement);
-          });
-          void pool.release(previous).catch((reason) => addNotice({ title: "Could not close archived conversation", message: String(reason) })).finally(() => transportConversationKeys.current.delete(previous));
-        }
-        for (const session of summaries) void pool.remove(session).catch((reason) => addNotice({ title: "Could not close archived conversation", message: String(reason) }));
+
+        if (!await closeRemovedTerminals(keys)) return false;
+        finishRemovedConversation(pool, hostId, sessionPath, sessionId, summaries, id);
+
         return true;
       } finally { removalPending.delete(removalKey); }
     },

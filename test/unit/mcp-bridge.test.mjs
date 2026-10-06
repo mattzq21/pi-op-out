@@ -1,42 +1,15 @@
 import assert from 'node:assert/strict';
-import { test, mock } from 'node:test';
+import { test } from 'node:test';
 import { registerHooks } from 'node:module';
 import { EventEmitter } from 'node:events';
 
-class FakeClient {
-  constructor(info) { this.info = info; this.calls = []; this.closed = 0; globalThis.__MCP_TEST_CLIENTS__.push(this); }
-  async connect(transport, options) { this.transport = transport; this.connectOptions = options; }
-  async listTools(params, options) { this.calls.push(['list', params, options]);
-
-  return globalThis.__MCP_TEST_PAGES__[params?.cursor ?? 'first']; }
-  async callTool(params, options) { this.calls.push(['call', params, options]);
-
-  return globalThis.__MCP_TEST_RESULT__; }
-  async close() { this.closed++; this.onclose?.(); }
-}
-
-class FakeStdio { constructor(options) { this.options = options; this.stderr = new EventEmitter(); } }
-
-class FakeHTTP { constructor(url, options) { this.url = url; this.options = options; } }
-
-globalThis.__MCP_TEST_SDK__ = { Client: FakeClient, Stdio: FakeStdio, HTTP: FakeHTTP };
-
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (context.parentURL?.endsWith('/resources/mcp-bridge.ts')) {
-      if (specifier === '@modelcontextprotocol/client') return { url: 'data:text/javascript,export const Client = globalThis.__MCP_TEST_SDK__.Client; export const StreamableHTTPClientTransport = globalThis.__MCP_TEST_SDK__.HTTP;', shortCircuit: true };
-
-      if (specifier === '@modelcontextprotocol/client/stdio') return { url: 'data:text/javascript,export const StdioClientTransport = globalThis.__MCP_TEST_SDK__.Stdio;', shortCircuit: true };
-
-      if (specifier === '@earendil-works/pi-ai') return { url: 'data:text/javascript,export const Type = { Unsafe: value => value };', shortCircuit: true };
+    if (specifier === '@earendil-works/pi-coding-agent' && context.parentURL?.endsWith('/resources/mcp-bridge.ts')) {
+      return { url: 'data:text/javascript,export const createMcpExtension = () => pi => globalThis.__PIOP_MCP_SDK__(pi);', shortCircuit: true };
     }
 
     return nextResolve(specifier, context);
-  },
-  load(url, context, nextLoad) {
-    const result = nextLoad(url, context);
-
-    return url.endsWith('/resources/mcp-bridge.ts') ? { ...result, source: String(result.source).replaceAll('process.env', 'globalThis.__MCP_TEST_ENV__') } : result;
   },
 });
 
@@ -44,188 +17,135 @@ const { default: mcpBridge } = await import('../../src-tauri/resources/mcp-bridg
 
 hooks.deregister();
 
-delete globalThis.__MCP_TEST_SDK__;
+async function fixture(run) {
+  const bus = new EventEmitter(), tools = new Map(), handlers = new Map(), servers = new Map(), registrations = [], removed = [], starts = [], executions = [];
+  let active = ['read', 'codemode'], startFailure, registrationFailure, adapter;
+  globalThis.__PIOP_MCP_SDK__ = pi => {
+    adapter = pi; pi.registerCommand('mcp', {});
+    pi.on('session_start', async (event, ctx) => { starts.push({ event, ctx });
 
-async function fixture(servers, run, env = {}) {
-  globalThis.__MCP_TEST_ENV__ = { ...env };
-  globalThis.__MCP_TEST_CLIENTS__ = [];
-  globalThis.__MCP_TEST_PAGES__ = { first: { tools: [{ name: 'lookup', inputSchema: { type: 'object', properties: { query: { type: 'string' } } } }] } };
-  globalThis.__MCP_TEST_RESULT__ = { content: [{ type: 'text', text: 'result' }] };
-  const bus = new EventEmitter(), tools = new Map(), handlers = new Map(), commands = new Map(), statuses = [], notices = [], messages = [];
-  let active = ['builtin'];
+      if (startFailure) throw startFailure;
+    });
+    pi.registerTool({ name: 'codemode', parameters: {} });
+  };
 
-  const pi = { events: { emit: (...args) => bus.emit(...args), on(name, handler) { bus.on(name, handler);
+  const pi = {
+    events: { on(name, handler) { bus.on(name, handler);
 
-  return () => bus.off(name, handler); } },
-    getAllTools: () => [...tools.values()], registerTool(tool) { tools.set(tool.name, tool); }, getActiveTools: () => active, setActiveTools(value) { active = value; },
-    on(name, handler) { handlers.set(name, handler); }, registerCommand(name, command) { commands.set(name, command); }, sendMessage(message, options) { messages.push({ message, options }); } };
+      return () => bus.off(name, handler);
+    } },
+    on(name, handler) { const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list);
 
-  const ctx = { sessionManager: { getSessionId: () => 'session' }, ui: { setStatus(key, value) { statuses.push({ key, value }); }, notify(...args) { notices.push(args); } } };
+      return () => handlers.set(name, list.filter(value => value !== handler));
+    },
+    registerCommand() { throw new Error('SDK slash commands must stay private'); },
+    registerTool(tool) { tools.set(tool.name, tool); },
+    getAllTools: () => [...tools.values()], getActiveTools: () => active, setActiveTools(value) { active = value; },
+    registerMcpServer(name, config) {
+      if (registrationFailure) throw registrationFailure;
+      registrations.push({ name, config }); servers.set(name, config);
+    },
+    unregisterMcpServer(name) { removed.push(name); servers.delete(name); },
+  };
 
-  const select = (serverIds, agentName = 'agent', sessionId = 'session') => { const request = { servers: serverIds.map(id => servers.find(server => server.id === id)), agentName, sessionId }; bus.emit('piop:mcp:select', request);
+  const ctx = { sessionManager: { getSessionId: () => 'session' } };
+  const dispatch = async (name, event = {}) => { for (const handler of handlers.get(name) ?? []) await handler(event, ctx); };
 
-  return request.ready; };
+  const select = async (definitions, agentName = 'general', sessionId = 'session', codemode) => {
+    const request = { servers: definitions, agentName, sessionId, codemode }; bus.emit('piop:mcp:select', request);
+
+    return request.registered;
+  };
+
+  const addTool = (name, properties = { query: { type: 'string' }, agent_id: { type: 'string' } }) => {
+    const tool = { name, namespace: { name: 'mcp__search' }, parameters: { type: 'object', properties, required: Object.keys(properties) }, execute: async (...args) => { executions.push(args);
+
+      return { content: [{ type: 'text', text: 'result' }] };
+    } };
+
+    adapter.registerTool(tool);
+
+    return tool;
+  };
 
   try {
-    await mcpBridge(pi); handlers.get('session_start')?.({}, ctx);
-    await run({ tools, handlers, commands, statuses, notices, messages, ctx, select, clients: globalThis.__MCP_TEST_CLIENTS__,
-      setActive(value) { active = value; }, getActive: () => active, setSettings(value) { servers = value.mcpServers; },
-      update() { return select(servers.filter(server => server.enabled).map(server => server.id)); } });
-  } finally {
-    await handlers.get('session_shutdown')?.();
+    mcpBridge(pi); await dispatch('session_start', { type: 'session_start', reason: 'startup' });
+    await run({ bus, ctx, adapter, tools, servers, registrations, removed, starts, executions, dispatch, select, addTool,
+      setStartFailure(value) { startFailure = value; }, setRegistrationFailure(value) { registrationFailure = value; },
+      setActive(value) { active = value; }, getActive: () => active,
+      available() { const request = {}; bus.emit('piop:mcp:tools', request);
 
-    for (const key of ['__MCP_TEST_ENV__', '__MCP_TEST_CLIENTS__', '__MCP_TEST_PAGES__', '__MCP_TEST_RESULT__']) delete globalThis[key];
-  }
+        return request;
+      },
+    });
+  } finally { await dispatch('session_shutdown'); delete globalThis.__PIOP_MCP_SDK__; }
 }
 
-const stdio = { id: 'Server One', name: 'Server', enabled: true, command: '/tool executable', args: `one "two words" '' 'literal\\slash' escaped\\ space tail\\`, startupTimeoutSec: 23 };
-
-test('MCP disconnect reports bounded recent diagnostics and ignores close events from replaced clients', async () => fixture([stdio], async f => {
-  const output = [];
-
-  const stderr = mock.method(process.stderr, 'write', chunk => { output.push(String(chunk));
-
-  return true; });
-
-  try {
-    await f.select([stdio.id]); const first = f.clients[0];
-    first.transport.stderr.emit('data', Buffer.from(`old-prefix${'x'.repeat(9000)}recent-tail\n`));
-    first.onerror(new Error('protocol failed'));
-    first.onclose();
-    const statuses = JSON.parse(f.statuses.findLast(status => status.key === 'pi-desktop-mcp-status').value.slice(5));
-    assert.equal(statuses[0].status, 'error'); assert.match(statuses[0].error, /recent-tail\nprotocol failed/);
-    assert.doesNotMatch(statuses[0].error, /old-prefix/); assert.ok(statuses[0].error.length < 8400);
-    assert.match(output.at(-1), /\[mcp:Server\] protocol failed/);
-    await f.select([stdio.id]); const count = f.statuses.length;
-    first.onclose(); assert.equal(f.statuses.length, count);
-  } finally { stderr.mock.restore(); }
+test('MCP connections start once on input and restart for a switched session', async () => fixture(async f => {
+  assert.equal(f.starts.length, 0); await f.select({ search: { command: 'server', args: ['two words'] } }); assert.equal(f.starts.length, 0);
+  await f.dispatch('input'); await f.dispatch('before_agent_start'); assert.equal(f.starts.length, 1); assert.equal(f.starts[0].ctx, f.ctx);
+  await f.dispatch('session_start', { type: 'session_start', reason: 'switch' }); await f.dispatch('before_agent_start');
+  assert.equal(f.starts.length, 2); assert.equal(f.starts[1].event.reason, 'switch');
 }));
 
-test('MCP shutdown during discovery prevents late tool registration and closes the pending client', async () => fixture([stdio], async f => {
-  let release, started;
-  const entered = new Promise(resolve => { started = resolve; });
-
-  const discovery = mock.method(FakeClient.prototype, 'listTools', async function () {
-    started();
-
-    return new Promise(resolve => { release = resolve; });
-  });
-
-  const stderr = mock.method(process.stderr, 'write', () => true);
-
-  try {
-    const selection = f.select([stdio.id]);
-    const rejected = assert.rejects(selection, /MCP bridge has shut down/);
-    await entered;
-    const shutdown = f.handlers.get('session_shutdown')();
-    assert.equal(f.clients[0].connectOptions.signal.aborted, true);
-    release({ tools: [{ name: 'late-tool' }] });
-    await rejected; await shutdown;
-    assert.equal(f.tools.size, 0); assert.ok(f.clients[0].closed >= 1);
-    assert.deepEqual(f.statuses.slice(-2), [{ key: 'pi-desktop-mcp-status', value: undefined }, { key: 'pi-desktop-mcp-loading', value: undefined }]);
-    assert.equal(f.select([stdio.id]), undefined, 'shutdown must unsubscribe selection requests');
-  } finally { discovery.mock.restore(); stderr.mock.restore(); }
+test('a failed MCP startup remains retryable on the next input', async () => fixture(async f => {
+  f.setStartFailure(new Error('offline')); await assert.rejects(f.dispatch('input'), /offline/);
+  f.setStartFailure(); await f.dispatch('input'); await f.dispatch('input'); assert.equal(f.starts.length, 2);
 }));
 
-
-test('MCP commands report selected tools and exclude status messages from model context', async () => fixture([stdio], async f => {
-  assert.equal(f.handlers.has('input'), false);
-  await f.commands.get('mcp-status').handler(); assert.equal(f.messages.at(-1).message.content, 'No MCP servers loaded');
-  await f.select([stdio.id]);
-  await f.commands.get('mcp-status').handler(); assert.match(f.messages.at(-1).message.content, /Server One: mcp_server_one_lookup/);
-  assert.deepEqual(f.messages.at(-1).options, { triggerTurn: false });
-  const ordinary = { role: 'user', content: 'hello' }, custom = { role: 'custom', customType: 'other' };
-  assert.deepEqual(f.handlers.get('context')({ messages: [ordinary, { role: 'custom', customType: 'pi-desktop-mcp-status' }, custom] }).messages, [ordinary, custom]);
+test('MCP registrations preserve native stdio and HTTP configuration without mutating callers', async () => fixture(async f => {
+  const definitions = { search: { command: '/server', args: ['two words'], env: { CUSTOM: 'value' }, timeout: 23000, piopInjectAgentId: true }, remote: { url: 'https://example.invalid/mcp', headers: { 'X-Test': 'value' } } };
+  const original = structuredClone(definitions); await f.select(definitions);
+  assert.deepEqual(definitions, original); assert.deepEqual(f.servers.get('remote'), definitions.remote);
+  assert.deepEqual(f.servers.get('search').args, ['two words']); assert.equal(f.servers.get('search').timeout, 23000); assert.equal(f.servers.get('search').env.CUSTOM, 'value');
+  assert.match(f.servers.get('search').env.PIOP_CUA_INSTANCE_ID, /^piop-[a-f0-9]{32}$/); assert.equal('piopInjectAgentId' in f.servers.get('search'), false);
 }));
 
-test('same-id MCP definition changes close the old lease and invalidate its tools', async () => {
-  const definition = { ...stdio };
-  await fixture([definition], async f => {
-    const names = await f.select([definition.id]); const oldClient = f.clients[0], oldTool = f.tools.get(names[0]);
-    definition.command = 'replacement-server';
-    assert.deepEqual(await f.select([definition.id]), names);
-    assert.equal(oldClient.closed, 1); assert.equal(f.clients.length, 2);
-    assert.equal(f.clients[1].transport.options.command, 'replacement-server');
-    await assert.rejects(oldTool.execute('call', {}), /not available for this agent/);
-    await f.select([definition.id]); assert.equal(f.clients.length, 2);
-  });
-});
-
-test('MCP updates retain unchanged connections and remove only tools owned by changed servers', async () => fixture([stdio], async f => {
-  const names = await f.select([stdio.id]); const client = f.clients[0]; f.setActive(['builtin', ...names]);
-  f.setSettings({ mcpServers: [{ ...stdio }] }); await f.update(); assert.equal(client.closed, 0);
-  const replacement = { ...stdio, id: 'replacement' };
-  f.setSettings({ mcpServers: [replacement] }); await f.update(); assert.equal(client.closed, 1); assert.deepEqual(f.getActive(), ['builtin']);
-  const statuses = JSON.parse(f.statuses.findLast(status => status.key === 'pi-desktop-mcp-status').value.slice(5));
-  assert.deepEqual(statuses, [{ id: 'replacement', status: 'connected' }]);
-  assert.equal((await f.select(['replacement'])).length, 1);
-  globalThis.__MCP_TEST_PAGES__ = { first: { tools: [] } };
-  await f.select(['replacement'], 'other'); await f.commands.get('mcp-status').handler();
-  assert.equal(f.messages.at(-1).message.content, 'replacement: no tools');
+test('unchanged MCP definitions retain registrations and replacements remove only affected servers', async () => fixture(async f => {
+  const definitions = { search: { command: 'server' }, other: { command: 'other' } };
+  await f.select(definitions); await f.select(structuredClone(definitions)); assert.equal(f.registrations.length, 2); assert.deepEqual(f.removed, []);
+  await f.select({ search: { command: 'replacement' } }); assert.deepEqual(f.removed, ['other', 'search']); assert.equal(f.registrations.length, 3);
+  assert.equal(f.servers.get('search').command, 'replacement'); assert.equal(f.servers.has('other'), false);
 }));
 
-test('MCP tool names remain unique and stable across normalization collisions and reconnects', async () => fixture([stdio], async f => {
-  f.tools.set('mcp_server_one_lookup', { name: 'mcp_server_one_lookup' });
-  globalThis.__MCP_TEST_PAGES__ = { first: { tools: [{ name: 'lookup' }, { name: 'look-up' }, { name: 'look up' }, { name: '!'.repeat(80) }, { name: 'x'.repeat(100) }] } };
-  const names = await f.select([stdio.id]);
-  assert.equal(new Set(names).size, 5); assert.ok(names.every(name => name.length <= 64));
-  assert.equal(names.includes('mcp_server_one_lookup'), false);
-  assert.equal(f.tools.size, 6);
-  assert.deepEqual(await f.select([stdio.id], 'new-agent'), names);
-  assert.equal(f.tools.size, 6);
+test('private MCP identities stay stable per agent and session and change between owners', async () => fixture(async f => {
+  const definitions = { search: { command: 'server' } };
+  await f.select(definitions); const initial = f.servers.get('search').env.PIOP_CUA_INSTANCE_ID;
+  await f.select(definitions); assert.equal(f.servers.get('search').env.PIOP_CUA_INSTANCE_ID, initial);
+  await f.select(definitions, 'review'); const review = f.servers.get('search').env.PIOP_CUA_INSTANCE_ID; assert.notEqual(review, initial);
+  await f.select(definitions, 'review', 'other-session'); assert.notEqual(f.servers.get('search').env.PIOP_CUA_INSTANCE_ID, review);
 }));
 
-test('MCP bridge discovers paginated tools and forwards calls with an opted-in private agent identity', async () => fixture([{ ...stdio, injectAgentId: true }], async f => {
-  globalThis.__MCP_TEST_PAGES__ = {
-    first: { tools: [{ name: 'Look up', inputSchema: { type: 'object', properties: { agent_id: { type: 'string' }, query: { type: 'string' } }, required: ['agent_id', 'query'] } }], nextCursor: 'next' },
-    next: { tools: [{ name: 'other' }] },
-  };
-  const names = await f.select([stdio.id]); assert.equal(names.length, 2);
-  const client = f.clients[0];
-  assert.deepEqual(client.transport.options.args, ['one', 'two words', '', 'literal\\slash', 'escaped space', 'tail\\']);
-  assert.equal(client.transport.options.command, '/tool executable'); assert.equal(client.transport.options.maxBufferSize, 4 * 1024 * 1024);
-  assert.equal(client.connectOptions.timeout, 23000); assert.equal(client.calls[1][1].cursor, 'next');
-  const tool = f.tools.get(names[0]); assert.deepEqual(tool.parameters.required, ['query']); assert.equal('agent_id' in tool.parameters.properties, false);
-  globalThis.__MCP_TEST_RESULT__ = { content: [{ type: 'text', text: 'hello' }, { type: 'image', data: 'bytes', mimeType: 'image/png' }, { type: 'resource', uri: 'example' }] };
-  const result = await tool.execute('call', { query: 'q', agent_id: 'spoofed' });
-  assert.equal(result.content[0].text, 'hello'); assert.deepEqual(result.content[1], { type: 'image', data: 'bytes', mimeType: 'image/png' });
-  assert.deepEqual(JSON.parse(result.content[2].text), { type: 'resource', uri: 'example' });
-  assert.equal(client.calls.at(-1)[1].arguments.agent_id, client.transport.options.env.PIOP_CUA_INSTANCE_ID);
-  assert.notEqual(client.calls.at(-1)[1].arguments.agent_id, 'spoofed'); assert.equal(client.calls.at(-1)[2].timeout, 120000);
-  assert.deepEqual(await f.select([stdio.id]), names); assert.equal(f.clients.length, 1);
-  f.setActive(['builtin', ...names]); await f.select([], 'agent'); assert.deepEqual(f.getActive(), ['builtin']);
-  await assert.rejects(tool.execute('call', {}), /not available for this agent/); assert.equal(client.closed, 1);
+test('opted-in MCP tools hide private identity fields and override spoofed call arguments', async () => fixture(async f => {
+  await f.select({ search: { command: 'server', piopInjectAgentId: true } });
+  const original = f.addTool('mcp__search__lookup'), tool = f.tools.get(original.name);
+  assert.deepEqual(tool.parameters.required, ['query']); assert.equal('agent_id' in tool.parameters.properties, false); assert.deepEqual(original.parameters.required, ['query', 'agent_id']);
+  const signal = new AbortController().signal, update = () => {};
+
+  await tool.execute('call', { query: 'q', agent_id: 'spoofed' }, signal, update, f.ctx);
+  assert.deepEqual(f.executions[0], ['call', { query: 'q', agent_id: f.servers.get('search').env.PIOP_CUA_INSTANCE_ID }, signal, update, f.ctx]);
 }));
 
-test('MCP bridge configures HTTP headers and reconnects on agent changes without aliasing tools', async () => fixture([
-  { id: 'http', name: 'HTTP', enabled: true, transport: 'http', url: 'https://example.invalid/mcp', headers: '{"X-Test":"value"}' },
-], async f => {
-  const names = await f.select(['http']); const oldTool = f.tools.get(names[0]); const oldClient = f.clients[0];
-  assert.equal(oldClient.transport.url.href, 'https://example.invalid/mcp'); assert.deepEqual(oldClient.transport.options.requestInit.headers, { 'X-Test': 'value' });
-  assert.deepEqual(await f.select(['http'], 'different-agent'), names); assert.equal(oldClient.closed, 1);
-  await assert.rejects(oldTool.execute('call', {}), /not available for this agent/);
-  const tool = f.tools.get(names[0]); const signal = AbortSignal.abort(); await assert.rejects(tool.execute('call', {}, signal), /aborted/);
-  globalThis.__MCP_TEST_RESULT__ = { isError: true, content: [{ type: 'text', text: 'remote failure' }] };
-  await assert.rejects(tool.execute('call', {}), /remote failure/);
-  globalThis.__MCP_TEST_RESULT__ = { structuredContent: { value: 3 } };
-  assert.deepEqual(JSON.parse((await tool.execute('call', {})).content[0].text), globalThis.__MCP_TEST_RESULT__.structuredContent);
-  f.clients.at(-1).onclose(); await assert.rejects(tool.execute('call', {}), /not available for this agent/);
-  await f.select(['http'], 'different-agent'); assert.equal(f.clients.length, 3);
+test('ordinary MCP tools retain their schemas and supplied arguments', async () => fixture(async f => {
+  await f.select({ search: { command: 'server' } });
+  const original = f.addTool('mcp__search__lookup'); assert.equal(f.tools.get(original.name), original);
+  await original.execute('call', { agent_id: 'public' }); assert.equal(f.executions[0][1].agent_id, 'public');
+  await f.select({ search: { command: 'server', piopInjectAgentId: true } });
+  const numeric = f.addTool('mcp__search__numeric', { agent_id: { type: 'number' } }); assert.equal(f.tools.get(numeric.name), numeric);
 }));
 
-test('MCP bridge rejects invalid transports and skips disabled agent servers while allowing later recovery', async () => {
-  for (const config of [
-    { command: '' }, { args: "'unterminated" }, { startupTimeoutSec: 0 }, { startupTimeoutSec: 601 },
-    { transport: 'http', url: '' }, { transport: 'http', url: 'file:///tmp/file' },
-    { transport: 'http', url: 'https://example.invalid', headers: '[]' }, { transport: 'http', url: 'https://example.invalid', headers: { invalid: 3 } },
-  ]) await fixture([{ ...stdio, ...config }], async f => {
-    await assert.rejects(f.select([stdio.id])); assert.ok(f.clients[0].closed >= 1, 'failed connections must be closed');
-    f.setSettings({ mcpServers: [stdio] }); await f.update(); assert.equal((await f.select([stdio.id])).length, 1);
-  });
-  await fixture([{ ...stdio, enabled: false }], async f => {
-    assert.deepEqual(await f.select([stdio.id]), []);
-    assert.equal(f.clients.length, 0);
-    f.setSettings({ mcpServers: [stdio] });
-    assert.equal((await f.update()).length, 1);
-  }, { PI_DESKTOP_MCP_ALLOWED_SERVER_IDS: 'other' });
-});
+test('MCP tool listings respect exposure, active selection and codemode settings', async () => fixture(async f => {
+  f.addTool('mcp__search__lookup'); f.tools.set('hidden', { name: 'hidden', exposure: 'hidden', sourceInfo: { path: 'builtin:mcp' } });
+  f.tools.set('tool-search', { name: 'tool-search', sourceInfo: { path: 'builtin:tool-search' } }); f.tools.set('read', { name: 'read' });
+  f.setActive(['read', 'mcp__search__lookup', 'tool-search', 'codemode']);
+  assert.deepEqual(f.available(), { tools: ['codemode', 'mcp__search__lookup', 'tool-search'], availableTools: ['codemode', 'mcp__search__lookup', 'tool-search'] });
+  await f.select({}, 'general', 'session', false); assert.equal(f.getActive().includes('codemode'), false); assert.equal(f.available().tools.includes('codemode'), false);
+  f.adapter.setActiveTools(['read', 'codemode']); assert.deepEqual(f.getActive(), ['read']);
+}));
+
+test('failed MCP registration rejects readiness, recovers, and unsubscribes on shutdown', async () => fixture(async f => {
+  f.setRegistrationFailure(new Error('invalid server')); await assert.rejects(f.select({ search: { command: 'server' } }), /invalid server/);
+  f.setRegistrationFailure(); await f.select({ search: { command: 'server' } }); assert.equal(f.servers.size, 1);
+  assert.equal(f.bus.listenerCount('piop:mcp:select'), 1); await f.dispatch('session_shutdown');
+  assert.equal(f.bus.listenerCount('piop:mcp:select'), 0); assert.equal(f.bus.listenerCount('piop:mcp:tools'), 0);
+}));

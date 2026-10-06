@@ -11,18 +11,22 @@ pub(crate) fn recover_remote(host: &crate::RemoteHost) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn recover(root: &Path) -> Result<(), String> {
+fn restoration_pending(root: &Path) -> Result<bool, String> {
     let directory = root.join("restore-transactions");
     let entries = match std::fs::read_dir(&directory) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error.to_string()),
     };
     let mut pending = false;
     for entry in entries {
         if entry.map_err(|error| error.to_string())?.path().extension().is_some_and(|extension| extension == "json") { pending = true; break; }
     }
-    if !pending { return Ok(()); }
+    Ok(pending)
+}
+
+pub(crate) fn recover(root: &Path) -> Result<(), String> {
+    if !restoration_pending(root)? { return Ok(()); }
     let output = crate::node_command()
         .env("PIOP_RESTORE_ROOT", root)
         .args(["-e", include_str!("../resources/restore-archived-worktree.bundle.mjs"), "--", "--recover"])

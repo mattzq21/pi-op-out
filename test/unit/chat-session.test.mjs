@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderHook, act } from '../dom.mjs';
 import { useChatSession } from '../../src/lib/useChatSession.ts';
+import { promptContext } from '../prompt-context-fixture.mjs';
 
 describe('chat session hook', () => {
   let dom, hook, transport, responses, calls;
@@ -53,7 +54,7 @@ describe('chat session hook', () => {
 
   test('pause checkpoints the latest user, hides synthetic resume input and retains prompt context', async () => {
     await send(message('message_start', 'user', 'question'));
-    const context = { userTimestamp: 100, tokens: 42 };
+    const context = promptContext({ system: 42 }, { userTimestamp: 100 });
     const status = { type: 'extension_ui_request', method: 'setStatus', statusKey: 'pi-desktop-prompt-context' };
     await send({ ...status, statusText: `json:${JSON.stringify(context)}` }, { ...status, statusText: 'json:{' }, { ...status, statusText: 'json:{}' }, { ...status, statusText: `json:${JSON.stringify({ ...context, tokens: 999 })}` });
     await send(message('message_end', 'user', 'question'));
@@ -62,15 +63,16 @@ describe('chat session hook', () => {
     assert.equal(hook.current.state.isStreaming, true);
     await send({ type: 'pause_state', isPaused: true, isPausing: false });
     assert.equal(hook.current.state.isStreaming, false); assert.equal(hook.current.messages[0].contextCheckpoint, true);
-    await send({ type: 'entry_appended', entry: { type: 'custom', customType: 'pi-desktop-resume', data: { message: 'resume' } } }, message('message_start', 'user', 'resume'), message('message_start', 'custom', 'hidden', { display: false }), message('message_start', 'custom', 'side response', { customType: 'pi-desktop-btw' }));
+    await send({ type: 'entry_appended', entry: { id: 'resume-marker', type: 'custom', customType: 'pi-desktop-resume', data: { message: 'resume' } } }, message('message_start', 'user', 'resume'), message('message_start', 'custom', 'hidden', { display: false, customType: 'piop-session-operation' }), message('message_start', 'custom', 'side response', { customType: 'pi-desktop-btw' }));
     assert.equal(hook.current.messages.length, 1);
   });
 
   test('activity, queue counts, context usage and connection state follow runtime events', async () => {
     await act(async () => hook.current.refresh());
-    await send({ type: 'runtime_presence', viewers: '3', isStreaming: true }, { type: 'queue_update', steering: ['a'], followUp: ['b'], pendingMessages: [{ id: 'pending' }] });
+    const pendingMessage = { id: 'pending', message: 'a', behavior: 'steer' };
+    await send({ type: 'runtime_presence', viewers: 3, isStreaming: true }, { type: 'queue_update', steering: ['a'], followUp: ['b'], pendingMessages: [pendingMessage] });
     assert.equal(hook.current.state.viewers, 3); assert.equal(hook.current.state.pendingMessageCount, 2);
-    assert.deepEqual(hook.current.state.pendingMessages, [{ id: 'pending' }]);
+    assert.deepEqual(hook.current.state.pendingMessages, [pendingMessage]);
     await send({ type: 'compaction_start' }); assert.equal(hook.current.state.activity, 'Compacting context…');
     responses.set('get_session_stats', { contextUsage: { tokens: 100, contextWindow: 1000, percent: 10 } });
     await send({ type: 'compaction_end', result: { estimatedTokensAfter: 100 } });
@@ -85,7 +87,7 @@ describe('chat session hook', () => {
 
   test('refresh coalesces requests, filters internal commands and replays only newer events', async () => {
     const pending = Promise.withResolvers(); responses.set('get_snapshot', () => pending.promise);
-    responses.set('get_commands', { commands: [{ name: 'visible' }, { name: 'inline', sourceInfo: { source: 'inline' } }, { name: 'pi-orchestration-tool' }, { name: 'pi-desktop-control' }, { name: 'pi-desktop-fast-status' }, { name: 'pi-desktop-fork-and-forget' }] });
+    responses.set('get_commands', { commands: [{ name: 'visible', source: 'extension' }, { name: 'inline', source: 'extension', sourceInfo: { source: 'inline' } }] });
     let first, second;
     await act(async () => { first = hook.current.refresh(); second = hook.current.refresh(); });
     assert.equal(first, second);

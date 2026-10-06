@@ -11,7 +11,7 @@ describe('split conversation lifecycle', () => {
   beforeEach(() => {
     dom = installDom(); HTMLElement.prototype.scrollIntoView = () => {};
 
-    mockIPC(command => ['load_session_groups', 'change_session_groups'].includes(command) ? { version: 1, groups: [], assignments: {} } : undefined, { shouldMockEvents: true });
+    mockIPC(command => ['load_session_groups', 'change_session_groups'].includes(command) ? { groups: [], assignments: {}, removedProjects: [] } : undefined, { shouldMockEvents: true });
     calls = []; listeners = new Set(); connected = []; released = []; dialogs = [];
     const state = { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', messageCount: 0, pendingMessageCount: 0 };
     responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_snapshot', { revision: 'snapshot', state, history: { entries: [], leafId: null }, sequence: 0, epoch: 'epoch', liveTools: [], queue: { type: 'queue_state', pendingMessages: [] } }], ['get_available_models', { models: [] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }]]);
@@ -42,7 +42,7 @@ describe('split conversation lifecycle', () => {
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const click = async element => act(async () => element.click());
   const event = async value => act(async () => { for (const listener of listeners) listener(value); });
-  const extension = async (method, value = {}) => event({ type: 'extension_ui_request', method, ...value });
+  const extension = async (method, value = {}) => event({ type: 'extension_ui_request', id: crypto.randomUUID(), method, ...value });
 
   test('connects an existing session, applies settings and releases its transport on unmount', async () => {
     let closed = 0; await render({ onClose: () => closed++ });
@@ -107,7 +107,7 @@ describe('split conversation lifecycle', () => {
   });
 
   test('branching forks before the next prompt and copies only the retained history diffs', async () => {
-    const entries = [{ type: 'message', id: 'u', parentId: null, message: { role: 'user', content: 'Question' } }, { type: 'message', id: 'a', parentId: 'u', message: { role: 'assistant', content: 'Answer' } }, { type: 'message', id: 'next', parentId: 'a', message: { role: 'user', content: 'Next question' } }];
+    const entries = [{ type: 'message', id: 'u', parentId: null, message: { role: 'user', content: 'Question' } }, { type: 'message', id: 'a', parentId: 'u', message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } }, { type: 'message', id: 'next', parentId: 'a', message: { role: 'user', content: 'Next question' } }];
     responses.get('get_snapshot').history = { entries, leafId: 'next' };
     let path = '/source.jsonl'; const changes = [], bindings = [], copies = [];
     transport.currentSessionPath = () => path;
@@ -117,18 +117,20 @@ describe('split conversation lifecycle', () => {
     return {}; });
     responses.set('get_entries', { entries: entries.slice(0, 2), leafId: 'a' });
     await render({ onSessionChange: (...args) => changes.push(args) });
-    await click(document.querySelector('[title="Branch from here"]'));
+    assert.ok(control('Fork'), JSON.stringify({ text: document.body.textContent, calls }));
+    await click(control('Fork'));
     assert.ok(calls.some(command => command.type === 'fork_after' && command.entryId === 'a'));
     assert.deepEqual(bindings, [['local', 'forked', transport]]); assert.equal(changes[0][0].path, '/fork.jsonl'); assert.equal(changes[0][0].name, 'Fork'); assert.equal(changes[0][1], transport);
     assert.deepEqual(copies, [[transport, '/source.jsonl', '/fork.jsonl', new Set(['u', 'a']), undefined]]);
   });
 
   test('branching the latest answer forks after it, honors cancellation, and exposes runtime errors', async () => {
-    responses.get('get_snapshot').history = { entries: [{ type: 'message', id: 'a', parentId: null, message: { role: 'assistant', content: 'Answer' } }], leafId: 'a' };
+    responses.get('get_snapshot').history = { entries: [{ type: 'message', id: 'a', parentId: null, message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } }], leafId: 'a' };
     transport.currentSessionPath = () => '/source'; const changes = [];
     responses.set('fork_after', { cancelled: true }); await render({ onSessionChange: value => changes.push(value) });
-    await click(document.querySelector('[title="Branch from here"]')); assert.ok(calls.some(command => command.type === 'fork_after' && command.entryId === 'a')); assert.deepEqual(changes, []);
-    responses.set('fork_after', new Error('fork failed')); await click(document.querySelector('[title="Branch from here"]')); assert.match(document.querySelector('.split-control-error').textContent, /fork failed/);
+    assert.ok(control('Fork'), JSON.stringify({ text: document.body.textContent, calls }));
+    await click(control('Fork')); assert.ok(calls.some(command => command.type === 'fork_after' && command.entryId === 'a')); assert.deepEqual(changes, []);
+    responses.set('fork_after', new Error('fork failed')); await click(control('Fork')); assert.match(document.querySelector('.split-control-error').textContent, /fork failed/);
     await click(control('Dismiss split pane error')); assert.equal(document.querySelector('.split-control-error'), null);
   });
 
@@ -154,9 +156,9 @@ describe('split conversation lifecycle', () => {
 
   test('agent capability updates populate the picker and selection sends encoded agent names', async () => {
     await render();
-    await extension('setStatus', { statusKey: 'pi-define-agents', statusText: `json:${encodeAgentValue({ config: { agents: ['general', 'review'].map(name => ({ name, model: '', effort: '', tools: [], skills: [], mcpServers: [], path_systemprompt: '', path_agentprompt: '' })) }, active: 'general' })}` });
+    await extension('setStatus', { statusKey: 'pi-define-agents', statusText: `json:${encodeAgentValue({ config: { agents: ['general', 'review'].map(name => ({ name, model: '', effort: '', tools: [], skills: [], mcpServers: {}, path_systemprompt: '', path_agentprompt: '' })) }, active: 'general' })}` });
     await click(control('Agent')); await click(document.querySelector('[role=option][data-value=review]'));
-    assert.ok(calls.some(command => command.type === 'prompt' && command.message === `/pi-define-agents-use ${encodeAgentValue('review')}`));
+    assert.ok(calls.some(command => command.type === 'select_agent' && command.agent === 'review'));
     await extension('setStatus', { statusKey: 'pi-define-agents', statusText: 'json:invalid' }); assert.equal(control('Agent').dataset.options, '');
     await extension('setStatus', { statusKey: 'pi-define-agents' }); assert.equal(control('Agent').dataset.options, '');
   });

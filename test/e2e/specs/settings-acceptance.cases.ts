@@ -17,7 +17,7 @@ describe("Settings acceptance", () => {
     const model = { provider, id: modelParts.join("/"), name: "Configured model", reasoning: true };
     await mockBackend({
       ...connectedSessionResponses("settings-save"),
-      load_app_settings: defaultSettings, save_app_settings: { settings: { ...defaultSettings, autoRetry: !defaultSettings.autoRetry } }, start_pi: {}, stop_pi: {},
+      load_app_settings: defaultSettings, save_app_settings: { settings: { ...defaultSettings, autoRetry: !defaultSettings.autoRetry } }, start_pi: {}, stop_pi: false,
       "pi_command:get_state": { ...connectedSessionResponses("settings-save")["pi_command:get_state"], model, thinkingLevel: defaultSettings.defaultThinking },
       "pi_command:get_available_models": { models: [model] },
       "pi_command:get_available_thinking_levels": { levels: [...new Set([defaultSettings.defaultThinking, "high", "off"])] },
@@ -110,51 +110,38 @@ describe("Settings acceptance", () => {
     await app.openConversations();
   });
 
+
   it("can prepare an MCP server without saving it", async () => {
     await app.openSettings();
     await app.openSettingsSection("Agents");
-    const before = await $$("input[aria-label='Server name']").length;
-    await app.addMcpServerButton.click();
-    const names = await $$("input[aria-label='Server name']");
-    const name = names[(await names.length) - 1];
+    const editor = $('textarea[aria-label="MCP server configuration"]');
+    const original = await editor.getValue();
+    const servers = { acceptance: { command: "node", args: ["server.js", "--quiet"] } };
+    await editor.setValue(JSON.stringify(servers));
 
-    await expect(names).toBeElementsArrayOfSize(before + 1);
-    await name.setValue("Acceptance server");
-    const card = await name.$('./ancestor::div[contains(@class, "mcp-card")]');
-    const command = await card.$('.//label[span[normalize-space(.)="Command"]]/input');
-    const args = await card.$('.//label[span[normalize-space(.)="Arguments"]]/input');
-    await command.setValue("node");
-    await args.setValue("server.js --quiet");
-
-    await expect(card.$('.mcp-transport-toggle button[aria-pressed="true"]')).toHaveText("stdio");
-    await expect(command).toHaveValue("node");
-    await expect(args).toHaveValue("server.js --quiet");
-    await $('button[aria-label="Remove Acceptance server"]').click();
-    await expect($$("input[aria-label='Server name']")).toBeElementsArrayOfSize(before);
+    await app.openSettingsSection("General");
+    await app.openSettingsSection("Agents");
+    expect(JSON.parse(await editor.getValue())).toEqual(servers);
+    await expect($(".mcp-error")).not.toBeExisting();
+    await editor.setValue(original);
     await app.openConversations();
   });
+
 
   it("can prepare an HTTP MCP server with headers without saving it", async () => {
     await app.openSettings();
     await app.openSettingsSection("Agents");
-    const before = await $$('input[aria-label="Server name"]').length;
-    await app.addMcpServerButton.click();
-    const names = await $$('input[aria-label="Server name"]');
-    const name = names[(await names.length) - 1];
-    await name.setValue("Acceptance HTTP");
-    const card = await name.$('./ancestor::div[contains(@class, "mcp-card")]');
-    await card.$('.//button[normalize-space(.)="HTTP"]').click();
-    const url = await card.$('input[placeholder="https://example.com/mcp"]');
-    const headers = await card.$('input[placeholder*="Authorization"]');
-    await url.setValue("https://mcp.example.test/api");
-    await headers.setValue('{"Authorization":"Bearer acceptance"}');
+    const editor = $('textarea[aria-label="MCP server configuration"]');
+    const original = await editor.getValue();
+    const servers = { acceptance: { url: "https://mcp.example.test/api", headers: { Authorization: "Bearer acceptance" } } };
+    await editor.setValue(JSON.stringify(servers));
 
-    await expect(card.$('.mcp-transport-toggle button[aria-pressed="true"]')).toHaveText("HTTP");
-    await expect(url).toHaveValue("https://mcp.example.test/api");
-    await expect(headers).toHaveValue('{"Authorization":"Bearer acceptance"}');
-    await expect(card.$('.//label[span[normalize-space(.)="Command"]]')).not.toBeExisting();
-    await $('button[aria-label="Remove Acceptance HTTP"]').click();
-    await expect($$('input[aria-label="Server name"]')).toBeElementsArrayOfSize(before);
+    expect(JSON.parse(await editor.getValue())).toEqual(servers);
+    await expect($(".mcp-error")).not.toBeExisting();
+    await editor.setValue('{"acceptance":{"url":"file:///tmp/server"}}');
+    await expect($(".mcp-error")).toBeDisplayed();
+    await expect(app.saveSettingsButton).toBeDisabled();
+    await editor.setValue(original);
     await app.openConversations();
   });
 

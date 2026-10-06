@@ -1,6 +1,6 @@
 import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState } from "./state.ts";
 import { Type } from "typebox";
-import { Check, Parse } from "typebox/value";
+import { Check, Errors, Parse } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
 import { readDaemonDefinitions } from "./daemon-definitions.ts";
@@ -733,7 +733,11 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (request.command !== "configure_agents") return;
     const ctx = request.ctx;
     request.ready = (async () => {
-      const { configuration: supplied } = Parse(Type.Object({ configuration: Type.Object({ agents: Type.Optional(Type.Array(agentSchema)) }) }), request.payload);
+      const schema = Type.Object({ configuration: Type.Object({ agents: Type.Optional(Type.Array(agentSchema)) }) });
+      const errors = Errors(schema, request.payload);
+
+      if (errors.length) throw new Error(`Invalid agent configuration: ${errors.map(error => `${error.instancePath} ${error.message}`).join('; ')}`);
+      const { configuration: supplied } = Parse(schema, request.payload);
       const next = normalize({ ...supplied, webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
 
       for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);

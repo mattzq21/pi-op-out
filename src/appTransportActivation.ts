@@ -81,7 +81,7 @@ export function createTransportActivation(context: ActivationContext) {
 
   const discardTransport = (previousTransport: NativeTransport, previousKey: string | undefined) => {
       discardDraft(previousTransport, previousKey);
-      let closingTerminals = Promise.resolve([] as PromiseSettledResult<void>[]);
+      let closingTerminals: Promise<PromiseSettledResult<void>[]> = Promise.resolve([]);
 
       if (previousKey) {
         const terminalIds = conversationTerminalIds(previousKey);

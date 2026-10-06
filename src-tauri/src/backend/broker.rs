@@ -166,6 +166,14 @@ fn enqueue_broker_message(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
         Ok(())
 }
 
+fn broker_terminal_lookup(app: &AppHandle, body: &[u8]) -> Result<Value, String> {
+            let value: Value = serde_json::from_slice(body).map_err(|_| "Invalid terminal lookup request")?;
+            let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
+            #[cfg(not(feature = "desktop"))]
+            if host_id != "local" { return peers::forward_broker(app, host_id, "/terminals", value.clone()); }
+            terminal_lookup::lookup(&app.state::<TerminalRuntime>(), &value, host_id)
+}
+
 fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream, method: &str, path: &str, body: Vec<u8>) -> Result<(), String> {
     let result = match (method, path) {
         ("GET", "/agent-definitions") => (|| {
@@ -177,13 +185,7 @@ fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
             let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
             crate::provider_auth::for_owner(app.clone(), "fast-mode-discovery".into(), Some(host_id.into()), json!({"action":"fast_capabilities"}))
         })(),
-        ("POST", "/terminals") => (|| {
-            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid terminal lookup request")?;
-            let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
-            #[cfg(not(feature = "desktop"))]
-            if host_id != "local" { return peers::forward_broker(&app, host_id, "/terminals", value.clone()); }
-            terminal_lookup::lookup(&app.state::<TerminalRuntime>(), &value, host_id)
-        })(),
+        ("POST", "/terminals") => broker_terminal_lookup(&app, &body),
         ("GET", "/agents") => {
             broker_agents(&app, &broker)
         },
@@ -229,6 +231,10 @@ fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
         })(),
         _ => Err("Unknown session broker endpoint".into()),
     };
+    finish_broker_response(stream, result)
+}
+
+fn finish_broker_response(stream: TcpStream, result: Result<Value, String>) -> Result<(), String> {
     match result { Ok(data) => broker_response(stream, "200 OK", json!({"data":data})), Err(error) => broker_response(stream, "400 Bad Request", json!({"error":error})) }
     Ok(())
 }
@@ -394,6 +400,10 @@ fn broker_orchestration(app: &AppHandle, broker: &BrokerRuntime, value: Value) -
         let result = daemon.request(json!({"type":"orchestration","action":action,"sessionKey":id,"deliveryId":value["deliveryId"]}))?;
         return broker_interruption_status(broker, &value, result);
     }
+    broker_conversation_operation(app, broker, &value, host, id, action)
+}
+
+fn broker_conversation_operation(app: &AppHandle, broker: &BrokerRuntime, value: &Value, host: &str, id: &str, action: &str) -> Result<Value, String> {
     let sessions = broker_message_sessions(app, &app.state::<SessionIndexRuntime>(), host)?;
     let session = resolve_agent(&sessions, host, id)?;
     let settings = load_app_settings(app.clone())?;
@@ -408,7 +418,6 @@ fn broker_orchestration(app: &AppHandle, broker: &BrokerRuntime, value: Value) -
     }
     daemon.request(packet)
 }
-
 fn broker_interruption_status(broker: &BrokerRuntime, request: &Value, mut result: Value) -> Result<Value, String> {
     if request["action"] == "interrupt" {
         let host = request["hostId"].as_str().ok_or("hostId is required")?;

@@ -251,6 +251,18 @@ export const config: WebdriverIO.Config = {
     try { cleanupTestSessions(); }
     finally { try { restoreNativeConfigs(); } finally { if (ownsFixtureHome) rmSync(fixtureHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } }
   },
+  afterTest: async (_test, _context, { passed }) => {
+    if (passed) return;
+
+    const state = await browser.execute(() => ({
+      errors: [...document.querySelectorAll(".error-toast,.dialog-error,.upload-error,.split-pane-status.error")].map(element => element.textContent),
+      composer: document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message piop"]')?.disabled,
+      calls: JSON.parse(document.querySelector<HTMLTextAreaElement>("#pi-e2e-calls")?.value || "[]").slice(-15).map((call: { command: string; args?: { command?: { type?: string }; action?: string } }) => ({ command: call.command, type: call.args?.command?.type, action: call.args?.action })),
+    }));
+
+    console.error("E2E failure state", JSON.stringify(state));
+  },
+
   before: async () => {
     const [mainWindow] = await browser.getWindowHandles();
 

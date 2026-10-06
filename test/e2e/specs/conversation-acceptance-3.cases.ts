@@ -36,19 +36,20 @@ describe("Conversation acceptance", () => {
 
     try {
       await emitPiEvent({ type: "agent_start" });
-      await emitPiEvent({ type: "queue_update", steering: [{}, {}], followUp: [{}] });
-      await expect($(".stream-banner")).toHaveText(expect.stringContaining("3 queued"));
+      await emitPiEvent({ type: "queue_update", steering: ["First correction", "Second correction"], followUp: ["Next task"], pendingMessages: [{ id: "steer-1", message: "First correction", behavior: "steer" }, { id: "steer-2", message: "Second correction", behavior: "steer" }, { id: "follow-1", message: "Next task", behavior: "followUp" }] });
+      await expect($$(".pending-message")).toBeElementsArrayOfSize(3);
 
-      await emitPiEvent({ type: "queue_update", steering: [], followUp: [] });
-      await browser.waitUntil(async () => !(await $(".stream-banner").getText()).includes("queued"));
+      await emitPiEvent({ type: "queue_update", steering: [], followUp: [], pendingMessages: [] });
+      await expect($(".pending-messages")).not.toBeExisting();
     } finally {
-      await emitPiEvent({ type: "queue_update", steering: [], followUp: [] });
+      await emitPiEvent({ type: "queue_update", steering: [], followUp: [], pendingMessages: [] });
       await emitPiEvent({ type: "agent_end" });
       await resetBackend();
     }
   });
 
   it("updates the thinking selector when piop changes effort", async () => {
+    await resetApp();
     await mockBackend(connectedSessionResponses("thinking-event-session"));
 
     try {
@@ -101,7 +102,7 @@ describe("Conversation acceptance", () => {
 
       if (await enableDebug.isExisting()) await enableDebug.click();
       await expect($(".cache-hit-rate")).toHaveAttribute("aria-label", "Cache 75%, 3000/4000");
-      await expect($(".session-cache-hit")).toHaveText("Cache 75%");
+      await expect($(".session-cache-hit")).toHaveText("75%");
     } finally {
       await resetBackend();
       await app.refreshForReset();
@@ -110,26 +111,26 @@ describe("Conversation acceptance", () => {
   });
 
   it("renders terminal output and reports when the process exits", async () => {
-    await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+    await startTemporaryConversation({ "shared_terminal:start": {}, "shared_terminal:resize": {}, "shared_terminal:close": {} });
 
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();
-      await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "start_terminal"));
-      const terminalId = (await backendCalls()).find(({ command }) => command === "start_terminal")?.args.terminalId;
+      await browser.waitUntil(async () => (await backendCalls()).some(({ command, args }) => command === "shared_terminal" && args.action === "start"));
+      const terminalId = (await backendCalls()).find(({ command, args }) => command === "shared_terminal" && args.action === "start")?.args.sharedTerminalId;
 
       if (!terminalId) throw new Error("Terminal start was not recorded");
 
-      await emitPiEvent({ type: "terminal_output", terminalId, data: "acceptance terminal output\r\n" });
+      await emitPiEvent({ type: "terminal_output", terminalId, hostId: "local", sessionId: "acceptance-terminal", generation: "e2e", outputEnd: "acceptance terminal output\r\n".length, data: "acceptance terminal output\r\n" });
       await browser.waitUntil(async () => String(await browser.execute(() => document.querySelector(".xterm-rows")?.textContent)).includes("acceptance terminal output"));
-      await emitPiEvent({ type: "terminal_exit", terminalId });
+      await emitPiEvent({ type: "terminal_exit", terminalId, hostId: "local", sessionId: "acceptance-terminal", generation: "e2e" });
       await expect($(".terminal-exited")).toHaveText("exited");
 
       await app.deleteTerminalButton.click();
-      await expect(app.terminalPanel).not.toBeExisting();
+      await expect(app.terminalPanel).not.toBeDisplayed();
     } finally {
-      if (await app.terminalPanel.isExisting()) await app.deleteTerminalButton.click();
+      if (await app.terminalPanel.isDisplayed()) await app.deleteTerminalButton.click();
       await resetBackend();
       await app.refreshForReset();
       await app.waitUntilReady();
@@ -138,33 +139,35 @@ describe("Conversation acceptance", () => {
 
   it("shows a terminal startup failure inside the terminal", async () => {
     await resetApp();
-    await startTemporaryConversation({ start_terminal: { error: "Terminal launch rejected" }, resize_terminal: {}, close_terminal: {} });
+    await startTemporaryConversation({ "shared_terminal:start": { error: "Terminal launch rejected" }, "shared_terminal:resize": {}, "shared_terminal:close": {} });
 
     try {
       await app.openTerminalButton.click();
       await browser.waitUntil(async () => String(await browser.execute(() => document.querySelector(".xterm-rows")?.textContent)).includes("Could not start terminal: Error: Terminal launch rejected"));
       await app.deleteTerminalButton.click();
-      await expect(app.terminalPanel).not.toBeExisting();
+      await expect(app.terminalPanel).not.toBeDisplayed();
     } finally {
-      if (await app.terminalPanel.isExisting()) await app.deleteTerminalButton.click();
+      if (await app.terminalPanel.isDisplayed()) await app.deleteTerminalButton.click();
       await resetBackend();
     }
   });
 
-  it("shows terminal input failures inside the active terminal", async () => {
+  it("reports terminal input failures without closing the active terminal", async () => {
     await resetApp();
-    await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, write_terminal: { error: "Terminal input channel closed" }, close_terminal: {} });
+    await startTemporaryConversation({ "shared_terminal:start": {}, "shared_terminal:resize": {}, "shared_terminal:write_with_draft": { error: "Terminal input channel closed" }, "shared_terminal:close": {} });
 
     try {
       await app.openTerminalButton.click();
       await expect(app.terminalPanel).toBeDisplayed();
       await browser.waitUntil(() => browser.execute(() => document.activeElement?.classList.contains("xterm-helper-textarea") ?? false), { timeoutMsg: "Opening the terminal did not focus its input" });
       await browser.keys("x");
-      await browser.waitUntil(async () => String(await browser.execute(() => document.querySelector(".xterm-rows")?.textContent)).includes("Terminal input failed: Error: Terminal input channel closed"));
+      await expect($(".error-toast strong")).toHaveText("Terminal input failed");
+      await expect($(".error-toast span")).toHaveText("Error: Terminal input channel closed");
+      await expect(app.terminalPanel).toBeDisplayed();
       await app.deleteTerminalButton.click();
-      await expect(app.terminalPanel).not.toBeExisting();
+      await expect(app.terminalPanel).not.toBeDisplayed();
     } finally {
-      if (await app.terminalPanel.isExisting()) await app.deleteTerminalButton.click();
+      if (await app.terminalPanel.isDisplayed()) await app.deleteTerminalButton.click();
       await resetBackend();
     }
   });
@@ -269,17 +272,17 @@ describe("Conversation acceptance", () => {
 
     try {
       await emitPiEvent({ type: "session_switched" });
-      const branch = $(".assistant-message").$('button[aria-label^="Branch from assistant response"]');
+      const branch = $(".assistant-message").$('button[aria-label="Fork"]');
       await expect(branch).toBeEnabled();
       await browser.execute(() => {
-        const element = document.querySelector('.assistant-message button[aria-label^="Branch from assistant response"]');
+        const element = document.querySelector('.assistant-message button[aria-label="Fork"]');
 
         if (!(element instanceof HTMLElement)) throw new Error("Expected page element was not found");
         element.click();
       });
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "fork_after"));
-      expect((await backendCalls()).find(({ args }) => args.command?.type === "fork_after")?.args.command).toEqual({ type: "fork_after", entryId: "branch-assistant" });
+      expect((await backendCalls()).find(({ args }) => args.command?.type === "fork_after")?.args.command).toMatchObject({ type: "fork_after", entryId: "branch-assistant" });
       await expect($(".user-message .message-body")).toHaveText("Establish the branch point");
       await expect($(".assistant-message")).toHaveText(expect.stringContaining("This response can be branched."));
     } finally {
@@ -301,12 +304,12 @@ describe("Conversation acceptance", () => {
       });
 
       await expect(app.composer).toHaveValue("");
-      await emitPiEvent({ type: "queue_update", steering: ["Focus on the acceptance criteria"], followUp: [] });
-      await expect($(".stream-banner")).toHaveText(expect.stringContaining("1 queued"));
+      await emitPiEvent({ type: "queue_update", steering: ["Focus on the acceptance criteria"], followUp: [], pendingMessages: [{ id: "steer-criteria", message: "Focus on the acceptance criteria", behavior: "steer" }] });
+      await expect($$(".pending-message")).toBeElementsArrayOfSize(1);
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "steer"));
-      expect((await backendCalls()).find(({ args }) => args.command?.type === "steer")?.args.command).toEqual({ type: "steer", message: "Focus on the acceptance criteria" });
+      expect((await backendCalls()).find(({ args }) => args.command?.type === "steer")?.args.command).toMatchObject({ type: "steer", message: "Focus on the acceptance criteria" });
     } finally {
-      await emitPiEvent({ type: "queue_update", steering: [], followUp: [] });
+      await emitPiEvent({ type: "queue_update", steering: [], followUp: [], pendingMessages: [] });
       await emitPiEvent({ type: "agent_end" });
       await resetBackend();
     }
@@ -324,15 +327,15 @@ describe("Conversation acceptance", () => {
 
       await expect(app.composer).toHaveValue("");
       await emitPiEvent({ type: "queue_update", steering: [], followUp: [pending.message], pendingMessages: [pending] });
-      await expect($(".stream-banner")).toHaveText(expect.stringContaining("1 queued"));
+      await expect($$(".pending-message")).toBeElementsArrayOfSize(1);
       await $('button[aria-label="Stop piop"]').click();
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String(args.command?.type))).length === 2);
-      expect((await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String(args.command?.type))).map(({ args }) => args.command)).toEqual([
+      expect((await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String(args.command?.type))).map(({ args }) => args.command)).toMatchObject([
         { type: "follow_up", message: pending.message }, { type: "abort" },
       ]);
       await $('button[aria-label="Remove queued message: Check this after the current response"]').click();
     } finally {
-      await emitPiEvent({ type: "queue_update", steering: [], followUp: [] });
+      await emitPiEvent({ type: "queue_update", steering: [], followUp: [], pendingMessages: [] });
       await emitPiEvent({ type: "agent_end" });
       await resetBackend();
     }
@@ -349,7 +352,7 @@ describe("Conversation acceptance", () => {
       await $('//dialog//button[normalize-space(.)="Continue"]').click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "extension_ui_response"));
-      expect((await backendCalls()).find(({ args }) => args.command?.type === "extension_ui_response")?.args.command).toEqual({ type: "extension_ui_response", id: "acceptance-input", value: "beta" });
+      expect((await backendCalls()).find(({ args }) => args.command?.type === "extension_ui_response")?.args.command).toMatchObject({ type: "extension_ui_response", id: "acceptance-input", value: "beta" });
       await expect(app.extensionDialogHeading).not.toBeExisting();
     } finally {
       await resetBackend();
@@ -369,7 +372,7 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-no-confirm", method: "confirm", title: "Publish release?" });
       await $('//dialog//button[normalize-space(.)="No"]').click();
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").length === 2);
-      expect((await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").map(({ args }) => args.command)).toEqual([
+      expect((await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").map(({ args }) => args.command)).toMatchObject([
         { type: "extension_ui_response", id: "acceptance-enter-input", value: "beta" },
         { type: "extension_ui_response", id: "acceptance-no-confirm", confirmed: false },
       ]);

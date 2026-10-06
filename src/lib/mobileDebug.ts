@@ -1,7 +1,12 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 
 const debugConnection = registerPlugin<{ load(): Promise<{ url?: string }> }>("DebugConnection");
+
 let debugUrl: string | undefined;
+
+function validDebugAddress(url: URL) {
+  return url.protocol === "ws:" && url.hostname === "10.0.2.2" && Boolean(url.port) && url.pathname === "/" && !url.username && !url.password && !url.search && !url.hash;
+}
 
 export async function loadMobileDebugConnection(): Promise<string | undefined> {
   if (Capacitor.getPlatform() !== "android") return undefined;
@@ -10,7 +15,7 @@ export async function loadMobileDebugConnection(): Promise<string | undefined> {
   if (!configuration.url) return undefined;
   const url = new URL(configuration.url);
 
-  if (url.protocol !== "ws:" || url.hostname !== "10.0.2.2" || !url.port || url.pathname !== "/" || url.username || url.password || url.search || url.hash) {
+  if (!validDebugAddress(url)) {
     throw new Error("Invalid emulator debug connection address.");
   }
 

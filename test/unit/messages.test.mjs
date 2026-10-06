@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { appendFileChanges, resumeMarker, isResumeMessage, checkpointLatestUser, cacheHitStats, normalizeMessage, applyAssistantMessageEvent, branchMessages } from '../../src/lib/messages.ts';
+import { promptContext } from '../prompt-context-fixture.mjs';
 
 test('message normalization preserves content and selects stable identifiers and roles', () => {
   const content = [{ type: 'text', text: 'hello' }];
@@ -22,7 +23,7 @@ test('message normalization preserves content and selects stable identifiers and
   assert.equal(normalizeMessage({ role: 'toolResult' }).toolStatus, 'done');
   assert.equal(normalizeMessage({ role: 'toolResult' }).role, 'tool');
 
-  for (const customType of ['pi-desktop-mcp-status', 'pi-desktop-catch-up']) assert.equal(normalizeMessage({ role: 'custom', customType }).role, 'system');
+  for (const customType of ['pi-desktop-mcp-status', 'piop-review-link', 'piop-html-preview']) assert.equal(normalizeMessage({ role: 'custom', customType }).role, 'system');
   assert.equal(normalizeMessage({ role: 'custom', customType: 'pi-desktop-btw' }).role, 'assistant');
   assert.equal(normalizeMessage({ role: 'custom', customType: 'other' }).role, 'custom');
   assert.equal(original.id, 'original');
@@ -128,8 +129,8 @@ const custom = (id, parentId, customType, data) => ({ type: 'custom', id, parent
 test('branch reconstruction follows ancestry, hides resume prompts and attaches context without eager tool inputs', () => {
   const entries = [
     msg('u', null, 'user', 'question'),
-    custom('context', 'u', 'pi-desktop-prompt-context', { tokens: 100 }),
-    custom('context2', 'context', 'pi-desktop-prompt-context', { tokens: 999 }),
+    custom('context', 'u', 'pi-desktop-prompt-context', promptContext({ system: 100 })),
+    custom('context2', 'context', 'pi-desktop-prompt-context', promptContext({ system: 999 })),
     msg('a', 'context2', 'assistant', [{ type: 'thinking', thinking: 'plan' }, { type: 'toolCall', id: 'call', name: 'read', arguments: { path: 'a' } }]),
     msg('t', 'a', 'toolResult', 'result', { toolCallId: 'call' }),
     custom('files', 't', 'piop-file-changes', { cwd: '/repo', patch: '', paths: ['a'], toolCallIds: ['call'] }),
@@ -141,7 +142,7 @@ test('branch reconstruction follows ancestry, hides resume prompts and attaches 
 
   const result = branchMessages(entries, 'final');
   assert.deepEqual(result.map(message => message.id), ['u', 'a', 't', 'final']);
-  assert.deepEqual(result[0].promptContext, { tokens: 100 });
+  assert.deepEqual(result[0].promptContext, promptContext({ system: 100 }));
   assert.equal(result[0].contextCheckpoint, true);
   assert.equal(result[2].toolInput, undefined);
   assert.equal(result[2].fileChanges[0].id, 'files');
@@ -156,8 +157,8 @@ test('branch reconstruction handles orphaned metadata, custom visibility and pau
     custom('c', null, 'pi-desktop-prompt-context', {}),
     msg('u', 'c', 'user'),
     custom('p', 'u', 'pi-desktop-pause-state', { isPaused: true }),
-    { id: 's', parentId: 'p', type: 'custom_message', customType: 'pi-desktop-catch-up' },
-    { id: 'hidden', parentId: 's', type: 'custom_message', display: false },
+    { id: 's', parentId: 'p', type: 'custom_message', customType: 'piop-review-link' },
+    { id: 'hidden', parentId: 's', type: 'custom_message', customType: 'piop-session-operation', display: false },
     { id: 'btw', parentId: 'hidden', type: 'custom_message', customType: 'pi-desktop-btw' },
     msg('unsupported', 'btw', 'system'),
     msg('t', 'unsupported', 'toolResult', '', { toolCallId: 'unknown' }),

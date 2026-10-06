@@ -19,7 +19,9 @@ const COLLAPSED_PROJECTS_KEY = "pi-desktop-collapsed-projects";
 const SESSION_ORDERS_KEY = "pi-desktop-session-orders";
 
 const SIDEBAR_ORDER_KEY = "pi-desktop-sidebar-order";
+
 const PROJECT_GROUPS_KEY = "pi-desktop-project-groups";
+
 const GROUP_CHILD_ORDER_KEY = "pi-desktop-group-child-order";
 
 export const RECENT_KEY = "__pi-desktop-ungrouped__";
@@ -98,44 +100,60 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const [sidebarOrder, setSidebarOrder] = createSignal<string[]>(savedSidebarOrder());
   const [projectGroups, setProjectGroups] = createSignal(readStoredJson(PROJECT_GROUPS_KEY, z.record(z.string(), z.string()), {}));
   const [groupChildOrders, setGroupChildOrders] = createSignal(readStoredJson(GROUP_CHILD_ORDER_KEY, z.record(z.string(), z.array(z.string())), {}));
+
   const projectParent = (id: string) => {
     const parent = projectGroups()[id];
 
     return !isFixedGroup(id) && savedGroupsById().has(id) && customGroups().some(group => group.id === parent) ? parent : undefined;
   };
+
   const groupAncestors = (id: string) => {
     const ancestors: string[] = [];
     const seen = new Set([id]);
     let parent = projectParent(id);
+
     while (parent && !seen.has(parent)) {
       ancestors.push(parent);
       seen.add(parent);
       parent = projectParent(parent);
     }
+
     return ancestors;
   };
+
   const canMoveProject = (id: string, parent?: string) => {
     if (isFixedGroup(id) || !savedGroupsById().has(id)) return false;
+
     if (parent === undefined) return true;
+
     if (!customGroups().some(group => group.id === parent) || parent === id) return false;
     const ancestors = groupAncestors(parent);
+
     if (ancestors.includes(id)) return false;
     const customIds = new Set(customGroups().map(group => group.id));
+
     const subtreeHeight = (key: string): number => customIds.has(key)
       ? 1 + Math.max(0, ...customGroups().filter(group => projectParent(group.id) === key).map(group => subtreeHeight(group.id)))
       : 0;
+
     return ancestors.length + 1 + subtreeHeight(id) <= 3;
   };
+
   const moveProject = (id: string, parent?: string) => {
     if (!canMoveProject(id, parent)) return;
     setProjectGroups(current => {
       const next = { ...current };
+
       if (parent) next[id] = parent; else delete next[id];
+
       try { localStorage.setItem(PROJECT_GROUPS_KEY, JSON.stringify(next)); } catch { }
+
       return next;
     });
+
     if (parent) expandProject(parent);
   };
+
   const groupNameTaken = (name: string, excludedId?: string) => name.trim().toLowerCase() === "dirless" || sidebarCollator.compare(RECENT_LABEL, name.trim()) === 0 || storedGroups.state?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
 
   const validateGroupName = (name: string, excludedId?: string) => {
@@ -152,7 +170,9 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     await storedGroups.change({ type: "remove", id: projectKey });
     setProjectGroups(current => {
       const next = Object.fromEntries(Object.entries(current).filter(([id, parent]) => id !== projectKey && parent !== projectKey));
+
       try { localStorage.setItem(PROJECT_GROUPS_KEY, JSON.stringify(next)); } catch { }
+
       return next;
     });
     setSessionOrders((current) => { const next = { ...current }; delete next[projectKey];
@@ -190,6 +210,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const expandProject = (projectKey: string) => {
     setCollapsedProjects((current) => {
       const keys = [projectKey, ...groupAncestors(projectKey)];
+
       if (!keys.some(key => current.has(key))) return current;
       const next = new Set(current);
       keys.forEach(key => next.delete(key));
@@ -198,6 +219,14 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
       return next;
     });
+  };
+
+  const placeSessionEntry = (destinationKey: string, key: string, targetKey: string | undefined, edge: "before" | "after") => {
+    const target = targetKey ? sessionLayoutToken(targetKey) : undefined;
+    const entries = groupEntries(destinationKey).filter(token => token !== sessionLayoutToken(key));
+    const index = target ? entries.indexOf(target) : -1;
+    const before = index < 0 ? null : edge === "before" ? target ?? null : entries[index + 1] ?? null;
+    placeGroupEntry(destinationKey, sessionLayoutToken(key), before);
   };
 
   const moveSession = (drag: DraggedSession, destinationKey: string, targetKey?: string, edge: "before" | "after" = "after") => {
@@ -218,11 +247,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     });
 
     if (customGroupsByKey().has(destinationKey)) {
-      const target = targetKey ? sessionLayoutToken(targetKey) : undefined;
-      const entries = groupEntries(destinationKey).filter(token => token !== sessionLayoutToken(drag.sessionKey));
-      const index = target ? entries.indexOf(target) : -1;
-      const before = index < 0 ? null : edge === "before" ? target ?? null : entries[index + 1] ?? null;
-      placeGroupEntry(destinationKey, sessionLayoutToken(drag.sessionKey), before);
+      placeSessionEntry(destinationKey, drag.sessionKey, targetKey, edge);
     }
 
     return storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
@@ -291,6 +316,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     const groupName = location === DIRLESS_KEY ? "Dirless" : location === RECENT_KEY ? RECENT_LABEL : savedGroupsById().get(location)?.name ?? "";
 
     const parentName = groupAncestors(location).map(id => savedGroupsById().get(id)?.name ?? "").join(" ");
+
     return `${session.name} ${session.project} ${projectName(session)} ${session.preview} ${session.hostName ?? session.hostId ?? "Local"} ${groupName} ${parentName}`.toLowerCase().includes(normalizedQuery());
   })));
 
@@ -364,6 +390,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
       ...(displayedSessions().get(id) ?? []).map(session => sessionLayoutToken(sessionKey(session))),
       ...sidebarEntries().filter(token => projectParent(token.slice("group:".length)) === id),
     ];
+
     const order = groupChildOrders()[id] ?? [];
     const available = new Set(entries);
     const known = new Set(order);

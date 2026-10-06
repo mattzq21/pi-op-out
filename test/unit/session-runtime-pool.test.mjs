@@ -11,7 +11,7 @@ describe('session runtime pool', () => {
     globalThis.window = Object.assign(new EventTarget(), { crypto: globalThis.crypto });
     globalThis.document = Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true });
     calls = []; errors = [];
-    responses = new Map([['start_pi', { attached: false }], ['stop_pi', true], ['load_git_diffs', {}], ['pi_command:get_state', { sessionId: 'session', sessionFile: '/session', messageCount: 0 }]]);
+    responses = new Map([['start_pi', { attached: false }], ['stop_pi', true], ['load_git_diffs', {}], ['pi_command:get_state', { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', sessionFile: '/session', messageCount: 0, pendingMessageCount: 0 }]]);
     mockIPC((command, args) => {
       calls.push({ command, args });
       const result = responses.get(command === 'pi_command' ? `pi_command:${args.command.type}` : command);
@@ -106,10 +106,10 @@ describe('session runtime pool', () => {
     responses.set('pi_command:get_state', () => pending.promise);
     const client = pool.create({ cwd: '/repo' });
     const id = await connect(client);
-    await send(id, { type: 'extension_ui_request', method: 'setStatus', statusKey: 'pi-desktop-mcp-status', statusText: 'json:[{"status":"starting"}]' });
+    await send(id, { type: 'extension_ui_request', id: 'mcp-status', method: 'setStatus', statusKey: 'pi-desktop-mcp-status', statusText: 'json:[{"status":"starting"}]' });
     assert.equal(pool.isRetained(client), true);
     assert.deepEqual(pool.liveSessionSummaries(), []);
-    pending.resolve({ sessionId: 'session', sessionFile: '/session', messageCount: 0 });
+    pending.resolve({ model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', sessionFile: '/session', messageCount: 0, pendingMessageCount: 0 });
     await settled();
     assert.equal(pool.liveSessionSummaries()[0].name, 'New session');
     assert.equal(pool.liveSessionSummaries()[0].project, 'repo');
@@ -148,7 +148,7 @@ describe('session runtime pool', () => {
     const client = pool.create({ cwd: '/repo' }); const id = await connect(client);
 
     for (const statusText of ['json:{', 'json:{}', 'json:[{"status":"ready"}]', 'plain']) {
-      await send(id, { type: 'extension_ui_request', method: 'setStatus', statusKey: 'pi-desktop-mcp-status', statusText });
+      await send(id, { type: 'extension_ui_request', id: 'mcp-status', method: 'setStatus', statusKey: 'pi-desktop-mcp-status', statusText });
     }
 
     assert.equal(pool.isRetained(client), false);

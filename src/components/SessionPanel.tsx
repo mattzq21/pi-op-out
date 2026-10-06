@@ -63,10 +63,13 @@ export function SessionPanel(props: Props) {
   const { collapsedProjects, customGroupsByKey, groupDestination, projectDetails, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
   const { projectParent, canMoveProject, moveProject, groupEntries, placeGroupEntry } = storedGroups;
   const siblingEntries = (parent?: string) => sidebarEntries().filter(token => projectParent(token.slice("group:".length)) === parent);
+
   const keyboardSidebarEntries = createMemo(() => {
     const descendants = (parent?: string): string[] => siblingEntries(parent).flatMap(token => [token, ...descendants(token.slice("group:".length))]);
+
     return descendants();
   });
+
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = createSignal<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [removingGroup, setRemovingGroup] = createSignal<{ id: string; name: string }>();
@@ -230,31 +233,51 @@ export function SessionPanel(props: Props) {
       if (autoScrollFrameRef.current !== undefined) { cancelAnimationFrame(autoScrollFrameRef.current); autoScrollFrameRef.current = undefined; }
     };
 
+    const customDropDestination = (hit: Element | null) => {
+      const destination = hit?.closest<HTMLElement>("[data-drop-project-key]")?.dataset.dropProjectKey;
+
+      return destination && customGroupsByKey().has(destination) ? destination : undefined;
+    };
+
+    const entryDropLocation = (parentKey: string | undefined, token: string, edge: "before" | "after") => {
+      const entries = parentKey ? groupEntries(parentKey) : siblingEntries();
+      const index = entries.indexOf(token);
+
+      return edge === "before" ? token : entries[index + 1] ?? null;
+    };
+
+    const entryParent = (element: HTMLElement, token: string) => token.startsWith("session:") ? element.dataset.projectKey : projectParent(token.slice("group:".length));
+
     const projectDropTarget = (hit: Element | null, y: number, projectKey: string): DropTarget | undefined => {
-      const heading = hit?.closest<HTMLElement>("[data-drop-project-key]");
-      const destination = heading?.dataset.dropProjectKey;
-      if (destination && customGroupsByKey().has(destination)) {
-        if (!canMoveProject(projectKey, destination)) return;
-        return { projectKey: destination, sessionKey: "", edge: "after", parentKey: destination };
-      }
+      const destination = customDropDestination(hit);
+
+      if (destination) return canMoveProject(projectKey, destination) ? { projectKey: destination, sessionKey: "", edge: "after", parentKey: destination } : undefined;
+
       const entryElement = hit?.closest<HTMLElement>("section[data-sidebar-token], .session-item[data-sidebar-token]");
       const token = entryElement?.dataset.sidebarToken;
 
       if (!entryElement || !token || token === groupLayoutToken(projectKey)) return;
       const bounds = entryElement.getBoundingClientRect();
       const edge = y < bounds.top + bounds.height / 2 ? "before" : "after";
-      const parentKey = token.startsWith("session:") ? entryElement.dataset.projectKey : projectParent(token.slice("group:".length));
-      if (!canMoveProject(projectKey, parentKey)) return;
-      const entries = parentKey ? groupEntries(parentKey) : siblingEntries();
-      const index = entries.indexOf(token);
+      const parentKey = entryParent(entryElement, token);
 
-      return { projectKey: RECENT_KEY, sessionKey: "", edge, parentKey, layoutBefore: edge === "before" ? token : entries[index + 1] ?? null };
+      if (!canMoveProject(projectKey, parentKey)) return;
+
+      return { projectKey: RECENT_KEY, sessionKey: "", edge, parentKey, layoutBefore: entryDropLocation(parentKey, token, edge) };
     };
 
     const emptyProjectDrop = (hit: Element | null): DropTarget | undefined => {
       const projectElement = hit?.closest<HTMLElement>("[data-drop-project-key]");
 
       return projectElement ? { projectKey: required(projectElement.dataset.dropProjectKey), sessionKey: "", edge: "after" } : undefined;
+    };
+
+    const sidebarZoneTarget = (zone: HTMLElement, current: MouseDrag): DropTarget | undefined => {
+      const parentKey = zone.dataset.sidebarParent;
+
+      if (!("session" in current) && !canMoveProject(current.projectKey, parentKey)) return;
+
+      return { projectKey: parentKey ?? RECENT_KEY, sessionKey: "", edge: "after", parentKey, layoutBefore: zone.dataset.sidebarEnd === "true" ? null : required(zone.dataset.sidebarBefore) };
     };
 
     const updateDropTarget = (x: number, y: number, current: MouseDrag) => {
@@ -264,10 +287,7 @@ export function SessionPanel(props: Props) {
       const sessionElement = hit?.closest<HTMLElement>(".session-item[data-session-key]");
 
       if (sidebarDropZone) {
-        const parentKey = sidebarDropZone.dataset.sidebarParent;
-        if ("session" in current || canMoveProject(current.projectKey, parentKey)) {
-          nextTarget = { projectKey: parentKey ?? RECENT_KEY, sessionKey: "", edge: "after", parentKey, layoutBefore: sidebarDropZone.dataset.sidebarEnd === "true" ? null : required(sidebarDropZone.dataset.sidebarBefore) };
-        }
+        nextTarget = sidebarZoneTarget(sidebarDropZone, current);
       } else if (!("session" in current)) {
         nextTarget = projectDropTarget(hit, y, current.projectKey);
       } else if (sessionElement && sessionElement.dataset.sessionKey !== current.sessionKey) {
@@ -311,6 +331,16 @@ export function SessionPanel(props: Props) {
       if (autoScrollFrameRef.current === undefined) autoScrollFrameRef.current = requestAnimationFrame(autoScroll);
     };
 
+    const placeDroppedProject = (current: MouseDrag, target: DropTarget, token: string) => {
+      if (!canMoveProject(current.projectKey, target.parentKey)) return;
+      moveProject(current.projectKey, target.parentKey);
+
+      if (target.layoutBefore === undefined) return;
+
+      if (target.parentKey) placeGroupEntry(target.parentKey, token, target.layoutBefore);
+      else placeSidebarEntry(token, target.layoutBefore);
+    };
+
     const finish = () => {
       const current = mouseDragRef.current;
 
@@ -328,13 +358,7 @@ export function SessionPanel(props: Props) {
 
             if (target.layoutBefore !== undefined && target.parentKey) placeGroupEntry(target.parentKey, sourceToken, target.layoutBefore);
             expandProject(target.projectKey);
-          } else if (canMoveProject(current.projectKey, target.parentKey)) {
-            moveProject(current.projectKey, target.parentKey);
-            if (target.layoutBefore !== undefined) {
-              if (target.parentKey) placeGroupEntry(target.parentKey, sourceToken, target.layoutBefore);
-              else placeSidebarEntry(sourceToken, target.layoutBefore);
-            }
-          }
+          } else placeDroppedProject(current, target, sourceToken);
         }
       }
 
@@ -353,6 +377,8 @@ export function SessionPanel(props: Props) {
     };
   };
 
+  const canReorderProject = (event: KeyboardEvent<HTMLElement>) => !normalizedQuery() && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown");
+
   const projectDragProps = (projectKey: string) => ({
     onMouseDown: (event: MouseEvent<HTMLElement>) => startMouseDrag(event, { projectKey }),
     onClick: (event: MouseEvent<HTMLElement>) => {
@@ -363,7 +389,7 @@ export function SessionPanel(props: Props) {
       toggleProject(projectKey);
     },
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
-      if (normalizedQuery() || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+      if (!canReorderProject(event)) return;
       event.preventDefault();
       const parent = projectParent(projectKey);
       const entries = parent ? groupEntries(parent) : siblingEntries(); const token = groupLayoutToken(projectKey); const index = entries.indexOf(token);

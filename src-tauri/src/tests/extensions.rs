@@ -350,12 +350,13 @@ fn diff_watch_preparation_replaces_legacy_assets_and_refreshes_all_bundled_files
             ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
             ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
             ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
+            ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
         ] {
             assert_eq!(fs::read_to_string(entry.parent().unwrap().join(name)).unwrap(), source);
         }
         prepare_diff_watch_extension().unwrap();
     }
-    assert_eq!(fs::read_dir(entry.parent().unwrap()).unwrap().count(), 4, "no temporary files should remain");
+    assert_eq!(fs::read_dir(entry.parent().unwrap()).unwrap().count(), 5, "no temporary files should remain");
 }
 
 #[test]

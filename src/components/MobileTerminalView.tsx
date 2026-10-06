@@ -54,6 +54,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
 
   createDependencyEffect(() => {
     setCommand(""); history.length = 0; historyIndex = 0; draft = ""; followOutput = true;
+
     if (componentProps.visible !== false) tabRefs.current.get(componentProps.activeId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, () => [componentProps.activeId]);
 

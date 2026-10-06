@@ -2,65 +2,53 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mcpServers } from '../../extensions/piop-define-agents/mcp-config.ts';
 
-const stdio = { id: 'search', name: 'Search', command: 'search-server' };
+test('native MCP records preserve options and are independent of their input', () => {
+  assert.deepEqual(mcpServers(undefined), {});
 
-const http = { id: 'web', name: 'Web', transport: 'http', url: 'https://example.com/mcp' };
+  const input = {
+    search: { command: 'search-server', args: ['--query', 'two words'], env: { MODE: 'search' }, enabled: false, timeout: 900, exposure: 'deferred', piopInjectAgentId: true },
+    web: { type: 'streamable-http', url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, toolExposure: { search: 'hidden' }, oauth: { clientId: 'fixture', callbackPort: 12345, callbackUrl: 'http://127.0.0.1:12345/callback' } },
+  };
 
-test('agent MCP definitions normalize defaults without modifying the input', () => {
-  assert.deepEqual(mcpServers(undefined), []);
-  const input = [Object.freeze({ ...stdio }), Object.freeze({ ...http, enabled: false, headers: { Authorization: 'token' }, startupTimeoutSec: 600 })];
   const result = mcpServers(input);
-  assert.deepEqual(result, [
-    { ...stdio, transport: 'stdio', args: '', enabled: true, url: undefined, headers: undefined, startupTimeoutSec: undefined, injectAgentId: undefined },
-    { ...http, command: '', args: '', enabled: false, headers: '{"Authorization":"token"}', startupTimeoutSec: 600, injectAgentId: undefined },
+  assert.deepEqual(result, input);
+  result.search.args.push('changed'); result.search.env.MODE = 'changed'; result.web.headers.Authorization = 'changed';
+  assert.deepEqual(input.search.args, ['--query', 'two words']);
+  assert.equal(input.search.env.MODE, 'search');
+  assert.equal(input.web.headers.Authorization, 'fixture');
+});
+
+test('legacy MCP records migrate quoted arguments and HTTP headers to native configurations', () => {
+  const result = mcpServers([
+    { id: 'search', name: 'Search', command: 'search-server', args: '--query "two words" \'\' escaped\\ space', injectAgentId: true },
+    { id: 'web', name: 'Web', transport: 'http', url: 'https://example.com/mcp', headers: '{"Authorization":"fixture"}', enabled: false },
   ]);
-  result[0].command = 'changed';
-  assert.equal(input[0].command, 'search-server');
-  assert.deepEqual(input[1].headers, { Authorization: 'token' });
 
-  for (const headers of [null, '{"Authorization":"token"}']) assert.equal(mcpServers([{ ...stdio, headers }])[0].headers, headers);
+  assert.deepEqual(result, {
+    search: { command: 'search-server', args: ['--query', 'two words', '', 'escaped space'], enabled: true, description: 'Search', exposure: 'direct', timeout: 120, piopInjectAgentId: true },
+    web: { url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, enabled: false, description: 'Web', exposure: 'direct', timeout: 120 },
+  });
+  assert.throws(() => mcpServers([{ id: 'search', name: 'Search', command: 'search', args: '"unfinished' }]), /Unterminated quote/);
+  assert.throws(() => mcpServers([{ id: 'web', name: 'Web', transport: 'http', url: 'https://example.com', headers: '{"x":3}' }]), /headers must contain string values/);
 });
 
-test('agent MCP limits accept 32 unique definitions and reject invalid identities', () => {
-  const full = Array.from({ length: 32 }, (_, index) => ({ ...stdio, id: `server-${index}` }));
-  assert.equal(mcpServers(full).length, 32);
+test('MCP identities and transport options reject invalid records without imposing an obsolete count limit', () => {
+  assert.equal(Object.keys(mcpServers(Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`server_${i}`, { command: 'search' }])))).length, 40);
 
-  for (const value of [null, {}, 'server', [...full, { ...stdio, id: 'extra' }]]) assert.throws(() => mcpServers(value), /at most 32/);
+  for (const value of [null, 'server', { 'bad name': { command: 'search' } }, { 'server-one': { command: 'search' }, server_one: { command: 'search' } }]) assert.throws(() => mcpServers(value));
+  assert.throws(() => mcpServers([{ id: 'same', name: 'One', command: 'search' }, { id: 'same', name: 'Two', command: 'search' }]), /duplicate MCP server name/);
 
-  for (const item of [null, 'legacy-id', {}, { ...stdio, id: '' }, { ...stdio, id: ' ' }, { ...stdio, id: 1 }]) assert.throws(() => mcpServers([item]), /unique id/);
-  const callable = Object.assign(function Search() {}, { id: stdio.id, command: stdio.command });
-  assert.throws(() => mcpServers([callable]), /unique id/);
-  assert.throws(() => mcpServers([stdio, { ...stdio }]), /unique id/);
-
-  for (const name of ['', ' ', 42, undefined]) assert.throws(() => mcpServers([{ ...stdio, name }]), /name is required/);
+  for (const change of [{ command: '' }, { command: ' ' }, { args: '--query' }, { args: [7] }, { env: { MODE: false } }, { enabled: 'true' }, { timeout: 0 }, { timeout: Infinity }, { piopInjectAgentId: 1 }, { type: 'websocket' }, { exposure: 'unknown' }]) assert.throws(() => mcpServers({ search: { command: 'search', ...change } }));
 });
 
-test('agent MCP options validate enabled flags, timeout boundaries and stdio arguments', () => {
-  for (const startupTimeoutSec of [1, 600]) assert.equal(mcpServers([{ ...stdio, startupTimeoutSec }])[0].startupTimeoutSec, startupTimeoutSec);
+test('HTTP MCP and authentication configurations enforce supported protocols and callback consistency', () => {
+  for (const url of ['http://example.com/mcp', 'https://example.com/mcp']) assert.equal(mcpServers({ web: { url } }).web.url, url);
 
-  for (const startupTimeoutSec of [0, 601, 1.5, '10', null, NaN, Infinity]) assert.throws(() => mcpServers([{ ...stdio, startupTimeoutSec }]), /startup timeout/);
+  for (const url of ['not a url', 'file:///tmp/mcp', 'ftp://example.com']) assert.throws(() => mcpServers({ web: { url } }));
 
-  for (const enabled of [null, 1, 'true']) assert.throws(() => mcpServers([{ ...stdio, enabled }]), /enabled must be a boolean/);
+  for (const headers of ['{}', { x: 3 }, null]) assert.throws(() => mcpServers({ web: { url: 'https://example.com', headers } }));
 
-  for (const injectAgentId of [null, 1, 'true', {}]) assert.throws(() => mcpServers([{ ...stdio, injectAgentId }]), /injectAgentId must be a boolean/);
-
-  for (const injectAgentId of [false, true]) assert.equal(mcpServers([{ ...stdio, injectAgentId }])[0].injectAgentId, injectAgentId);
-
-  for (const command of ['', ' ', 1, undefined]) assert.throws(() => mcpServers([{ ...stdio, command }]), /command is required/);
-
-  for (const args of [null, [], 7]) assert.throws(() => mcpServers([{ ...stdio, args }]), /arguments must be a string/);
-  assert.throws(() => mcpServers([{ ...stdio, transport: 'websocket' }]), /unsupported MCP transport/);
-});
-
-test('agent HTTP MCP definitions validate protocols and both header encodings', () => {
-  for (const url of ['http://example.com/mcp', 'https://example.com/mcp']) assert.equal(mcpServers([{ ...http, url }])[0].url, url);
-
-  for (const url of ['', 'not a url']) assert.throws(() => mcpServers([{ ...http, url }]));
-
-  for (const url of ['file:///tmp/mcp', 'ftp://example.com']) assert.throws(() => mcpServers([{ ...http, url }]), { message: 'Web: URL must use HTTP or HTTPS' });
-
-  for (const headers of [undefined, '', '{}', { Authorization: 'secret' }]) assert.equal(mcpServers([{ ...http, headers }]).length, 1);
-  assert.throws(() => mcpServers([{ ...http, headers: '{bad' }]), SyntaxError);
-
-  for (const headers of ['null', '[]', '{"x":3}', [], 1, { x: false }]) assert.throws(() => mcpServers([{ ...http, headers }]), { message: 'Web: headers must contain string values' });
+  for (const oauth of [{ callbackPort: 0 }, { callbackPort: 65536 }, { callbackUrl: 'https://localhost/callback' }, { callbackUrl: 'http://example.com/callback' }, { callbackUrl: 'http://localhost/callback?x=1' }, { callbackUrl: 'http://localhost:1234/callback', callbackPort: 4321 }, { authServerMetadataUrl: 'http://example.com/metadata' }]) assert.throws(() => mcpServers({ web: { url: 'https://example.com', oauth } }));
+  assert.throws(() => mcpServers({ web: { url: 'http://example.com', auth: { provider: 'fixture' } } }), /Provider authentication requires HTTPS/);
+  assert.equal(mcpServers({ web: { url: 'http://localhost:8080', auth: { provider: 'fixture' } } }).web.auth.provider, 'fixture');
 });

@@ -173,9 +173,14 @@ fn register(state: &PeerRuntime, kind: &str, id: &str, route: Route) -> Result<(
     routes.insert(key, route); Ok(())
 }
 
-pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -> Result<Option<Value>, String> {
+fn routing_arguments(command: &str, args: &Value) -> Value {
     let mut routed_args = args.clone();
     if command == "provider_auth" && args["request"]["flowId"].is_string() { routed_args["flowId"] = args["request"]["flowId"].clone(); }
+    routed_args
+}
+
+pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -> Result<Option<Value>, String> {
+    let routed_args = routing_arguments(command, args);
     let args = &routed_args;
     let state = app.state::<PeerRuntime>();
     if command == "storage_report" { return route_storage_report(app); }

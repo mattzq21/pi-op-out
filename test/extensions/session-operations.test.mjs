@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdtemp, mkdir, readFile, writeFile, rm, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -15,7 +15,7 @@ async function fixture(t) {
   t.after(() => rm(dir, { recursive: true, force: true }));
 
   const bundle = await build({
-    entryPoints: [fileURLToPath(new URL('../../src-tauri/resources/session-broker.ts', import.meta.url))],
+    stdin: { contents: 'export { forkConversation } from "./src-tauri/resources/session-broker/fork.ts"; export { registerForkAndForget } from "./src-tauri/resources/session-broker/operations.ts";', resolveDir: process.cwd() },
     bundle: true, write: false, platform: 'node', format: 'esm',
     plugins: [{ name: 'broker-fixture', setup(builder) {
       builder.onLoad({ filter: /\.ts$/ }, async ({ path }) => ({
@@ -43,11 +43,19 @@ async function fixture(t) {
   const sourcePath = join(dir, 'source.jsonl');
   const sourceText = [header, ...entries].map(JSON.stringify).join('\n') + '\n';
   await writeFile(sourcePath, sourceText);
-  const notices = [], messages = [], commands = new Map(), tools = new Map();
-  const ctx = { cwd: dir, sessionManager: { getEntries: () => entries, getBranch: () => entries, getHeader: () => header, getSessionFile: () => sourcePath, getSessionDir: () => dir }, ui: { notify: (...args) => notices.push(args) } };
-  module.registerSessionOperations({ registerTool: tool => tools.set(tool.name, tool), registerCommand: (name, command) => commands.set(name, command), sendMessage: message => messages.push(message) });
+  const notices = [], operations = [], listeners = [];
+  const ctx = { cwd: dir, sessionManager: { getEntries: () => entries, getBranch: () => entries, getEntry: id => entries.find(entry => entry.id === id), getHeader: () => header, getSessionFile: () => sourcePath, getSessionDir: () => dir }, ui: { notify: (...args) => notices.push(args) } };
+  module.registerForkAndForget({ events: { on: (_name, handler) => listeners.push(handler) }, appendEntry: (customType, data) => operations.push({ customType, data }) });
 
-  return { ...module, ctx, dir, entries, sourcePath, sourceText, notices, messages, commands, tools };
+  const rpc = async (command, payload) => {
+    const request = { command, payload, ctx };
+
+    for (const listener of listeners) listener(request);
+
+    return request.ready;
+  };
+
+  return { ...module, ctx, dir, entries, sourcePath, sourceText, notices, operations, rpc };
 }
 
 const unexpectedWorktree = async () => { throw Error('Git must not be required'); };
@@ -110,9 +118,8 @@ test('non-Git fork retains completed history, unique identity, permissions, and 
   assert.equal(await readFile(f.sourcePath, 'utf8'), f.sourceText);
 });
 
-test('fork to another directory preserves that directory and does not copy project files', async t => {
+test('fork to another directory creates it without copying project files', async t => {
   const f = await fixture(t);
-  await mkdir(join(f.dir, 'other'));
   const result = await f.forkConversation(f.ctx, { cwd: 'other', entryId: 'a1' }, unexpectedWorktree);
   assert.equal(result.cwd, join(f.dir, 'other'));
   assert.deepEqual(await readdir(result.cwd), []);
@@ -122,12 +129,12 @@ test('fork to another directory preserves that directory and does not copy proje
 test('invalid fork targets and unfinished history fail before creating a worktree', async t => {
   const f = await fixture(t);
 
-  for (const options of [{ entryId: 'missing' }, { entryId: 'tool' }, { entryId: 'u1' }, { cwd: '.', worktree: 'branch' }, { cwd: 'missing' }]) {
+  for (const options of [{ entryId: 'missing' }, { entryId: 'tool' }, { entryId: 'u1' }, { cwd: '.', worktree: 'branch' }, { cwd: 'missing/child' }, { cwd: '.' }]) {
     await assert.rejects(f.forkConversation(f.ctx, options, unexpectedWorktree));
   }
 
   f.entries[3].message.stopReason = 'aborted';
-  await assert.rejects(f.forkConversation(f.ctx, { entryId: 'tool' }, unexpectedWorktree), /completed assistant/);
+  await assert.rejects(f.forkConversation(f.ctx, { entryId: 'tool' }, unexpectedWorktree), /unfinished tool calls/);
   f.entries.length = 1;
   assert.equal((await readEntries((await f.forkConversation(f.ctx, {}, unexpectedWorktree)).sessionPath)).length, 1);
 });
@@ -145,31 +152,20 @@ test('worktree fork returns setup failures with the created path and session', a
   assert.equal((await readEntries(result.sessionPath))[0].cwd, result.path);
 });
 
-test('tools and slash commands route worktrees to the current host and report results', async t => {
+test('fork RPC switches to a completed response without changing the parent', async t => {
   const f = await fixture(t);
-  const requests = [];
-  t.mock.method(globalThis, 'fetch', async (url, options) => {
-    requests.push({ url, body: JSON.parse(options.body) });
+  let switched;
+  f.ctx.switchSession = async path => { switched = path;
 
-    return { ok: true, json: async () => ({ data: { path: f.dir, branch: 'fixture' } }) };
-  });
-  const previous = process.env.PI_DESKTOP_HOST_ID;
-  process.env.PI_DESKTOP_HOST_ID = 'remote-fixture';
-  t.after(() => { if (previous === undefined) delete process.env.PI_DESKTOP_HOST_ID; else process.env.PI_DESKTOP_HOST_ID = previous; });
-  await f.commands.get('create-worktree').handler('experiment', f.ctx);
-  await f.tools.get('remove_worktree').execute('call', { cwd: 'other', deleteBranch: true }, undefined, undefined, f.ctx);
-  await f.commands.get('fork-session').handler('--worktree experiment', f.ctx);
-  assert.deepEqual(requests.map(r => r.url), ['http://fixture/worktrees/create', 'http://fixture/worktrees/remove', 'http://fixture/worktrees/create']);
-  assert.ok(requests.every(r => r.body.hostId === 'remote-fixture'));
-  assert.equal(requests[1].body.cwd, join(f.dir, 'other'));
-  assert.equal(requests[1].body.deleteBranch, true);
-  assert.equal(f.messages.length, 2);
-  await f.commands.get('remove-worktree').handler('', f.ctx);
-  assert.match(f.notices[0][0], /Usage/);
-  const fork = await f.tools.get('fork_session').execute('call', {}, undefined, undefined, f.ctx);
-  assert.equal(fork.details.hostId, 'remote-fixture');
+    return { cancelled: false }; };
+
+  assert.deepEqual(await f.rpc('fork_after', { entryId: 'a1' }), { cancelled: false });
+  assert.deepEqual((await readEntries(switched)).slice(1), f.entries.slice(0, 2));
+  assert.equal(await readFile(f.sourcePath, 'utf8'), f.sourceText);
+  const before = await readdir(f.dir);
+  await assert.rejects(f.rpc('fork_after', { entryId: 'tool' }), /unfinished tool calls/);
+  assert.deepEqual(await readdir(f.dir), before);
 });
-
 
 test('Git sessions fork in place and into an independent real worktree', async t => {
   const f = await fixture(t);
@@ -206,15 +202,19 @@ test('an unopened fork owns inherited prompt checkpoints before its parent is de
   assert.equal((await git('rev-parse', '--verify', `refs/pi-session-snapshots/chats/${child.sessionId}/prompts/before`)).stdout.trim(), commit);
 });
 
-test('cancelled tools do not create sessions or contact the worktree broker', async t => {
+test('forget RPC records successful navigation and preserves cancelled or invalid requests', async t => {
   const f = await fixture(t);
-  t.mock.method(globalThis, 'fetch', async () => { assert.fail('Cancelled operation contacted broker'); });
-  const signal = AbortSignal.abort(new Error('cancelled'));
-  const before = await readdir(f.dir);
+  const targets = [];
+  f.ctx.navigateTree = async id => { targets.push(id);
 
-  for (const [name, params] of [['fork_session', {}], ['create_worktree', { name: 'experiment' }], ['remove_worktree', { cwd: 'other' }]]) {
-    await assert.rejects(f.tools.get(name).execute('call', params, signal, undefined, f.ctx), /cancelled/);
-  }
+    return { cancelled: targets.length === 1 }; };
 
-  assert.deepEqual(await readdir(f.dir), before);
+  assert.deepEqual(await f.rpc('fork_and_forget', { entryId: 'a1' }), { cancelled: true });
+  assert.deepEqual(f.operations, []);
+  assert.deepEqual(await f.rpc('fork_and_forget', { entryId: 'a1' }), { cancelled: false });
+  assert.deepEqual(f.operations, [{ customType: 'pi-desktop-fork-and-forget', data: { entryId: 'a1' } }]);
+
+  for (const entryId of ['missing', 'u1']) await assert.rejects(f.rpc('fork_and_forget', { entryId }), /Assistant response not found/);
+  assert.deepEqual(targets, ['a1', 'a1']);
+  assert.equal(await readFile(f.sourcePath, 'utf8'), f.sourceText);
 });

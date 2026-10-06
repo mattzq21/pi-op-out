@@ -49,7 +49,7 @@ fn merge_missing(original: &mut Value, additional: Value) {
     }
 }
 
-fn write(path: &Path, record: &Value) -> Result<(), Box<dyn std::error::Error>> {
+fn prepare_database_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(path.parent().ok_or("Tool failure database has no parent")?)?;
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(false);
@@ -65,6 +65,26 @@ fn write(path: &Path, record: &Value) -> Result<(), Box<dyn std::error::Error>> 
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
     drop(file);
+    Ok(())
+}
+
+fn retained_result(transaction: &rusqlite::Transaction<'_>, record: &Value) -> Result<Value, Box<dyn std::error::Error>> {
+    let previous: Option<String> = transaction.query_row(
+        "SELECT result FROM tool_failures WHERE epoch = ?1 AND tool_call_id = ?2",
+        params![record["epoch"].as_str(), record["toolCallId"].as_str()],
+        |row| row.get(0),
+    ).optional()?;
+    let mut result = record["result"].clone();
+    if let Some(previous) = previous {
+        let mut original = serde_json::from_str(&previous)?;
+        merge_missing(&mut original, result);
+        result = original;
+    }
+    Ok(result)
+}
+
+fn write(path: &Path, record: &Value) -> Result<(), Box<dyn std::error::Error>> {
+    prepare_database_file(path)?;
     let mut connection = Connection::open(path)?;
     connection.busy_timeout(Duration::from_millis(250))?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -84,17 +104,7 @@ fn write(path: &Path, record: &Value) -> Result<(), Box<dyn std::error::Error>> 
             UNIQUE (epoch, tool_call_id)
         );",
     )?;
-    let previous: Option<String> = transaction.query_row(
-        "SELECT result FROM tool_failures WHERE epoch = ?1 AND tool_call_id = ?2",
-        params![record["epoch"].as_str(), record["toolCallId"].as_str()],
-        |row| row.get(0),
-    ).optional()?;
-    let mut result = record["result"].clone();
-    if let Some(previous) = previous {
-        let mut original = serde_json::from_str(&previous)?;
-        merge_missing(&mut original, result);
-        result = original;
-    }
+    let result = retained_result(&transaction, record)?;
     let json = |key: &str| record.get(key).filter(|value| !value.is_null()).map(Value::to_string);
     transaction.execute(
         "INSERT INTO tool_failures

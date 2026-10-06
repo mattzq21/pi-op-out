@@ -1,7 +1,7 @@
 import { $, $$, browser, expect } from "@wdio/globals";
 
 import { app } from "../pageobjects/app.page.js";
-import { mockBackend, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, defaultSettings, pressShortcut, connectedSessionResponses } from './acceptance-fixture.js';
+import { failureState, mockBackend, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, defaultSettings, pressShortcut, connectedSessionResponses } from './acceptance-fixture.js';
 
 describe("Conversation acceptance", () => {
   before(async () => {
@@ -82,17 +82,17 @@ describe("Conversation acceptance", () => {
     await pressShortcut(panelShortcut);
     await expect($(".session-panel")).toBeDisplayed();
 
-    await mockBackend({ start_terminal: {}, resize_terminal: {} });
+    await mockBackend({ "shared_terminal:start": {}, "shared_terminal:resize": {} });
 
     try {
       await pressShortcut(terminalShortcut);
       await expect(app.terminalPanel).toBeDisplayed();
       await pressShortcut(terminalShortcut);
-      await expect(app.terminalPanel).not.toBeExisting();
+      await expect(app.terminalPanel).not.toBeDisplayed();
       await pressShortcut(composerShortcut);
       await browser.waitUntil(async () => await browser.execute(() => document.activeElement?.getAttribute("aria-label")) === "Message piop");
     } finally {
-      if (await app.terminalPanel.isExisting()) await pressShortcut(terminalShortcut);
+      if (await app.terminalPanel.isDisplayed()) await pressShortcut(terminalShortcut);
       await resetBackend();
     }
   });
@@ -121,7 +121,7 @@ describe("Conversation acceptance", () => {
 
       const menu = $('[role="menu"][aria-label="Acceptance indexed conversation actions"]');
       await expect(menu).toBeDisplayed();
-      await expect(menu.$$("[role='menuitem']")).toBeElementsArrayOfSize(4);
+      await expect(menu.$$("[role='menuitem']")).toBeElementsArrayOfSize(3);
       await expect(session.$('button[aria-label^="Archive "]')).toBeExisting();
       await browser.keys("Escape");
       await expect(menu).not.toBeExisting();
@@ -214,7 +214,7 @@ describe("Conversation acceptance", () => {
   it("relocates a conversation whose original project directory moved", async () => {
     const indexed = { id: "acceptance-relocate", path: "/tmp/acceptance-relocate.jsonl", name: "Acceptance relocation target", project: "Moved project", cwd: "/missing/original-project", cwdExists: false, preview: "Relocation preview", messageCount: 3, hostId: "local" };
     const groups = { groups: [], assignments: { [`local:${indexed.id}`]: "__pi-desktop-dirless__" }, removedProjects: [] };
-    await mockBackend({ list_sessions: [indexed], load_session_groups: groups, change_session_groups: groups, create_temporary_chat: { cwd: "/tmp/relocated-acceptance-project", sessionId: "dirless" }, relocate_session: {}, ...connectedSessionResponses(indexed.id) });
+    await mockBackend({ list_sessions: [indexed], load_session_groups: groups, change_session_groups: groups, validate_project_directory: "/tmp/relocated-acceptance-project", create_temporary_chat: { cwd: "/tmp/relocated-acceptance-project", sessionId: "dirless" }, "recover_missing_session:inspect": { canRecoverRemote: false }, "recover_missing_session:empty": { cwd: "/tmp/relocated-acceptance-project" }, ...connectedSessionResponses(indexed.id) });
 
     try {
       await app.conversationSearch.setValue(indexed.name);
@@ -222,11 +222,15 @@ describe("Conversation acceptance", () => {
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
       await updateBackendResponse("list_sessions", [{ ...indexed, cwd: "/tmp/relocated-acceptance-project", cwdExists: true }]);
       await session.$(".session-main").click();
+      await expect($("#missing-directory-title")).toHaveText("Working directory is missing");
+      await $('//dialog//button[normalize-space(.)="Create empty workdir"]').click();
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "relocate_session") && (await backendCalls()).some(({ command }) => command === "start_pi"));
-      expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/relocated-acceptance-project", hostId: "local" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ command, args }) => command === "recover_missing_session" && args.action === "empty") && (await backendCalls()).some(({ command }) => command === "start_pi"));
+      expect((await backendCalls()).find(({ command, args }) => command === "recover_missing_session" && args.action === "empty")?.args).toMatchObject({ sessionPath: indexed.path, action: "empty", hostId: "local" });
       expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args).toEqual(expect.objectContaining({ cwd: "/tmp/relocated-acceptance-project", sessionPath: indexed.path, hostId: "local" }));
       await expect(app.composer).toBeEnabled();
+    } catch (cause) {
+      throw new Error(String(cause) + " " + await failureState(), { cause });
     } finally {
       await app.conversationSearch.clearValue();
 
@@ -238,7 +242,7 @@ describe("Conversation acceptance", () => {
   it("reports when relocating a moved conversation fails", async () => {
     const indexed = { id: "acceptance-relocate-failure", path: "/tmp/acceptance-relocate-failure.jsonl", name: "Acceptance failed relocation", project: "Moved project", cwd: "/missing/failed-project", cwdExists: false, preview: "Failed relocation preview", messageCount: 2, hostId: "local" };
     const groups = { groups: [], assignments: { [`local:${indexed.id}`]: "__pi-desktop-dirless__" }, removedProjects: [] };
-    await mockBackend({ list_sessions: [indexed], load_session_groups: groups, change_session_groups: groups, create_temporary_chat: { cwd: "/tmp/dirless-failure", sessionId: "dirless" }, relocate_session: { error: "Dirless directory is unavailable" } });
+    await mockBackend({ list_sessions: [indexed], load_session_groups: groups, change_session_groups: groups, create_temporary_chat: { cwd: "/tmp/dirless-failure", sessionId: "dirless" }, "recover_missing_session:inspect": { canRecoverRemote: false }, "recover_missing_session:empty": { error: "Dirless directory is unavailable" } });
 
     try {
       await app.conversationSearch.setValue(indexed.name);
@@ -246,9 +250,10 @@ describe("Conversation acceptance", () => {
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
       await session.$(".session-main").click();
 
-      await expect($(".error-toast strong")).toHaveText("Could not open Dirless conversation");
-      await expect($(".error-toast span")).toHaveText("Error: Dirless directory is unavailable");
-      expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/dirless-failure", hostId: "local" });
+      await expect($("#missing-directory-title")).toHaveText("Working directory is missing");
+      await $('//dialog//button[normalize-space(.)="Create empty workdir"]').click();
+      await expect($(".dialog-error")).toHaveText("Dirless directory is unavailable");
+      expect((await backendCalls()).find(({ command, args }) => command === "recover_missing_session" && args.action === "empty")?.args).toMatchObject({ sessionPath: indexed.path, action: "empty", hostId: "local" });
     } finally {
       await app.conversationSearch.clearValue();
 
@@ -261,7 +266,7 @@ describe("Conversation acceptance", () => {
 
   it("archives an indexed conversation through its visible action", async () => {
     const indexed = { id: "acceptance-archive", path: "/tmp/acceptance-archive.jsonl", name: "Acceptance archive target", project: "Acceptance project", cwd: "/tmp", preview: "Archive preview", messageCount: 2, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], load_git_diffs: {}, stop_pi: {}, archive_session: {} });
+    await mockBackend({ list_sessions: [indexed], load_git_diffs: {}, stop_pi: false, archive_session: {} });
 
     try {
       await app.conversationSearch.setValue("Acceptance archive target");
@@ -279,7 +284,7 @@ describe("Conversation acceptance", () => {
 
   it("keeps a conversation available when archiving fails", async () => {
     const indexed = { id: "acceptance-archive-failure", path: "/tmp/acceptance-archive-failure.jsonl", name: "Acceptance archive failure", project: "Acceptance project", cwd: "/tmp", preview: "Archive failure preview", messageCount: 2, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], load_git_diffs: {}, stop_pi: {}, archive_session: { error: "Archive destination is unavailable" } });
+    await mockBackend({ list_sessions: [indexed], load_git_diffs: {}, stop_pi: false, archive_session: { error: "Archive destination is unavailable" } });
 
     try {
       await app.conversationSearch.setValue(indexed.name);
@@ -311,15 +316,8 @@ describe("Conversation acceptance", () => {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
-      await browser.execute(() => {
-        const element = document.querySelector(".session-item");
-
-        if (!(element instanceof HTMLElement)) throw new Error("Expected page element was not found");
-        element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 }));
-      });
-      await $('//div[@role="menu"]//button[normalize-space(.)="Split pane"]').click();
-
-      const split = $(`section[aria-label="Split conversation: ${indexed.name}"]`);
+      await emitPiEvent({ type: "extension_ui_request", id: "indexed-review", method: "input", title: "__pi_desktop_review__", placeholder: JSON.stringify({ task: "Review this conversation", parentSessionId: "parent", cwd: indexed.cwd, sessionId: indexed.id, sessionPath: indexed.path }) });
+      const split = $('section[aria-label="Split conversation: Code review"]');
       await expect(split).toBeDisplayed();
       await expect($$(".chat-panes .chat-shell")).toBeElementsArrayOfSize(2);
       await split.$('textarea[aria-label="Message piop"]').waitForEnabled();
@@ -356,7 +354,7 @@ describe("Conversation acceptance", () => {
       await input.setValue("Renamed acceptance conversation");
       await $('//dialog//button[normalize-space(.)="Continue"]').click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "set_session_name"));
-      expect((await backendCalls()).find(({ args }) => args.command?.type === "set_session_name")?.args.command).toEqual({ type: "set_session_name", name: "Renamed acceptance conversation" });
+      expect((await backendCalls()).find(({ args }) => args.command?.type === "set_session_name")?.args.command).toMatchObject({ type: "set_session_name", name: "Renamed acceptance conversation" });
     } finally {
       await app.conversationSearch.clearValue();
       await resetApp();

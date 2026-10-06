@@ -1,7 +1,7 @@
 import { $, $$, browser, expect } from "@wdio/globals";
 
 import { app } from "../pageobjects/app.page.js";
-import { mockBackend, updateBackendResponse, resetBackend, resetApp, emitPiEvent, defaultSettings, enableAgents, connectedSessionResponses, startTemporaryConversation, withClientSettingsWriteFailure } from './acceptance-fixture.js';
+import { failureState, mockBackend, updateBackendResponse, resetBackend, resetApp, emitPiEvent, defaultSettings, enableAgents, connectedSessionResponses, startTemporaryConversation, withClientSettingsWriteFailure } from './acceptance-fixture.js';
 
 describe("BUGS-3 regressions", () => {
   before(async () => {
@@ -14,7 +14,7 @@ describe("BUGS-3 regressions", () => {
   afterEach(async () => {
     if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
 
-    if (await app.terminalPanel.isExisting()) await app.closeTerminalButton.click();
+    if (await app.terminalPanel.isDisplayed()) await app.closeTerminalButton.click();
     await app.conversationSearch.clearValue();
     await resetBackend();
   });
@@ -43,7 +43,7 @@ describe("BUGS-3 regressions", () => {
 
   it("isolates drafts and terminals between fresh conversations", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
-    await mockBackend({ create_temporary_chat: { cwd: "/tmp/bugs3-fresh", sessionId: "bugs3-fresh" }, list_sessions: [], load_app_settings: settings, ...connectedSessionResponses(""), "pi_command:set_model": {}, start_terminal: {}, resize_terminal: {} });
+    await mockBackend({ create_temporary_chat: { cwd: "/tmp/bugs3-fresh", sessionId: "bugs3-fresh-1" }, list_sessions: [], load_app_settings: settings, ...connectedSessionResponses("bugs3-fresh-1"), "pi_command:set_model": {}, "shared_terminal:start": {}, "shared_terminal:resize": {} });
 
     try {
       await $('button[aria-label="New conversation"]').click();
@@ -53,13 +53,17 @@ describe("BUGS-3 regressions", () => {
       await app.addTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
 
+      await updateBackendResponse("create_temporary_chat", { cwd: "/tmp/bugs3-fresh-2", sessionId: "bugs3-fresh-2" });
+      await updateBackendResponse("pi_command:get_state", connectedSessionResponses("bugs3-fresh-2")["pi_command:get_state"]);
       await $('button[aria-label="New conversation"]').click();
 
       await expect(app.composer).toHaveValue("");
-      await expect(app.terminalPanel).not.toBeExisting();
+      await expect(app.terminalPanel).not.toBeDisplayed();
       await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(1);
+    } catch (cause) {
+      throw new Error(String(cause) + " " + await failureState(), { cause });
     } finally {
       await resetBackend();
       await app.refreshForReset();
@@ -68,7 +72,7 @@ describe("BUGS-3 regressions", () => {
   });
 
   it("keeps a terminal tab when closing its process fails", async () => {
-    await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, close_terminal: { error: "Terminal close failed" } });
+    await startTemporaryConversation({ "shared_terminal:start": {}, "shared_terminal:resize": {}, "shared_terminal:close": { error: "Terminal close failed" } });
 
     try {
       await expect(app.openTerminalButton).toBeEnabled();
@@ -90,7 +94,7 @@ describe("BUGS-3 regressions", () => {
   it("reports a failed agent selection", async () => {
     await startTemporaryConversation({});
     await enableAgents();
-    await updateBackendResponse("pi_command:prompt", { error: "Agent switch failed" });
+    await updateBackendResponse("pi_command:select_agent", { error: "Agent switch failed" });
     await $('button[aria-label="Agent"]').click();
     await $('//div[@role="listbox" and @aria-label="Agent options"]//button[.//span[normalize-space(.)="reviewer"]]').click();
 
