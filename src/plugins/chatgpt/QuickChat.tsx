@@ -36,6 +36,10 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
     </div>;
 
   const renderComposer = () => <form class="quick-chat-composer" onSubmit={event => { event.preventDefault(); follow = true; void state.send(); }}>
+      <label class="quick-chat-context-toggle">
+        <input type="checkbox" checked={state.includeContext()} disabled={active() || state.loading()} onChange={event => state.setIncludeContext(event.currentTarget.checked)} />
+        Include Piop session context
+      </label>
       <textarea ref={composer} aria-label="Message ChatGPT" placeholder="Message ChatGPT" value={state.prompt()} maxLength={100000} disabled={state.busy()} readOnly={!state.editable()} onInput={event => state.setPrompt(event.currentTarget.value)} onKeyDown={event => {
         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); follow = true; void state.send(); }
       }} />

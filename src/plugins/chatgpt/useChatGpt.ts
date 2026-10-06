@@ -18,8 +18,9 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const [chats, setChats] = createSignal<RegularChat[]>([]);
   const [chat, setChat] = createSignal<RegularChat>();
   const [prompt, setPrompt] = createSignal("");
+  const [includeContext, setIncludeContext] = createSignal(true);
   const modelSelection = createModelSelection(models);
-  const source = () => request()?.source();
+  const source = () => includeContext() ? request()?.source() : undefined;
   const responding = () => isResponding(chat());
   const recovering = () => isRecovering(chat());
   const [draftId, setDraftId] = createSignal(crypto.randomUUID());
@@ -298,7 +299,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 
   onCleanup(() => { disposed = true; desiredChat = undefined; generation++; submission?.abort(); release(); });
 
-  return { models, modelSelection, chats, chat, prompt, setPrompt, source, responding, recovering,
+  return { models, modelSelection, chats, chat, prompt, setPrompt, source, includeContext, setIncludeContext, responding, recovering,
     busy, loading, editable, error: () => error() ?? cancellationError() ?? pollError(), fresh, select, send, stop, refresh: () => setReload(value => value + 1) };
 }
 

@@ -13,6 +13,8 @@
 .quick-chat-status { font-size: 13px; color: #a6a6af; }
 .quick-chat-error { margin: 10px 14px; padding: 10px; color: #ffb2b2; background: #391f26; border-radius: 8px; font-size: 13px; }
 .quick-chat-composer { padding: 12px; border-top: 1px solid #343438; }
+.quick-chat-context-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: #b5b5bf; font-size: 12px; cursor: pointer; }
+.quick-chat-context-toggle input { margin: 0; accent-color: var(--accent, #d6bb53); }
 .quick-chat-composer textarea { box-sizing: border-box; width: 100%; min-height: 85px; max-height: 220px; resize: vertical; color: inherit; background: #242428; border: 1px solid #3b3b42; border-radius: 10px; padding: 12px; font: inherit; font-size: 14px; }
 .quick-chat-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
 .quick-chat-model-controls { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; }
