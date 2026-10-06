@@ -15,7 +15,14 @@ export function createPlugin(context: PluginContext): PluginInstance {
     const prepared = otherPane ? { ...value, preparedContext: await chatGptContext(value, signal) } : value;
     signal.throwIfAborted();
     const [initialSource, setInitialSource] = createSignal(prepared);
-    const readSource = () => ({ ...context.source(), selected });
+
+    const readSource = () => {
+      const source = context.source();
+      const sameConversation = source.hostId === value?.hostId && source.sessionId === value?.sessionId;
+
+      return { ...source, selected: sameConversation ? selected : undefined };
+    };
+
     setRequest({ id: crypto.randomUUID(),
       source: () => initialSource() ?? captureChatGptContext(readSource), onAccepted: () => setInitialSource(undefined) });
     context.activate();

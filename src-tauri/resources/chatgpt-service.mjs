@@ -482,8 +482,16 @@ async function chatGptPrepareConversation(identity, active, body) {
   } catch { active.controller.signal.throwIfAborted(); body.client_prepare_state = 'failure'; }
 }
 
+async function chatGptOpenStream(identity, active, body) {
+  try { return await chatGptHttp(identity, '/f/conversation', { body, headers: active.headers, signal: active.controller.signal }); }
+  catch (error) {
+    active.uncertainSend = error.status === undefined;
+    throw error;
+  }
+}
+
 async function chatGptStream(identity, active, body) {
-  let response = await chatGptHttp(identity, '/f/conversation', { body, headers: active.headers, signal: active.controller.signal });
+  let response = await chatGptOpenStream(identity, active, body);
   active.streamStarted = response.headers.get('content-type')?.includes('text/event-stream') === true;
 
   for (let attempt = 0; ; attempt++) {
@@ -521,7 +529,7 @@ async function chatGptRun(identity, key, active, body) {
 function chatGptRunFailed(active, error) {
   const chat = active.chat;
   chat.status = active.controller.signal.aborted ? 'stopped' : 'error';
-  chat.interrupted = chat.status === 'error' && active.streamStarted === true && !active.rejected && Boolean(chat.conversationId);
+  chat.interrupted = chat.status === 'error' && (active.streamStarted === true || active.uncertainSend === true) && !active.rejected && Boolean(chat.conversationId);
 
   if (chat.status === 'error') chat.error = error.message || 'ChatGPT request failed.';
 }
