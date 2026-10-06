@@ -453,7 +453,7 @@ export function registerSubagents(pi: ExtensionAPI) {
 
     if (child) tools.push("send_message", "wait_agent");
 
-    if (allowed.includes("send_message")) tools.push("send_message_to_thread", "read_thread", "wait_threads", "list_threads", "create_thread", "list_agent_profiles");
+    if (allowed.includes("send_message")) tools.push("send_message_to_thread", "stop_thread", "read_thread", "wait_threads", "list_threads", "create_thread", "list_agent_profiles");
   });
 
   pi.on("session_shutdown", unsubscribeTools);
