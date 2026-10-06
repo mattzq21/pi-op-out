@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./index.ts";
+import type { Agent } from "./contracts.ts";
 
 function hasErrorCode(cause: unknown, code: string) {
   return cause instanceof Error && "code" in cause && cause.code === code;
@@ -53,6 +54,15 @@ Guidelines:
 
 export function resolvePromptPath(path: string) {
   return path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(dirname(configPath), path);
+}
+
+export function effectiveAgentPromptPath(agent: Agent) {
+  const path = agent.path_agentprompt;
+
+  if (!path || !agent.ignoreAgentsMd) return path;
+  const resolved = resolvePromptPath(path);
+
+  return resolved === resolvePromptPath(DEFAULT_AGENT_PROMPT_PATH) || resolved === join(homedir(), ".agents", "AGENTS.md") ? "" : path;
 }
 
 export async function ensurePromptFile(relativePath: string, contents: string) {
