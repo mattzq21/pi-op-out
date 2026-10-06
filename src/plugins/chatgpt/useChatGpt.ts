@@ -21,6 +21,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const modelSelection = createModelSelection(models);
   const source = () => request()?.source();
   const responding = () => isResponding(chat());
+  const recovering = () => isRecovering(chat());
   const [draftId, setDraftId] = createSignal(crypto.randomUUID());
   const [busy, setBusy] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
@@ -287,7 +288,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 
   onCleanup(() => { disposed = true; desiredChat = undefined; generation++; submission?.abort(); release(); });
 
-  return { models, modelSelection, chats, chat, prompt, setPrompt, source, responding,
+  return { models, modelSelection, chats, chat, prompt, setPrompt, source, responding, recovering,
     busy, loading, editable, error: () => error() ?? cancellationError() ?? pollError(), fresh, select, send, stop, refresh: () => setReload(value => value + 1) };
 }
 
@@ -297,7 +298,9 @@ function createChatGptCall(providerId: string, leaseId: string) {
   return <S extends z.ZodType,>(action: string, schema: S, args: Record<string, import("zod").JSONType | undefined> = {}) => invoke("plugin_call", { hostId: "local", pluginId: "chatgpt", request: { ...args, action, providerId, leaseId } }, schema);
 }
 
-function isResponding(chat: RegularChat | undefined) { return chat?.status === "streaming" || chat?.status === "stopping"; }
+function isRecovering(chat: RegularChat | undefined) { return chat?.status === "error" && chat.interrupted; }
+
+function isResponding(chat: RegularChat | undefined) { return chat?.status === "streaming" || chat?.status === "stopping" || isRecovering(chat); }
 
 function hasLease(chat: RegularChat | undefined) { return chat?.ownership?.owned === true; }
 

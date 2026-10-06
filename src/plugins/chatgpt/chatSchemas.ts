@@ -5,6 +5,7 @@ export const regularChatSchema = z.object({
   id: z.string(), title: z.string(), model: z.string(), updatedAt: z.number(),
   thinkingEffort: z.string().optional(), versionId: z.string().optional(),
   status: z.enum(["idle", "streaming", "stopping", "complete", "stopped", "error"]),
+  interrupted: z.boolean().default(false),
   contextSource: z.string().optional(), error: z.string().optional(), submissionId: z.string().optional(),
   acceptedSubmissionIds: z.array(z.string()).default([]),
   messages: z.array(z.object({ id: z.string(), role: z.enum(["user", "assistant"]), text: z.string() })).default([]),

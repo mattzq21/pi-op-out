@@ -219,7 +219,14 @@ async function chatGptReadChat(identity, id) {
   const value = await chatGptQueuedOperation(identity, id, async () => {
     const chat = await chatGptLoad(identity, id);
 
-    return chatGptStopping.has(key) ? chat : chatGptRecover(identity, chat);
+    if (chatGptStopping.has(key)) return chat;
+
+    try { return await chatGptRecover(identity, chat); }
+    catch (error) {
+      if (chat.status !== 'error' || chat.interrupted !== true) throw error;
+
+      return { ...chat, error: error.message || chat.error };
+    }
   });
 
   return chatGptStopping.has(key) ? { ...value, status: 'stopping' } : value;
@@ -569,6 +576,7 @@ async function chatGptFinishStop(identity, id, expectedSubmissionId) {
   current.status = 'stopped'; delete current.interrupted; current.updatedAt = Date.now();
 
   if (remoteError) current.error = remoteError;
+  else delete current.error;
   await chatGptSave(identity, current);
 
   return current;

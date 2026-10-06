@@ -11,7 +11,7 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
   let composer: HTMLTextAreaElement | undefined;
   let follow = true;
   const active = () => state.busy() || state.responding();
-  const status = () => state.chat()?.status === "stopping" ? "Stopping…" : state.busy() ? "Preparing…" : "Responding…";
+  const status = () => state.chat()?.status === "stopping" ? "Stopping…" : state.busy() ? "Preparing…" : state.recovering() ? "Checking whether your message was received. Stop recovery to continue chatting." : "Responding…";
   createEffect(() => {
     state.chat();
     queueMicrotask(() => { if (messages && follow) messages.scrollTop = messages.scrollHeight; });
@@ -41,7 +41,7 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
       }} />
       <div class="quick-chat-controls">{renderModelControls()}
         <Show when={active()} fallback={<button type="submit" aria-label="Send to ChatGPT" disabled={!state.editable() || !state.prompt().trim() || state.loading() || !state.models().length}><Send size={17} /></button>}>
-          <button type="button" aria-label="Stop ChatGPT" disabled={!state.editable() || state.chat()?.status === "stopping"} onClick={() => void state.stop()}><Square size={16} /></button>
+          <button type="button" aria-label={state.recovering() ? "Stop recovery" : "Stop ChatGPT"} disabled={!state.editable() || state.chat()?.status === "stopping"} onClick={() => void state.stop()}><Square size={16} /><Show when={state.recovering()}>Stop recovery</Show></button>
         </Show>
       </div>
     </form>;
