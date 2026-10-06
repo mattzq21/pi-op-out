@@ -1,11 +1,12 @@
 import { Eye, Pencil } from "lucide-solid";
 import { createSignal, Show, type Accessor } from "solid-js";
-import { type ChatNoteTarget, useChatNote } from "./useNotes";
+import { type ChatNoteTarget } from "./useNotes";
+import { useNoteSession } from "./noteSessions";
 import { Markdown } from "../../components/Markdown";
 import "./notes.css";
 
 export function NotesPane(props: ChatNoteTarget & { visible: Accessor<boolean> }) {
-  const notes = useChatNote({ sessionId: props.sessionId, hostId: props.hostId }, props.visible);
+  const notes = useNoteSession({ sessionId: props.sessionId, hostId: props.hostId }, props.visible);
   const [preview, setPreview] = createSignal(false);
   let editor: HTMLTextAreaElement | undefined;
   const focusEditor = () => { setPreview(false); queueMicrotask(() => editor?.focus()); };

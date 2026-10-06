@@ -268,5 +268,5 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   window.addEventListener("beforeunload", beforeUnload);
   onCleanup(() => { disposed = true; clearTimeout(leaseTimer); clearInterval(updates); window.removeEventListener("focus", resume); window.document.removeEventListener("visibilitychange", resume); window.removeEventListener("beforeunload", beforeUnload); void release(); });
 
-  return { content, loading, saving, error, ready: () => !!document(), editable, edit, save, retry, takeControl };
+  return { content, loading, saving, error, ready: () => !!document(), pending: () => loading() || saving() || dirty(), editable, edit, save, retry, takeControl };
 }

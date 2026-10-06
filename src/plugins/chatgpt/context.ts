@@ -22,11 +22,12 @@ function contextPart(part: ContentPart) {
 function contextMessage(message: ChatMessage) {
   if (message.role === "system") return "";
   const text = Array.isArray(message.content) ? message.content.map(contextPart).filter(Boolean).join("\n") : message.content;
+  const input = message.role === "tool" && message.toolInput !== undefined ? `Input:\n${boundedChatContext(JSON.stringify(message.toolInput) ?? "", 10000)}\n\nOutput:\n` : "";
 
-  if (!text) return "";
+  if (!text && !input) return "";
   const label = message.role === "tool" ? `Tool: ${message.toolName ?? "result"}` : message.role;
 
-  return `## ${label}\n${boundedChatContext(text)}`;
+  return `## ${label}\n${boundedChatContext(input + text)}`;
 }
 
 export interface ChatGptContextSource extends PluginConversation { preparedContext?: string }
@@ -73,18 +74,22 @@ export async function chatGptContext(source: ChatGptContextSource, signal: Abort
 }
 
 async function loadedContextMessage(source: ChatGptContextSource, item: ChatMessage, signal: AbortSignal) {
-  if (!item.loadToolPayload || item.toolPayloadLoaded) return contextMessage(item);
+  const current = source.readMessages?.().find(message => message.id === item.id) ?? item;
+
+  if (!current.loadToolPayload || freshToolPayload(current)) return contextMessage(current);
 
   try {
-    await abortableContextLoad(item.loadToolPayload(), signal);
+    await abortableContextLoad(current.loadToolPayload(), signal);
     signal.throwIfAborted();
     const loaded = source.readMessages?.().find(message => message.id === item.id);
 
-    if (loaded?.toolPayloadLoaded) return contextMessage(loaded);
+    if (loaded && freshToolPayload(loaded)) return contextMessage(loaded);
   } catch { signal.throwIfAborted(); }
 
   return `## tool\n[Deferred tool output unavailable: ${item.toolName ?? "tool"}]`;
 }
+
+function freshToolPayload(message: ChatMessage) { return message.toolPayloadLoaded && message.loadedToolPayloadVersion === message.toolPayloadVersion; }
 
 function abortableContextLoad(load: Promise<unknown>, signal: AbortSignal) {
   signal.throwIfAborted();

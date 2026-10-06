@@ -25,6 +25,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const [busy, setBusy] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
+  const [pollError, setPollError] = createSignal<string>();
   const [cancellationError, setCancellationError] = createSignal<string>();
   const [reload, setReload] = createSignal(0);
   const leaseId = crypto.randomUUID();
@@ -42,6 +43,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const release = (id?: string) => {
     const targets = id ? [id] : [...leasedChats];
     clearTimeout(leaseTimer);
+    setChat(value => value && targets.includes(value.id) ? observingChat(value) : value);
 
     for (const chatId of targets) { leasedChats.delete(chatId); void call("release", ownershipSchema, { chatId }).catch(() => undefined); }
   };
@@ -61,7 +63,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const fresh = () => {
     desiredChat = undefined; submission?.abort(); submission = undefined; stopOperation = undefined; setBusy(false);
     release();
-    selection++; setLoading(false); setDraftId(crypto.randomUUID()); setChat(undefined); setPrompt(""); setError(undefined); setCancellationError(undefined);
+    selection++; setLoading(false); setDraftId(crypto.randomUUID()); setChat(undefined); setPrompt(""); setError(undefined); setPollError(undefined); setCancellationError(undefined);
   };
 
   createDependencyEffect(fresh, () => [request()?.id]);
@@ -96,7 +98,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     release();
     desiredChat = id;
     const version = ++selection; const current = generation;
-    setLoading(true); setError(undefined); setCancellationError(undefined);
+    setLoading(true); setError(undefined); setPollError(undefined); setCancellationError(undefined);
 
     try {
       await claim(id);
@@ -120,12 +122,12 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
         const value = await call("read", regularChatSchema, { chatId: id });
 
         if (cancelled || current !== generation || selected !== selection) return;
-        receiveChat(value); setError(undefined);
+        receiveChat(value); setPollError(undefined);
 
         timer = setTimeout(() => void poll(), isResponding(value) ? 400 : 1000);
       } catch (reason) {
         if (cancelled || current !== generation) return;
-        setError(reason instanceof Error ? reason.message : String(reason)); timer = setTimeout(() => void poll(), 2000);
+        setPollError(reason instanceof Error ? reason.message : String(reason)); timer = setTimeout(() => void poll(), 2000);
       }
     };
 
@@ -134,7 +136,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     return () => { cancelled = true; clearTimeout(timer); };
   }, () => [chat()?.id, open(), loading()]);
 
-  const editable = () => !chat() || chat()?.ownership?.owned === true;
+  const editable = () => open() && (!chat() || chat()?.ownership?.owned === true);
   const canSend = () => editable() && !busy() && !loading() && models().length > 0 && !responding() && Boolean(prompt().trim());
   const contextSource = () => source()?.messages.length || source()?.selected ? source() : undefined;
   const targetChatId = () => chat()?.id ?? draftId();
@@ -231,6 +233,8 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   };
 
   createDependencyEffect(() => {
+    setChat(value => value && observingChat(value));
+
     if (!open()) { if (!busy() && !responding()) release();
 
     return; }
@@ -264,7 +268,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   onCleanup(() => { disposed = true; desiredChat = undefined; generation++; submission?.abort(); release(); });
 
   return { models, modelSelection, chats, chat, prompt, setPrompt, source, responding,
-    busy, loading, editable, error: () => error() ?? cancellationError(), fresh, select, send, stop, refresh: () => setReload(value => value + 1) };
+    busy, loading, editable, error: () => error() ?? cancellationError() ?? pollError(), fresh, select, send, stop, refresh: () => setReload(value => value + 1) };
 }
 
 type ChatGptCall = <S extends z.ZodType>(action: string, schema: S, args: Record<string, import("zod").JSONType | undefined>) => Promise<z.output<S>>;

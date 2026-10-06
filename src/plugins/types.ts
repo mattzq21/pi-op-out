@@ -1,7 +1,7 @@
 import type { Accessor, Component, JSX } from "solid-js";
 import type { ChatMessage } from "../types";
 
-export interface PluginConversation { title: string; hostId: string; sessionId: string; messages: ChatMessage[]; readMessages?: () => ChatMessage[]; selected?: { text: string; source: string } }
+export interface PluginConversation { title: string; hostId: string; sessionId: string; messageCount?: number; messages: ChatMessage[]; readMessages?: () => ChatMessage[]; selected?: { text: string; source: string } }
 
 export interface TranscriptProps { messages: Accessor<HTMLElement | null>; source: Accessor<PluginConversation> }
 

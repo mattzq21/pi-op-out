@@ -6,7 +6,6 @@ import { listen } from "../lib/platform";
 import { pluginError, pluginStatus, plugins, refreshPlugins, setPluginError } from ".";
 import type { PluginConversation, PluginInstance } from "./types";
 import { Sidepane } from "./Sidepane";
-import { flushAllPlugins } from "./lifecycle";
 import "./workspace.css";
 
 interface RunningPlugin { id: string; name: string; instance: PluginInstance; dispose: () => void }
@@ -25,10 +24,6 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const enabledPlugins = createMemo(() => plugins.filter(plugin => pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
   const error = () => loadError() ?? hosts().map(pluginError).filter(Boolean).join("\n");
   const activate = (id: string) => { onOpen(); setActive(id); setOpen(true); };
-
-  const beforeDisconnect = (event: WindowEventMap["piop-mobile-before-disconnect"]) => event.detail.waitUntil(flushAllPlugins());
-  window.addEventListener("piop-mobile-before-disconnect", beforeDisconnect);
-  onCleanup(() => window.removeEventListener("piop-mobile-before-disconnect", beforeDisconnect));
 
   createEffect(() => {
     for (const target of hosts()) void refreshPlugins(target).catch(reason => setPluginError(target, String(reason)));
