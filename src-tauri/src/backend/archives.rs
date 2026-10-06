@@ -316,7 +316,9 @@ fn delete_session_targets(runtime: &PiRuntime, targets: &[serde_json::Value], ho
     } else {
         let host = host.ok_or("Remote host is required")?;
         let mut command = ssh(host);
-        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&arguments))));
+        let remote = format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&arguments));
+        let locked = format!("umask 077 && mkdir -p \"$HOME/{STORAGE_DIRECTORY}/notes\" && exec flock --exclusive --no-fork \"$HOME/{STORAGE_DIRECTORY}/notes/ownership.lock\" sh -c {}", shell_quote(&remote));
+        command.arg(remote_login_command(&locked));
         command
     };
     if host_id == "local" { crate::host_supervisor::with_note_deletion(|| run_session_deletion(&mut command)) }

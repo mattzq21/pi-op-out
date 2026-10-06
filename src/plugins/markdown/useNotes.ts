@@ -24,6 +24,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   const [content, setContent] = createSignal("");
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
+  const [releasing, setReleasing] = createSignal(false);
   const [leaseValid, setLeaseValid] = createSignal(false);
   const [flushing, setFlushing] = createSignal(false);
   const [unconfirmed, setUnconfirmed] = createSignal<{ content: string; token: string }>();
@@ -35,10 +36,11 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   let generation = 0;
   let disposed = false;
   let inFlight: Promise<boolean> | undefined;
+  let retirement: Promise<void> | undefined;
   let operations = Promise.resolve();
   let checking = false;
   const dirty = () => !!document() && (!!unconfirmed() || content() !== document()?.content);
-  const editable = () => visible() && !loading() && !flushing() && leaseValid() && ownership().owned;
+  const editable = () => visible() && !loading() && !flushing() && !releasing() && leaseValid() && ownership().owned;
   const pendingWork = () => !!inFlight || dirty();
 
   try { localStorage.removeItem("piop-chat-note:" + JSON.stringify([target.hostId, target.sessionId])); } catch { }
@@ -191,13 +193,15 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
     setUnconfirmed(undefined); setDocument(next); updateOwnership(next.ownership);
   };
 
-  const syncUnavailable = () => disposed || loading() || !!inFlight || document()?.deleted;
+  const syncUnavailable = () => disposed || loading() || releasing() || !!inFlight || document()?.deleted;
 
   const readCurrent = () => {
     const leaseToken = ownership().token;
 
     return (visible() || dirty()) && leaseToken ? request("renew", { leaseToken }) : request("read");
   };
+
+  const releaseIfHidden = () => { if (!visible() && !dirty()) void release(); };
 
   const sync = async () => {
     if (checking || syncUnavailable()) return;
@@ -210,28 +214,37 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
 
       if (current !== generation || syncUnavailable() || document() !== note) return;
       setReadError(""); receiveUpdate(next);
+      releaseIfHidden();
     } catch (reason) {
       if (!disposed && current === generation) setReadError(reason instanceof Error ? reason.message : String(reason));
     } finally { checking = false; }
   };
 
-  const release = async () => {
-    if (!ownership().owned && !inFlight) return;
-
+  const releaseOwned = async () => {
     if (!await save()) return;
 
     if (!disposed && visible()) return;
     const leaseToken = ownership().token;
-    relinquish();
     const current = generation;
 
     if (!leaseToken) return;
+    setLeaseValid(false);
 
     try {
       const next = await call("release", { leaseToken });
 
-      if (!disposed && current === generation) selectDocument(next);
+      if (!disposed && current === generation) { relinquish(); selectDocument(next); }
     } catch { }
+  };
+
+  const release = (): Promise<void> => {
+    if (retirement) return retirement;
+
+    if (!ownership().owned && !inFlight) return Promise.resolve();
+    setReleasing(true);
+    retirement = releaseOwned().finally(() => { retirement = undefined; setReleasing(false); });
+
+    return retirement;
   };
 
   const takeControl = () => load("takeover");
@@ -249,6 +262,8 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   const resume = () => { if (!window.document.hidden) void sync(); };
 
   const show = async () => {
+    await retirement;
+
     if (!await save()) return;
 
     if (visible() && !disposed && !loading() && !document()?.deleted) await load("claim");
@@ -271,6 +286,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   onCleanup(() => { disposed = true; clearTimeout(leaseTimer); clearInterval(updates); window.removeEventListener("focus", resume); window.document.removeEventListener("visibilitychange", resume); window.removeEventListener("beforeunload", beforeUnload); void release(); });
 
   const ready = () => !!document() && !document()?.deleted && !document()?.disabled;
+  const pending = () => loading() || saving() || releasing() || dirty() || ownership().owned;
 
-  return { content, loading, saving, error, deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending: () => loading() || saving() || dirty(), editable, edit, save, retry, takeControl };
+  return { content, loading, saving, error, deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending, editable, edit, save, retry, takeControl };
 }
