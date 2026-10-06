@@ -71,12 +71,13 @@ impl Runtime {
 
     async fn call(&self, packet: &Value) -> Result<Value> {
         let id = packet["pluginId"].as_str().ok_or("Missing plugin ID")?;
-        if !self.enabled.iter().any(|enabled| enabled == id) { return Err(format!("The {id} plugin is disabled on this daemon")); }
+        let enabled = self.enabled.iter().any(|enabled| enabled == id);
         match id {
             "markdown" => {
                 let request = packet["request"].clone();
-                tokio::task::spawn_blocking(move || markdown::dispatch(request)).await.map_err(|error| error.to_string())?
+                tokio::task::spawn_blocking(move || markdown::dispatch(request, enabled)).await.map_err(|error| error.to_string())?
             },
+            _ if !enabled => Err(format!("The {id} plugin is disabled on this daemon")),
             "chatgpt" => self.chatgpt.as_ref().ok_or("ChatGPT plugin is unavailable")?.request(json!({"method":"plugin_call","request":packet["request"]})).await,
             _ => Err(format!("Unknown plugin: {id}")),
         }

@@ -197,7 +197,7 @@ fn write_note(path: &Path, body: &str, args: &Value) -> Result<(), String> {
     result
 }
 
-pub(super) fn dispatch(args: Value) -> Result<Value, String> {
+pub(super) fn dispatch(args: Value, enabled: bool) -> Result<Value, String> {
     let _guard = lock_notes()?;
     let session = Uuid::parse_str(field(&args, "sessionId")?).map_err(|_| "Choose a chat before writing a note")?.to_string();
     let lease_path = lease_path(&session)?;
@@ -205,7 +205,18 @@ pub(super) fn dispatch(args: Value) -> Result<Value, String> {
         write_lease(&lease_path, None)?;
         return Ok(json!({"content":"","version":version(""),"deleted":true,"ownership":{"owned":false,"available":false,"token":null}}));
     }
+    if !enabled { return disabled_note(&args, &session, &lease_path); }
     dispatch_note(&args, &session, &lease_path)
+}
+
+fn disabled_note(args: &Value, session: &str, lease_path: &Path) -> Result<Value, String> {
+    let mut result = document(&read(&note_path(session)?)?);
+    let editor = editor(args)?;
+    let lease = read_lease(lease_path)?;
+    if controls(lease.as_ref(), &editor) { write_lease(lease_path, None)?; }
+    result["ownership"] = json!({"owned":false,"available":false,"token":null});
+    result["disabled"] = json!(true);
+    Ok(result)
 }
 
 fn editor(args: &Value) -> Result<Editor<'_>, String> {

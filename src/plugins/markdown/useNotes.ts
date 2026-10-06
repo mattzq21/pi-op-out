@@ -8,7 +8,7 @@ import { ownershipSchema } from "../ownership";
 
 const noteOwnershipSchema = ownershipSchema.extend({ token: z.string().nullable() });
 
-const noteSchema = z.object({ content: z.string(), version: z.string(), ownership: noteOwnershipSchema, deleted: z.boolean().default(false) });
+const noteSchema = z.object({ content: z.string(), version: z.string(), ownership: noteOwnershipSchema, deleted: z.boolean().default(false), disabled: z.boolean().default(false) });
 
 type NoteDocument = z.infer<typeof noteSchema>;
 
@@ -77,7 +77,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   };
 
   const selectDocument = (next: NoteDocument) => {
-    if (next.deleted) { setReadError(""); setSaveError(""); }
+    if (next.deleted || next.disabled) { setReadError(""); setSaveError(""); }
 
     setDocument(next);
     setContent(next.content);
@@ -182,7 +182,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   const confirmedSave = (next: NoteDocument) => unconfirmed()?.token === next.ownership.token && unconfirmed()?.content === next.content;
 
   const receiveUpdate = (next: NoteDocument) => {
-    if (next.deleted || next.ownership.token !== ownership().token || next.version !== document()?.version && !confirmedSave(next)) {
+    if (next.deleted || next.disabled || next.ownership.token !== ownership().token || next.version !== document()?.version && !confirmedSave(next)) {
       relinquish(); selectDocument(next); setSaveError("");
 
       return;
@@ -270,5 +270,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   window.addEventListener("beforeunload", beforeUnload);
   onCleanup(() => { disposed = true; clearTimeout(leaseTimer); clearInterval(updates); window.removeEventListener("focus", resume); window.document.removeEventListener("visibilitychange", resume); window.removeEventListener("beforeunload", beforeUnload); void release(); });
 
-  return { content, loading, saving, error, deleted: () => document()?.deleted, ready: () => !!document() && !document()?.deleted, pending: () => loading() || saving() || dirty(), editable, edit, save, retry, takeControl };
+  const ready = () => !!document() && !document()?.deleted && !document()?.disabled;
+
+  return { content, loading, saving, error, deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending: () => loading() || saving() || dirty(), editable, edit, save, retry, takeControl };
 }

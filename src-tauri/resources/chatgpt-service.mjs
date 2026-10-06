@@ -599,7 +599,12 @@ function chatGptHistory(history) {
 }
 
 export async function handleChatGpt(loaded, request) {
-  if (request.action === 'accounts') return loaded.runtime.getProviders().filter(provider => /^openai-codex(?:--piop-account-\d+)?$/.test(provider.id)).map(provider => ({ id: provider.id, name: provider.name, configured: loaded.runtime.getProviderAuthStatus(provider.id).configured }));
+  if (request.action === 'accounts') {
+    await loaded.runtime.refresh({ allowNetwork: false });
+
+    return loaded.runtime.getProviders().filter(provider => /^openai-codex(?:--piop-account-\d+)?$/.test(provider.id)).map(provider => ({ id: provider.id, name: provider.name, configured: loaded.runtime.getProviderAuthStatus(provider.id).configured }));
+  }
+
   const identity = await chatGptIdentity(loaded, request.providerId);
 
   if (['claim', 'ownership', 'release'].includes(request.action)) return chatGptOwnership(identity, request, request.action);
