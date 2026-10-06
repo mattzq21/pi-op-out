@@ -59,7 +59,7 @@ export function resolvePromptPath(path: string) {
 export function effectiveAgentPromptPath(agent: Agent) {
   const path = agent.path_agentprompt;
 
-  if (!path || !agent.ignoreAgentsMd) return path;
+  if (!path || agent.ignoreAgentsMd === false) return path;
   const resolved = resolvePromptPath(path);
 
   return resolved === resolvePromptPath(DEFAULT_AGENT_PROMPT_PATH) || resolved === join(homedir(), ".agents", "AGENTS.md") ? "" : path;
