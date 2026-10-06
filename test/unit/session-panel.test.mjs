@@ -53,7 +53,7 @@ describe('conversation sidebar', () => {
 
       throw new Error(`Unexpected command: ${command}`);
     }, { shouldMockEvents: true });
-    props = { sessions: [session('b', 'Chat 10'), session('a', 'Chat 2')], query: '', onQuery: () => {}, onSelect: () => {}, onAction: () => {}, onNewChat: () => {}, onCreateWorktree: () => {}, onDeleteWorktree: async () => {} };
+    props = { sessions: [session('b', 'Chat 10'), session('a', 'Chat 2')], query: '', isArchiving: () => false, onQuery: () => {}, onSelect: () => {}, onAction: () => {}, onNewChat: () => {}, onCreateWorktree: () => {}, onDeleteWorktree: async () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; clearMocks(); dom.restore(); });
 

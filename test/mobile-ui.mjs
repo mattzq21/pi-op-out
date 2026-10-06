@@ -58,7 +58,7 @@ try {
    let result=data[m.command]??{};
 
    if(m.command==='pi_command') {
-   const responses={get_session_revision:{revision:'changed'},get_snapshot:{revision:'snapshot',state,history:{entries:[],leafId:null},queue:{pendingMessages:[]},liveTools:[],sequence:0,epoch:1},get_state:state,get_available_models:{models:[state.model]},get_available_thinking_levels:{levels:['high']},get_commands:{commands:[]},get_session_stats:{}};
+   const responses={get_session_revision:{revision:'changed'},get_snapshot:{revision:'snapshot',state,history:{entries:[],leafId:null},queue:{type:'queue_state',pendingMessages:[]},liveTools:[],sequence:0,epoch:'mobile-test'},get_state:state,get_available_models:{models:[state.model]},get_available_thinking_levels:{levels:['high']},get_commands:{commands:[]},get_session_stats:{}};
     result=responses[m.args.command.type]??{};
    }
 

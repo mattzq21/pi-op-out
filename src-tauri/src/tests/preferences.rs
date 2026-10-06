@@ -41,11 +41,11 @@ fn frontmatter_respects_the_header_boundary_and_quoted_values() {
 }
 
 #[test]
-fn worktree_names_validate_user_input_and_preserve_parent_branches() {
+fn worktree_names_validate_user_input_and_keep_the_root_branch() {
     assert_eq!(worktree_suffix(" feature-1_test.v2 ").unwrap(), "feature-1_test.v2");
     for name in ["", " ", "feature/name", "a b", "é", "$(touch x)"] { assert!(worktree_suffix(name).is_err()); }
     assert_eq!(worktree_branch_name("main", "feature"), "main|feature");
-    assert_eq!(worktree_branch_name("main|parent", "feature"), "main|parent|feature");
+    assert_eq!(worktree_branch_name("main|parent", "feature"), "main|feature");
     assert_eq!(worktree_branch_name("feature/project", "child"), "feature/project|child");
 }
 include!("../test_directory.rs");

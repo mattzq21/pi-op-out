@@ -14,8 +14,8 @@ describe('split conversation lifecycle', () => {
     mockIPC(command => ['load_session_groups', 'change_session_groups'].includes(command) ? { version: 1, groups: [], assignments: {} } : undefined, { shouldMockEvents: true });
     calls = []; listeners = new Set(); connected = []; released = []; dialogs = [];
     const state = { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', messageCount: 0, pendingMessageCount: 0 };
-    responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_snapshot', { revision: 'snapshot', state, history: { entries: [], leafId: null }, sequence: 0, epoch: 'epoch', liveTools: [], queue: { pendingMessages: [] } }], ['get_available_models', { models: [] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }]]);
-    transport = { currentHostId: () => 'local', ownsConversation: () => true, connect: async (...args) => connected.push(args), subscribe: handler => { listeners.add(handler);
+    responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_snapshot', { revision: 'snapshot', state, history: { entries: [], leafId: null }, sequence: 0, epoch: 'epoch', liveTools: [], queue: { type: 'queue_state', pendingMessages: [] } }], ['get_available_models', { models: [] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }]]);
+    transport = { currentHostId: () => 'local', ownsConversation: () => true, isGitRepository: async () => false, connect: async (...args) => connected.push(args), subscribe: handler => { listeners.add(handler);
 
     return () => listeners.delete(handler); }, command: async command => { calls.push(command); const result = responses.get(command.type);
 

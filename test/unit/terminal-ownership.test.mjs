@@ -23,7 +23,7 @@ test('opening an empty terminal then taking ownership starts the shell before in
 
     if (args.action === 'start') history.set(id, { id, output: '$ ', outputEnd: 2, generation: '1', owned: true, started: true, exited: false });
 
-    if (args.action === 'write') {
+    if (args.action === 'write_with_draft') {
       if (!history.has(id)) throw 'Terminal is unavailable';
       writes.push(args.data);
     }
@@ -31,7 +31,9 @@ test('opening an empty terminal then taking ownership starts the shell before in
   let owned = false, listener, controller, view;
 
   const transport = {
+    markTerminalActivity: () => {},
     ownsConversation: () => owned,
+    hasConfirmedOwnership: () => owned,
     subscribe: callback => { listener = callback;
 
     return () => {}; },
@@ -63,7 +65,7 @@ test('opening an empty terminal then taking ownership starts the shell before in
       });
     });
     assert.equal(history.size, 0);
-    await act(() => document.querySelector('[aria-label="Take session ownership"]').click());
+    await act(() => document.querySelector('.terminal-host').dispatchEvent(new window.FocusEvent('focusin', { bubbles: true })));
     await act(() => terminals.at(-1).data('pwd\r'));
     const firstNotices = [...notices], firstCalls = [...calls];
     const originalId = controller.state.activeTerminal.id;

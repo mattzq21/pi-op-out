@@ -17,12 +17,20 @@ fn storage_inventory_query_counts_real_files_and_marks_malformed_archives_undele
     let report = query_storage_inventory(&mut command, None).unwrap();
     assert_eq!(report.host_id, "local"); assert!(report.error.is_none());
     let category = |id: &str| report.categories.iter().find(|category| category.id == id).unwrap();
-    assert_eq!(category("active-conversations").byte_size, active.len() as u64 + 2);
+    fn allocated_bytes(path: &Path) -> u64 {
+        let metadata = fs::symlink_metadata(path).unwrap();
+        #[cfg(unix)]
+        let own = { use std::os::unix::fs::MetadataExt; metadata.blocks() * 512 };
+        #[cfg(not(unix))]
+        let own = metadata.len();
+        own + if metadata.is_dir() { fs::read_dir(path).unwrap().map(|entry| allocated_bytes(&entry.unwrap().path())).sum::<u64>() } else { 0 }
+    }
+    assert_eq!(category("active-conversations").byte_size, allocated_bytes(&root.join("sessions")));
     assert_eq!(category("active-conversations").item_count, 1);
-    assert_eq!(category("archived-conversations").byte_size, 8);
-    assert_eq!(category("git-diff-snapshots").byte_size, 6);
+    assert_eq!(category("archived-conversations").byte_size, allocated_bytes(&root.join("archived")));
+    assert_eq!(category("git-diff-snapshots").byte_size, allocated_bytes(&root.join("git-snapshots")));
     assert_eq!(category("git-diff-snapshots").item_count, 1);
-    assert_eq!(category("temporary-chats").byte_size, 9);
+    assert_eq!(category("temporary-chats").byte_size, allocated_bytes(&root.join("tmp")));
     assert_eq!(category("temporary-chats").item_count, 1);
     assert!(category("project-checkpoints").estimated);
     assert_eq!(report.archives.len(), 1);
@@ -159,7 +167,8 @@ fn session_deletion_checks_active_path_and_identity_and_preserves_invalid_traces
             host_id: "local".into(), session_id: Some(if use_path { "different" } else { "one" }.into()),
             session_path: use_path.then(|| path.to_string_lossy().into_owned()), worktree: None, working: false, messageable: false,
         });
-        assert_eq!(delete_session_files(&runtime, path.to_str().unwrap(), "local", None, &root, false).unwrap_err(), "Close the session before deleting it");
+        let expected_error = if use_path { "Close the session before deleting it" } else { "Deletion failed: Close the session before deleting it\nDeletion was rolled back." };
+        assert_eq!(delete_session_files(&runtime, path.to_str().unwrap(), "local", None, &root, false).unwrap_err(), expected_error);
         assert_eq!(fs::read_to_string(&path).unwrap(), content);
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
     }
@@ -191,7 +200,8 @@ fn session_deletion_only_blocks_owned_matching_sessions_on_the_same_host() {
         let blocked = blocks_deletion(messageable, same_host, same_path, same_id);
         assert_eq!(result.is_err(), blocked, "viewer={messageable}, same host={same_host}, same path={same_path}, same id={same_id}: {result:?}");
         if blocked {
-            assert_eq!(result.unwrap_err(), "Close the session before deleting it");
+            let expected_error = if same_path { "Close the session before deleting it" } else { "Deletion failed: Close the session before deleting it\nDeletion was rolled back." };
+            assert_eq!(result.unwrap_err(), expected_error);
             assert_eq!(fs::read_to_string(&path).unwrap(), content);
             assert_eq!(fs::read_to_string(&sidecar).unwrap(), "{}");
         } else { assert!(!path.exists()); assert!(!sidecar.exists()); }

@@ -70,7 +70,7 @@ fn remote_capture_protocol_accepts_real_script_output_without_modifying_reposito
     test_git(&repository.0, &["add", "file"]); test_git(&repository.0, &["commit", "-m", "Initial"]);
     fs::write(repository.0.join("file"), "unstaged\n").unwrap();
     let index = fs::read(repository.0.join(".git/index")).unwrap();
-    let script = format!("require(\u{27}node:os\u{27}).homedir = () => process.argv[1];\n{}", include_str!("../../resources/capture-git-tree.cjs"));
+    let script = format!("const fixtureHome = process.argv[1]; process.argv.splice(1, 1); require(\u{27}node:os\u{27}).homedir = () => fixtureHome;\n{}", include_str!("../../resources/capture-git-tree.cjs"));
     let mut command = Command::new("node"); command.arg("-e").arg(script).arg(&home.0).current_dir(&repository.0).env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null");
     let token = query_remote_git_tree(&mut command, "isolated host").unwrap().unwrap();
     let snapshot: GitSnapshotToken = serde_json::from_str(&token).unwrap();
@@ -346,9 +346,16 @@ fn diff_watch_preparation_replaces_legacy_assets_and_refreshes_all_bundled_files
     assert_eq!(entry, generated_extension_root().unwrap().join("piop-diff-watch/index.ts"));
     for _ in 0..2 {
         assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../../extensions/piop-diff-watch/index.ts"));
+        for (name, source) in [
+            ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
+            ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
+            ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
+        ] {
+            assert_eq!(fs::read_to_string(entry.parent().unwrap().join(name)).unwrap(), source);
+        }
         prepare_diff_watch_extension().unwrap();
     }
-    assert_eq!(fs::read_dir(entry.parent().unwrap()).unwrap().count(), 1, "no temporary files should remain");
+    assert_eq!(fs::read_dir(entry.parent().unwrap()).unwrap().count(), 4, "no temporary files should remain");
 }
 
 #[test]
@@ -531,8 +538,11 @@ fn configuration_preparation_reports_failed_writes_and_cleans_temporary_files() 
         assert!(result.is_err());
         assert_eq!(fs::read_to_string(obstruction.join("keep")).unwrap(), "original");
         let files: Vec<_> = fs::read_dir(obstruction.parent().unwrap()).unwrap().map(|entry| entry.unwrap().file_name()).collect();
-        let expected_files = match kind { 0 => 1, 1 => 3, _ => 2 };
+        let expected_files = match kind { 0 => 1, 1 => 4, _ => 2 };
         assert_eq!(files.len(), expected_files, "failed writes must not leave temporary files: {files:?}");
-        if kind == 1 { assert!(files.contains(&std::ffi::OsString::from("provider-accounts.mjs"))); }
+        if kind == 1 {
+            assert!(files.contains(&std::ffi::OsString::from("provider-accounts.mjs")));
+            assert!(files.contains(&std::ffi::OsString::from("app-rpc.cjs")));
+        }
     }
 }

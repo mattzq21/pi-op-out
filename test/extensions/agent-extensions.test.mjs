@@ -4,17 +4,13 @@ import { mkdtemp, readFile, writeFile, rm, mkdir, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { transform } from 'esbuild';
+import { compileAgentFixture } from '../compile-defined-agent-fixture.mjs';
 
 export async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'piop-extensions-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
 
-  for (const name of ['index', 'extension-loader', 'mcp-config']) {
-    let source = await readFile(new URL(`../../extensions/piop-define-agents/${name}.ts`, import.meta.url), 'utf8');
-    source = source.replace('./extension-loader.ts', './extension-loader.mjs').replace('./mcp-config.ts', './mcp-config.mjs').replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = () => "";');
-    await writeFile(join(dir, `${name}.mjs`), (await transform(source, { loader: 'ts', format: 'esm' })).code);
-  }
+  await compileAgentFixture(dir);
 
   const handlers = new Map(), commands = new Map(), tools = new Map(), listeners = new Map();
   const entries = [], messages = [], statuses = new Map();

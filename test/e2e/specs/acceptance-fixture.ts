@@ -72,12 +72,14 @@ const withKnownModels = (responses: BackendResponses) => {
 export const withSessionSnapshot = (responses: BackendResponses) => {
   responses = withKnownModels(responses);
 
+  if (Array.isArray(responses.list_sessions)) responses.list_sessions = responses.list_sessions.map(session => ({ lastMessageAt: 0, apiCost: 0, ...session }));
+
   if (responses.start_pi && agentEvent) responses.start_pi = { ...startSchema.parse(responses.start_pi), events: [agentEvent] };
   const state = responses["pi_command:get_state"];
 
   if (!state) return responses;
 
-  return { ...responses, "pi_command:get_session_revision": { revision: "changed" }, "pi_command:get_snapshot": { revision: "snapshot", state, history: responses["pi_command:get_entries"] ?? { entries: [], leafId: null }, queue: { pendingMessages: [] }, liveTools: [], sequence: 0, epoch: "e2e" } };
+  return { ...responses, "pi_command:get_session_revision": { revision: "changed" }, "pi_command:get_snapshot": { revision: "snapshot", state, history: responses["pi_command:get_entries"] ?? { entries: [], leafId: null }, queue: { type: "queue_state", pendingMessages: [] }, liveTools: [], sequence: 0, epoch: "e2e" } };
 };
 
 export const mockBackend = async (responses: BackendResponses) => {

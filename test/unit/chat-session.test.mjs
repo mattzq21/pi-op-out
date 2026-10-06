@@ -6,7 +6,7 @@ import { useChatSession } from '../../src/lib/useChatSession.ts';
 describe('chat session hook', () => {
   let dom, hook, transport, responses, calls;
   const initialState = { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', messageCount: 0, pendingMessageCount: 0 };
-  const snapshot = (extra = {}) => ({ revision: 'snapshot', state: initialState, history: { entries: [], leafId: null }, sequence: 10, epoch: 'epoch', liveTools: [], queue: { pendingMessages: [] }, ...extra });
+  const snapshot = (extra = {}) => ({ revision: 'snapshot', state: initialState, history: { entries: [], leafId: null }, sequence: 10, epoch: 'epoch', liveTools: [], queue: { type: 'queue_state', pendingMessages: [] }, ...extra });
   beforeEach(async () => {
     dom = installDom(); calls = [];
     responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_tool_payload', { chunk: JSON.stringify({ content: 'persisted', details: { diff: 'patch' }, toolInput: { path: 'a' } }), length: 0, revision: 'payload' }], ['get_snapshot', snapshot()], ['get_available_models', { models: [{ id: 'model' }] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }], ['get_session_stats', { contextUsage: { tokens: 500, contextWindow: 1000, percent: 50 } }]]);

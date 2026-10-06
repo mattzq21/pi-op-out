@@ -13,7 +13,7 @@ for (const mode of ['production', 'e2e', 'development']) test(`application short
 
   let disposed;
   globalThis.__PIOP_TEST_MODE__ = mode;
-  globalThis.__PIOP_TEST_HOT__ = mode === 'development' ? { dispose(callback) { disposed = callback; } } : undefined;
+  globalThis.__PIOP_TEST_HOT__ = mode === 'development' ? { on() {}, off() {}, dispose(callback) { disposed = callback; } } : undefined;
 
   const hooks = registerHooks({
     resolve(specifier, context, nextResolve) {

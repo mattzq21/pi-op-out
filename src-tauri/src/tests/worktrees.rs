@@ -166,6 +166,7 @@ fn runtime_settings_include_only_enabled_named_tools_and_valid_skill_paths() {
     settings.skills = vec![json!({"path":"/skills/active","enabled":true}), json!({"path":"/skills/off","enabled":false}), json!({"path":42,"enabled":true}), json!({"path":"/skills/unset"})];
     settings.context_window_cap = 12345; settings.context_window_cap_enabled = false;
     assert_eq!(runtime_settings(&settings), json!({
+        "defaultModel":settings.default_model, "registeredTools":["read", "bash", "write", "edit"],
         "tools":["read"], "skills":["/skills/active"], "explicitOnlySkills":[],
         "contextWindowCap":12345, "contextWindowCapEnabled":false
     }));
