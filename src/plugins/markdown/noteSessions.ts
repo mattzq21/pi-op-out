@@ -1,5 +1,6 @@
 import { createEffect, createRoot, createSignal, onCleanup, type Accessor } from "solid-js";
 import { useChatNote, type ChatNoteTarget } from "./useNotes";
+import { captureDaemonTransport } from "../../lib/platform";
 
 interface NoteSession {
   note: ReturnType<typeof useChatNote>;
@@ -9,12 +10,12 @@ interface NoteSession {
 
 const sessions = new Map<string, NoteSession>();
 
-function createSession(key: string, target: ChatNoteTarget, shown: boolean): NoteSession {
+function createSession(key: string, target: ChatNoteTarget, shown: boolean, transport: ReturnType<typeof captureDaemonTransport>): NoteSession {
   return createRoot(dispose => {
     const consumers = new Map<symbol, boolean>();
     const [visible, setVisible] = createSignal(shown);
     const [attached, setAttached] = createSignal(0);
-    const note = useChatNote(target, visible);
+    const note = useChatNote(target, visible, transport);
     const update = () => { setVisible([...consumers.values()].some(Boolean)); setAttached(consumers.size); };
 
     const session = {
@@ -33,8 +34,9 @@ function createSession(key: string, target: ChatNoteTarget, shown: boolean): Not
 }
 
 export function useNoteSession(target: ChatNoteTarget, visible: Accessor<boolean>) {
-  const key = JSON.stringify([target.hostId, target.sessionId]);
-  const session = sessions.get(key) ?? createSession(key, target, visible());
+  const transport = captureDaemonTransport();
+  const key = JSON.stringify([transport.identity, target.hostId, target.sessionId]);
+  const session = sessions.get(key) ?? createSession(key, target, visible(), transport);
   sessions.set(key, session);
   const consumer = Symbol();
   session.show(consumer, visible());

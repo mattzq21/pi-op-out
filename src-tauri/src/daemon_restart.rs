@@ -107,9 +107,16 @@ pub(crate) fn prepare(app: AppHandle, mut args: Value) -> Result<Value, String> 
     let _preparation = Preparation;
     ensure_restart_safe(&app)?;
     args["type"] = json!("prepare_daemon_restart");
+    prepare_plugin_handoff(&app, &daemon, args)
+}
+
+fn prepare_plugin_handoff(app: &AppHandle, daemon: &crate::daemon::Daemon, args: Value) -> Result<Value, String> {
+    let leases = crate::host_supervisor::preserve_leases_for_restart()?;
     let prepared = daemon.request(args)?;
-    let plan = make_plan(&app, prepared)?;
-    prepare_handoff(&plan)
+    let plan = make_plan(app, prepared)?;
+    let result = prepare_handoff(&plan)?;
+    leases.commit();
+    Ok(result)
 }
 
 fn ensure_restart_safe(app: &AppHandle) -> Result<(), String> {

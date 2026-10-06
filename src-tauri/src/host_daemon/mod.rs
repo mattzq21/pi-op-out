@@ -15,7 +15,7 @@ mod tool_payload;
 mod tool_failures;
 mod worker;
 
-pub(crate) use plugins::{validate_configuration, with_note_deletion};
+pub(crate) use plugins::{preserve_leases_for_restart, validate_configuration, with_note_deletion};
 
 use futures_util::FutureExt;
 use serde_json::{json, Value};

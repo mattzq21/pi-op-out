@@ -1,6 +1,6 @@
 import { createSignal, onCleanup, onMount, type Accessor } from "solid-js";
 import { z } from "zod";
-import { invoke } from "../../lib/platform";
+import { captureDaemonTransport } from "../../lib/platform";
 import { required } from "../../lib/required";
 import { registerPluginFlush } from "../lifecycle";
 import { createDependencyEffect } from "../../lib/solid";
@@ -18,7 +18,7 @@ const noOwnership: NoteOwnership = { owned: false, available: false, token: null
 
 export interface ChatNoteTarget { sessionId: string; hostId: string; }
 
-export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) {
+export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, transport = captureDaemonTransport()) {
   const [document, setDocument] = createSignal<NoteDocument>();
   const [ownership, setOwnership] = createSignal<NoteOwnership>(noOwnership);
   const [content, setContent] = createSignal("");
@@ -48,7 +48,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   try { localStorage.removeItem("piop-chat-note:" + JSON.stringify([target.hostId, target.sessionId])); } catch { }
 
   const call = (action: string, fields: Record<string, string> = {}) => {
-    const result = operations.then(() => invoke("plugin_call", { hostId: target.hostId, pluginId: "markdown", request: { sessionId: target.sessionId, leaseId, action, ...fields } }, noteSchema));
+    const result = operations.then(() => transport.invoke("plugin_call", { hostId: target.hostId, pluginId: "markdown", request: { sessionId: target.sessionId, leaseId, action, ...fields } }, noteSchema));
     operations = result.then(() => undefined, () => undefined);
 
     return result;
@@ -183,6 +183,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   };
 
   onCleanup(registerPluginFlush(target.hostId, async () => {
+    if (!transport.active()) return;
     setFlushing(true);
 
     try {

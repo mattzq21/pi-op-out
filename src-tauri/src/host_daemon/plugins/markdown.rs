@@ -53,20 +53,44 @@ fn write_lease(path: &Path, lease: Option<&Lease>) -> Result<(), String> {
     }
 }
 
-pub(super) fn preserve_leases_for_restart() -> Result<(), String> {
+pub(crate) struct RestartLeases { preserved: Vec<(PathBuf, Lease, Lease)> }
+
+impl RestartLeases {
+    pub(crate) fn commit(mut self) { self.preserved.clear(); }
+
+    fn restore(&self) -> Result<(), String> {
+        let _guard = lock_notes()?;
+        for (path, original, extended) in &self.preserved {
+            if read_lease(path)?.as_ref() == Some(extended) { write_lease(path, Some(original))?; }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for RestartLeases {
+    fn drop(&mut self) {
+        if self.preserved.is_empty() { return; }
+        if let Err(error) = self.restore() { eprintln!("Could not restore note leases after failed restart preparation: {error}"); }
+    }
+}
+
+pub(crate) fn preserve_leases_for_restart() -> Result<RestartLeases, String> {
+    let mut leases = RestartLeases { preserved: Vec::new() };
     let _guard = lock_notes()?;
     let root = notes_root()?.join("leases");
     crate::ensure_private_dir(&root)?;
     for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
-        preserve_lease(&entry.map_err(|error| error.to_string())?.path())?;
+        preserve_lease(&entry.map_err(|error| error.to_string())?.path(), &mut leases)?;
     }
-    Ok(())
+    Ok(leases)
 }
 
-fn preserve_lease(path: &Path) -> Result<(), String> {
+fn preserve_lease(path: &Path, leases: &mut RestartLeases) -> Result<(), String> {
     if path.extension().is_none_or(|extension| extension != "json") { return Ok(()); }
     if let Some(mut lease) = read_lease(&validate_path(path.into())?)? {
+        let original = lease.clone();
         lease.expires = lease.expires.max(now() + 300);
+        leases.preserved.push((path.into(), original, lease.clone()));
         write_lease(path, Some(&lease))?;
     }
     Ok(())

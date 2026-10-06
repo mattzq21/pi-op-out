@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 mod markdown;
 
-pub(crate) use markdown::with_note_deletion;
+pub(crate) use markdown::{preserve_leases_for_restart, with_note_deletion};
 
 const BUNDLED: &[&str] = &["chatgpt", "markdown"];
 const CHATGPT_SOURCE: &str = concat!(
@@ -201,7 +201,6 @@ impl PluginService {
 }
 
 async fn checkpoint(runtime: &Runtime) -> Result<Value> {
-    tokio::task::spawn_blocking(markdown::preserve_leases_for_restart).await.map_err(|error| error.to_string())??;
     runtime.drain().await?;
     match &runtime.chatgpt {
         Some(sdk) => sdk.request(json!({"method":"plugin_checkpoint"})).await,

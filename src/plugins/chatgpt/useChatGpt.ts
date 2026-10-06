@@ -52,9 +52,10 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const claim = async (id: string) => {
     const claimCall = call;
     const current = generation;
+    const selected = selection;
     const ownership = await claimCall("claim", ownershipSchema, { chatId: id });
 
-    if (disposed || generation !== current || desiredChat !== id) { if (ownership.owned) void claimCall("release", ownershipSchema, { chatId: id }).catch(() => undefined);
+    if (disposed || generation !== current || desiredChat !== id || selection !== selected) { if (ownership.owned && (disposed || generation !== current || desiredChat !== id)) void claimCall("release", ownershipSchema, { chatId: id }).catch(() => undefined);
 
     return { owned: false, available: false }; }
 
@@ -98,6 +99,10 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     setChats(previous => [value, ...previous.filter(item => item.id !== value.id)].sort((a, b) => b.updatedAt - a.updatedAt));
   };
 
+  const preserveStopping = (value: RegularChat): RegularChat => stopOperation && chat()?.id === value.id ? { ...value, status: "stopping" } : value;
+  const currentSelection = (current: number, selected: number) => generation === current && selection === selected;
+  const releaseSuperseded = (id: string) => { if (desiredChat !== id && !busy() && !responding()) release(id); };
+
   const receiveChat = (value: RegularChat, acquired = false) => {
     const previous = chat();
     const wasOwned = hasLease(previous);
@@ -107,6 +112,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     if (!wasOwned || value.updatedAt !== previous?.updatedAt) modelSelection.restore(value);
 
     if (!acquired && !wasOwned) value = observingChat(value);
+    value = preserveStopping(value);
     setChat(value); remember(value);
   };
 
@@ -119,11 +125,16 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 
     try {
       await claim(id);
+
+      if (!currentSelection(current, version)) return;
       const value = await selectCall("read", regularChatSchema, { chatId: id });
 
-      if (generation === current && selection === version) { setChat(value); modelSelection.restore(value); setPrompt(""); }
-    } catch (reason) { if (generation === current && selection === version) setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { if (generation === current && selection === version) setLoading(false); }
+      if (currentSelection(current, version)) { setChat(value); modelSelection.restore(value); setPrompt(""); }
+    } catch (reason) { if (currentSelection(current, version)) {
+      release(id); desiredChat = chat()?.id;
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } }
+    finally { if (currentSelection(current, version)) setLoading(false); }
   };
 
   createDependencyEffect(() => {
@@ -198,9 +209,8 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 
       if (generation !== current) return;
       remember(value);
-      setCancellationError(result.cancellationError);
 
-      if (selection === selected) { setChat(value); setPrompt(""); }
+      if (selection === selected && submission === controller) { setCancellationError(result.cancellationError); setChat(value); setPrompt(""); }
     } catch (reason) {
       if (generation !== current) return;
 
@@ -271,7 +281,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 
           if (current !== generation) return;
 
-          if (cancelled || desiredChat !== id || selected !== selection) { if (!busy() && !responding()) release(id);
+          if (cancelled || desiredChat !== id || selected !== selection) { releaseSuperseded(id);
 
           return; }
 
