@@ -29,7 +29,7 @@ impl Host {
         }
         match name {
             "agent_definitions" => return Ok(self.registry().agent_definitions.clone()),
-            "conversation_owner" => return self.ownership().owns(&text(&packet, "sessionId"), &text(&packet, "clientId")).map(Value::Bool),
+            "conversation_owner" => return self.ownership().owns(&text(&packet, "sessionId"), &text(&packet, "clientId"), flag(&packet, "allowReleased")).map(Value::Bool),
             "provider_auth" | "provider_auth_cancel_owner" => return self.services.handle(packet).await,
             "ownership_drained" => return Ok(self.ownership_drained(&packet)),
             "conversation_mutation" => return self.begin_mutation(&packet).await,
