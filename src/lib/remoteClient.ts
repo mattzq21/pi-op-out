@@ -1,12 +1,13 @@
 import { z, type JSONType } from "zod";
 import { jsonResultSchema, remotePacketSchema, type NativeArguments, type RemotePacket } from "./transportSchemas";
 import { isMobileDebugConnection } from "./mobileDebug";
+import { busyRetryDelay, HOST_BUSY } from "./backpressure";
 
 export interface HostConnection { url: string }
 
 export type RemoteEvent = { event: string; payload: JSONType | undefined };
 
-type Pending = { resolve: (value: JSONType | undefined) => void; reject: (error: Error) => void; timer?: ReturnType<typeof setTimeout> };
+type Pending = { resolve: (value: JSONType | undefined) => void; reject: (error: Error) => void; timer?: ReturnType<typeof setTimeout>; retryTimer?: ReturnType<typeof setTimeout>; retries: number; retry: () => void };
 
 export function validateHost(connection: HostConnection): string {
   const url = new URL(connection.url);
@@ -107,10 +108,25 @@ export class RemoteClient {
     const request = this.pending.get(Number(message.id));
 
     if (!request) return;
+
+    if (this.retryBusy(request, message.error)) return;
+
     clearTimeout(request.timer); this.pending.delete(Number(message.id));
+    clearTimeout(request.retryTimer);
 
     if (message.error !== undefined) request.reject(new Error(message.error)); else request.resolve(message.result);
   }
+
+  private retryBusy(request: Pending, error?: string) {
+    const delay = error === HOST_BUSY ? busyRetryDelay(request.retries) : undefined;
+
+    if (delay === undefined) return false;
+    request.retries += 1;
+    request.retryTimer = setTimeout(() => { request.retryTimer = undefined; request.retry(); }, delay);
+
+    return true;
+  }
+
   invoke<S extends z.ZodType>(command: string, args: NativeArguments | undefined, schema: S): Promise<z.output<S>>;
   invoke(command: string, args?: NativeArguments): Promise<JSONType | undefined>;
   invoke(command: string, args: NativeArguments = {}, schema: z.ZodType = jsonResultSchema) {
@@ -125,13 +141,21 @@ export class RemoteClient {
     if (command === "start_terminal" && args.terminalId !== undefined) this.terminals.add(args.terminalId);
 
     return new Promise<JSONType | undefined>((resolve, reject) => {
-      const timer = command === "run_worktree_setup" ? undefined : setTimeout(() => { this.pending.delete(id); reject(new Error("Host request timed out; it may still complete. Refresh before trying again.")); }, 660000);
-      this.pending.set(id, { resolve, reject, timer });
-
-      try { socket.send(packet); }
-      catch (reason) { clearTimeout(timer); this.pending.delete(id); reject(reason); }
+      const request: Pending = { resolve, reject, retries: 0, retry: () => { if (this.pending.get(id) === request) this.sendRequest(socket, packet, id, request); } };
+      request.timer = command === "run_worktree_setup" ? undefined : setTimeout(() => { clearTimeout(request.retryTimer); this.pending.delete(id); reject(new Error("Host request timed out; it may still complete. Refresh before trying again.")); }, 660000);
+      this.pending.set(id, request);
+      request.retry();
     }).then(value => schema.parse(value));
   }
+
+  private sendRequest(socket: WebSocket, packet: string, id: number, request: Pending) {
+    try { socket.send(packet); }
+    catch (reason) {
+      clearTimeout(request.timer); clearTimeout(request.retryTimer); this.pending.delete(id);
+      request.reject(reason instanceof Error ? reason : new Error(String(reason)));
+    }
+  }
+
   listen<S extends z.ZodType>(event: string, handler: (event: { event: string; payload: z.output<S>; id: number }) => void, schema: S): Promise<() => void> {
     const listener = (value: RemoteEvent) => handler({ ...value, payload: schema.parse(value.payload), id: 0 });
     const listeners = this.listeners.get(event) ?? new Set();
@@ -148,7 +172,7 @@ export class RemoteClient {
 
     for (const terminalId of this.terminals) this.receive({ event: "pi://event", payload: { type: "terminal_exit", terminalId } });
     this.terminals.clear();
-    this.pending.forEach(({ timer, reject }) => { clearTimeout(timer); reject(new Error("Disconnected from host; the command may have completed.")); });
+    this.pending.forEach(({ timer, retryTimer, reject }) => { clearTimeout(timer); clearTimeout(retryTimer); reject(new Error("Disconnected from host; the command may have completed.")); });
     this.pending.clear();
   }
   close() {

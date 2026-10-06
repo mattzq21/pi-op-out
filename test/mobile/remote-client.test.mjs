@@ -13,7 +13,7 @@ class FakeSocket {
   readyState = 1;
   sent = [];
   constructor(url) { this.url = url; FakeSocket.instances.push(this); }
-  send(data) { this.sent.push(JSON.parse(data)); }
+  send(data) { const packet = JSON.parse(data); this.sent.push(packet); this.onSend?.(packet); }
   close() { this.readyState = 3; this.onclose?.(); }
   receive(value) { this.onmessage?.({ data: JSON.stringify(value) }); }
 }
@@ -83,4 +83,63 @@ test('rejects older desktop endpoints without leaving a pending handshake', asyn
   const socket = FakeSocket.instances.at(-1);
   socket.onopen(); socket.receive({ type: 'ready', protocol: 1 });
   await rejection; assert.equal(socket.readyState, 3); client.close();
+});
+
+test('busy responses retry a rejected mutation without duplicating its accepted execution', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const { client, socket } = await connected();
+  let busy = 2;
+  let accepted = 0;
+  socket.onSend = packet => {
+    if (packet.command !== 'pi_command') return;
+
+    if (busy-- > 0) socket.receive({ id: packet.id, error: 'Host is busy; try again' });
+    else { accepted++; socket.receive({ id: packet.id, result: { accepted: true } }); }
+  };
+
+  try {
+    const pending = client.invoke('pi_command', { command: { type: 'prompt', message: 'one message' } });
+    const result = pending.catch(error => ({ error: error.message }));
+    context.mock.timers.tick(1000);
+    context.mock.timers.tick(1000);
+    assert.deepEqual(await result, { accepted: true });
+    assert.equal(accepted, 1);
+    const attempts = socket.sent.filter(packet => packet.command === 'pi_command');
+
+    assert.equal(attempts.length, 3);
+    assert.equal(new Set(attempts.map(packet => packet.id)).size, 1);
+  } finally { client.close(); }
+});
+
+test('persistent saturation fails within a bounded number of attempts', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const { client, socket } = await connected();
+  socket.onSend = packet => { if (packet.command) socket.receive({ id: packet.id, error: 'Host is busy; try again' }); };
+
+  try {
+    const pending = client.invoke('list_sessions');
+    const rejection = assert.rejects(pending, /Host is busy; try again/);
+
+    for (let tick = 0; tick < 10; tick++) context.mock.timers.tick(1000);
+    await rejection;
+    assert.equal(socket.sent.filter(packet => packet.command).length, 7);
+  } finally { client.close(); }
+});
+
+test('disconnect cancels a busy retry and never replays it on the next connection', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const { client, socket } = await connected();
+  const pending = client.invoke('shared_terminal', { action: 'write', data: 'one command\r' });
+  const rejection = assert.rejects(pending, /Disconnected.*may have completed/);
+  socket.receive({ id: 1, error: 'Host is busy; try again' });
+  socket.close();
+  await rejection;
+  const reconnect = client.connect(host);
+  const next = FakeSocket.instances.at(-1);
+  next.onopen(); next.receive({ type: 'ready', protocol: 1, backend: 'daemon' });
+  await reconnect;
+  context.mock.timers.tick(10000);
+  assert.equal(socket.sent.filter(packet => packet.command).length, 1);
+  assert.equal(next.sent.filter(packet => packet.command).length, 0);
+  client.close();
 });
