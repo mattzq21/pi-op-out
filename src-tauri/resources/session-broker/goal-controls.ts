@@ -109,12 +109,14 @@ async function prepareGoal(args: string, ctx: ExtensionContext, controls: GoalCo
   let applied = false;
 
   try {
-    return await commit(ctx, controls, () => {
+    const summary = await commit(ctx, controls, () => {
       if (snapshot(ctx, controls) !== captured.key) throw new Error("The goal changed while preparing this operation. Submit /goal again.");
       controls.assertAvailable(ctx);
       applyDraft(ctx, controls, draft.objective, editing);
       applied = true;
     }, start);
+
+    return { summary, objective: draft.objective };
   } finally { if (!applied) await draft.cleanup(); }
 }
 
@@ -168,11 +170,15 @@ export function registerGoalControls(pi: ExtensionAPI, controls: GoalControls) {
     const value = goalObjective(text);
 
     if (value === undefined) return;
+    event.message.content = [];
 
     try {
-      await prepareGoal(value, ctx, controls, false, false);
+      const prepared = await prepareGoal(value, ctx, controls, false, false);
+
+      if (prepared) event.message.content = [{ type: "text", text: `/goal ${prepared.objective}` }];
     } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
   });
+  pi.on("context", event => ({ messages: event.messages.filter(message => message.role !== "user" || message.content.length > 0) }));
   pi.registerCommand("goal", {
     description: `Persistent conversation goal. ${USAGE}`,
     getArgumentCompletions: prefix => ["edit", "pause", "resume", "clear", "budget"].flatMap(value => value.startsWith(prefix.trim()) ? [{ value, label: value }] : []),
@@ -187,7 +193,7 @@ export function registerGoalControls(pi: ExtensionAPI, controls: GoalControls) {
           return;
         }
 
-        const summary = value === "edit" ? await prepareGoal(value, ctx, controls, true) : await commit(ctx, controls, () => applyCommand(value, ctx, controls), Boolean(value));
+        const summary = value === "edit" ? (await prepareGoal(value, ctx, controls, true))?.summary : await commit(ctx, controls, () => applyCommand(value, ctx, controls), Boolean(value));
 
         if (summary && value !== "clear") pi.sendMessage({ customType: "piop-goal-summary", content: summary, display: true }, { triggerTurn: false });
       } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
