@@ -3,7 +3,7 @@ import { FastModeCommands } from "./fastModeCommands";
 
 export class ConversationCommands extends FastModeCommands {
   private goalAttachments(command: RpcCommand) {
-    if (command.type === "prompt" && command.message !== undefined && /^\/goal\s+\S/.test(command.message) && Array.isArray(command.images) && command.images.length) {
+    if (["prompt", "steer", "follow_up"].includes(command.type) && command.message !== undefined && /^\/goal\s+\S/.test(command.message) && Array.isArray(command.images) && command.images.length) {
       const objective = command.message.slice(6);
       const attachments = command.images.map((image, index) => ({ name: `Image ${index + 1}`, image }));
 

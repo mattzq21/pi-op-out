@@ -14,6 +14,14 @@ export type GoalControls = {
 
 const USAGE = "/goal [objective|edit|pause|resume|clear|budget <tokens|clear>]";
 
+const isGoalObjective = (value: string) => Boolean(value) && !["edit", "clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget ");
+
+function goalObjective(text: string) {
+  const value = text.match(/^\/goal\s+([\s\S]*)$/)?.[1].trim();
+
+  return value !== undefined && isGoalObjective(value) ? value : undefined;
+}
+
 const goalToolDescription = "Update the existing goal.\nSet status to `paused` only at the user's explicit request to pause this goal, never on your own initiative. Ask if unclear; a later resume revokes that request. Report the returned status and stop goal work. Budget limits take precedence over pausing.\nSet status to `complete` only when the objective has actually been achieved and no required work remains.\nSet status to `blocked` only when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic continuations, and the agent cannot make meaningful progress without user input or an external-state change.\nIf the user resumes a goal that was previously marked `blocked`, treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, set status to `blocked` again.\nOnce the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; set status to `blocked`.\nDo not use `blocked` merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.\nDo not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work.\nYou cannot use this tool to resume, budget-limit, or usage-limit a goal; those status changes are controlled by the user or system.\nWhen marking a budgeted goal achieved with status `complete`, report the final token usage from the tool result to the user.";
 
 function registerGoalTool(pi: ExtensionAPI, controls: GoalControls) {
@@ -67,7 +75,7 @@ function snapshot(ctx: ExtensionContext, controls: GoalControls) {
   return JSON.stringify([ctx.sessionManager.getSessionId(), goal?.id, goal?.objective, goal?.status, goal?.tokenBudget]);
 }
 
-function commit(ctx: ExtensionCommandContext, controls: GoalControls, operation: () => void, start = true) {
+function commit(ctx: ExtensionContext, controls: GoalControls, operation: () => void, start = true) {
   return controls.coordination.run(ctx, () => {
     operation();
     const summary = goalSummary(controls.state);
@@ -79,7 +87,7 @@ function commit(ctx: ExtensionCommandContext, controls: GoalControls, operation:
   });
 }
 
-async function prepareGoal(args: string, ctx: ExtensionCommandContext, controls: GoalControls, editing: boolean) {
+async function prepareGoal(args: string, ctx: ExtensionContext, controls: GoalControls, editing: boolean, start = true) {
   const captured = await controls.coordination.run(ctx, () => {
     controls.assertAvailable(ctx);
 
@@ -106,11 +114,11 @@ async function prepareGoal(args: string, ctx: ExtensionCommandContext, controls:
       controls.assertAvailable(ctx);
       applyDraft(ctx, controls, draft.objective, editing);
       applied = true;
-    });
+    }, start);
   } finally { if (!applied) await draft.cleanup(); }
 }
 
-function applyDraft(ctx: ExtensionCommandContext, controls: GoalControls, objective: string, editing: boolean) {
+function applyDraft(ctx: ExtensionContext, controls: GoalControls, objective: string, editing: boolean) {
   if (editing) {
     const goal = controls.state.require();
     controls.state.flushClock(); goal.objective = objective;
@@ -150,14 +158,36 @@ function applyCommand(value: string, ctx: ExtensionCommandContext, controls: Goa
 
 export function registerGoalControls(pi: ExtensionAPI, controls: GoalControls) {
   registerGoalTool(pi, controls);
+  pi.on("input", (event, ctx) => {
+    if (goalObjective(event.text) !== undefined) controls.assertAvailable(ctx);
+  });
+  pi.on("message_start", async (event, ctx) => {
+    if (event.message.role !== "user") return;
+    const content = event.message.content;
+    const text = Array.isArray(content) ? content.flatMap(part => part.type === "text" ? [part.text] : []).join("") : content;
+    const value = goalObjective(text);
+
+    if (value === undefined) return;
+
+    try {
+      await prepareGoal(value, ctx, controls, false, false);
+    } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
+  });
   pi.registerCommand("goal", {
     description: `Persistent conversation goal. ${USAGE}`,
     getArgumentCompletions: prefix => ["edit", "pause", "resume", "clear", "budget"].flatMap(value => value.startsWith(prefix.trim()) ? [{ value, label: value }] : []),
     async handler(args, ctx) {
       try {
         const value = args.trim();
-        const preparing = value === "edit" || (value && !["clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget "));
-        const summary = preparing ? await prepareGoal(value, ctx, controls, value === "edit") : await commit(ctx, controls, () => applyCommand(value, ctx, controls), Boolean(value));
+
+        if (isGoalObjective(value)) {
+          controls.assertAvailable(ctx);
+          pi.sendUserMessage(`/goal ${value}`, { deliverAs: "followUp" });
+
+          return;
+        }
+
+        const summary = value === "edit" ? await prepareGoal(value, ctx, controls, true) : await commit(ctx, controls, () => applyCommand(value, ctx, controls), Boolean(value));
 
         if (summary && value !== "clear") pi.sendMessage({ customType: "piop-goal-summary", content: summary, display: true }, { triggerTurn: false });
       } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }

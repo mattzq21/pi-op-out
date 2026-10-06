@@ -66,6 +66,15 @@ async function main() {
   const { AgentSession } = await import(pathToFileURL(join(root, "dist/index.js")).href);
   const { writeRawStdout } = await import(pathToFileURL(join(root, "dist/core/output-guard.js")).href);
   const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);
+  const prompt = AgentSession.prototype.prompt;
+
+  AgentSession.prototype.prompt = function (text, options) {
+    const value = text.match(/^\/goal\s+([\s\S]*)$/)?.[1].trim();
+    const objective = value && !["edit", "clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget ");
+
+    return prompt.call(this, text, objective ? { ...options, expandPromptTemplates: false } : options);
+  };
+
   let session;
   const bind = AgentSession.prototype.bindExtensions;
   AgentSession.prototype.bindExtensions = async function (...bindings) {
