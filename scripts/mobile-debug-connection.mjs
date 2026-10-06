@@ -7,14 +7,19 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const project = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
+
 const manifest = join(project, "src-tauri");
+
 let key = 0xcbf29ce484222325n;
 
 for (const byte of Buffer.from(manifest)) key = BigInt.asUintN(64, (key ^ BigInt(byte)) * 0x100000001b3n);
 
 const endpointFile = join(homedir(), ".piop-dev", "daemons", key.toString(16).padStart(16, "0"), "debug-mobile.json");
+
 const daemon = join(manifest, "target", "debug", "piopd");
+
 const builtIdentity = createHash("sha256").update(readFileSync(daemon)).digest("hex");
+
 const result = spawnSync(daemon, ["start"], { cwd: project, stdio: ["ignore", "ignore", "inherit"] });
 
 if (result.error || result.status !== 0) {
@@ -26,6 +31,7 @@ async function ready(url) {
     const socket = new WebSocket(url);
     const timer = setTimeout(() => finish(false), 1500);
     const finish = (value) => { clearTimeout(timer); resolve(value); socket.close(); };
+
     socket.addEventListener("message", ({ data }) => {
       try {
         const packet = JSON.parse(String(data));
@@ -38,7 +44,11 @@ async function ready(url) {
 }
 
 let connection;
+
+let runtime;
+
 let outdatedBuild = false;
+
 const deadline = Date.now() + 10000;
 
 while (Date.now() < deadline) {
@@ -63,18 +73,22 @@ while (Date.now() < deadline) {
 
         url.hostname = "10.0.2.2";
         connection = url.href;
+        runtime = packet.debugRuntime ?? { processId: packet.debugProcessId, buildIdentity: runningIdentity };
         break;
       }
     }
   } catch { }
+
   await delay(200);
 }
 
 if (outdatedBuild) throw new Error("The running worktree daemon does not match the rebuilt binary; restart it before connecting.");
+
 if (!connection) throw new Error("The worktree daemon has no live debug mobile endpoint. Rebuild it, stop the old daemon, and start it again.");
 
 process.stdout.write(JSON.stringify({
   project,
+  runtime,
   apk: join(project, "android/app/build/outputs/apk/debug/app-debug.apk"),
   url: connection,
   exec: { argv: ["am", "start", "-S", "-n", "dev.pi.mobile/.MainActivity", "--es", "piopDebugUrl", connection] },

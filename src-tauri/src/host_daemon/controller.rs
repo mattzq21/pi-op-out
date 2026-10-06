@@ -435,7 +435,7 @@ impl Host {
         if !Arc::ptr_eq(&target, &self.agent_reload_target(runtime, session_id)?) {
             return Err("The session changed while loading agent definitions. Reload from its current host.".into());
         }
-        let sessions = {
+        let (revision, sessions) = {
             let mut registry = self.registry();
             registry.agent_revision += 1;
             let revision = registry.agent_revision;
@@ -443,13 +443,13 @@ impl Host {
             if let Some(configuration) = registry.configuration.as_mut() {
                 configuration["agentRevision"] = json!(revision);
             }
-            registry.sessions.values().cloned().collect::<Vec<_>>()
+            (revision, registry.sessions.values().cloned().collect::<Vec<_>>())
         };
         for session in sessions {
             session.publish(json!({"type":"settings_pending","pending":true}), None);
             self.reconcile(session);
         }
-        Ok(json!({"success":true,"sessionId":session_id}))
+        Ok(json!({"success":true,"sessionId":session_id,"agentRevision":revision}))
     }
 
     fn agent_reload_target(&self, runtime: &str, session_id: &str) -> Result<Arc<Session>> {
@@ -548,8 +548,8 @@ impl Host {
         if matches!(kind(&command), "fork" | "fork_after" | "clone" | "new_session" | "switch_session") {
             return super::branching::switch(self, &session, runtime, command).await;
         }
-        if command["clientScreenWidth"].is_number() {
-            session.raw(json!({"type":"html_preview_viewport","screenWidth":command["clientScreenWidth"]})).await?;
+        if command["clientHtmlPreviewSize"].is_number() {
+            session.raw(json!({"type":"html_preview_viewport","size":command["clientHtmlPreviewSize"]})).await?;
         }
         queue_command(&session, command).await
     }

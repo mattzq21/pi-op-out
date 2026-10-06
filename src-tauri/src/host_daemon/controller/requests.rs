@@ -258,8 +258,8 @@ impl Host {
         if name == "presence" {
             session.presence(runtime, packet["presence"].clone());
             let presence = &packet["presence"];
-            if flag(presence, "visible") && flag(presence, "focused") && presence["screenWidth"].is_number() {
-                session.raw(json!({"type":"html_preview_viewport","screenWidth":presence["screenWidth"]})).await?;
+            if flag(presence, "visible") && flag(presence, "focused") && presence["htmlPreviewSize"].is_number() {
+                session.raw(json!({"type":"html_preview_viewport","size":presence["htmlPreviewSize"]})).await?;
             }
             return Ok(Value::Null);
         }

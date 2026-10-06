@@ -27,7 +27,8 @@ impl Session {
         }
         let message = format!("Saved settings could not be applied: {error}. Save again or reopen the conversation to retry.");
         self.state().configuration_error = Some(message.clone());
-        self.publish(json!({"type":"extension_error","error":message}), None);
+        let revision = self.host.configuration().and_then(|configuration| configuration["agentRevision"].as_u64()).unwrap_or(0);
+        self.publish(json!({"type":"extension_error","error":message,"agentRevision":revision}), None);
         if self.views().is_empty() {
             self.host
                 .output(json!({"type":"diagnostic","line":format!("Could not apply settings to {}: {error}",self.key())}));
@@ -56,7 +57,7 @@ impl Session {
                 state.agent_revision = revision;
                 state.applied_configuration = Some(configuration);
             }
-            self.publish(json!({"type":"settings_applied"}), None);
+            self.publish(json!({"type":"settings_applied","agentRevision":revision}), None);
         }
         Ok(())
     }

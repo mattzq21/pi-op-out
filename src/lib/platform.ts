@@ -11,6 +11,12 @@ export type { UnlistenFn };
 
 export const isMobile = import.meta.env.MODE === "mobile";
 
+export function htmlPreviewSize() {
+  const width = typeof window === "undefined" ? undefined : window.screen?.width;
+
+  return typeof width === "number" && Number.isFinite(width) && width >= 2560 ? 750 : 600;
+}
+
 const clientPreferences = registerPlugin<{ load(): Promise<{ settings: unknown }>; save(options: { settings: unknown }): Promise<void> }>("ClientPreferences");
 
 const conversationClientId = (() => {

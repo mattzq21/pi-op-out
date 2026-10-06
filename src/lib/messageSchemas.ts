@@ -14,7 +14,7 @@ const contentPartSchema = z.union([
   imageSchema,
   textSchema,
   z.object({ type: z.literal("thinking"), thinking: z.string() }),
-  z.object({ type: z.literal("toolCall"), id: z.string(), name: z.string(), arguments: z.record(z.string(), z.json()), partialArgs: z.string().optional() }),
+  z.object({ type: z.literal("toolCall"), id: z.string(), name: z.string(), arguments: z.record(z.string(), z.json()).default({}), partialArgs: z.string().optional() }),
 ]);
 
 export const contentSchema = z.union([z.string(), z.array(contentPartSchema)]);

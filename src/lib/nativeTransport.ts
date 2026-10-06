@@ -9,7 +9,7 @@ import { NativeSettings } from "./nativeSettings";
 import { nativeTerminals } from "./nativeTerminals";
 import { ConversationCommands } from "./conversationCommands";
 import { commandListingSchema } from "./fastModeCommands";
-import { listen, type UnlistenFn } from "./platform";
+import { htmlPreviewSize, listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
 import { nativeConnectionTargetSchema, restoredSessionTarget } from "./sessionResume";
 import type { GroupChange, SessionGroup, SessionGroups, SessionGroupSeed } from "./sessionGroups";
@@ -122,7 +122,7 @@ export class NativeTransport {
   private presenceCleanup?: () => void;
   setVisible(visible: boolean) { this.visible = visible; this.publishPresence(); }
   private presence() {
-    const presence = { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus(), screenWidth: window.screen?.width ?? 0 };
+    const presence = { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus(), htmlPreviewSize: htmlPreviewSize() };
 
     return this.readOnly ? { ...presence, readOnly: true } : presence;
   }
@@ -186,8 +186,46 @@ export class NativeTransport {
 
     return this.settings.runCommand(async () => {
       if (!this.running || this.readOnly || version !== this.connectionVersion || hostId !== this.hostId) throw new Error("The session connection changed. Reload from its current host.");
-      await this.executeCommandNow({ type: "reload_agents", sessionId }, z.object({ success: z.literal(true), sessionId: z.literal(sessionId) }));
+      await this.applyAgentReload(sessionId);
     });
+  }
+  private async applyAgentReload(sessionId: string) {
+    let revision = Infinity;
+    let appliedRevision = -1;
+    let failure: { agentRevision: number; error: string } | undefined;
+    let listener: (event: RpcEvent) => void = () => undefined;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const complete = () => {
+          if (appliedRevision >= revision) resolve();
+          else if (failure && failure.agentRevision >= revision) reject(new Error(failure.error));
+        };
+
+        listener = event => {
+          if (this.sessionId !== sessionId || !this.running || ["disconnected", "ownership_lost"].includes(event.type)) {
+            reject(new Error("The session connection changed before agent definitions finished reloading."));
+
+            return;
+          }
+
+          const update = z.object({ agentRevision: z.number().int().nonnegative(), error: z.string().optional() }).safeParse(event);
+
+          if (!update.success) return;
+
+          if (event.type === "settings_applied") appliedRevision = Math.max(appliedRevision, update.data.agentRevision);
+
+          if (event.type === "extension_error" && update.data.error) failure = { agentRevision: update.data.agentRevision, error: update.data.error };
+          complete();
+        };
+
+        this.listeners.add(listener);
+        void this.executeCommandNow({ type: "reload_agents", sessionId }, z.object({ success: z.literal(true), sessionId: z.literal(sessionId), agentRevision: z.number().int().nonnegative() })).then(result => {
+          revision = result.agentRevision;
+          complete();
+        }).catch(reject);
+      });
+    } finally { this.listeners.delete(listener); }
   }
   currentCwd() { return this.cwd; }
   currentSessionPath() { return this.sessionPath; }
@@ -352,6 +390,7 @@ export class NativeTransport {
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
   async disconnect(discardBlank = false) { const owned = this.hasConfirmedOwnership(); ++this.connectionVersion; this.running = false; this.owns = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
+
     if (owned) this.emit({ type: "ownership_lost" });
 
   return this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId, discardBlank }, z.boolean())); }
@@ -386,7 +425,7 @@ export class NativeTransport {
     command = this.fastMode.normalize(command);
 
     try {
-      const result = await call("pi_command", { runtimeId: this.runtimeId, command: { ...command, clientScreenWidth: window.screen?.width ?? 0 } });
+      const result = await call("pi_command", { runtimeId: this.runtimeId, command: { ...command, clientHtmlPreviewSize: htmlPreviewSize() } });
       this.retainCommandSession(command, commandSessionSchema.parse(result));
       this.resetChangedSession(command, z.object({ cancelled: z.boolean().optional() }).catch({}).parse(result));
       const fastModeUpdate = this.fastMode.afterCommand(command, command.type === "get_commands" ? commandListingSchema.parse(result) : undefined);
