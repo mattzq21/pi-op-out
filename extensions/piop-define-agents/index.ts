@@ -298,11 +298,12 @@ function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[]
 
 function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options: BuildSystemPromptOptions, explicitOnlySkills: string[] = []) {
   delete options.forceSystemPrompt;
-  const instructions = [options.appendSystemPrompt, agentPrompt.trim() ? agentPrompt : undefined].filter(Boolean).join("\n\n");
+  const instructions = agentPrompt.trim() ? agentPrompt : "";
   options.customPrompt = prompt || " ";
   options.sections = { ...options.sections, instructions };
   options.contextFiles = [];
   delete options.sections.project_context;
+  delete options.sections.addendum;
   options.appendSystemPrompt = "";
   const explicit = new Set(explicitOnlySkills.map(normalizedPath));
   options.skills = options.skills?.map((skill) => explicit.has(normalizedPath(skill.filePath)) || explicit.has(normalizedPath(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : skill);
