@@ -6,29 +6,32 @@ use uuid::Uuid;
 const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
 static NOTES: OnceLock<Mutex<HashMap<PathBuf, Lease>>> = OnceLock::new();
 
-struct Lease { client: String, editor: Uuid, expires: Instant }
+struct Lease { client: String, editor: Uuid, token: Uuid, expires: Instant }
 
-struct Editor<'a> { client: &'a str, id: Uuid }
+struct Editor<'a> { client: &'a str, id: Uuid, token: Option<Uuid> }
 
 fn owns(lease: Option<&Lease>, editor: &Editor<'_>) -> bool {
     lease.is_some_and(|lease| lease.client == editor.client && lease.editor == editor.id && lease.expires > Instant::now())
 }
 
 fn ownership(lease: Option<&Lease>, editor: &Editor<'_>) -> Value {
-    json!({"owned":owns(lease, editor),"available":lease.is_none()})
+    let owned = owns(lease, editor);
+    json!({"owned":owned,"available":lease.is_none(),"token":lease.filter(|_| owned).map(|lease| lease.token.to_string())})
+}
+
+fn controls(lease: Option<&Lease>, editor: &Editor<'_>) -> bool {
+    owns(lease, editor) && lease.is_some_and(|lease| Some(lease.token) == editor.token)
 }
 
 fn update_lease(leases: &mut HashMap<PathBuf, Lease>, path: &Path, editor: &Editor<'_>, action: &str) {
-    let owned = owns(leases.get(path), editor);
+    let controlled = controls(leases.get(path), editor);
     if action == "release" {
-        if owned { leases.remove(path); }
-    } else if renews(action, owned, leases.contains_key(path)) {
-        leases.insert(path.into(), Lease { client: editor.client.into(), editor: editor.id, expires: Instant::now() + Duration::from_secs(30) });
+        if controlled { leases.remove(path); }
+    } else if action == "takeover" || action == "claim" && !leases.contains_key(path) {
+        leases.insert(path.into(), Lease { client: editor.client.into(), editor: editor.id, token: Uuid::new_v4(), expires: Instant::now() + Duration::from_secs(30) });
+    } else if controlled && matches!(action, "renew" | "save") {
+        if let Some(lease) = leases.get_mut(path) { lease.expires = Instant::now() + Duration::from_secs(30); }
     }
-}
-
-fn renews(action: &str, owned: bool, occupied: bool) -> bool {
-    match action { "claim" => owned || !occupied, "save" => owned, _ => false }
 }
 
 pub(crate) fn initialize() -> Result<(), String> {
@@ -111,9 +114,13 @@ pub(super) fn dispatch(args: Value) -> Result<Value, String> {
     let mut leases = NOTES.get_or_init(Mutex::default).lock().map_err(|_| "Notes are unavailable")?;
     leases.retain(|_, lease| lease.expires > Instant::now());
     let path = note_path(field(&args, "sessionId")?)?;
-    let editor = Editor { client: field(&args, "clientId")?, id: Uuid::parse_str(field(&args, "leaseId")?).map_err(|_| "Invalid note editor identity")? };
+    let editor = Editor {
+        client: field(&args, "clientId")?,
+        id: Uuid::parse_str(field(&args, "leaseId")?).map_err(|_| "Invalid note editor identity")?,
+        token: args["leaseToken"].as_str().and_then(|token| Uuid::parse_str(token).ok()),
+    };
     let action = field(&args, "action")?;
-    let mut result = perform(&path, &args, action, owns(leases.get(&path), &editor))?;
+    let mut result = perform(&path, &args, action, controls(leases.get(&path), &editor))?;
     update_lease(&mut leases, &path, &editor, action);
     result["ownership"] = ownership(leases.get(&path), &editor);
     Ok(result)
@@ -121,9 +128,9 @@ pub(super) fn dispatch(args: Value) -> Result<Value, String> {
 
 fn perform(path: &Path, args: &Value, action: &str, owned: bool) -> Result<Value, String> {
     match action {
-        "read" | "claim" | "release" => Ok(document(&read(path)?)),
+        "read" | "claim" | "takeover" | "renew" | "release" => Ok(document(&read(path)?)),
         "save" => {
-            if !owned { return Err("This client no longer owns the note's editing lease. Your draft has been kept.".into()); }
+            if !owned { return Err("This client no longer controls the note.".into()); }
             let body = field(args, "content")?;
             write_note(path, body, args)?;
             Ok(document(body))
