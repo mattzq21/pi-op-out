@@ -36,12 +36,12 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
     </div>;
 
   const renderComposer = () => <form class="quick-chat-composer" onSubmit={event => { event.preventDefault(); follow = true; void state.send(); }}>
-      <textarea ref={composer} aria-label="Message ChatGPT" placeholder="Message ChatGPT" value={state.prompt()} maxLength={100000} disabled={state.busy()} onInput={event => state.setPrompt(event.currentTarget.value)} onKeyDown={event => {
+      <textarea ref={composer} aria-label="Message ChatGPT" placeholder="Message ChatGPT" value={state.prompt()} maxLength={100000} disabled={state.busy()} readOnly={!state.editable()} onInput={event => state.setPrompt(event.currentTarget.value)} onKeyDown={event => {
         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); follow = true; void state.send(); }
       }} />
       <div class="quick-chat-controls">{renderModelControls()}
-        <Show when={active()} fallback={<button type="submit" aria-label="Send to ChatGPT" disabled={!state.prompt().trim() || state.loading() || !state.models().length}><Send size={17} /></button>}>
-          <button type="button" aria-label="Stop ChatGPT" disabled={state.chat()?.status === "stopping"} onClick={() => void state.stop()}><Square size={16} /></button>
+        <Show when={active()} fallback={<button type="submit" aria-label="Send to ChatGPT" disabled={!state.editable() || !state.prompt().trim() || state.loading() || !state.models().length}><Send size={17} /></button>}>
+          <button type="button" aria-label="Stop ChatGPT" disabled={!state.editable() || state.chat()?.status === "stopping"} onClick={() => void state.stop()}><Square size={16} /></button>
         </Show>
       </div>
     </form>;
@@ -63,6 +63,7 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
       <IconButton label="Refresh ChatGPT" disabled={active()} onClick={state.refresh}><RefreshCw size={16} /></IconButton>
     </header>
     {renderSelection()}{renderMessages()}
+    <Show when={!state.editable()}><p class="quick-chat-error" role="status">Read-only · waiting for editing access.</p></Show>
     <Show when={state.error() || state.chat()?.error}><div class="quick-chat-error" role="alert">{state.error() || state.chat()?.error}</div></Show>
     {renderComposer()}
   </section>;

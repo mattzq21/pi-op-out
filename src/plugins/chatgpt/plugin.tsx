@@ -16,7 +16,7 @@ export function createPlugin(context: PluginContext): PluginInstance {
     signal.throwIfAborted();
     const [initialSource, setInitialSource] = createSignal(prepared);
     const readSource = () => ({ ...context.source(), selected });
-    setRequest({ id: crypto.randomUUID(), hostId: value?.hostId ?? current.hostId,
+    setRequest({ id: crypto.randomUUID(),
       source: () => initialSource() ?? captureChatGptContext(readSource), onAccepted: () => setInitialSource(undefined) });
     context.activate();
   };

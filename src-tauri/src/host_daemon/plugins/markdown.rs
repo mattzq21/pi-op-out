@@ -1,10 +1,35 @@
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{fs::{self, OpenOptions}, io::{Read, Write}, path::{Path, PathBuf}, sync::Mutex};
+use std::{collections::HashMap, fs::{self, OpenOptions}, io::{Read, Write}, path::{Path, PathBuf}, sync::{Mutex, OnceLock}, time::{Duration, Instant}};
 use uuid::Uuid;
 
 const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
-static NOTE_LOCK: Mutex<()> = Mutex::new(());
+static NOTES: OnceLock<Mutex<HashMap<PathBuf, Lease>>> = OnceLock::new();
+
+struct Lease { client: String, editor: Uuid, expires: Instant }
+
+struct Editor<'a> { client: &'a str, id: Uuid }
+
+fn owns(lease: Option<&Lease>, editor: &Editor<'_>) -> bool {
+    lease.is_some_and(|lease| lease.client == editor.client && lease.editor == editor.id && lease.expires > Instant::now())
+}
+
+fn ownership(lease: Option<&Lease>, editor: &Editor<'_>) -> Value {
+    json!({"owned":owns(lease, editor),"available":lease.is_none()})
+}
+
+fn update_lease(leases: &mut HashMap<PathBuf, Lease>, path: &Path, editor: &Editor<'_>, action: &str) {
+    let owned = owns(leases.get(path), editor);
+    if action == "release" {
+        if owned { leases.remove(path); }
+    } else if renews(action, owned, leases.contains_key(path)) {
+        leases.insert(path.into(), Lease { client: editor.client.into(), editor: editor.id, expires: Instant::now() + Duration::from_secs(30) });
+    }
+}
+
+fn renews(action: &str, owned: bool, occupied: bool) -> bool {
+    match action { "claim" => owned || !occupied, "save" => owned, _ => false }
+}
 
 pub(crate) fn initialize() -> Result<(), String> {
     let root = crate::home_dir()?.join(crate::STORAGE_DIRECTORY).join("notes").join("chats");
@@ -83,19 +108,26 @@ fn write_note(path: &Path, body: &str, args: &Value) -> Result<(), String> {
 }
 
 pub(super) fn dispatch(args: Value) -> Result<Value, String> {
-    let _guard = NOTE_LOCK.lock().map_err(|_| "Notes are unavailable")?;
+    let mut leases = NOTES.get_or_init(Mutex::default).lock().map_err(|_| "Notes are unavailable")?;
+    leases.retain(|_, lease| lease.expires > Instant::now());
     let path = note_path(field(&args, "sessionId")?)?;
-    match field(&args, "action")? {
-        "read" => Ok(document(&read(&path)?)),
-        "save" => save(&path, &args),
-        _ => Err("Unknown chat note action".into()),
-    }
+    let editor = Editor { client: field(&args, "clientId")?, id: Uuid::parse_str(field(&args, "leaseId")?).map_err(|_| "Invalid note editor identity")? };
+    let action = field(&args, "action")?;
+    let mut result = perform(&path, &args, action, owns(leases.get(&path), &editor))?;
+    update_lease(&mut leases, &path, &editor, action);
+    result["ownership"] = ownership(leases.get(&path), &editor);
+    Ok(result)
 }
 
-fn save(path: &Path, args: &Value) -> Result<Value, String> {
-    let body = field(args, "content")?;
-    let current = read(path)?;
-    if version(&current) != field(args, "version")? { return Ok(document(&current)); }
-    write_note(path, body, args)?;
-    Ok(document(body))
+fn perform(path: &Path, args: &Value, action: &str, owned: bool) -> Result<Value, String> {
+    match action {
+        "read" | "claim" | "release" => Ok(document(&read(path)?)),
+        "save" => {
+            if !owned { return Err("This client no longer owns the note's editing lease. Your draft has been kept.".into()); }
+            let body = field(args, "content")?;
+            write_note(path, body, args)?;
+            Ok(document(body))
+        },
+        _ => Err("Unknown chat note action".into()),
+    }
 }

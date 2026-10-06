@@ -14,16 +14,19 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const [open, setOpen] = createSignal(false);
   const [active, setActive] = createSignal("chatgpt");
   const [running, setRunning] = createSignal<RunningPlugin[]>([]);
+  const [loadError, setLoadError] = createSignal<string>();
   const owner = getOwner();
   let generation = 0;
   let disposed = false;
   const host = createMemo(() => source().hostId);
-  const status = createMemo(() => pluginStatus(host()));
+  const runtimeHost = (scope: string) => scope === "client" ? "local" : host();
+  const hosts = createMemo(() => [...new Set(plugins.map(plugin => runtimeHost(plugin.scope)))]);
+  const enabledPlugins = createMemo(() => plugins.filter(plugin => pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
+  const error = () => loadError() ?? hosts().map(pluginError).filter(Boolean).join("\n");
   const activate = (id: string) => { onOpen(); setActive(id); setOpen(true); };
 
   createEffect(() => {
-    const target = host();
-    void refreshPlugins(target).catch(reason => setPluginError(target, String(reason)));
+    for (const target of hosts()) void refreshPlugins(target).catch(reason => setPluginError(target, String(reason)));
   });
 
   const listener = listen("pi://plugins-changed", ({ payload }) => {
@@ -33,19 +36,15 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
 
   const reconnected = listen("pi://event", ({ payload }) => {
     if (payload.type !== "connection_restored") return;
-    const target = host();
-    void refreshPlugins(target).catch(reason => setPluginError(target, String(reason)));
+
+    for (const target of hosts()) void refreshPlugins(target).catch(reason => setPluginError(target, String(reason)));
   }, z.object({ type: z.string().optional() }).passthrough());
 
   onCleanup(() => { void reconnected.then(stop => stop()); });
 
   createEffect(() => {
-    const target = host();
-    const snapshot = status();
+    const enabled = enabledPlugins();
     const current = ++generation;
-
-    if (!snapshot) return;
-    const enabled = plugins.filter(plugin => snapshot.enabled.includes(plugin.id));
     void Promise.all(enabled.map(async definition => ({ definition, module: await definition.load() }))).then(loaded => {
       if (disposed || current !== generation) return;
       const previous = untrack(running);
@@ -62,8 +61,8 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
       if (!next.some(item => item.id === untrack(active))) setActive(next[0]?.id ?? "");
 
       if (!next.length) setOpen(false);
-      setPluginError(target);
-    }).catch(reason => { if (current === generation) setPluginError(target, `Plugins could not load: ${String(reason)}`); });
+      setLoadError(undefined);
+    }).catch(reason => { if (current === generation) setLoadError(`Plugins could not load: ${String(reason)}`); });
   });
   createEffect(() => { if (open()) running().find(item => item.id === active())?.instance.show?.(); });
   onCleanup(() => { disposed = true; generation++;
@@ -85,13 +84,13 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
     event.preventDefault(); setActive(item.id); document.getElementById(`plugin-tab-${item.id}`)?.focus();
   };
 
-  const button = () => <Show when={running().length || pluginError(host())}><IconButton class="open-plugins-button" label="Open sidepane" aria-controls="plugin-sidepane" aria-expanded={open()} onClick={() => { if (open()) close(); else { onOpen(); setOpen(true); } }}><PanelRight size={19} /></IconButton></Show>;
+  const button = () => <Show when={running().length || error()}><IconButton class="open-plugins-button" label="Open sidepane" aria-controls="plugin-sidepane" aria-expanded={open()} onClick={() => { if (open()) close(); else { onOpen(); setOpen(true); } }}><PanelRight size={19} /></IconButton></Show>;
 
   const panel = () => <Sidepane open={open() && visible()}>
     <header class="plugin-pane-header"><div role="tablist" aria-label="Sidepane plugins" onKeyDown={changeTab}><For each={running()}>{item => <button id={`plugin-tab-${item.id}`} role="tab" aria-controls={`plugin-panel-${item.id}`} aria-selected={active() === item.id} tabIndex={active() === item.id ? 0 : -1} onClick={() => setActive(item.id)}>{item.name}</button>}</For></div>
       <IconButton label="Close sidepane" onClick={close}><PanelRightClose size={18} /></IconButton>
     </header>
-    <Show when={pluginError(host())}><p class="plugin-error" role="alert">{pluginError(host())}</p></Show>
+    <Show when={error()}><p class="plugin-error" role="alert">{error()}</p></Show>
     <For each={running()}>{item => <div class="plugin-panel" id={`plugin-panel-${item.id}`} role="tabpanel" aria-labelledby={`plugin-tab-${item.id}`} hidden={active() !== item.id}>{item.instance.panel()}</div>}</For>
   </Sidepane>;
 

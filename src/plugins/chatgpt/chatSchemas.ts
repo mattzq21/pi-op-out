@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ownershipSchema } from "../ownership";
 
 export const regularChatSchema = z.object({
   id: z.string(), title: z.string(), model: z.string(), updatedAt: z.number(),
@@ -7,6 +8,7 @@ export const regularChatSchema = z.object({
   contextSource: z.string().optional(), error: z.string().optional(), submissionId: z.string().optional(),
   acceptedSubmissionIds: z.array(z.string()).default([]),
   messages: z.array(z.object({ id: z.string(), role: z.enum(["user", "assistant"]), text: z.string() })).default([]),
+  ownership: ownershipSchema.optional(),
 });
 
 export const chatModelsSchema = z.array(z.object({

@@ -19,6 +19,50 @@ const chatGptTickets = new Map();
 
 const chatGptWrites = new Map();
 
+const chatGptLeases = new Map();
+
+function chatGptLeaseBusy(key, lease) { return lease.busy > 0 || chatGptActive.has(key) || chatGptStopping.has(key); }
+
+function chatGptLeaseLive(key, lease) { return Boolean(lease && (lease.expires > Date.now() || chatGptLeaseBusy(key, lease))); }
+
+function chatGptLeaseOwner(request) { return JSON.stringify([request.clientId, chatGptId(request.leaseId)]); }
+
+function chatGptUpdateLease(key, owner, action) {
+  let lease = chatGptLeases.get(key);
+
+  if (action === 'release' && lease?.owner === owner) {
+    if (chatGptLeaseBusy(key, lease)) lease.expires = 0;
+    else { chatGptLeases.delete(key); lease = undefined; }
+  } else if (lease?.owner === owner || (action === 'claim' && !lease)) {
+    lease ??= { owner, busy: 0, expires: 0 };
+    lease.expires = Date.now() + 30000;
+    chatGptLeases.set(key, lease);
+  }
+
+  return lease;
+}
+
+function chatGptOwnership(identity, request, action = 'read') {
+  const key = chatGptKey(identity, request.chatId);
+  const owner = chatGptLeaseOwner(request);
+
+  for (const [id, lease] of chatGptLeases) if (!chatGptLeaseLive(id, lease)) chatGptLeases.delete(id);
+  const lease = chatGptUpdateLease(key, owner, action);
+
+  return { owned: lease?.owner === owner, available: !lease };
+}
+
+async function chatGptOwnedOperation(identity, request, run) {
+  const ownership = chatGptOwnership(identity, request);
+
+  if (!ownership.owned) throw new Error('This client does not hold the ChatGPT chat’s editing lease.');
+  const lease = chatGptLeases.get(chatGptKey(identity, request.chatId));
+  lease.busy++;
+
+  try { return { ...await run(), ownership: chatGptOwnership(identity, request) }; }
+  finally { lease.busy--; }
+}
+
 export function chatGptIdle() { return !chatGptActive.size && !chatGptStopping.size && !chatGptOperations.size && !chatGptWrites.size; }
 
 export function chatGptTicketSnapshot() { return [...chatGptTickets].filter(([_id, ticket]) => ticket.expires > Date.now()); }
@@ -549,13 +593,15 @@ export async function handleChatGpt(loaded, request) {
   if (request.action === 'accounts') return loaded.runtime.getProviders().filter(provider => /^openai-codex(?:--piop-account-\d+)?$/.test(provider.id)).map(provider => ({ id: provider.id, name: provider.name, configured: loaded.runtime.getProviderAuthStatus(provider.id).configured }));
   const identity = await chatGptIdentity(loaded, request.providerId);
 
+  if (['claim', 'ownership', 'release'].includes(request.action)) return chatGptOwnership(identity, request, request.action);
+
   switch (request.action) {
     case 'models': return chatGptModelVersions(await (await chatGptHttp(identity, '/models')).json());
     case 'list': return chatGptList(identity);
     case 'prepare': return chatGptPrepare(identity, request);
-    case 'send': return chatGptSend(identity, request);
-    case 'read': return chatGptReadChat(identity, request.chatId);
-    case 'stop': return chatGptStop(identity, request.chatId, request.expectedSubmissionId);
+    case 'send': return chatGptOwnedOperation(identity, request, () => chatGptSend(identity, request));
+    case 'read': return { ...await chatGptReadChat(identity, request.chatId), ownership: chatGptOwnership(identity, request) };
+    case 'stop': return chatGptOwnedOperation(identity, request, () => chatGptStop(identity, request.chatId, request.expectedSubmissionId));
     default: throw new Error('Unknown ChatGPT operation.');
   }
 }

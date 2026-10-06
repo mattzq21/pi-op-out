@@ -5,8 +5,8 @@ import type { PluginModule } from "./types";
 import { flushPlugins } from "./lifecycle";
 
 export const plugins = [
-  { id: "chatgpt", name: "ChatGPT", description: "ChatGPT chats with agent conversation context and selected text.", load: (): Promise<PluginModule> => import("./chatgpt/plugin") },
-  { id: "markdown", name: "Markdown notes", description: "Automatically saved notes for each conversation, with Markdown preview.", load: (): Promise<PluginModule> => import("./markdown/plugin") },
+  { id: "chatgpt", scope: "client", name: "ChatGPT", description: "Client-owned ChatGPT chats with context from any agent host.", load: (): Promise<PluginModule> => import("./chatgpt/plugin") },
+  { id: "markdown", scope: "conversation", name: "Markdown notes", description: "Shared conversation notes, with one client editing at a time.", load: (): Promise<PluginModule> => import("./markdown/plugin") },
 ];
 
 export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), revision: z.string(), error: z.string().nullable() });
@@ -33,7 +33,7 @@ function nextRequest(host: string) {
 }
 
 function acceptPluginStatus(host: string, status: PluginStatus, request: number) {
-  if (requests.get(host) === request) setStatuses(previous => ({ ...previous, [host]: status }));
+  if (requests.get(host) === request) { setStatuses(previous => ({ ...previous, [host]: status })); setPluginError(host); }
 }
 
 export async function refreshPlugins(host: string) {
