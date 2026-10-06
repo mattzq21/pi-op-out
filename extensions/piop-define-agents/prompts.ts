@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,15 +77,5 @@ export async function snapshotPrompt(contents: string) {
 }
 
 export async function ensureDefaultAgentPrompt() {
-  try { await readFile(resolvePromptPath(DEFAULT_AGENT_PROMPT_PATH), "utf8");
-
-  return; }
-  catch (error) { if (!hasErrorCode(error, "ENOENT")) throw error; }
-
-  let prompt = "";
-
-  try { prompt = await readFile(join(homedir(), ".agents", "AGENTS.md"), "utf8"); }
-  catch (error) { if (!hasErrorCode(error, "ENOENT")) throw error; }
-
-  await ensurePromptFile(DEFAULT_AGENT_PROMPT_PATH, prompt);
+  await ensurePromptFile(DEFAULT_AGENT_PROMPT_PATH, "");
 }

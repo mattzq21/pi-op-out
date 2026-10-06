@@ -16,10 +16,14 @@ export const agentThinkingLevels: Array<Parameters<ExtensionAPI["setThinkingLeve
 
 export const agentSchema = Type.Object({
   name: Type.String(), model: Type.String(), effort: Type.String(), fastMode: Type.Optional(Type.Boolean()), codemode: Type.Optional(Type.Boolean()), extensions: Type.Optional(Type.Array(Type.String())),
-  path_systemprompt: Type.String(), path_agentprompt: Type.String(), tools: Type.Array(Type.String()), skills: Type.Array(Type.String()), mcpServers: nativeMcpSchema,
+  path_systemprompt: Type.String(), path_agent_prompt: Type.String(), tools: Type.Array(Type.String()), skills: Type.Array(Type.String()), mcpServers: nativeMcpSchema,
 });
 
-const storedAgentSchema = Type.Object({ ...agentSchema.properties, mcpServers: Type.Union([nativeMcpSchema, legacyMcpSchema]) });
+const storedAgentSchema = Type.Object({
+  ...Type.Omit(agentSchema, ["path_agent_prompt"]).properties,
+  path_agent_prompt: Type.Optional(Type.String()), path_agentprompt: Type.Optional(Type.String()),
+  mcpServers: Type.Union([nativeMcpSchema, legacyMcpSchema]),
+});
 
 const snapshotSchema = Type.Union([
   Type.Object({ version: Type.Literal(2), definition: storedAgentSchema }),
@@ -90,5 +94,8 @@ export function readAgentState(branch: Branch, session: string) {
 function normalizeState(state: Static<typeof stateSchema>): SessionAgentState {
   const snapshot = state.snapshot;
 
-  return { ...state, snapshot: snapshot && { ...snapshot, definition: { ...snapshot.definition, mcpServers: mcpServers(snapshot.definition.mcpServers) } } };
+  if (!snapshot) return { ...state, snapshot: undefined };
+  const { path_agentprompt, ...definition } = snapshot.definition;
+
+  return { ...state, snapshot: { ...snapshot, definition: { ...definition, path_agent_prompt: definition.path_agent_prompt ?? path_agentprompt ?? "", mcpServers: mcpServers(definition.mcpServers) } } };
 }

@@ -214,7 +214,7 @@ pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
 fn migrate_agent_prompt_paths(config: &mut Value, legacy_dir: &Path) {
     if let Some(agents) = config["agents"].as_array_mut() {
         for agent in agents {
-            for key in ["path_systemprompt", "path_agentprompt"] {
+            for key in ["path_systemprompt", "path_agent_prompt", "path_agentprompt"] {
                 if let Some(path) = agent[key].as_str().filter(|path| !path.is_empty() && !path.starts_with('~') && !Path::new(path).is_absolute()) {
                     agent[key] = json!(legacy_dir.join(path).to_string_lossy());
                 }

@@ -7,7 +7,8 @@ export async function selectedProfileState(pi: ExtensionAPI, agent: Agent, readP
   const defaults: RuntimeSettingsRequest = {};
   pi.events.emit("piop:runtime-settings", defaults);
   definition.model = definition.model.trim() || defaults.settings?.defaultModel || "";
-  const [systemPrompt, agentPrompt] = await Promise.all([readPrompt(resolvePromptPath(definition.path_systemprompt)), definition.path_agentprompt ? readPrompt(resolvePromptPath(definition.path_agentprompt)) : Promise.resolve("")]);
+  const agentPromptPath = definition.path_agent_prompt;
+  const [systemPrompt, agentPrompt] = await Promise.all([readPrompt(resolvePromptPath(definition.path_systemprompt)), agentPromptPath ? readPrompt(resolvePromptPath(agentPromptPath)) : Promise.resolve("")]);
 
   return { active: definition.name, locked: false, snapshot: { version: 1, definition, systemPrompt, agentPrompt } };
 }

@@ -5,7 +5,7 @@
       "model": "",
       "effort": "",
       "path_systemprompt": "sysprompt/default.md",
-      "path_agentprompt": "~/.piop/agents/default.md",
+      "path_agent_prompt": "~/.piop/agents/default.md",
       "tools": ["read", "bash", "edit", "write", "grep", "find", "ls"],
       "skills": [],
       "extensions": ["./pony-agent/index.ts"],

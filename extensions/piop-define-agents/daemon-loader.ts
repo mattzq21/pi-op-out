@@ -90,7 +90,7 @@ for (const agent of config.agents) {
 
   if (denied.length) throw new Error(`Agent "${agent.name}" cannot run because Pi does not allow its configured tools: ${denied.join(", ")}`);
 
-  for (const path of [agent.path_systemprompt, agent.path_agentprompt].filter(Boolean)) {
+  for (const path of [agent.path_systemprompt, agent.path_agent_prompt].filter(Boolean)) {
     const resolved = resolvePromptPath(path);
     prompts[resolved] ??= await readFile(resolved, "utf8");
   }
