@@ -1,4 +1,4 @@
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -83,25 +83,35 @@ function capabilitySummary(description: string) {
 }
 
 const abilitiesEntry = "piop-codemode-abilities";
+
 const abilitiesSchema = Type.Object({
   tools: Type.Array(Type.String()),
   batches: Type.Array(Type.Object({ text: Type.String(), timestamp: Type.Number() })),
 });
 
+function availableCodemodeTool(tool: ReturnType<ExtensionAPI["getAllTools"]>[number], active: Set<string>, known: Set<string>) {
+  const exposure = tool.exposure ?? "direct";
+
+  return tool.name !== "codemode" && !known.has(tool.name) && (exposure === "codemode" || exposure === "deferred" || exposure === "direct" && active.has(tool.name));
+}
+
+function restoredCodemodeAbilities(ctx: ExtensionContext) {
+  const entry = [...ctx.sessionManager.getBranch()].reverse().find((item) => item.type === "custom" && item.customType === abilitiesEntry);
+  const saved = entry?.type === "custom" && Check(abilitiesSchema, entry.data) ? entry.data : { tools: [], batches: [] };
+
+  return structuredClone(saved);
+}
+
 function codemodeAbilities(pi: ExtensionAPI, ctx: ExtensionContext) {
   const active = new Set(pi.getActiveTools());
 
   if (!active.has("codemode")) return;
-  const entry = [...ctx.sessionManager.getBranch()].reverse().find((item) => item.type === "custom" && item.customType === abilitiesEntry);
-  const saved = entry?.type === "custom" && Check(abilitiesSchema, entry.data) ? entry.data : { tools: [], batches: [] };
-  const state = structuredClone(saved);
+  const state = restoredCodemodeAbilities(ctx);
   const known = new Set(state.tools);
   const phrases = new Set<string>();
 
   for (const tool of pi.getAllTools()) {
-    const exposure = tool.exposure ?? "direct";
-
-    if (tool.name === "codemode" || known.has(tool.name) || !(exposure === "codemode" || exposure === "deferred" || (exposure === "direct" && active.has(tool.name)))) continue;
+    if (!availableCodemodeTool(tool, active, known)) continue;
     state.tools.push(tool.name);
     phrases.add(capabilitySummary(tool.description) || tool.name.replace(/_/g, " "));
   }
@@ -115,18 +125,23 @@ function codemodeAbilities(pi: ExtensionAPI, ctx: ExtensionContext) {
   return state.batches;
 }
 
-function replacePromptText(value: unknown, prompt: string, replacement: string): unknown {
-  if (typeof value === "string") return value === prompt ? replacement : value;
+const promptValueSchema = Type.Cyclic({ Value: Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null(), Type.Undefined(), Type.Array(Type.Ref("Value")), Type.Record(Type.String(), Type.Ref("Value"))]) }, "Value");
+
+type PromptValue = Static<typeof promptValueSchema>;
+
+const providerPayloadSchema = Type.Record(Type.String(), promptValueSchema);
+
+function replacePromptText(value: PromptValue, prompt: string, replacement: string): PromptValue {
+  if (Check(Type.String(), value)) return value === prompt ? replacement : value;
 
   if (Array.isArray(value)) return value.map((item) => replacePromptText(item, prompt, replacement));
 
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, replacePromptText(item, prompt, replacement)]));
+  if (value && Check(Type.Record(Type.String(), Type.Unknown()), value)) return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, replacePromptText(item, prompt, replacement)]));
 
   return value;
 }
 
-function updateProviderPrompt(payload: unknown, prompt: string, replacement: string) {
-  if (!Check(Type.Record(Type.String(), Type.Unknown()), payload)) return;
+function updateProviderPrompt(payload: Static<typeof providerPayloadSchema>, prompt: string, replacement: string) {
   const updated = { ...payload };
 
   for (const key of ["instructions", "system", "systemInstruction"]) {
@@ -298,7 +313,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
 
     if (!prompt || !additions?.length) return;
 
-    return updateProviderPrompt(event.payload, prompt, `${prompt}\n\n${additions.join("\n\n")}`);
+    if (Check(providerPayloadSchema, event.payload)) return updateProviderPrompt(event.payload, prompt, `${prompt}\n\n${additions.join("\n\n")}`);
   });
   pi.on("before_agent_start", (event) => {
     if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1" || !current().explicitOnlySkills?.length) return;

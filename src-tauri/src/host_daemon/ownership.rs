@@ -164,8 +164,11 @@ impl ConversationOwnership {
         }
     }
 
-    pub fn owns(&self, id: &str, client: &str) -> Result<bool> {
-        Ok(!client.is_empty() && self.read(id)?.is_some_and(|record| !flag(&record, "deleted") && record["client"].as_str() == Some(client)))
+    pub fn owns(&self, id: &str, client: &str, allow_released: bool) -> Result<bool> {
+        let Some(record) = self.read(id)? else { return Ok(false); };
+        let released = allow_released && record["client"].as_str().is_none_or(str::is_empty)
+            && record["previousClient"] == client && record["endpoint"] == self.endpoint && record["token"] == self.token;
+        Ok(!client.is_empty() && !flag(&record, "deleted") && (record["client"].as_str() == Some(client) || released))
     }
 
     fn read(&self, id: &str) -> Result<Option<Value>> {
@@ -599,5 +602,43 @@ mod tests {
             assert!(guard.owned, "archive remained owned by another client");
             guard.release(&ownership, false).unwrap();
         }
+    }
+    #[tokio::test]
+    async fn terminal_reassignment_accepts_only_the_last_released_client() {
+        let home = TestDirectory::new();
+        let ownership = ConversationOwnership::new(&home.0, ".piop", Arc::new(Idle)).await.unwrap();
+        let id = Uuid::new_v4().to_string();
+        let path = home.0.join(".piop/sessions/chat.jsonl");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!("{}\n", json!({"type":"session","id":id}))).unwrap();
+        let guard = ownership.begin(&id, "first", &json!({"path":path})).await.unwrap();
+        guard.release(&ownership, false).unwrap();
+        ownership.release_client(&id, "first", || true).await.unwrap();
+        assert!(!ownership.owns(&id, "first", false).unwrap());
+        assert!(ownership.owns(&id, "first", true).unwrap());
+        assert!(!ownership.owns(&id, "second", true).unwrap());
+        let guard = ownership.begin(&id, "second", &json!({"path":path})).await.unwrap();
+        guard.release(&ownership, false).unwrap();
+        assert!(!ownership.owns(&id, "first", true).unwrap());
+        assert!(ownership.owns(&id, "second", false).unwrap());
+        ownership.release_client(&id, "second", || true).await.unwrap();
+        assert!(!ownership.owns(&id, "first", true).unwrap());
+        assert!(ownership.owns(&id, "second", true).unwrap());
+        assert!(!ownership.owns(&id, "", true).unwrap());
+        let mut record = ownership.read(&id).unwrap().unwrap();
+        let endpoint = record["endpoint"].clone();
+        record["endpoint"] = json!("another-daemon");
+        ownership.write(&id, &record).unwrap();
+        assert!(!ownership.owns(&id, "second", true).unwrap());
+        record["endpoint"] = endpoint;
+        let token = record["token"].clone();
+        record["token"] = json!("another-token");
+        ownership.write(&id, &record).unwrap();
+        assert!(!ownership.owns(&id, "second", true).unwrap());
+        record["token"] = token;
+        record["deleted"] = json!(true);
+        ownership.write(&id, &record).unwrap();
+        assert!(!ownership.owns(&id, "second", true).unwrap());
+        ownership.shutdown();
     }
 }

@@ -164,6 +164,7 @@ export function appendQueuedProjectContext(messages: ChatMessage[], entry: PiEnt
 
 function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers: Set<string>) {
   if (entry.customType === "piop-queued-project-context") return appendQueuedProjectContext(messages, entry, true);
+
   if (entry.customType === "piop-file-changes") return appendFileChanges(messages, entry, true);
   const marker = resumeMarker(entry);
 
@@ -188,12 +189,16 @@ function compactionMessage(entry: PiEntry): ChatMessage {
   return { id: entry.id, entryId: entry.id, role: "system", customType: "compaction", timestamp: entry.timestamp ? Date.parse(entry.timestamp) : undefined, content: tokens.success ? `Context compacted · ${tokens.data.toLocaleString()} tokens before compaction` : "Context compacted" };
 }
 
-function visibleEntryMessage(entry: PiEntry, resumeMarkers: Set<string>): ChatMessage | undefined {
-  if (entry.type === "compaction") return compactionMessage(entry);
-
+function customEntryMessage(entry: PiEntry): ChatMessage | undefined {
   if (entry.type === "custom_message" && entry.customType !== "pi-desktop-btw" && (entry.display !== false || isContextInjection({ role: "custom", customType: entry.customType }))) {
     return normalizeMessage({ role: "custom", customType: entry.customType, details: entry.details, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp);
   }
+}
+
+function visibleEntryMessage(entry: PiEntry, resumeMarkers: Set<string>): ChatMessage | undefined {
+  if (entry.type === "compaction") return compactionMessage(entry);
+
+  if (entry.type === "custom_message") return customEntryMessage(entry);
 
   if (entry.type !== "message" || !entry.message || isResumeMessage(entry.message, resumeMarkers)) return undefined;
   const message = normalizeMessage(entry.message, entry.id, entry.timestamp);

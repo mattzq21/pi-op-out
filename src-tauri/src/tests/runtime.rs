@@ -238,7 +238,7 @@ fn terminal_startup_streams_shell_output_and_removes_finished_process() {
         assert_eq!(packet["type"], "terminal_output");
         output.push_str(packet["data"].as_str().unwrap());
     }
-    assert_eq!(output, "hello λ");
+    assert_eq!(output, "\u{1b}[8;1;1thello λ");
     assert!(runtime.0.test_processes().lock().unwrap().is_empty());
 }
 

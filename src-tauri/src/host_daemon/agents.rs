@@ -42,7 +42,11 @@ pub(super) async fn load(home: &Path, storage: &str, settings: &Value, initial: 
     if !output.status.success() {
         return Err(format!("Could not load agent definitions: {}", String::from_utf8_lossy(&output.stderr).trim()));
     }
-    let bytes = std::fs::read(&response.0).map_err(|error| format!("Could not read agent definitions: {error}"))?;
+    read_definitions(&response.0)
+}
+
+fn read_definitions(path: &Path) -> Result<Value> {
+    let bytes = std::fs::read(path).map_err(|error| format!("Could not read agent definitions: {error}"))?;
     let definitions: Value = serde_json::from_slice(&bytes).map_err(|error| format!("Invalid agent definitions: {error}"))?;
     if !definitions["config"]["agents"].is_array() || !definitions["prompts"].is_object() {
         return Err("Invalid agent definitions".into());

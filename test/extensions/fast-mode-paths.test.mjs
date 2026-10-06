@@ -19,11 +19,12 @@ test('manual fast mode survives agent restoration in either handler order', asyn
 
   for (const enabled of [true, false]) for (const agentFirst of [true, false]) {
     const entries = [], statuses = new Map();
-    const ctx = { cwd: dir, hasUI: true, mode: 'rpc', model: { provider: 'openai', id: 'gpt-5.4' }, sessionManager: { getSessionId: () => 'id', getBranch: () => entries }, ui: { setStatus: (key, value) => statuses.set(key, value), notify: message => assert.fail(message) } };
+    const model = { provider: 'openai', id: 'gpt-5.4', service_tiers: [{ id: 'priority' }] };
+    const ctx = { cwd: dir, hasUI: true, mode: 'rpc', model, modelRegistry: { getAvailable: () => [model] }, sessionManager: { getSessionId: () => 'id', getBranch: () => entries }, ui: { setStatus: (key, value) => statuses.set(key, value), notify: message => assert.fail(message) } };
 
     const load = () => {
       const handlers = new Map(), commands = new Map(); let agent;
-      createPiFastModeExtension({ extensionDir: dir, agentDir: dir })({ on: (name, fn) => handlers.set(name, fn), events: { emit: (name, value) => { if (name === 'piop:fast-mode-changed') entries.push({ type: 'custom', customType: 'pi-define-agents-state', data: { fastModeOverride: value.enabled } }); }, on: (_name, fn) => { agent = fn; } }, registerFlag() {}, getFlag: () => false, registerCommand: (name, fn) => commands.set(name, fn), appendEntry: (customType, data) => entries.push({ type: 'custom', customType, data }) });
+      createPiFastModeExtension({ extensionDir: dir, agentDir: dir })({ on: (name, fn) => handlers.set(name, fn), events: { emit: (name, value) => { if (name === 'piop:fast-mode-changed') entries.push({ type: 'custom', customType: 'pi-define-agents-state', data: { fastModeOverride: value.enabled } }); }, on: (name, fn) => { if (name === 'piop:fast-mode') agent = fn; } }, registerFlag() {}, getFlag: () => false, registerCommand: (name, fn) => commands.set(name, fn), appendEntry: (customType, data) => entries.push({ type: 'custom', customType, data }) });
 
       return { start: () => handlers.get('session_start')({}, ctx), agent: restore => agent({ apply: true, enabled: restore ? entries.at(-1)?.data.fastModeOverride : !enabled, restore, ctx }), toggle: () => commands.get('fast').handler(enabled ? 'on' : 'off', ctx) };
     };
@@ -46,6 +47,7 @@ test('renamed fast-mode config preserves legacy user and project settings', asyn
   for (const name of ['config', 'types']) {
     const source = (await readFile(new URL(`../../extensions/piop-openai-fast-mode/src/${name}.ts`, import.meta.url), 'utf8'))
       .replace('import { getAgentDir } from "@earendil-works/pi-coding-agent";', 'const getAgentDir = () => "/unused";')
+      .replace('from "zod"', `from ${JSON.stringify(import.meta.resolve('zod'))}`)
       .replace('"./types"', '"./types.mjs"');
 
     await writeFile(join(dir, `${name}.mjs`), (await transform(source, { loader: 'ts', format: 'esm' })).code);

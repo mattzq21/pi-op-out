@@ -55,11 +55,11 @@ describe('composer interactions', () => {
     assert.equal((await key('Enter', { shiftKey: true })).defaultPrevented, false);
     await key('Enter', { isComposing: true }); assert.deepEqual(sent, []);
     await key('Enter'); assert.deepEqual(sent, [['Build it', undefined, []]]); assert.equal(editor().value, '');
-    await render({ streaming: true, queued: 2 });
+    await render({ streaming: true, queued: 2, pendingMessages: [{ id: 'steer', message: 'Steer', behavior: 'steer' }, { id: 'later', message: 'Later', behavior: 'followUp' }], onChangePending: async () => {} });
     await enterText(editor(), 'Steer now'); await key('Enter', { ctrlKey: true });
     await enterText(editor(), 'Next turn'); await key('Enter');
     assert.deepEqual(sent.slice(1), [['Steer now', 'steer', []], ['Next turn', 'followUp', []]]);
-    assert.match(document.querySelector('.stream-status').textContent, /2 queued/);
+    assert.equal(document.querySelectorAll('.pending-message').length, 2);
   });
 
   test('a streaming draft has a clickable follow-up send action', async () => {
@@ -159,7 +159,7 @@ describe('composer interactions', () => {
 
   test('context indicators clamp percentages and describe unavailable usage', async () => {
     let terminals = 0;
-    await render({ contextUsage: { tokens: 50, contextWindow: 200 }, onOpenTerminal: () => terminals++, sessionCache: { rate: 20, low: true } });
+    await render({ contextUsage: { tokens: 50, contextWindow: 200 }, onOpenTerminal: () => terminals++, sessionCache: { rate: 20, low: true, cachedTokens: 20, promptTokens: 100 } });
     assert.ok(control('25% of 200 context tokens used')); assert.match(document.querySelector('.session-cache-hit.low').textContent, /20%/); await click(control('Open terminal')); assert.equal(terminals, 1);
     await render({ contextUsage: { tokens: null, contextWindow: 200 } }); assert.ok(control('Context usage unavailable; window is 200 tokens'));
 

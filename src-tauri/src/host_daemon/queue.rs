@@ -170,7 +170,6 @@ impl QueueState {
             event["message"]["deliveryBehavior"] = json!("steer");
         }
     }
-
     fn failed_held(&mut self) -> Value {
         let mut held = self.held.take().unwrap_or_default();
         for item in &mut held {
@@ -226,7 +225,6 @@ impl SessionQueue {
         let event = self.state().publish();
         self.executor.publish(event);
     }
-
     pub fn tag_entries(&self, entries: &mut Value) {
         let state = self.state();
         for entry in entries["entries"].as_array_mut().into_iter().flatten() {
@@ -420,8 +418,10 @@ impl SessionQueue {
         self.serial_command(command, &name).await
     }
 
+    fn waking_orchestration(&self, command: &Value, name: &str) -> bool { name == "orchestration_message" && command["wake"] != false && self.held() }
+    fn resuming_prompt(&self, command: &Value, name: &str) -> bool { name == "resume" || name == "prompt" && self.held() && command["message"].is_string() }
     async fn serial_command(&self, command: Value, name: &str) -> Result<Value> {
-        if name == "orchestration_message" && command["wake"] != false && self.held() {
+        if self.waking_orchestration(&command, name) {
             return self.resume_command(command, name).await;
         }
         if name == "pause" {
@@ -432,7 +432,7 @@ impl SessionQueue {
             }
             return result;
         }
-        if name == "resume" || name == "prompt" && self.held() && command["message"].is_string() {
+        if self.resuming_prompt(&command, name) {
             return self.resume_command(command, name).await;
         }
         if !matches!(name, "steer" | "follow_up") {
@@ -440,7 +440,6 @@ impl SessionQueue {
         }
         self.enqueue(command, name).await
     }
-
     async fn resume_command(&self, command: Value, name: &str) -> Result<Value> {
         let revision = self.state().inference_revision;
         let slash = text(&command, "message").starts_with('/');
@@ -484,7 +483,6 @@ impl SessionQueue {
         self.publish();
         result
     }
-
     async fn stop(&self, result: Result<Value>) -> Result<Value> {
         match result {
             Err(error) if error == "Pi command timed out" => {
@@ -708,52 +706,4 @@ fn move_item(items: &mut Vec<Value>, id: &str, neighbor: &str, action: &Value) {
 }
 
 #[cfg(test)]
-mod regression_tests {
-    use super::*;
-    struct Unresponsive { forced: std::sync::atomic::AtomicBool }
-    impl Execution for Unresponsive {
-        fn execute(&self, command: Value) -> BoxFuture<'_, Result<Value>> {
-            Box::pin(async move {
-                if kind(&command) == "force_stop" { self.forced.store(true, std::sync::atomic::Ordering::SeqCst); return Ok(Value::Null); }
-                std::future::pending().await
-            })
-        }
-        fn publish(&self, _: Value) {}
-    }
-    #[tokio::test]
-    async fn abort_forces_stop_when_preparation_never_answers() {
-        let executor = Arc::new(Unresponsive { forced: std::sync::atomic::AtomicBool::new(false) });
-        let queue = SessionQueue::new(executor.clone(), vec![]);
-        let result = tokio::time::timeout(std::time::Duration::from_secs(6), queue.command(json!({"type":"abort"}))).await;
-        assert!(result.is_ok(), "abort never reached force stop");
-        result.unwrap().unwrap();
-        assert!(executor.forced.load(std::sync::atomic::Ordering::SeqCst));
-    }
-
-    #[test]
-    fn queue_updates_keep_attachment_metadata_without_image_data() {
-        let item = json!({"id":"queued","message":"inspect","behavior":"followUp","images":[{"type":"image","mimeType":"image/png","data":"private-image"}]});
-        let view = QueueState::default().view(&[item]);
-        assert_eq!(view["pendingMessages"][0]["id"], "queued");
-        assert_eq!(view["pendingMessages"][0]["images"][0]["mimeType"], "image/png");
-        assert!(view["pendingMessages"][0]["images"][0].get("data").is_none());
-    }
-
-    struct StuckPreparation;
-    impl Execution for StuckPreparation {
-        fn execute(&self, command: Value) -> BoxFuture<'_, Result<Value>> {
-            Box::pin(async move {
-                if kind(&command) == "force_stop" { Ok(Value::Null) } else { std::future::pending().await }
-            })
-        }
-        fn publish(&self, _event: Value) {}
-    }
-    #[tokio::test]
-    async fn abort_escalates_even_when_preparation_and_gate_are_stuck() {
-        let queue = SessionQueue::new(Arc::new(StuckPreparation), Vec::new());
-        let _gate = queue.gate.lock().await;
-        let result = tokio::time::timeout(std::time::Duration::from_secs(6), queue.command(json!({"type":"abort"}))).await;
-        assert!(result.is_ok(), "abort never reached force_stop");
-        assert!(result.unwrap().is_ok());
-    }
-}
+mod regression_tests;

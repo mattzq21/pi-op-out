@@ -6,6 +6,7 @@ import { registerPlugin } from "@capacitor/core";
 import { remoteClient } from "./remoteClient";
 import { z, type JSONType } from "zod";
 import { jsonResultSchema, nativeArgumentsSchema, type NativeArguments } from "./transportSchemas";
+import { invokeWithBackpressure } from "./backpressure";
 
 export type { UnlistenFn };
 
@@ -41,7 +42,7 @@ export async function invoke(command: string, args?: NativeArguments, schema: z.
   if (!isMobile) {
     const local = ["load_client_settings", "save_client_settings", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file"];
 
-    const response = await (local.includes(command) ? nativeInvoke(command, args) : nativeInvoke("daemon_invoke", { command, args }));
+    const response = await (local.includes(command) ? nativeInvoke(command, args) : invokeWithBackpressure(() => nativeInvoke("daemon_invoke", { command, args })));
 
     return schema.parse(response);
   }

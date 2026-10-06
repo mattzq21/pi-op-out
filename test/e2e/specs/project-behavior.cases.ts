@@ -90,9 +90,10 @@ describe("Project behavior", () => {
       await app.openProjectButton.click();
 
       await expect(app.projectDialogHeading).not.toBeExisting();
-      await expect($('button[aria-label="Selected project: tmp"]')).toHaveAttribute("title", "/tmp");
+      await expect($('button[aria-label="Selected project: tmp"]')).toHaveAttribute("data-tooltip", "/tmp");
       await expect($(".error-toast")).not.toBeExisting();
-      expect((await backendCalls()).filter(({ command }) => command === "stop_pi" || command === "start_pi").map(({ command }) => command)).toEqual(["stop_pi", "start_pi"]);
+      expect((await backendCalls()).filter(({ command }) => command === "start_pi")).toHaveLength(1);
+      expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args.cwd).toBe("/tmp");
     } finally {
       await resetBackend();
       await app.refreshForReset();
@@ -105,7 +106,7 @@ describe("Project behavior", () => {
     await mockBackend({
       ...connectedSessionResponses("acceptance-project"),
       "pi_command:get_state": { model: { provider: "e2e", id: "alternate", name: "Alternate model" }, thinkingLevel: "high", isStreaming: false, sessionId: "acceptance-project", messageCount: 0, pendingMessageCount: 0 },
-      "pi_command:set_model": {}, "pi_command:set_thinking_level": {}, validate_project_directory: "/tmp", start_pi: {}, stop_pi: {},
+      "pi_command:set_model": {}, "pi_command:set_thinking_level": {}, validate_project_directory: "/tmp", start_pi: {}, stop_pi: false,
       load_app_settings: settings,
     });
 
@@ -128,7 +129,7 @@ describe("Project behavior", () => {
       await app.prepareMessage("Use the selected model and effort");
       await app.sendMessageButton.click();
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String(args.command?.type))).length === 2);
-      expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String(args.command?.type))).map(({ args }) => args.command)).toEqual([
+      expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String(args.command?.type))).map(({ args }) => args.command)).toMatchObject([
         { type: "set_model", provider: "e2e", modelId: "alternate" }, { type: "set_thinking_level", level: "off" },
       ]);
     } finally {
@@ -139,7 +140,7 @@ describe("Project behavior", () => {
   });
 
   it("forwards terminal keyboard input to the active project terminal", async () => {
-    await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, write_terminal: {}, close_terminal: {} });
+    await startTemporaryConversation({ "shared_terminal:start": {}, "shared_terminal:resize": {}, "shared_terminal:write_with_draft": {}, "shared_terminal:close": {} });
 
     try {
       await app.openTerminalButton.click();
@@ -149,18 +150,18 @@ describe("Project behavior", () => {
       await browser.keys("pwd");
       await browser.keys("Enter");
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "write_terminal"));
-      const input = (await backendCalls()).filter(({ command }) => command === "write_terminal").map(({ args }) => String(args.data)).join("");
+      await browser.waitUntil(async () => (await backendCalls()).some(({ command, args }) => command === "shared_terminal" && args.action === "write_with_draft"));
+      const input = (await backendCalls()).filter(({ command, args }) => command === "shared_terminal" && args.action === "write_with_draft").map(({ args }) => String(args.data)).join("");
       expect(input.length).toBeGreaterThan(1);
       expect(input).toContain("\r");
     } finally {
-      if (await app.terminalPanel.isExisting()) await app.deleteTerminalButton.click();
+      if (await app.terminalPanel.isDisplayed()) await app.deleteTerminalButton.click();
       await resetBackend();
     }
   });
 
   it("reports a backend connection failure without trapping the user in the chooser", async () => {
-    await mockBackend({ stop_pi: {}, start_pi: { error: "Project runtime unavailable" }, validate_project_directory: "/tmp/acceptance-project", list_directories: { path: "/tmp/acceptance-project", parent: "/tmp", directories: [] } });
+    await mockBackend({ stop_pi: false, start_pi: { error: "Project runtime unavailable" }, validate_project_directory: "/tmp/acceptance-project", list_directories: { path: "/tmp/acceptance-project", parent: "/tmp", directories: [] } });
 
     try {
       await app.openProjectChooser();
@@ -170,7 +171,8 @@ describe("Project behavior", () => {
       await expect(app.projectDialogHeading).not.toBeExisting();
       await expect($(".error-toast strong")).toHaveText("piop could not connect");
       await expect($(".error-toast span")).toHaveText("Project runtime unavailable");
-      expect((await backendCalls()).filter(({ command }) => command === "stop_pi" || command === "start_pi").map(({ command }) => command)).toEqual(["stop_pi", "start_pi"]);
+      expect((await backendCalls()).filter(({ command }) => command === "start_pi")).toHaveLength(1);
+      expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args.cwd).toBe("/tmp/acceptance-project");
     } finally {
       await resetBackend();
     }

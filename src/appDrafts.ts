@@ -2,10 +2,57 @@ import { createSignal } from "solid-js";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { StateUpdate } from "./lib/solid";
 import type { ComposerUpload } from "./types";
+import { z } from "zod";
+import { isMobile } from "./lib/platform";
+
+const draftsSchema = z.record(z.string(), z.string());
+
+function draftStorageKey() {
+  try {
+    const host = isMobile ? localStorage.getItem("piop-mobile-host") ?? "mobile" : "desktop";
+
+    return `piop-conversation-drafts:v1:${host}`;
+  } catch { return undefined; }
+}
+
+function restoreDrafts(key?: string): Record<string, string> {
+  if (!key) return {};
+
+  try {
+    return draftsSchema.parse(JSON.parse(localStorage.getItem(key) ?? "{}"));
+  } catch { return {}; }
+}
+
+function persistDraftChanges(key: string | undefined, previous: Record<string, string>, next: Record<string, string>) {
+  if (!key) return;
+
+  try {
+    const stored = restoreDrafts(key);
+
+    for (const [session, text] of Object.entries(next)) {
+      if (previous[session] !== text) stored[session] = text;
+    }
+
+    for (const session of Object.keys(previous)) {
+      if (!(session in next)) delete stored[session];
+    }
+
+    if (Object.keys(stored).length) localStorage.setItem(key, JSON.stringify(stored));
+    else localStorage.removeItem(key);
+  } catch { }
+}
 
 export function createConversationDrafts() {
-  const [composerDrafts, setComposerDrafts] = createSignal<Record<string, string>>({});
+  const storageKey = draftStorageKey();
+  const [composerDrafts, setComposerDrafts] = createSignal(restoreDrafts(storageKey));
   const [uploadsByTransport, setUploadsByTransport] = createSignal<Map<NativeTransport, ComposerUpload[]>>(new Map());
+
+  const updateDrafts = (update: (current: Record<string, string>) => Record<string, string>) => setComposerDrafts(current => {
+    const next = update(current);
+    persistDraftChanges(storageKey, current, next);
+
+    return next;
+  });
 
   const setComposerUploads = (ownerTransport: NativeTransport, update: StateUpdate<ComposerUpload[]>) => setUploadsByTransport((current) => {
     const next = new Map(current);
@@ -18,7 +65,7 @@ export function createConversationDrafts() {
 
   const transportHasDraft = (owner: NativeTransport, key?: string) => Boolean(key && composerDrafts()[key]) || (uploadsByTransport().get(owner)?.length ?? 0) > 0;
 
-  const setComposerDraft = (sessionKey: string, update: StateUpdate<string>) => setComposerDrafts((current) => { const value = update instanceof Function ? update(current[sessionKey] ?? "") : update;
+  const setComposerDraft = (sessionKey: string, update: StateUpdate<string>) => updateDrafts((current) => { const value = update instanceof Function ? update(current[sessionKey] ?? "") : update;
 
   if (value) return { ...current, [sessionKey]: value }; const next = { ...current }; delete next[sessionKey];
 
@@ -26,7 +73,7 @@ export function createConversationDrafts() {
 
   const rekeyDraft = (previousKey: string, nextKey: string, copy = false) => {
     if (previousKey === nextKey) return;
-    setComposerDrafts(current => {
+    updateDrafts(current => {
       if (!(previousKey in current)) return current;
       const next = { ...current, [nextKey]: current[previousKey] };
 

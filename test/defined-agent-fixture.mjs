@@ -2,13 +2,13 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { transform } from 'esbuild';
+import { compileAgentFixture } from './compile-defined-agent-fixture.mjs';
 
 export const encoded = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
-export const profile = (name = 'general', extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'prompt.md', path_agentprompt: '', tools: ['read'], skills: [], mcpServers: [], extensions: [], ...extra });
+export const profile = (name = 'general', extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'prompt.md', path_agentprompt: '', tools: ['read'], skills: [], mcpServers: {}, extensions: [], ...extra });
 
-export const configured = agents => ({ agents: agents, webSearchDefaultApplied: true, sessionToolsDefaultApplied: true, subagentsDefaultApplied: true, diagramistDefaultApplied: true, askerAgentDefaultApplied: true, terminalAgentDefaultApplied: true });
+export const configured = agents => ({ agents: agents, webSearchDefaultApplied: true, sessionToolsDefaultApplied: true, subagentsDefaultApplied: true, diagramistDefaultApplied: true, askerAgentDefaultApplied: true, terminalAgentDefaultApplied: true, excalidrawAgentDefaultApplied: true });
 
 export async function agentFixture(t, options = {}) {
   options = { files: {}, effort: 'high', model: { provider: 'test', id: 'default' }, config: configured([profile(), profile('reviewer')]), ...options };
@@ -34,15 +34,7 @@ export async function agentFixture(t, options = {}) {
 
   for (const [name, content] of Object.entries(options.files)) await file(name, content);
 
-  for (const name of ['index', 'extension-loader', 'mcp-config']) {
-    let source = await readFile(new URL(`../extensions/piop-define-agents/${name}.ts`, import.meta.url), 'utf8');
-    source = source.replace('./extension-loader.ts', './extension-loader.mjs').replace('./mcp-config.ts', './mcp-config.mjs')
-      .replace('import { homedir } from "node:os";', `const homedir = () => ${JSON.stringify(home)};`)
-      .replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = (skills, tool) => `Skills via ${tool}: ${skills.map(skill => skill.filePath + (skill.disableModelInvocation ? " (explicit)" : "")).join(", ")}`;');
-
-    if (name === 'index' && options.files['fs.mjs']) source = source.replace('from "node:fs/promises"', 'from "./fs.mjs"');
-    await file(`${name}.mjs`, (await transform(source, { loader: 'ts', format: 'esm' })).code);
-  }
+  await compileAgentFixture(dir, { home, files: options.files });
 
   const handlers = new Map(), commands = new Map(), listeners = new Map(), statuses = new Map();
   const entries = structuredClone(options.entries ?? []), notices = [], modelSelections = [], fastSelections = [];
@@ -94,11 +86,20 @@ export async function agentFixture(t, options = {}) {
 
   const define = (await import(pathToFileURL(join(dir, 'index.mjs')))).default;
 
+  const rpc = async (command, payload) => {
+    const request = { command, payload, ctx };
+    pi.events.emit('piop:rpc', request);
+
+    if (!request.ready) throw new Error('Agent RPC handler was not registered');
+
+    return request.ready;
+  };
+
   return {
     dir, home, file, pi, ctx, entries, notices, statuses, commands, tools, modelSelections, fastSelections, emit,
     load: () => define(pi), start: () => emit('session_start'), input: text => emit('input', { text }),
-    select: name => commands.get('pi-define-agents-use').handler(name, ctx),
-    configure: value => commands.get('pi-define-agents-config').handler(encoded(value), ctx),
+    select: name => rpc('select_agent', { agent: name }),
+    configure: value => rpc('configure_agents', { configuration: value }),
     config: async () => JSON.parse(await readFile(join(dir, 'config.json'), 'utf8')),
     state: () => JSON.parse(process.env.PIOP_AGENT_DRAFT_STATE || 'null')?.state ?? entries.findLast(entry => entry.customType === 'pi-define-agents-state' && entry.data)?.data,
     capability: () => JSON.parse(Buffer.from(statuses.get('pi-define-agents').slice(5), 'base64url')),

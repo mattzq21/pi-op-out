@@ -6,6 +6,7 @@ import { currentHost } from "./client.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
+import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from "../piop-diff-watch/pin-checkpoints.ts";
 
 export type ForkOptions = { cwd?: string; worktree?: string; entryId?: string };
 
@@ -38,8 +39,10 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   inheritGoal(ctx, retained, timestamp);
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let created = false;
+  let checkpoints: PinnedCheckpoint[] = [];
 
   try {
+    checkpoints = await pinPromptHistory(header.cwd, sessionId, retained);
     await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source }, ...retained]);
     created = true;
 
@@ -50,6 +53,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
       await rm(sessionPath.replace(/\.jsonl$/, ".diffs.json"), { force: true });
     }
 
+    await removePinnedCheckpoints(checkpoints);
     await cleanupForkDirectory(cwd, options);
 
     if (worktree) throw new Error(`Worktree kept at ${cwd}, but conversation fork failed: ${String(error)}`);

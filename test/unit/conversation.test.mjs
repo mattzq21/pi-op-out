@@ -82,7 +82,7 @@ describe('conversation behavior', () => {
     await act(async () => retryButton().click());
     await render({ draft: 'New question', onBranch: message => branches.push(message.id) });
     await act(async () => pending.resolve(false)); assert.deepEqual(drafts, ['']);
-    await act(async () => document.querySelector('[title="Branch from here"]').click());
+    await act(async () => document.querySelector('[aria-label="Fork"]').click());
     assert.deepEqual(branches, ['a']);
   });
 

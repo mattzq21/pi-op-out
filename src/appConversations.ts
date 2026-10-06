@@ -38,17 +38,28 @@ import { useAppUsage } from "./useAppUsage";
 
 export { formatCodexReset,normalizeCodexUsage,normalizeOpencodeGoUsage,usageWindowsDescription } from "./appSupport";
 
+const removedSessionSchema = z.object({ hostId: z.string().optional(), sessionPath: z.string().nullish().transform(path => path ?? undefined), sessionId: z.string().optional() });
+
+type RemovedSession = z.infer<typeof removedSessionSchema>;
+
+const removedSessionHost = (removed: RemovedSession) => removed.hostId ?? "local";
+
+function removedSessionMatches(hostId: string | undefined, sessionId: string, sessionPath: string | undefined, removed: RemovedSession) {
+  return (hostId ?? "local") === (removed.hostId ?? "local") && (sessionId === removed.sessionId || Boolean(removed.sessionPath && sessionPath === removed.sessionPath));
+}
+
 export function createAppConversations(preloadChat: () => void) {
   const runtimePool = createMemo(() => new SessionRuntimePool());
+  const initialTarget = initialWindowTarget();
 
-  const [transport, setTransport] = createSignal((() => { const initial = runtimePool().create(initialWindowTarget()); runtimePool().activate(initial);
+  const [transport, setTransport] = createSignal((() => { const initial = runtimePool().create(initialTarget); runtimePool().activate(initial);
 
     return initial; })());
 
   const [view, setView] = createSignal<"chat" | "settings">("chat");
   const activeTransportRef = createRef(transport()); createComputed(() => { activeTransportRef.current = transport(); });
   const pendingSessionGroups = createRef(new WeakMap<NativeTransport, SessionGroup>());
-  const initialConversationKey = createRef(`local:draft-${crypto.randomUUID()}`);
+  const initialConversationKey = createRef(`${initialTarget.hostId ?? "local"}:draft-${crypto.randomUUID()}`);
   const [activeConversationKey, setActiveConversationKey] = createSignal(initialConversationKey.current);
   const chatViewKey = createConversationViewKey(transport, activeConversationKey, () => chatSubmission(transport())?.message);
   const activeConversationKeyRef = createRef(activeConversationKey()); createComputed(() => { activeConversationKeyRef.current = activeConversationKey(); });
@@ -87,7 +98,13 @@ export function createAppConversations(preloadChat: () => void) {
   const activeHostIdRef = createRef(activeHostId()); createComputed(() => { activeHostIdRef.current = activeHostId(); });
   const { codexUsage, opencodeGoBadge, usageClock } = useAppUsage(transport);
   const [notices, setNotices] = createSignal<Array<{ id: string; title: string; message: string }>>([]);
-  const addNotice = (notice: { title: string; message: string }) => setNotices((current) => [...current.slice(-9), { ...notice, id: crypto.randomUUID() }]);
+
+  const addNotice = (notice: { title: string; message: string }) => {
+    const id = crypto.randomUUID();
+    setNotices(current => [...current.slice(-9), { ...notice, id }]);
+
+    return () => setNotices(current => current.filter(item => item.id !== id));
+  };
 
   const hasRetainedDraft = (ownerTransport: NativeTransport) => {
     const key = transportConversationKeys.current.get(ownerTransport);
@@ -113,6 +130,8 @@ export function createAppConversations(preloadChat: () => void) {
   const projectOpenRef = createRef(projectOpen()); createComputed(() => { projectOpenRef.current = projectOpen(); });
   const projectOpenRequest = createRef(0);
   const drafts = createConversationDrafts();
+
+  if (initialTarget.draftKey) drafts.rekeyDraft(initialTarget.draftKey, initialConversationKey.current);
   const { composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, transportHasDraft } = drafts;
   const newSessionPending = createRef(false);
   const lastNewSessionSelection = createRef<string | undefined>(undefined);
@@ -144,7 +163,11 @@ export function createAppConversations(preloadChat: () => void) {
 
   const { terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, conversationTerminalIds, queueTerminalOutput, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal } = terminals;
   const reconnectPending = createRef(new Set<NativeTransport>());
-  useSessionResume(() => ({ ready: connected(), saved: chatSession().state.messageCount > 0, ephemeral: transport().isEphemeral(), target: { sessionId: chatSession().state.sessionId, sessionPath: chatSession().state.sessionFile, cwd: activeCwd(), hostId: activeHostId() } }));
+  useSessionResume(() => {
+    const saved = chatSession().state.messageCount > 0;
+
+    return { ready: connected(), saved, ephemeral: transport().isEphemeral(), target: { sessionId: chatSession().state.sessionId, sessionPath: chatSession().state.sessionFile, cwd: !saved && transport().isTemporaryChat() ? undefined : activeCwd(), hostId: activeHostId(), draftKey: composerDrafts()[activeConversationKey()] ? activeConversationKey() : undefined } };
+  });
   const splitSessionId = createMemo(() => splitConversationKey(splitPane()));
 
   const composerValues = () => {
@@ -158,7 +181,10 @@ export function createAppConversations(preloadChat: () => void) {
   const composerFields = createMemoFields(composerValues);
   const composerState = () => composerFields;
   const terminalViewKey = terminals.viewKey;
-  const activateConversationKey = (key: string) => { setArchivesOpen(false); if (key !== activeConversationKeyRef.current) setTerminalTarget(undefined); activeConversationKeyRef.current = key; setActiveConversationKey(key); };
+
+  const activateConversationKey = (key: string) => { setArchivesOpen(false);
+
+    if (key !== activeConversationKeyRef.current) setTerminalTarget(undefined); activeConversationKeyRef.current = key; setActiveConversationKey(key); };
 
   createDependencyEffect(() => {
     const capturedRuntimePool = runtimePool();
@@ -207,13 +233,16 @@ export function createAppConversations(preloadChat: () => void) {
       listen("pi://session-removed", async ({ payload }) => {
         if (!await archives.removed(payload.hostId ?? "local", payload.sessionPath, payload.sessionId)) return;
         const split = splitPane()?.session;
-        if (split && (split.hostId ?? "local") === (payload.hostId ?? "local") && (split.id === payload.sessionId || split.path === payload.sessionPath) && !archives.isPending(split)) closeSplitPane();
+
+        if (split && removedSessionMatches(split.hostId, split.id, split.path, payload) && !archives.isPending(split)) closeSplitPane();
         const subagent = subagentPane();
-        if (subagent && subagent.hostId === (payload.hostId ?? "local") && (subagent.sessionId === payload.sessionId || subagent.sessionPath === payload.sessionPath)) closeSplitPane();
-        if (payload.sessionPath) runtimePool().removeSummary(payload.hostId ?? "local", payload.sessionPath);
+
+        if (subagent && removedSessionMatches(subagent.hostId, subagent.sessionId, subagent.sessionPath, payload)) closeSplitPane();
+
+        if (payload.sessionPath) runtimePool().removeSummary(removedSessionHost(payload), payload.sessionPath);
         setSessions((current) => current.filter((session) => !runtimePool().isRemoved(session) && !archives.isArchived(session)));
         void syncSessionIndex();
-      }, z.object({ hostId: z.string().optional(), sessionPath: z.string().nullish().transform((path) => path ?? undefined), sessionId: z.string().optional() })),
+      }, removedSessionSchema),
       listen("pi://daemon-error", ({ payload }) => addNotice({ title: `Connection · ${payload.hostId}`, message: payload.line }), z.object({ hostId: z.string(), line: z.string() })),
     ];
 

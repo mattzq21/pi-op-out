@@ -7,9 +7,14 @@ import { z } from "zod";
 export const nativeConnectionTargetSchema = z.object({
   cwd: z.string().optional(), sessionPath: z.string().optional(), sessionId: z.string().optional(),
   hostId: z.string().optional(), readOnly: z.boolean().optional(),
+  draftKey: z.string().optional(),
 });
 
-const savedSessionTargetSchema = nativeConnectionTargetSchema.omit({ readOnly: true }).required();
+const savedSessionTargetSchema = nativeConnectionTargetSchema.omit({ readOnly: true, draftKey: true }).required();
+
+const draftTargetSchema = nativeConnectionTargetSchema.pick({ cwd: true, hostId: true, draftKey: true }).required({ hostId: true, draftKey: true });
+
+const restoredTargetSchema = z.union([savedSessionTargetSchema, draftTargetSchema]);
 
 function storageKey() {
   const host = isMobile ? localStorage.getItem("piop-mobile-host") ?? "" : "desktop";
@@ -22,7 +27,7 @@ export function restoredSessionTarget(): NativeConnectionTarget {
   try {
     const value = JSON.parse(localStorage.getItem(storageKey()) ?? "null");
 
-    return savedSessionTargetSchema.parse(value);
+    return restoredTargetSchema.parse(value);
   } catch { return {}; }
 }
 
@@ -38,6 +43,7 @@ export function useSessionResume(selection: Accessor<{ target: NativeConnectionT
 
     try {
       if (current.saved && current.target.sessionId && current.target.sessionPath) localStorage.setItem(key, JSON.stringify(current.target));
+      else if (current.target.draftKey) localStorage.setItem(key, JSON.stringify(draftTargetSchema.parse(current.target)));
       else localStorage.removeItem(key);
     } catch { }
   }, () => [selection()]);

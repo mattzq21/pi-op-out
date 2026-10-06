@@ -119,9 +119,9 @@ describe('message rendering', () => {
 
     return pending.promise; }, onForkAndForget: async value => forgotten.push(value), onCreateWorktree: value => worktrees.push(value) };
 
-    await render(message, extra); await click(document.querySelector('[title="Branch from here"]'));
-    assert.equal(document.querySelector('[title="Fork and forget from here"]').disabled, true); assert.equal(branches.length, 1);
-    await act(async () => pending.resolve()); await click(document.querySelector('[title="Fork and forget from here"]')); await click(control('Create Git worktree'));
+    await render(message, extra); await click(control('Fork'));
+    assert.equal(document.querySelector('.fork-and-forget-button').disabled, true); assert.equal(branches.length, 1);
+    await act(async () => pending.resolve()); await click(document.querySelector('.fork-and-forget-button')); await click(control('Branch'));
     assert.deepEqual(forgotten, [message]); assert.deepEqual(worktrees, [message]);
     await view.rerender({ message: { ...message, streaming: true }, ...extra }); assert.equal(document.querySelector('.message-actions'), null); assert.ok(document.querySelector('.stream-caret'));
     await view.rerender({ message, showActions: false }); assert.equal(document.querySelector('.message-actions'), null);
@@ -129,7 +129,7 @@ describe('message rendering', () => {
 
   test('reasoning and cache totals accompany completed assistant responses', async () => {
     await render({ role: 'assistant', timestamp: 1000, content: [{ type: 'thinking', thinking: 'Reasoning' }, { type: 'text', text: 'Answer' }], usage: { input: 1000, cacheRead: 1000 } }, { debug: true, turnCacheUsage: { input: 1000, cacheRead: 3000 } });
-    assert.equal(document.querySelector('.reasoning-text').textContent.trim(), 'Reasoning'); assert.match(document.querySelector('.cache-hit-rate').textContent, /^Cache 75%/);
+    assert.equal(document.querySelector('.reasoning-text').textContent.trim(), 'Reasoning'); assert.match(document.querySelector('.cache-hit-rate').textContent, /^75%/);
     assert.equal(document.querySelector('.cache-hit-rate').getAttribute('aria-label'), 'Cache 75%, 3000/4000');
     await click(document.querySelector('.message-actions .icon-button')); assert.deepEqual(copied, ['Answer']);
   });

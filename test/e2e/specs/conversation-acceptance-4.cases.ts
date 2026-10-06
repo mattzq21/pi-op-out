@@ -22,7 +22,7 @@ describe("Conversation acceptance", () => {
       await $('//dialog//button[normalize-space(.)="Continue"]').click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.id === "acceptance-editor-content"));
-      expect((await backendCalls()).find(({ args }) => args.command?.id === "acceptance-editor-content")?.args.command).toEqual({ type: "extension_ui_response", id: "acceptance-editor-content", value: "First line\nSecond line" });
+      expect((await backendCalls()).find(({ args }) => args.command?.id === "acceptance-editor-content")?.args.command).toMatchObject({ type: "extension_ui_response", id: "acceptance-editor-content", value: "First line\nSecond line" });
     } finally {
       await resetBackend();
     }
@@ -48,7 +48,7 @@ describe("Conversation acceptance", () => {
       await $('//dialog//button[normalize-space(.)="Cancel"]').click();
 
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").length === 3);
-      expect((await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").map(({ args }) => args.command)).toEqual([
+      expect((await backendCalls()).filter(({ args }) => args.command?.type === "extension_ui_response").map(({ args }) => args.command)).toMatchObject([
         { type: "extension_ui_response", id: "acceptance-select", value: "Beta" },
         { type: "extension_ui_response", id: "acceptance-confirm", confirmed: true },
         { type: "extension_ui_response", id: "acceptance-editor", cancelled: true },

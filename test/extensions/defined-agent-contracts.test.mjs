@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { agentFixture, profile, configured, encoded } from '../defined-agent-fixture.mjs';
 
-const remoteMcp = { id: 'remote', name: 'Remote', transport: 'stdio', command: 'mcp-server', args: '', enabled: true };
+const remoteMcp = { command: 'mcp-server', args: [], enabled: true };
 
 test('restoring general preserves explicitly enabled question tools', async t => {
   const f = await agentFixture(t, { tools: ['read', 'request_user_input'], config: configured([profile('general', { tools: ['read', 'request_user_input'] })]) });
@@ -22,7 +22,7 @@ test('selections stay drafts until input and preserve immutable prompt files', a
   assert.deepEqual(f.entries, []);
   assert.equal(f.state().snapshot.version, 2);
   assert.equal(await readFile(f.state().snapshot.definition.path_systemprompt, 'utf8'), 'System instructions');
-  await f.select(` ${encoded('reviewer')} `);
+  await f.select('reviewer');
   assert.deepEqual(f.entries, []);
   const draft = structuredClone(f.state());
   assert.equal(draft.active, 'reviewer');
@@ -125,31 +125,31 @@ for (const enabled of [false, true]) test(`restoring an agent delegates the save
 });
 
 test('MCP selections wait for readiness, deduplicate tools, and report unavailable or rejected bridges', async t => {
-  const f = await agentFixture(t, { config: configured([profile('general', { mcpServers: [remoteMcp] })]) });
+  const f = await agentFixture(t, { config: configured([profile('general', { mcpServers: { remote: remoteMcp } })]) });
   await f.load(); await f.start();
-  assert.deepEqual(await f.input('no bridge'), { action: 'handled' }); assert.match(f.notices.at(-1).message, /MCP bridge is unavailable/);
+  assert.deepEqual(await f.input('no bridge'), { action: 'handled' }); assert.match(f.notices.at(-1).message, /MCP registration adapter is unavailable/);
   const gate = Promise.withResolvers(), started = Promise.withResolvers(); let selection;
-  const remove = f.pi.events.on('piop:mcp:select', request => { selection = request; request.ready = gate.promise; started.resolve(); });
+  const remove = f.pi.events.on('piop:mcp:select', request => { selection = request; request.registered = gate.promise; started.resolve(); });
   const pending = f.input('connect');
   let timer;
 
   try { await Promise.race([started.promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('MCP selection was not requested')), 1000); })]); }
   finally { clearTimeout(timer); }
 
-  assert.deepEqual({ ...selection, ready: undefined }, { servers: [{ ...remoteMcp, url: undefined, headers: undefined, startupTimeoutSec: undefined, injectAgentId: undefined }], agentName: 'general', sessionId: 'session-id', ready: undefined });
+  assert.deepEqual(selection, { servers: { remote: remoteMcp }, agentName: 'general', sessionId: 'session-id', codemode: undefined, registered: gate.promise });
   assert.deepEqual(f.pi.getActiveTools(), []);
   gate.resolve(['mcp_remote_read', 'read', 'mcp_remote_read']); assert.deepEqual(await pending, { action: 'continue' }); assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']); remove();
 
   for (const reason of [new Error('network lost'), 'network lost']) {
-    const stop = f.pi.events.on('piop:mcp:select', request => { request.ready = Promise.reject(reason); });
-    assert.deepEqual(await f.input('retry'), { action: 'handled' }); assert.equal(f.notices.at(-1).message, 'Agent "general" could not connect its MCP servers:\nnetwork lost'); assert.deepEqual(f.pi.getActiveTools(), []); stop();
+    const stop = f.pi.events.on('piop:mcp:select', request => { request.registered = Promise.reject(reason); });
+    assert.deepEqual(await f.input('retry'), { action: 'handled' }); assert.equal(f.notices.at(-1).message, 'Agent "general" could not register its MCP servers:\nnetwork lost'); assert.deepEqual(f.pi.getActiveTools(), []); stop();
   }
 });
 
 test('agent MCP tools come from bridge selections and refresh respects global tool availability', async t => {
   const runtime = { tools: ['read'], skills: [] };
-  const f = await agentFixture(t, { runtime, tools: ['read', 'mcp_my_server_query', 'mcp_other_query', 'mcp_tool_query'], config: configured([profile('general', { mcpServers: [remoteMcp] })]) });
-  f.pi.events.on('piop:mcp:select', request => { request.ready = Promise.resolve(['mcp_my_server_query', 'mcp_tool_query']); });
+  const f = await agentFixture(t, { runtime, tools: ['read', 'mcp_my_server_query', 'mcp_other_query', 'mcp_tool_query'], config: configured([profile('general', { mcpServers: { remote: remoteMcp } })]) });
+  f.pi.events.on('piop:mcp:select', request => { request.registered = Promise.resolve(['mcp_my_server_query', 'mcp_tool_query']); });
   await f.load(); await f.start(); await f.input('go');
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_my_server_query', 'mcp_tool_query']);
   const stopTools = f.pi.events.on('piop:mcp:tools', request => { request.tools = ['mcp_my_server_query', 'mcp_tool_query']; });
@@ -175,9 +175,9 @@ test('skills are intersected by normalized path and prompts preserve append inst
 
 test('configuration edits normalize resources and persist atomically without modifying the running snapshot', async t => {
   const f = await agentFixture(t); await f.load(); await f.start();
-  await f.configure({ agents: [profile('reviewer', { model: 42, effort: null, tools: ['read', 7], skills: [false, '/skill'], mcpServers: [remoteMcp], path_agentprompt: '  agent.md  ' }), profile('reviewer', { tools: ['bash'] }), profile('default')] });
+  await f.configure({ agents: [profile('reviewer', { model: '', effort: 'high', tools: ['read'], skills: ['/skill'], mcpServers: { remote: remoteMcp }, path_agentprompt: '  agent.md  ' }), profile('reviewer', { tools: ['bash'] }), profile('default')] });
   const saved = await f.config(); assert.deepEqual(saved.agents.map(a => a.name), ['reviewer', 'general']);
-  assert.equal(saved.agents[0].model, ''); assert.equal(saved.agents[0].effort, 'high'); assert.deepEqual(saved.agents[0].tools, ['read']); assert.deepEqual(saved.agents[0].skills, ['/skill']); assert.deepEqual(saved.agents[0].mcpServers, [remoteMcp]); assert.equal(saved.agents[0].path_agentprompt, 'agent.md');
+  assert.equal(saved.agents[0].model, ''); assert.equal(saved.agents[0].effort, 'high'); assert.deepEqual(saved.agents[0].tools, ['read']); assert.deepEqual(saved.agents[0].skills, ['/skill']); assert.deepEqual(saved.agents[0].mcpServers, { remote: remoteMcp }); assert.equal(saved.agents[0].path_agentprompt, 'agent.md');
   assert.equal(saved.webSearchDefaultApplied, true); assert.equal(saved.sessionToolsDefaultApplied, true);
   assert.equal(f.capability().active, 'general'); assert.deepEqual(f.state().snapshot.definition.tools, ['read']);
   assert.equal((await stat(join(f.dir, 'config.json'))).mode & 0o777, 0o600);
@@ -194,10 +194,10 @@ test('configuration edits normalize resources and persist atomically without mod
 
 for (const development of [false, true]) test(`first run creates private defaults and preserves existing prompts (${development ? 'development' : 'production'})`, async t => {
   const env = development ? { PIOP_STORAGE_DIRECTORY: '.piop-dev' } : {};
-  const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'fork_session', 'create_worktree', 'remove_worktree', 'subagent'];
+  const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent'];
   const f = await agentFixture(t, { config: null, env, runtime: { tools: allTools, skills: [] }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.config();
-  const expected = { name: 'general', model: development ? 'openai-codex/gpt-6-luna' : '', effort: development ? 'medium' : 'high', extensions: [], path_systemprompt: 'sysprompt/default.md', path_agentprompt: `~/${development ? '.piop-dev' : '.piop'}/agents/default.md`, tools: allTools, skills: [], mcpServers: [] };
+  const expected = { name: 'general', model: development ? 'openai-codex/gpt-6-luna' : '', effort: development ? 'medium' : 'high', extensions: [], path_systemprompt: 'sysprompt/default.md', path_agentprompt: `~/${development ? '.piop-dev' : '.piop'}/agents/default.md`, tools: allTools, skills: [], mcpServers: {} };
 
   if (development) expected.fastMode = false;
   assert.deepEqual(config.agents[0], expected);
@@ -210,10 +210,10 @@ for (const development of [false, true]) test(`first run creates private default
 });
 
 test('legacy prompt and tool migrations preserve content, remove inline fields and run only once', async t => {
-  const legacy = { name: 'default', description: 'obsolete', systemPrompt: 'System', developerPrompt: 'Developer', agentsMd: 'Agent notes', tools: ['exec_command', 'apply_patch', 'read', 'web_search'], skills: [], mcpServers: [] };
+  const legacy = { name: 'default', description: 'obsolete', systemPrompt: 'System', developerPrompt: 'Developer', agentsMd: 'Agent notes', tools: ['exec_command', 'apply_patch', 'read', 'web_search'], skills: [], mcpServers: {} };
   const f = await agentFixture(t, { config: { agents: [legacy, { ...legacy, name: ' Reviewer!! ', systemPrompt: '' }] }, runtime: { tools: ['web_search', 'fork_session'], skills: [] } });
   await f.load(); const config = await f.config();
-  assert.deepEqual(config.agents.map(a => a.name), ['general', ' Reviewer!! ', 'diagramist']);
+  assert.deepEqual(config.agents.map(a => a.name), ['general', ' Reviewer!! ', 'diagramist', 'excalidraw-agent']);
   const hash = createHash('sha256').update('default').update('\0').update('System\n\nDeveloper').digest('hex');
   assert.equal(config.agents[0].path_systemprompt, `sysprompt/default-${hash}.md`);
   assert.equal(await readFile(join(f.dir, config.agents[0].path_systemprompt), 'utf8'), 'System\n\nDeveloper');
@@ -221,7 +221,7 @@ test('legacy prompt and tool migrations preserve content, remove inline fields a
 
   for (const agent of config.agents.slice(0, 2)) {
     assert.equal(await readFile(join(f.dir, agent.path_agentprompt), 'utf8'), 'Agent notes');
-    assert.deepEqual(agent.tools, ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write', 'web_search', 'fork_session']);
+    assert.deepEqual(agent.tools, ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write', 'web_search']);
 
     for (const field of ['description', 'systemPrompt', 'developerPrompt', 'agentsMd']) assert.equal(field in agent, false);
   }
@@ -241,7 +241,7 @@ test('invalid configuration and filesystem failures surface instead of silently 
 test('legacy migration skips null entries and empty names while retaining a general profile', async t => {
   const f = await agentFixture(t, { config: { agents: [{ name: 'default', tools: [] }, null, { name: '' }, { name: 7 }] } });
   await f.load(); const config = await f.config();
-  assert.deepEqual(config.agents.map(agent => agent.name), ['general', 'diagramist']);
+  assert.deepEqual(config.agents.map(agent => agent.name), ['general', 'diagramist', 'excalidraw-agent']);
   assert.equal(config.agents[0].path_systemprompt, 'sysprompt/default.md');
   assert.equal(config.agents[0].path_agentprompt, '~/.piop/agents/default.md');
 });
@@ -267,18 +267,19 @@ test('prompt migration preserves intentional emptiness and distinguishes names a
   assert.equal(agents[4].path_systemprompt, 'prompt.md'); assert.equal(agents[4].path_agentprompt, '');
 });
 
-test('normalization supplies defaults for absent arrays and filters malformed profiles without dropping valid fields', async t => {
-  const f = await agentFixture(t); await f.load(); await f.start();
+test('legacy normalization supplies defaults for absent arrays and filters malformed profiles without dropping valid fields', async t => {
+  const f = await agentFixture(t);
   const full = profile('reviewer', { model: ' test/review/model ', effort: ' low ', fastMode: false, extensions: [], tools: null, skills: null, mcpServers: undefined, path_agentprompt: 7 });
-  await f.configure({ agents: [null, false, {}, { name: '' }, { name: 7 }, full, profile('default')] });
+  await f.file('config.json', JSON.stringify({ ...configured([]), agents: [null, false, {}, { name: '' }, { name: 7 }, full, profile('default')] }));
+  await f.load(); await f.start();
   const config = await f.config(), reviewer = config.agents[0];
   assert.deepEqual(config.agents.map(agent => agent.name), ['reviewer', 'general']);
   assert.equal(reviewer.model, full.model); assert.equal(reviewer.effort, full.effort); assert.equal(reviewer.fastMode, false);
-  assert.deepEqual(reviewer.tools, ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']); assert.deepEqual(reviewer.skills, []); assert.deepEqual(reviewer.mcpServers, []); assert.equal(reviewer.path_agentprompt, '');
+  assert.deepEqual(reviewer.tools, ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']); assert.deepEqual(reviewer.skills, []); assert.deepEqual(reviewer.mcpServers, {}); assert.equal(reviewer.path_agentprompt, '');
   await f.select('reviewer'); assert.equal(f.ctx.model.id, 'review/model'); assert.equal(f.pi.getThinkingLevel(), 'low');
   assert.equal(f.state().snapshot.definition.model, 'test/review/model'); assert.equal(f.state().snapshot.definition.effort, 'low');
   await f.configure({ agents: [profile('default'), profile('general')] }); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['default', 'general']);
-  await f.configure({ agents: 'invalid' }); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['general']);
+  await assert.rejects(f.configure({ agents: 'invalid' }));
   await assert.rejects(f.configure(configured([profile('bad', { path_systemprompt: '  ' })])), /requires a nonempty path_systemprompt/);
 });
 
@@ -309,8 +310,9 @@ test('session restore uses the latest state, ignores unrelated custom records, a
     { type: 'message', message: { role: 'assistant' } },
   ] });
 
-  await f.load(); await f.start(); assert.equal(f.capability().active, 'general'); assert.equal(f.capability().locked, true);
-  assert.deepEqual(await f.input('hello'), { action: 'continue' });
+  await f.load(); await f.start(); assert.equal(f.capability().active, 'missing'); assert.equal(f.capability().locked, true);
+  assert.deepEqual(await f.input('hello'), { action: 'handled' });
+  await f.select('general'); assert.deepEqual(await f.input('hello'), { action: 'continue' });
   f.entries.length = 0; f.entries.push({ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'missing' } });
   await f.start(); assert.equal(f.capability().unavailable, true); assert.equal(f.capability().saved, false); assert.deepEqual(await f.prompt(), {}); assert.equal(await f.emit('resources_discover'), undefined);
   const request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready; assert.deepEqual(f.pi.getActiveTools(), []);
@@ -384,10 +386,10 @@ test('fresh sessions recognize conversational history but ignore tool messages a
 });
 
 test('tool migration adds missing defaults only once and never removes explicit builtin choices', async t => {
-  const runtime = { tools: ['web_search', 'fork_session'], skills: [] };
+  const runtime = { tools: ['web_search', 'subagent'], skills: [] };
   const f = await agentFixture(t, { runtime, config: { agents: [profile('general', { tools: ['read'] }), profile('reviewer', { tools: ['web_search'] })] } });
   await f.load(); const saved = await f.config();
-  assert.deepEqual(saved.agents[0].tools, ['read', 'fork_session', 'web_search']); assert.deepEqual(saved.agents[1].tools, ['web_search', 'fork_session']);
+  assert.deepEqual(saved.agents[0].tools, ['read', 'subagent', 'web_search']); assert.deepEqual(saved.agents[1].tools, ['web_search', 'subagent']);
   saved.agents[0].tools = []; await f.file('config.json', JSON.stringify(saved)); await f.load(); assert.deepEqual((await f.config()).agents[0].tools, []);
 });
 
@@ -521,15 +523,16 @@ test('restored fast-mode snapshots validate both configured models and conversat
   });
 });
 
-test('plain command names are trimmed, invalid encoded values are rejected, and command descriptions remain useful', async t => {
+test('agent RPC uses exact names and rejects encoded or unknown names without exposing internal slash commands', async t => {
   const f = await agentFixture(t); await f.load(); await f.start();
-  assert.equal(f.commands.get('pi-define-agents-use').description, 'Select a defined agent'); assert.equal(f.commands.get('pi-define-agents-config').description, 'Update agent definitions');
-  await f.select(' reviewer '); assert.equal(f.capability().active, 'reviewer');
+  assert.equal(f.commands.has('pi-define-agents-use'), false); assert.equal(f.commands.has('pi-define-agents-config'), false);
+  await f.select('reviewer'); assert.equal(f.capability().active, 'reviewer');
+  await assert.rejects(f.select(' reviewer '), /Unknown defined agent/);
   await assert.rejects(f.select(encoded({ name: 'general' })), { message: `Unknown defined agent: ${encoded({ name: 'general' })}` });
 });
 
 test('new default profiles retain available session tools after one-time migrations are finished', async t => {
-  const tools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'fork_session', 'create_worktree', 'remove_worktree'];
+  const tools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent'];
   const f = await agentFixture(t, { runtime: { tools, skills: [] }, tools });
   f.pi.events.on('piop:fast-mode', request => { if (!request.apply) delete request.models; });
   await f.load(); await f.start(); await f.configure({ agents: [] });
@@ -537,7 +540,8 @@ test('new default profiles retain available session tools after one-time migrati
 });
 
 test('disabled embedded MCP servers do not enable stale globally registered tools', async t => {
-  const f = await agentFixture(t, { config: configured([profile('general', { mcpServers: [{ ...remoteMcp, enabled: false }] })]), tools: ['read', 'mcp_my_server_query', 'mcp_my__server_query', 'mcp__my_server__query'] });
+  const f = await agentFixture(t, { config: configured([profile('general', { mcpServers: { remote: { ...remoteMcp, enabled: false } } })]), tools: ['read', 'mcp_my_server_query', 'mcp_my__server_query', 'mcp__my_server__query'] });
+  f.pi.events.on('piop:mcp:select', request => { request.registered = Promise.resolve([]); });
   await f.load(); await f.start(); assert.deepEqual(f.pi.getActiveTools(), ['read']); assert.deepEqual(await f.input('connect'), { action: 'continue' }); assert.deepEqual(f.pi.getActiveTools(), ['read']);
 });
 
@@ -552,10 +556,12 @@ test('shutdown removes agent extension listeners and missing-agent refresh clear
 test('configuration errors identify the invalid field instead of leaking incidental type errors', async t => {
   const f = await agentFixture(t); await f.load();
 
-  for (const path_systemprompt of [null, 7, false, '', '   ']) await assert.rejects(f.configure(configured([profile('bad', { path_systemprompt })])), { message: 'Agent "bad" requires a nonempty path_systemprompt' });
+  for (const path_systemprompt of [null, 7, false]) await assert.rejects(f.configure(configured([profile('bad', { path_systemprompt })])), /Invalid agent configuration:.*path_systemprompt/);
+
+  for (const path_systemprompt of ['', '   ']) await assert.rejects(f.configure(configured([profile('bad', { path_systemprompt })])), { message: 'Agent "bad" requires a nonempty path_systemprompt' });
 
   for (const field of ['systemPrompt', 'developerPrompt']) await assert.rejects(f.configure(configured([profile('bad', { [field]: 'inline' })])), { message: 'Agent "bad" must link a system prompt file using path_systemprompt' });
-  await assert.rejects(f.configure(configured([profile('bad', { fastMode: 'yes' })])), { message: 'Agent "bad" fastMode must be a boolean' });
+  await assert.rejects(f.configure(configured([profile('bad', { fastMode: 'yes' })])), /Invalid agent configuration:.*fastMode/);
 });
 
 test('adding profiles supplies a missing general profile and inherited agent prompt paths', async t => {
@@ -563,7 +569,7 @@ test('adding profiles supplies a missing general profile and inherited agent pro
   await f.configure(configured([profile('reviewer')])); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['general', 'reviewer']);
 
   for (const name of ['general', 'default']) {
-    const agent = profile(name); delete agent.path_agentprompt;
+    const agent = profile(name, { path_agentprompt: '~/.piop/agents/default.md' });
     await f.configure(configured([agent])); assert.equal((await f.config()).agents[0].path_agentprompt, '~/.piop/agents/default.md');
   }
 });
@@ -585,15 +591,22 @@ test('legacy prompt type errors and whitespace fall back to the default system p
   assert.equal(await readFile(join(f.home, '.piop/agents/default.md'), 'utf8'), '');
 });
 
-test('MCP is deferred until input for selection, startup, and rollback', async t => {
+test('MCP registrations refresh on startup, selection and input while failed selections retain their tools', async t => {
   const f = await agentFixture(t, { env: { PI_DESKTOP_MCP_CONFIG: 'fixture' }, config: configured([profile(), profile('reviewer'), profile('broken', { tools: ['missing'] }), profile('broken-skills', { tools: ['missing'], skills: ['/new'] })]) });
-  const calls = []; f.pi.events.on('piop:mcp:select', request => { calls.push(request); request.ready = Promise.resolve([]); });
-  await f.load(); await f.start(); assert.equal(calls.length, 0);
-  await f.select('reviewer'); assert.equal(calls.length, 0);
+  const calls = []; f.pi.events.on('piop:mcp:select', request => { calls.push(request); request.registered = Promise.resolve([]); });
+  await f.load(); await f.start(); assert.equal(calls.length, 1);
+  await f.select('reviewer'); assert.equal(calls.length, 2);
 
-  for (const name of ['broken', 'broken-skills']) { await assert.rejects(f.select(name), /does not allow/); assert.equal(calls.length, 0); }
+  for (const name of ['broken', 'broken-skills']) {
+    const count = calls.length;
+    await assert.rejects(f.select(name), /does not allow/);
+    assert.equal(calls.length, count + 1);
+    assert.equal(calls.at(-1).agentName, 'reviewer');
+    assert.equal(f.capability().active, 'reviewer');
+    assert.deepEqual(f.pi.getActiveTools(), ['read']);
+  }
 
-  await f.input('hello'); assert.equal(calls.length, 1);
+  await f.input('hello'); assert.equal(calls.length, 5);
 });
 
 test('fast-mode preflight rejects unsupported models before attempting to load extensions', async t => {

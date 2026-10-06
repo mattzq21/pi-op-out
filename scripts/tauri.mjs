@@ -8,6 +8,7 @@ import { selectWindowBounds } from "./window-placement.mjs";
 import { watchBackend } from "./watch-backend.mjs";
 
 const args = process.argv.slice(2);
+
 const branchLabel = args[0] === "dev" && args[1] !== undefined && !args[1].startsWith("-") ? args.splice(1, 1)[0] : undefined;
 
 const windowBounds = process.platform === "linux" && args[0] === "dev" ? selectWindowBounds() : undefined;

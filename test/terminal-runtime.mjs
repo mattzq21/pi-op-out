@@ -1,7 +1,13 @@
 export const terminals = [];
 
 export class Terminal {
-  constructor(options) { this.options = options; this.cols = 100; this.rows = 30; this.writes = []; this.completions = []; this.addons = []; this.selection = ''; this.resets = 0; terminals.push(this); }
+  constructor(options) { this.options = options; this.cols = 100; this.rows = 30; this.writes = []; this.completions = []; this.addons = []; this.selection = ''; this.resets = 0;
+    this.parser = { registerCsiHandler: (_identifier, handler) => { this.csiHandler = handler;
+
+      return { dispose: () => { this.csiDisposed = true; } }; } };
+
+    terminals.push(this); }
+  resize(cols, rows) { this.cols = cols; this.rows = rows; }
   loadAddon(addon) { this.addons.push(addon); addon.terminal = this; }
   open(host) { this.host = host; }
   attachCustomKeyEventHandler(handler) { this.key = handler; }
@@ -14,12 +20,21 @@ export class Terminal {
   onData(handler) { this.data = handler;
 
   return { dispose: () => { this.dataDisposed = true; } }; }
-  onResize(handler) { this.resize = handler;
+  onResize(handler) { this.resizeHandler = handler;
 
   return { dispose: () => { this.resizeDisposed = true; } }; }
+  onCursorMove(handler) { this.cursorMove = handler;
+
+  return { dispose: () => { this.cursorDisposed = true; } }; }
+  onRender(handler) { this.render = handler;
+
+  return { dispose: () => { this.renderDisposed = true; } }; }
+  onScroll(handler) { this.scroll = handler;
+
+  return { dispose: () => { this.scrollDisposed = true; } }; }
   dispose() { this.disposed = true; }
 }
 
-export class FitAddon { fit() { if (this.error) throw this.error; } }
+export class FitAddon { fit() { if (this.error) throw this.error; } proposeDimensions() { return { cols: this.terminal.cols, rows: this.terminal.rows }; } }
 
 export class SerializeAddon { serialize() { return `serialized:${this.terminal.writes.join('')}`; } }

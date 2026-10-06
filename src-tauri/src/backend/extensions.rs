@@ -203,6 +203,7 @@ pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
         ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
         ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
         ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
+        ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
     ] {
         atomic_write_private(&dir.join(name), content.as_bytes())?;
     }

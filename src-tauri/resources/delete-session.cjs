@@ -95,11 +95,14 @@ async function restoreRepository(repository) {
   const output = await git(repository.cwd, ["for-each-ref", "--format=%(refname) %(objectname)", ...repository.refs.map(({ ref }) => ref)]);
   const current = new Map(output.trim().split("\n").filter(Boolean).map(line => line.split(" ")));
   const missing = [];
+
   for (const ref of repository.refs) {
     const oid = current.get(ref.ref);
+
     if (oid === undefined) missing.push(ref);
     else if (oid !== ref.oid) throw new Error(`Refusing to overwrite a changed checkpoint: ${ref.ref}`);
   }
+
   if (missing.length) await git(repository.cwd, ["update-ref", "--stdin"], transaction(missing, true));
 }
 
@@ -144,10 +147,96 @@ async function snapshotRefs(entries, header) {
   return [...repositories.values()].filter(({ refs }) => refs.length);
 }
 
+function mergeRepositories(repositoriesByPath, repositories) {
+  for (const repository of repositories) {
+        const existing = repositoriesByPath.get(repository.cwd);
+
+        if (existing) {
+          for (const ref of repository.refs) {
+            const duplicate = existing.refs.find(candidate => candidate.ref === ref.ref);
+
+            if (duplicate && duplicate.oid !== ref.oid) throw new Error("Checkpoint refs changed during deletion");
+
+            if (!duplicate) existing.refs.push(ref);
+          }
+        } else repositoriesByPath.set(repository.cwd, repository);
+  }
+}
+
+async function collectDeletionFiles(targets, sources, request, files) {
+  const repositoriesByPath = new Map();
+    const selected = new Set(sources);
+
+    for (const [index, source] of sources.entries()) {
+      const target = targets[index];
+      const [trace, sidecar, loopCheckpoint] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true), readFile(`${source}.loop-detection.json`, true)]);
+      files.push(...[trace, sidecar, loopCheckpoint].filter(Boolean));
+      const snapshots = await readSnapshotDirectory(source.replace(/\.jsonl$/, ".snapshots"));
+
+      if (snapshots) files.push(snapshots);
+      const entries = trace.body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
+      const header = entries[0];
+      validateHeader(header, request);
+      const directory = await archivedDirectory(source, header, target, selected);
+
+      if (directory && !files.some(saved => saved.file === directory.file)) files.push(directory);
+
+      mergeRepositories(repositoriesByPath, await snapshotRefs(entries, header));
+    }
+
+    return [...repositoriesByPath.values()];
+
+}
+
+function deletionError(error, recoveryErrors, lock) {
+  return new Error([
+      `Deletion failed: ${error.message}`,
+      recoveryErrors.length ? `Rollback failed: ${recoveryErrors.map(result => result.reason.message).join("; ")}. Recovery files retained in ${lock}` : "Deletion was rolled back.",
+    ].join("\n"));
+}
+
+function deletionStorageRoot(target) {
+  return fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", target.area === "archived" ? "archived" : "sessions"));
+}
+
+async function stageDeletion(files, repositories) {
+    const staged = await Promise.allSettled(files.map(stageFile));
+    const stageFailures = staged.filter((result) => result.status === "rejected");
+
+    if (stageFailures.length) throw new Error(`Could not stage session files for deletion: ${stageFailures.map((result) => result.reason.message).join("; ")}`);
+
+    const results = await Promise.allSettled(repositories.map(async (repository) => {
+      repository.attempted = true;
+      await git(repository.cwd, ["update-ref", "--stdin"], transaction(repository.refs, false));
+    }));
+
+    const failures = results.filter((result) => result.status === "rejected");
+
+    if (failures.length) throw new Error(`Could not remove checkpoint refs: ${failures.map((result) => result.reason.message).join("; ")}`);
+
+}
+
+async function writeDeletionJournal(lock, files, repositories) {
+    files.forEach((saved, index) => { saved.stagedPath = path.join(lock, `${index}.staged`); });
+    const journal = await fs.open(path.join(lock, "recovery.json"), "wx", 0o600);
+
+    try {
+      await journal.writeFile(JSON.stringify({
+        files: files.map((saved) => ({ path: saved.file, staged: path.basename(saved.stagedPath), mode: saved.metadata.mode & 0o777, atime: saved.metadata.atime, mtime: saved.metadata.mtime })),
+        repositories: repositories.map(({ cwd, refs }) => ({ cwd, refs })),
+      }));
+      await journal.sync();
+    } finally { await journal.close(); }
+
+}
+
+const canRemoveRecovery = (preserveRecovery, committed) => !preserveRecovery && !committed;
+
 async function main() {
   const request = JSON.parse(process.argv[1]);
   const targets = request.targets || [request];
   const sources = await Promise.all(targets.map(sessionSource));
+
   if (!sources.length || new Set(sources).size !== sources.length) throw new Error("Invalid conversation deletion targets");
   const source = sources[0];
   const lock = await acquireDeletionLock(source);
@@ -160,58 +249,15 @@ async function main() {
 
   try {
     for (const child of sources.slice(1)) childLocks.push(await acquireDeletionLock(child));
-    const repositoriesByPath = new Map();
-    const selected = new Set(sources);
-    for (const [index, source] of sources.entries()) {
-      const target = targets[index];
-      const [trace, sidecar, loopCheckpoint] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true), readFile(`${source}.loop-detection.json`, true)]);
-      files.push(...[trace, sidecar, loopCheckpoint].filter(Boolean));
-      const snapshots = await readSnapshotDirectory(source.replace(/\.jsonl$/, ".snapshots"));
-      if (snapshots) files.push(snapshots);
-      const entries = trace.body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
-      const header = entries[0];
-      validateHeader(header, request);
-      const directory = await archivedDirectory(source, header, target, selected);
-      if (directory && !files.some(saved => saved.file === directory.file)) files.push(directory);
-      for (const repository of await snapshotRefs(entries, header)) {
-        const existing = repositoriesByPath.get(repository.cwd);
-        if (existing) {
-          for (const ref of repository.refs) {
-            const duplicate = existing.refs.find(candidate => candidate.ref === ref.ref);
-            if (duplicate && duplicate.oid !== ref.oid) throw new Error("Checkpoint refs changed during deletion");
-            if (!duplicate) existing.refs.push(ref);
-          }
-        } else repositoriesByPath.set(repository.cwd, repository);
-      }
-    }
-    repositories = [...repositoriesByPath.values()];
-    const storageRoot = await fs.realpath(targets[0].root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", targets[0].area === "archived" ? "archived" : "sessions"));
+    repositories = await collectDeletionFiles(targets, sources, request, files);
+    const storageRoot = await deletionStorageRoot(targets[0]);
     garbageRoot = path.join(path.dirname(storageRoot), "deleted-sessions");
     await fs.mkdir(garbageRoot, { recursive: true, mode: 0o700 });
+
     if (!(await fs.lstat(garbageRoot)).isDirectory()) throw new Error("Invalid deleted conversation directory");
     const garbagePath = path.join(garbageRoot, randomUUID());
-    files.forEach((saved, index) => { saved.stagedPath = path.join(lock, `${index}.staged`); });
-    const journal = await fs.open(path.join(lock, "recovery.json"), "wx", 0o600);
-    try {
-      await journal.writeFile(JSON.stringify({
-        files: files.map((saved) => ({ path: saved.file, staged: path.basename(saved.stagedPath), mode: saved.metadata.mode & 0o777, atime: saved.metadata.atime, mtime: saved.metadata.mtime })),
-        repositories: repositories.map(({ cwd, refs }) => ({ cwd, refs })),
-      }));
-      await journal.sync();
-    } finally { await journal.close(); }
-    const staged = await Promise.allSettled(files.map(stageFile));
-    const stageFailures = staged.filter((result) => result.status === "rejected");
-    if (stageFailures.length) throw new Error(`Could not stage session files for deletion: ${stageFailures.map((result) => result.reason.message).join("; ")}`);
-
-    const results = await Promise.allSettled(repositories.map(async (repository) => {
-      repository.attempted = true;
-      await git(repository.cwd, ["update-ref", "--stdin"], transaction(repository.refs, false));
-    }));
-
-    const failures = results.filter((result) => result.status === "rejected");
-
-    if (failures.length) throw new Error(`Could not remove checkpoint refs: ${failures.map((result) => result.reason.message).join("; ")}`);
-
+    await writeDeletionJournal(lock, files, repositories);
+    await stageDeletion(files, repositories);
     await fs.rename(lock, garbagePath);
     committed = true;
   } catch (error) {
@@ -219,16 +265,16 @@ async function main() {
       ...repositories.filter(repository => repository.attempted).map(restoreRepository),
       ...files.map(restoreFile),
     ]);
+
     const recoveryErrors = rollback.filter(result => result.status === "rejected");
     preserveRecovery = recoveryErrors.length > 0;
-    throw new Error([
-      `Deletion failed: ${error.message}`,
-      recoveryErrors.length ? `Rollback failed: ${recoveryErrors.map(result => result.reason.message).join("; ")}. Recovery files retained in ${lock}` : "Deletion was rolled back.",
-    ].join("\n"));
+    throw deletionError(error, recoveryErrors, lock);
   } finally {
-    if (!preserveRecovery && !committed) await fs.rm(lock, { recursive: true }).catch((error) => console.error(`Could not remove deletion recovery directory ${lock}: ${error.message}`));
+    if (canRemoveRecovery(preserveRecovery, committed)) await fs.rm(lock, { recursive: true }).catch((error) => console.error(`Could not remove deletion recovery directory ${lock}: ${error.message}`));
+
     for (const childLock of childLocks) await fs.rm(childLock, { recursive: true }).catch((error) => console.error(`Could not remove deletion lock ${childLock}: ${error.message}`));
   }
+
   await cleanupCommitted(garbageRoot);
 }
 
@@ -240,6 +286,10 @@ async function cleanupCommitted(root) {
       await fs.rm(directory, { recursive: true, force: true });
     }
   } catch (error) { console.error(`Deletion committed; could not clean up ${root}: ${error.message}`); }
+}
+
+function archiveRoot(target) {
+  return fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "archived"));
 }
 
 async function archivedDirectoryMetadata(directory) {
@@ -254,7 +304,7 @@ async function archivedDirectory(source, header, target, selected = new Set([sou
   const saved = header.worktreeRestore;
 
   if (target.area !== "archived" || saved?.kind !== "directory") return undefined;
-  const archive = await fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "archived"));
+  const archive = await archiveRoot(target);
   const root = await fs.realpath(path.join(archive, '..', 'archived-tmp'));
   let directory;
 

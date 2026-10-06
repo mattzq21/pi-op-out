@@ -283,6 +283,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
   const handleEvent = (raw: RpcEvent) => {
     if (owner.current !== transport()) return;
+
+    if (raw.type === "extension_ui_request" && raw.method !== "setStatus") return;
     const event = chatSessionEventSchema.parse(raw);
 
     if (bufferedEvents.current) { bufferedEvents.current.push(event);

@@ -214,6 +214,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
         ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
         ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
         ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
+        ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
     ] {
         remote.push_str(&format!(r#" && printf %s {} > "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}""#, shell_quote(content)));
     }
@@ -266,12 +267,21 @@ pub(super) fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, h
     }
 }
 
+fn local_worker_command(pi_path: &Path, is_rpc: bool) -> Result<Command, String> {
+    let mut command = Command::new(session_worker_executable()?);
+    command.args([std::ffi::OsStr::new("--piop-session-worker"), pi_path.as_os_str()]);
+    command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY);
+    command.arg(if is_rpc { "--mode" } else { "--print" });
+    if is_rpc { command.arg("rpc"); }
+    Ok(command)
+}
+
 fn local_pi_command(settings: &AppSettings, host_id: &str, launch: PiLaunch<'_>, broker_port: u16, broker_token: &str, desktop_home: &Path) -> Result<Command, String> {
     let is_rpc = matches!(launch, PiLaunch::Rpc { .. });
     let default_model = &settings.default_model;
     let pi_path = pi_executable();
         let session_dir = ensure_desktop_sessions_dir(desktop_home)?;
-        let mut command = Command::new(session_worker_executable()?); command.args([std::ffi::OsStr::new("--piop-session-worker"), pi_path.as_os_str()]); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
+        let mut command = local_worker_command(&pi_path, is_rpc)?;
         configure_local_extensions(&mut command, settings, host_id, (broker_port, broker_token), &session_dir)?;
         if is_rpc { command.env("PIOP_RPC_ENTRY", generated_extension_root()?.join("app-rpc.cjs")); }
         configure_local_launch(&mut command, launch, &pi_path)?;

@@ -61,16 +61,21 @@ fn spawn_terminal_shell(slave: &dyn portable_pty::SlavePty, command: impl FnOnce
     slave.spawn_command(command).map_err(|error| format!("Could not start terminal shell: {error}"))
 }
 
+fn terminal_already_running(runtime: &TerminalRuntime, processes: &HashMap<String, TerminalProcess>, terminal_id: &str, owner: &str) -> Result<bool, String> {
+    if runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?.get(terminal_id).is_some_and(|item| !terminal_lookup::owned_by(item, owner)) {
+        return Err("Terminal belongs to another connection".into());
+    }
+    if let Some(process) = processes.get(terminal_id) {
+        return if process.window_label == owner { Ok(true) } else { Err("Terminal belongs to another connection".into()) };
+    }
+    Ok(false)
+}
+
 pub(super) fn start_terminal_with(runtime: &TerminalRuntime, launch: TerminalLaunch,
     command: impl FnOnce() -> Result<CommandBuilder, String>, mut emit: impl FnMut(Value) + Send + 'static) -> Result<(), String> {
     let TerminalLaunch { terminal_id, session_key, cwd, cols, rows, host_id, window_label } = launch;
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
-    if runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?.get(&terminal_id).is_some_and(|item| !terminal_lookup::owned_by(item, &window_label)) {
-        return Err("Terminal belongs to another connection".into());
-    }
-    if let Some(process) = processes.get(&terminal_id) {
-        return if process.window_label == window_label { Ok(()) } else { Err("Terminal belongs to another connection".into()) };
-    }
+    if terminal_already_running(runtime, &processes, &terminal_id, &window_label)? { return Ok(()); }
     if processes.values().filter(|process| process.session_key == session_key).count() >= MAX_TERMINALS { return Err(format!("At most {MAX_TERMINALS} terminals may run for one conversation")); }
     let pair = native_pty_system().openpty(PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
     let child = spawn_terminal_shell(pair.slave.as_ref(), command)?;

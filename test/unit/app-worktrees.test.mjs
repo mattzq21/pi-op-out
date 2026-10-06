@@ -68,8 +68,8 @@ for (const [hostId, settings, hostName] of [
   const onSetup = () => {};
 
   assert.equal(await f.actions.createWorktree({ transport: f.owner, cwd: '/parent', hostId }, 'experiment', onSetup), f.result);
-  assert.deepEqual(f.calls, [['create', '/parent', 'experiment', hostId], ['setup', '/parent', '/child', hostId, onSetup], ['target', undefined]]);
-  assert.deepEqual(f.groups, []);
+  assert.deepEqual(f.calls, [['create', '/parent', 'experiment', hostId], ['setup', '/parent', '/child', hostId, onSetup], ['target', undefined], ['sync']]);
+  assert.deepEqual(f.groups, [{ type: 'project', project: { id: `${hostId}:/child`, name: 'experiment', cwd: '/child', hostId, projectKind: 'worktree', branch: 'experiment' } }]);
   assert.deepEqual(f.notices, []);
   assert.deepEqual(f.sessions, [{ id: 'existing' }]);
 });
@@ -78,9 +78,10 @@ for (const setupError of [new Error('Environment setup cancelled'), new Error('s
   const f = fixture(t, { setupError, groupError: new Error('group failed') });
   assert.equal(await f.actions.createWorktree({ transport: f.owner, cwd: '/parent', hostId: 'local' }, 'experiment'), f.result);
   assert.deepEqual(f.notices, [
+    { title: 'Worktree created, but could not be added to the sidebar', message: '/child\ngroup failed' },
     { title: setupError.message === 'Environment setup cancelled' ? 'Environment setup cancelled; worktree kept' : 'Worktree created, but environment setup failed', message: `/child\n${setupError.message ?? setupError}` },
   ]);
-  assert.deepEqual(f.calls.at(-1), ['target', undefined]);
+  assert.deepEqual(f.calls.slice(-2), [['target', undefined], ['sync']]);
 });
 
 for (const warning of [undefined, 'Branch retained']) test(`worktree deletion refreshes sessions and reports warning ${warning}`, async t => {

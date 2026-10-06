@@ -24,7 +24,7 @@ export function initialWindowTarget(): NativeConnectionTarget {
   catch { return {}; }
 }
 
-export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; readOnly?: boolean; }
+export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; readOnly?: boolean; draftKey?: string; }
 
 export const loadSessionGroups = (seeds: SessionGroupSeed[], legacy: SessionGroups) => call("load_session_groups", { seeds, legacy }, sessionGroupsSchema);
 
@@ -436,9 +436,14 @@ export class NativeTransport {
 
       return z.parse(schema, result);
     } catch (reason) {
-      const message = reason instanceof Error ? reason.message : String(reason); const diagnostics = this.stderrLines.join("\n");
-      throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message);
+      throw this.commandError(reason);
     }
+  }
+  private commandError(cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    const diagnostics = this.stderrLines.join("\n");
+
+    return new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message);
   }
   private resetChangedSession(command: RpcCommand, result: { cancelled?: boolean }) {
     if (["new_session", "switch_session", "fork", "fork_after", "clone"].includes(command.type) && !result.cancelled) { forgetSession(this); this.sessionId = undefined; }

@@ -67,6 +67,7 @@ export function registerHtmlPreview(pi: ExtensionAPI) {
       return { content: [{ type: "text", text: `Displayed ${title} in the chat (${size}×${size} on desktop; placeholder on mobile).` }], details: {} };
     },
   });
+
   defineTool();
   pi.events.on("piop:rpc", request => {
     if (request.command !== "html_preview_viewport") return;
