@@ -7,12 +7,15 @@ mod payload;
 mod protocol;
 mod provider_sdk;
 mod providers;
+mod plugins;
 mod queue;
 mod services;
 mod session;
 mod tool_payload;
 mod tool_failures;
 mod worker;
+
+pub(crate) use plugins::{preserve_leases_for_restart, validate_configuration, with_note_deletion};
 
 use futures_util::FutureExt;
 use serde_json::{json, Value};

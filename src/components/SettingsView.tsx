@@ -8,7 +8,7 @@ import { Dynamic } from "solid-js/web";
 import { accountModelNameLookup } from "../lib/providerAccounts";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { Bot, Check, CircleGauge, CirclePlus, ClipboardCheck, Cpu, HardDrive, Keyboard, Mic, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-solid";
+import { Bot, Check, CircleGauge, CirclePlus, ClipboardCheck, Cpu, HardDrive, Keyboard, Mic, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -17,10 +17,11 @@ import { IconButton } from "./IconButton";
 import { ProviderSettings } from "./ProviderSettings";
 import { StorageSettings } from "./StorageSettings";
 import { ReviewSettings } from "./ReviewSettings";
+import { PluginSettings } from "./PluginSettings";
 import { Toggle } from "./Toggle";
 import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
-export type Section = "providers" | "general" | "dictation" | "review" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections";
+export type Section = "providers" | "general" | "dictation" | "review" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections" | "plugins";
 
 type SettingsSection = { id: Section; label: string; icon: typeof Settings2 };
 
@@ -35,6 +36,7 @@ export const sections: SettingsSection[] = [
   { id: "storage", label: "Storage", icon: HardDrive },
   { id: "environment", label: "Worktree scripts", icon: Wrench },
   { id: "keybinds", label: "Keybinds", icon: Keyboard },
+  { id: "plugins", label: "Plugins", icon: PlugZap },
   { id: "machines", label: "Machines", icon: Server },
   { id: "agents", label: "Agents", icon: Bot },
   ...mobileSections,
@@ -435,6 +437,7 @@ export function SettingsView(props: SettingsViewProps) {
       };
 
       return (<section class="settings-content">
+        {formValidation().visibleSection === "plugins" && <SettingsSection title="Plugins" description="Bundled plugins for this daemon."><PluginSettings hostId={providerHostId()} onBusyChange={settingsProps().onSavingChange} /></SettingsSection>}
         {!formValidation().matchingSections.length && <div class="empty-small" role="status">No settings match your search.</div>}
         {formValidation().visibleSection === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
         {renderWorktreeScripts()}

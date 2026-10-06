@@ -116,6 +116,7 @@ pub(crate) fn connect(app: &AppHandle, host_id: &str) -> Result<Arc<Connection>,
     let (daemon_id, reader) = peer_handshake(&mut child, stdout, &host, &diagnostics)?;
     let connection = Arc::new(Connection { daemon_id, prefix: format!("peer-{}:", Uuid::new_v4()), alive: AtomicBool::new(true), sequence: AtomicU64::new(1), child: Mutex::new(child), stdin: Mutex::new(stdin), pending: Mutex::new(HashMap::new()) });
     if let Some(existing) = install_connection(&state, host_id, host, &connection)? { return Ok(existing); }
+    let _ = app.emit("pi://plugins-changed", json!({"hostId":host_id,"_peer":true}));
     let reading = connection.clone(); let app = app.clone();
     thread::spawn(move || {
         for line in reader.lines().map_while(Result::ok) {
@@ -231,6 +232,18 @@ pub(crate) fn invalidate(app: &AppHandle) {
 
 pub(crate) fn shutdown(app: &AppHandle) {
     if let Ok(connections) = app.state::<PeerRuntime>().connections.lock() { for (_, connection) in connections.values() { connection.close(); } }
+}
+
+pub(crate) fn ensure_restart_safe(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<PeerRuntime>();
+    let local = daemon_endpoint::identity()?;
+    let connections = state.connections.lock().map_err(|_| "Peer connections unavailable")?.values().cloned().collect::<Vec<_>>();
+    let mut checked = HashSet::new();
+    for (host, connection) in connections {
+        if connection.daemon_id == local || !connection.alive.load(Ordering::SeqCst) || !checked.insert(connection.daemon_id.clone()) { continue; }
+        connection.invoke("check_daemon_idle", json!({})).map_err(|error| format!("Cannot restart while {} may have active work: {error}", host.name))?;
+    }
+    Ok(())
 }
 
 pub(crate) fn forward_broker(app: &AppHandle, host_id: &str, path: &str, mut body: Value) -> Result<Value, String> {

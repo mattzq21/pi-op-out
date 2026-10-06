@@ -114,6 +114,15 @@ pub(super) fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, strea
     respond_broker_request(app, broker, stream, method, path, body)
 }
 
+fn with_broker_access<T>(app: &AppHandle, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let state = app.state::<crate::daemon_restart::Runtime>();
+    let _guard = state.gate.try_read().map_err(|_| "The daemon is preparing a restart")?;
+    if crate::daemon_restart::blocking() || app.state::<crate::daemon_clients::DaemonClients>().closing() {
+        return Err("The daemon is restarting or shutting down. Reconnect before retrying.".into());
+    }
+    work()
+}
+
 pub(super) fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|error| format!("Could not start session broker: {error}"))?;
     *broker.port.lock().map_err(|_| "Session broker lock was poisoned")? = listener.local_addr().map_err(|error| error.to_string())?.port();
@@ -156,10 +165,10 @@ fn enqueue_broker_message(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
         *count += 1; drop(count);
         thread::spawn(move || {
             let _delivery = delivery;
-            let result = if orchestration {
+            let result = with_broker_access(&app, || if orchestration {
                 serde_json::from_slice(&body).map_err(|_| "Invalid orchestration request".into())
                     .and_then(|value| broker_orchestration(&app, &broker, value))
-            } else { process_broker_message(&app, &broker, &body) };
+            } else { process_broker_message(&app, &broker, &body) });
             if let Ok(mut count) = broker.message_count.lock() { *count = count.saturating_sub(1); }
             match result { Ok(data) => broker_response(stream, "200 OK", json!({"data":data})), Err(error) => broker_response(stream, "400 Bad Request", json!({"error":error})) }
         });
@@ -175,7 +184,7 @@ fn broker_terminal_lookup(app: &AppHandle, body: &[u8]) -> Result<Value, String>
 }
 
 fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream, method: &str, path: &str, body: Vec<u8>) -> Result<(), String> {
-    let result = match (method, path) {
+    let result = with_broker_access(&app, || match (method, path) {
         ("GET", "/agent-definitions") => (|| {
             let daemon = app.state::<PiRuntime>().connections.get("local")?.ok_or("Agent definitions are unavailable")?;
             daemon.request(json!({"type":"agent_definitions"}))
@@ -230,7 +239,7 @@ fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
             Ok(json!({"cancelled":true}))
         })(),
         _ => Err("Unknown session broker endpoint".into()),
-    };
+    });
     finish_broker_response(stream, result)
 }
 
@@ -516,6 +525,15 @@ pub(super) fn claim_agent(broker: &BrokerRuntime, host_id: &str, session_id: &st
 }
 
 impl BrokerRuntime {
+    pub(super) fn ensure_idle(&self) -> Result<(), String> {
+        let active = *self.message_count.lock().map_err(|_| "Broker job count unavailable")? > 0
+            || !self.jobs.lock().map_err(|_| "Broker jobs unavailable")?.is_empty()
+            || !self.operations.lock().map_err(|_| "Broker operations unavailable")?.is_empty()
+            || !self.deliveries.lock().map_err(|_| "Broker deliveries unavailable")?.is_empty();
+        if active { return Err("Wait for active broker requests to finish before restarting the daemon".into()); }
+        Ok(())
+    }
+
     pub(super) fn shutdown(&self) {
         self.closing.store(true, Ordering::SeqCst);
         let jobs = self.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();

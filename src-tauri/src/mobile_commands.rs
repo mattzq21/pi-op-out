@@ -6,7 +6,12 @@ fn argument<T: serde::de::DeserializeOwned>(args: &Value, key: &str) -> Result<T
 
 pub(super) async fn dispatch(app: AppHandle, owner: String, command: String, args: Value) -> Result<Value, String> {
     let routing_app = app.clone(); let routing_owner = owner.clone(); let routing_command = command.clone(); let routing_args = args.clone();
-    if let Some(result) = tokio::task::spawn_blocking(move || peers::route(&routing_app, &routing_owner, &routing_command, &routing_args)).await.map_err(|error| error.to_string())?? { return Ok(result); }
+    {
+        let state = app.state::<crate::daemon_restart::Runtime>();
+        let _guard = state.gate.read().await;
+        if crate::daemon_restart::blocking() && command != "daemon_restart_status" { return Err("The daemon is restarting. Reconnect before retrying.".into()); }
+        if let Some(result) = tokio::task::spawn_blocking(move || peers::route(&routing_app, &routing_owner, &routing_command, &routing_args)).await.map_err(|error| error.to_string())?? { return Ok(result); }
+    }
     dispatch_local(app, owner, command, args).await
 }
 
@@ -27,6 +32,20 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
     if command == "debug_runtime" {
         return tokio::task::spawn_blocking(daemon_endpoint::debug_runtime).await.map_err(|error| error.to_string())?;
     }
+    if command == "daemon_restart_status" { return crate::daemon_restart::status(&argument::<String>(&args, "restartId")?); }
+    let state = app.state::<crate::daemon_restart::Runtime>();
+    if command == "restart_daemon" {
+        let _guard = state.gate.try_write().map_err(|_| "Wait for pending requests to finish before restarting the daemon")?;
+        return handle_restart_daemon(app.clone(), owner, args).await;
+    }
+    let _guard = if command == "check_daemon_idle" {
+        state.gate.try_read().map_err(|_| "The remote daemon is preparing a restart")?
+    } else { state.gate.read().await };
+    if crate::daemon_restart::blocking() { return Err("The daemon is restarting. Reconnect before retrying.".into()); }
+    dispatch_command(app.clone(), owner, command, args).await
+}
+
+async fn dispatch_command(app: AppHandle, owner: String, command: String, args: Value) -> Result<Value, String> {
     if let Some(id) = args.get("runtimeId").and_then(Value::as_str) {
         crate::pi_runtime::ensure_runtime_owner(&app.state::<PiRuntime>(), id, &owner)?;
     }
@@ -41,6 +60,9 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
 type CommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>>;
 type CommandHandler = fn(AppHandle, String, Value) -> CommandFuture;
 const COMMANDS: &[(&str, CommandHandler)] = &[
+    ("check_daemon_idle", handle_check_daemon_idle),
+    ("plugin_call", handle_plugin_call),
+    ("plugin_status", handle_plugin_status),
     ("shared_terminal", handle_shared_terminal),
     ("reassign_terminal", handle_reassign_terminal),
     ("dictation_configuration", handle_dictation_configuration),
@@ -101,6 +123,12 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("opencode_go_usage", handle_opencode_go_usage),
 ];
 
+fn handle_check_daemon_idle(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || crate::daemon_restart::ensure_local_idle(&app).map(|()| Value::Null)).await.map_err(|error| error.to_string())?
+    })
+}
+
 fn handle_dictation_configuration(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
     Box::pin(async move {
         Ok(dictation::configuration(&app))
@@ -143,6 +171,24 @@ fn handle_save_host_settings(app: AppHandle, _owner: String, args: Value) -> Com
 fn handle_host_storage_report(_app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || serde_json::to_value(StorageReport { hosts: vec![inspect_storage(None)?] }).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_plugin_call(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || plugins::dispatch(app, "plugin_call", args)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_plugin_status(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || plugins::dispatch(app, "plugin_status", args)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_restart_daemon(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || crate::daemon_restart::prepare(app, args)).await.map_err(|error| error.to_string())?
     })
 }
 

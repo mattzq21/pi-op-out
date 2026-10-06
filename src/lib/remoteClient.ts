@@ -21,6 +21,7 @@ export function validateHost(connection: HostConnection): string {
 
 export class RemoteClient {
   private socket?: WebSocket;
+  private destination?: string;
   private sequence = 0;
   private ready = false;
   private pending = new Map<number, Pending>();
@@ -28,9 +29,12 @@ export class RemoteClient {
   private listeners = new Map<string, Set<(event: RemoteEvent) => void>>();
   private heartbeat?: ReturnType<typeof setInterval>;
   onDisconnect?: (message: string) => void;
+  connectionIdentity() { return this.destination; }
   async connect(connection: HostConnection): Promise<void> {
+    const destination = validateHost(connection);
     this.close();
-    const socket = new WebSocket(validateHost(connection));
+    this.destination = destination;
+    const socket = new WebSocket(destination);
     this.socket = socket;
     await new Promise<void>((resolve, reject) => {
       let ready = false;

@@ -434,6 +434,16 @@ fn validate_saved_path(path: &Path, root: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn saved_conversation_in(root: &Path, id: &str) -> Result<bool> {
+    let Some(root) = optional_path(root)? else { return Ok(false); };
+    for entry in std::fs::read_dir(&root).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.extension().is_none_or(|extension| extension != "jsonl") { continue; }
+        if read_candidate(id, &path, &root, true)?.is_some() { return Ok(true); }
+    }
+    Ok(false)
+}
+
 fn read_candidate(id: &str, path: &Path, root: &Path, metadata_only: bool) -> Result<Option<SavedConversation>> {
     let Some(path) = optional_path(path)? else {
         return Ok(None);

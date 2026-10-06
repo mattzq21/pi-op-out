@@ -20,19 +20,26 @@ fn validate_delivery(packet: &Value) -> Result<()> {
     Ok(())
 }
 
+fn ensure_restart_access(name: &str) -> Result<()> {
+    if crate::daemon_restart::blocking() && !matches!(name, "prepare_daemon_restart" | "plugin_status" | "detach" | "shutdown") {
+        return Err("The daemon is restarting. Reconnect before retrying.".into());
+    }
+    Ok(())
+}
+
 impl Host {
     pub async fn handle(self: &Arc<Self>, packet: Value) -> Result<Value> {
         let runtime = text(&packet, "runtimeId");
         let name = kind(&packet);
+        ensure_restart_access(name)?;
         if name == "detach" {
             self.registry().attachments.remove(&runtime);
         }
         match name {
+            "check_daemon_idle" | "prepare_daemon_restart" => return self.restart_request(packet).await,
             "agent_definitions" => return Ok(self.registry().agent_definitions.clone()),
-            "conversation_owner" => return self.ownership().owns(&text(&packet, "sessionId"), &text(&packet, "clientId"), flag(&packet, "allowReleased")).map(Value::Bool),
-            "provider_auth" | "provider_auth_cancel_owner" | "ownership_drained" => return self.service_request(packet).await,
-            "conversation_mutation" => return self.begin_mutation(&packet).await,
-            "conversation_mutation_end" => return self.end_mutation(&packet),
+            "conversation_owner" | "ownership_drained" | "conversation_mutation" | "conversation_mutation_end" => return self.ownership_request(&packet).await,
+            "provider_auth" | "provider_auth_cancel_owner" | "plugin_call" | "plugin_status" => return self.services.handle(packet).await,
             "configure" | "attach" | "shutdown" => return self.lifecycle(packet).await,
             "retire" | "session_command" | "orchestration" => return self.conversation_request(packet).await,
             _ => {}
@@ -40,9 +47,32 @@ impl Host {
         self.runtime_command(packet, &runtime).await
     }
 
-    async fn service_request(&self, packet: Value) -> Result<Value> {
-        if kind(&packet) == "ownership_drained" { return Ok(self.ownership_drained(&packet)); }
+    async fn ownership_request(&self, packet: &Value) -> Result<Value> {
+        match kind(packet) {
+            "conversation_owner" => self.ownership().owns(&text(packet, "sessionId"), &text(packet, "clientId"), flag(packet, "allowReleased")).map(Value::Bool),
+            "ownership_drained" => Ok(self.ownership_drained(packet)),
+            "conversation_mutation" => self.begin_mutation(packet).await,
+            _ => self.end_mutation(packet),
+        }
+    }
+
+    async fn restart_request(&self, packet: Value) -> Result<Value> {
+        self.ensure_idle()?;
+        let packet = if kind(&packet) == "check_daemon_idle" { json!({"type":"plugin_idle"}) } else { packet };
         self.services.handle(packet).await
+    }
+
+    fn ensure_idle(&self) -> Result<()> {
+        let sessions: Vec<_> = self.registry().sessions.values().cloned().collect();
+        if sessions.iter().any(|session| session.busy(&Value::Null) || session.transient()) || self.pending_work() {
+            return Err("Wait for active agents to finish before restarting the daemon".into());
+        }
+        Ok(())
+    }
+
+    fn pending_work(&self) -> bool {
+        let registry = self.registry();
+        !registry.deliveries.is_empty() || !registry.guards.is_empty() || !registry.pending.is_empty()
     }
 
     async fn conversation_request(self: &Arc<Self>, packet: Value) -> Result<Value> {

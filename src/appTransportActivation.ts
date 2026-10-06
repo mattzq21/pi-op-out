@@ -6,6 +6,7 @@ import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import type { RefObject } from "./lib/solid";
 import type { useChatSession } from "./lib/useChatSession";
 import type { SessionSummary } from "./types";
+import { flushAllPlugins } from "./plugins/lifecycle";
 
 declare global {
   interface WindowEventMap {
@@ -37,6 +38,7 @@ export function useWorkspaceDisconnect(hasDrafts: () => boolean, pool: () => Ses
     return; }
 
     const close = async () => {
+      await flushAllPlugins();
       await Promise.all(draftTerminalIds().map(id => owner().closeTerminal(id)));
       await pool().disconnectAll(true);
     };

@@ -34,6 +34,22 @@ const conversationClientId = (() => {
 
 export const listen = <S extends z.ZodType>(event: string, handler: EventCallback<z.output<S>>, schema: S): Promise<UnlistenFn> => isMobile ? remoteClient.listen(event, handler, schema) : nativeListen(event, value => handler({ ...value, payload: schema.parse(value.payload) }), { target: { kind: "WebviewWindow", label: getCurrentWebviewWindow().label } });
 
+export function captureDaemonTransport() {
+  const identity = isMobile ? remoteClient.connectionIdentity() : "desktop";
+  const active = () => !isMobile || identity !== undefined && remoteClient.connectionIdentity() === identity;
+
+  const scopedInvoke = async <S extends z.ZodType>(command: string, args: NativeArguments, schema: S): Promise<z.output<S>> => {
+    if (!active()) throw new Error("Reconnect to this note's original host to save it.");
+    const result = await invoke(command, args, schema);
+
+    if (!active()) throw new Error("The note's host connection changed.");
+
+    return result;
+  };
+
+  return { identity, active, invoke: scopedInvoke };
+}
+
 export function invoke<S extends z.ZodType>(command: string, args: NativeArguments | undefined, schema: S): Promise<z.output<S>>;
 export function invoke(command: string, args?: NativeArguments): Promise<JSONType | undefined>;
 export async function invoke(command: string, args?: NativeArguments, schema: z.ZodType = jsonResultSchema) {
