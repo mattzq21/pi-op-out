@@ -31,7 +31,7 @@ export type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeCo
 
 const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 
-const fallbackConfig: Config = { agents: [{ name: "general", model: development ? "openai-codex/gpt-6-luna" : "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, ignoreAgentsMd: true, path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: {} }] };
+const fallbackConfig: Config = { agents: [{ name: "general", model: development ? "openai-codex/gpt-6-luna" : "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, ignoreGeneralAgentsMd: true, path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: {} }] };
 
 function defaultAgent(pi: ConfigRuntime): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
@@ -117,11 +117,11 @@ function promptPath(agent: StoredAgent): string {
 
 function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAgent[] }, pi: ConfigRuntime): Config {
   for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.fastMode !== undefined && !Check(Type.Boolean(), agent.fastMode)) throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
-  for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.ignoreAgentsMd !== undefined && !Check(Type.Boolean(), agent.ignoreAgentsMd)) throw new Error(`Agent "${agent.name}" ignoreAgentsMd must be a boolean`);
+  for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.ignoreGeneralAgentsMd !== undefined && !Check(Type.Boolean(), agent.ignoreGeneralAgentsMd)) throw new Error(`Agent "${agent.name}" ignoreGeneralAgentsMd must be a boolean`);
 
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)).map((agent) => ({
     name: agent.name, model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
-    fastMode: agent.fastMode, codemode: agent.codemode, ignoreAgentsMd: agent.ignoreAgentsMd ?? true, extensions: extensionPaths(agent.extensions),
+    fastMode: agent.fastMode, codemode: agent.codemode, ignoreGeneralAgentsMd: agent.ignoreGeneralAgentsMd ?? true, extensions: extensionPaths(agent.extensions),
     path_systemprompt: promptPath(agent), path_agentprompt: Check(Type.String(), agent.path_agentprompt) ? agent.path_agentprompt.trim() : ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)).flatMap(item => item === "goal" ? ["get_goal", "create_goal", "update_goal"] : [item]) : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
@@ -297,12 +297,12 @@ function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[]
   return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
 }
 
-function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options: BuildSystemPromptOptions, ignoreAgentsMd: boolean, explicitOnlySkills: string[] = []) {
+function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options: BuildSystemPromptOptions, ignoreGeneralAgentsMd: boolean, explicitOnlySkills: string[] = []) {
   delete options.forceSystemPrompt;
   const instructions = [options.appendSystemPrompt, agentPrompt.trim() ? agentPrompt : undefined].filter(Boolean).join("\n\n");
   options.customPrompt = prompt || " ";
   options.sections = { ...options.sections, instructions };
-  if (ignoreAgentsMd) {
+  if (ignoreGeneralAgentsMd) {
     options.contextFiles = [];
     delete options.sections.project_context;
   }
@@ -370,7 +370,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   const stopProfileCatalog = pi.events.on("piop:agents:profiles", request => {
     request.active = currentAgent()?.name;
-    request.profiles = config.agents.map(agent => ({ name: agent.name, model: agent.model, effort: agent.effort, fastMode: agent.fastMode, ignoreAgentsMd: agent.ignoreAgentsMd, tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers), path_systemprompt: agent.path_systemprompt, path_agentprompt: agent.path_agentprompt }));
+    request.profiles = config.agents.map(agent => ({ name: agent.name, model: agent.model, effort: agent.effort, fastMode: agent.fastMode, ignoreGeneralAgentsMd: agent.ignoreGeneralAgentsMd, tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers), path_systemprompt: agent.path_systemprompt, path_agentprompt: agent.path_agentprompt }));
   });
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
@@ -689,7 +689,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!agent) return;
 
     if (agent.codemode === false) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
-    configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, agent.ignoreAgentsMd !== false, desktopList(pi, "explicitOnlySkills"));
+    configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, agent.ignoreGeneralAgentsMd !== false, desktopList(pi, "explicitOnlySkills"));
   });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "select_agent") return;
