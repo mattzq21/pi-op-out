@@ -29,7 +29,7 @@ function contextMessage(message: ChatMessage) {
   return `## ${label}\n${boundedChatContext(text)}`;
 }
 
-export type ChatGptContextSource = PluginConversation;
+export interface ChatGptContextSource extends PluginConversation { preparedContext?: string }
 
 export function captureChatGptContext(read: () => ChatGptContextSource) {
   const source = read();
@@ -52,11 +52,18 @@ function recentItems(messages: ChatMessage[]) {
   return turns.slice(-5).flatMap(turn => turn.slice(-100));
 }
 
-export async function chatGptContext(source: ChatGptContextSource) {
+export async function chatGptContext(source: ChatGptContextSource, signal: AbortSignal) {
+  signal.throwIfAborted();
+
+  if (source.preparedContext !== undefined) return source.preparedContext;
   const items = recentItems(source.messages);
   const rendered = [];
 
-  for (const item of items) rendered.push(await loadedContextMessage(source, item));
+  for (const item of items) {
+    signal.throwIfAborted();
+    rendered.push(await loadedContextMessage(source, item, signal));
+  }
+
   const omitted = items.length < source.messages.length ? "[Earlier conversation items omitted]" : "";
   let text = boundedChatContext([`# ${source.title}`, omitted, ...rendered].filter(Boolean).join("\n\n"));
 
@@ -65,15 +72,26 @@ export async function chatGptContext(source: ChatGptContextSource) {
   return text;
 }
 
-async function loadedContextMessage(source: ChatGptContextSource, item: ChatMessage) {
+async function loadedContextMessage(source: ChatGptContextSource, item: ChatMessage, signal: AbortSignal) {
   if (!item.loadToolPayload || item.toolPayloadLoaded) return contextMessage(item);
 
   try {
-    await item.loadToolPayload();
+    await abortableContextLoad(item.loadToolPayload(), signal);
+    signal.throwIfAborted();
     const loaded = source.readMessages?.().find(message => message.id === item.id);
 
     if (loaded?.toolPayloadLoaded) return contextMessage(loaded);
-  } catch { }
+  } catch { signal.throwIfAborted(); }
 
   return `## tool\n[Deferred tool output unavailable: ${item.toolName ?? "tool"}]`;
+}
+
+function abortableContextLoad(load: Promise<unknown>, signal: AbortSignal) {
+  signal.throwIfAborted();
+
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    load.then(() => resolve(), reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }

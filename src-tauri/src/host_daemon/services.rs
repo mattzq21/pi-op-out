@@ -30,7 +30,7 @@ impl Services for HostServices {
         Box::pin(async move {
             match kind(&packet) {
                 "provider_auth" => self.providers.handle(&text(&packet, "owner"), packet["request"].clone()).await,
-                "plugin_call" | "plugin_status" | "restart_daemon" => self.plugins.handle(packet).await,
+                "plugin_call" | "plugin_status" | "prepare_daemon_restart" => self.plugins.handle(packet).await,
                 "provider_auth_cancel_owner" => {
                     self.providers.cancel_owner(&text(&packet, "owner")).await;
                     Ok(Value::Null)

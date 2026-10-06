@@ -21,6 +21,7 @@ mod mobile;
 #[cfg(not(feature = "desktop"))]
 mod mobile_commands;
 mod daemon_clients;
+mod daemon_restart;
 #[cfg(not(feature = "desktop"))]
 mod peers;
 #[cfg(not(feature = "desktop"))]

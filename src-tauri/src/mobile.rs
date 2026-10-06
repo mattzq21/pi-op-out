@@ -16,7 +16,7 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
     daemon_endpoint::publish(listener.local_addr().map_err(|error| error.to_string())?, token.clone())?;
     let (events, _) = broadcast::channel::<Value>(1024);
-    for name in ["pi://event", "pi://stderr", "pi://settings-changed", "pi://groups-changed", "pi://dictation", "pi://sessions-changed", "pi://daemon-error", "pi://provider-auth-changed", "pi://session-removed", "pi://session-restored", "pi://host-settings-changed", "pi://plugins-changed"] {
+    for name in ["pi://event", "pi://stderr", "pi://settings-changed", "pi://groups-changed", "pi://dictation", "pi://sessions-changed", "pi://daemon-error", "pi://provider-auth-changed", "pi://session-removed", "pi://session-restored", "pi://host-settings-changed", "pi://plugins-changed", "pi://daemon-restarting"] {
         let events = events.clone();
         app.listen_any(name, move |event| {
             if let Ok(payload) = serde_json::from_str::<Value>(event.payload()) {
@@ -46,7 +46,7 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
 
 #[cfg(debug_assertions)]
 fn start_debug(app: AppHandle, events: broadcast::Sender<Value>, connections: Arc<Semaphore>, jobs: Arc<Semaphore>) -> Result<(), String> {
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+    let listener = TcpListener::bind(std::env::var("PIOP_DEBUG_MOBILE_BIND").unwrap_or_else(|_| "127.0.0.1:0".into())).map_err(|error| error.to_string())?;
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
     let address = listener.local_addr().map_err(|error| error.to_string())?;
     let endpoint = json!({"url":format!("ws://{address}"), "protocol":1});
@@ -129,6 +129,7 @@ async fn serve_client<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(a
     let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
     let mut last_seen = Instant::now();
     loop {
+        let mut restart_id = None;
         let outgoing = tokio::select! {
             incoming = socket.next() => {
                 last_seen = Instant::now();
@@ -166,14 +167,17 @@ async fn serve_client<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(a
                 Ok(event) if peer && (event["payload"]["_peer"] == true || event["event"] == "pi://groups-changed") => None,
                 Ok(event) => Some(Message::Text(event.to_string().into())), Err(_) => break
             },
-            Some(response) = receiver.recv() => Some(Message::Text(response.to_string().into())),
+            Some(response) = receiver.recv() => {
+                restart_id = response["result"]["restartId"].as_str().map(str::to_owned);
+                Some(Message::Text(response.to_string().into()))
+            },
             Some(_) = pending.join_next(), if !pending.is_empty() => None,
             _ = heartbeat.tick() => {
                 if last_seen.elapsed() > Duration::from_secs(65) { break; }
                 Some(Message::Ping(Vec::new().into()))
             },
         };
-        if !send_outgoing(&mut socket, outgoing).await { break; }
+        if !send_outgoing(&mut socket, outgoing, &app, restart_id).await { break; }
     }
     let _ = tokio::time::timeout(Duration::from_secs(2), socket.close(None)).await;
     drop(receiver);
@@ -206,11 +210,13 @@ async fn send_ready<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(soc
     socket.send(message).await.map_err(|error| error.to_string())
 }
 
-async fn send_outgoing<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(socket: &mut tokio_tungstenite::WebSocketStream<S>, message: Option<Message>) -> bool {
-    match message {
+async fn send_outgoing<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(socket: &mut tokio_tungstenite::WebSocketStream<S>, message: Option<Message>, app: &AppHandle, restart_id: Option<String>) -> bool {
+    let sent = match message {
         Some(message) => matches!(tokio::time::timeout(Duration::from_secs(10), socket.send(message)).await, Ok(Ok(()))),
         None => true,
-    }
+    };
+    if sent { if let Some(id) = restart_id { crate::daemon_restart::commit(app.clone(), &id); } }
+    sent
 }
 
 #[cfg(test)]

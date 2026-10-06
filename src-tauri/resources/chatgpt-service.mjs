@@ -373,11 +373,10 @@ function chatGptVisible(message) {
 function chatGptUpdateMessage(chat, message) {
   const text = chatGptText(message);
 
-  if (!text) return;
   const existing = chat.messages.find(item => item.id === message.id);
 
   if (existing) existing.text = text;
-  else chat.messages.push({ id: message.id, role: 'assistant', text });
+  else if (text) chat.messages.push({ id: message.id, role: 'assistant', text });
 }
 
 async function chatGptConsume(identity, active, response) {

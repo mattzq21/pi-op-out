@@ -1,4 +1,4 @@
-import { createSignal, Show, type Accessor } from "solid-js";
+import { createSignal, onCleanup, Show, type Accessor } from "solid-js";
 import { captureChatGptContext, type ChatGptContextSource } from "./context";
 import { createDependencyEffect, cssPixels } from "../../lib/solid";
 import { isMobile } from "../../lib/platform";
@@ -34,11 +34,17 @@ function selectedMessage(messages: HTMLElement | null) {
     top: below ? rect.bottom + 8 : rect.top - 8 };
 }
 
-export function ChatGptSelection(props: { messages: Accessor<HTMLElement | null>; source: Accessor<ChatGptContextSource>; onAsk: (source: ChatGptContextSource) => void }) {
+export function ChatGptSelection(props: { messages: Accessor<HTMLElement | null>; source: Accessor<ChatGptContextSource>; onAsk: (source: ChatGptContextSource, signal: AbortSignal) => Promise<void> }) {
   const [selected, setSelected] = createSignal<SelectedText>();
+  const [preparing, setPreparing] = createSignal(false);
+  const [error, setError] = createSignal<string>();
+  let preparation: AbortController | undefined;
+  onCleanup(() => preparation?.abort());
   createDependencyEffect(() => {
-    const update = () => setSelected(selectedMessage(props.messages()));
-    const dismiss = () => setSelected(undefined);
+    const update = () => { if (!preparing()) setSelected(selectedMessage(props.messages())); };
+
+    const dismiss = () => { if (!preparing()) setSelected(undefined); };
+
     document.addEventListener("selectionchange", update);
     document.addEventListener("scroll", dismiss, true);
     window.addEventListener("resize", dismiss);
@@ -52,17 +58,25 @@ export function ChatGptSelection(props: { messages: Accessor<HTMLElement | null>
     };
   }, () => []);
 
-  const open = () => {
+  const open = async () => {
     const selection = selected();
     const start = props.onAsk;
 
-    if (!selection) return;
-    start(captureChatGptContext(() => ({ ...props.source(), selected: selection })));
-    window.getSelection()?.removeAllRanges();
-    setSelected(undefined);
+    if (!selection || preparing()) return;
+    const controller = new AbortController(); preparation = controller;
+    setPreparing(true); setError(undefined);
+
+    try {
+      await start(captureChatGptContext(() => ({ ...props.source(), selected: selection })), controller.signal);
+      window.getSelection()?.removeAllRanges();
+      setSelected(undefined);
+    } catch (reason) { if (!controller.signal.aborted) setError(String(reason)); }
+    finally { setPreparing(false); preparation = undefined; }
   };
 
   return <Show when={selected()}>{selection => <div class={`selection-chatgpt-tip${selection().below ? " below" : ""}${isMobile ? " mobile" : ""}`} style={{ left: cssPixels(selection().left), top: cssPixels(selection().top) }} onPointerDown={event => event.preventDefault()}>
-    <button type="button" onClick={open}>Ask ChatGPT</button>
+    <button type="button" disabled={preparing()} onClick={() => void open()}>{preparing() ? "Preparing context…" : "Ask ChatGPT"}</button>
+    <Show when={preparing()}><button type="button" onClick={() => preparation?.abort()}>Cancel</button></Show>
+    <Show when={error()}><span role="alert">{error()}</span></Show>
   </div>}</Show>;
 }

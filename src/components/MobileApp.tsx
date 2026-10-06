@@ -1,4 +1,5 @@
 import { Key } from "@solid-primitives/keyed";
+import { z } from "zod";
 import { createComputed, createSignal } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
@@ -21,6 +22,7 @@ export function MobileApp() {
   const generation = createRef(0);
   const retry = createRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const retryDelay = createRef(2000);
+  const restartUntil = createRef(0);
   const reconnectEnabled = createRef(autoReconnect()); createComputed(() => { reconnectEnabled.current = autoReconnect(); });
   const intentionalDisconnect = createRef(false);
   const activeDebugAddress = createRef<string | undefined>(undefined);
@@ -30,7 +32,7 @@ export function MobileApp() {
     clearTimeout(retry.current);
     const last = activeDebugAddress.current ?? localStorage.getItem("piop-mobile-host");
 
-    if (!reconnectEnabled.current || intentionalDisconnect.current || !last) return;
+    if ((!reconnectEnabled.current && Date.now() >= restartUntil.current) || intentionalDisconnect.current || !last) return;
     retry.current = setTimeout(() => { void connectRef.current(last); }, retryDelay.current);
     retryDelay.current = Math.min(retryDelay.current * 2, 30000);
   };
@@ -65,7 +67,7 @@ export function MobileApp() {
 
       if (attempt !== generation.current) return;
       localStorage.setItem("piop-mobile-host", cleanUrl);
-      setHosts(saveMobileHost(cleanUrl, label)); setUrl(cleanUrl); setConnected(true); setWorkspaceOpen(true); retryDelay.current = 2000;
+      setHosts(saveMobileHost(cleanUrl, label)); setUrl(cleanUrl); setConnected(true); setWorkspaceOpen(true); retryDelay.current = 2000; restartUntil.current = 0;
     } catch (reason) {
       if (attempt !== generation.current) return;
       remoteClient.close(); setError(reason instanceof Error ? reason.message : String(reason));
@@ -77,6 +79,14 @@ export function MobileApp() {
   createComputed(() => { connectRef.current = connect; });
   createDependencyEffect(() => {
     remoteClient.onDisconnect = (reason) => { setConnected(false); setError(reason); scheduleReconnect(); };
+
+    const restarting = () => { restartUntil.current = Date.now() + 240000; retryDelay.current = 500; };
+
+    const restartListener = remoteClient.listen("pi://daemon-restarting", ({ payload }) => {
+      if (payload.hostId === "local") restarting();
+    }, z.object({ hostId: z.string() }));
+
+    window.addEventListener("piop-daemon-restarting", restarting);
 
     const startupGeneration = generation.current;
     void loadMobileDebugConnection().then((debugUrl) => {
@@ -107,7 +117,7 @@ export function MobileApp() {
     const viewport = () => document.documentElement.style.setProperty("--mobile-height", `${window.visualViewport?.height ?? window.innerHeight}px`);
     viewport(); window.visualViewport?.addEventListener("resize", viewport);
 
-    return () => { generation.current++; clearTimeout(retry.current); remoteClient.close(); window.removeEventListener("piop-mobile-disconnect", disconnect); remoteClient.onDisconnect = undefined; void back.then((handle) => handle.remove()); window.visualViewport?.removeEventListener("resize", viewport); };
+    return () => { generation.current++; clearTimeout(retry.current); remoteClient.close(); window.removeEventListener("piop-mobile-disconnect", disconnect); window.removeEventListener("piop-daemon-restarting", restarting); void restartListener.then(stop => stop()); remoteClient.onDisconnect = undefined; void back.then((handle) => handle.remove()); window.visualViewport?.removeEventListener("resize", viewport); };
   }, () => [disconnect, scheduleReconnect]);
 
   const saveHost = () => {

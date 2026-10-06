@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, Show, type JSX } from "solid-js";
+import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 
 function savedWidth() {
   try {
@@ -12,25 +12,33 @@ function savedWidth() {
 
 export function Sidepane(props: { open: boolean; children: JSX.Element }) {
   const [width, setWidth] = createSignal(savedWidth());
-  const [viewport, setViewport] = createSignal(window.innerWidth);
+  const [available, setAvailable] = createSignal(window.innerWidth);
   const [dragging, setDragging] = createSignal(false);
-  const maximum = () => Math.max(300, Math.floor(viewport() * .6));
-  const shownWidth = () => Math.min(maximum(), Math.max(300, width()));
+  const maximum = () => Math.max(0, Math.floor(available() * .6));
+  const minimum = () => Math.min(300, maximum());
+  const shownWidth = () => Math.min(maximum(), Math.max(minimum(), width()));
+  let pane: HTMLElement | undefined;
   let drag: { x: number; width: number; pointer: number } | undefined;
 
   const resize = (value: number) => {
-    const next = Math.round(Math.min(maximum(), Math.max(300, value)));
+    const next = Math.round(Math.min(maximum(), Math.max(minimum(), value)));
     setWidth(next);
 
     try { localStorage.setItem("piop-sidepane-width", String(next)); } catch {}
   };
 
-  const viewportChanged = () => setViewport(window.innerWidth);
-  window.addEventListener("resize", viewportChanged);
-  onCleanup(() => window.removeEventListener("resize", viewportChanged));
+  onMount(() => {
+    const container = pane?.parentElement;
 
-  return <aside id="plugin-sidepane" class="plugin-sidepane" hidden={!props.open} aria-label="Plugins" style={{ "--plugin-width": `${shownWidth()}px` }}>
-    <Show when={props.open}><div class="plugin-resizer" classList={{ dragging: dragging() }} role="separator" tabIndex={0} aria-label="Sidepane width" aria-orientation="vertical" aria-valuemin={300} aria-valuemax={maximum()} aria-valuenow={shownWidth()}
+    if (!container) return;
+    const measure = () => setAvailable(container.clientWidth);
+    const observer = new ResizeObserver(measure);
+    observer.observe(container); measure();
+    onCleanup(() => observer.disconnect());
+  });
+
+  return <aside ref={pane} id="plugin-sidepane" class="plugin-sidepane" hidden={!props.open} aria-label="Plugins" style={{ "--plugin-width": `${shownWidth()}px` }}>
+    <Show when={props.open}><div class="plugin-resizer" classList={{ dragging: dragging() }} role="separator" tabIndex={0} aria-label="Sidepane width" aria-orientation="vertical" aria-valuemin={minimum()} aria-valuemax={maximum()} aria-valuenow={shownWidth()}
       onPointerDown={event => {
         if (event.button !== 0 || !event.isPrimary) return;
         event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);

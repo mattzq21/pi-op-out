@@ -20,25 +20,48 @@ fn validate_delivery(packet: &Value) -> Result<()> {
     Ok(())
 }
 
+fn ensure_restart_access(name: &str) -> Result<()> {
+    if crate::daemon_restart::blocking() && !matches!(name, "prepare_daemon_restart" | "plugin_status" | "detach" | "shutdown") {
+        return Err("The daemon is restarting. Reconnect before retrying.".into());
+    }
+    Ok(())
+}
+
 impl Host {
     pub async fn handle(self: &Arc<Self>, packet: Value) -> Result<Value> {
         let runtime = text(&packet, "runtimeId");
         let name = kind(&packet);
+        ensure_restart_access(name)?;
         if name == "detach" {
             self.registry().attachments.remove(&runtime);
         }
         match name {
+            "prepare_daemon_restart" => return self.prepare_restart(packet).await,
             "agent_definitions" => return Ok(self.registry().agent_definitions.clone()),
-            "conversation_owner" => return self.ownership().owns(&text(&packet, "sessionId"), &text(&packet, "clientId")).map(Value::Bool),
-            "provider_auth" | "provider_auth_cancel_owner" | "plugin_call" | "plugin_status" | "restart_daemon" => return self.services.handle(packet).await,
-            "ownership_drained" => return Ok(self.ownership_drained(&packet)),
-            "conversation_mutation" => return self.begin_mutation(&packet).await,
-            "conversation_mutation_end" => return self.end_mutation(&packet),
+            "conversation_owner" | "ownership_drained" | "conversation_mutation" | "conversation_mutation_end" => return self.ownership_request(&packet).await,
+            "provider_auth" | "provider_auth_cancel_owner" | "plugin_call" | "plugin_status" => return self.services.handle(packet).await,
             "configure" | "attach" | "shutdown" => return self.lifecycle(packet).await,
             "retire" | "session_command" | "orchestration" => return self.conversation_request(packet).await,
             _ => {}
         }
         self.runtime_command(packet, &runtime).await
+    }
+
+    async fn ownership_request(&self, packet: &Value) -> Result<Value> {
+        match kind(packet) {
+            "conversation_owner" => self.ownership().owns(&text(packet, "sessionId"), &text(packet, "clientId")).map(Value::Bool),
+            "ownership_drained" => Ok(self.ownership_drained(packet)),
+            "conversation_mutation" => self.begin_mutation(packet).await,
+            _ => self.end_mutation(packet),
+        }
+    }
+
+    async fn prepare_restart(&self, packet: Value) -> Result<Value> {
+        let sessions: Vec<_> = self.registry().sessions.values().cloned().collect();
+        if sessions.iter().any(|session| session.busy(&Value::Null) || session.transient()) || !self.registry().deliveries.is_empty() {
+            return Err("Wait for active agents to finish before restarting the daemon".into());
+        }
+        self.services.handle(packet).await
     }
 
     async fn conversation_request(self: &Arc<Self>, packet: Value) -> Result<Value> {

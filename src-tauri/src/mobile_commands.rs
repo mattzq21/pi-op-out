@@ -23,6 +23,18 @@ pub(super) async fn dispatch_peer(app: AppHandle, owner: String, command: String
 }
 
 async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Value) -> Result<Value, String> {
+    if command == "daemon_restart_status" { return crate::daemon_restart::status(&argument::<String>(&args, "restartId")?); }
+    let state = app.state::<crate::daemon_restart::Runtime>();
+    if command == "restart_daemon" {
+        let _guard = state.gate.try_write().map_err(|_| "Wait for pending requests to finish before restarting the daemon")?;
+        return handle_restart_daemon(app.clone(), owner, args).await;
+    }
+    let _guard = state.gate.read().await;
+    if crate::daemon_restart::blocking() { return Err("The daemon is restarting. Reconnect before retrying.".into()); }
+    dispatch_command(app.clone(), owner, command, args).await
+}
+
+async fn dispatch_command(app: AppHandle, owner: String, command: String, args: Value) -> Result<Value, String> {
     if let Some(id) = args.get("runtimeId").and_then(Value::as_str) {
         crate::pi_runtime::ensure_runtime_owner(&app.state::<PiRuntime>(), id, &owner)?;
     }
@@ -39,7 +51,6 @@ type CommandHandler = fn(AppHandle, String, Value) -> CommandFuture;
 const COMMANDS: &[(&str, CommandHandler)] = &[
     ("plugin_call", handle_plugin_call),
     ("plugin_status", handle_plugin_status),
-    ("restart_daemon", handle_restart_daemon),
     ("shared_terminal", handle_shared_terminal),
     ("reassign_terminal", handle_reassign_terminal),
     ("dictation_configuration", handle_dictation_configuration),
@@ -159,7 +170,7 @@ fn handle_plugin_status(app: AppHandle, _owner: String, args: Value) -> CommandF
 
 fn handle_restart_daemon(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || plugins::dispatch(app, "restart_daemon", args)).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || crate::daemon_restart::prepare(app, args)).await.map_err(|error| error.to_string())?
     })
 }
 

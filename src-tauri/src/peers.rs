@@ -116,6 +116,7 @@ pub(crate) fn connect(app: &AppHandle, host_id: &str) -> Result<Arc<Connection>,
     let (daemon_id, reader) = peer_handshake(&mut child, stdout, &host, &diagnostics)?;
     let connection = Arc::new(Connection { daemon_id, prefix: format!("peer-{}:", Uuid::new_v4()), alive: AtomicBool::new(true), sequence: AtomicU64::new(1), child: Mutex::new(child), stdin: Mutex::new(stdin), pending: Mutex::new(HashMap::new()) });
     if let Some(existing) = install_connection(&state, host_id, host, &connection)? { return Ok(existing); }
+    let _ = app.emit("pi://plugins-changed", json!({"hostId":host_id,"_peer":true}));
     let reading = connection.clone(); let app = app.clone();
     thread::spawn(move || {
         for line in reader.lines().map_while(Result::ok) {

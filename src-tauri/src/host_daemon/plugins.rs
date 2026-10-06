@@ -80,21 +80,16 @@ impl Runtime {
         }
     }
 
-    async fn restore(&self, previous: &Self) -> Result<()> {
-        if let (Some(previous), Some(candidate)) = (&previous.chatgpt, &self.chatgpt) {
-            let tickets = previous.request(json!({"method":"plugin_checkpoint"})).await?;
-            candidate.request(json!({"method":"plugin_restore","tickets":tickets})).await?;
+    async fn restore(&self, tickets: Value) -> Result<()> {
+        if let Some(sdk) = &self.chatgpt {
+            sdk.request(json!({"method":"plugin_restore","tickets":tickets})).await?;
         }
         Ok(())
     }
 
-    async fn prepare_swap(&self, previous: &Self) -> Result<()> {
-        previous.drain().await?;
-        self.restore(previous).await?;
-        let configuration = Configuration { enabled: self.enabled.clone(), previous: previous.enabled.clone() };
-        tokio::task::spawn_blocking(move || {
-            crate::atomic_write_private(&configuration_path()?, &serde_json::to_vec(&configuration).map_err(|error| error.to_string())?)
-        }).await.map_err(|error| error.to_string())?
+    async fn restore_startup(&self) -> Result<()> {
+        if let Some(tickets) = crate::daemon_restart::startup_tickets() { self.restore(tickets).await?; }
+        Ok(())
     }
 }
 
@@ -130,6 +125,12 @@ fn configuration() -> Result<Configuration> {
     }
 }
 
+pub(crate) async fn validate_configuration(executable: &str, enabled: Vec<String>) -> Result<()> {
+    let runtime = Runtime::load(executable, enabled).await?;
+    runtime.shutdown().await;
+    Ok(())
+}
+
 pub(super) struct PluginService {
     executable: String,
     state: RwLock<Option<State>>,
@@ -159,38 +160,31 @@ impl PluginService {
                 }
             }
         };
+        if let Err(reason) = runtime.restore_startup().await { error = Some(reason); }
         *state = Some(State { runtime, revision: Uuid::new_v4().to_string(), error });
     }
 
     pub async fn handle(&self, packet: Value) -> Result<Value> {
         self.initialize().await;
-        if packet["type"] == "restart_daemon" { return self.restart(&packet).await; }
+        if packet["type"] == "prepare_daemon_restart" { return self.prepare_restart(&packet).await; }
         let state = self.state.read().await;
         let state = state.as_ref().ok_or("Plugins are unavailable")?;
         if packet["type"] == "plugin_status" { return Ok(state.status()); }
         state.runtime.call(&packet).await
     }
 
-    async fn restart(&self, packet: &Value) -> Result<Value> {
+    async fn prepare_restart(&self, packet: &Value) -> Result<Value> {
         let enabled: Vec<String> = serde_json::from_value(packet["enabled"].clone()).map_err(|error| error.to_string())?;
-        let mut state = self.state.write().await;
-        let current = state.as_mut().ok_or("Plugins are unavailable")?;
+        validate(&enabled)?;
+        let state = self.state.write().await;
+        let current = state.as_ref().ok_or("Plugins are unavailable")?;
         if packet["revision"].as_str() != Some(&current.revision) { return Err("Plugin setup changed in another client. Reload the plugin setup before restarting.".into()); }
-        let candidate = match Runtime::load(&self.executable, enabled).await {
-            Ok(runtime) => runtime,
-            Err(error) => { current.error = Some(format!("Restart failed; the previous plugins are still running. {error}")); return Ok(current.status()); }
+        current.runtime.drain().await?;
+        let tickets = match &current.runtime.chatgpt {
+            Some(sdk) => sdk.request(json!({"method":"plugin_checkpoint"})).await?,
+            None => json!([]),
         };
-        let result = candidate.prepare_swap(&current.runtime).await;
-        if let Err(error) = result {
-            candidate.shutdown().await;
-            current.error = Some(format!("Restart failed; the previous plugins are still running. {error}"));
-            return Ok(current.status());
-        }
-        let previous = std::mem::replace(&mut current.runtime, candidate);
-        current.revision = Uuid::new_v4().to_string();
-        current.error = None;
-        previous.shutdown().await;
-        Ok(current.status())
+        Ok(json!({"enabled":enabled,"previous":current.runtime.enabled,"tickets":tickets}))
     }
 
     pub async fn shutdown(&self) {

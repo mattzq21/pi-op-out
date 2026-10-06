@@ -168,7 +168,7 @@ function isResponding(chat: RegularChat | undefined) { return chat?.status === "
 interface ChatGptSubmissionResult { chat: RegularChat; cancellationError?: string }
 
 async function submitChatGpt(call: ChatGptCall, input: Record<string, import("zod").JSONType | undefined>, source: ChatGptContextSource | undefined, signal: AbortSignal): Promise<ChatGptSubmissionResult> {
-  const context = source ? await chatGptContext(source) : undefined;
+  const context = source ? await chatGptContext(source, signal) : undefined;
   signal.throwIfAborted();
   const p = chatGptPrepareToken();
   const prepared = await call("prepare", chatRequirementsSchema, { p });

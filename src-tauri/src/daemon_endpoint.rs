@@ -19,6 +19,14 @@ pub(crate) fn read() -> Result<Endpoint, String> {
     serde_json::from_slice(&fs::read(path()?).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
 }
 
+pub(crate) fn restart_active() -> bool {
+    let Ok(directory) = directory() else { return false; };
+    let Ok(bytes) = fs::read(directory.join("restart-status.json")) else { return false; };
+    let Ok(status) = serde_json::from_slice::<Value>(&bytes) else { return false; };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    matches!(status["phase"].as_str(), Some("preparing" | "armed" | "restarting")) && status["expiresAt"].as_u64().unwrap_or(0) > now
+}
+
 #[cfg(not(feature = "desktop"))]
 pub(crate) fn identity() -> Result<String, String> {
     let path = directory()?.join("daemon-id");

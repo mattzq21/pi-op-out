@@ -15,6 +15,7 @@ pub(crate) struct DesktopDaemon {
 pub(crate) struct Connection {
     window: String,
     alive: AtomicBool,
+    restarting: AtomicBool,
     sequence: AtomicU64,
     outgoing: async_mpsc::UnboundedSender<Message>,
     pending: Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>,
@@ -61,6 +62,7 @@ impl Connection {
     }
 
     fn receive_event(&self, app: &AppHandle, event: &str, payload: &Value) {
+            if event == "pi://daemon-restarting" && payload["hostId"] == "local" { self.restarting.store(true, Ordering::SeqCst); }
             if event == "pi://event" && payload["type"] == "terminal_exit" {
                 if let (Some(id), Ok(mut terminals)) = (payload["terminalId"].as_str(), self.terminals.lock()) { terminals.remove(id); }
             }
@@ -96,6 +98,7 @@ impl DesktopDaemon {
     pub(crate) async fn connect(&self, app: &AppHandle, window: &str) -> Result<Arc<Connection>, String> {
         let mut connections = self.connections.lock().await;
         if let Some(connection) = connections.get(window).filter(|connection| connection.alive.load(Ordering::SeqCst)) { return Ok(connection.clone()); }
+        let reconnecting = connections.contains_key(window);
         let _startup = self.startup.lock().await;
         let socket = match configured_endpoint()? {
             Some(endpoint) => open(&endpoint).await?,
@@ -103,10 +106,11 @@ impl DesktopDaemon {
         };
         if app.get_webview_window(window).is_none() { return Err("The client window was closed".into()); }
         let (outgoing, incoming) = async_mpsc::unbounded_channel();
-        let connection = Arc::new(Connection { window: window.into(), alive: AtomicBool::new(true), sequence: AtomicU64::new(1), outgoing, pending: Mutex::new(HashMap::new()), terminals: Mutex::new(std::collections::HashSet::new()) });
+        let connection = Arc::new(Connection { window: window.into(), alive: AtomicBool::new(true), restarting: AtomicBool::new(false), sequence: AtomicU64::new(1), outgoing, pending: Mutex::new(HashMap::new()), terminals: Mutex::new(std::collections::HashSet::new()) });
         connections.insert(window.into(), connection.clone());
-        let reader = connection.clone(); let app = app.clone();
-        tokio::spawn(run_connection(socket, incoming, reader, app));
+        let reader = connection.clone();
+        tokio::spawn(run_connection(socket, incoming, reader, app.clone()));
+        if reconnecting { let _ = app.emit_to(window, "pi://event", json!({"type":"connection_restored"})); }
         Ok(connection)
     }
 
@@ -149,6 +153,18 @@ async fn run_connection(socket: Socket, mut incoming: async_mpsc::UnboundedRecei
     }
     eprintln!("Piop daemon connection closed: {reason}");
     reader.disconnected(&app, &reason);
+    if reader.restarting.load(Ordering::SeqCst) { reconnect_after_restart(app, reader.window.clone()); }
+}
+
+fn reconnect_after_restart(app: AppHandle, window: String) {
+    tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+        while tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if app.get_webview_window(&window).is_none() { break; }
+            if app.state::<DesktopDaemon>().connect(&app, &window).await.is_ok() { break; }
+        }
+    });
 }
 
 type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -195,6 +211,10 @@ async fn existing_local_socket() -> Result<Option<Socket>, String> {
 
 async fn local_socket(app: &AppHandle) -> Result<Socket, String> {
     if let Some(socket) = existing_local_socket().await? { return Ok(socket); }
+    while daemon_endpoint::restart_active() {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if let Some(socket) = existing_local_socket().await? { return Ok(socket); }
+    }
     #[cfg(debug_assertions)]
     tokio::task::spawn_blocking(ensure_development_daemon).await.map_err(|error| error.to_string())??;
     let executable = daemon_executable(app)?;

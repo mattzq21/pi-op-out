@@ -15,6 +15,8 @@ mod tool_payload;
 mod tool_failures;
 mod worker;
 
+pub(crate) use plugins::validate_configuration;
+
 use futures_util::FutureExt;
 use serde_json::{json, Value};
 use std::{path::PathBuf, sync::mpsc, thread};

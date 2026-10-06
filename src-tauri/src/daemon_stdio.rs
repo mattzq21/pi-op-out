@@ -58,6 +58,10 @@ fn start_daemon(mode: &str) -> Result<PathBuf, String> {
 
 async fn connect() -> Result<(Socket, Value), String> {
     if let Ok(socket) = open("peer").await { return Ok(socket); }
+    while daemon_endpoint::restart_active() {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if let Ok(socket) = open("peer").await { return Ok(socket); }
+    }
     let log_path = start_daemon("--exit-on-disconnect")?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let mut last_error = String::new();
@@ -70,6 +74,10 @@ async fn connect() -> Result<(Socket, Value), String> {
 
 async fn control_socket(action: &str) -> Result<Option<Socket>, String> {
     if let Ok((socket, _)) = open("control").await { return Ok(Some(socket)); }
+    while daemon_endpoint::restart_active() {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if let Ok((socket, _)) = open("control").await { return Ok(Some(socket)); }
+    }
     if action == "stop" && daemon_endpoint::claim().is_ok() { return Ok(None); }
     if action == "start" { start_daemon("--serve")?; }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);

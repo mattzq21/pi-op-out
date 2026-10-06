@@ -47,10 +47,30 @@ export async function refreshPlugins(host: string) {
 export async function restartPlugins(host: string, enabled: string[], revision: string) {
   await flushPlugins(host);
   await Promise.all(plugins.flatMap(plugin => enabled.includes(plugin.id) ? [plugin.load()] : []));
-  const request = nextRequest(host);
-  const status = await invoke("restart_daemon", { hostId: host, enabled, revision }, pluginStatusSchema);
-  acceptPluginStatus(host, status, request);
-  setPluginError(host);
+  const { restartId } = await invoke("restart_daemon", { hostId: host, enabled, revision }, z.object({ restartId: z.string() }));
 
-  return status;
+  if (host === "local") window.dispatchEvent(new Event("piop-daemon-restarting"));
+  const result = await waitForRestart(host, restartId);
+  const status = await refreshPlugins(host);
+  const error = result.error ?? status.error;
+  setPluginError(host, error ?? undefined);
+
+  return { ...status, error };
+}
+
+const restartStatusSchema = z.object({ phase: z.string(), error: z.string().nullable() });
+
+async function waitForRestart(host: string, restartId: string) {
+  const deadline = Date.now() + 240000;
+
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const result = await invoke("daemon_restart_status", { hostId: host, restartId }, restartStatusSchema).catch(() => undefined);
+
+    if (result?.phase === "failed") throw new Error(result.error ?? "Daemon restart failed");
+
+    if (result?.phase === "complete" || result?.phase === "rolled_back") return result;
+  }
+
+  throw new Error("Could not confirm the daemon restart. Reconnect and reload the plugin setup.");
 }

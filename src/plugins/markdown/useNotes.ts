@@ -45,6 +45,7 @@ export function useChatNote(target: ChatNoteTarget) {
   const dirty = () => !!document() && content() !== document()?.content;
   let disposed = false;
   let inFlight: Promise<boolean> | undefined;
+  const pendingWork = () => !!inFlight || dirty();
   let checking = false;
   const request = (action: string, fields: Record<string, string> = {}) => invoke("plugin_call", { hostId: target.hostId, pluginId: "markdown", request: { sessionId: target.sessionId, action, ...fields } }, noteSchema);
 
@@ -139,7 +140,7 @@ export function useChatNote(target: ChatNoteTarget) {
   };
 
   onCleanup(registerPluginFlush(target.hostId, async () => {
-    if (dirty() && !await save()) throw new Error("The note could not be saved. Retry saving it before restarting plugins.");
+    if (pendingWork() && !await save()) throw new Error("The note could not be saved. Retry saving it before restarting plugins.");
   }));
 
   const receiveUpdate = (next: NoteDocument, current: NoteDocument | undefined) => {
@@ -185,7 +186,7 @@ export function useChatNote(target: ChatNoteTarget) {
   const resume = () => { if (!window.document.hidden) void sync(); };
 
   const beforeUnload = (event: BeforeUnloadEvent) => {
-    if (!dirty()) return;
+    if (!pendingWork()) return;
     event.preventDefault();
     event.returnValue = "";
     void save();

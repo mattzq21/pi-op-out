@@ -49,6 +49,7 @@ mod headless {
                 ($kind:ty) => { states.insert(TypeId::of::<$kind>(), Box::new(<$kind>::default())); };
             }
             state!(crate::daemon_clients::DaemonClients);
+            state!(crate::daemon_restart::Runtime);
             state!(crate::PiRuntime);
             state!(crate::TerminalRuntime);
             state!(crate::SessionIndexRuntime);

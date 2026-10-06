@@ -19,7 +19,7 @@ pub(crate) struct DaemonClients(Arc<Lifetime>);
 impl Default for DaemonClients {
     fn default() -> Self {
         Self(Arc::new(Lifetime {
-            clients: Mutex::new(Clients { automatic: std::env::args().any(|argument| argument == "--exit-on-disconnect"), ..Clients::default() }),
+            clients: Mutex::new(Clients { automatic: std::env::args().any(|argument| argument == "--exit-on-disconnect") || std::env::var_os("PIOP_RESTART_AUTOMATIC").is_some(), ..Clients::default() }),
             stopped: Notify::new(),
         }))
     }
@@ -28,6 +28,10 @@ impl Default for DaemonClients {
 pub(crate) struct Client(Arc<Lifetime>);
 
 impl DaemonClients {
+    pub(crate) fn automatic(&self) -> bool {
+        self.0.clients.lock().unwrap_or_else(|error| error.into_inner()).automatic
+    }
+
     pub(crate) fn persist(&self) -> Result<(), String> {
         let mut clients = self.0.clients.lock().map_err(|error| error.to_string())?;
         if clients.closing { return Err("Piop daemon is shutting down".into()); }

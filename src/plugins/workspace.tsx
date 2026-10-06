@@ -31,6 +31,14 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
     void refreshPlugins(target).catch(reason => setPluginError(target, String(reason)));
   }, z.object({ hostId: z.string().optional() }));
 
+  const reconnected = listen("pi://event", ({ payload }) => {
+    if (payload.type !== "connection_restored") return;
+    const target = host();
+    void refreshPlugins(target).catch(reason => setPluginError(target, String(reason)));
+  }, z.object({ type: z.string().optional() }).passthrough());
+
+  onCleanup(() => { void reconnected.then(stop => stop()); });
+
   createEffect(() => {
     const target = host();
     const snapshot = status();

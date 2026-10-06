@@ -29,7 +29,7 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
     const current = status();
 
     if (!current || busy()) return;
-    setBusy(true); setError(undefined); setMessage("Restarting… Any active ChatGPT response will finish first.");
+    setBusy(true); setError(undefined); setMessage("Restarting the daemon and reconnecting…");
 
     try {
       const result = await restartPlugins(props.hostId, enabled(), current.revision);
