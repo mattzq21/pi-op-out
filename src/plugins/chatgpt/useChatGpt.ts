@@ -6,7 +6,7 @@ import { invoke } from "../../lib/platform";
 import { chatGptContext, type ChatGptContextSource } from "./context";
 import { chatGptPrepareToken, solveChatGptRequirements } from "./chatGptIntegrity";
 import { createModelSelection, type ChatModel } from "./modelSelection";
-import { ownershipSchema } from "../ownership";
+import { ownershipSchema, type PluginOwnership } from "../ownership";
 
 export type { RegularChat } from "./chatSchemas";
 
@@ -34,6 +34,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   let leaseTimer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
   let submission: AbortController | undefined;
+  let stopOperation: symbol | undefined;
   let selection = 0;
   let pending: { key: string; id: string } | undefined;
   const call = <S extends z.ZodType,>(action: string, schema: S, args: Record<string, import("zod").JSONType | undefined> = {}) => invoke("plugin_call", { hostId: "local", pluginId: "chatgpt", request: { ...args, action, providerId: provider, leaseId } }, schema);
@@ -58,7 +59,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   };
 
   const fresh = () => {
-    desiredChat = undefined; submission?.abort(); submission = undefined; setBusy(false);
+    desiredChat = undefined; submission?.abort(); submission = undefined; stopOperation = undefined; setBusy(false);
     release();
     selection++; setLoading(false); setDraftId(crypto.randomUUID()); setChat(undefined); setPrompt(""); setError(undefined); setCancellationError(undefined);
   };
@@ -79,6 +80,18 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     setChats(previous => [value, ...previous.filter(item => item.id !== value.id)].sort((a, b) => b.updatedAt - a.updatedAt));
   };
 
+  const receiveChat = (value: RegularChat, acquired = false) => {
+    const previous = chat();
+    const wasOwned = hasLease(previous);
+
+    if (previous && value.updatedAt < previous.updatedAt) return;
+
+    if (!wasOwned || value.updatedAt !== previous?.updatedAt) modelSelection.restore(value);
+
+    if (!acquired && !wasOwned) value = observingChat(value);
+    setChat(value); remember(value);
+  };
+
   const select = async (id: string) => {
     release();
     desiredChat = id;
@@ -97,18 +110,19 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   createDependencyEffect(() => {
     const id = chat()?.id;
 
-    if (!open() || !id || !responding()) return;
+    if (!open() || !id || loading()) return;
     let cancelled = false; let timer: ReturnType<typeof setTimeout>;
     const current = generation;
+    const selected = selection;
 
     const poll = async () => {
       try {
         const value = await call("read", regularChatSchema, { chatId: id });
 
-        if (cancelled || current !== generation || chat()?.id !== id) return;
-        setChat(value); remember(value); setError(undefined);
+        if (cancelled || current !== generation || selected !== selection) return;
+        receiveChat(value); setError(undefined);
 
-        if (isResponding(value)) timer = setTimeout(() => void poll(), 400);
+        timer = setTimeout(() => void poll(), isResponding(value) ? 400 : 1000);
       } catch (reason) {
         if (cancelled || current !== generation) return;
         setError(reason instanceof Error ? reason.message : String(reason)); timer = setTimeout(() => void poll(), 2000);
@@ -118,7 +132,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     timer = setTimeout(() => void poll(), 200);
 
     return () => { cancelled = true; clearTimeout(timer); };
-  }, () => [chat()?.id, responding(), open()]);
+  }, () => [chat()?.id, open(), loading()]);
 
   const editable = () => !chat() || chat()?.ownership?.owned === true;
   const canSend = () => editable() && !busy() && !loading() && models().length > 0 && !responding() && Boolean(prompt().trim());
@@ -150,7 +164,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     const submissionKey = JSON.stringify([provider, id, text, chosenModel, sourceIdentity(capturedSource)]);
     const attemptId = submissionId(submissionKey);
     const sendCall: ChatGptCall = call;
-    const controller = new AbortController(); submission = controller;
+    const controller = new AbortController(); submission = controller; stopOperation = undefined;
     setBusy(true); setError(undefined); setCancellationError(undefined);
 
     try {
@@ -175,10 +189,12 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     } finally { finishSubmission(current, controller); }
   };
 
-  const finishStop = (current: number) => { if (generation === current) setBusy(false); };
+  const currentStop = (current: number, operation: symbol) => generation === current && stopOperation === operation;
 
-  const stopped = (value: RegularChat, current: number) => {
-    if (generation === current && chat()?.id === value.id) { setChat(value); remember(value); }
+  const finishStop = (current: number, operation: symbol) => { if (currentStop(current, operation)) { stopOperation = undefined; setBusy(false); } };
+
+  const stopped = (value: RegularChat, current: number, operation: symbol) => {
+    if (currentStop(current, operation) && chat()?.id === value.id) { setChat(value); remember(value); }
   };
 
   const stop = async () => {
@@ -189,12 +205,29 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     const id = chat()?.id;
 
     if (!id || !editable()) return;
+    const operation = Symbol(); stopOperation = operation;
     const current = generation; setError(undefined); setCancellationError(undefined); setBusy(true);
     setChat(value => value && { ...value, status: "stopping" });
 
-    try { stopped(await call("stop", regularChatSchema, { chatId: id }), current); }
-    catch (reason) { if (generation === current) setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { finishStop(current); }
+    try { stopped(await call("stop", regularChatSchema, { chatId: id }), current, operation); }
+    catch (reason) { if (currentStop(current, operation)) setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { finishStop(current, operation); }
+  };
+
+  const refreshLease = async (id: string) => {
+    const ownership = await claim(id);
+    const refreshed = chat()?.id === id ? await call("read", regularChatSchema, { chatId: id }) : undefined;
+
+    return { ownership, refreshed };
+  };
+
+  const receiveLease = (id: string, ownership: PluginOwnership, refreshed: RegularChat | undefined) => {
+    if (!ownership.owned) setChat(value => value?.id === id ? { ...value, ownership } : value);
+
+    if (refreshed) receiveChat(refreshed, ownership.owned);
+    clearTimeout(leaseTimer);
+
+    if (ownership.owned) leaseTimer = setTimeout(() => setChat(value => value?.id === id ? { ...value, ownership: { owned: false, available: false } } : value), 25000);
   };
 
   createDependencyEffect(() => {
@@ -207,19 +240,17 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 
     const renew = async () => {
       const id = desiredChat;
+      const selected = selection;
 
       try {
         if (id) {
-          const ownership = await claim(id);
+          const { ownership, refreshed } = await refreshLease(id);
 
-          if (cancelled || desiredChat !== id) { if (!busy() && !responding()) release(id);
+          if (cancelled || desiredChat !== id || selected !== selection) { if (!busy() && !responding()) release(id);
 
           return; }
 
-          setChat(value => value?.id === id ? { ...value, ownership } : value);
-          clearTimeout(leaseTimer);
-
-          if (ownership.owned) leaseTimer = setTimeout(() => setChat(value => value?.id === id ? { ...value, ownership: { owned: false, available: false } } : value), 25000);
+          receiveLease(id, ownership, refreshed);
         }
       } catch {}
       finally { if (!cancelled) timer = setTimeout(() => void renew(), 8000); }
@@ -240,6 +271,10 @@ type ChatGptCall = <S extends z.ZodType>(action: string, schema: S, args: Record
 
 function isResponding(chat: RegularChat | undefined) { return chat?.status === "streaming" || chat?.status === "stopping"; }
 
+function hasLease(chat: RegularChat | undefined) { return chat?.ownership?.owned === true; }
+
+function observingChat(chat: RegularChat): RegularChat { return { ...chat, ownership: { owned: false, available: chat.ownership?.available ?? false } }; }
+
 interface ChatGptSubmissionResult { chat: RegularChat; cancellationError?: string }
 
 async function submitChatGpt(call: ChatGptCall, input: Record<string, import("zod").JSONType | undefined>, source: ChatGptContextSource | undefined, signal: AbortSignal): Promise<ChatGptSubmissionResult> {
@@ -249,6 +284,11 @@ async function submitChatGpt(call: ChatGptCall, input: Record<string, import("zo
   const prepared = await call("prepare", chatRequirementsSchema, { p });
   signal.throwIfAborted();
   const integrity = await solveChatGptRequirements(prepared, p, signal);
+  signal.throwIfAborted();
+  const ownership = await call("claim", ownershipSchema, { chatId: input.chatId });
+
+  if (!ownership.owned) throw new Error("Another client holds this chat's editing lease.");
+  signal.throwIfAborted();
   let value: RegularChat;
 
   try {

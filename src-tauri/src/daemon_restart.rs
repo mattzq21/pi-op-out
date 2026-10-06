@@ -105,10 +105,19 @@ pub(crate) fn prepare(app: AppHandle, mut args: Value) -> Result<Value, String> 
     let daemon = crate::plugins::connection(&app)?;
     if PREPARING.swap(true, std::sync::atomic::Ordering::SeqCst) { return Err("A daemon restart is already being prepared".into()); }
     let _preparation = Preparation;
+    crate::peers::ensure_restart_safe(&app)?;
     args["type"] = json!("prepare_daemon_restart");
     let prepared = daemon.request(args)?;
     let plan = make_plan(&app, prepared)?;
     prepare_handoff(&plan)
+}
+
+pub(crate) fn ensure_local_idle(app: &AppHandle) -> Result<(), String> {
+    if !app.state::<crate::TerminalRuntime>().working_directories("local")?.is_empty() { return Err("Close running terminals before restarting the daemon".into()); }
+    if crate::plugins::connection(app)?.request(json!({"type":"check_daemon_idle"}))? != true {
+        return Err("Wait for active plugins to finish before restarting the daemon".into());
+    }
+    Ok(())
 }
 
 fn prepare_handoff(plan: &Plan) -> Result<Value, String> {

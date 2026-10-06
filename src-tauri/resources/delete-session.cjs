@@ -171,6 +171,7 @@ async function main() {
       const entries = trace.body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
       const header = entries[0];
       validateHeader(header, request);
+      await appendConversationNote(files, header, target);
       const directory = await archivedDirectory(source, header, target, selected);
       if (directory && !files.some(saved => saved.file === directory.file)) files.push(directory);
       for (const repository of await snapshotRefs(entries, header)) {
@@ -240,6 +241,15 @@ async function cleanupCommitted(root) {
       await fs.rm(directory, { recursive: true, force: true });
     }
   } catch (error) { console.error(`Deletion committed; could not clean up ${root}: ${error.message}`); }
+}
+
+async function appendConversationNote(files, header, target) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)) return undefined;
+  const storage = target.root ? path.dirname(await fs.realpath(target.root)) : path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
+
+  const note = await readFile(path.join(storage, "notes", "chats", `${header.id.toLowerCase()}.md`), true);
+
+  if (note && !files.some(saved => saved.file === note.file)) files.push(note);
 }
 
 async function archivedDirectoryMetadata(directory) {

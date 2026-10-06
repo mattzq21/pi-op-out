@@ -319,7 +319,8 @@ fn delete_session_targets(runtime: &PiRuntime, targets: &[serde_json::Value], ho
         command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&arguments))));
         command
     };
-    run_session_deletion(&mut command)
+    if host_id == "local" { crate::host_supervisor::with_note_deletion(|| run_session_deletion(&mut command)) }
+    else { run_session_deletion(&mut command) }
 }
 
 pub(super) fn run_session_deletion(command: &mut Command) -> Result<(), String> {

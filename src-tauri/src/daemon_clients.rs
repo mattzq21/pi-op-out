@@ -51,16 +51,41 @@ impl DaemonClients {
         Ok(Client(self.0.clone()))
     }
 
-    pub(crate) async fn wait_for_shutdown(&self) {
+    pub(crate) async fn wait_for_shutdown(&self, app: crate::platform::AppHandle) {
         tokio::select! {
-            _ = self.0.stopped.notified() => return,
+            _ = self.0.stopped.notified() => {},
             _ = tokio::time::sleep(Duration::from_secs(30)) => {},
         }
-        {
-            let mut clients = self.0.clients.lock().unwrap_or_else(|error| error.into_inner());
-            if clients.automatic && clients.count == 0 { clients.closing = true; return; }
+        loop {
+            if self.closing() { return; }
+            if self.unattended() {
+                let checking = app.clone();
+                let idle = tokio::select! {
+                    result = tokio::task::spawn_blocking(move || crate::daemon_restart::ensure_local_idle(&checking)) => result.is_ok_and(|result| result.is_ok()),
+                    _ = self.0.stopped.notified() => continue,
+                };
+                if idle && self.close_if_unattended() { return; }
+            }
+            tokio::select! {
+                _ = self.0.stopped.notified() => {},
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {},
+            }
         }
-        self.0.stopped.notified().await;
+    }
+
+    fn closing(&self) -> bool {
+        self.0.clients.lock().unwrap_or_else(|error| error.into_inner()).closing
+    }
+
+    fn unattended(&self) -> bool {
+        let clients = self.0.clients.lock().unwrap_or_else(|error| error.into_inner());
+        clients.automatic && clients.count == 0
+    }
+
+    fn close_if_unattended(&self) -> bool {
+        let mut clients = self.0.clients.lock().unwrap_or_else(|error| error.into_inner());
+        if clients.automatic && clients.count == 0 { clients.closing = true; return true; }
+        false
     }
 }
 
@@ -69,7 +94,6 @@ impl Drop for Client {
         let mut clients = self.0.clients.lock().unwrap_or_else(|error| error.into_inner());
         clients.count -= 1;
         if clients.automatic && clients.count == 0 {
-            clients.closing = true;
             self.0.stopped.notify_one();
         }
     }

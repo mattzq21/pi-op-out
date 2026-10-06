@@ -24,6 +24,9 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   const [content, setContent] = createSignal("");
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
+  const [leaseValid, setLeaseValid] = createSignal(false);
+  const [flushing, setFlushing] = createSignal(false);
+  const [unconfirmed, setUnconfirmed] = createSignal<{ content: string; token: string }>();
   const [readError, setReadError] = createSignal("");
   const [saveError, setSaveError] = createSignal("");
   const error = () => readError() || saveError();
@@ -34,8 +37,8 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   let inFlight: Promise<boolean> | undefined;
   let operations = Promise.resolve();
   let checking = false;
-  const dirty = () => !!document() && content() !== document()?.content;
-  const editable = () => visible() && !loading() && ownership().owned;
+  const dirty = () => !!document() && (!!unconfirmed() || content() !== document()?.content);
+  const editable = () => visible() && !loading() && !flushing() && leaseValid() && ownership().owned;
   const pendingWork = () => !!inFlight || dirty();
 
   try { localStorage.removeItem("piop-chat-note:" + JSON.stringify([target.hostId, target.sessionId])); } catch { }
@@ -61,14 +64,16 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
     generation++;
     clearTimeout(leaseTimer);
     setOwnership(noOwnership);
+    setLeaseValid(false); setUnconfirmed(undefined);
     setContent(document()?.content ?? "");
   };
 
   const updateOwnership = (value: NoteOwnership) => {
     clearTimeout(leaseTimer);
     setOwnership(value);
+    setLeaseValid(value.owned);
 
-    if (value.owned && !disposed) leaseTimer = setTimeout(() => { relinquish(); void sync(); }, 25000);
+    if (value.owned && !disposed) leaseTimer = setTimeout(() => { setLeaseValid(false); void sync(); }, 25000);
   };
 
   const selectDocument = (next: NoteDocument) => {
@@ -94,10 +99,11 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
     const current = generation;
 
     try {
-      const next = await request("read");
+      const next = await readCurrent();
 
       if (disposed || current !== generation) return;
-      selectDocument(next);
+      setReadError("");
+      receiveUpdate(next);
 
       if (!next.ownership.owned) setSaveError("");
     } catch (reason) { if (!disposed && current === generation) setReadError(reason instanceof Error ? reason.message : String(reason)); }
@@ -108,10 +114,15 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
     setSaving(true);
 
     try {
+      if (!leaseValid()) await refreshAfterFailure();
+
+      if (!leaseValid()) return !dirty();
+
       while (dirty() && ownership().owned) {
         const note = required(document());
         const body = content();
         const leaseToken = required(ownership().token);
+        setUnconfirmed({ content: body, token: leaseToken });
         const saved = await request("save", { content: body, version: note.version, leaseToken });
 
         if (current !== generation) return true;
@@ -120,7 +131,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
 
         return true; }
 
-        setDocument(saved); updateOwnership(saved.ownership);
+        setUnconfirmed(undefined); setDocument(saved); updateOwnership(saved.ownership);
       }
 
       setSaveError("");
@@ -128,11 +139,11 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
       return !dirty();
     } catch (reason) {
       if (current !== generation) return true;
-      relinquish();
+      setLeaseValid(false);
       setSaveError(reason instanceof Error ? reason.message : String(reason));
       await refreshAfterFailure();
 
-      return false;
+      return !dirty();
     } finally { setSaving(false); }
   };
 
@@ -159,17 +170,23 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   };
 
   onCleanup(registerPluginFlush(target.hostId, async () => {
-    if (pendingWork() && !await save()) throw new Error("The note could not be saved. Check the note before restarting plugins.");
+    setFlushing(true);
+
+    try {
+      if (pendingWork() && !await save()) throw new Error("The note could not be saved. Retry saving before disconnecting or restarting plugins.");
+    } finally { setFlushing(false); }
   }));
 
+  const confirmedSave = (next: NoteDocument) => unconfirmed()?.token === next.ownership.token && unconfirmed()?.content === next.content;
+
   const receiveUpdate = (next: NoteDocument) => {
-    if (next.ownership.token !== ownership().token || next.version !== document()?.version) {
+    if (next.ownership.token !== ownership().token || next.version !== document()?.version && !confirmedSave(next)) {
       relinquish(); selectDocument(next); setSaveError("");
 
       return;
     }
 
-    setDocument(next); updateOwnership(next.ownership);
+    setUnconfirmed(undefined); setDocument(next); updateOwnership(next.ownership);
   };
 
   const syncUnavailable = () => disposed || loading() || !!inFlight;
@@ -177,7 +194,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   const readCurrent = () => {
     const leaseToken = ownership().token;
 
-    return visible() && leaseToken ? request("renew", { leaseToken }) : request("read");
+    return (visible() || dirty()) && leaseToken ? request("renew", { leaseToken }) : request("read");
   };
 
   const sync = async () => {
@@ -198,7 +215,8 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
 
   const release = async () => {
     if (!ownership().owned && !inFlight) return;
-    await save();
+
+    if (!await save()) return;
 
     if (!disposed && visible()) return;
     const leaseToken = ownership().token;
@@ -215,11 +233,21 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   };
 
   const takeControl = () => load("takeover");
-  const retry = () => load("read");
+
+  const retry = async () => {
+    if (!document()) { await load("read");
+
+    return; }
+
+    await sync();
+
+    if (dirty()) await save();
+  };
+
   const resume = () => { if (!window.document.hidden) void sync(); };
 
   const show = async () => {
-    await save();
+    if (!await save()) return;
 
     if (visible() && !disposed && !loading()) await load("claim");
   };

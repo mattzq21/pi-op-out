@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 mod markdown;
 
+pub(crate) use markdown::with_note_deletion;
+
 const BUNDLED: &[&str] = &["chatgpt", "markdown"];
 const CHATGPT_SOURCE: &str = concat!(
     include_str!("../../resources/chatgpt-stream.mjs"), "\n",
@@ -165,12 +167,21 @@ impl PluginService {
     }
 
     pub async fn handle(&self, packet: Value) -> Result<Value> {
+        if packet["type"] == "plugin_idle" { return self.idle().await; }
         self.initialize().await;
         if packet["type"] == "prepare_daemon_restart" { return self.prepare_restart(&packet).await; }
         let state = self.state.read().await;
         let state = state.as_ref().ok_or("Plugins are unavailable")?;
         if packet["type"] == "plugin_status" { return Ok(state.status()); }
         state.runtime.call(&packet).await
+    }
+
+    async fn idle(&self) -> Result<Value> {
+        let state = self.state.read().await;
+        match state.as_ref().and_then(|state| state.runtime.chatgpt.as_ref()) {
+            Some(sdk) => sdk.request(json!({"method":"plugin_idle"})).await,
+            None => Ok(json!(true)),
+        }
     }
 
     async fn prepare_restart(&self, packet: &Value) -> Result<Value> {

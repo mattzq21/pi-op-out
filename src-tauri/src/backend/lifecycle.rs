@@ -27,25 +27,26 @@ async fn serve_daemon() -> Result<(), String> {
     }).await.map_err(|error| error.to_string())??;
     mobile::start(app.clone())?;
     crate::daemon_restart::ready()?;
-    wait_for_shutdown(&app.state::<daemon_clients::DaemonClients>()).await?;
+    wait_for_shutdown(&app).await?;
     tokio::task::spawn_blocking(move || shutdown_backend(&app)).await.map_err(|error| error.to_string())?;
     Ok(())
 }
 
-async fn wait_for_shutdown(clients: &daemon_clients::DaemonClients) -> Result<(), String> {
+async fn wait_for_shutdown(app: &AppHandle) -> Result<(), String> {
+    let clients = app.state::<daemon_clients::DaemonClients>();
     #[cfg(unix)]
     {
         let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(|error| error.to_string())?;
         tokio::select! {
             result = tokio::signal::ctrl_c() => result.map_err(|error| error.to_string())?,
             _ = terminate.recv() => {},
-            _ = clients.wait_for_shutdown() => {},
+            _ = clients.wait_for_shutdown(app.clone()) => {},
         }
     }
     #[cfg(not(unix))]
     tokio::select! {
         result = tokio::signal::ctrl_c() => result.map_err(|error| error.to_string())?,
-        _ = clients.wait_for_shutdown() => {},
+        _ = clients.wait_for_shutdown(app.clone()) => {},
     }
     Ok(())
 }

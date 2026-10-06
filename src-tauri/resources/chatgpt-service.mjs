@@ -65,10 +65,19 @@ async function chatGptOwnedOperation(identity, request, run) {
 
 export function chatGptIdle() { return !chatGptActive.size && !chatGptStopping.size && !chatGptOperations.size && !chatGptWrites.size; }
 
-export function chatGptTicketSnapshot() { return [...chatGptTickets].filter(([_id, ticket]) => ticket.expires > Date.now()); }
+export function chatGptTicketSnapshot() {
+  return {
+    tickets: [...chatGptTickets].filter(([_id, ticket]) => ticket.expires > Date.now()),
+    leases: [...chatGptLeases].flatMap(([id, lease]) => chatGptLeaseLive(id, lease) ? [[id, { owner: lease.owner }]] : []),
+  };
+}
 
-export function chatGptRestore(tickets) {
+export function chatGptRestore(snapshot) {
+  const tickets = Array.isArray(snapshot) ? snapshot : snapshot.tickets;
+
   for (const [id, ticket] of tickets) if (ticket.expires > Date.now()) chatGptTickets.set(id, ticket);
+
+  for (const [id, lease] of snapshot.leases ?? []) chatGptLeases.set(id, { owner: lease.owner, busy: 0, expires: Date.now() + 30000 });
 }
 
 function chatGptId(value) {

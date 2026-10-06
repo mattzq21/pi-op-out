@@ -13,3 +13,7 @@ export function registerPluginFlush(host: string, flush: () => Promise<void>) {
 export async function flushPlugins(host: string) {
   await Promise.all([...(flushers.get(host) ?? [])].map(flush => flush()));
 }
+
+export async function flushAllPlugins() {
+  await Promise.all([...flushers.keys()].map(flushPlugins));
+}

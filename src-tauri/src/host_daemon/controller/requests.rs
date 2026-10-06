@@ -36,7 +36,7 @@ impl Host {
             self.registry().attachments.remove(&runtime);
         }
         match name {
-            "prepare_daemon_restart" => return self.prepare_restart(packet).await,
+            "check_daemon_idle" | "prepare_daemon_restart" => return self.restart_request(packet).await,
             "agent_definitions" => return Ok(self.registry().agent_definitions.clone()),
             "conversation_owner" | "ownership_drained" | "conversation_mutation" | "conversation_mutation_end" => return self.ownership_request(&packet).await,
             "provider_auth" | "provider_auth_cancel_owner" | "plugin_call" | "plugin_status" => return self.services.handle(packet).await,
@@ -56,12 +56,18 @@ impl Host {
         }
     }
 
-    async fn prepare_restart(&self, packet: Value) -> Result<Value> {
+    async fn restart_request(&self, packet: Value) -> Result<Value> {
+        self.ensure_idle()?;
+        let packet = if kind(&packet) == "check_daemon_idle" { json!({"type":"plugin_idle"}) } else { packet };
+        self.services.handle(packet).await
+    }
+
+    fn ensure_idle(&self) -> Result<()> {
         let sessions: Vec<_> = self.registry().sessions.values().cloned().collect();
         if sessions.iter().any(|session| session.busy(&Value::Null) || session.transient()) || !self.registry().deliveries.is_empty() {
             return Err("Wait for active agents to finish before restarting the daemon".into());
         }
-        self.services.handle(packet).await
+        Ok(())
     }
 
     async fn conversation_request(self: &Arc<Self>, packet: Value) -> Result<Value> {

@@ -15,7 +15,7 @@ mod tool_payload;
 mod tool_failures;
 mod worker;
 
-pub(crate) use plugins::validate_configuration;
+pub(crate) use plugins::{validate_configuration, with_note_deletion};
 
 use futures_util::FutureExt;
 use serde_json::{json, Value};

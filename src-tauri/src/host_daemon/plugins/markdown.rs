@@ -45,10 +45,38 @@ fn field<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
 
 fn note_path(session_id: &str) -> Result<PathBuf, String> {
     let session = Uuid::parse_str(session_id).map_err(|_| "Choose a chat before writing a note")?;
-    let root = crate::home_dir()?.join(crate::STORAGE_DIRECTORY).join("notes").join("chats");
+    let storage = crate::home_dir()?.join(crate::STORAGE_DIRECTORY);
+    ensure_conversation(&storage, &session.to_string())?;
+    let root = storage.join("notes").join("chats");
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let path = fs::canonicalize(root).map_err(|error| error.to_string())?.join(format!("{session}.md"));
     validate_path(path)
+}
+
+fn ensure_conversation(storage: &Path, session: &str) -> Result<(), String> {
+    let key = super::super::ownership::ConversationOwnership::key(session)?;
+    let bytes = match fs::read(storage.join("conversation-ownership").join(format!("{key}.json"))) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let record: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let Some(path) = record["path"].as_str().map(Path::new) else { return Ok(()); };
+    if conversation_exists(storage, session, path)? { return Ok(()); }
+    Err("This conversation has been permanently deleted.".into())
+}
+
+fn conversation_exists(storage: &Path, session: &str, recorded: &Path) -> Result<bool, String> {
+    if recorded.is_file() { return Ok(true); }
+    for area in ["sessions", "archived"] {
+        if super::super::ownership::saved_conversation_in(&storage.join(area), session)? { return Ok(true); }
+    }
+    Ok(false)
+}
+
+pub(crate) fn with_note_deletion(operation: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    let _guard = NOTES.get_or_init(Mutex::default).lock().map_err(|_| "Notes are unavailable")?;
+    operation()
 }
 
 fn validate_path(path: PathBuf) -> Result<PathBuf, String> {

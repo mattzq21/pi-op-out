@@ -229,6 +229,18 @@ pub(crate) fn shutdown(app: &AppHandle) {
     if let Ok(connections) = app.state::<PeerRuntime>().connections.lock() { for (_, connection) in connections.values() { connection.close(); } }
 }
 
+pub(crate) fn ensure_restart_safe(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<PeerRuntime>();
+    let local = daemon_endpoint::identity()?;
+    let connections = state.connections.lock().map_err(|_| "Peer connections unavailable")?.values().cloned().collect::<Vec<_>>();
+    let mut checked = HashSet::new();
+    for (host, connection) in connections {
+        if connection.daemon_id == local || !connection.alive.load(Ordering::SeqCst) || !checked.insert(connection.daemon_id.clone()) { continue; }
+        connection.invoke("check_daemon_idle", json!({})).map_err(|error| format!("Cannot restart while {} may have active work: {error}", host.name))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn forward_broker(app: &AppHandle, host_id: &str, path: &str, mut body: Value) -> Result<Value, String> {
     let connection = connect(app, host_id)?;
     body["hostId"] = json!("local");
