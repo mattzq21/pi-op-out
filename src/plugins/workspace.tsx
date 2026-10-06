@@ -21,7 +21,8 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const host = createMemo(() => source().hostId);
   const runtimeHost = (scope: string) => scope === "client" ? "local" : host();
   const hosts = createMemo(() => [...new Set(plugins.map(plugin => runtimeHost(plugin.scope)))]);
-  const enabledPlugins = createMemo(() => plugins.filter(plugin => pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
+  const conversationReady = createMemo(() => Boolean(source().sessionId) && (source().messageCount ?? 0) > 0);
+  const enabledPlugins = createMemo(() => plugins.filter(plugin => (plugin.scope === "client" || conversationReady()) && pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
   const error = () => loadError() ?? hosts().map(pluginError).filter(Boolean).join("\n");
   const activate = (id: string) => { onOpen(); setActive(id); setOpen(true); };
 
