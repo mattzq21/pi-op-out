@@ -4,7 +4,7 @@ import { Check } from "typebox/value";
 import { Type } from "typebox";
 import { loadConfig } from "./index.ts";
 import { agentSchema, agentThinkingLevels } from "./state.ts";
-import { configPath, effectiveAgentPromptPath, resolvePromptPath } from "./prompts.ts";
+import { configPath, resolvePromptPath } from "./prompts.ts";
 import type { RuntimeSettingsRequest } from "./contracts.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
@@ -90,7 +90,7 @@ for (const agent of config.agents) {
 
   if (denied.length) throw new Error(`Agent "${agent.name}" cannot run because Pi does not allow its configured tools: ${denied.join(", ")}`);
 
-  for (const path of [agent.path_systemprompt, effectiveAgentPromptPath(agent)].filter(Boolean)) {
+  for (const path of [agent.path_systemprompt, agent.path_agent_prompt].filter(Boolean)) {
     const resolved = resolvePromptPath(path);
     prompts[resolved] ??= await readFile(resolved, "utf8");
   }

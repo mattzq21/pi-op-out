@@ -1,7 +1,7 @@
 import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState } from "./state.ts";
 import { Type } from "typebox";
 import { Check, Parse } from "typebox/value";
-import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, effectiveAgentPromptPath, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
+import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
 import { readDaemonDefinitions } from "./daemon-definitions.ts";
 import { selectedProfileState } from "./profiles.ts";
@@ -31,7 +31,7 @@ export type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeCo
 
 const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 
-const fallbackConfig: Config = { agents: [{ name: "general", model: development ? "openai-codex/gpt-6-luna" : "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, ignoreGeneralAgentsMd: true, path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: {} }] };
+const fallbackConfig: Config = { agents: [{ name: "general", model: development ? "openai-codex/gpt-6-luna" : "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agent_prompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: {} }] };
 
 function defaultAgent(pi: ConfigRuntime): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
@@ -45,11 +45,11 @@ function defaultAgent(pi: ConfigRuntime): Agent {
 async function snapshotPrompts(definition: Agent, systemPrompt: string, agentPrompt: string): Promise<AgentSnapshot> {
   return { version: 2, definition: { ...definition,
     path_systemprompt: await snapshotPrompt(systemPrompt),
-    path_agentprompt: agentPrompt ? await snapshotPrompt(agentPrompt) : "",
+    path_agent_prompt: agentPrompt ? await snapshotPrompt(agentPrompt) : "",
   } };
 }
 
-type StoredAgent = Omit<Agent, "path_systemprompt" | "path_agentprompt" | "mcpServers"> & { mcpServers?: McpServers | LegacyMcpServer[]; path_systemprompt?: string; path_agentprompt?: string; agentsMd?: string; systemPrompt?: string; developerPrompt?: string };
+type StoredAgent = Omit<Agent, "path_systemprompt" | "path_agent_prompt" | "mcpServers"> & { mcpServers?: McpServers | LegacyMcpServer[]; path_systemprompt?: string; path_agent_prompt?: string; path_agentprompt?: string; ignoreGeneralAgentsMd?: boolean; agentsMd?: string; systemPrompt?: string; developerPrompt?: string };
 
 type StoredConfig = Omit<Config, "agents"> & { agents?: StoredAgent[] };
 
@@ -78,10 +78,10 @@ async function migrateSystemPrompt(agent: StoredAgent, storage: ConfigStorage) {
 }
 
 async function migrateAgentPrompt(agent: StoredAgent, storage: ConfigStorage) {
-  let agentPromptPath = agent.path_agentprompt;
+  let agentPromptPath = agent.path_agent_prompt ?? agent.path_agentprompt;
 
   if (agentPromptPath === undefined) {
-    agentPromptPath = ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "";
+    agentPromptPath = "";
 
     if (Check(Type.String(), agent.agentsMd) && agent.agentsMd.trim()) {
       const hash = createHash("sha256").update(agent.name).update("\0").update(agent.agentsMd).digest("hex");
@@ -100,8 +100,8 @@ async function migratePrompts(stored: StoredConfig, pi: ConfigRuntime, storage: 
     if (!Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)) continue;
     const path = await migrateSystemPrompt(agent, storage);
     const agentPromptPath = await migrateAgentPrompt(agent, storage);
-    const { systemPrompt: _inline, developerPrompt: _legacy, agentsMd: _instructions, ...profile } = agent;
-    agents.push({ ...profile, path_systemprompt: path, path_agentprompt: agentPromptPath });
+    const { systemPrompt: _inline, developerPrompt: _legacy, agentsMd: _instructions, path_agentprompt: _oldPromptPath, ignoreGeneralAgentsMd: _oldIgnore, ...profile } = agent;
+    agents.push({ ...profile, path_systemprompt: path, path_agent_prompt: agentPromptPath });
   }
 
   return normalize({ ...stored, agents }, pi);
@@ -117,12 +117,11 @@ function promptPath(agent: StoredAgent): string {
 
 function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAgent[] }, pi: ConfigRuntime): Config {
   for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.fastMode !== undefined && !Check(Type.Boolean(), agent.fastMode)) throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
-  for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.ignoreGeneralAgentsMd !== undefined && !Check(Type.Boolean(), agent.ignoreGeneralAgentsMd)) throw new Error(`Agent "${agent.name}" ignoreGeneralAgentsMd must be a boolean`);
 
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)).map((agent) => ({
     name: agent.name, model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
-    fastMode: agent.fastMode, codemode: agent.codemode, ignoreGeneralAgentsMd: agent.ignoreGeneralAgentsMd ?? true, extensions: extensionPaths(agent.extensions),
-    path_systemprompt: promptPath(agent), path_agentprompt: Check(Type.String(), agent.path_agentprompt) ? agent.path_agentprompt.trim() : ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "",
+    fastMode: agent.fastMode, codemode: agent.codemode, extensions: extensionPaths(agent.extensions),
+    path_systemprompt: promptPath(agent), path_agent_prompt: Check(Type.String(), agent.path_agent_prompt) ? agent.path_agent_prompt.trim() : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)).flatMap(item => item === "goal" ? ["get_goal", "create_goal", "update_goal"] : [item]) : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
 
@@ -148,7 +147,7 @@ async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined,
     const stored = supplied ?? JSON.parse(await readFile(configPath, "utf8"));
     const config = await migratePrompts(stored, pi, storage);
 
-    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (Array.isArray(agent.mcpServers) || agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await storage.writeConfig(config);
+    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (Array.isArray(agent.mcpServers) || agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agent_prompt === undefined || "path_agentprompt" in agent || "ignoreGeneralAgentsMd" in agent || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await storage.writeConfig(config);
 
     return config;
   }
@@ -297,15 +296,13 @@ function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[]
   return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
 }
 
-function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options: BuildSystemPromptOptions, ignoreGeneralAgentsMd: boolean, explicitOnlySkills: string[] = []) {
+function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options: BuildSystemPromptOptions, explicitOnlySkills: string[] = []) {
   delete options.forceSystemPrompt;
   const instructions = [options.appendSystemPrompt, agentPrompt.trim() ? agentPrompt : undefined].filter(Boolean).join("\n\n");
   options.customPrompt = prompt || " ";
   options.sections = { ...options.sections, instructions };
-  if (ignoreGeneralAgentsMd) {
-    options.contextFiles = [];
-    delete options.sections.project_context;
-  }
+  options.contextFiles = [];
+  delete options.sections.project_context;
   options.appendSystemPrompt = "";
   const explicit = new Set(explicitOnlySkills.map(normalizedPath));
   options.skills = options.skills?.map((skill) => explicit.has(normalizedPath(skill.filePath)) || explicit.has(normalizedPath(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : skill);
@@ -370,7 +367,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   const stopProfileCatalog = pi.events.on("piop:agents:profiles", request => {
     request.active = currentAgent()?.name;
-    request.profiles = config.agents.map(agent => ({ name: agent.name, model: agent.model, effort: agent.effort, fastMode: agent.fastMode, ignoreGeneralAgentsMd: agent.ignoreGeneralAgentsMd, tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers), path_systemprompt: agent.path_systemprompt, path_agentprompt: agent.path_agentprompt }));
+    request.profiles = config.agents.map(agent => ({ name: agent.name, model: agent.model, effort: agent.effort, fastMode: agent.fastMode, tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers), path_systemprompt: agent.path_systemprompt, path_agent_prompt: agent.path_agent_prompt }));
   });
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
@@ -449,11 +446,11 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const prepareAgentPrompts = async (agent: Agent, persistSnapshot: boolean) => {
     activeSystemPrompt = "";
     activeAgentPrompt = "";
-    const agentPromptPath = effectiveAgentPromptPath(agent);
+    const agentPromptPath = agent.path_agent_prompt;
 
     if (snapshot?.version === 1) {
       activeSystemPrompt = snapshot.systemPrompt;
-      activeAgentPrompt = agent.path_agentprompt && !agentPromptPath ? "" : snapshot.agentPrompt;
+      activeAgentPrompt = agentPromptPath ? snapshot.agentPrompt : "";
     } else {
       const path = resolvePromptPath(agent.path_systemprompt);
 
@@ -689,7 +686,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!agent) return;
 
     if (agent.codemode === false) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
-    configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, agent.ignoreGeneralAgentsMd !== false, desktopList(pi, "explicitOnlySkills"));
+    configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, desktopList(pi, "explicitOnlySkills"));
   });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "select_agent") return;

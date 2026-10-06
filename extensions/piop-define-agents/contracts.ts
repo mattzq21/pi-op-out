@@ -17,7 +17,7 @@ interface FastModeChange { enabled?: boolean }
 
 interface FastModelsChange { ctx: ExtensionContext }
 
-export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; ignoreGeneralAgentsMd?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
+export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; extensions?: string[]; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
 
 export type AgentSnapshot = { version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
 
@@ -25,7 +25,7 @@ export type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; loc
 
 export interface SubagentProfileRequest { agent?: string; state?: SessionAgentState; error?: string; ready?: Promise<void> }
 
-export interface AgentProfileSummary { name: string; model: string; effort: string; fastMode?: boolean; ignoreGeneralAgentsMd?: boolean; tools: string[]; skills: string[]; mcpServers: string[]; path_systemprompt: string; path_agentprompt: string }
+export interface AgentProfileSummary { name: string; model: string; effort: string; fastMode?: boolean; tools: string[]; skills: string[]; mcpServers: string[]; path_systemprompt: string; path_agent_prompt: string }
 
 export interface AgentProfilesRequest { active?: string; profiles?: AgentProfileSummary[] }
 
