@@ -159,7 +159,19 @@ function answerLogin(packet) {
   state.answer(packet.answer);
 }
 
+function handlePluginLifecycle(packet) {
+  if (packet.method === 'plugin_idle') return bundledPlugin?.idle() ?? true;
+
+  if (packet.method === 'plugin_checkpoint') return bundledPlugin?.checkpoint() ?? [];
+
+  bundledPlugin?.restore(packet.tickets);
+
+  return true;
+}
+
 async function handle(packet) {
+  if (['plugin_idle', 'plugin_checkpoint', 'plugin_restore'].includes(packet.method)) return handlePluginLifecycle(packet);
+
   if (packet.method === 'login') return login(packet);
 
   if (packet.method === 'cancel') return cancelLogin(packet);
@@ -169,6 +181,16 @@ async function handle(packet) {
 
   if (packet.method === 'initialize') return { authPath: loaded.authPath, builtinIds: loaded.builtinIds };
   await syncAccounts(loaded);
+
+  return handleProviderRequest(loaded, packet);
+}
+
+async function handleProviderRequest(loaded, packet) {
+  if (packet.method === 'plugin_call') {
+    if (!bundledPlugin) throw new Error('Plugin is not loaded.');
+
+    return bundledPlugin.call(loaded, packet.request);
+  }
 
   if (packet.method === 'fast_capabilities') return { clientVersion: FAST_CATALOG_CLIENT_VERSION, models: await discoverFastCapabilities(loaded.runtime) };
 

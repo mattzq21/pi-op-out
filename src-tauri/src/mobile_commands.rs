@@ -37,6 +37,9 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
 type CommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>>;
 type CommandHandler = fn(AppHandle, String, Value) -> CommandFuture;
 const COMMANDS: &[(&str, CommandHandler)] = &[
+    ("plugin_call", handle_plugin_call),
+    ("plugin_status", handle_plugin_status),
+    ("restart_daemon", handle_restart_daemon),
     ("shared_terminal", handle_shared_terminal),
     ("reassign_terminal", handle_reassign_terminal),
     ("dictation_configuration", handle_dictation_configuration),
@@ -139,6 +142,24 @@ fn handle_save_host_settings(app: AppHandle, _owner: String, args: Value) -> Com
 fn handle_host_storage_report(_app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || serde_json::to_value(StorageReport { hosts: vec![inspect_storage(None)?] }).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_plugin_call(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || plugins::dispatch(app, "plugin_call", args)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_plugin_status(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || plugins::dispatch(app, "plugin_status", args)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_restart_daemon(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || plugins::dispatch(app, "restart_daemon", args)).await.map_err(|error| error.to_string())?
     })
 }
 

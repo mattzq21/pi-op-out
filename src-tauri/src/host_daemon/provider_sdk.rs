@@ -22,6 +22,7 @@ pub(super) trait Events: Send + Sync {
 
 pub(super) struct Sdk {
     executable: String,
+    plugin: Option<&'static str>,
     events: Arc<dyn Events>,
     connection: AsyncMutex<Option<Arc<Connection>>>,
     stopped: AtomicBool,
@@ -53,10 +54,15 @@ impl Sdk {
     pub fn new(executable: String, events: Arc<dyn Events>) -> Self {
         Self {
             executable,
+            plugin: None,
             events,
             connection: AsyncMutex::new(None),
             stopped: AtomicBool::new(false),
         }
+    }
+
+    pub fn plugin(executable: String, events: Arc<dyn Events>, source: &'static str) -> Self {
+        Self { plugin: Some(source), ..Self::new(executable, events) }
     }
 
     async fn connect(&self) -> Result<Arc<Connection>> {
@@ -68,9 +74,10 @@ impl Sdk {
             return Ok(connection.clone());
         }
         let source = format!(
-            "{}\n{}\n{}",
+            "{}\n{}\n{}\n{}",
             include_str!("../../resources/provider-accounts.bundle.mjs"),
             include_str!("../../resources/fast-capabilities.mjs"),
+            self.plugin.unwrap_or("const bundledPlugin = null;"),
             include_str!("../../resources/provider-sdk.mjs")
         );
         let mut child = Command::new("node")

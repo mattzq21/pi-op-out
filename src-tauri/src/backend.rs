@@ -33,6 +33,8 @@ mod provider_auth;
 mod conversation_ownership;
 mod restore_recovery;
 mod session_groups;
+#[cfg(not(feature = "desktop"))]
+mod plugins;
 mod session_registry;
 use terminals::terminal_lookup;
 #[cfg(not(feature = "desktop"))]

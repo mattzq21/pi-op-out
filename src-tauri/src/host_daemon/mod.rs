@@ -7,6 +7,7 @@ mod payload;
 mod protocol;
 mod provider_sdk;
 mod providers;
+mod plugins;
 mod queue;
 mod services;
 mod session;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TranscriptPlugins } from "../plugins/transcript";
 import { stringsSchema, validItems } from "../lib/messageSchemas";
 import { gitPatchSchema } from "../lib/diffSchemas";
 import { required } from "../lib/required";
@@ -8,7 +9,7 @@ import { acknowledgeChatSubmission, chatSubmission, trackChatSubmission } from "
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
-import { createDependencyEffect, createRef, type StateUpdate } from "../lib/solid";
+import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
 
 import { ChevronRight, FolderGit2, LoaderCircle, X } from "lucide-solid";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
@@ -31,13 +32,11 @@ import { ConversationHostContext } from "../lib/subagentNavigation";
 
 interface Props { transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onProjectBranch?: (path: string) => Promise<void>; onBranch: (message: ChatMessage) => void; canRollback?: boolean; onForkAndForget?: (message: ChatMessage, restoreWorktree?: boolean) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
-
 function canRetry(props: Props, ownsConversation: boolean) {
   return ownsConversation && !props.readOnly && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
 }
 
-
-export function ChatView(props: Props) {
+export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
   const imageProject = () => {
     const cwd = props.projectCwd ?? (props.state.sessionId ? props.transport?.currentCwd() : undefined);
 
@@ -263,7 +262,9 @@ export function ChatView(props: Props) {
   };
 
   const ConversationShell = () => <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} oncapture:focus={() => props.onActivate?.()} oncapture:pointerdown={() => props.onActivate?.()}>
+    {props.transcriptActions}
     <ConversationContent />
+    <TranscriptPlugins messages={() => messagesRef.current} source={() => ({ hostId: props.transport?.currentHostId() ?? "local", sessionId: props.state.sessionId, title: props.state.sessionName || "Current conversation", messages: [...props.messages] })} />
   </main>;
 
   return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><ReviewNavigationContext.Provider value={async id => { if (!props.transport) throw new Error("Conversation is unavailable"); await props.transport.command({ type: "open_review", reviewId: id }); }}><ConversationShell /></ReviewNavigationContext.Provider></ConversationHostContext.Provider>;
