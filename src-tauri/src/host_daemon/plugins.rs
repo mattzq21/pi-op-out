@@ -190,15 +190,20 @@ impl PluginService {
         let state = self.state.write().await;
         let current = state.as_ref().ok_or("Plugins are unavailable")?;
         if packet["revision"].as_str() != Some(&current.revision) { return Err("Plugin setup changed in another client. Reload the plugin setup before restarting.".into()); }
-        current.runtime.drain().await?;
-        let tickets = match &current.runtime.chatgpt {
-            Some(sdk) => sdk.request(json!({"method":"plugin_checkpoint"})).await?,
-            None => json!([]),
-        };
+        let tickets = checkpoint(&current.runtime).await?;
         Ok(json!({"enabled":enabled,"previous":current.runtime.enabled,"tickets":tickets}))
     }
 
     pub async fn shutdown(&self) {
         if let Some(state) = self.state.write().await.take() { state.runtime.shutdown().await; }
+    }
+}
+
+async fn checkpoint(runtime: &Runtime) -> Result<Value> {
+    tokio::task::spawn_blocking(markdown::preserve_leases_for_restart).await.map_err(|error| error.to_string())??;
+    runtime.drain().await?;
+    match &runtime.chatgpt {
+        Some(sdk) => sdk.request(json!({"method":"plugin_checkpoint"})).await,
+        None => Ok(json!([])),
     }
 }

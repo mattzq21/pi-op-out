@@ -64,10 +64,15 @@ impl Host {
 
     fn ensure_idle(&self) -> Result<()> {
         let sessions: Vec<_> = self.registry().sessions.values().cloned().collect();
-        if sessions.iter().any(|session| session.busy(&Value::Null) || session.transient()) || !self.registry().deliveries.is_empty() {
+        if sessions.iter().any(|session| session.busy(&Value::Null) || session.transient()) || self.pending_mutations() {
             return Err("Wait for active agents to finish before restarting the daemon".into());
         }
         Ok(())
+    }
+
+    fn pending_mutations(&self) -> bool {
+        let registry = self.registry();
+        !registry.deliveries.is_empty() || !registry.guards.is_empty()
     }
 
     async fn conversation_request(self: &Arc<Self>, packet: Value) -> Result<Value> {

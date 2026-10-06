@@ -158,7 +158,7 @@ export async function chatGptSocket(url, topic, signal, receive) {
     const touch = () => { clearTimeout(timer); timer = setTimeout(() => finish(new Error('ChatGPT stream timed out.')), 60000); };
 
     const payload = message => {
-      if (message?.type !== 'conversation-turn-stream') return;
+      if (finished || message?.type !== 'conversation-turn-stream') return;
       touch();
 
       if (message.payload.type === 'done') { finish();
@@ -185,9 +185,8 @@ export async function chatGptSocket(url, topic, signal, receive) {
         if (!Array.isArray(frames)) return;
 
         for (const frame of frames) {
-          if (frame.id === 2) for (const item of frame.reply?.catchups ?? []) payload(item.payload);
-
-          if (frame.topic_id === topic) payload(frame.payload);
+          if (finished) break;
+          chatGptSocketFrame(frame, topic, payload);
         }
       } catch (error) { finish(error); }
     });
@@ -197,10 +196,20 @@ export async function chatGptSocket(url, topic, signal, receive) {
   });
 }
 
+function chatGptSocketFrame(frame, topic, payload) {
+  if (frame.id === 2) {
+    if (frame.reply?.recovered === false) throw new Error('ChatGPT stream history could not be recovered.');
+
+    for (const item of frame.reply?.catchups ?? []) payload(item.payload);
+  }
+
+  if (frame.topic_id === topic) payload(frame.payload);
+}
+
 function chatGptSocketItem(seen, item) {
   if (item.stream_item_id && seen.has(item.stream_item_id)) return false;
 
-  if (seen.size && item.parent_stream_item_id && !seen.has(item.parent_stream_item_id)) throw new Error('ChatGPT stream missed an item.');
+  if (item.parent_stream_item_id != null && !seen.has(item.parent_stream_item_id)) throw new Error('ChatGPT stream missed an item.');
 
   if (item.stream_item_id) seen.add(item.stream_item_id);
 

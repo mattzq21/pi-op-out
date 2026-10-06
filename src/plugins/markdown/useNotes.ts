@@ -8,7 +8,7 @@ import { ownershipSchema } from "../ownership";
 
 const noteOwnershipSchema = ownershipSchema.extend({ token: z.string().nullable() });
 
-const noteSchema = z.object({ content: z.string(), version: z.string(), ownership: noteOwnershipSchema });
+const noteSchema = z.object({ content: z.string(), version: z.string(), ownership: noteOwnershipSchema, deleted: z.boolean().default(false) });
 
 type NoteDocument = z.infer<typeof noteSchema>;
 
@@ -77,6 +77,8 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   };
 
   const selectDocument = (next: NoteDocument) => {
+    if (next.deleted) { setReadError(""); setSaveError(""); }
+
     setDocument(next);
     setContent(next.content);
     updateOwnership(next.ownership);
@@ -180,7 +182,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   const confirmedSave = (next: NoteDocument) => unconfirmed()?.token === next.ownership.token && unconfirmed()?.content === next.content;
 
   const receiveUpdate = (next: NoteDocument) => {
-    if (next.ownership.token !== ownership().token || next.version !== document()?.version && !confirmedSave(next)) {
+    if (next.deleted || next.ownership.token !== ownership().token || next.version !== document()?.version && !confirmedSave(next)) {
       relinquish(); selectDocument(next); setSaveError("");
 
       return;
@@ -189,7 +191,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
     setUnconfirmed(undefined); setDocument(next); updateOwnership(next.ownership);
   };
 
-  const syncUnavailable = () => disposed || loading() || !!inFlight;
+  const syncUnavailable = () => disposed || loading() || !!inFlight || document()?.deleted;
 
   const readCurrent = () => {
     const leaseToken = ownership().token;
@@ -249,7 +251,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   const show = async () => {
     if (!await save()) return;
 
-    if (visible() && !disposed && !loading()) await load("claim");
+    if (visible() && !disposed && !loading() && !document()?.deleted) await load("claim");
   };
 
   createDependencyEffect(() => { if (visible()) void show(); else void release(); }, () => [visible()]);
@@ -268,5 +270,5 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   window.addEventListener("beforeunload", beforeUnload);
   onCleanup(() => { disposed = true; clearTimeout(leaseTimer); clearInterval(updates); window.removeEventListener("focus", resume); window.document.removeEventListener("visibilitychange", resume); window.removeEventListener("beforeunload", beforeUnload); void release(); });
 
-  return { content, loading, saving, error, ready: () => !!document(), pending: () => loading() || saving() || dirty(), editable, edit, save, retry, takeControl };
+  return { content, loading, saving, error, deleted: () => document()?.deleted, ready: () => !!document() && !document()?.deleted, pending: () => loading() || saving() || dirty(), editable, edit, save, retry, takeControl };
 }

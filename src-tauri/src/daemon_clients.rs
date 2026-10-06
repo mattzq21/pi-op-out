@@ -59,12 +59,11 @@ impl DaemonClients {
         loop {
             if self.closing() { return; }
             if self.unattended() {
-                let checking = app.clone();
-                let idle = tokio::select! {
-                    result = tokio::task::spawn_blocking(move || crate::daemon_restart::ensure_local_idle(&checking)) => result.is_ok_and(|result| result.is_ok()),
-                    _ = self.0.stopped.notified() => continue,
+                let stopped = tokio::select! {
+                    stopped = self.stop_if_idle(&app) => stopped,
+                    _ = self.0.stopped.notified() => false,
                 };
-                if idle && self.close_if_unattended() { return; }
+                if stopped { return; }
             }
             tokio::select! {
                 _ = self.0.stopped.notified() => {},
@@ -73,7 +72,16 @@ impl DaemonClients {
         }
     }
 
-    fn closing(&self) -> bool {
+    async fn stop_if_idle(&self, app: &crate::platform::AppHandle) -> bool {
+        let state = app.state::<crate::daemon_restart::Runtime>();
+        let Ok(_guard) = state.gate.try_write() else { return false; };
+        let checking = app.clone();
+        let idle = tokio::task::spawn_blocking(move || crate::daemon_restart::ensure_local_idle(&checking))
+            .await.is_ok_and(|result| result.is_ok());
+        idle && self.close_if_unattended()
+    }
+
+    pub(crate) fn closing(&self) -> bool {
         self.0.clients.lock().unwrap_or_else(|error| error.into_inner()).closing
     }
 

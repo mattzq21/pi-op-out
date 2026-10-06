@@ -74,20 +74,25 @@ export async function chatGptContext(source: ChatGptContextSource, signal: Abort
 }
 
 async function loadedContextMessage(source: ChatGptContextSource, item: ChatMessage, signal: AbortSignal) {
-  const current = source.readMessages?.().find(message => message.id === item.id) ?? item;
-
-  if (!current.loadToolPayload || freshToolPayload(current)) return contextMessage(current);
-
-  try {
-    await abortableContextLoad(current.loadToolPayload(), signal);
+  for (let attempt = 0; attempt < 3; attempt++) {
     signal.throwIfAborted();
-    const loaded = source.readMessages?.().find(message => message.id === item.id);
+    const current = latestContextMessage(source, item);
 
-    if (loaded && freshToolPayload(loaded)) return contextMessage(loaded);
-  } catch { signal.throwIfAborted(); }
+    if (!current.loadToolPayload || freshToolPayload(current)) return contextMessage(current);
+
+    try { await abortableContextLoad(current.loadToolPayload(), signal); }
+    catch { signal.throwIfAborted(); }
+  }
+
+  signal.throwIfAborted();
+  const loaded = latestContextMessage(source, item);
+
+  if (freshToolPayload(loaded)) return contextMessage(loaded);
 
   return `## tool\n[Deferred tool output unavailable: ${item.toolName ?? "tool"}]`;
 }
+
+function latestContextMessage(source: ChatGptContextSource, item: ChatMessage) { return source.readMessages?.().find(message => message.id === item.id) ?? item; }
 
 function freshToolPayload(message: ChatMessage) { return message.toolPayloadLoaded && message.loadedToolPayloadVersion === message.toolPayloadVersion; }
 

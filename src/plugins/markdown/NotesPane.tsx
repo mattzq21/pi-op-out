@@ -20,6 +20,7 @@ export function NotesPane(props: ChatNoteTarget & { visible: Accessor<boolean> }
   };
 
   return <section class="notes-pane" aria-label="Chat note" onKeyDown={editorKeyDown}>
+    <Show when={notes.deleted()}><div class="notes-error" role="status">This conversation was permanently deleted.</div></Show>
     <Show when={notes.ready() && !notes.editable()}><div class="notes-error" role="status"><span>Read-only </span><button disabled={notes.loading() || notes.saving()} onClick={() => void notes.takeControl()}>Take control</button></div></Show>
     <Show when={notes.error()}><div class="notes-error" role="alert"><span>{notes.error()}</span><button disabled={notes.loading() || notes.saving()} onClick={() => void notes.retry()}>Retry</button></div></Show>
     <div class="notes-editor-toolbar"><div role="group" aria-label="Note mode"><button aria-pressed={!preview()} classList={{ active: !preview() }} onClick={focusEditor}><Pencil size={13} />Edit</button><button aria-pressed={preview()} classList={{ active: preview() }} onClick={() => setPreview(true)}><Eye size={14} />Preview</button></div></div>

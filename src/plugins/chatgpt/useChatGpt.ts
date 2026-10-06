@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { regularChatSchema, chatModelsSchema, chatRequirementsSchema, type RegularChat } from "./chatSchemas";
+import { regularChatSchema, chatModelsSchema, chatAccountsSchema, chatRequirementsSchema, type RegularChat } from "./chatSchemas";
 import { createSignal, onCleanup, type Accessor } from "solid-js";
 import { createDependencyEffect } from "../../lib/solid";
 import { invoke } from "../../lib/platform";
@@ -13,7 +13,7 @@ export type { RegularChat } from "./chatSchemas";
 export interface QuickChatRequest { id: string; source: Accessor<ChatGptContextSource>; onAccepted?: () => void }
 
 export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open: Accessor<boolean>) {
-  const provider = "openai-codex";
+  let provider = "openai-codex";
   const [models, setModels] = createSignal<ChatModel[]>([]);
   const [chats, setChats] = createSignal<RegularChat[]>([]);
   const [chat, setChat] = createSignal<RegularChat>();
@@ -38,7 +38,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   let stopOperation: symbol | undefined;
   let selection = 0;
   let pending: { key: string; id: string } | undefined;
-  const call = <S extends z.ZodType,>(action: string, schema: S, args: Record<string, import("zod").JSONType | undefined> = {}) => invoke("plugin_call", { hostId: "local", pluginId: "chatgpt", request: { ...args, action, providerId: provider, leaseId } }, schema);
+  let call = createChatGptCall(provider, leaseId);
 
   const release = (id?: string) => {
     const targets = id ? [id] : [...leasedChats];
@@ -49,9 +49,11 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   };
 
   const claim = async (id: string) => {
-    const ownership = await call("claim", ownershipSchema, { chatId: id });
+    const claimCall = call;
+    const current = generation;
+    const ownership = await claimCall("claim", ownershipSchema, { chatId: id });
 
-    if (disposed || desiredChat !== id) { if (ownership.owned) release(id);
+    if (disposed || generation !== current || desiredChat !== id) { if (ownership.owned) void claimCall("release", ownershipSchema, { chatId: id }).catch(() => undefined);
 
     return { owned: false, available: false }; }
 
@@ -67,13 +69,26 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   };
 
   createDependencyEffect(fresh, () => [request()?.id]);
+
+  const loadCatalog = async (current: number) => {
+    const accounts = await call("accounts", chatAccountsSchema);
+
+    if (generation !== current) return;
+    const selected = accounts.find(account => account.configured && account.id === provider) ?? accounts.find(account => account.configured);
+
+    if (!selected) throw new Error("Sign in to a ChatGPT account in Settings → Providers.");
+    provider = selected.id; call = createChatGptCall(provider, leaseId);
+    const catalogCall = call;
+    const [history, catalog] = await Promise.all([catalogCall("list", z.array(regularChatSchema)), catalogCall("models", chatModelsSchema)]);
+
+    if (generation !== current) return;
+    setChats(history); setModels(catalog);
+  };
+
   createDependencyEffect(() => {
     const current = ++generation; submission?.abort(); setBusy(false); fresh(); setLoading(true);
     setChats([]); setModels([]);
-    void Promise.all([call("list", z.array(regularChatSchema)), call("models", chatModelsSchema)]).then(([history, catalog]) => {
-      if (generation !== current) return;
-      setChats(history); setModels(catalog);
-    }).catch(reason => { if (generation === current) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { if (generation === current) setLoading(false); });
+    void loadCatalog(current).catch(reason => { if (generation === current) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { if (generation === current) setLoading(false); });
 
     return () => { generation++; };
   }, () => [reload()]);
@@ -98,11 +113,12 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     release();
     desiredChat = id;
     const version = ++selection; const current = generation;
+    const selectCall = call;
     setLoading(true); setError(undefined); setPollError(undefined); setCancellationError(undefined);
 
     try {
       await claim(id);
-      const value = await call("read", regularChatSchema, { chatId: id });
+      const value = await selectCall("read", regularChatSchema, { chatId: id });
 
       if (generation === current && selection === version) { setChat(value); modelSelection.restore(value); setPrompt(""); }
     } catch (reason) { if (generation === current && selection === version) setError(reason instanceof Error ? reason.message : String(reason)); }
@@ -217,8 +233,9 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   };
 
   const refreshLease = async (id: string) => {
+    const leaseCall = call;
     const ownership = await claim(id);
-    const refreshed = chat()?.id === id ? await call("read", regularChatSchema, { chatId: id }) : undefined;
+    const refreshed = chat()?.id === id ? await leaseCall("read", regularChatSchema, { chatId: id }) : undefined;
 
     return { ownership, refreshed };
   };
@@ -245,10 +262,13 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     const renew = async () => {
       const id = desiredChat;
       const selected = selection;
+      const current = generation;
 
       try {
         if (id) {
           const { ownership, refreshed } = await refreshLease(id);
+
+          if (current !== generation) return;
 
           if (cancelled || desiredChat !== id || selected !== selection) { if (!busy() && !responding()) release(id);
 
@@ -272,6 +292,10 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 }
 
 type ChatGptCall = <S extends z.ZodType>(action: string, schema: S, args: Record<string, import("zod").JSONType | undefined>) => Promise<z.output<S>>;
+
+function createChatGptCall(providerId: string, leaseId: string) {
+  return <S extends z.ZodType,>(action: string, schema: S, args: Record<string, import("zod").JSONType | undefined> = {}) => invoke("plugin_call", { hostId: "local", pluginId: "chatgpt", request: { ...args, action, providerId, leaseId } }, schema);
+}
 
 function isResponding(chat: RegularChat | undefined) { return chat?.status === "streaming" || chat?.status === "stopping"; }
 

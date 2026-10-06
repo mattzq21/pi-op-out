@@ -1,17 +1,79 @@
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, fs::{self, OpenOptions}, io::{Read, Write}, path::{Path, PathBuf}, sync::{Mutex, OnceLock}, time::{Duration, Instant}};
+use std::{fs::{self, File, OpenOptions}, io::{Read, Write}, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 use uuid::Uuid;
 
 const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
-static NOTES: OnceLock<Mutex<HashMap<PathBuf, Lease>>> = OnceLock::new();
+#[derive(Clone, Deserialize, PartialEq, Serialize)]
+struct Lease { client: String, editor: String, token: String, expires: u64 }
 
-struct Lease { client: String, editor: Uuid, token: Uuid, expires: Instant }
+struct Editor<'a> { client: &'a str, id: String, token: Option<&'a str> }
 
-struct Editor<'a> { client: &'a str, id: Uuid, token: Option<Uuid> }
+fn now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() }
+
+fn notes_root() -> Result<PathBuf, String> { Ok(crate::home_dir()?.join(crate::STORAGE_DIRECTORY).join("notes")) }
+
+fn lock_notes() -> Result<File, String> {
+    let root = notes_root()?;
+    crate::ensure_private_dir(&root)?;
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+    let file = options.open(validate_path(root.join("ownership.lock"))?).map_err(|error| error.to_string())?;
+    file.lock().map_err(|error| error.to_string())?;
+    Ok(file)
+}
+
+fn lease_path(session: &str) -> Result<PathBuf, String> {
+    let root = notes_root()?.join("leases");
+    crate::ensure_private_dir(&root)?;
+    validate_path(root.join(format!("{session}.json")))
+}
+
+fn read_lease(path: &Path) -> Result<Option<Lease>, String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let lease: Lease = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    Ok((lease.expires > now()).then_some(lease))
+}
+
+fn write_lease(path: &Path, lease: Option<&Lease>) -> Result<(), String> {
+    if let Some(lease) = lease {
+        return crate::atomic_write_private(path, &serde_json::to_vec(lease).map_err(|error| error.to_string())?);
+    }
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+pub(super) fn preserve_leases_for_restart() -> Result<(), String> {
+    let _guard = lock_notes()?;
+    let root = notes_root()?.join("leases");
+    crate::ensure_private_dir(&root)?;
+    for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
+        preserve_lease(&entry.map_err(|error| error.to_string())?.path())?;
+    }
+    Ok(())
+}
+
+fn preserve_lease(path: &Path) -> Result<(), String> {
+    if path.extension().is_none_or(|extension| extension != "json") { return Ok(()); }
+    if let Some(mut lease) = read_lease(&validate_path(path.into())?)? {
+        lease.expires = lease.expires.max(now() + 300);
+        write_lease(path, Some(&lease))?;
+    }
+    Ok(())
+}
 
 fn owns(lease: Option<&Lease>, editor: &Editor<'_>) -> bool {
-    lease.is_some_and(|lease| lease.client == editor.client && lease.editor == editor.id && lease.expires > Instant::now())
+    lease.is_some_and(|lease| lease.client == editor.client && lease.editor == editor.id && lease.expires > now())
 }
 
 fn ownership(lease: Option<&Lease>, editor: &Editor<'_>) -> Value {
@@ -20,22 +82,22 @@ fn ownership(lease: Option<&Lease>, editor: &Editor<'_>) -> Value {
 }
 
 fn controls(lease: Option<&Lease>, editor: &Editor<'_>) -> bool {
-    owns(lease, editor) && lease.is_some_and(|lease| Some(lease.token) == editor.token)
+    owns(lease, editor) && lease.is_some_and(|lease| Some(lease.token.as_str()) == editor.token)
 }
 
-fn update_lease(leases: &mut HashMap<PathBuf, Lease>, path: &Path, editor: &Editor<'_>, action: &str) {
-    let controlled = controls(leases.get(path), editor);
+fn update_lease(lease: &mut Option<Lease>, editor: &Editor<'_>, action: &str) {
+    let controlled = controls(lease.as_ref(), editor);
     if action == "release" {
-        if controlled { leases.remove(path); }
-    } else if action == "takeover" || action == "claim" && !leases.contains_key(path) {
-        leases.insert(path.into(), Lease { client: editor.client.into(), editor: editor.id, token: Uuid::new_v4(), expires: Instant::now() + Duration::from_secs(30) });
+        if controlled { *lease = None; }
+    } else if action == "takeover" || action == "claim" && lease.is_none() {
+        *lease = Some(Lease { client: editor.client.into(), editor: editor.id.clone(), token: Uuid::new_v4().to_string(), expires: now() + 30 });
     } else if controlled && matches!(action, "renew" | "save") {
-        if let Some(lease) = leases.get_mut(path) { lease.expires = Instant::now() + Duration::from_secs(30); }
+        if let Some(lease) = lease { lease.expires = lease.expires.max(now() + 30); }
     }
 }
 
 pub(crate) fn initialize() -> Result<(), String> {
-    let root = crate::home_dir()?.join(crate::STORAGE_DIRECTORY).join("notes").join("chats");
+    let root = notes_root()?.join("chats");
     crate::ensure_private_dir(&root)
 }
 
@@ -43,27 +105,24 @@ fn field<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
     args[name].as_str().ok_or_else(|| format!("Missing note {name}"))
 }
 
-fn note_path(session_id: &str) -> Result<PathBuf, String> {
-    let session = Uuid::parse_str(session_id).map_err(|_| "Choose a chat before writing a note")?;
-    let storage = crate::home_dir()?.join(crate::STORAGE_DIRECTORY);
-    ensure_conversation(&storage, &session.to_string())?;
-    let root = storage.join("notes").join("chats");
+fn note_path(session: &str) -> Result<PathBuf, String> {
+    let root = notes_root()?.join("chats");
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let path = fs::canonicalize(root).map_err(|error| error.to_string())?.join(format!("{session}.md"));
     validate_path(path)
 }
 
-fn ensure_conversation(storage: &Path, session: &str) -> Result<(), String> {
+fn has_conversation(session: &str) -> Result<bool, String> {
+    let storage = crate::home_dir()?.join(crate::STORAGE_DIRECTORY);
     let key = super::super::ownership::ConversationOwnership::key(session)?;
     let bytes = match fs::read(storage.join("conversation-ownership").join(format!("{key}.json"))) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
         Err(error) => return Err(error.to_string()),
     };
     let record: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-    let Some(path) = record["path"].as_str().map(Path::new) else { return Ok(()); };
-    if conversation_exists(storage, session, path)? { return Ok(()); }
-    Err("This conversation has been permanently deleted.".into())
+    let Some(path) = record["path"].as_str().map(Path::new) else { return Ok(true); };
+    conversation_exists(&storage, session, path)
 }
 
 fn conversation_exists(storage: &Path, session: &str, recorded: &Path) -> Result<bool, String> {
@@ -75,7 +134,7 @@ fn conversation_exists(storage: &Path, session: &str, recorded: &Path) -> Result
 }
 
 pub(crate) fn with_note_deletion(operation: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
-    let _guard = NOTES.get_or_init(Mutex::default).lock().map_err(|_| "Notes are unavailable")?;
+    let _guard = lock_notes()?;
     operation()
 }
 
@@ -139,18 +198,34 @@ fn write_note(path: &Path, body: &str, args: &Value) -> Result<(), String> {
 }
 
 pub(super) fn dispatch(args: Value) -> Result<Value, String> {
-    let mut leases = NOTES.get_or_init(Mutex::default).lock().map_err(|_| "Notes are unavailable")?;
-    leases.retain(|_, lease| lease.expires > Instant::now());
-    let path = note_path(field(&args, "sessionId")?)?;
-    let editor = Editor {
-        client: field(&args, "clientId")?,
-        id: Uuid::parse_str(field(&args, "leaseId")?).map_err(|_| "Invalid note editor identity")?,
-        token: args["leaseToken"].as_str().and_then(|token| Uuid::parse_str(token).ok()),
-    };
-    let action = field(&args, "action")?;
-    let mut result = perform(&path, &args, action, controls(leases.get(&path), &editor))?;
-    update_lease(&mut leases, &path, &editor, action);
-    result["ownership"] = ownership(leases.get(&path), &editor);
+    let _guard = lock_notes()?;
+    let session = Uuid::parse_str(field(&args, "sessionId")?).map_err(|_| "Choose a chat before writing a note")?.to_string();
+    let lease_path = lease_path(&session)?;
+    if !has_conversation(&session)? {
+        write_lease(&lease_path, None)?;
+        return Ok(json!({"content":"","version":version(""),"deleted":true,"ownership":{"owned":false,"available":false,"token":null}}));
+    }
+    dispatch_note(&args, &session, &lease_path)
+}
+
+fn editor(args: &Value) -> Result<Editor<'_>, String> {
+    Ok(Editor {
+        client: field(args, "clientId")?,
+        id: Uuid::parse_str(field(args, "leaseId")?).map_err(|_| "Invalid note editor identity")?.to_string(),
+        token: args["leaseToken"].as_str(),
+    })
+}
+
+fn dispatch_note(args: &Value, session: &str, lease_path: &Path) -> Result<Value, String> {
+    let path = note_path(session)?;
+    let mut lease = read_lease(lease_path)?;
+    let previous = lease.clone();
+    let editor = editor(args)?;
+    let action = field(args, "action")?;
+    let mut result = perform(&path, args, action, controls(lease.as_ref(), &editor))?;
+    update_lease(&mut lease, &editor, action);
+    if lease != previous { write_lease(lease_path, lease.as_ref())?; }
+    result["ownership"] = ownership(lease.as_ref(), &editor);
     Ok(result)
 }
 

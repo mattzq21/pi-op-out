@@ -445,7 +445,7 @@ async function chatGptConsume(identity, active, response) {
     chatGptReceive(active, data);
     chatGptCheckpoint(identity, active);
 
-    if (data?.type !== 'resume_conversation_token') active.offset++;
+    active.offset++;
 
     if (data?.type === 'stream_handoff') topic = data.options?.find(option => option.type === 'subscribe_ws_topic')?.topic_id;
   };
