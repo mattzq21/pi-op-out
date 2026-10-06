@@ -101,10 +101,33 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const projectParent = (id: string) => {
     const parent = projectGroups()[id];
 
-    return savedGroupsById().get(id)?.cwd && customGroups().some(group => group.id === parent) ? parent : undefined;
+    return !isFixedGroup(id) && savedGroupsById().has(id) && customGroups().some(group => group.id === parent) ? parent : undefined;
+  };
+  const groupAncestors = (id: string) => {
+    const ancestors: string[] = [];
+    const seen = new Set([id]);
+    let parent = projectParent(id);
+    while (parent && !seen.has(parent)) {
+      ancestors.push(parent);
+      seen.add(parent);
+      parent = projectParent(parent);
+    }
+    return ancestors;
+  };
+  const canMoveProject = (id: string, parent?: string) => {
+    if (isFixedGroup(id) || !savedGroupsById().has(id)) return false;
+    if (parent === undefined) return true;
+    if (!customGroups().some(group => group.id === parent) || parent === id) return false;
+    const ancestors = groupAncestors(parent);
+    if (ancestors.includes(id)) return false;
+    const customIds = new Set(customGroups().map(group => group.id));
+    const subtreeHeight = (key: string): number => customIds.has(key)
+      ? 1 + Math.max(0, ...customGroups().filter(group => projectParent(group.id) === key).map(group => subtreeHeight(group.id)))
+      : 0;
+    return ancestors.length + 1 + subtreeHeight(id) <= 3;
   };
   const moveProject = (id: string, parent?: string) => {
-    if (!savedGroupsById().get(id)?.cwd || (parent !== undefined && !customGroups().some(group => group.id === parent))) return;
+    if (!canMoveProject(id, parent)) return;
     setProjectGroups(current => {
       const next = { ...current };
       if (parent) next[id] = parent; else delete next[id];
@@ -166,10 +189,10 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   const expandProject = (projectKey: string) => {
     setCollapsedProjects((current) => {
-      const parent = projectParent(projectKey);
-      if (!current.has(projectKey) && (!parent || !current.has(parent))) return current;
-      const next = new Set(current); next.delete(projectKey);
-      if (parent) next.delete(parent);
+      const keys = [projectKey, ...groupAncestors(projectKey)];
+      if (!keys.some(key => current.has(key))) return current;
+      const next = new Set(current);
+      keys.forEach(key => next.delete(key));
 
       try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { }
 
@@ -267,7 +290,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     const location = visualProjectKey(session);
     const groupName = location === DIRLESS_KEY ? "Dirless" : location === RECENT_KEY ? RECENT_LABEL : savedGroupsById().get(location)?.name ?? "";
 
-    const parentName = savedGroupsById().get(projectParent(location) ?? "")?.name ?? "";
+    const parentName = groupAncestors(location).map(id => savedGroupsById().get(id)?.name ?? "").join(" ");
     return `${session.name} ${session.project} ${projectName(session)} ${session.preview} ${session.hostName ?? session.hostId ?? "Local"} ${groupName} ${parentName}`.toLowerCase().includes(normalizedQuery());
   })));
 
@@ -315,7 +338,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   }, () => [projectOrderKey()]);
 
   const groups = createMemo<SidebarGroup[]>(() => ([
-    ...customVisualGroups().filter(([key, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0 || physicalGroups().some(([id, , , , children]) => projectParent(id) === key && children.length > 0)),
+    ...customVisualGroups().filter(([key, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0 || [...customVisualGroups(), ...physicalGroups()].some(([id, , , , children]) => children.length > 0 && groupAncestors(id).includes(key))),
     ...physicalGroups().filter(([, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0),
     [RECENT_KEY, RECENT_LABEL, "", undefined, recentSessions()],
     [DIRLESS_KEY, "Dirless", "", undefined, orderedSessions(DIRLESS_KEY, groupedSessions()[DIRLESS_KEY] ?? [], sessionOrders())],
@@ -374,6 +397,6 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     get state() { return storedGroups.state; }, get error() { return storedGroups.error; },
     sessions, collapsedProjects, customGroupsByKey, groupDestination, projectDetails,
     normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, groupedSessions: displayedSessions,
-    validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry, projectParent, moveProject, groupEntries, placeGroupEntry,
+    validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry, projectParent, canMoveProject, moveProject, groupEntries, placeGroupEntry,
   };
 }

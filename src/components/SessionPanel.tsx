@@ -61,9 +61,12 @@ export function SessionPanel(props: Props) {
   const panel = () => panelFields;
   const storedGroups = props.sidebar;
   const { collapsedProjects, customGroupsByKey, groupDestination, projectDetails, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
-  const { projectParent, moveProject, groupEntries, placeGroupEntry } = storedGroups;
+  const { projectParent, canMoveProject, moveProject, groupEntries, placeGroupEntry } = storedGroups;
   const siblingEntries = (parent?: string) => sidebarEntries().filter(token => projectParent(token.slice("group:".length)) === parent);
-  const keyboardSidebarEntries = createMemo(() => siblingEntries().flatMap(token => [token, ...siblingEntries(token.slice("group:".length))]));
+  const keyboardSidebarEntries = createMemo(() => {
+    const descendants = (parent?: string): string[] => siblingEntries(parent).flatMap(token => [token, ...descendants(token.slice("group:".length))]);
+    return descendants();
+  });
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = createSignal<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [removingGroup, setRemovingGroup] = createSignal<{ id: string; name: string }>();
@@ -230,7 +233,8 @@ export function SessionPanel(props: Props) {
     const projectDropTarget = (hit: Element | null, y: number, projectKey: string): DropTarget | undefined => {
       const heading = hit?.closest<HTMLElement>("[data-drop-project-key]");
       const destination = heading?.dataset.dropProjectKey;
-      if (destination && customGroupsByKey().has(destination) && groupDestination(projectKey)?.cwd) {
+      if (destination && customGroupsByKey().has(destination)) {
+        if (!canMoveProject(projectKey, destination)) return;
         return { projectKey: destination, sessionKey: "", edge: "after", parentKey: destination };
       }
       const entryElement = hit?.closest<HTMLElement>("section[data-sidebar-token], .session-item[data-sidebar-token]");
@@ -240,8 +244,7 @@ export function SessionPanel(props: Props) {
       const bounds = entryElement.getBoundingClientRect();
       const edge = y < bounds.top + bounds.height / 2 ? "before" : "after";
       const parentKey = token.startsWith("session:") ? entryElement.dataset.projectKey : projectParent(token.slice("group:".length));
-      if (parentKey && !groupDestination(projectKey)?.cwd) return;
-      if (parentKey && !customGroupsByKey().has(parentKey)) return;
+      if (!canMoveProject(projectKey, parentKey)) return;
       const entries = parentKey ? groupEntries(parentKey) : siblingEntries();
       const index = entries.indexOf(token);
 
@@ -262,7 +265,7 @@ export function SessionPanel(props: Props) {
 
       if (sidebarDropZone) {
         const parentKey = sidebarDropZone.dataset.sidebarParent;
-        if ("session" in current || !parentKey || groupDestination(current.projectKey)?.cwd) {
+        if ("session" in current || canMoveProject(current.projectKey, parentKey)) {
           nextTarget = { projectKey: parentKey ?? RECENT_KEY, sessionKey: "", edge: "after", parentKey, layoutBefore: sidebarDropZone.dataset.sidebarEnd === "true" ? null : required(sidebarDropZone.dataset.sidebarBefore) };
         }
       } else if (!("session" in current)) {
@@ -325,7 +328,7 @@ export function SessionPanel(props: Props) {
 
             if (target.layoutBefore !== undefined && target.parentKey) placeGroupEntry(target.parentKey, sourceToken, target.layoutBefore);
             expandProject(target.projectKey);
-          } else {
+          } else if (canMoveProject(current.projectKey, target.parentKey)) {
             moveProject(current.projectKey, target.parentKey);
             if (target.layoutBefore !== undefined) {
               if (target.parentKey) placeGroupEntry(target.parentKey, sourceToken, target.layoutBefore);
@@ -372,7 +375,7 @@ export function SessionPanel(props: Props) {
       if (parent) placeGroupEntry(parent, token, before);
       else placeSidebarEntry(token, before);
     },
-    "aria-description": isFixedGroup(projectKey) ? "Always shown below project groups." : !normalizedQuery() ? "Drag to reorder or move a project into a group. Press Alt plus Up or Down to reorder." : undefined,
+    "aria-description": isFixedGroup(projectKey) ? "Always shown below project groups." : !normalizedQuery() ? "Drag to reorder or move into a group. Custom groups can nest up to three levels. Press Alt plus Up or Down to reorder." : undefined,
     "aria-keyshortcuts": !isFixedGroup(projectKey) && !normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown" : undefined,
   });
 
