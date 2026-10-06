@@ -79,12 +79,12 @@ export function Diagram(props: { source: string; complete: boolean }) {
       <button type="button" onClick={() => setSourceVisible(!sourceVisible())} aria-pressed={sourceVisible()}>Source</button>
       <button type="button" onClick={() => void copy()}>Copy</button>
       <button type="button" aria-label="Zoom out" disabled={zoom() <= 0.5} onClick={() => setZoom(Math.max(0.5, zoom() - 0.25))}>−</button>
-      <button type="button" onClick={reset} title="Reset zoom and position">{Math.round(zoom() * 100)}%</button>
+      <button type="button" onClick={reset} data-tooltip="Reset zoom and position">{Math.round(zoom() * 100)}%</button>
       <button type="button" aria-label="Zoom in" disabled={zoom() >= 4} onClick={() => setZoom(Math.min(4, zoom() + 0.25))}>+</button>
       <button type="button" aria-expanded={expanded()} onClick={() => setExpanded(!expanded())}>{expanded() ? "Collapse" : "Expand"}</button>
     </div>
     <Show when={svg()}>
-      <div ref={viewport} class="diagram-viewport" tabindex="0" role="region" aria-label="Diagram preview; scroll or drag to pan, Ctrl+scroll to zoom" title="Ctrl+scroll up to zoom in, Ctrl+scroll down to zoom out" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={() => { drag = undefined; }} onLostPointerCapture={() => { drag = undefined; }}>
+      <div ref={viewport} class="diagram-viewport" tabindex="0" role="region" aria-label="Diagram preview; scroll or drag to pan, Ctrl+scroll to zoom" data-tooltip="Ctrl+scroll up to zoom in, Ctrl+scroll down to zoom out" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={() => { drag = undefined; }} onLostPointerCapture={() => { drag = undefined; }}>
         <div class="diagram-canvas" style={{ width: `${zoom() * 100}%` }} innerHTML={svg()} />
       </div>
     </Show>

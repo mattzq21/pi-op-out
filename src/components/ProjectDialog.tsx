@@ -226,7 +226,7 @@ export function ProjectDialog(componentProps: Props) {
       {loading() && <div class="directory-palette-empty" role="status">Loading folder suggestions…</div>}
     </div>);
 
-  const renderDirectoryPaletteOpen = () => (<button class="directory-palette-open" disabled={!listing() || loading() || opening()} onClick={() => void open()}><FolderOpen size={18} /><span><strong>{opening() ? "Opening…" : "Open current folder"}</strong><small title={listing()?.path}>{displayPath(listing()?.path || parent(), homePath()) || "Type a path to begin"}</small></span><kbd>{isMac() ? "⌘" : "Ctrl"} Enter</kbd></button>);
+  const renderDirectoryPaletteOpen = () => (<button class="directory-palette-open" disabled={!listing() || loading() || opening()} onClick={() => void open()}><FolderOpen size={18} /><span><strong>{opening() ? "Opening…" : "Open current folder"}</strong><small data-tooltip={listing()?.path}>{displayPath(listing()?.path || parent(), homePath()) || "Type a path to begin"}</small></span><kbd>{isMac() ? "⌘" : "Ctrl"} Enter</kbd></button>);
 
   return <dialog ref={element => { dialogRef.current = element; }} class="extension-dialog directory-palette" data-custom-history aria-labelledby="project-dialog-title" onCancel={(event) => { event.preventDefault();
 

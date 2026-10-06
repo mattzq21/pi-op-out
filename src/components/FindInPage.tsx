@@ -354,9 +354,9 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
         if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); event.stopPropagation(); move(event.shiftKey ? -1 : 1); }
       }} />
       <span class="find-count" role="status">{query() ? matches().length ? `${index() + 1} / ${matches().length}` : "No matches" : ""}</span>
-      <button aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={!matches().length} onClick={() => move(-1)}><ArrowUp size={15} /></button>
-      <button aria-label="Next match" title="Next match (Enter)" disabled={!matches().length} onClick={() => move(1)}><ArrowDown size={15} /></button>
-      <button aria-label="Close find" title="Close (Escape)" onClick={close}><X size={15} /></button>
+      <button aria-label="Previous match" data-tooltip="Previous match (Shift+Enter)" disabled={!matches().length} onClick={() => move(-1)}><ArrowUp size={15} /></button>
+      <button aria-label="Next match" data-tooltip="Next match (Enter)" disabled={!matches().length} onClick={() => move(1)}><ArrowDown size={15} /></button>
+      <button aria-label="Close find" data-tooltip="Close (Escape)" onClick={close}><X size={15} /></button>
     </section>
   </>)}</>;
 }

@@ -171,7 +171,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
 
       const storageRoot = createMemo(() => host().categories.find((category) => category.id === "other-storage")?.directories?.[0]);
 
-      const renderHostHeader = () => (<header><button type="button" class="config-icon storage-directory-button" aria-label={`Open ${host().hostName} storage directory`} title={host().hostId !== "local" ? "Remote directories cannot be opened in the local file manager" : storageRoot() ?? "Storage directory unavailable"} disabled={host().hostId !== "local" || !storageRoot()} onClick={() => { const directory = storageRoot();
+      const renderHostHeader = () => (<header><button type="button" class="config-icon storage-directory-button" aria-label={`Open ${host().hostName} storage directory`} data-tooltip={host().hostId !== "local" ? "Remote directories cannot be opened in the local file manager" : storageRoot() ?? "Storage directory unavailable"} disabled={host().hostId !== "local" || !storageRoot()} onClick={() => { const directory = storageRoot();
 
         if (directory) void openDirectory(directory, host()); }}><Database size={16} /></button><span><strong>{host().hostName}</strong><small>{host().error ? "Storage unavailable" : `${approximate() ? "About " : ""}${formatBytes(total())} ${host().warnings.length ? "measured · incomplete" : "total disk usage"}`}</small></span></header>);
 
@@ -187,16 +187,16 @@ export function StorageSettings(componentProps: { hostId?: string }) {
           };
 
           return <div class="storage-category" >
-            <button type="button" class="storage-category-icon storage-directory-button" aria-label={`Open ${details().name} ${directories().length > 1 ? "directories" : "directory"}`} aria-expanded={directories().length > 1 ? showDirectories() : undefined} title={directoryTitle(host().hostId, directories())} disabled={host().hostId !== "local" || !directories().length} onClick={openCategory}><Dynamic component={CategoryIcon()} size={15} /></button>
+            <button type="button" class="storage-category-icon storage-directory-button" aria-label={`Open ${details().name} ${directories().length > 1 ? "directories" : "directory"}`} aria-expanded={directories().length > 1 ? showDirectories() : undefined} data-tooltip={directoryTitle(host().hostId, directories())} disabled={host().hostId !== "local" || !directories().length} onClick={openCategory}><Dynamic component={CategoryIcon()} size={15} /></button>
             <span><strong>{details().name}</strong><small>{details().description} · {itemCount(category())}</small><i><b style={{ width: `${Math.max(category().byteSize ? 2 : 0, category().byteSize / maximum() * 100)}%` }} /></i></span>
             <code>{category().estimated && category().byteSize > 0 ? "~" : ""}{formatBytes(Number(category().byteSize) || 0)}</code>
-            {showDirectories() && <div class="storage-directory-list" aria-label={`${details().name} directories`}>{directories().map((directory) => <button type="button" title={directory} onClick={() => void openDirectory(directory, host())}>{directory}</button>)}</div>}
+            {showDirectories() && <div class="storage-directory-list" aria-label={`${details().name} directories`}>{directories().map((directory) => <button type="button" data-tooltip={directory} onClick={() => void openDirectory(directory, host())}>{directory}</button>)}</div>}
           </div>;
         }}</Key>}</div>
       );
 
       const renderStorageHostError = () => (<Show when={!host().error} fallback={<div class="storage-host-error" role="alert">{host().error}</div>}>
-        {host().warnings.length > 0 && <div class="storage-warning" title={host().warnings.join("\n")}>Storage could not be fully measured at {host().warnings.length} location{host().warnings.length === 1 ? "" : "s"}. The total is incomplete.</div>}
+        {host().warnings.length > 0 && <div class="storage-warning" data-tooltip={host().warnings.join("\n")}>Storage could not be fully measured at {host().warnings.length} location{host().warnings.length === 1 ? "" : "s"}. The total is incomplete.</div>}
         {storageSections.map((section) => {
           const categories = createMemo(() => section.categories.flatMap((id) => host().categories.filter((category) => category.id === id)));
           const subtotal = createMemo(() => categories().reduce((sum, category) => sum + category.byteSize, 0));
@@ -216,7 +216,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
 
                 const renderWorktreeAction = () => ((!archive().worktreePath && archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : "Restore conversation"}</button>);
 
-                return <div class={`archive-row${archive().deletable ? "" : " cleanup-unavailable"}`}  title={archive().deleteError || archive().path}>
+                return <div class={`archive-row${archive().deletable ? "" : " cleanup-unavailable"}`}  data-tooltip={archive().deleteError || archive().path}>
                   {renderArchiveDetails()}
                   <code>{formatBytes(Number(archive().byteSize) || 0)}</code>
                   {renderWorktreeAction()}

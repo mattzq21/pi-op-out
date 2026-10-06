@@ -112,9 +112,9 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
     {required((active())) === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{tool().description && <p>{tool().description}</p>}<details class="prompt-context-tool-json"><summary>JSON</summary><pre>{JSON.stringify(tool().parameters, null, 2)}</pre></details></div>}</Key> : <p>No active tools</p>)}
     {required((active())) === "skills" && <>
       <nav class="prompt-skills-tabs" aria-label="Skill categories">
-        <button type="button" aria-pressed={skillTab() === "model"} title="Share of total estimated context used by skill definitions" onClick={() => setSkillTab("model")}>Defined <small>{skillPercent().defined}%</small></button>
-        <button type="button" aria-pressed={skillTab() === "user"} title="Share of total estimated context used by invoked skills" onClick={() => setSkillTab("user")}>Invoked <small>{skillPercent().invoked}%</small></button>
-        <button type="button" aria-pressed={skillTab() === "tax"} title="Share of total estimated context used by shared skill instructions" onClick={() => setSkillTab("tax")}>Tax <small>{skillPercent().tax}%</small></button>
+        <button type="button" aria-pressed={skillTab() === "model"} data-tooltip="Share of total estimated context used by skill definitions" onClick={() => setSkillTab("model")}>Defined <small>{skillPercent().defined}%</small></button>
+        <button type="button" aria-pressed={skillTab() === "user"} data-tooltip="Share of total estimated context used by invoked skills" onClick={() => setSkillTab("user")}>Invoked <small>{skillPercent().invoked}%</small></button>
+        <button type="button" aria-pressed={skillTab() === "tax"} data-tooltip="Share of total estimated context used by shared skill instructions" onClick={() => setSkillTab("tax")}>Tax <small>{skillPercent().tax}%</small></button>
       </nav>
       {renderSkillContents()}
     </>}

@@ -402,9 +402,9 @@ export function SessionPanel(props: Props) {
 
         return; }
 
-      panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><Show when={session().projectKind === "main"}><Folder class="session-leading-icon" size={14} aria-hidden="true" /></Show><strong>{session().name}</strong><span class="session-api-cost" title="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
+      panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><Show when={session().projectKind === "main"}><Folder class="session-leading-icon" size={14} aria-hidden="true" /></Show><strong>{session().name}</strong><span class="session-api-cost" data-tooltip="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
 
-    const renderArchiveButton = () => (<button class="session-archive" aria-busy={archiving()} aria-label={`${archiving() ? "Archiving" : "Archive"} ${session().name}`} title={!isSavedSession(session()) ? "Send a message before archiving this draft" : `${archiving() ? "Archiving" : "Archive"} ${session().name}`} disabled={archiving() || !isSavedSession(session())} onClick={() => void archive()}><Show when={archiving()} fallback={<Archive size={14} />}><LoaderCircle size={14} class="spinning" /></Show></button>);
+    const renderArchiveButton = () => (<button class="session-archive" aria-busy={archiving()} aria-label={`${archiving() ? "Archiving" : "Archive"} ${session().name}`} data-tooltip={!isSavedSession(session()) ? "Send a message before archiving this draft" : `${archiving() ? "Archiving" : "Archive"} ${session().name}`} disabled={archiving() || !isSavedSession(session())} onClick={() => void archive()}><Show when={archiving()} fallback={<Archive size={14} />}><LoaderCircle size={14} class="spinning" /></Show></button>);
 
     return <div onMouseEnter={(event) => setTooltipAnchor(event.currentTarget)} onMouseLeave={() => setTooltipAnchor(undefined)} onFocusIn={(event) => setTooltipAnchor(event.currentTarget)} onFocusOut={() => setTooltipAnchor(undefined)} data-sidebar-token={sessionLayoutToken(key())} data-session-key={key()} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault();
 
@@ -460,15 +460,15 @@ export function SessionPanel(props: Props) {
             return (isEditingGroup(projectKey) ? <div class="project-label">{renderGroupNameInput()}{groupDraftError() && <small id="rename-group-error" class="group-error">{(groupDraftError())}</small>}</div> : <>
               <button class="project-disclosure" aria-label={disclosureLabel()} aria-expanded={!collapsed()} aria-controls={groupId} onClick={() => toggleProject(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} /></button><button class="project-label" disabled={Boolean(normalizedQuery())} {...projectDragProps(projectKey)}>{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
               {!isFixedGroup(projectKey) && <div class="project-actions">
-                {customGroupsByKey().has(projectKey) && <button aria-label={`Rename group ${label()}`} title="Rename group" onClick={() => editGroup(required(customGroupsByKey().get(projectKey)))}><Pencil size={12} /></button>}
-                <button aria-label={`New chat in ${label()}`} title="New chat in group" onClick={() => {
+                {customGroupsByKey().has(projectKey) && <button aria-label={`Rename group ${label()}`} data-tooltip="Rename group" onClick={() => editGroup(required(customGroupsByKey().get(projectKey)))}><Pencil size={12} /></button>}
+                <button aria-label={`New chat in ${label()}`} data-tooltip="New chat in group" onClick={() => {
                   const destination = groupDestination(projectKey);
 
                   if (!destination) return;
                   expandProject(projectKey);
                   panel().onNewChat(destination);
                 }}><MessageSquarePlus size={14} /></button>
-                <button aria-label={`Group actions for ${label()}`} title="Group actions" aria-haspopup="menu" aria-expanded={groupMenu()?.projectKey === projectKey} onClick={(event) => {
+                <button aria-label={`Group actions for ${label()}`} data-tooltip="Group actions" aria-haspopup="menu" aria-expanded={groupMenu()?.projectKey === projectKey} onClick={(event) => {
                   event.stopPropagation();
 
                   if (groupMenu()?.projectKey === projectKey) { closeMenu(true);
@@ -519,7 +519,7 @@ export function SessionPanel(props: Props) {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
     else if (event.key === "Home" || event.key === "End") { event.preventDefault(); items[event.key === "Home" ? 0 : items.length - 1]?.focus(); }
     else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeMenu(true); }
-  }}>{<Key each={menuActions().menuItems} by={({ label }) => label}>{(entry, _index) => <button  role="menuitem" disabled={entry().disabled} title={entry().disabled ? groupMenu() ? "Custom groups have no directory" : "Send a message before cloning this draft" : undefined} onClick={() => { const run = entry().run; run(); closeMenu(true); }}><Dynamic component={entry().Icon} size={14} />{entry().label}</button>}</Key>}</div>);
+  }}>{<Key each={menuActions().menuItems} by={({ label }) => label}>{(entry, _index) => <button  role="menuitem" disabled={entry().disabled} data-tooltip={entry().disabled ? groupMenu() ? "Custom groups have no directory" : "Send a message before cloning this draft" : undefined} onClick={() => { const run = entry().run; run(); closeMenu(true); }}><Dynamic component={entry().Icon} size={14} />{entry().label}</button>}</Key>}</div>);
 
   return <aside class="session-panel">
     {removingGroup() && <RemoveGroupDialog name={required((removingGroup())).name} onCancel={() => setRemovingGroup(undefined)} onRemove={async () => {

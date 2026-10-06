@@ -63,7 +63,7 @@ export function WorktreeDialog(componentProps: Props) {
   if (!creatingRef.current && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) componentProps.onCancel(); }}>
     <p class="eyebrow">Git</p><h2 id="worktree-dialog-title">Create worktree</h2>{renderDescription()}
     <input autofocus aria-label="Branch name" value={name()} placeholder="Branch name" disabled={creating()} onInput={(event) => { setName(event.target.value); setError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) void create(); }} />
-    {name().trim() && <p class="worktree-preview" title={componentProps.projectPath}>Branch: <code>parent|{name().trim()}</code>. The current branch is the parent.</p>}
+    {name().trim() && <p class="worktree-preview" data-tooltip={componentProps.projectPath}>Branch: <code>parent|{name().trim()}</code>. The current branch is the parent.</p>}
     {error() && <p class="dialog-error" role="alert">{(error())}</p>}
     {renderCancelSetup()}
     {renderDialogActions()}

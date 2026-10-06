@@ -31,7 +31,7 @@ export function SubagentResults(props: { runs: Run[] }) {
 
     return <div class="subagent-branch">
       <button type="button" class="subagent-open" disabled={!open || !run().sessionId || !run().sessionPath} aria-label={`Open ${run().name} agent chat — ${statusLabel()}`} onClick={() => open?.({ ...run(), hostId: host?.() ?? run().hostId })}>
-          <span class={`subagent-state subagent-${run().status}`} title={statusLabel()} role="img" aria-label={statusLabel()}>{run().status === "running" ? <GitFork size={14} /> : run().status === "completed" ? <GitMerge size={14} /> : run().status === "cancelled" ? <Pause size={14} /> : <CircleX size={14} />}</span>
+          <span class={`subagent-state subagent-${run().status}`} data-tooltip={statusLabel()} role="img" aria-label={statusLabel()}>{run().status === "running" ? <GitFork size={14} /> : run().status === "completed" ? <GitMerge size={14} /> : run().status === "cancelled" ? <Pause size={14} /> : <CircleX size={14} />}</span>
           <span class="subagent-name">{run().name}</span>
       </button>
     </div>;

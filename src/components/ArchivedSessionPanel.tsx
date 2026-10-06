@@ -67,7 +67,7 @@ export function ArchivedSessionPanel() {
         <div class="project-label"><span>{host().hostName}</span></div>
         <Show when={host().error}><p class="group-error" role="alert">{host().error}</p></Show>
         <Key each={host().warnings} by={warning => warning}>{warning => <p class="group-error" role="status">{warning()}</p>}</Key>
-        <Key each={host().archives} by={archive => archive.path}>{archive => <div class="session-item" title={archive().cwd}>
+        <Key each={host().archives} by={archive => archive.path}>{archive => <div class="session-item" data-tooltip={archive().cwd}>
           <div class="session-main"><div class="session-copy">
             <div class="session-title-row"><strong>{archive().name}</strong></div>
             <small class="archived-session-detail">{archive().cwd}</small>

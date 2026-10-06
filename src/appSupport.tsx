@@ -102,7 +102,7 @@ function LimitBadge(componentProps: { label: string; prefix?: string; go?: boole
 
   return componentProps.resetAt ? formatCodexReset(componentProps.resetAt) : ""; };
 
-  return <span class={componentProps.go ? "codex-usage opencode-go-usage" : "codex-usage"} role="status" aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)})` : ""}`} title={`${componentProps.label} usage remaining`}><span>{componentProps.prefix}{componentProps.remainingPercent}%<span class="codex-usage-left"> left</span></span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}</span>;
+  return <span class={componentProps.go ? "codex-usage opencode-go-usage" : "codex-usage"} role="status" aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)})` : ""}`} data-tooltip={`${componentProps.label} usage remaining`}><span>{componentProps.prefix}{componentProps.remainingPercent}%<span class="codex-usage-left"> left</span></span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}</span>;
 }
 
 function goUsageBadge(usage?: OpencodeGoUsage) { return usage === undefined ? undefined : { window: usage.rolling, detail: usageWindowsDescription(usage) }; }
