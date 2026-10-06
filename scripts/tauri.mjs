@@ -8,6 +8,7 @@ import { selectWindowBounds } from "./window-placement.mjs";
 import { watchBackend } from "./watch-backend.mjs";
 
 const args = process.argv.slice(2);
+const branchLabel = args[0] === "dev" && args[1] !== undefined && !args[1].startsWith("-") ? args.splice(1, 1)[0] : undefined;
 
 const windowBounds = process.platform === "linux" && args[0] === "dev" ? selectWindowBounds() : undefined;
 
@@ -75,7 +76,7 @@ if (windowBounds) {
 }
 
 if (args[0] === "dev") {
-  await watchBackend(tauri, args.includes("--no-watch") ? args : [...args, "--no-watch"], { stdio: "inherit", env }, fileURLToPath(new URL("../", import.meta.url)), { port: devPort, watch: !args.includes("--no-watch") });
+  await watchBackend(tauri, args.includes("--no-watch") ? args : [...args, "--no-watch"], { stdio: "inherit", env }, fileURLToPath(new URL("../", import.meta.url)), { port: devPort, branchLabel, watch: !args.includes("--no-watch") });
 } else {
   const child = spawn(tauri, args, { stdio: "inherit", env });
   child.once("error", (error) => { console.error(error.message); process.exitCode = 1; });
