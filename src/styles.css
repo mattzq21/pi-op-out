@@ -85,7 +85,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .project-disclosure { display: grid; place-items: center; flex: 0 0 20px; height: 27px; padding: 0; border: 0; background: transparent; color: var(--muted); }
 .project-disclosure svg.collapsed { transform: rotate(-90deg); }
 .new-chat-project { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.session-tooltip { position: fixed; z-index: 10000; pointer-events: none; display: grid; gap: 6px; max-width: min(360px, calc(100vw - 16px)); padding: 9px 12px; border: 1px solid #454540; border-radius: 7px; background: #242422; color: #eee9df; box-shadow: 0 4px 16px #0004; font: 12px/1.4 sans-serif; }
+.session-tooltip { position: fixed; z-index: 10000; pointer-events: none; display: grid; gap: 6px; max-width: min(360px, calc(100vw - 16px)); padding: 9px 12px; border: 1px solid #454540; border-radius: 7px; background: #242422; color: #eee9df; box-shadow: 0 4px 16px #0004; font: 14px/1.4 sans-serif; }
 .session-tooltip > span { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .session-tooltip svg { flex-shrink: 0; color: #aaa69d; }
 .session-tooltip > span > span { overflow-wrap: anywhere; min-width: 0; }
@@ -179,7 +179,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .cache-hit-rate, .session-cache-hit { position: relative; }
 .cache-hit-rate, .session-cache-hit { display: inline-flex; align-items: center; gap: 4px; }
 .cache-icon { width: 20px; height: 20px; flex: 0 0 auto; color: var(--muted); }
-.cache-fraction-tooltip { position: absolute; z-index: 12; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%) translateY(2px); opacity: 0; padding: 6px 8px; border: 1px solid #ffffff18; border-radius: 5px; background: #151514; color: #f7f5ef; box-shadow: 0 4px 12px #0005; text-align: center; font: 500 11px/1.25 "DM Sans", sans-serif; letter-spacing: .01em; font-variant-numeric: tabular-nums; pointer-events: none; transition: opacity .12s, transform .12s; }
+.cache-fraction-tooltip { position: absolute; z-index: 12; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%) translateY(2px); opacity: 0; padding: 6px 8px; border: 1px solid #ffffff18; border-radius: 5px; background: #151514; color: #f7f5ef; box-shadow: 0 4px 12px #0005; text-align: center; font: 500 14px/1.25 "DM Sans", sans-serif; letter-spacing: .01em; font-variant-numeric: tabular-nums; pointer-events: none; transition: opacity .12s, transform .12s; }
 .cache-fraction-tooltip { width: max-content; white-space: nowrap; }
 .cache-fraction-tooltip > span { display: block; }
 .cache-fraction-tooltip > span:first-child { border-bottom: 1px solid currentColor; padding-bottom: 2px; }
@@ -187,7 +187,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .cache-hit-rate:hover .cache-fraction-tooltip, .cache-hit-rate:focus-visible .cache-fraction-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
 .tool-failure-rate { white-space: nowrap; }
 .tool-failure-icon { width: 20px; height: 20px; flex: 0 0 auto; }
-.tool-failure-tooltip { position: absolute; z-index: 10; bottom: calc(100% + 6px); right: 0; display: none; width: max-content; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font: 12px/1.4 "DM Sans"; font-variant-numeric: tabular-nums; pointer-events: none; }
+.tool-failure-tooltip { position: absolute; z-index: 10; bottom: calc(100% + 6px); right: 0; display: none; width: max-content; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font: 14px/1.4 "DM Sans"; font-variant-numeric: tabular-nums; pointer-events: none; }
 .tool-failure-tooltip > span { display: block; }
 .tool-failure-rate:hover .tool-failure-tooltip, .tool-failure-rate:focus-visible .tool-failure-tooltip { display: block; }
 .message-failure { display: flex; align-items: center; gap: 7px; color: #c64f38; font-size: 12px; }.message-failure button { margin-left: 5px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; padding: 4px 9px; font: inherit; cursor: pointer; }.message-failure button:hover { background: #c64f3812; }
@@ -242,7 +242,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .prompt-context-bar { display: flex; flex-wrap: wrap; }
 .prompt-context-wheel { flex: 0 0 auto; margin-left: auto; }
 .prompt-context-bar .prompt-context-diagram { display: inline-grid; place-items: center; flex: 0 0 auto; margin-left: auto; padding: 0 4px; }
-.prompt-context-token-tooltip, .app-tooltip { position: fixed; z-index: 10000; pointer-events: none; padding: 6px 8px; border: 1px solid #ffffff18; border-radius: 5px; background: #151514; color: #f7f5ef; box-shadow: 0 4px 12px #0005; font: 500 11px/1.25 "DM Sans", sans-serif; white-space: nowrap; }
+.prompt-context-token-tooltip, .app-tooltip { position: fixed; z-index: 10000; pointer-events: none; padding: 6px 8px; border: 1px solid #ffffff18; border-radius: 5px; background: #151514; color: #f7f5ef; box-shadow: 0 4px 12px #0005; font: 500 14px/1.25 "DM Sans", sans-serif; white-space: nowrap; }
 .app-tooltip { width: max-content; max-width: min(440px, calc(100vw - 16px)); white-space: pre-wrap; overflow-wrap: anywhere; letter-spacing: .01em; opacity: 0; transform: translateY(2px); transition: opacity .12s, transform .12s; }.app-tooltip.visible { opacity: 1; transform: translateY(0); }
 .prompt-context-tool-json { margin-top: 7px; }
 .prompt-context-tool-json > summary { width: fit-content; cursor: pointer; color: var(--muted); }
