@@ -194,6 +194,7 @@ export async function watchBackend(command, args, options, root, { port, branchL
       root,
       define: {
         "import.meta.env.VITE_PIOP_DEBUG": JSON.stringify(options.env.VITE_PIOP_DEBUG),
+        __PIOP_CUSTOM_DEVELOPMENT_LABEL__: branchLabel !== undefined,
         ...(branchLabel !== undefined ? { __PIOP_DEVELOPMENT_BRANCH__: JSON.stringify(branchLabel) } : {}),
       },
       server: { host: "127.0.0.1", port, strictPort: true },

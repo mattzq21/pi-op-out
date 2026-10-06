@@ -25,7 +25,7 @@ const developmentBranch = (() => {
 export default defineConfig({
   cacheDir: `.trace/vite/${dependencyCacheKey}`,
   plugins: [solid()],
-  define: { __PIOP_DEVELOPMENT_BRANCH__: JSON.stringify(developmentBranch) },
+  define: { __PIOP_DEVELOPMENT_BRANCH__: JSON.stringify(developmentBranch), __PIOP_CUSTOM_DEVELOPMENT_LABEL__: false },
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_ENV_"],
   server: {

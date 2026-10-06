@@ -20,6 +20,7 @@ button { cursor: pointer; }
 .icon-rail { position: relative; width: var(--rail-width); flex: 0 0 var(--rail-width); background: #292824; color: #bdb9b0; display: flex; flex-direction: column; align-items: center; padding: 13px 0 12px; z-index: 3; }
 .icon-rail.compact { width: 60px; flex-basis: 60px; }
 .rail-branch { width: calc(100% - 28px); min-width: 0; min-height: 44px; margin: 0 14px 5px; padding: 4px 8px 8px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--accent); font: 600 26px/1.1 "DM Sans"; letter-spacing: -.03em; }.rail-branch svg { width: 22px; height: 22px; flex: 0 0 auto; }.rail-branch span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-branch.custom-label { flex-shrink: 0; }.rail-branch.custom-label span { overflow: visible; text-overflow: clip; white-space: pre-wrap; overflow-wrap: anywhere; }
 .icon-rail nav { width: 100%; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 5px; }
 .icon-rail nav button { cursor: default; }
 .icon-rail.compact .rail-branch { width: 100%; margin-inline: 0; padding-inline: 0; }.icon-rail.compact .rail-branch span { display: none; }
