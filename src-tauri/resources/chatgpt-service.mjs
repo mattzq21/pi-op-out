@@ -369,11 +369,11 @@ async function chatGptSendTurn(identity, request) {
 
     return chat; }
 
-    if (chat.status === 'streaming') throw new Error('Reload this chat before continuing an interrupted connection.');
+    if (chatGptNeedsRecovery(chat)) throw new Error('Reload this chat before continuing an interrupted connection.');
     active.chat = chat;
     const body = chatGptRequest(chat, request);
     chatGptAcceptSubmission(chat, request.submissionId);
-    chat.status = 'streaming'; delete chat.error; chat.updatedAt = Date.now();
+    chat.status = 'streaming'; delete chat.error; delete chat.interrupted; chat.updatedAt = Date.now();
     await chatGptSave(identity, chat);
     active.done = chatGptRun(identity, key, active, body);
 
@@ -398,7 +398,7 @@ function chatGptReceive(active, data) {
   if (!data || typeof data !== 'object') return;
 
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
-  if (data.error) throw new Error(typeof data.error === 'string' ? data.error : 'ChatGPT could not complete this response.');
+  if (data.error) { active.rejected = true; throw new Error(typeof data.error === 'string' ? data.error : 'ChatGPT could not complete this response.'); }
 
   if (data.conversation_id) active.chat.conversationId = chatGptId(data.conversation_id);
 
@@ -484,11 +484,14 @@ async function chatGptPrepareConversation(identity, active, body) {
 
 async function chatGptStream(identity, active, body) {
   let response = await chatGptHttp(identity, '/f/conversation', { body, headers: active.headers, signal: active.controller.signal });
+  active.streamStarted = response.headers.get('content-type')?.includes('text/event-stream') === true;
 
   for (let attempt = 0; ; attempt++) {
     try { await chatGptConsume(identity, active, response); break; }
     catch (error) {
       active.controller.signal.throwIfAborted();
+
+      if (active.rejected) throw error;
 
       if (!active.resumeToken || !active.chat.conversationId || attempt >= 2) throw error;
       response = await chatGptHttp(identity, '/f/conversation/resume', { body: { conversation_id: active.chat.conversationId, offset: active.offset }, headers: { 'x-conduit-token': active.resumeToken }, signal: active.controller.signal });
@@ -504,11 +507,8 @@ async function chatGptRun(identity, key, active, body) {
     await chatGptStream(identity, active, body);
     active.controller.signal.throwIfAborted();
     chat.status = 'complete';
-  } catch (error) {
-    chat.status = active.controller.signal.aborted ? 'stopped' : 'error';
-
-    if (chat.status === 'error') chat.error = error.message || 'ChatGPT request failed.';
-  } finally {
+  } catch (error) { chatGptRunFailed(active, error); }
+  finally {
     chat.updatedAt = Date.now();
 
     try { await chatGptSave(identity, chat); }
@@ -516,6 +516,14 @@ async function chatGptRun(identity, key, active, body) {
 
     chatGptActive.delete(key);
   }
+}
+
+function chatGptRunFailed(active, error) {
+  const chat = active.chat;
+  chat.status = active.controller.signal.aborted ? 'stopped' : 'error';
+  chat.interrupted = chat.status === 'error' && active.streamStarted === true && !active.rejected && Boolean(chat.conversationId);
+
+  if (chat.status === 'error') chat.error = error.message || 'ChatGPT request failed.';
 }
 
 async function chatGptStop(identity, id, expectedSubmissionId) {
@@ -550,7 +558,7 @@ async function chatGptFinishStop(identity, id, expectedSubmissionId) {
   const current = await chatGptLoad(identity, id);
 
   if (current.submissionId !== submissionId) return current;
-  current.status = 'stopped'; current.updatedAt = Date.now();
+  current.status = 'stopped'; delete current.interrupted; current.updatedAt = Date.now();
 
   if (remoteError) current.error = remoteError;
   await chatGptSave(identity, current);
@@ -566,20 +574,38 @@ async function chatGptStopRemote(identity, chat, headers) {
 }
 
 async function chatGptRecover(identity, chat) {
-  if (chatGptActive.has(chatGptKey(identity, chat.id)) || chat.status !== 'streaming') return chat;
+  if (chatGptActive.has(chatGptKey(identity, chat.id)) || !chatGptNeedsRecovery(chat)) return chat;
 
   if (!chat.conversationId) { chat.status = 'error'; chat.error = 'The host restarted before the conversation ID arrived. Check ChatGPT history before sending again.'; }
   else {
     const history = await (await chatGptHttp(identity, `/conversation/${chatGptId(chat.conversationId)}`)).json();
     const entries = chatGptHistory(history);
+
+    if (!chatGptHistoryIncludesSubmission(chat, entries)) return chat;
     chat.messages = entries.filter(chatGptVisible).map(message => ({ id: message.id, role: message.author.role, text: chatGptText(message) }));
     chat.parentMessageId = history.current_node || chat.parentMessageId;
-    chat.status = entries.at(-1)?.status === 'in_progress' ? 'streaming' : 'complete';
+    chat.status = chatGptRecoveredStatus(entries);
+    delete chat.error; delete chat.interrupted;
   }
 
+  chat.updatedAt = Date.now();
   await chatGptSave(identity, chat);
 
   return chat;
+}
+
+function chatGptNeedsRecovery(chat) { return chat.status === 'streaming' || chat.status === 'error' && chat.interrupted === true && Boolean(chat.conversationId); }
+
+function chatGptHistoryIncludesSubmission(chat, entries) {
+  const latest = chat.messages.findLast(message => message.role === 'user');
+
+  return !latest || entries.some(message => message.id === latest.id);
+}
+
+function chatGptRecoveredStatus(entries) {
+  const latest = entries.at(-1);
+
+  return latest?.author?.role === 'assistant' && latest.status !== 'in_progress' ? 'complete' : 'streaming';
 }
 
 function chatGptHistory(history) {

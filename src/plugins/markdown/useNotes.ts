@@ -34,9 +34,11 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
   const leaseId = crypto.randomUUID();
   let leaseTimer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
+  let visibilityRevision = 0;
   let disposed = false;
   let inFlight: Promise<boolean> | undefined;
   let retirement: Promise<void> | undefined;
+  let acquisition: Promise<void> | undefined;
   let operations = Promise.resolve();
   let checking = false;
   const dirty = () => !!document() && (!!unconfirmed() || content() !== document()?.content);
@@ -86,7 +88,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
     updateOwnership(next.ownership);
   };
 
-  const load = async (action: string) => {
+  const loadDocument = async (action: string) => {
     relinquish();
     const current = generation;
     setLoading(true); setReadError(""); setSaveError("");
@@ -97,6 +99,13 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
       if (!disposed && current === generation) selectDocument(next);
     } catch (reason) { if (!disposed && current === generation) setReadError(reason instanceof Error ? reason.message : String(reason)); }
     finally { if (!disposed && current === generation) setLoading(false); }
+  };
+
+  const load = (action: string) => {
+    const pending = loadDocument(action).finally(() => { if (acquisition === pending) acquisition = undefined; });
+    acquisition = pending;
+
+    return pending;
   };
 
   const refreshAfterFailure = async () => {
@@ -261,15 +270,24 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>) 
 
   const resume = () => { if (!window.document.hidden) void sync(); };
 
-  const show = async () => {
-    await retirement;
-
-    if (!await save()) return;
-
-    if (visible() && !disposed && !loading() && !document()?.deleted) await load("claim");
+  const settleOwnership = async () => {
+    while (acquisition || retirement) await Promise.all([acquisition, retirement]);
   };
 
-  createDependencyEffect(() => { if (visible()) void show(); else void release(); }, () => [visible()]);
+  const show = async (current: number) => {
+    await settleOwnership();
+
+    if (!await save()) return;
+    await settleOwnership();
+
+    if (current === visibilityRevision && visible() && !disposed && !document()?.deleted) await load("claim");
+  };
+
+  createDependencyEffect(() => {
+    const current = ++visibilityRevision;
+
+    if (visible()) void show(current); else void release();
+  }, () => [visible()]);
 
   const beforeUnload = (event: BeforeUnloadEvent) => {
     if (!pendingWork()) return;
