@@ -7,6 +7,7 @@ import { chatGptContext, type ChatGptContextSource } from "./context";
 import { chatGptPrepareToken, solveChatGptRequirements } from "./chatGptIntegrity";
 import { createModelSelection, type ChatModel } from "./modelSelection";
 import { ownershipSchema, type PluginOwnership } from "../ownership";
+import { watchChatGptCatalog } from "./catalogUpdates";
 
 export type { RegularChat } from "./chatSchemas";
 
@@ -26,10 +27,12 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const [draftId, setDraftId] = createSignal(crypto.randomUUID());
   const [busy, setBusy] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
+  const [catalogLoading, setCatalogLoading] = createSignal(true);
   const [error, setError] = createSignal<string>();
   const [pollError, setPollError] = createSignal<string>();
   const [cancellationError, setCancellationError] = createSignal<string>();
-  const [reload, setReload] = createSignal(0);
+  const [catalogError, setCatalogError] = createSignal<string>();
+  const [leaseRevision, setLeaseRevision] = createSignal(0);
   const leaseId = crypto.randomUUID();
   let desiredChat: string | undefined;
   const leasedChats = new Set<string>();
@@ -74,27 +77,49 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   createDependencyEffect(fresh, () => [request()?.id]);
 
   const loadCatalog = async (current: number) => {
+    const started = Date.now();
     const accounts = await call("accounts", chatAccountsSchema);
 
     if (generation !== current) return;
     const selected = accounts.find(account => account.configured && account.id === provider) ?? accounts.find(account => account.configured);
 
-    if (!selected) throw new Error("Sign in to a ChatGPT account in Settings → Providers.");
+    if (!selected || selected.id !== provider && (desiredChat || busy())) throw new Error("Sign in to the chat's ChatGPT account in Settings → Providers.");
     provider = selected.id; call = createChatGptCall(provider, leaseId);
     const catalogCall = call;
     const [history, catalog] = await Promise.all([catalogCall("list", z.array(regularChatSchema)), catalogCall("models", chatModelsSchema)]);
 
     if (generation !== current) return;
-    setChats(history); setModels(catalog);
+    receiveHistory(history, started); setModels(catalog);
   };
 
-  createDependencyEffect(() => {
-    const current = ++generation; submission?.abort(); setBusy(false); fresh(); setLoading(true);
-    setChats([]); setModels([]);
-    void loadCatalog(current).catch(reason => { if (generation === current) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { if (generation === current) setLoading(false); });
+  const receiveHistory = (history: RegularChat[], started: number) => {
+    setChats(previous => [...history.map(value => {
+      const newer = previous.find(item => item.id === value.id && item.updatedAt > value.updatedAt);
 
-    return () => { generation++; };
-  }, () => [reload()]);
+      return newer ?? value;
+    }), ...previous.filter(value => value.updatedAt >= started && !history.some(item => item.id === value.id))].sort((a, b) => b.updatedAt - a.updatedAt));
+  };
+
+  const refreshCatalog = async (catalog: boolean) => {
+    const current = generation; const catalogCall = call;
+    const started = Date.now();
+
+    try {
+      if (catalog) await loadCatalog(current);
+      else {
+        const history = await catalogCall("list", z.array(regularChatSchema));
+
+        if (generation === current && catalogCall === call) receiveHistory(history, started);
+      }
+
+      if (generation === current) setCatalogError(undefined);
+    } catch (reason) {
+      if (generation === current) setCatalogError(reason instanceof Error ? reason.message : String(reason));
+      throw reason;
+    } finally { if (generation === current) setCatalogLoading(false); }
+  };
+
+  watchChatGptCatalog(() => provider, open, refreshCatalog, () => setLeaseRevision(value => value + 1));
 
   const remember = (value: RegularChat) => {
     setChats(previous => [value, ...previous.filter(item => item.id !== value.id)].sort((a, b) => b.updatedAt - a.updatedAt));
@@ -166,7 +191,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   }, () => [chat()?.id, open(), loading()]);
 
   const editable = () => open() && (!chat() || chat()?.ownership?.owned === true);
-  const canSend = () => editable() && !busy() && !loading() && models().length > 0 && !responding() && Boolean(prompt().trim());
+  const canSend = () => editable() && !busy() && !loading() && !catalogLoading() && models().length > 0 && !responding() && Boolean(prompt().trim());
   const contextSource = () => source()?.messages.length || source()?.selected ? source() : undefined;
   const targetChatId = () => chat()?.id ?? draftId();
 
@@ -295,12 +320,12 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     void renew();
 
     return () => { cancelled = true; clearTimeout(timer); };
-  }, () => [open()]);
+  }, () => [open(), leaseRevision()]);
 
   onCleanup(() => { disposed = true; desiredChat = undefined; generation++; submission?.abort(); release(); });
 
   return { models, modelSelection, chats, chat, prompt, setPrompt, source, includeContext, setIncludeContext, responding, recovering,
-    busy, loading, editable, error: () => error() ?? cancellationError() ?? pollError(), fresh, select, send, stop, refresh: () => setReload(value => value + 1) };
+    busy, loading: () => loading() || catalogLoading(), editable, error: () => error() ?? cancellationError() ?? catalogError() ?? pollError(), fresh, select, send, stop };
 }
 
 type ChatGptCall = <S extends z.ZodType>(action: string, schema: S, args: Record<string, import("zod").JSONType | undefined>) => Promise<z.output<S>>;

@@ -21,6 +21,43 @@ const chatGptWrites = new Map();
 
 const chatGptLeases = new Map();
 
+const chatGptModelCatalogs = new Map();
+
+function chatGptChanged(providerId, scope) { emit({ event: 'chatgpt_changed', providerId, scope }); }
+
+async function chatGptModels(identity) {
+  const models = chatGptModelVersions(await (await chatGptHttp(identity, '/models')).json());
+  const fingerprint = JSON.stringify(models);
+  const previous = chatGptModelCatalogs.get(identity.providerId);
+
+  if (previous) {
+    if (previous.fingerprint !== fingerprint) { previous.fingerprint = fingerprint; chatGptChanged(identity.providerId, 'catalog'); }
+  }
+
+  return { models, fingerprint };
+}
+
+async function chatGptModelCatalog(loaded, identity) {
+  const result = await chatGptModels(identity);
+
+  if (!chatGptModelCatalogs.has(identity.providerId)) {
+    const catalog = { fingerprint: result.fingerprint, timer: undefined };
+
+    const refresh = async () => {
+      try {
+        await loaded.runtime.refresh({ allowNetwork: false });
+        await chatGptModels(await chatGptIdentity(loaded, identity.providerId));
+      } catch { }
+      finally { catalog.timer = setTimeout(() => void refresh(), 60000); catalog.timer.unref(); }
+    };
+
+    catalog.timer = setTimeout(() => void refresh(), 60000); catalog.timer.unref();
+    chatGptModelCatalogs.set(identity.providerId, catalog);
+  }
+
+  return result.models;
+}
+
 function chatGptLeaseBusy(key, lease) { return lease.busy > 0 || chatGptActive.has(key) || chatGptStopping.has(key); }
 
 function chatGptLeaseLive(key, lease) { return Boolean(lease && (lease.expires > Date.now() || chatGptLeaseBusy(key, lease))); }
@@ -177,7 +214,7 @@ async function chatGptSave(identity, chat) {
   const write = previous.catch(() => undefined).then(async () => {
     const temporary = `${path}.${chatUuid()}.tmp`;
 
-    try { await chatWrite(temporary, data, { mode: 0o600 }); await chatRename(temporary, path); }
+    try { await chatWrite(temporary, data, { mode: 0o600 }); await chatRename(temporary, path); chatGptChanged(identity.providerId, 'chats'); }
     finally { await chatRemove(temporary, { force: true }); }
   });
 
@@ -652,7 +689,7 @@ export async function handleChatGpt(loaded, request) {
   if (['claim', 'ownership', 'release'].includes(request.action)) return chatGptOwnership(identity, request, request.action);
 
   switch (request.action) {
-    case 'models': return chatGptModelVersions(await (await chatGptHttp(identity, '/models')).json());
+    case 'models': return chatGptModelCatalog(loaded, identity);
     case 'list': return chatGptList(identity);
     case 'prepare': return chatGptPrepare(identity, request);
     case 'send': return chatGptOwnedOperation(identity, request, () => chatGptSend(identity, request));

@@ -1,7 +1,7 @@
 use super::{protocol::Result, provider_sdk::{Events, Sdk}};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::{Arc, OnceLock, Weak}, time::Duration};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -40,17 +40,22 @@ impl State {
     }
 }
 
-struct PluginEvents;
+struct PluginEvents(Arc<OnceLock<Weak<super::controller::Host>>>);
 impl Events for PluginEvents {
-    fn event(&self, _packet: Value) {}
+    fn event(&self, packet: Value) {
+        if packet["event"] != "chatgpt_changed" { return; }
+        if let Some(host) = self.0.get().and_then(Weak::upgrade) {
+            host.output(json!({"type":"chatgpt_changed","providerId":packet["providerId"],"scope":packet["scope"]}));
+        }
+    }
 }
 
 impl Runtime {
-    async fn load(executable: &str, enabled: Vec<String>) -> Result<Self> {
+    async fn load(executable: &str, enabled: Vec<String>, events: Arc<dyn Events>) -> Result<Self> {
         validate(&enabled)?;
         if enabled.iter().any(|id| id == "markdown") { markdown::initialize()?; }
         let chatgpt = if enabled.iter().any(|id| id == "chatgpt") {
-            Some(start_chatgpt(executable).await?)
+            Some(start_chatgpt(executable, events).await?)
         } else { None };
         Ok(Self { enabled, chatgpt })
     }
@@ -96,8 +101,8 @@ impl Runtime {
     }
 }
 
-async fn start_chatgpt(executable: &str) -> Result<Sdk> {
-    let sdk = Sdk::plugin(executable.into(), Arc::new(PluginEvents), CHATGPT_SOURCE);
+async fn start_chatgpt(executable: &str, events: Arc<dyn Events>) -> Result<Sdk> {
+    let sdk = Sdk::plugin(executable.into(), events, CHATGPT_SOURCE);
     let initialization = tokio::time::timeout(Duration::from_secs(20), sdk.request(json!({"method":"initialize"}))).await;
     let error = match initialization {
         Ok(Ok(value)) if value["authPath"].is_string() => None,
@@ -129,7 +134,7 @@ fn configuration() -> Result<Configuration> {
 }
 
 pub(crate) async fn validate_configuration(executable: &str, enabled: Vec<String>) -> Result<()> {
-    let runtime = Runtime::load(executable, enabled).await?;
+    let runtime = Runtime::load(executable, enabled, Arc::new(PluginEvents(Arc::default()))).await?;
     runtime.shutdown().await;
     Ok(())
 }
@@ -137,10 +142,13 @@ pub(crate) async fn validate_configuration(executable: &str, enabled: Vec<String
 pub(super) struct PluginService {
     executable: String,
     state: RwLock<Option<State>>,
+    host: Arc<OnceLock<Weak<super::controller::Host>>>,
 }
 
 impl PluginService {
-    pub fn new(executable: String) -> Self { Self { executable, state: RwLock::new(None) } }
+    pub fn new(executable: String) -> Self { Self { executable, state: RwLock::new(None), host: Arc::default() } }
+
+    pub fn bind(&self, host: Weak<super::controller::Host>) { let _ = self.host.set(host); }
 
     async fn initialize(&self) {
         if self.state.read().await.is_some() { return; }
@@ -150,11 +158,12 @@ impl PluginService {
             Ok(config) => (config, None),
             Err(error) => (Configuration { enabled: Vec::new(), previous: Vec::new() }, Some(error)),
         };
-        let runtime = match Runtime::load(&self.executable, config.enabled).await {
+        let events: Arc<dyn Events> = Arc::new(PluginEvents(self.host.clone()));
+        let runtime = match Runtime::load(&self.executable, config.enabled, events.clone()).await {
             Ok(runtime) => runtime,
             Err(reason) => {
                 error = Some(format!("Could not load the plugin setup: {reason}. Restored the previous setup."));
-                match Runtime::load(&self.executable, config.previous).await {
+                match Runtime::load(&self.executable, config.previous, events).await {
                     Ok(runtime) => runtime,
                     Err(reason) => {
                         error = Some(format!("Plugins could not start: {reason}. Plugins are disabled; your conversations remain available."));

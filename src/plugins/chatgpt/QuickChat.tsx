@@ -1,5 +1,5 @@
 import { For, Show, createEffect } from "solid-js";
-import { Plus, RefreshCw, Send, Square } from "lucide-solid";
+import { Plus, Send, Square } from "lucide-solid";
 import { IconButton } from "../../components/IconButton";
 import { Markdown } from "../../components/Markdown";
 import { useChatGpt, type QuickChatRequest } from "./useChatGpt";
@@ -64,7 +64,6 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
   return <section class="quick-chat" aria-label="ChatGPT quick chat">
     <header class="quick-chat-header">{renderChatPicker()}
       <IconButton label="New ChatGPT chat" disabled={state.busy()} onClick={() => { props.onNew(); state.fresh(); follow = true; }}><Plus size={17} /></IconButton>
-      <IconButton label="Refresh ChatGPT" disabled={active()} onClick={state.refresh}><RefreshCw size={16} /></IconButton>
     </header>
     {renderSelection()}{renderMessages()}
     <Show when={!state.editable()}><p class="quick-chat-error" role="status">Read-only · waiting for editing access.</p></Show>

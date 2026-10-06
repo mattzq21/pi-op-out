@@ -24,6 +24,7 @@ impl HostServices {
 
 impl Services for HostServices {
     fn bind(&self, host: Weak<Host>) {
+        self.plugins.bind(host.clone());
         self.providers.bind(host);
     }
     fn handle(&self, packet: Value) -> BoxFuture<'_, Result<Value>> {
