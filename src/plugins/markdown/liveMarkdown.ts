@@ -65,7 +65,15 @@ function decorateMarker(view: EditorView, ranges: Range<Decoration>[], node: Syn
     ranges.push(Decoration.replace({ widget: new BulletWidget() }).range(node.from, node.to));
   }
 
-  if (node.name === "URL" && node.node.parent?.name === "Link") ranges.push(Decoration.replace({}).range(node.from, node.to));
+  if (node.name === "URL" && isLinkDestination(view, node)) ranges.push(Decoration.replace({}).range(node.from, node.to));
+}
+
+function isLinkDestination(view: EditorView, node: SyntaxNodeRef) {
+  const marker = node.node.prevSibling;
+
+  if (!marker || node.node.parent?.name !== "Link") return false;
+
+  return marker.name === "LinkMark" && view.state.doc.sliceString(marker.from, marker.to) === "(";
 }
 
 function decorations(view: EditorView): DecorationSet {
