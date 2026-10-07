@@ -85,7 +85,7 @@ export const liveMarkdown = ViewPlugin.fromClass(class {
   constructor(view: EditorView) { this.decorations = decorations(view); }
 
   update(update: ViewUpdate) {
-    if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged || syntaxTree(update.startState) !== syntaxTree(update.state)) {
+    if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged || update.startState.readOnly !== update.state.readOnly || syntaxTree(update.startState) !== syntaxTree(update.state)) {
       this.decorations = decorations(update.view);
     }
   }
