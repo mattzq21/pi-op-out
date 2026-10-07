@@ -233,18 +233,30 @@ async function chatGptLoad(identity, id) {
 }
 
 async function chatGptList(identity) {
-  const files = (await chatReadDir(identity.directory)).filter(name => /^[a-zA-Z0-9-]+\.json$/.test(name));
+  const files = (await chatReadDir(identity.directory)).filter(name => /^[a-zA-Z0-9-]{1,100}\.json$/.test(name));
 
   const chats = await Promise.all(files.map(async name => {
-    const chat = await chatGptLoad(identity, name.slice(0, -5));
+    const id = name.slice(0, -5);
 
-    return chatGptSummary(chat, chatGptStopping.has(chatGptKey(identity, chat.id)));
+    try {
+      const chat = await chatGptLoad(identity, id);
+
+      return chatGptSummary(chat, chatGptStopping.has(chatGptKey(identity, id)), id);
+    } catch {
+      return { id, title: `Unavailable chat (${id})`, model: 'auto', updatedAt: 0, status: 'error', error: 'This local history file could not be read. The file has been kept unchanged.' };
+    }
   }));
 
   return chats.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-function chatGptSummary(chat, stopping) {
+function chatGptSummary(chat, stopping, id) {
+  const value = chat ?? {};
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate stored history before it reaches the account-wide list response.
+  const stringsValid = [value.title, value.model, value.contextSource === undefined ? '' : value.contextSource].every(field => typeof field === 'string');
+
+  if (!stringsValid || value.id !== id || !Number.isFinite(value.updatedAt) || !['idle', 'streaming', 'stopping', 'complete', 'stopped', 'error'].includes(value.status)) throw new Error('Invalid local ChatGPT history metadata.');
+
   return { id: chat.id, title: chat.title, model: chat.model, updatedAt: chat.updatedAt, status: stopping ? 'stopping' : chat.status, contextSource: chat.contextSource };
 }
 
