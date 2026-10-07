@@ -145,14 +145,18 @@ pub(super) fn save_settings_with(
     migrate_keybindings(&mut settings);
     validate_settings_for_save(&settings)?;
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+    let mut revisions = agent_host_id.as_ref().map(|_| runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")).transpose()?;
     atomic_write_private(&path()?, &serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?)?;
-    invalidate(&settings)?;
     let mut change = json!({"settings":settings});
-    if let Some(host_id) = agent_host_id {
+    if let (Some(host_id), Some(revisions)) = (agent_host_id, revisions.as_mut()) {
         let revision = runtime.agent_config_revision.fetch_add(1, Ordering::SeqCst) + 1;
-        runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")?.insert(host_id.clone(), revision);
+        revisions.insert(host_id.clone(), revision);
         change["agentConfigChange"] = json!({"hostId":host_id,"revision":revision});
     }
-    synchronize(&settings)?;
+    drop(revisions);
+    let mut warnings = Vec::new();
+    if let Err(error) = invalidate(&settings) { warnings.push(format!("Settings were saved, but applying connection changes failed: {error}")); }
+    if let Err(error) = synchronize(&settings) { warnings.push(format!("Settings were saved, but updating running sessions failed: {error}")); }
+    change["warnings"] = json!(warnings);
     Ok(change)
 }

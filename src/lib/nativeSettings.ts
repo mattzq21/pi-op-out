@@ -1,6 +1,6 @@
-import { appSettingsSchema, settingsChangeSchema, voidResultSchema } from "./responseSchemas";
+import { appSettingsSchema, settingsChangeSchema } from "./responseSchemas";
 import type { AppSettings, RpcEvent } from "../types";
-import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
+import { preferences, preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import { keybindingsError } from "./keybindings";
 import type { NativeCall } from "./nativeCall";
 
@@ -63,16 +63,30 @@ export class NativeSettings {
 
     if (shortcutError) throw new Error(shortcutError);
     const previous = await this.call("load_app_settings", undefined, appSettingsSchema);
-    const target = this.connection.target();
+    const previousClient = await withClientSettings(previous);
     const daemonSettings = scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
     const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
-    const change = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { settings: previous };
-    await saveClientSettings(settings);
-    change.settings = await withClientSettings(change.settings);
+    const clientChanged = JSON.stringify(preferences(settings)) !== JSON.stringify(preferences(previousClient));
 
-    if (reconnect && daemonChanged) await this.reconnectAfterSave(settings, previous, target);
+    if (clientChanged) await saveClientSettings(settings);
+    let change;
+
+    try { change = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { settings: previous }; }
+    catch (reason) {
+      await this.restoreClientSettings(previousClient, clientChanged, String(reason));
+      throw reason;
+    }
+
+    change.settings = { ...change.settings, ...preferences(settings) };
+
+    if (reconnect && daemonChanged) await this.reconnectAfterSave(settings);
 
     return change;
+  }
+
+  private async restoreClientSettings(settings: AppSettings, changed: boolean, reason: string) {
+    try { if (changed) await saveClientSettings(settings); }
+    catch (rollback) { throw new Error(`Settings save failed: ${String(reason)}. Client preferences could not be restored: ${String(rollback)}. Reload settings before retrying.`); }
   }
 
   private selectAvailableHost(settings: AppSettings, fresh: boolean) {
@@ -81,18 +95,14 @@ export class NativeSettings {
     if (hostId !== "local" && !settings.hosts.some(host => host.enabled !== false && host.id === hostId)) this.connection.resetToLocal(fresh);
   }
 
-  private async reconnectAfterSave(settings: AppSettings, previous: AppSettings, target: SettingsTarget) {
+  private async reconnectAfterSave(settings: AppSettings) {
     try {
       this.selectAvailableHost(settings, false);
       await this.connection.disconnect();
       await this.connection.connect();
     } catch (reason) {
-      await this.call("save_app_settings", { settings: previous }, voidResultSchema);
-      this.connection.selectTarget(target);
-
-      try { await this.connection.disconnect(); await this.connection.connect(); } catch { }
-
-      throw reason;
+      this.queue(settings, { reconnect: true });
+      this.connection.emit({ type: "extension_error", error: `Settings saved, but this session could not reconnect: ${String(reason)}. Reconnect to apply them.` });
     }
   }
 

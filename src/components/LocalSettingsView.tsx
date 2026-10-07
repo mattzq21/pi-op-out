@@ -2,7 +2,7 @@ import { modelSchema } from "../lib/responseSchemas";
 import { z } from "zod";
 import { required } from "../lib/required";
 import { Key, Rerun } from "@solid-primitives/keyed";
-import { createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect } from "../lib/solid";
 
@@ -47,6 +47,7 @@ export function LocalSettingsView(props: Props) {
 function DaemonSettingsEditor(componentProps: Props & { target: string; label: string }) {
   const hostId = createMemo(() => (componentProps.target === "client" ? "local" : componentProps.target));
   const [hostSettings, setHostSettings] = createSignal<AppSettings>();
+  const [saveWarning, setSaveWarning] = createSignal<string>();
   const [resources, setResources] = createSignal<{ config: AgentConfig; models: Model[]; levels: string[] }>();
   const [error, setError] = createSignal<string>();
   const [revision, setRevision] = createSignal(0);
@@ -112,6 +113,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   const current = createMemo(() => (componentProps.target === "client" || hostId() === "local" ? componentProps.settings : hostSettings()));
 
   const save = async (next: AppSettings, config?: AgentConfig) => { const capturedHostId = hostId(); const capturedResources = resources(); const capturedTarget0 = componentProps.target; const capturedOnSave1 = componentProps.onSave;
+    setSaveWarning(undefined);
 
     if (capturedTarget0 === "client" || capturedHostId === "local") await capturedOnSave1(next, config, capturedResources?.config);
     else {
@@ -131,6 +133,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
 
         const change = await writer.saveHostSettings(next, Boolean(config));
         setHostSettings(change.settings);
+        setSaveWarning(change.warnings?.length ? `Settings saved, but could not be applied to all sessions: ${change.warnings.join("; ")}` : undefined);
       } catch (reason) {
         await restoreAgents(reason);
         throw reason;
@@ -140,5 +143,5 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     if (config) setResources((value) => value ? { ...value, config } : value);
   };
 
-  return <>{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : resources()?.config} models={resources()?.models} thinkingLevels={resources()?.levels} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
+  return <><Show when={saveWarning()}>{warning => <p role="alert">{warning()}</p>}</Show>{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : resources()?.config} models={resources()?.models} thinkingLevels={resources()?.levels} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
 }

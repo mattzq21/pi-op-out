@@ -21,7 +21,7 @@ export const clientSettingsSchema = appSettingsSchema.pick({ "keybindings": true
 
 export const agentConfigChangeSchema = z.object({ hostId: z.string(), revision: z.number() });
 
-export const settingsChangeSchema = z.object({ settings: appSettingsSchema, agentConfigChange: agentConfigChangeSchema.optional() });
+export const settingsChangeSchema = z.object({ settings: appSettingsSchema, agentConfigChange: agentConfigChangeSchema.optional(), warnings: z.array(z.string()).optional() });
 
 export const sessionSummarySchema = z.object({ id: z.string(), isDraft: z.boolean().optional(), subagentParentId: z.string().optional(), daemonId: z.string().optional(), isRunning: z.boolean().optional(), groupId: z.union([z.string(), z.null()]).optional(), path: z.string(), name: z.string(), project: z.string(), cwd: z.string(), cwdExists: z.boolean().optional(), projectRoot: z.union([z.string(), z.null()]).optional(), branch: z.union([z.string(), z.null()]).optional(), worktreeRoot: z.union([z.string(), z.null()]).optional(), projectKind: z.union([z.literal("no-repo"), z.literal("main"), z.literal("worktree"), z.null()]).optional(), preview: z.string(), messageCount: z.number(), lastMessageAt: z.number(), apiCost: z.number(), hostId: z.string().optional(), hostName: z.string().optional() });
 

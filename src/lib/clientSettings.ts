@@ -15,7 +15,7 @@ const clientSettingsSchema = z.object({
 
 type StoredPreferences = z.infer<typeof clientSettingsSchema>;
 
-function preferences(settings: AppSettings): ClientSettings {
+export function preferences(settings: AppSettings): ClientSettings {
   return { keybindings: settings.keybindings, hiddenModels: settings.hiddenModels, knownModels: settings.knownModels, debugMode: settings.debugMode };
 }
 

@@ -85,7 +85,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
       try {
         await writer.connect(undefined, undefined, undefined, undefined, true);
         await writer.command({ type: "configure_agents", configuration: configuration });
-      } finally { await writer.dispose(); }
+      } finally { await writer.dispose().catch(() => undefined); }
     };
 
     let agentsSaved = false;
@@ -106,6 +106,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
 
     setSettings(savedChange.settings);
     applyRuntimeSettings(savedChange.settings);
+    savedChange.warnings?.forEach(warning => addNotice({ title: "Settings saved; some sessions could not apply them", message: warning }));
   };
 
   const toggleDebugMode = () => {

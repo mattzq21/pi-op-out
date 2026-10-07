@@ -60,7 +60,7 @@ export interface DefinedAgentsCapability { version: number; active: string; lock
 
 export interface AgentConfigChange { hostId: string; revision: number; }
 
-export interface SettingsChange { settings: AppSettings; agentConfigChange?: AgentConfigChange; }
+export interface SettingsChange { settings: AppSettings; agentConfigChange?: AgentConfigChange; warnings?: string[]; }
 
 export type RpcCommand = z.infer<typeof rpcCommandSchema>;
 
