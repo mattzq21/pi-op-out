@@ -69,7 +69,7 @@ pub(super) fn publish_private(path: &Path, body: &[u8]) -> Result<Publication, S
     ensure_private_dir(parent)?;
     if private_file_matches(path, body)? {
         let result = fs::File::open(path).and_then(|file| file.sync_all()).map_err(|error| format!("Could not sync saved configuration: {error}"))
-            .and_then(|()| sync_private_parent(parent));
+            .and_then(|()| sync_directory_ancestors(parent));
         return Ok(Publication::committed(result));
     }
     let temporary = parent.join(format!(".{}.{}.tmp", path.file_name().and_then(|name| name.to_str()).unwrap_or("config"), Uuid::new_v4()));
@@ -88,12 +88,17 @@ pub(super) fn publish_private(path: &Path, body: &[u8]) -> Result<Publication, S
         }
         file.write_all(body).and_then(|_| file.sync_all()).map_err(|error| error.to_string())?;
         fs::rename(&temporary, path).map_err(|error| if path.is_dir() { format!("Configuration path is a directory: {}", path.display()) } else { error.to_string() })?;
-        Ok(Publication::committed(sync_private_parent(parent)))
+        Ok(Publication::committed(sync_directory_ancestors(parent)))
     })();
     if result.is_err() { let _ = fs::remove_file(&temporary); }
     result
 }
 
-fn sync_private_parent(parent: &Path) -> Result<(), String> {
-    fs::File::open(parent).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync configuration directory: {error}"))
+pub(super) fn sync_directory_ancestors(path: &Path) -> Result<(), String> {
+    let directory = fs::canonicalize(path).map_err(|error| format!("Could not resolve saved directory {}: {error}", path.display()))?;
+    for ancestor in directory.ancestors() {
+        fs::File::open(ancestor).and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("Could not sync saved directory {}: {error}", ancestor.display()))?;
+    }
+    Ok(())
 }

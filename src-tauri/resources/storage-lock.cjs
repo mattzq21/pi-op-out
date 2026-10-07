@@ -24,19 +24,27 @@ function runWithStorageLock(root, operation) {
     .catch(error => { console.error(error.message); process.exitCode = 1; });
 }
 
-async function withReferencePublicationLock(root, operation) {
+function acquireReferencePublicationLock(root, shared = false) {
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const descriptor = fs.openSync(path.join(root, 'reference-publication.lock'), fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
 
   try {
     if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid reference publication lock');
-    const locked = spawnSync('flock', ['--exclusive', '3'], { stdio: ['ignore', 'pipe', 'pipe', descriptor] });
+    const locked = spawnSync('flock', [shared ? '--shared' : '--exclusive', '3'], { stdio: ['ignore', 'pipe', 'pipe', descriptor] });
 
     if (locked.error) throw locked.error;
 
     if (locked.status !== 0) throw new Error(locked.stderr.toString().trim() || 'Could not lock reference publication');
 
-    return await operation();
-  } finally { fs.closeSync(descriptor); }
+    return () => fs.closeSync(descriptor);
+  } catch (error) { fs.closeSync(descriptor); throw error; }
 }
 
-module.exports = { runWithStorageLock, withReferencePublicationLock };
+async function withReferencePublicationLock(root, operation) {
+  const release = acquireReferencePublicationLock(root);
+
+  try { return await operation(); }
+  finally { release(); }
+}
+
+module.exports = { runWithStorageLock, withReferencePublicationLock, acquireReferencePublicationLock };

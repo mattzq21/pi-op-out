@@ -123,10 +123,7 @@ fn update_lease(lease: &mut Option<Lease>, editor: &Editor<'_>, action: &str) {
 pub(crate) fn initialize() -> Result<(), String> {
     let root = notes_root()?.join("chats");
     crate::ensure_private_dir(&root)?;
-    let notes = root.parent().ok_or("Note directory has no parent")?;
-    File::open(notes).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync note directory: {error}"))?;
-    let storage = notes.parent().ok_or("Notes directory has no parent")?;
-    File::open(storage).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync notes storage: {error}"))
+    crate::private_fs::sync_directory_ancestors(&root)
 }
 
 fn field<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
@@ -135,7 +132,7 @@ fn field<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
 
 fn note_path(session: &str) -> Result<PathBuf, String> {
     let root = notes_root()?.join("chats");
-    initialize()?;
+    crate::ensure_private_dir(&root)?;
     let path = fs::canonicalize(root).map_err(|error| error.to_string())?.join(format!("{session}.md"));
     validate_path(path)
 }
@@ -219,7 +216,7 @@ fn write_note(path: &Path, body: &str, args: &Value) -> Result<(), String> {
     let _ = fs::remove_file(&temporary);
     result?;
     let parent = path.parent().ok_or("Note file has no parent directory")?;
-    File::open(parent).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync saved note: {error}"))
+    crate::private_fs::sync_directory_ancestors(parent)
 }
 
 pub(super) fn dispatch(args: Value, enabled: bool) -> Result<Value, String> {

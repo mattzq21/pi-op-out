@@ -277,7 +277,7 @@ pub(super) fn write_atomic(path: &Path, data: &Value) -> Result<()> {
 
 fn sync_catalog_parent(path: &Path) -> Result<()> {
     let parent = path.parent().ok_or("Provider configuration has no parent directory")?;
-    File::open(parent).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync provider configuration directory: {error}"))
+    crate::private_fs::sync_directory_ancestors(parent)
 }
 
 fn sync_existing_catalog(path: &Path) -> Result<()> {

@@ -33,7 +33,7 @@ const channelUpdateScript = `
   }
   function claim() {
     const owner = readOwner();
-    if (Number.isSafeInteger(owner?.pid) && owner.pid > 0) {
+    if (Number.isSafeInteger(owner?.pid) && owner.pid > 0 && owner.pid <= 2147483647) {
       try { process.kill(owner.pid, 0); }
       catch (error) { if (error.code === "ESRCH") return publish(); throw error; }
       throw new Error("Subagent usage channel is already owned by a running process");

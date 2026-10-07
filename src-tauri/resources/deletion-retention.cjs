@@ -58,6 +58,7 @@ function externalTranscripts(root, inventory) {
     const record = path.join(directory, entry.name);
 
     if (!entry.isFile()) { inventory.uncertain = true; continue; }
+
     const file = externalTranscript(record, inventory);
 
     if (!file) continue;
@@ -75,10 +76,19 @@ function externalTranscript(record, inventory) {
   let value;
 
   try { value = JSON.parse(fs.readFileSync(record, 'utf8')); }
-  catch (error) { if (!(error instanceof SyntaxError)) throw error; inventory.uncertain = true; return; }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    inventory.uncertain = true;
+
+    return;
+  }
 
   if (!Check(Type.Object({ path: Type.String() }), value) || !path.isAbsolute(value.path)
-    || path.basename(record) !== createHash('sha256').update(value.path).digest('hex') + '.json') { inventory.uncertain = true; return; }
+    || path.basename(record) !== createHash('sha256').update(value.path).digest('hex') + '.json') {
+    inventory.uncertain = true;
+
+    return;
+  }
 
   return value.path;
 }

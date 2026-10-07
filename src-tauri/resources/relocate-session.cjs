@@ -1,11 +1,18 @@
 const fs = require('node:fs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
+const { homedir } = require('node:os');
+const { join } = require('node:path');
+const { acquireReferencePublicationLock } = require('./storage-lock.cjs');
 
 const snapshotSchema = Type.Object({ repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-fA-F0-9]{40,64}$' }) });
 
 const { randomUUID } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
+
+const release = acquireReferencePublicationLock(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop'), true);
+
+process.on('exit', release);
 
 const [sessionPath, requestedReplacement] = process.argv.slice(1);
 
