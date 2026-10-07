@@ -1,4 +1,5 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { Check } from "lucide-solid";
 import { pluginError, plugins, refreshPlugins, restartPlugins, type PluginStatus } from "../plugins";
 import { Toggle } from "./Toggle";
 
@@ -9,6 +10,8 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
   const [error, setError] = createSignal<string>();
   const [message, setMessage] = createSignal<string>();
   const [terminalConfirmation, setTerminalConfirmation] = createSignal<number>();
+  const [restarted, setRestarted] = createSignal(false);
+  let successTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
 
   const reload = async () => {
@@ -23,13 +26,14 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
 
   onMount(() => void reload());
   createEffect(() => props.onBusyChange?.(busy()));
-  onCleanup(() => { disposed = true; props.onBusyChange?.(false); });
+  onCleanup(() => { disposed = true; clearTimeout(successTimer); props.onBusyChange?.(false); });
   const change = (id: string, checked: boolean) => { setMessage(undefined); setEnabled(previous => checked ? [...previous, id] : previous.filter(value => value !== id)); };
 
   const restart = async (closeTerminals = false) => {
     const current = status();
 
     if (!current || busy()) return;
+    clearTimeout(successTimer); setRestarted(false);
     setBusy(true); setError(undefined); setMessage("Restarting the daemon and reconnecting…");
 
     try {
@@ -45,6 +49,11 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
 
       setStatus(result); setEnabled(result.enabled);
       setMessage(undefined);
+
+      if (!result.error) {
+        setRestarted(true);
+        successTimer = setTimeout(() => setRestarted(false), 10000);
+      }
     } catch (reason) {
       if (!disposed) { setError(String(reason)); setMessage(undefined); }
     } finally { if (!disposed) setBusy(false); }
@@ -53,7 +62,10 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
   return <div class="settings-section">
     <div class="section-title">
       <div><h2>Plugins</h2><p>Bundled plugins for this daemon.</p></div>
-      <button class="secondary-button" type="button" disabled={busy() || !status()} onClick={() => void restart()}>{busy() ? "Please wait…" : "Restart daemon"}</button>
+      <div class="plugin-restart-actions">
+        <Show when={restarted()}><span class="plugin-restart-success" role="status" aria-label="Daemon restarted"><Check size={18} aria-hidden="true" /></span></Show>
+        <button class="secondary-button" type="button" disabled={busy() || !status()} onClick={() => void restart()}>{busy() ? "Please wait…" : "Restart daemon"}</button>
+      </div>
     </div>
     <Show when={error() || status()?.error || pluginError(props.hostId)}><p role="alert">{error() || status()?.error || pluginError(props.hostId)}</p></Show>
     <Show when={message()}><p role="status">{message()}</p></Show>
