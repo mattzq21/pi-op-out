@@ -50,19 +50,22 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
     } finally { if (!disposed) setBusy(false); }
   };
 
-  return <>
+  return <div class="settings-section">
+    <div class="section-title">
+      <div><h2>Plugins</h2><p>Bundled plugins for this daemon.</p></div>
+      <button class="secondary-button" type="button" disabled={busy() || !status()} onClick={() => void restart()}>{busy() ? "Please wait…" : "Restart daemon"}</button>
+    </div>
     <Show when={error() || status()?.error || pluginError(props.hostId)}><p role="alert">{error() || status()?.error || pluginError(props.hostId)}</p></Show>
     <Show when={message()}><p role="status">{message()}</p></Show>
     <div class="config-list"><For each={plugins}>{plugin => <div class="config-row plugin-settings-row">
       <Toggle label={`Enable ${plugin.name} plugin`} checked={enabled().includes(plugin.id)} disabled={busy() || !status()} onChange={checked => change(plugin.id, checked)} />
       <span><strong>{plugin.name}</strong></span>
     </div>}</For></div>
-    <button type="button" disabled={busy() || !status()} onClick={() => void restart()}>{busy() ? "Please wait…" : "Restart daemon"}</button>
     <Show when={error()}><button type="button" disabled={busy()} onClick={() => void reload()}>Reload plugin setup</button></Show>
     <Show when={terminalConfirmation()}>{count => <RestartTerminalsDialog count={count()} onCancel={() => setTerminalConfirmation(undefined)} onConfirm={() => {
       setTerminalConfirmation(undefined); void restart(true);
     }} />}</Show>
-  </>;
+  </div>;
 }
 
 function RestartTerminalsDialog(props: { count: number; onCancel: () => void; onConfirm: () => void }) {
