@@ -5,6 +5,7 @@ import { required } from "../../lib/required";
 import { registerPluginFlush } from "../lifecycle";
 import { createDependencyEffect } from "../../lib/solid";
 import { ownershipSchema } from "../ownership";
+import { createNoteRecovery, type NoteRecovery } from "./noteRecovery";
 
 const noteOwnershipSchema = ownershipSchema.extend({ token: z.string().nullable() });
 
@@ -22,16 +23,27 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const [document, setDocument] = createSignal<NoteDocument>();
   const [ownership, setOwnership] = createSignal<NoteOwnership>(noOwnership);
   const [content, setContent] = createSignal("");
+  const [local, setLocal] = createSignal<NoteRecovery>();
+  const [recoveries, setRecoveries] = createSignal<NoteRecovery[]>([]);
+  const [storedRevision, setStoredRevision] = createSignal<string>();
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
   const [releasing, setReleasing] = createSignal(false);
   const [leaseValid, setLeaseValid] = createSignal(false);
   const [flushing, setFlushing] = createSignal(false);
-  const [unconfirmed, setUnconfirmed] = createSignal<{ content: string; token: string }>();
+  const [unconfirmed, setUnconfirmed] = createSignal<string>();
   const [readError, setReadError] = createSignal("");
   const [saveError, setSaveError] = createSignal("");
-  const error = () => readError() || saveError();
+  const [recoveryError, setRecoveryError] = createSignal("");
+  const [recoveryReadError, setRecoveryReadError] = createSignal("");
+  const [storagePending, setStoragePending] = createSignal(0);
+  const error = () => readError() || saveError() || recoveryError() || recoveryReadError();
   const leaseId = crypto.randomUUID();
+  const recovery = createNoteRecovery(transport.identity, target.hostId, target.sessionId, leaseId);
+  const [recoveredSource, setRecoveredSource] = createSignal<NoteRecovery>();
+  let recoveryReady: Promise<void> | undefined;
+  let storageOperations = Promise.resolve();
+  const pendingRemovals = new Map<string, NoteRecovery>();
   let leaseTimer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
   let visibilityRevision = 0;
@@ -41,11 +53,79 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   let acquisition: Promise<void> | undefined;
   let operations = Promise.resolve();
   let checking = false;
-  const dirty = () => !!document() && (!!unconfirmed() || content() !== document()?.content);
+  const dirty = () => !!local();
+  const conflict = () => !!local() && !!document() && local()?.baseVersion !== document()?.version;
   const editable = () => visible() && !loading() && !flushing() && !releasing() && leaseValid() && ownership().owned;
-  const pendingWork = () => !!inFlight || dirty();
+  const pendingWork = () => !!inFlight || dirty() || !!recoveryError() || storagePending() > 0;
+  const durable = () => !local() || storedRevision() === local()?.revision;
 
-  try { localStorage.removeItem("piop-chat-note:" + JSON.stringify([target.hostId, target.sessionId])); } catch { }
+  const store = (operation: () => Promise<void>) => {
+    setStoragePending(value => value + 1);
+    const result = storageOperations.then(operation);
+    storageOperations = result.then(() => {
+      if (durable() && !pendingRemovals.size) setRecoveryError("");
+    }, reason => { setRecoveryError("Could not preserve the note recovery copy. " + String(reason)); }).finally(() => setStoragePending(value => value - 1));
+
+    return storageOperations;
+  };
+
+  const persist = (value: NoteRecovery) => store(async () => {
+    await recovery.save(value);
+    setStoredRevision(value.revision);
+  });
+
+  const removeRecovery = (value: NoteRecovery) => {
+    pendingRemovals.set(value.revision, value);
+
+    return store(async () => {
+      await recovery.remove(value);
+      pendingRemovals.delete(value.revision);
+      setRecoveries(items => items.filter(item => item.id !== value.id || item.revision !== value.revision));
+    });
+  };
+
+  const matchingCopy = (left: NoteRecovery, right: NoteRecovery) => left.content === right.content && left.baseVersion === right.baseVersion;
+
+  const discardRecovery = async (value: NoteRecovery) => {
+    for (const copy of recoveries()) {
+      if (matchingCopy(copy, value)) await removeRecovery(copy);
+    }
+  };
+
+  const forgetLocal = (discard = true) => {
+    const value = local();
+    const source = recoveredSource();
+    setLocal(undefined); setUnconfirmed(undefined); setStoredRevision(undefined); setRecoveredSource(undefined);
+
+    if (value) void removeRecovery(value);
+
+    if (discard && source) void discardRecovery(source);
+  };
+
+  const acknowledgeCopies = (body: string) => {
+    for (const copy of recoveries()) {
+      if (copy.content === body && !pendingRemovals.has(copy.revision)) void removeRecovery(copy);
+    }
+  };
+
+  const restore = (value: NoteRecovery) => {
+    if (dirty() || inFlight) return;
+    setRecoveredSource(value);
+    const next = recovery.create(value.content, value.baseVersion);
+    setLocal(next); setContent(next.content);
+    void persist(next);
+  };
+
+  const loadRecovery = async () => {
+    try {
+      const { copies, warnings } = await recovery.load();
+      const values = copies.filter(value => value.id !== leaseId);
+      setRecoveries(values);
+      setRecoveryReadError(warnings.join(" "));
+
+      if (values[0]) restore(values[0]);
+    } catch (reason) { setRecoveryReadError("Could not restore saved note edits. " + String(reason)); }
+  };
 
   const call = (action: string, fields: Record<string, string> = {}) => {
     const result = operations.then(() => transport.invoke("plugin_call", { hostId: target.hostId, pluginId: "markdown", request: { sessionId: target.sessionId, leaseId, action, ...fields } }, noteSchema));
@@ -67,36 +147,44 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const relinquish = () => {
     generation++;
     clearTimeout(leaseTimer);
-    setOwnership(noOwnership);
-    setLeaseValid(false); setUnconfirmed(undefined);
-    setContent(document()?.content ?? "");
+    setOwnership(noOwnership); setLeaseValid(false);
   };
 
   const updateOwnership = (value: NoteOwnership) => {
     clearTimeout(leaseTimer);
-    setOwnership(value);
-    setLeaseValid(value.owned);
+    setOwnership(value); setLeaseValid(value.owned);
 
     if (value.owned && !disposed) leaseTimer = setTimeout(() => { setLeaseValid(false); void sync(); }, 25000);
   };
 
-  const selectDocument = (next: NoteDocument) => {
-    if (next.deleted || next.disabled) { setReadError(""); setSaveError(""); }
+  const receiveUpdate = (next: NoteDocument) => {
+    const edit = local();
 
-    setDocument(next);
-    setContent(next.content);
-    updateOwnership(next.ownership);
+    if (edit && edit.content === next.content && !next.deleted) forgetLocal(false);
+    else if (edit && unconfirmed() === next.content && !next.deleted) {
+      const rebased = recovery.create(edit.content, next.version);
+      setLocal(rebased); setUnconfirmed(undefined);
+      void persist(rebased);
+    }
+
+    setDocument(next); updateOwnership(next.ownership);
+
+    if (!next.deleted) acknowledgeCopies(next.content);
+
+    if (!dirty()) setContent(next.content);
   };
 
   const loadDocument = async (action: string) => {
     relinquish();
     const current = generation;
-    setLoading(true); setReadError(""); setSaveError("");
+    setLoading(true); setReadError("");
 
     try {
+      recoveryReady ??= loadRecovery();
+      await recoveryReady;
       const next = await request(action);
 
-      if (!disposed && current === generation) selectDocument(next);
+      if (!disposed && current === generation) receiveUpdate(next);
     } catch (reason) { if (!disposed && current === generation) setReadError(reason instanceof Error ? reason.message : String(reason)); }
     finally { if (!disposed && current === generation) setLoading(false); }
   };
@@ -108,6 +196,12 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     return pending;
   };
 
+  const readCurrent = () => {
+    const leaseToken = ownership().token;
+
+    return visible() && leaseToken ? request("renew", { leaseToken }) : request("read");
+  };
+
   const refreshAfterFailure = async () => {
     const current = generation;
 
@@ -115,11 +209,28 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
       const next = await readCurrent();
 
       if (disposed || current !== generation) return;
-      setReadError("");
-      receiveUpdate(next);
-
-      if (!next.ownership.owned) setSaveError("");
+      setReadError(""); receiveUpdate(next);
     } catch (reason) { if (!disposed && current === generation) setReadError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+
+  const canSave = () => leaseValid() && ownership().owned && !conflict() && !document()?.deleted && !document()?.disabled;
+
+  const drainEdits = async (current: number) => {
+    while (dirty() && canSave()) {
+      const edit = required(local());
+      await storageOperations;
+
+      if (!canSave()) return;
+
+      if (local()?.revision !== edit.revision) continue;
+      const note = required(document());
+      const leaseToken = required(ownership().token);
+      setUnconfirmed(edit.content);
+      const saved = await request("save", { content: edit.content, version: note.version, leaseToken });
+
+      if (current !== generation) return;
+      receiveUpdate(saved);
+    }
   };
 
   const drain = async () => {
@@ -127,34 +238,22 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     setSaving(true);
 
     try {
+      await storageOperations;
+
       if (!leaseValid()) await refreshAfterFailure();
 
-      if (!leaseValid()) return !dirty();
+      await drainEdits(current);
 
-      while (dirty() && ownership().owned) {
-        const note = required(document());
-        const body = content();
-        const leaseToken = required(ownership().token);
-        setUnconfirmed({ content: body, token: leaseToken });
-        const saved = await request("save", { content: body, version: note.version, leaseToken });
-
-        if (current !== generation) return true;
-
-        if (saved.ownership.token !== leaseToken) { relinquish(); selectDocument(saved);
-
-        return true; }
-
-        setUnconfirmed(undefined); setDocument(saved); updateOwnership(saved.ownership);
-      }
-
-      setSaveError("");
+      if (!dirty()) setSaveError("");
 
       return !dirty();
     } catch (reason) {
-      if (current !== generation) return true;
+      if (current !== generation) return !dirty();
       setLeaseValid(false);
       setSaveError(reason instanceof Error ? reason.message : String(reason));
       await refreshAfterFailure();
+
+      if (!dirty()) setSaveError("");
 
       return !dirty();
     } finally { setSaving(false); }
@@ -165,21 +264,33 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
 
     if (!dirty()) return Promise.resolve(true);
 
-    if (!ownership().owned) { relinquish();
-
-    return Promise.resolve(true); }
-
-    inFlight = drain().finally(() => { inFlight = undefined;
-
-    if (!ownership().owned) void sync(); });
+    if (!ownership().owned || conflict()) return Promise.resolve(false);
+    inFlight = drain().finally(() => { inFlight = undefined; });
 
     return inFlight;
   };
 
   const edit = (body: string) => {
-    if (!document() || !editable()) return;
-    setContent(body);
+    const note = document();
+
+    if (!note || !editable()) return;
+    const next = recovery.create(body, local()?.baseVersion ?? note.version);
+    setContent(body); setLocal(next);
+    void persist(next);
     void save();
+  };
+
+  const useSaved = () => {
+    if (inFlight || !document()) return;
+    forgetLocal(); setContent(required(document()).content); setSaveError("");
+  };
+
+  const useLocal = async () => {
+    if (!editable() || !local() || !document()) return;
+    const next = recovery.create(content(), required(document()).version);
+    setLocal(next); setUnconfirmed(undefined);
+    await persist(next);
+    await save();
   };
 
   onCleanup(registerPluginFlush(target.hostId, async () => {
@@ -187,31 +298,15 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     setFlushing(true);
 
     try {
-      if (pendingWork() && !await save()) throw new Error("The note could not be saved. Retry saving before disconnecting or restarting plugins.");
+      if (pendingWork() && !await save()) throw new Error("The note has unsaved edits. Resolve its recovery copy before disconnecting or restarting plugins.");
+      await storageOperations;
+
+      if (recoveryError()) throw new Error(recoveryError());
     } finally { setFlushing(false); }
   }));
 
-  const confirmedSave = (next: NoteDocument) => unconfirmed()?.token === next.ownership.token && unconfirmed()?.content === next.content;
-
-  const receiveUpdate = (next: NoteDocument) => {
-    if (next.deleted || next.disabled || next.ownership.token !== ownership().token || next.version !== document()?.version && !confirmedSave(next)) {
-      relinquish(); selectDocument(next); setSaveError("");
-
-      return;
-    }
-
-    setUnconfirmed(undefined); setDocument(next); updateOwnership(next.ownership);
-  };
-
   const syncUnavailable = () => disposed || loading() || releasing() || !!inFlight || document()?.deleted;
-
-  const readCurrent = () => {
-    const leaseToken = ownership().token;
-
-    return (visible() || dirty()) && leaseToken ? request("renew", { leaseToken }) : request("read");
-  };
-
-  const releaseIfHidden = () => { if (!visible() && !dirty()) void release(); };
+  const releaseIfHidden = () => { if (!visible()) void release(); };
 
   const sync = async () => {
     if (checking || syncUnavailable()) return;
@@ -223,17 +318,17 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
       const next = await readCurrent();
 
       if (current !== generation || syncUnavailable() || document() !== note) return;
-      setReadError(""); receiveUpdate(next);
-      releaseIfHidden();
+      setReadError(""); receiveUpdate(next); releaseIfHidden();
     } catch (reason) {
       if (!disposed && current === generation) setReadError(reason instanceof Error ? reason.message : String(reason));
     } finally { checking = false; }
   };
 
   const releaseOwned = async () => {
-    if (!await save()) return;
+    await save();
+    await storageOperations;
 
-    if (!disposed && visible()) return;
+    if (!durable() || !disposed && visible()) return;
     const leaseToken = ownership().token;
     const current = generation;
 
@@ -243,7 +338,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     try {
       const next = await call("release", { leaseToken });
 
-      if (!disposed && current === generation) { relinquish(); selectDocument(next); }
+      if (!disposed && current === generation) { relinquish(); receiveUpdate(next); }
     } catch { }
   };
 
@@ -257,9 +352,15 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     return retirement;
   };
 
-  const takeControl = () => load("takeover");
+  const takeControl = async () => { await inFlight; await load("takeover"); };
 
   const retry = async () => {
+    if (local()) await persist(required(local()));
+
+    for (const value of [...pendingRemovals.values()]) await removeRecovery(value);
+
+    if (recoveryReadError()) await loadRecovery();
+
     if (!document()) { await load("read");
 
     return; }
@@ -277,8 +378,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
 
   const show = async (current: number) => {
     await settleOwnership();
-
-    if (!await save()) return;
+    await save();
     await settleOwnership();
 
     if (current === visibilityRevision && visible() && !disposed && !document()?.deleted) await load("claim");
@@ -292,8 +392,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
 
   const beforeUnload = (event: BeforeUnloadEvent) => {
     if (!pendingWork()) return;
-    event.preventDefault();
-    event.returnValue = "";
+    event.preventDefault(); event.returnValue = "";
     void save();
   };
 
@@ -305,7 +404,20 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   onCleanup(() => { disposed = true; clearTimeout(leaseTimer); clearInterval(updates); window.removeEventListener("focus", resume); window.document.removeEventListener("visibilitychange", resume); window.removeEventListener("beforeunload", beforeUnload); void release(); });
 
   const ready = () => !!document() && !document()?.deleted && !document()?.disabled;
-  const pending = () => loading() || saving() || releasing() || dirty() || ownership().owned;
+  const pending = () => loading() || saving() || releasing() || !durable() || storagePending() > 0 || !!recoveryError() || ownership().owned;
 
-  return { content, loading, saving, error, deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending, editable, edit, save, retry, takeControl };
+  const recoveryCopies = () => {
+    const source = recoveredSource();
+    const unique: NoteRecovery[] = [];
+
+    for (const value of recoveries()) {
+      if (source && matchingCopy(value, source)) continue;
+
+      if (!unique.some(copy => matchingCopy(copy, value))) unique.push(value);
+    }
+
+    return unique;
+  };
+
+  return { content, loading, saving, error, dirty, conflict, durable, recoveries: recoveryCopies, restore, discardRecovery, useSaved, useLocal, savedContent: () => document()?.content ?? "", deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending, editable, edit, save, retry, takeControl };
 }
