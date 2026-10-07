@@ -54,8 +54,8 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
     <Show when={error() || status()?.error || pluginError(props.hostId)}><p role="alert">{error() || status()?.error || pluginError(props.hostId)}</p></Show>
     <Show when={message()}><p role="status">{message()}</p></Show>
     <div class="config-list"><For each={plugins}>{plugin => <div class="config-row plugin-settings-row">
-      <span><strong>{plugin.name}</strong></span>
       <Toggle label={`Enable ${plugin.name} plugin`} checked={enabled().includes(plugin.id)} disabled={busy() || !status()} onChange={checked => change(plugin.id, checked)} />
+      <span><strong>{plugin.name}</strong></span>
     </div>}</For></div>
     <button type="button" disabled={busy() || !status()} onClick={() => void restart()}>{busy() ? "Please wait…" : "Restart daemon"}</button>
     <Show when={error()}><button type="button" disabled={busy()} onClick={() => void reload()}>Reload plugin setup</button></Show>
