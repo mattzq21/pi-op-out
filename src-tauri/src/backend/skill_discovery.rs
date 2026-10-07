@@ -109,7 +109,6 @@ pub(super) fn merge_discovered_skills(settings: &mut AppSettings) {
 
 pub(super) fn merge_discovered_skills_at(settings: &mut AppSettings, home: &Path) {
     let roots = [
-        (home.join(".pi/agent/skills"), true),
         (home.join(".agents/skills"), false),
     ];
     let enabled_by_path: HashMap<PathBuf, bool> = settings.skills.iter().filter_map(|skill| {
