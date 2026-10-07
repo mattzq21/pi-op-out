@@ -42,7 +42,7 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
       <div class="quick-chat-controls">
         <label class="quick-chat-context-toggle">
           <input type="checkbox" checked={state.includeContext()} disabled={active() || state.loading()} onChange={event => state.setIncludeContext(event.currentTarget.checked)} />
-          Include Piop session context
+          Piop context
         </label>
         <Show when={active()}>
           <button type="button" aria-label={state.recovering() ? "Stop recovery" : "Stop ChatGPT"} disabled={!state.editable() || state.chat()?.status === "stopping"} onClick={() => void state.stop()}><Square size={16} /><Show when={state.recovering()}>Stop recovery</Show></button>
