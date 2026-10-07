@@ -74,7 +74,7 @@ function linkSnapshot(source, destination) {
   fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
 
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-    if (['comparison-retry.json', 'retry-before', 'materialization.json', 'index', 'index.lock'].includes(entry.name) || entry.name.endsWith('.tmp')) continue;
+    if (['comparison-retry.json', 'retry-before', 'materialization.json', 'index', 'index.lock', '.previous-objects', '.sealed-objects', '.pack-status', '.reachable-objects'].includes(entry.name) || entry.name.endsWith('.tmp')) continue;
     const file = path.join(source, entry.name);
     const target = path.join(destination, entry.name);
 

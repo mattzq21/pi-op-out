@@ -42,7 +42,7 @@ function regularJson(file, bounded = false) {
 
   if (!stat.isFile()) throw new Error('Diff storage must contain regular files');
 
-  if (bounded && stat.size > maximumRecordBytes) throw new Error('Saved diff record exceeds the 16 MiB limit');
+  if (bounded && stat.size > maximumRecordBytes * 2) throw new Error('Saved diff record exceeds its size limit');
 
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
@@ -75,7 +75,9 @@ function loadDiffs(session) {
 function writeRecord(directory, messageId, value) {
   const record = { messageId, snapshot: patchValue(value) };
 
-  if (Buffer.byteLength(JSON.stringify(record)) > maximumRecordBytes) throw new Error('Diff record exceeds the 16 MiB limit');
+  if (Buffer.byteLength(JSON.stringify(record.snapshot)) > maximumRecordBytes) throw new Error('Diff record exceeds the 16 MiB limit');
+
+  if (Buffer.byteLength(JSON.stringify(record)) > maximumRecordBytes * 2) throw new Error('Diff record identifier exceeds its size limit');
   publish(recordFile(directory, messageId), record);
 }
 
