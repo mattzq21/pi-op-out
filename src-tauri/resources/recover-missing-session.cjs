@@ -18,7 +18,7 @@ const git = (args) => execFileSync('git', args, { encoding: 'utf8', timeout: 120
 if (request.action === 'inspect') {
   const registryRequest = { action: 'get', sessionId: header.id, root: path.join(require('node:os').homedir(), request.storage) };
   const saved = JSON.parse(execFileSync(process.execPath, ['-e', process.argv[3], JSON.stringify(registryRequest)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 }));
-  process.stdout.write(JSON.stringify({ canRecoverRemote: Boolean(saved?.remote_url && saved?.upstream_branch) }));
+  process.stdout.write(JSON.stringify({ canRecoverRemote: Boolean(saved?.remote_url && (saved?.upstream_branch || saved?.branch)) }));
   process.exit(0);
 }
 
@@ -30,7 +30,8 @@ try {
   if (request.action === 'empty') directory = fs.mkdtempSync('/tmp/piop-session-');
   else if (request.action === 'remote') {
     const registryRequest = { action: 'get', sessionId: header.id, root: path.join(require('node:os').homedir(), request.storage) };
-    const saved = JSON.parse(execFileSync(process.execPath, ['-e', process.argv[3], JSON.stringify(registryRequest)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 }));
+    const manualDetails = request.repository?.trim() && request.branch?.trim();
+    const saved = manualDetails ? undefined : JSON.parse(execFileSync(process.execPath, ['-e', process.argv[3], JSON.stringify(registryRequest)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 }));
     let branch = request.branch?.trim() || saved?.upstream_branch || saved?.branch;
 
     if (!branch) {
