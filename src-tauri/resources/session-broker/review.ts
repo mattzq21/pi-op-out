@@ -1,7 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -16,6 +17,8 @@ const settingsSchema = Schema.Object({ reviewAgent: Schema.Optional(Schema.Strin
 
 const fileErrorSchema = Schema.Object({ code: Schema.String() });
 
+const sessionHeaderSchema = Schema.Object({ type: Schema.Literal("session"), id: Schema.String() });
+
 type ReviewRecord = Static<typeof reviewSchema>;
 
 const feedbackSchema = Schema.Object({ sessionId: Schema.String(), message: Schema.String({ minLength: 1 }) });
@@ -23,6 +26,28 @@ const feedbackSchema = Schema.Object({ sessionId: Schema.String(), message: Sche
 const feedbackDetailsSchema = Schema.Object({ toolCallId: Schema.String() });
 
 const runFile = promisify(execFile);
+
+async function requireSavedReviewParent(ctx: ExtensionContext) {
+  const path = ctx.sessionManager.getSessionFile();
+  const message = "Send a message in the main conversation before starting a review";
+
+  if (!path) throw new Error(message);
+  let file;
+
+  try { file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
+  catch (error) { if (Check(fileErrorSchema, error) && error.code === "ENOENT") throw new Error(message); throw error; }
+
+  try {
+    if (!(await file.stat()).isFile()) throw new Error("The main conversation transcript must be a regular file");
+    const content = await file.readFile("utf8");
+    const end = content.indexOf("\n");
+
+    if (end < 0) throw new Error(message);
+    const header = JSON.parse(content.slice(0, end));
+
+    if (!Check(sessionHeaderSchema, header) || header.id !== ctx.sessionManager.getSessionId()) throw new Error("The saved main conversation does not match this session");
+  } finally { await file.close(); }
+}
 
 async function requireReviewRepository(cwd: string) {
   try {
@@ -38,6 +63,7 @@ async function createReview(ctx: ExtensionContext, agentState: SessionAgentState
   const header = ctx.sessionManager.getHeader();
 
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save the main conversation before starting a review");
+  await requireSavedReviewParent(ctx);
   const timestamp = new Date().toISOString();
   const sessionId = randomUUID();
   const record = { sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId() };
