@@ -13,14 +13,16 @@
 .quick-chat-status { font-size: 13px; color: var(--muted); }
 .quick-chat-error { margin: 10px 14px; padding: 10px; color: var(--ink); background: var(--accent-08); border-radius: 8px; font-size: 13px; }
 .quick-chat-composer { padding: 12px; border-top: 1px solid var(--line); }
+.quick-chat-input { border: 1px solid var(--line); border-radius: 10px; background: var(--dark-control, var(--paper)); overflow: hidden; }
+.quick-chat-input:focus-within { border-color: var(--accent); }
 .quick-chat-context-mode { display: flex; padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
 .quick-chat-context-mode button { border: 0; border-radius: 5px; padding: 5px 8px; background: transparent; color: var(--muted); font-size: 12px; white-space: nowrap; cursor: pointer; }
 .quick-chat-context-mode button:hover:not(:disabled) { color: var(--ink); background: var(--dark-control-hover, var(--paper)); }
 .quick-chat-context-mode button[aria-pressed=true] { color: var(--accent); background: var(--accent-14); }
 .quick-chat-context-mode button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.quick-chat-composer textarea { box-sizing: border-box; width: 100%; min-height: 85px; max-height: 220px; resize: vertical; color: var(--ink); background: var(--dark-control, var(--paper)); border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: inherit; font-size: 14px; }
+.quick-chat-composer textarea { display: block; box-sizing: border-box; width: 100%; min-height: 85px; max-height: 220px; resize: vertical; color: var(--ink); background: transparent; border: 0; outline: 0; padding: 12px; font: inherit; font-size: 14px; }
 .quick-chat-composer textarea::placeholder { color: var(--faint); }
-.quick-chat-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.quick-chat-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 8px 8px; }
 .quick-chat-model-controls { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; margin-left: auto; }
 .quick-chat-picker { position: relative; min-width: 0; }
 .quick-chat-picker select { appearance: none; -webkit-appearance: none; display: block; width: auto; max-width: 148px; height: 28px; margin: 0; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer; color-scheme: inherit; transition: background .12s, color .12s; }

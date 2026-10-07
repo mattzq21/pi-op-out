@@ -36,6 +36,7 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
     </div>;
 
   const renderComposer = () => <form class="quick-chat-composer" onSubmit={event => { event.preventDefault(); follow = true; void state.send(); }}>
+    <div class="quick-chat-input">
       <textarea ref={composer} aria-label="Message ChatGPT" placeholder="Message ChatGPT" value={state.prompt()} maxLength={100000} disabled={state.busy()} readOnly={!state.editable()} onInput={event => state.setPrompt(event.currentTarget.value)} onKeyDown={event => {
         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); follow = true; void state.send(); }
       }} />
@@ -49,6 +50,7 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
         </Show>
         {renderModelControls()}
       </div>
+    </div>
     </form>;
 
   const renderModelControls = () => <Show when={state.models().length}>
