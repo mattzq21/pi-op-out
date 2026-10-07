@@ -31,7 +31,8 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
     if command == "daemon_restart_status" { return crate::daemon_restart::status(&argument::<String>(&args, "restartId")?); }
     let state = app.state::<crate::daemon_restart::Runtime>();
     if command == "restart_daemon" {
-        let _guard = state.gate.try_write().map_err(|_| "Wait for pending requests to finish before restarting the daemon")?;
+        let _guard = tokio::time::timeout(std::time::Duration::from_secs(30), state.gate.write()).await
+            .map_err(|_| "Pending daemon requests did not finish within 30 seconds. Try restarting again once they finish.")?;
         return handle_restart_daemon(app.clone(), owner, args).await;
     }
     let _guard = if command == "check_daemon_idle" {
