@@ -4,9 +4,21 @@ const os = require('node:os');
 const { randomUUID } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
-const [action, directory, storage, branch] = process.argv.slice(1);
+const [action, directory, storage, branch, revision = 'HEAD'] = process.argv.slice(1);
 
 const root = path.join(os.homedir(), storage, 'worktrees');
+
+function withCreationLock(operation) {
+  fs.mkdirSync(path.dirname(root), { recursive: true, mode: 0o700 });
+  const descriptor = fs.openSync(path.join(path.dirname(root), 'reference-publication.lock'), fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
+
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid reference publication lock');
+    execFileSync('flock', ['--shared', '3'], { stdio: ['ignore', 'pipe', 'pipe', descriptor] });
+
+    return operation();
+  } finally { fs.closeSync(descriptor); }
+}
 
 function cleanup(target) {
   const container = path.dirname(target);
@@ -44,11 +56,23 @@ function allocate() {
   try { fs.writeFileSync(path.join(container, 'parent.json'), JSON.stringify({ branch, parentBranch }), { flag: 'wx', mode: 0o600 }); }
   catch (error) { cleanup(target); throw error; }
 
-  process.stdout.write(target);
+  return target;
+}
+
+function create() {
+  const target = allocate();
+
+  try {
+    const args = ['worktree', 'add', ...(revision === '--orphan' ? ['--orphan'] : []), '-b', branch, '--', target];
+
+    if (revision !== '--orphan') args.push(revision);
+    execFileSync('git', ['-C', directory, ...args], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+    process.stdout.write(target);
+  } finally { cleanup(target); }
 }
 
 try {
-  if (action === 'cleanup') cleanup(directory);
-  else if (action === 'allocate') allocate();
+  if (action === 'cleanup') withCreationLock(() => cleanup(directory));
+  else if (action === 'create') withCreationLock(create);
   else throw new Error('Unknown worktree storage operation');
 } catch (error) { console.error(error.message); process.exitCode = 1; }

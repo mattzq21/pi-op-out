@@ -70,8 +70,9 @@ function restoredBranch(saved, git) {
 
 function existingWorktree(saved, git) {
   if (!exists(saved.path)) return undefined;
+  const directory = fs.lstatSync(saved.path, { bigint: true });
 
-  if (!fs.lstatSync(saved.path).isDirectory()) throw new Error('The archived worktree path is no longer a directory');
+  if (!directory.isDirectory()) throw new Error('The archived worktree path is no longer a directory');
   const current = args => execFileSync('git', ['-C', saved.path, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3, 4] }).trim();
   const common = fs.realpathSync(git(['rev-parse', '--path-format=absolute', '--git-common-dir']));
 
@@ -82,7 +83,7 @@ function existingWorktree(saved, git) {
   try { branch = current(['symbolic-ref', '--quiet', '--short', 'HEAD']); }
   catch (error) { if (error.status !== 1) throw error; }
 
-  return { repositoryRoot: common, path: saved.path, branch, reused: true };
+  return { repositoryRoot: common, path: saved.path, branch, reused: true, directoryIdentity: `${directory.dev}:${directory.ino}` };
 }
 
 function worktreePlan(entries, header) {
@@ -259,6 +260,17 @@ function restorationResult(record, shared, destination) {
   return { path: shared?.plan.path ?? shared?.plan.destination ?? record.header.cwd, branch: shared?.plan.branch ?? null, sessionPath: destination };
 }
 
+function retainWorkingDirectory(record, shared) {
+  if (shared?.kind !== 'git') return;
+  const directory = record.header.worktreeRestore?.conversationPath ?? record.header.cwd;
+
+  if (!containsDirectory(shared.plan.path, directory)) throw new Error('The conversation working directory is outside its recovery checkout');
+  const relative = path.relative(shared.plan.path, directory);
+  shared.plan.conversationDirectories ??= [];
+
+  if (!shared.plan.conversationDirectories.includes(relative)) shared.plan.conversationDirectories.push(relative);
+}
+
 function restoreArchives(files) {
   const records = files.map(readArchive);
   const sessions = path.join(root, 'sessions');
@@ -280,13 +292,15 @@ function restoreArchives(files) {
     for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.diffs.json'), `${destination}.loop-detection.json`]) absent(target);
 
     const shared = recoveryPlan(locations, record, archiveRecords);
+    retainWorkingDirectory(record, shared);
     record.destination = destination;
     record.result = restorationResult(record, shared, destination);
   }
 
   const plans = [...locations.values()].filter(item => !item.plan.reused);
+  const reusedWorktrees = [...locations.values()].flatMap(item => item.kind === 'git' && item.plan.reused ? [item.plan] : []);
 
-  return restoreGroup(root, records, plans.flatMap(item => item.kind === 'directory' ? [item.plan] : []), plans.flatMap(item => item.kind === 'git' ? [item.plan] : []));
+  return restoreGroup(root, records, plans.flatMap(item => item.kind === 'directory' ? [item.plan] : []), plans.flatMap(item => item.kind === 'git' ? [item.plan] : []), reusedWorktrees);
 }
 
 function main() {

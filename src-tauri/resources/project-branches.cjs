@@ -8,6 +8,19 @@ const [cwd, storage, selected] = process.argv.slice(1);
 
 const git = (args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
 
+function withCreationLock(operation) {
+  const root = path.join(os.homedir(), storage);
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const descriptor = fs.openSync(path.join(root, 'reference-publication.lock'), fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
+
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid reference publication lock');
+    execFileSync('flock', ['--shared', '3'], { stdio: ['ignore', 'pipe', 'pipe', descriptor] });
+
+    return operation();
+  } finally { fs.closeSync(descriptor); }
+}
+
 function worktrees() {
   return git(['worktree', 'list', '--porcelain', '-z']).split('\0\0').filter(Boolean).map((record) => {
     const fields = record.split('\0');
@@ -60,6 +73,6 @@ try {
 
   if (selected && !branches.includes(selected)) throw new Error('Branch no longer exists');
   const trees = worktrees();
-  const directory = selected ? checkout(selected, trees) : root;
+  const directory = selected ? withCreationLock(() => checkout(selected, worktrees())) : root;
   process.stdout.write(JSON.stringify({ branches, current: selected || current, path: directory, mainPath: trees[0].path }));
 } catch (error) { console.error(error.message); process.exitCode = 1; }

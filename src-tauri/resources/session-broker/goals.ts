@@ -11,7 +11,7 @@ interface GoalControl { action: "pause" | "resume"; ctx: ExtensionContext; ready
 
 export interface GoalScope { goalId?: string; ctx: ExtensionContext; ready?: Promise<void> }
 
-interface GoalUsage { goalId?: string; tokens: number; ctx: ExtensionContext }
+export interface GoalUsage { ctx: ExtensionContext; ready?: Promise<void> }
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
@@ -268,7 +268,12 @@ export function registerGoals(pi: ExtensionAPI) {
   });
 
   const usage = pi.events.on("piop:goal-usage", event => {
-    schedule(event.ctx, () => { if (event.goalId && event.goalId === state.goal?.id) account(event.ctx, event.tokens, true); });
+    event.ready = coordination.run(event.ctx, () => {
+      if (state.replaySubagentUsage(event.ctx) && state.goal) {
+        steering(goalBudgetPrompt(state.goal));
+        pause(event.ctx);
+      }
+    });
   });
 
   pi.on("context", (event, ctx) => coordination.run(ctx, () => {

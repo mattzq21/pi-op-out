@@ -57,9 +57,18 @@ fn report(host: &Host, recovery: &Recovery, reported: &mut HashSet<String>) {
 }
 
 async fn replay_transactions(root: &Path) -> Result<()> {
+    run_recovery(root, include_str!("../../../resources/restore-archived-worktree.bundle.mjs"), &["--", "--recover"]).await
+}
+
+pub(super) async fn collect_retention(root: &Path) -> Result<()> {
+    let request = json!({"retentionOnly":true,"root":root}).to_string();
+    run_recovery(root, include_str!("../../../resources/delete-session.bundle.mjs"), &[&request]).await
+}
+
+async fn run_recovery(root: &Path, script: &str, arguments: &[&str]) -> Result<()> {
     let mut command = tokio::process::Command::from(crate::node_command());
     command.env("PIOP_RESTORE_ROOT", root)
-        .args(["-e", include_str!("../../../resources/restore-archived-worktree.bundle.mjs"), "--", "--recover"])
+        .args(["-e", script]).args(arguments)
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);
@@ -69,7 +78,7 @@ async fn replay_transactions(root: &Path) -> Result<()> {
     let output = child.wait_with_output().await.map_err(|error| error.to_string())?;
     #[cfg(unix)]
     { group.0 = None; }
-    if !output.status.success() {
+    if !output.status.success() && output.status.code() != Some(75) {
         return Err(format!("Session storage recovery is pending: {}", String::from_utf8_lossy(&output.stderr).trim()));
     }
     Ok(())

@@ -1,4 +1,4 @@
-import { modelSchema } from "../lib/responseSchemas";
+import { modelSchema, settingsChangeSchema } from "../lib/responseSchemas";
 import { z } from "zod";
 import { required } from "../lib/required";
 import { Key, Rerun } from "@solid-primitives/keyed";
@@ -12,7 +12,7 @@ import { agentConfigChangeSchema, agentConfigSchema, definedAgentsCapabilitySche
 import { restoreAgentConfiguration, saveAgentConfiguration } from "../lib/agentConfiguration";
 import { NativeTransport } from "../lib/nativeTransport";
 import { isMobile, listen } from "../lib/platform";
-import type { AgentConfig, AppSettings, Model, SessionSummary } from "../types";
+import type { AgentConfig, AppSettings, Model, SessionSummary, SettingsPublication } from "../types";
 import { clientSections, sections, SettingsView, type Section } from "./SettingsView";
 
 interface Props {
@@ -38,7 +38,19 @@ export function LocalSettingsView(props: Props) {
   const [dirty, setDirty] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [generation, setGeneration] = createSignal(0);
+  const pendingDurability = new Map<string, string>();
   const changeDirty = (value: boolean) => { setDirty(value); props.onDirtyChange(value); };
+
+  const preserveHostSettings = (hostId: string, settings: AppSettings, publication?: SettingsPublication) => {
+    if (!settings.settingsRevision) return settings;
+    const key = JSON.stringify([hostId, settings.settingsRevision]);
+
+    if (publication?.durable) pendingDurability.delete(key);
+    else if (settings.settingsDurabilityError) pendingDurability.set(key, settings.settingsDurabilityError);
+    const pending = pendingDurability.get(key);
+
+    return pending ? { ...settings, settingsDurabilityError: pending } : settings;
+  };
 
   const label = createMemo(() => (target() === "client" ? "This client" : target() === "local" ? isMobile ? "Connected daemon" : "Local daemon" : props.settings.hosts.find((host) => host.id === target())?.name ?? target()));
 
@@ -48,11 +60,11 @@ export function LocalSettingsView(props: Props) {
       <div class="settings-nav-group"><p class="eyebrow">Daemons</p>{<Key each={[{ id: "local", name: isMobile ? "Connected daemon" : "This computer" }, ...props.settings.hosts.filter((host) => host.enabled !== false)]} by={(host) => host.id}>{(host, _index) => <div ><button class={target() === host().id ? "active" : ""} disabled={target() !== host().id && (dirty() || saving())} aria-expanded={target() === host().id} onClick={() => { if (target() !== host().id) { setTarget(host().id); setSelectedSection("general"); } }}><Monitor size={16} /><span>{host().name}</span></button>{target() === host().id && <div class="settings-daemon-tabs">{<Key each={sections.filter((item) => !clientSections.has(item.id))} by={(item) => item.id}>{(item, _index) => <button  class={selectedSection() === item().id ? "active" : ""} aria-current={selectedSection() === item().id ? "page" : undefined} onClick={() => setSelectedSection(item().id)}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>}</div>}</Key>}</div>
       {dirty() && <p class="settings-switch-hint">Save before switching computers, or <button disabled={saving()} onClick={() => { changeDirty(false); setGeneration((value) => value + 1); }}>discard changes</button>.</p>}
     </nav>
-    <div class="settings-editor-content"><Rerun on={() => `${target()}:${generation()}`}>{(_key) => <DaemonSettingsEditor  {...props} target={target()} label={label()} selectedSection={selectedSection()} onDirtyChange={changeDirty} onSavingChange={setSaving} />}</Rerun></div>
+    <div class="settings-editor-content"><Rerun on={() => `${target()}:${generation()}`}>{(_key) => <DaemonSettingsEditor  {...props} preserveHostSettings={preserveHostSettings} target={target()} label={label()} selectedSection={selectedSection()} onDirtyChange={changeDirty} onSavingChange={setSaving} />}</Rerun></div>
   </div>;
 }
 
-function DaemonSettingsEditor(componentProps: Props & { target: string; label: string }) {
+function DaemonSettingsEditor(componentProps: Props & { target: string; label: string; preserveHostSettings: (hostId: string, settings: AppSettings, publication?: SettingsPublication) => AppSettings }) {
   const hostId = createMemo(() => (componentProps.target === "client" ? "local" : componentProps.target));
   const [hostSettings, setHostSettings] = createSignal<AppSettings>();
   const [saveWarning, setSaveWarning] = createSignal<string>();
@@ -65,7 +77,12 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     const listeners = [
       listen("pi://provider-auth-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }, z.object({ hostId: z.string() })),
       listen("pi://settings-changed", () => { if (!cancelled && capturedHostId === "local") setRevision((value) => value + 1); }, z.unknown()),
-      listen("pi://host-settings-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }, z.object({ hostId: z.string() })),
+      listen("pi://host-settings-changed", ({ payload }) => {
+        if (cancelled || payload.hostId !== capturedHostId) return;
+        setHostSettings(componentProps.preserveHostSettings(capturedHostId, payload.settings, payload.publication));
+        setSaveWarning(payload.warnings?.join("; "));
+        setRevision(value => value + 1);
+      }, settingsChangeSchema.extend({ hostId: z.string() })),
     ];
 
     return () => { cancelled = true;
@@ -98,7 +115,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
         const loaded = await reader.loadHostSettings();
 
         if (cancelled) return;
-        setHostSettings(loaded);
+        setHostSettings(componentProps.preserveHostSettings(capturedHostId, loaded));
         await reader.connect(undefined, undefined, undefined, undefined, true);
 
         if (cancelled) return;
@@ -137,7 +154,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
         }
 
         const change = await writer.saveHostSettings(next, Boolean(config));
-        setHostSettings(change.settings);
+        setHostSettings(componentProps.preserveHostSettings(target, change.settings, change.publication));
         warnings.push(...change.warnings ?? []);
       } catch (reason) {
         try { await restoreAgentConfiguration(restoreAgents, String(reason)); }

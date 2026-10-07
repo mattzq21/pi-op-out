@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { validSessionHeader } = require('./checkpoint-schemas.cjs');
+const { describeCandidates } = require('./retention-candidates.cjs');
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -255,13 +256,13 @@ function recoveryPending(root) {
     || ['restore-transactions', 'deleted-sessions'].some(name => entries(path.join(root, name)).length);
 }
 
-function collectRetention(root, sources, savedFiles) {
+function collectRetention(root, sources, savedFiles, deferred = { directories: [], sessionIds: [] }) {
   const inventory = { goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: recoveryPending(root) };
 
   for (const area of ['sessions', 'archived', 'fork-transactions', 'fork-preparations']) sessionFiles(path.join(root, area), inventory);
   externalTranscripts(root, inventory);
   const candidates = new Set([...inventory.goals, ...worktreeContainers(root)]);
-  const owned = new Set();
+  const owned = new Set(deferred.directories.filter(file => candidates.has(file)));
   const ignored = { sessionIds: new Set(), uncertain: false };
   const deleted = savedFiles.filter(saved => saved.sessionId);
 
@@ -271,20 +272,22 @@ function collectRetention(root, sources, savedFiles) {
   const retained = survivingReferences(inventory, candidates, excluded);
   queuedReferences(root, excluded, candidates, retained, inventory);
   goalReferences(retained, inventory.goals, candidates, inventory);
+  const requestedIds = [...new Set([...deleted.map(saved => saved.sessionId), ...deferred.sessionIds])].filter(id => uuidPattern.test(id));
 
   return {
     directories: inventory.uncertain ? [] : [...owned].filter(file => !retained.has(file)),
     files: invalidReceipts(root, excluded),
-    registryIds: inventory.uncertain ? [] : deleted.map(saved => saved.sessionId).filter(id => uuidPattern.test(id) && !inventory.sessionIds.has(id.toLowerCase())),
+    registryIds: inventory.uncertain ? [] : requestedIds.filter(id => !inventory.sessionIds.has(id.toLowerCase())),
+    deferred: describeCandidates([...owned], requestedIds),
   };
 }
 
 function cleanupRegistry(root, sessionIds) {
-  if (!sessionIds.length) return;
+  if (!sessionIds.length) return [];
   const database = path.join(root, 'sessions.sqlite');
   const info = metadata(database);
 
-  if (!info) return;
+  if (!info) return [...sessionIds];
 
   if (!info.isFile()) throw new Error('Invalid session repository registry');
   const { DatabaseSync } = require('node:sqlite');
@@ -292,21 +295,28 @@ function cleanupRegistry(root, sessionIds) {
 
   try {
     db.exec('PRAGMA busy_timeout=10000; BEGIN IMMEDIATE');
-
-    if (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_repositories'").get()) {
-      const remove = db.prepare('DELETE FROM session_repositories WHERE lower(session_id) = ?');
-      const read = db.prepare('SELECT session_id, session_path FROM session_repositories WHERE lower(session_id) = ?');
-
-      for (const id of sessionIds) {
-        const record = read.get(id.toLowerCase());
-
-        if (record?.session_path && survivingSession(record.session_path, record.session_id, new Set())) continue;
-        remove.run(id.toLowerCase());
-      }
-    }
-
+    const completed = removeRegistryRows(db, sessionIds);
     db.exec('COMMIT');
+
+    return completed;
   } finally { db.close(); }
+}
+
+function removeRegistryRows(db, sessionIds) {
+  if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_repositories'").get()) return [...sessionIds];
+  const remove = db.prepare('DELETE FROM session_repositories WHERE lower(session_id) = ?');
+  const read = db.prepare('SELECT session_id, session_path FROM session_repositories WHERE lower(session_id) = ?');
+  const completed = [];
+
+  for (const id of sessionIds) {
+    const record = read.get(id.toLowerCase());
+
+    if (record?.session_path && survivingSession(record.session_path, record.session_id, new Set())) continue;
+    remove.run(id.toLowerCase());
+    completed.push(id);
+  }
+
+  return completed;
 }
 
 module.exports = { collectRetention, cleanupRegistry, validReceipt, discardReceipt, pruneReceipts };

@@ -513,7 +513,7 @@ fn directory_recovery_command(settings: &AppSettings, host_id: &str, script: &st
         let mut command = node_command(); command.args(["-e", script, arguments, relocate, registry]); command
     } else {
         let mut command = ssh(remote_host(settings, host_id)?);
-        command.arg(remote_login_command(&format!("node -e {} {} {} {}", shell_quote(script), shell_quote(arguments), shell_quote(relocate), shell_quote(registry)))); command
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {} {} {}", shell_quote(script), shell_quote(arguments), shell_quote(relocate), shell_quote(registry)))); command
     };
     Ok(command)
 }
@@ -527,7 +527,7 @@ fn run_directory_recovery(command: &mut Command) -> Result<serde_json::Value, St
 pub(super) fn relocate_remote_session(session_path: &str, cwd: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let session = shell_quote(session_path); let replacement = shell_quote(cwd.trim());
     let relocate = shell_quote(include_str!("../../resources/relocate-session.bundle.mjs"));
-    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; node -e {relocate} "$path" "$replacement""#);
+    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {relocate} "$path" "$replacement""#);
     let output = run_limited(&mut command(script), 64 * 1024, &format!("Could not relocate conversation on {host_name}"))?;
     if output.status.success() { return Ok(()); }
     let error = String::from_utf8_lossy(&output.stderr).trim().to_string();

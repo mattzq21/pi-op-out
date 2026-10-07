@@ -121,6 +121,83 @@ function branchCommit(plan) {
   catch (error) { if (error.status === 128) return undefined; throw error; }
 }
 
+function conversationDirectoryParts(root, relative) {
+  const target = path.resolve(root, relative);
+  const boundary = path.relative(root, target);
+
+  if (boundary === '..' || boundary.startsWith('..' + path.sep) || path.isAbsolute(boundary)) throw new Error('The conversation working directory is outside its recovery checkout');
+
+  return boundary.split(path.sep).filter(Boolean);
+}
+
+function prepareConversationDirectories(plan) {
+  for (const relative of plan.conversationDirectories ?? []) {
+    let directory = plan.staging;
+
+    for (const component of conversationDirectoryParts(plan.staging, relative)) {
+      directory = path.join(directory, component);
+
+      if (!exists(directory)) fs.mkdirSync(directory, { mode: 0o700 });
+
+      if (!fs.lstatSync(directory).isDirectory()) throw new Error(`Invalid restored conversation directory: ${directory}`);
+    }
+  }
+}
+
+function prepareReusedDirectory(directory, transaction, journal) {
+  if (exists(directory)) {
+    if (!fs.lstatSync(directory).isDirectory()) throw new Error(`Invalid restored conversation directory: ${directory}`);
+
+    return;
+  }
+
+  const parent = path.dirname(directory);
+  const item = { source: path.join(parent, `.piop-restore-${randomUUID()}`), destination: directory, parentIdentity: identity(parent) };
+  transaction.createdDirectories.push(item);
+  write(journal, JSON.stringify(transaction));
+  fs.mkdirSync(item.source, { mode: 0o700 });
+  item.identity = identity(item.source);
+  sync(item.source); sync(parent);
+  write(journal, JSON.stringify(transaction));
+  performMove(item);
+}
+
+function prepareReusedWorktrees(transaction, journal) {
+  for (const plan of transaction.reusedWorktrees) {
+    if (!matches(plan.path, plan.directoryIdentity) || !fs.lstatSync(plan.path).isDirectory()) throw new Error(`Invalid restored checkout: ${plan.path}`);
+
+    for (const relative of plan.conversationDirectories) {
+      let directory = plan.path;
+
+      for (const component of conversationDirectoryParts(plan.path, relative)) {
+        directory = path.join(directory, component);
+        prepareReusedDirectory(directory, transaction, journal);
+      }
+    }
+  }
+}
+
+function undoCreatedDirectory(item) {
+  const remaining = [item.destination, item.source].filter(directory => exists(directory));
+
+  if (!remaining.length) return;
+  const parent = path.dirname(item.destination);
+
+  if (!matches(parent, item.parentIdentity)) throw new Error(`Restored conversation directory parent changed: ${parent}`);
+
+  for (const directory of remaining) {
+    if (!item.identity && directory === item.destination) continue;
+
+    if (item.identity && !matches(directory, item.identity)) throw new Error(`Restored conversation directory changed: ${directory}`);
+    fs.rmdirSync(directory);
+    sync(parent);
+  }
+}
+
+function undoCreatedDirectories(transaction) {
+  for (const directory of [...(transaction.createdDirectories ?? [])].reverse()) undoCreatedDirectory(directory);
+}
+
 function prepareWorktree(plan) {
   git(plan, ['update-ref', plan.reservation, plan.commit, '0'.repeat(plan.commit.length)]);
   const common = git(plan, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
@@ -128,6 +205,7 @@ function prepareWorktree(plan) {
   sync(common);
   git(plan, ['update-ref', '--create-reflog', '-m', plan.reservation, `refs/heads/${plan.branch}`, plan.commit, '0'.repeat(plan.commit.length)]);
   git(plan, ['worktree', 'add', plan.staging, plan.branch]);
+  prepareConversationDirectories(plan);
   syncTree(plan.staging);
   git(plan, ['worktree', 'move', plan.staging, plan.path]);
   const gitDirectory = fs.readFileSync(path.join(plan.path, '.git'), 'utf8').trim().slice('gitdir: '.length);
@@ -241,6 +319,8 @@ function rollback(transaction) {
 
   for (const item of [...transaction.moves].reverse()) undoMove(item);
 
+  undoCreatedDirectories(transaction);
+
   for (const directory of [...directories(transaction)].reverse()) undoDirectory(directory);
 
   for (const worktree of [...worktrees(transaction)].reverse()) undoWorktree(worktree);
@@ -308,6 +388,8 @@ function publishRestoration(root, transaction, journal) {
 
   for (const directory of transaction.directories) prepareDirectory(directory, transaction, journal);
 
+  prepareReusedWorktrees(transaction, journal);
+
   for (const directory of transaction.workingDirectories) {
     if (!fs.statSync(directory).isDirectory()) throw new Error(`The conversation working directory is unavailable: ${directory}`);
   }
@@ -322,7 +404,7 @@ function publishRestoration(root, transaction, journal) {
   performMove(transaction.trace);
 }
 
-function restoreGroup(root, records, directoryPlans = [], worktreePlans = []) {
+function restoreGroup(root, records, directoryPlans = [], worktreePlans = [], reusedWorktrees = []) {
   const sessions = records.map(record => sessionTransaction(root, record));
   const primary = sessions[0];
 
@@ -335,6 +417,8 @@ function restoreGroup(root, records, directoryPlans = [], worktreePlans = []) {
     directories: directoryPlans.map(directory => ({ ...directory, ...move(directory.source, directory.destination) })),
     workingDirectories: [...new Set(records.map(record => record.header.cwd))],
     worktrees: worktreePlans,
+    reusedWorktrees,
+    createdDirectories: [],
   };
 
   if (Buffer.byteLength(JSON.stringify(transaction.result)) + 1 > 64 * 1024 * 1024) throw new Error('Restore group is too large; restore fewer conversations at a time');

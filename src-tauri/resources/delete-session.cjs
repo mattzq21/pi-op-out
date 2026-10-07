@@ -10,6 +10,7 @@ const { recover, createJournal, removeCheckpointRefs, cleanupCommitted, sync, sy
 const { runWithStorageLock, withReferencePublicationLock } = require("./storage-lock.cjs");
 const { recoverStorage } = require("./storage-recovery.cjs");
 const { collectRetention } = require("./deletion-retention.cjs");
+const { collectDeferredRetention } = require("./retention-collection.cjs");
 
 function git(cwd, args, input = "") {
   try {
@@ -197,7 +198,7 @@ async function main(root) {
     const retention = collectRetention(root, sources, files);
 
     await appendRetentionFiles(files, retention);
-    const journal = createJournal(root, lock, childLocks, files, repositories, sessionIds, retention.registryIds);
+    const journal = createJournal(root, lock, childLocks, files, repositories, sessionIds, retention.registryIds, retention.deferred);
     await stageDeletion(files, journal.repositories);
     await fs.rename(lock, journal.garbagePath);
     committed = true;
@@ -429,6 +430,17 @@ function validateHeader(header, target) {
 
 async function start() {
   const request = JSON.parse(process.argv[1]);
+
+  if (request.retentionOnly === true) {
+    const root = await fs.realpath(request.root);
+    await runWithStorageLock(root, () => withReferencePublicationLock(root, () => {
+      recoverStorage(root);
+      collectDeferredRetention(root);
+    }, true), true);
+
+    return;
+  }
+
   const targets = request.targets || [request];
 
   if (!targets.length) throw new Error("Invalid conversation deletion targets");

@@ -1,6 +1,32 @@
 import { spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { mkdir, open } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const MAX_GIT_OUTPUT = 4 * 1024 * 1024;
+
+export async function acquireWorktreePublicationLock() {
+  const root = join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const file = await open(join(root, "reference-publication.lock"), constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+
+  try {
+    if (!(await file.stat()).isFile()) throw new Error("Invalid reference publication lock");
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn("flock", ["--shared", "3"], { stdio: ["ignore", "ignore", "pipe", file.fd] });
+      let error = "";
+      child.stderr?.on("data", (chunk: Buffer) => { error += chunk.toString(); });
+      child.on("error", reject);
+      child.on("close", code => {
+        if (code === 0) resolve();
+        else reject(new Error(error.trim() || "Could not lock worktree creation"));
+      });
+    });
+
+    return file;
+  } catch (error) { await file.close(); throw error; }
+}
 
 export class GitError extends Error {
   constructor(message: string, readonly exitCode: number | null) { super(message); }

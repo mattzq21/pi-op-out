@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-function lockedProcess(root) {
+function lockedProcess(root, nonblocking) {
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const notes = path.join(root, 'notes');
   fs.mkdirSync(notes, { recursive: true, mode: 0o700 });
@@ -12,36 +12,51 @@ function lockedProcess(root) {
 
   try {
     for (const file of [path.join(notes, 'ownership.lock'), path.join(root, 'restore.lock')]) descriptors.push(fs.openSync(file, fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600));
-    const child = spawnSync('sh', ['-c', 'flock --exclusive 3 || exit $?; flock --exclusive 4 || exit $?; exec "$@"', 'piop-storage', process.execPath, ...process.execArgv, '--', ...process.argv.slice(1), '--locked'], { stdio: ['inherit', 'inherit', 'inherit', ...descriptors] });
+    const options = nonblocking ? '--nonblock --conflict-exit-code 75' : '';
+    const child = spawnSync('sh', ['-c', `flock --exclusive ${options} 3 || exit $?; flock --exclusive ${options} 4 || exit $?; exec "$@"`, 'piop-storage', process.execPath, ...process.execArgv, '--', ...process.argv.slice(1), '--locked'], { stdio: ['inherit', 'inherit', 'inherit', ...descriptors] });
 
     if (child.error) throw child.error;
     process.exitCode = child.status ?? 1;
   } finally { descriptors.forEach(descriptor => fs.closeSync(descriptor)); }
 }
 
-function runWithStorageLock(root, operation) {
-  return Promise.resolve().then(() => process.argv.at(-1) === '--locked' ? operation() : lockedProcess(root))
+function runWithStorageLock(root, operation, nonblocking = false) {
+  return Promise.resolve().then(() => process.argv.at(-1) === '--locked' ? operation() : lockedProcess(root, nonblocking))
     .catch(error => { console.error(error.message); process.exitCode = 1; });
 }
 
-function acquireReferencePublicationLock(root, shared = false) {
+function acquireReferencePublicationLock(root, shared = false, nonblocking = false) {
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const descriptor = fs.openSync(path.join(root, 'reference-publication.lock'), fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
 
   try {
     if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid reference publication lock');
-    const locked = spawnSync('flock', [shared ? '--shared' : '--exclusive', '3'], { stdio: ['ignore', 'pipe', 'pipe', descriptor] });
 
-    if (locked.error) throw locked.error;
+    if (!lockReferenceDescriptor(descriptor, shared, nonblocking)) { fs.closeSync(descriptor);
 
-    if (locked.status !== 0) throw new Error(locked.stderr.toString().trim() || 'Could not lock reference publication');
+      return; }
 
     return () => fs.closeSync(descriptor);
   } catch (error) { fs.closeSync(descriptor); throw error; }
 }
 
-async function withReferencePublicationLock(root, operation) {
-  const release = acquireReferencePublicationLock(root);
+function lockReferenceDescriptor(descriptor, shared, nonblocking) {
+  const options = nonblocking ? ['--nonblock', '--conflict-exit-code', '75'] : [];
+  const locked = spawnSync('flock', [shared ? '--shared' : '--exclusive', ...options, '3'], { stdio: ['ignore', 'pipe', 'pipe', descriptor] });
+
+  if (locked.error) throw locked.error;
+
+  if (nonblocking && locked.status === 75) return false;
+
+  if (locked.status !== 0) throw new Error(locked.stderr.toString().trim() || 'Could not lock reference publication');
+
+  return true;
+}
+
+async function withReferencePublicationLock(root, operation, nonblocking = false) {
+  const release = acquireReferencePublicationLock(root, false, nonblocking);
+
+  if (!release) return;
 
   try { return await operation(); }
   finally { release(); }

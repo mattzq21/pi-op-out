@@ -15,10 +15,16 @@ export const GOAL_STATUSES: GoalStatus[] = ["active", "paused", "blocked", "usag
 
 const accountingSchema = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
 
+export const subagentUsageSchema = Type.Object({
+  version: Type.Literal(1), runId: Type.String(), total: accountingSchema, tokens: accountingSchema,
+  goalId: Type.Optional(Type.String()),
+});
+
 const goalSchema = Type.Object({
   version: Type.Literal(1), id: Type.String({ minLength: 1 }), sessionId: Type.String({ minLength: 1 }),
   objective: Type.String(), status: statusSchema, tokenBudget: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })]),
   tokensUsed: accountingSchema, elapsedMs: accountingSchema, createdAt: accountingSchema, updatedAt: accountingSchema,
+  subagentUsage: Type.Optional(Type.Array(Type.Object({ runId: Type.String(), total: accountingSchema }))),
 });
 
 export type Goal = Static<typeof goalSchema>;
@@ -50,6 +56,21 @@ function validateSaved(data: Goal | null): Goal | null {
   return structuredClone(data);
 }
 
+function applySubagentUsage(goal: Goal, usage: Static<typeof subagentUsageSchema>) {
+  if (usage.goalId !== goal.id) return false;
+  const receipts = goal.subagentUsage ??= [];
+  const previous = receipts.find(receipt => receipt.runId === usage.runId);
+  const accounted = previous?.total ?? Math.max(0, usage.total - usage.tokens);
+
+  if (usage.total <= accounted) return false;
+  goal.tokensUsed = Math.min(Number.MAX_SAFE_INTEGER, goal.tokensUsed + usage.total - accounted);
+
+  if (previous) previous.total = usage.total;
+  else receipts.push({ runId: usage.runId, total: usage.total });
+
+  return true;
+}
+
 export class GoalState {
   goal: Goal | null = null;
   private clock: number | undefined;
@@ -66,6 +87,7 @@ export class GoalState {
     if (data !== null && !Check(goalSchema, data)) throw new Error("Invalid saved goal");
     this.goal = validateSaved(data);
     this.saved = JSON.stringify(this.goal);
+    this.replaySubagentUsage(ctx);
 
     if (this.goal?.status === "complete") { this.clear(ctx);
 
@@ -134,6 +156,22 @@ export class GoalState {
     return limited;
   }
 
+  replaySubagentUsage(ctx: ExtensionContext) {
+    if (!this.goal) return false;
+    let changed = false;
+
+    for (const entry of ctx.sessionManager.getEntries()) {
+      if (entry.type !== "custom" || entry.customType !== "piop-subagent-usage" || !Check(subagentUsageSchema, entry.data)) continue;
+      changed = applySubagentUsage(this.goal, entry.data) || changed;
+    }
+
+    if (changed) this.flushClock();
+    const limited = changed && this.enforceBudget(true);
+    this.save(ctx);
+
+    return limited;
+  }
+
   enforceBudget(includeStopped = false) {
     const goal = this.goal;
 
@@ -181,7 +219,7 @@ export class GoalState {
 
     if (next !== this.saved) {
       if (this.goal) this.goal.updatedAt = Date.now();
-      this.pi.appendEntry(GOAL_ENTRY, this.goal && { ...this.goal });
+      this.pi.appendEntry(GOAL_ENTRY, this.goal && structuredClone(this.goal));
       this.saved = JSON.stringify(this.goal);
     }
 

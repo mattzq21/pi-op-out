@@ -170,6 +170,7 @@ pub(super) fn local_branch_exists(root: &Path, branch: &str) -> Result<bool, Str
     match status.code() { Some(0) => Ok(true), Some(1) => Ok(false), _ => Err("Could not inspect Git branches".into()) }
 }
 
+#[cfg(test)]
 pub(super) fn local_worktree_is_registered(root: &Path, target: &Path) -> Result<bool, String> {
     let output = run_limited(Command::new("git").arg("-C").arg(root).args(["worktree", "list", "--porcelain", "-z"]), 1024 * 1024, "Could not inspect Git worktrees")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
@@ -198,61 +199,39 @@ fn project_worktree_root(cwd: &str, host: Option<&RemoteHost>) -> Result<PathBuf
 
 struct ManagedWorktreeTarget { path: PathBuf, host: Option<RemoteHost> }
 
-fn worktree_storage_command(action: &str, directory: &Path, host: Option<&RemoteHost>, branch: &str) -> Command {
+fn worktree_storage_command(action: &str, directory: &Path, host: Option<&RemoteHost>, branch: &str, revision: &str) -> Command {
     let script = include_str!("../../resources/worktree-storage.cjs");
     if let Some(host) = host {
         let mut command = ssh(host);
-        command.arg(format!("node -e {} {} {} {} {}", shell_quote(script), shell_quote(action), shell_quote(&directory.to_string_lossy()), shell_quote(STORAGE_DIRECTORY), shell_quote(branch)));
+        command.arg(format!("node -e {} {} {} {} {} {}", shell_quote(script), shell_quote(action), shell_quote(&directory.to_string_lossy()), shell_quote(STORAGE_DIRECTORY), shell_quote(branch), shell_quote(revision)));
         command
     } else {
         let mut command = node_command();
-        command.args(["-e", script, action]).arg(directory).arg(STORAGE_DIRECTORY).arg(branch);
+        command.args(["-e", script, action]).arg(directory).arg(STORAGE_DIRECTORY).arg(branch).arg(revision);
         command
     }
 }
 
 impl Drop for ManagedWorktreeTarget {
     fn drop(&mut self) {
-        let _ = run_limited(&mut worktree_storage_command("cleanup", &self.path, self.host.as_ref(), ""), 64 * 1024, "Could not clean up worktree storage");
+        let _ = run_limited(&mut worktree_storage_command("cleanup", &self.path, self.host.as_ref(), "", ""), 64 * 1024, "Could not clean up worktree storage");
     }
 }
 
-fn managed_worktree_target(root: &Path, host: Option<&RemoteHost>, branch: &str) -> Result<ManagedWorktreeTarget, String> {
-    let output = run_limited(&mut worktree_storage_command("allocate", root, host, branch), 64 * 1024, "Could not allocate worktree storage")?;
+fn create_managed_worktree(root: &Path, host: Option<&RemoteHost>, branch: &str, revision: &str) -> Result<ManagedWorktreeTarget, String> {
+    let output = run_limited(&mut worktree_storage_command("create", root, host, branch, revision), 64 * 1024, "Could not create Git worktree")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let path = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
     if path.is_empty() { return Err("Worktree storage path was unavailable".into()); }
     Ok(ManagedWorktreeTarget { path: PathBuf::from(path), host: host.cloned() })
 }
 
-fn require_new_worktree_path(target: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(target) {
-        Ok(_) => Err(format!("Worktree directory already exists: {}", target.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn worktree_creation_error(stderr: &[u8]) -> String {
-    let error = String::from_utf8_lossy(stderr).trim().to_string();
-    if error.is_empty() { "Could not create Git worktree".into() } else { error }
-}
-
 pub(super) fn create_project_worktree_at(cwd: &str, name: &str, host: Option<&RemoteHost>) -> Result<GitWorktree, String> {
     let name = worktree_suffix(name)?;
     let root = project_worktree_root(cwd, host)?;
     let branch = child_worktree_branch(&root, name, host)?;
-    let reservation = managed_worktree_target(&root, host, &branch)?;
+    let reservation = create_managed_worktree(&root, host, &branch, "HEAD")?;
     let target = &reservation.path;
-    let output = if let Some(host) = host {
-        run_limited(ssh(host).arg(format!("target={}; if [ -e \"$target\" ] || [ -L \"$target\" ]; then printf 'Worktree directory already exists: %s' \"$target\" >&2; exit 1; fi; git -C {} worktree add -b {} \"$target\" HEAD", shell_quote(&target.to_string_lossy()), shell_quote(&root.to_string_lossy()), shell_quote(&branch))), 64 * 1024, "Could not create Git worktree")?
-    } else {
-        require_new_worktree_path(target)?;
-        run_limited(Command::new("git").arg("-C").arg(&root).args(["worktree", "add", "-b", &branch]).arg(target).arg("HEAD"), 64 * 1024, "Could not create Git worktree")?
-    };
-    if !output.status.success() {
-        return Err(worktree_creation_error(&output.stderr));
-    }
     Ok(GitWorktree { branch, path: target.to_string_lossy().into_owned() })
 }
 
@@ -277,9 +256,11 @@ pub(super) fn create_git_worktree(app: AppHandle, cwd: String, name: String, hos
         let settings = load_app_settings(app)?; let host = remote_host(&settings, host_id)?;
         let root = remote_worktree_root(&cwd, host)?;
         let branch = child_worktree_branch(Path::new(&root), name, Some(host))?;
-        let reservation = managed_worktree_target(Path::new(&root), Some(host), &branch)?;
-        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; target={target}; if [ -e "$target" ] || [ -L "$target" ]; then printf 'Worktree directory already exists: %s' "$target" >&2; exit 1; fi; worktrees=$(git -C "$root" worktree list --porcelain) || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; printf '%s\n' "$worktrees" | grep -Fqx "worktree $target" && {{ printf 'Git worktree is already registered: %s' "$target" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --src-prefix=a/ --dst-prefix=b/ --binary --no-textconv --no-ext-diff HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard $(test "$has_head" -eq 0 && printf %s --cached) -- > "$temporary/untracked" || exit 1; if [ "$has_head" -eq 1 ]; then git -C "$root" worktree add -b "$branch" "$target" >/dev/null || exit 1; else git -C "$root" worktree add --orphan -b "$branch" "$target" >/dev/null || exit 1; fi; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
-            root = shell_quote(&root), branch = shell_quote(&branch), target = shell_quote(&reservation.path.to_string_lossy()),
+        let storage_script = shell_quote(include_str!("../../resources/worktree-storage.cjs"));
+        let create = format!("node -e {storage_script} create \"$root\" {} \"$branch\" \"$revision\"", shell_quote(STORAGE_DIRECTORY));
+        let cleanup = format!("node -e {storage_script} cleanup \"$target\" {} ''", shell_quote(STORAGE_DIRECTORY));
+        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; {cleanup} >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --src-prefix=a/ --dst-prefix=b/ --binary --no-textconv --no-ext-diff HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard $(test "$has_head" -eq 0 && printf %s --cached) -- > "$temporary/untracked" || exit 1; revision=HEAD; if [ "$has_head" -eq 0 ]; then revision=--orphan; fi; target=$({create}) || exit 1; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
+            root = shell_quote(&root), branch = shell_quote(&branch),
             patch_plus_one = MAX_GIT_PATCH_BYTES + 1, max_patch = MAX_GIT_PATCH_BYTES);
         let output = run_limited(ssh(host).arg(script), 64 * 1024, &format!("Could not create Git worktree on {}", host.name))?;
         return parse_worktree_output(output, "Could not create Git worktree");
@@ -288,15 +269,11 @@ pub(super) fn create_git_worktree(app: AppHandle, cwd: String, name: String, hos
     create_local_git_worktree(&cwd, name)
 }
 
-fn new_local_worktree_target(root: &Path, branch: &str) -> Result<ManagedWorktreeTarget, String> {
+fn new_local_worktree(root: &Path, branch: &str, has_head: bool) -> Result<ManagedWorktreeTarget, String> {
     let valid = Command::new("git").args(["check-ref-format", "--branch", branch]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not validate Git branch: {error}"))?;
     if !valid.success() { return Err(format!("Invalid Git branch name: {branch}")); }
     if local_branch_exists(root, branch)? { return Err(format!("Git branch already exists: {branch}")); }
-    let reservation = managed_worktree_target(root, None, branch)?;
-    let target = &reservation.path;
-    if fs::symlink_metadata(target).is_ok() { return Err(format!("Worktree directory already exists: {}", target.display())); }
-    if local_worktree_is_registered(root, target)? { return Err(format!("Git worktree is already registered: {}", target.display())); }
-    Ok(reservation)
+    create_managed_worktree(root, None, branch, if has_head { "HEAD" } else { "--orphan" })
 }
 
 pub(super) fn write_worktree_patch(path: &Path, patch: &[u8]) -> std::io::Result<()> {
@@ -331,18 +308,6 @@ fn local_worktree_untracked(root: &Path, has_head: bool) -> Result<LimitedOutput
     Ok(untracked)
 }
 
-fn add_local_worktree(root: &Path, branch: &str, target: &Path, has_head: bool) -> Result<(), String> {
-    let mut add_worktree = Command::new("git"); add_worktree.arg("-C").arg(root).args(["worktree", "add"]);
-    if !has_head { add_worktree.arg("--orphan"); }
-    add_worktree.args(["-b", branch]).arg(target);
-    let output = run_limited(&mut add_worktree, 64 * 1024, "Could not create Git worktree")?;
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if error.is_empty() { "Could not create Git worktree".into() } else { error });
-    }
-    Ok(())
-}
-
 fn canonical_worktree_root(cwd: &str) -> Result<PathBuf, String> {
     project_worktree_root(cwd, None)?.canonicalize().map_err(|error| format!("Could not resolve Git repository: {error}"))
 }
@@ -351,12 +316,11 @@ pub(super) fn create_local_git_worktree(cwd: &str, name: &str) -> Result<GitWork
     let name = worktree_suffix(name)?;
     let root = canonical_worktree_root(cwd)?;
     let branch = child_worktree_branch(&root, name, None)?;
-    let reservation = new_local_worktree_target(&root, &branch)?;
-    let target = &reservation.path;
     let has_head = Command::new("git").arg("-C").arg(&root).args(["rev-parse", "--verify", "HEAD"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not inspect Git HEAD: {error}"))?.success();
     let patch = local_worktree_patch(&root, has_head)?;
     let untracked = local_worktree_untracked(&root, has_head)?;
-    add_local_worktree(&root, &branch, target, has_head)?;
+    let reservation = new_local_worktree(&root, &branch, has_head)?;
+    let target = &reservation.path;
     let copy_result = (|| {
         if !patch.is_empty() {
             let patch_path = std::env::temp_dir().join(format!("pi-desktop-worktree-{}.patch", Uuid::new_v4()));
@@ -547,7 +511,7 @@ fn cleanup_worktree_storage(settings: &AppSettings, host_id: &str, path: &str) {
         let Ok(host) = remote_host(settings, host_id) else { return; };
         Some(host)
     };
-    let _ = run_limited(&mut worktree_storage_command("cleanup", Path::new(path), host, ""), 64 * 1024, "Could not clean up worktree storage");
+    let _ = run_limited(&mut worktree_storage_command("cleanup", Path::new(path), host, "", ""), 64 * 1024, "Could not clean up worktree storage");
 }
 
 pub(super) fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: WorktreeRemovalTarget, delete_branch: bool, cancelled: &AtomicBool) -> Result<GitWorktreeRemoval, String> {

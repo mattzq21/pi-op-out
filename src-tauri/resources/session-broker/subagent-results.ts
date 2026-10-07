@@ -17,6 +17,7 @@ export const runSchema = Schema.Object({
   agent: Schema.Optional(Schema.String()), taskPath: Schema.Optional(Schema.String()),
   cwd: Schema.Optional(Schema.String()), worktree: Schema.Optional(Schema.Union([Schema.Literal("same"), Schema.Literal("new")])), branch: Schema.Optional(Schema.String()),
   offset: Schema.Optional(Schema.Integer({ minimum: 0 })), deliveryIds: Schema.Optional(Schema.Array(Schema.String())), goalId: Schema.Optional(Schema.String()),
+  accountingPending: Schema.Optional(Schema.Boolean()),
 });
 
 const usageSchema = Schema.Object({ input: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.Number()), cacheWrite: Schema.Optional(Schema.Number()), cost: Schema.Optional(Schema.Object({ total: Schema.Optional(Schema.Number()) })) });
@@ -25,7 +26,9 @@ const transcriptEntrySchema = Schema.Object({ type: Schema.String(), timestamp: 
 
 const descendantUsageSchema = Schema.Object({ type: Schema.Literal("custom"), customType: Schema.Literal("piop-subagent-usage"), data: Schema.Object({ tokens: Schema.Integer({ minimum: 0 }) }) });
 
-const assistantSchema = Schema.Object({ role: Schema.Literal("assistant"), stopReason: Schema.String(), errorMessage: Schema.Optional(Schema.String()), content: Schema.Array(Schema.Unknown()), usage: Schema.Optional(usageSchema) });
+const assistantSchema = Schema.Object({ role: Schema.Literal("assistant"), timestamp: Schema.Optional(Schema.Number()), stopReason: Schema.String(), errorMessage: Schema.Optional(Schema.String()), content: Schema.Array(Schema.Unknown()), usage: Schema.Optional(usageSchema) });
+
+const responseUsageSchema = Schema.Object({ type: Schema.Literal("custom"), customType: Schema.Literal("piop-subagent-response-usage"), data: Schema.Object({ key: Schema.String(), tokens: Schema.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) }) });
 
 const textSchema = Schema.Object({ type: Schema.Literal("text"), text: Schema.String() });
 
@@ -193,7 +196,9 @@ function subagentEntryCost(usage: Static<typeof usageSchema> | undefined) {
   return amount !== undefined && Number.isFinite(amount) ? Math.max(0, amount) : 0;
 }
 
-function relevantEntry(line: string, run: SubagentRun) {
+type SubagentTranscript = Pick<SubagentRun, "sessionPath" | "offset" | "startedAt">;
+
+function relevantEntry(line: string, run: SubagentTranscript) {
   let entry;
 
   try { entry = JSON.parse(line); } catch { return; }
@@ -205,10 +210,26 @@ function relevantEntry(line: string, run: SubagentRun) {
   return entry;
 }
 
-export async function subagentCompletion(run: SubagentRun, reportUsage: (tokens: number) => Promise<void>) {
+function responseUsageKey(timestamp: number | undefined, tokens: number) {
+  return JSON.stringify([timestamp, tokens]);
+}
+
+function unrecordedResponse(message: SubagentResponse, recorded: Map<string, number>) {
+  const tokens = goalTokens(message.usage);
+  const key = responseUsageKey(message.timestamp, tokens);
+  const remaining = recorded.get(key) ?? 0;
+
+  if (!remaining) return tokens;
+  recorded.set(key, remaining - 1);
+
+  return 0;
+}
+
+async function scanSubagentTranscript(run: SubagentTranscript, reportUsage: (tokens: number) => Promise<void>) {
   let last: SubagentResponse | undefined;
   let cost = 0;
   let tokens = 0;
+  const recorded = new Map<string, number>();
   const input = createReadStream(run.sessionPath, { start: run.offset ?? 0 });
   const lines = createInterface({ input, crlfDelay: Infinity });
 
@@ -220,6 +241,12 @@ export async function subagentCompletion(run: SubagentRun, reportUsage: (tokens:
 
       if (Check(descendantUsageSchema, entry)) { tokens += entry.data.tokens; continue; }
 
+      if (Check(responseUsageSchema, entry)) {
+        tokens += entry.data.tokens;
+        recorded.set(entry.data.key, (recorded.get(entry.data.key) ?? 0) + 1);
+        continue;
+      }
+
       if (entry.type !== "message") { tokens += goalTokens(entry.usage); cost += subagentEntryCost(entry.usage); continue; }
 
       if (Check(Schema.Object({ role: Schema.Literal("user") }), entry.message)) last = undefined;
@@ -227,13 +254,33 @@ export async function subagentCompletion(run: SubagentRun, reportUsage: (tokens:
       if (!Check(assistantSchema, entry.message)) continue;
       last = entry.message;
       cost += subagentEntryCost(last.usage);
-      tokens += goalTokens(last.usage);
+      tokens += unrecordedResponse(last, recorded);
     }
   } finally { lines.close(); input.destroy(); await reportUsage(tokens); }
 
+  return { last, cost };
+}
+
+export async function subagentUsageTotal(run: SubagentTranscript) {
+  let total = 0;
+  await scanSubagentTranscript(run, async tokens => { total = tokens; });
+
+  return total;
+}
+
+export async function subagentCompletion(run: SubagentRun, reportUsage: (tokens: number) => Promise<void>) {
+  const { last, cost } = await scanSubagentTranscript(run, reportUsage);
   run.apiCost = cost;
 
   return last;
+}
+
+export async function persistSubagentResponseUsage(pi: ExtensionAPI, ctx: ExtensionContext, timestamp: number, tokens: number) {
+  const path = ctx.sessionManager.getSessionFile();
+
+  if (!path) throw new Error("Subagent usage requires a saved conversation");
+  pi.appendEntry("piop-subagent-response-usage", { key: responseUsageKey(timestamp, tokens), tokens });
+  await syncPath(path);
 }
 
 export function ownedSubagentRuns(ctx: ExtensionContext) {
@@ -265,6 +312,6 @@ export async function persistSubagentUsage(pi: ExtensionAPI, ctx: ExtensionConte
   const path = ctx.sessionManager.getSessionFile();
 
   if (!path) throw new Error("Subagent usage requires a saved parent conversation");
-  pi.appendEntry("piop-subagent-usage", { runId: resultNotificationId(run), total, tokens });
+  pi.appendEntry("piop-subagent-usage", { version: 1, runId: resultNotificationId(run), goalId: run.goalId, total, tokens });
   await syncPath(path);
 }

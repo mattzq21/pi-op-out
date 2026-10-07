@@ -8,6 +8,12 @@ const installedStorageClasses = new WeakSet();
 
 const failedSessionStorage = new WeakSet();
 
+const sessionReferenceBaselines = new WeakMap();
+
+function sessionReferenceRoot() {
+  return storagePath.join(storageHome(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
+}
+
 function registerExternalTranscript(root, transcript) {
   if (!transcript) return;
   const file = storagePath.resolve(transcript);
@@ -21,13 +27,88 @@ function registerExternalTranscript(root, transcript) {
   const record = storagePath.join(directory, storageHash("sha256").update(file).digest("hex") + ".json");
   const body = JSON.stringify({ path: file });
 
-  if (storageReadOptional(record) === body) return;
-  storagePublish(record, record + "." + storageUuid() + ".tmp", body, false);
+  if (storageReadOptional(record) !== body) storagePublish(record, record + "." + storageUuid() + ".tmp", body, false);
+  storageSyncDirectory(record);
+  storageSyncDirectory(directory);
   storageSyncDirectory(root);
 }
 
+function textGoalReferences(text, root, found) {
+  const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^${escaped}/(?:sessions|archived|fork-transactions|fork-preparations)/(?:[^\\r\\n]*?/)?attachments/goal-[A-Za-z0-9]{6}(?![A-Za-z0-9])`);
+  const prefix = root + "/";
+  let start = text.indexOf(prefix);
+
+  while (start !== -1) {
+    const next = text.indexOf(prefix, start + prefix.length);
+    const segment = text.slice(start, next === -1 ? undefined : next);
+    const match = pattern.exec(segment);
+
+    if (match && storagePath.resolve(match[0]) === match[0]) found.add(match[0]);
+    start = next;
+  }
+}
+
+function managedGoalReferences(value, root = sessionReferenceRoot()) {
+  const found = new Set();
+
+  for (const token of JSON.stringify(value).matchAll(/"(?:[^"\\]|\\.)*"/g)) {
+    textGoalReferences(JSON.parse(token[0]), root, found);
+  }
+
+  return found;
+}
+
+function validateGoalDirectory(directory) {
+  const objective = storagePath.join(directory, "goal-objective.md");
+
+  try {
+    if (!storageFs.lstatSync(directory).isDirectory() || !storageFs.lstatSync(objective).isFile()) throw new Error("Invalid goal attachment");
+
+    return storageFs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isFile() && /\.(md|txt)$/.test(entry.name)
+      ? [...managedGoalReferences(storageFs.readFileSync(storagePath.join(directory, entry.name), "utf8"))] : []);
+  } catch (error) { throw new Error(`Managed goal attachment is unavailable: ${directory}. Reattach it before saving. ${error.message}`); }
+}
+
+function validateNewGoalReferences(incoming, previous) {
+  const retained = new Set(previous);
+  const pending = new Set(incoming);
+
+  for (const directory of pending) {
+    if (retained.has(directory)) continue;
+    retained.add(directory);
+
+    for (const dependency of validateGoalDirectory(directory)) pending.add(dependency);
+  }
+}
+
+export function validateSessionReferencePublication(entries, previous = inheritedSessionEntries(entries)) {
+  const incoming = managedGoalReferences(entries);
+  validateNewGoalReferences(incoming, managedGoalReferences(previous));
+
+  return incoming;
+}
+
+function storedSessionEntries(path) {
+  const body = storageReadOptional(path);
+
+  return body ? body.split("\n").filter(line => line.trim()).map(line => JSON.parse(line)) : [];
+}
+
+function sessionParentPath(entry) {
+  if (entry?.type === "session") return entry.parentSession;
+
+  if (entry?.type === "custom" && entry.customType === "piop-subagent-parent") return entry.data?.parentSessionPath;
+}
+
+function inheritedSessionEntries(entries) {
+  const parents = entries.map(sessionParentPath).filter(path => path?.constructor === String && storagePath.isAbsolute(path));
+
+  return [...new Set(parents)].flatMap(storedSessionEntries);
+}
+
 export function acquireSessionReferencePublication(transcript) {
-  const root = storagePath.join(storageHome(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
+  const root = sessionReferenceRoot();
   storageFs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const descriptor = storageFs.openSync(storagePath.join(root, "reference-publication.lock"), storageFs.constants.O_CREAT | storageFs.constants.O_RDWR | storageFs.constants.O_NOFOLLOW, 0o600);
 
@@ -172,17 +253,30 @@ function sessionStoragePublish(manager, entries, exclusive) {
   const path = manager.sessionFile;
   const release = acquireSessionReferencePublication(path);
 
-  try { storagePublish(path, sessionStorageTemporary(path), entries.map(entry => JSON.stringify(entry) + "\n").join(""), exclusive); }
-  catch (error) {
-    if (storageFs.existsSync(path)) failedSessionStorage.add(manager);
-    throw error;
+  try {
+    const references = validateSessionReferencePublication(entries, exclusive ? undefined : storedSessionEntries(path));
+
+    try { storagePublish(path, sessionStorageTemporary(path), entries.map(entry => JSON.stringify(entry) + "\n").join(""), exclusive); }
+    catch (error) {
+      if (storageFs.existsSync(path)) failedSessionStorage.add(manager);
+      throw error;
+    }
+
+    sessionReferenceBaselines.set(manager, { path, entries: manager.fileEntries, references });
   } finally { release(); }
 }
 
 function sessionStorageAppend(manager, entry) {
   const release = acquireSessionReferencePublication(manager.sessionFile);
 
-  try { appendSessionStorage(manager, entry); }
+  try {
+    const baseline = sessionReferenceBaselines.get(manager);
+    const previous = baseline?.path === manager.sessionFile && baseline.entries === manager.fileEntries ? baseline.references : managedGoalReferences(manager.fileEntries);
+    const references = managedGoalReferences([entry]);
+    validateNewGoalReferences(references, previous);
+    appendSessionStorage(manager, entry);
+    sessionReferenceBaselines.set(manager, { path: manager.sessionFile, entries: manager.fileEntries, references: new Set([...previous, ...references]) });
+  }
   finally { release(); }
 }
 
@@ -237,6 +331,19 @@ export function installSessionStorage(SessionManager) {
     sessionStorageState(this);
 
     if (this.persist && this.sessionFile) sessionStoragePublish(this, this.fileEntries, false);
+  };
+
+  const fork = SessionManager.forkFrom;
+
+  if (fork instanceof Function) SessionManager.forkFrom = function (...args) {
+    const release = acquireSessionReferencePublication();
+
+    try {
+      const session = fork.apply(this, args);
+      registerExternalTranscript(sessionReferenceRoot(), session.sessionFile);
+
+      return session;
+    } finally { release(); }
   };
 
   installedStorageClasses.add(SessionManager);

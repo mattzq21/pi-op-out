@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { open, rm } from "node:fs/promises";
 import { closeSync, fsyncSync, linkSync, openSync } from "node:fs";
 import { dirname } from "node:path";
-import { acquireSessionReferencePublication } from "../sdk-storage.mjs";
+import { acquireSessionReferencePublication, validateSessionReferencePublication } from "../sdk-storage.mjs";
 
 export async function writeSessionFile(path: string, entries: unknown[]) {
   const temporary = `${path}.${randomUUID()}.tmp`;
@@ -15,6 +15,7 @@ export async function writeSessionFile(path: string, entries: unknown[]) {
     const release = acquireSessionReferencePublication(path);
 
     try {
+      validateSessionReferencePublication(entries);
       linkSync(temporary, path);
       const directory = openSync(dirname(path), "r");
 

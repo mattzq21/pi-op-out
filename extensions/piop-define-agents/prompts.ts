@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { link, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { link, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,15 +20,12 @@ async function syncPath(path: string) {
 }
 
 async function durableDirectory(path: string) {
-  const created = await mkdir(resolve(path), { recursive: true, mode: 0o700 });
+  await mkdir(resolve(path), { recursive: true, mode: 0o700 });
 
-  if (!created) return;
-  const boundary = dirname(created);
-
-  for (let current = resolve(path); ; current = dirname(current)) {
+  for (let current = await realpath(path); ; current = dirname(current)) {
     await syncPath(current);
 
-    if (current === boundary) break;
+    if (current === dirname(current)) break;
   }
 }
 

@@ -1,4 +1,4 @@
-import { GitError, runGit } from "./git.ts";
+import { GitError, runGit, acquireWorktreePublicationLock } from "./git.ts";
 import { pinPromptHistory } from "./pin-checkpoints.ts";
 import { publishFork, ForkPublicationPending } from "./fork-publication.ts";
 import { registerPreparedCheckpoints } from "./fork-preparation.ts";
@@ -315,6 +315,20 @@ async function checkpointWorktreeTarget(root: string, branch: string) {
   return target;
 }
 
+async function createCheckpointWorktree(root: string, branch: string, commit: string) {
+  const lock = await acquireWorktreePublicationLock();
+  let target: string | undefined;
+
+  try {
+    target = await checkpointWorktreeTarget(root, branch);
+    await assertWorktreeAvailable(root, branch, target);
+    await runGit(root, ["worktree", "add", "-b", branch, target, commit]);
+
+    return target;
+  } catch (error) { if (target) await cleanupCheckpointContainer(target); throw error; }
+  finally { await lock.close(); }
+}
+
 async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: string, afterResponse = false) {
   const root = await repositoryRoot(ctx.cwd);
 
@@ -331,16 +345,12 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
   }
 
   const branch = await checkpointBranchName(root, name);
-  const target = await checkpointWorktreeTarget(root, branch);
+  const target = await createCheckpointWorktree(root, branch, checkpoint.commit);
   const id = randomUUID();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
-  let created = false;
 
   try {
-    await assertWorktreeAvailable(root, branch, target);
-    await runGit(root, ["worktree", "add", "-b", branch, target, checkpoint.commit]);
-    created = true;
     const entries = await branchSessionEntries(ctx, root, id, history, owner, checkpoint, timestamp, target, afterResponse, entryId);
     await publishCheckpointSession(ctx, entries, sessionPath, id);
 
@@ -350,10 +360,8 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
 
     for (const { ref, commit } of [...await promptRefs(root, id), ...await sessionSnapshots(root, id)]) await runGit(root, ["update-ref", "-d", ref, commit]);
 
-    if (created) {
-      await runGit(root, ["worktree", "remove", "--force", target])
-        .then(() => runGit(root, ["branch", "-D", branch])).catch(() => undefined);
-    }
+    await runGit(root, ["worktree", "remove", "--force", target])
+      .then(() => runGit(root, ["branch", "-D", branch])).catch(() => undefined);
 
     throw error;
   } finally { await cleanupCheckpointContainer(target); }

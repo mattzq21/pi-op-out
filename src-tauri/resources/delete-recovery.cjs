@@ -4,6 +4,7 @@ const { createHash, randomUUID } = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { isDeepStrictEqual } = require("node:util");
 const { cleanupRegistry } = require("./deletion-retention.cjs");
+const { validateRetention, recordRetention } = require("./retention-candidates.cjs");
 
 const lockPattern = /^\.delete-[a-f0-9]{64}\.lock$/;
 
@@ -115,7 +116,7 @@ function ownershipRecords(root, sessionIds) {
   });
 }
 
-function createJournal(root, lock, childLocks, files, repositories, sessionIds, registryIds = []) {
+function createJournal(root, lock, childLocks, files, repositories, sessionIds, registryIds = [], retention = { directories: [], sessionIds: [] }) {
   const id = randomUUID();
   const garbageRoot = path.join(root, "deleted-sessions");
   fs.mkdirSync(garbageRoot, { recursive: true, mode: 0o700 });
@@ -130,7 +131,7 @@ function createJournal(root, lock, childLocks, files, repositories, sessionIds, 
     repositories: repositories.map((repository, repositoryIndex) => ({ cwd: repository.cwd,
       refs: repository.refs.map((ref, index) => ({ ...ref, reservation: `refs/piop-deletions/${id}/${repositoryIndex}/${index}` })),
     })),
-    ownership: ownershipRecords(root, sessionIds), registryIds,
+    ownership: ownershipRecords(root, sessionIds), registryIds, retention,
   };
 
   files.forEach((saved, index) => { saved.stagedPath = path.join(lock, journal.files[index].staged); });
@@ -178,6 +179,12 @@ function verifyJournalDirectory(root, directory, journal) {
   if (journal.root !== root || journal.locks?.[0]?.identity !== identity(directory)) throw new Error(`Deletion recovery directory changed: ${directory}`);
 }
 
+function validateRetentionMetadata(root, journal) {
+  if (journal.registryIds !== undefined && (!Array.isArray(journal.registryIds) || journal.registryIds.some(id => !uuidPattern.test(id)))) throw new Error("Invalid deleted registry sessions");
+
+  if (journal.retention !== undefined) validateRetention(root, journal.retention);
+}
+
 function readJournal(root, directory) {
   const journal = JSON.parse(fs.readFileSync(path.join(directory, "recovery.json"), "utf8"));
 
@@ -188,7 +195,7 @@ function readJournal(root, directory) {
   journal.repositories.forEach(validateRepository);
   (journal.ownership ?? []).forEach(record => validateOwnership(root, record));
 
-  if (journal.registryIds !== undefined && (!Array.isArray(journal.registryIds) || journal.registryIds.some(id => !uuidPattern.test(id)))) throw new Error("Invalid deleted registry sessions");
+  validateRetentionMetadata(root, journal);
 
   verifyJournalDirectory(root, directory, journal);
 
@@ -297,13 +304,18 @@ function cleanupCommitted(root) {
 
     for (const lock of journal.locks ?? inferredLocks(journal)) sync(path.dirname(lock.path));
     reconcileOwnership(directory, journal);
-    cleanupRegistry(root, journal.registryIds ?? []);
+    cleanupCommittedRetention(root, journal);
     removeLocks(root, directory, journal);
 
     for (const repository of journal.repositories) releaseReservations(repository);
     fs.rmSync(directory, { recursive: true });
     sync(garbageRoot);
   }
+}
+
+function cleanupCommittedRetention(root, journal) {
+  if (journal.retention) recordRetention(root, journal.id, journal.retention);
+  cleanupRegistry(root, journal.registryIds ?? []);
 }
 
 function deletionLocks(directory, locks) {

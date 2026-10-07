@@ -52,6 +52,7 @@ impl QueueStorage {
         if items.is_empty() {
             return self.remove(parent);
         }
+        super::super::reference_publication::validate_new_references(root, items, &self.load()?)?;
         self.write_items(items, parent)
     }
 

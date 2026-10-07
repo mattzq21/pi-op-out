@@ -1,6 +1,7 @@
 mod attachment;
 mod requests;
 mod recovery;
+mod retention;
 
 use super::{
     ownership::{ownership_error, ConversationOwnership, Guard, Revocation},
@@ -183,6 +184,7 @@ impl Host {
         host.recover_queued_input();
         host.services.bind(Arc::downgrade(&host));
         host.watch_removals();
+        host.watch_retention();
         Ok(host)
     }
 

@@ -3,7 +3,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { Type as Schema } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { resolveAgentProfile } from "./agent-profiles.ts";
-import type { GoalScope } from "./goals.ts";
+import type { GoalScope, GoalUsage } from "./goals.ts";
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -222,7 +222,7 @@ async function confirmSubagentStopped(run: SubagentRun, ctx: ExtensionContext, d
   }
 }
 
-async function usageReporter(run: SubagentRun, execution: SubagentExecution, restored: boolean) {
+async function usageReporter(run: SubagentRun, execution: Pick<SubagentExecution, "signal" | "pi" | "ctx" | "reportDescendants">, restored: boolean) {
   const { signal, pi, ctx } = execution;
   signal?.throwIfAborted();
 
@@ -238,14 +238,25 @@ async function usageReporter(run: SubagentRun, execution: SubagentExecution, res
 
   if (restored && run.offset === undefined) await subagentCompletion(run, async total => { reported = Math.max(reported, total); });
 
-  return async (total: number) => {
-    const tokens = Math.max(0, total - reported);
-    reported = Math.max(reported, total);
+  let pending = Promise.resolve();
 
-    if (!tokens) return;
-    await persistSubagentUsage(pi, ctx, run, reported, tokens);
-    pi.events.emit("piop:goal-usage", { goalId: run.goalId, tokens, ctx });
-    await execution.reportDescendants(tokens, ctx);
+  return (total: number) => {
+    const next = pending.then(async () => {
+      const tokens = Math.max(0, total - reported);
+      const saved = Math.max(reported, reportedSubagentUsage(ctx, run));
+
+      if (total > saved) await persistSubagentUsage(pi, ctx, run, total, total - saved);
+      const usage: GoalUsage = { ctx };
+      pi.events.emit("piop:goal-usage", usage);
+      await usage.ready;
+
+      if (tokens) await execution.reportDescendants(tokens, ctx);
+      reported = Math.max(reported, total);
+    });
+
+    pending = next.catch(() => undefined);
+
+    return next;
   };
 }
 
@@ -257,6 +268,19 @@ async function stopDispatchedSubagent(run: SubagentRun, ctx: ExtensionContext, l
   if (retired.some(Boolean)) throw new SubagentRetiredError("Subagent was archived or deleted; its worker has stopped");
 }
 
+async function finishSubagentUsage(run: SubagentRun, reportUsage: (total: number) => Promise<void>, closeUsage: () => Promise<void>, dispatched: boolean) {
+  let cleanupFailure;
+
+  try { await closeUsage(); } catch (error) { cleanupFailure = error; }
+
+  const last = await subagentCompletion(run, reportUsage);
+  run.accountingPending = false;
+
+  if (dispatched && cleanupFailure) throw cleanupFailure;
+
+  return last;
+}
+
 async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution, lifecycle: ActiveSubagent, restored = false) {
   const { signal, pi, ctx } = execution;
 
@@ -264,8 +288,7 @@ async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution, 
   const reportUsage = await usageReporter(run, execution, restored);
   const usageFailure = new AbortController();
   const requestSignal = signal ? AbortSignal.any([signal, usageFailure.signal]) : usageFailure.signal;
-  const liveUsage = restored ? async () => { await subagentCompletion(run, reportUsage); } : reportUsage;
-  const closeUsage = await listenSubagentUsage(run.sessionPath, liveUsage, error => { usageFailure.abort(error); });
+  const closeUsage = await listenSubagentUsage(run.sessionPath, reportUsage, error => { usageFailure.abort(error); }, run);
 
   let dispatched = false;
   let submitted = restored;
@@ -273,6 +296,8 @@ async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution, 
 
   try {
     requestSignal.throwIfAborted();
+
+    if (restored) await subagentCompletion(run, reportUsage);
 
     if (!restored) {
       const deliveryId = randomUUID();
@@ -296,8 +321,7 @@ async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution, 
   }
 
   finally {
-    try { await closeUsage(); last = await subagentCompletion(run, reportUsage); }
-    catch (error) { if (dispatched) throw error; }
+    last = await finishSubagentUsage(run, reportUsage, closeUsage, dispatched);
   }
 
   run.output = completedSubagentOutput(last);
@@ -325,6 +349,7 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution,
 
     if (active.has(child.sessionId)) throw new Error("This subagent is already running");
     Object.assign(run, child);
+    run.accountingPending = true;
     lifecycle.deliveryIds = new Set(run.deliveryIds);
     active.set(run.sessionId, lifecycle); claimed = true;
     await persistSubagentRun(pi, ctx, run); await publish(run);
@@ -369,7 +394,7 @@ async function publishSubagentResult(pi: ExtensionAPI, ctx: ExtensionContext, ru
     await sendAgentMailbox(pi, ctx, { customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId }, display: true }, notificationId);
   }
 
-  await forgetSubagentRun(ctx, run);
+  if (!run.accountingPending) await forgetSubagentRun(ctx, run);
 }
 
 async function restoreSubagentPath(run: SubagentRun, signal?: AbortSignal) {
@@ -561,6 +586,13 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
       try {
         if (run.status !== "running") {
+          if (run.accountingPending) {
+            await restoreSubagentPath(run, signal);
+            const reportUsage = await usageReporter(run, { pi, ctx, signal, reportDescendants }, true);
+            await subagentCompletion(run, reportUsage);
+            run.accountingPending = false;
+          }
+
           if (!tracked.has(JSON.stringify(run))) await persistSubagentRun(pi, ctx, run);
           await publishSubagentResult(pi, ctx, run);
           continue;
