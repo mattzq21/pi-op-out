@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { open, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { goalTokens } from "./goal-state.ts";
 
 const channelSchema = Type.Object({ port: Type.Integer({ minimum: 1, maximum: 65535 }), token: Type.String() });
-
-const ownerSchema = Type.Object({ pid: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) });
 
 const usageSchema = Type.Object({ total: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) });
 
@@ -20,20 +20,82 @@ type Channel = Static<typeof channelSchema>;
 
 const channelPath = (path: string) => `${path}.goal-usage.json`;
 
-async function claimChannel(path: string) {
-  try {
-    const owner = JSON.parse(await readFile(path, "utf8"));
-
-    if (!Check(ownerSchema, owner)) throw new Error("Invalid existing subagent usage channel");
-
-    try { process.kill(owner.pid, 0); }
-    catch (error) {
-      if (!Check(fileErrorSchema, error) || error.code !== "ESRCH") throw error;
-      await rm(path);
+const channelUpdateScript = `
+  const fs = require("node:fs");
+  const [path, temporary, action] = process.argv.slice(1);
+  const next = JSON.parse(fs.readFileSync(0, "utf8"));
+  function readOwner() {
+    let content;
+    try { content = fs.readFileSync(path, "utf8"); }
+    catch (error) { if (error.code === "ENOENT") return; throw error; }
+    try { return JSON.parse(content); }
+    catch (error) { if (error instanceof SyntaxError) return; throw error; }
+  }
+  function claim() {
+    const owner = readOwner();
+    if (Number.isSafeInteger(owner?.pid) && owner.pid > 0) {
+      try { process.kill(owner.pid, 0); }
+      catch (error) { if (error.code === "ESRCH") return publish(); throw error; }
+      throw new Error("Subagent usage channel is already owned by a running process");
     }
-  } catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error; }
+    publish();
+  }
+  function publish() {
+    process.kill(next.pid, 0);
+    fs.rmSync(temporary, { force: true });
+    try {
+      const file = fs.openSync(temporary, "wx", 0o600);
+      try { fs.writeFileSync(file, JSON.stringify(next)); fs.fsyncSync(file); }
+      finally { fs.closeSync(file); }
+      fs.renameSync(temporary, path);
+    } finally { fs.rmSync(temporary, { force: true }); }
+  }
+  try {
+    if (action === "claim") claim();
+    else if (readOwner()?.token === next.token) fs.rmSync(path, { force: true });
+  } catch (error) { process.stderr.write(error.message); process.exitCode = 1; }
+`;
 
-  return open(path, "wx", 0o600);
+async function prepareChannelDirectory(path: string, directory: string) {
+  const transcript = await lstat(path);
+
+  if (!transcript.isFile() || transcript.isSymbolicLink()) throw new Error("Subagent usage requires a saved session file");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+}
+
+async function channelDirectory(path: string, action: "claim" | "close") {
+  if (!path.endsWith(".jsonl")) throw new Error("Subagent usage requires a saved session");
+
+  const directory = path.replace(/\.jsonl$/, ".snapshots");
+
+  if (action === "claim") await prepareChannelDirectory(path, directory);
+
+  const info = await lstat(directory).catch(error => {
+    if (action === "close" && Check(fileErrorSchema, error) && error.code === "ENOENT") return;
+    throw error;
+  });
+
+  if (!info) return;
+
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Subagent usage storage must be a directory");
+
+  return directory;
+}
+
+async function updateChannel(path: string, action: "claim" | "close", channel: Channel & { pid: number }) {
+  const directory = await channelDirectory(path, action);
+
+  if (!directory) return;
+
+  return new Promise<void>((resolve, reject) => {
+    const child = execFile("flock", ["--exclusive", "--wait", "10", "--no-fork", join(directory, "subagent-usage.lock"), process.execPath, "-e", channelUpdateScript, channelPath(path), join(directory, "subagent-usage.pending"), action], { timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 16_384, encoding: "utf8" }, (error, _output, stderr) => {
+      if (error) reject(new Error(`Could not ${action} subagent usage channel: ${stderr.trim() || error.message}`));
+      else resolve();
+    });
+
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(JSON.stringify(channel));
+  });
 }
 
 async function receiveUsage(request: IncomingMessage, response: ServerResponse, token: string, report: (total: number) => void | Promise<void>) {
@@ -72,12 +134,12 @@ export async function listenSubagentUsage(path: string, report: (total: number) 
 
   server.requestTimeout = 5000;
   server.headersTimeout = 5000;
-  let owned = false;
+  let channel: (Channel & { pid: number }) | undefined;
 
   const close = async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
 
-    if (owned) await rm(channelPath(path), { force: true });
+    if (channel) await updateChannel(path, "close", channel);
   };
 
   try {
@@ -86,12 +148,8 @@ export async function listenSubagentUsage(path: string, report: (total: number) 
     const address = server.address();
 
     if (!Check(addressSchema, address)) throw new Error("Subagent usage server did not bind a TCP port");
-    const port = address.port;
-    const file = await claimChannel(channelPath(path));
-    owned = true;
-
-    try { await file.writeFile(JSON.stringify({ port, token, pid: process.pid })); }
-    finally { await file.close(); }
+    channel = { port: address.port, token, pid: process.pid };
+    await updateChannel(path, "claim", channel);
 
     return close;
   } catch (error) { await close(); throw error; }
