@@ -8,12 +8,14 @@ const runFile = promisify(execFile);
 
 const captureSchema = Type.Object({
   root: Type.String({ minLength: 1 }), repository_root: Type.String({ minLength: 1 }), tree: Type.String({ pattern: "^[a-fA-F0-9]{40,64}$" }),
+  durable: Type.Optional(Type.Boolean()),
+  retentionError: Type.Optional(Type.String()),
 });
 
 const skippedCaptureSchema = Type.Object({ code: Type.Union([Type.Literal(3), Type.Literal(4), Type.Literal(6)]) });
 
-type TurnCapture = { phase: "start"; turnId: string; cwd: string; baseline: string }
-  | { phase: "end"; turnId: string; cwd?: string; current?: string | null; sessionPath?: string; messageId?: string };
+type TurnCapture = { phase: "start"; turnId: string; cwd: string; baseline: string; sessionPath?: string }
+  | { phase: "end"; turnId: string; cwd?: string; current?: string | null; sessionPath?: string; messageId?: string; durable?: boolean };
 
 export function registerTurnCapture(pi: ExtensionAPI) {
   const script = process.env.PI_DESKTOP_GIT_CAPTURE_SCRIPT;
@@ -22,23 +24,25 @@ export function registerTurnCapture(pi: ExtensionAPI) {
 
   const publish = (ctx: ExtensionContext, capture: TurnCapture) => ctx.ui.setStatus("pi-desktop-turn-capture", JSON.stringify(capture));
 
-  const snapshot = async (cwd: string, ctx: ExtensionContext, turnId: string, phase: string) => {
+  const snapshot = async (cwd: string, ctx: ExtensionContext, turnId: string, phase: string, comparison?: { baseline: string; messageId: string }) => {
 
     try {
-      const owner = { sessionPath: ctx.sessionManager.getSessionFile(), sessionId: ctx.sessionManager.getSessionId(), turnId, phase };
+      const owner = { sessionPath: ctx.sessionManager.getSessionFile(), sessionId: ctx.sessionManager.getSessionId(), turnId, phase, ephemeral: process.env.PIOP_EPHEMERAL_SESSION === "1", ...comparison };
       const { stdout } = await runFile(process.execPath, ["-e", script, JSON.stringify(owner)], { cwd, maxBuffer: 64 * 1024 });
       const capture = JSON.parse(stdout);
 
       if (!Check(captureSchema, capture)) throw new Error("Git snapshot was incomplete");
 
-      return JSON.stringify({ root: capture.root, tree: capture.tree, repository_root: capture.repository_root });
+      if (capture.retentionError) ctx.ui.notify(`Could not retain project changes for retry: ${capture.retentionError}`, "error");
+
+      return { token: JSON.stringify({ root: capture.root, tree: capture.tree, repository_root: capture.repository_root }), durable: capture.durable === true };
     } catch (error) {
       if (Check(skippedCaptureSchema, error)) return null;
       throw error;
     }
   };
 
-  let turn: { id: string; cwd: string; sessionId: string; entries: Set<string> } | undefined;
+  let turn: { id: string; cwd: string; sessionId: string; entries: Set<string>; baseline: string } | undefined;
 
   const cancel = (ctx: ExtensionContext) => {
     if (turn) publish(ctx, { phase: "end", turnId: turn.id });
@@ -53,7 +57,7 @@ export function registerTurnCapture(pi: ExtensionAPI) {
 
       const baseline = await snapshot(started.cwd, ctx, started.id, "start");
 
-      if (baseline) { turn = started; publish(ctx, { phase: "start", turnId: started.id, cwd: started.cwd, baseline }); }
+      if (baseline) { turn = { ...started, baseline: baseline.token }; publish(ctx, { phase: "start", turnId: started.id, cwd: started.cwd, baseline: baseline.token, sessionPath: ctx.sessionManager.getSessionFile() }); }
     } catch (error) { ctx.ui.notify(`Could not capture project changes: ${error instanceof Error ? error.message : String(error)}`, "error"); }
   });
   pi.on("agent_end", async (_event, ctx) => {
@@ -61,6 +65,7 @@ export function registerTurnCapture(pi: ExtensionAPI) {
 
     if (!ended) return;
     let current: string | null = null;
+    let durable = false;
     let messageId: string | undefined;
     const sessionPath = ctx.sessionManager.getSessionFile();
 
@@ -70,9 +75,11 @@ export function registerTurnCapture(pi: ExtensionAPI) {
 
       if (!response) return;
       messageId = response.id;
-      current = await snapshot(ended.cwd, ctx, ended.id, "end");
+      const captured = await snapshot(ended.cwd, ctx, ended.id, "end", { baseline: ended.baseline, messageId });
+      current = captured?.token ?? null;
+      durable = captured?.durable === true;
     } catch (error) { ctx.ui.notify(`Could not capture project changes: ${error instanceof Error ? error.message : String(error)}`, "error"); }
-    finally { publish(ctx, { phase: "end", turnId: ended.id, cwd: ended.cwd, current, sessionPath, messageId }); }
+    finally { publish(ctx, { phase: "end", turnId: ended.id, cwd: ended.cwd, current, sessionPath, messageId, durable }); }
   });
   pi.on("session_shutdown", (_event, ctx) => cancel(ctx));
 }

@@ -149,44 +149,121 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, _broker: &BrokerRunt
     Ok(daemon)
 }
 
+fn retry_capture(app: &AppHandle, daemon: &std::sync::Weak<Daemon>, host_id: &str, path: &str, host: Option<&RemoteHost>) {
+    let result = crate::git_diff_retry::retry_pending_git_diffs(path, host);
+    if !daemon.upgrade().is_some_and(|daemon| daemon.alive.load(Ordering::SeqCst)) { return; }
+    match result {
+        Ok(true) => { let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path})); }
+        Ok(false) => {}
+        Err(error) => { let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":format!("Project changes retained for retry: {error}")})); }
+    }
+}
+
+fn retain_failed_captures(pending: &mut Vec<(String, Value)>, app: &AppHandle, host_id: &str, host: Option<&RemoteHost>) {
+    for (baseline, packet) in std::mem::take(pending) {
+        match crate::git_diff_retry::retain_pending_git_diff(&packet, &baseline, host) {
+            Ok(()) => {
+                let _ = discard_git_tree_at_host(&baseline, host);
+                if let Some(current) = packet["current"].as_str() { let _ = discard_git_tree_at_host(current, host); }
+            }
+            Err(error) => {
+                let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":format!("Comparison inputs retained; could not queue project changes: {error}")}));
+                pending.push((baseline, packet));
+            }
+        }
+    }
+}
+
+fn retain_capture_packet(packet: &Value, baseline: Option<&str>, host: Option<&RemoteHost>) -> Result<(), String> {
+    if packet["durable"] == true { return Ok(()); }
+    crate::git_diff_retry::retain_pending_git_diff(packet, baseline.ok_or("Comparison baseline is missing")?, host)
+}
+
+struct CaptureWriter {
+    app: AppHandle,
+    daemon: std::sync::Weak<Daemon>,
+    host_id: String,
+    host: Option<RemoteHost>,
+    baselines: HashMap<String, String>,
+    session_path: Option<String>,
+    pending: Vec<(String, Value)>,
+}
+
+impl CaptureWriter {
+    fn retry(&self) {
+        if let Some(path) = &self.session_path { retry_capture(&self.app, &self.daemon, &self.host_id, path, self.host.as_ref()); }
+    }
+
+    fn run(mut self, receiver: mpsc::Receiver<CaptureWork>) {
+        while let Ok(work) = receiver.recv() {
+            retain_failed_captures(&mut self.pending, &self.app, &self.host_id, self.host.as_ref());
+            match work {
+                CaptureWork::Packet(packet) => self.packet(packet),
+                CaptureWork::Drain(completion) => {
+                    self.retry();
+                    if self.pending.is_empty() { let _ = completion.send(()); }
+                }
+            }
+        }
+        for baseline in self.baselines.into_values() { let _ = discard_git_tree_at_host(&baseline, self.host.as_ref()); }
+    }
+
+    fn remember(&mut self, packet: &Value) {
+        if packet["ephemeral"] == true { return; }
+        if let Some(path) = packet["sessionPath"].as_str() { self.session_path = Some(path.to_owned()); }
+        if packet["phase"] == "closed" || packet["phase"] == "start" { self.retry(); }
+    }
+
+    fn packet(&mut self, packet: Value) {
+        self.remember(&packet);
+        if update_capture_baseline(&mut self.baselines, &packet, self.host.as_ref()) { return; }
+        let Some(turn_id) = packet["turnId"].as_str() else { return; };
+        let baseline = self.baselines.remove(turn_id);
+        if packet["ephemeral"] != true && packet["current"].is_string() && packet["sessionPath"].is_string() && packet["messageId"].is_string() {
+            self.persist(packet, baseline);
+            return;
+        }
+        if let Err(error) = self.emit_diff(&packet, baseline.as_deref()) {
+            let _ = self.app.emit("pi://daemon-error", json!({"hostId":self.host_id,"line":format!("Could not capture project changes: {error}")}));
+        }
+        self.discard(&packet, baseline.as_deref());
+    }
+
+    fn persist(&mut self, packet: Value, baseline: Option<String>) {
+        if let Err(error) = retain_capture_packet(&packet, baseline.as_deref(), self.host.as_ref()) {
+            let _ = self.app.emit("pi://daemon-error", json!({"hostId":self.host_id,"line":format!("Comparison inputs retained; could not queue project changes: {error}")}));
+            if let Some(baseline) = baseline { self.pending.push((baseline, packet)); }
+            return;
+        }
+        self.retry();
+        self.discard(&packet, baseline.as_deref());
+    }
+
+    fn discard(&self, packet: &Value, baseline: Option<&str>) {
+        if let Some(baseline) = baseline { let _ = discard_git_tree_at_host(baseline, self.host.as_ref()); }
+        if let Some(current) = packet["current"].as_str() { let _ = discard_git_tree_at_host(current, self.host.as_ref()); }
+    }
+
+    fn emit_diff(&self, packet: &Value, baseline: Option<&str>) -> Result<(), String> {
+        if packet["ephemeral"] != true { return Ok(()); }
+        let (Some(baseline), Some(current), Some(cwd), Some(path), Some(id)) = (baseline, packet["current"].as_str(), packet["cwd"].as_str(), packet["sessionPath"].as_str(), packet["messageId"].as_str()) else { return Ok(()); };
+        if let Some(diff) = load_git_diff_between_at_host(cwd, baseline, current, self.host.as_ref())? {
+            let _ = self.app.emit("pi://event", json!({"type":"turn_diff","hostId":self.host_id,"sessionPath":path,"messageId":id,"snapshot":diff}));
+        }
+        Ok(())
+    }
+}
+
 fn persist_capture(app: &AppHandle, daemon: &Arc<Daemon>, host_id: &str, packet: Value) {
     let Some(key) = packet["sessionKey"].as_str() else { return; };
     let Ok(mut captures) = daemon.captures.lock() else { return; };
     let sender = captures.entry(key.into()).or_insert_with(|| {
         let (sender, receiver) = mpsc::channel::<CaptureWork>();
-        let host = daemon.host.clone();
-        let app = app.clone(); let daemon = Arc::downgrade(daemon); let host_id = host_id.to_owned();
-        thread::spawn(move || {
-            let mut baselines = HashMap::<String, String>::new();
-            while let Ok(work) = receiver.recv() {
-                let packet = match work {
-                    CaptureWork::Packet(packet) => packet,
-                    CaptureWork::Drain(completion) => { let _ = completion.send(()); continue; }
-                };
-                if update_capture_baseline(&mut baselines, &packet, host.as_ref()) { continue; }
-                let Some(turn_id) = packet["turnId"].as_str() else { continue; };
-                let baseline = baselines.remove(turn_id);
-                let current = packet["current"].as_str();
-                let result = (|| -> Result<(), String> {
-                    let (Some(baseline), Some(current), Some(cwd), Some(path), Some(id)) = (baseline.as_deref(), current, packet["cwd"].as_str(), packet["sessionPath"].as_str(), packet["messageId"].as_str()) else { return Ok(()); };
-                    if let Some(diff) = load_git_diff_between_at_host(cwd, baseline, current, host.as_ref())? {
-                        if packet["ephemeral"] == true {
-                            let _ = app.emit("pi://event", json!({"type":"turn_diff","hostId":host_id,"sessionPath":path,"messageId":id,"snapshot":diff}));
-                            return Ok(());
-                        }
-                        let mut diffs = load_git_diffs_at_host(path, host.as_ref())?;
-                        diffs.insert(id.into(), diff);
-                        save_git_diffs_at_host(path, diffs, host.as_ref())?;
-                        if daemon.upgrade().is_some_and(|daemon| daemon.alive.load(Ordering::SeqCst)) { let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path})); }
-                    }
-                    Ok(())
-                })();
-                if let Some(baseline) = baseline { let _ = discard_git_tree_at_host(&baseline, host.as_ref()); }
-                if let Some(current) = current { let _ = discard_git_tree_at_host(current, host.as_ref()); }
-                if let Err(error) = result { if daemon.upgrade().is_some_and(|daemon| daemon.alive.load(Ordering::SeqCst)) { let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":format!("Could not save project changes: {error}")})); } }
-            }
-            for baseline in baselines.into_values() { let _ = discard_git_tree_at_host(&baseline, host.as_ref()); }
-        });
+        let writer = CaptureWriter {
+            app: app.clone(), daemon: Arc::downgrade(daemon), host_id: host_id.to_owned(), host: daemon.host.clone(),
+            baselines: HashMap::new(), session_path: None, pending: Vec::new(),
+        };
+        thread::spawn(move || writer.run(receiver));
         sender
     });
     let _ = sender.send(CaptureWork::Packet(packet));
@@ -233,8 +310,10 @@ fn handle_session_state(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str
 fn handle_session_closed(app: &AppHandle, connection: &Arc<Daemon>, packet: &Value) {
                     let runtime = app.state::<PiRuntime>();
                     if let Some(key) = packet["sessionKey"].as_str() {
-                        if let Err(error) = connection.drain_captures(Some(key)) { let _ = app.emit("pi://daemon-error", json!({"line":error})); }
-                        if let Ok(mut captures) = connection.captures.lock() { if let Some(sender) = captures.remove(key) { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); } }
+                        match connection.drain_captures(Some(key)) {
+                            Ok(()) => { if let Ok(mut captures) = connection.captures.lock() { if let Some(sender) = captures.remove(key) { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); } } }
+                            Err(error) => { let _ = app.emit("pi://daemon-error", json!({"line":error})); }
+                        }
                     }
                     if let Ok(mut agents) = runtime.active_agents.lock() { agents.remove(&format!("{}{}", connection.agent_prefix, packet["sessionKey"].as_str().unwrap_or_default())); };
                     let _ = app.emit("pi://sessions-changed", ());

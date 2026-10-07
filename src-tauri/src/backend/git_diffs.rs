@@ -114,7 +114,9 @@ pub(super) fn remote_session_sidecar_script(session_path: &str, action: &str) ->
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<GitDiffSnapshots, String> {
-    load_git_diffs_at_host(&session_path, saved_remote_host(app, host_id)?.as_ref())
+    let host = saved_remote_host(app, host_id)?;
+    if let Err(error) = crate::git_diff_retry::retry_pending_git_diffs(&session_path, host.as_ref()) { eprintln!("Pending project changes retained for retry: {error}"); }
+    load_git_diffs_at_host(&session_path, host.as_ref())
 }
 
 fn validate_unsaved_session(home: &Path, candidate: &Path) -> Result<(), String> {
@@ -162,18 +164,47 @@ pub(super) fn save_git_diffs(app: AppHandle, session_path: String, snapshots: Gi
 pub(super) fn save_git_diffs_at_host(session_path: &str, snapshots: GitDiffSnapshots, host: Option<&RemoteHost>) -> Result<(), String> {
     let body = serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?;
     if body.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff history exceeds the 16 MiB limit".into()); }
-    let Some(host) = host else { return save_local_git_diffs(&home_dir()?, session_path, &body); };
+    let Some(host) = host else { return merge_local_git_diffs(&home_dir()?, session_path, snapshots); };
     let mut command = ssh(host); command.arg(remote_save_git_diffs_script(session_path));
     write_remote_git_diffs(&mut command, &body)
 }
 
+fn merge_local_git_diffs(home: &Path, session_path: &str, snapshots: GitDiffSnapshots) -> Result<(), String> {
+    let directory = local_desktop_session_file_at(home, session_path)?.with_extension("snapshots");
+    crate::ensure_private_dir(&directory)?;
+    if fs::symlink_metadata(&directory).map_err(|error| error.to_string())?.file_type().is_symlink() { return Err("Snapshot storage cannot be a symlink".into()); }
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600).custom_flags(libc::O_NOFOLLOW); }
+    let lock = options.open(directory.join("diff-write.lock")).map_err(|error| error.to_string())?;
+    lock.lock().map_err(|error| error.to_string())?;
+    let mut saved = load_local_git_diffs(home, session_path)?;
+    saved.extend(snapshots);
+    let body = serde_json::to_string(&saved).map_err(|error| error.to_string())?;
+    if body.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff history exceeds the 16 MiB limit".into()); }
+    save_local_git_diffs(home, session_path, &body)
+}
+
 pub(super) fn save_local_git_diffs(home: &Path, session_path: &str, body: &str) -> Result<(), String> {
     let path = local_desktop_session_file_at(home, session_path)?.with_extension("diffs.json");
-    atomic_write_private(&path, body.as_bytes()).map_err(|error| format!("Could not save diffs: {error}"))
+    atomic_write_private(&path, body.as_bytes()).map_err(|error| format!("Could not save diffs: {error}"))?;
+    fs::File::open(&path).and_then(|file| file.sync_all()).map_err(|error| format!("Could not sync saved diffs: {error}"))?;
+    fs::File::open(path.parent().ok_or("Diff storage directory missing")?).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync diff storage: {error}"))
 }
 
 pub(super) fn remote_save_git_diffs_script(session_path: &str) -> String {
-    remote_session_sidecar_script(session_path, "umask 077; temporary=$(mktemp \"$sidecar.XXXXXX\") || exit 1; trap 'rm -f -- \"$temporary\"' EXIT; cat > \"$temporary\" && chmod 600 -- \"$temporary\" && mv -f -- \"$temporary\" \"$sidecar\"")
+    let script = r#"const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const target=process.argv[1], incoming=JSON.parse(fs.readFileSync(0,'utf8'));
+const saved=fs.existsSync(target)?JSON.parse(fs.readFileSync(target,'utf8')):{};
+const body=JSON.stringify({...saved,...incoming});
+if(Buffer.byteLength(body)>16*1024*1024)throw Error('Diff history exceeds the 16 MiB limit');
+const temporary=target+'.'+crypto.randomUUID()+'.tmp';
+try{const file=fs.openSync(temporary,'wx',0o600);try{fs.writeFileSync(file,body);fs.fsyncSync(file);}finally{fs.closeSync(file);}
+fs.renameSync(temporary,target);const directory=fs.openSync(path.dirname(target),'r');try{fs.fsyncSync(directory);}finally{fs.closeSync(directory);}}
+finally{fs.rmSync(temporary,{force:true});}"#;
+    let action = format!("umask 077; snapshots=${{session%.jsonl}}.snapshots; mkdir -p -- \"$snapshots\" || exit 1; [ ! -L \"$snapshots\" ] || exit 1; exec flock --exclusive --no-fork \"$snapshots/diff-write.lock\" node -e {} \"$sidecar\"", shell_quote(script));
+    remote_session_sidecar_script(session_path, &action)
 }
 
 pub(super) fn write_remote_git_diffs(command: &mut Command, body: &str) -> Result<(), String> {

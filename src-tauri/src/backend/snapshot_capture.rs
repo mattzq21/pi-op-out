@@ -110,7 +110,7 @@ pub(super) fn local_git_diff_with(cwd: &str, base_token: &str,
 }
 
 pub(super) fn local_git_diff_between(cwd: &str, base: &GitSnapshotToken, current: &GitSnapshotToken) -> Result<Option<GitDiffSnapshot>, String> {
-    let Some((_, repository_objects)) = git_root_and_objects(cwd)? else { return Ok(None) };
+    let (_, repository_objects) = git_root_and_objects(cwd)?.ok_or("The comparison repository is unavailable")?;
     let alternates = std::env::join_paths([Path::new(&base.root).join("objects"), repository_objects]).map_err(|error| error.to_string())?;
     let mut command = node_command(); command.current_dir(&current.repository_root).args(["-e", include_str!("../../resources/capture-git-diff.bundle.mjs"), &base.tree, &current.tree])
         .env("GIT_OBJECT_DIRECTORY", Path::new(&current.root).join("objects")).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates);

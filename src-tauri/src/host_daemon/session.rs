@@ -164,6 +164,7 @@ impl Session {
             cwd,
         } = launch;
         spec.prepare(&key, &client_id, home);
+        spec.env.insert("PIOP_EPHEMERAL_SESSION".into(), u8::from(ephemeral).to_string());
         let identity = if spec.argument("--session").is_some() {
             key.clone()
         } else {
