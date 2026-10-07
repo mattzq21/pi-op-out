@@ -48,7 +48,10 @@ fn private_file_matches(path: &Path, body: &[u8]) -> Result<bool, String> {
 pub(super) fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or("Configuration file has no parent directory")?;
     ensure_private_dir(parent)?;
-    if private_file_matches(path, body)? { return Ok(()); }
+    if private_file_matches(path, body)? {
+        fs::File::open(path).and_then(|file| file.sync_all()).map_err(|error| format!("Could not sync saved configuration: {error}"))?;
+        return sync_private_parent(parent);
+    }
     let temporary = parent.join(format!(".{}.{}.tmp", path.file_name().and_then(|name| name.to_str()).unwrap_or("config"), Uuid::new_v4()));
     let result = (|| {
         let mut options = OpenOptions::new(); options.write(true).create_new(true);
@@ -65,9 +68,12 @@ pub(super) fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), Strin
         }
         file.write_all(body).and_then(|_| file.sync_all()).map_err(|error| error.to_string())?;
         fs::rename(&temporary, path).map_err(|error| if path.is_dir() { format!("Configuration path is a directory: {}", path.display()) } else { error.to_string() })?;
-        if let Ok(directory) = fs::File::open(parent) { let _ = directory.sync_all(); }
-        Ok(())
+        sync_private_parent(parent)
     })();
     if result.is_err() { let _ = fs::remove_file(&temporary); }
     result
+}
+
+fn sync_private_parent(parent: &Path) -> Result<(), String> {
+    fs::File::open(parent).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync configuration directory: {error}"))
 }

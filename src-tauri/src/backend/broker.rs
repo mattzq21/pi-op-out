@@ -464,7 +464,7 @@ pub(super) struct BrokerRuntime {
     pub(super) port: Arc<Mutex<u16>>,
     pub(super) token: String,
     pub(super) busy: Arc<Mutex<HashSet<String>>>,
-    jobs: Arc<Mutex<HashMap<String, Arc<MessageJob>>>>>,
+    jobs: Arc<Mutex<HashMap<String, Arc<MessageJob>>>>,
     cancelled: Arc<Mutex<HashSet<String>>>,
     operations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }

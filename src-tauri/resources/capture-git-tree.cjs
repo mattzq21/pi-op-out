@@ -67,20 +67,28 @@ function writeJson(file, value) {
 }
 
 function copySnapshot(source, destination) {
-  fs.cpSync(source, destination, { recursive: true, filter: (file) => file === source || !['comparison-retry.json', 'retry-before'].includes(path.basename(file)) });
+  linkSnapshot(source, destination);
 }
 
 function linkSnapshot(source, destination) {
-  fs.mkdirSync(destination, { mode: 0o700 });
+  fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
 
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-    if (['comparison-retry.json', 'retry-before'].includes(entry.name)) continue;
+    if (['comparison-retry.json', 'retry-before', 'materialization.json', 'index', 'index.lock'].includes(entry.name) || entry.name.endsWith('.tmp')) continue;
     const file = path.join(source, entry.name);
     const target = path.join(destination, entry.name);
 
     if (entry.isDirectory()) linkSnapshot(file, target);
-    else if (entry.isFile()) fs.linkSync(file, target);
+    else if (entry.isFile()) linkFile(file, target);
     else throw new Error('Comparison snapshots cannot contain symbolic links');
+  }
+}
+
+function linkFile(source, target) {
+  try { fs.linkSync(source, target); }
+  catch (error) {
+    if (!['EXDEV', 'ENOTSUP', 'EOPNOTSUPP'].includes(error.code)) throw error;
+    fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL | fs.constants.COPYFILE_FICLONE);
   }
 }
 
@@ -184,7 +192,10 @@ function materialize(directory, repositoryRoot) {
   const saved = readSnapshot(directory);
   const temporary = temporarySnapshot();
 
-  try { copySnapshot(directory, temporary); }
+  try {
+    writeJson(path.join(temporary, 'materialization.json'), { sessionId: owner.sessionId, pid: process.ppid, identity: processIdentity(process.ppid) });
+    copySnapshot(directory, temporary);
+  }
   catch (error) { fs.rmSync(temporary, { recursive: true, force: true }); throw error; }
 
   return { root: temporary, tree: saved.tree, repository_root: repositoryRoot || saved.repositoryRoot };
@@ -217,13 +228,26 @@ function nextComparison(retained) {
   const record = readPending(retained)[0];
 
   if (!record) return null;
-  const baseline = materialize(path.join(record.directory, 'before'));
 
-  try {
-    const current = materialize(path.join(record.directory, 'after'));
+  return { turnId: record.turnId, messageId: record.messageId, cwd: record.cwd };
+}
 
-    return { turnId: record.turnId, messageId: record.messageId, cwd: record.cwd, baseline: JSON.stringify(baseline), current: JSON.stringify(current) };
-  } catch (error) { fs.rmSync(baseline.root, { recursive: true, force: true }); throw error; }
+function pendingPatch(retained) {
+  const record = readPending(retained).find((entry) => entry.turnId === owner.turnId);
+
+  if (!record) {
+    if (Object.hasOwn(completedComparisons(retained), owner.turnId)) return null;
+    throw new Error('Pending comparison is missing');
+  }
+
+  const before = path.join(record.directory, 'before');
+  const after = path.join(record.directory, 'after');
+  const baseline = readSnapshot(before);
+  const current = readSnapshot(after);
+  const env = { ...process.env, GIT_OBJECT_DIRECTORY: path.join(after, 'objects'), GIT_ALTERNATE_OBJECT_DIRECTORIES: path.join(before, 'objects') };
+  const patch = execFileSync(process.execPath, ['-e', owner.diffScript, baseline.tree, current.tree], { cwd: record.cwd, env, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+
+  return patch.trim() ? patch : null;
 }
 
 function acknowledgeComparison(retained) {
@@ -279,6 +303,8 @@ function snapshotAction(retained) {
   checkedDirectory(retained);
 
   if (owner.action === 'next') return console.log(JSON.stringify(nextComparison(retained)));
+
+  if (owner.action === 'diff') return console.log(JSON.stringify(pendingPatch(retained)));
 
   if (owner.action === 'retain') {
     retainRequested(retained, owner);
@@ -340,17 +366,64 @@ function retainComparison(retained, token, request) {
 
 function sealSnapshot(token, env, retained) {
   const saved = snapshotMetadata(token, retained);
-  fs.mkdirSync(path.join(token.root, 'objects', 'pack'), { recursive: true });
-  execFileSync('git', ['-C', token.repository_root, 'pack-objects', '--revs', path.join(token.root, 'objects', 'pack', 'snapshot')], {
-    env, input: token.tree + '\n', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 1024 * 1024,
-  });
+  const objects = path.join(token.root, 'objects');
+  const previous = path.join(token.root, '.previous-objects');
+  const prepared = path.join(token.root, '.sealed-objects');
 
-  for (const name of fs.readdirSync(path.join(token.root, 'objects'))) {
-    if (/^[a-f0-9]{2}$/.test(name)) fs.rmSync(path.join(token.root, 'objects', name), { recursive: true });
-  }
-
+  if (!fs.existsSync(objects) && fs.existsSync(previous)) fs.renameSync(previous, objects);
+  fs.rmSync(prepared, { recursive: true, force: true });
+  fs.mkdirSync(prepared, { mode: 0o700 });
+  shareObjects(retained, prepared);
+  unpackTree(token, env, prepared);
+  pruneObjects(token, prepared);
+  syncTree(prepared);
+  fs.rmSync(previous, { recursive: true, force: true });
+  fs.renameSync(objects, previous);
+  fs.renameSync(prepared, objects);
+  syncPath(token.root);
+  fs.rmSync(path.join(token.root, 'index'), { force: true });
   syncTree(token.root);
   writeJson(path.join(token.root, 'snapshot.json'), { ...saved, selfContained: true });
+  fs.rmSync(previous, { recursive: true, force: true });
+}
+
+function shareObjects(retained, prepared) {
+  const baseline = retained ? retainedBaselines(retained)[0] : undefined;
+
+  if (!baseline) return;
+  const objects = path.join(baseline.directory, 'objects');
+
+  for (const prefix of fs.readdirSync(objects, { withFileTypes: true })) {
+    if (prefix.isDirectory() && /^[a-f0-9]{2}$/.test(prefix.name)) linkSnapshot(path.join(objects, prefix.name), path.join(prepared, prefix.name));
+  }
+}
+
+function unpackTree(token, env, destination) {
+  const status = path.join(token.root, '.pack-status');
+  const command = '{ git pack-objects --revs --stdout; echo $? > "$1"; } | GIT_OBJECT_DIRECTORY="$2" GIT_ALTERNATE_OBJECT_DIRECTORIES= git unpack-objects -q; result=$?; [ "$(cat "$1")" = 0 ] && [ "$result" = 0 ]';
+
+  try { execFileSync('sh', ['-c', command, 'piop-snapshot', status, destination], { cwd: token.repository_root, env, input: token.tree + '\n', maxBuffer: 1024 * 1024 }); }
+  finally { fs.rmSync(status, { force: true }); }
+}
+
+function pruneObjects(token, objects) {
+  const list = path.join(token.root, '.reachable-objects');
+  const descriptor = fs.openSync(list, 'w', 0o600);
+  const env = { ...process.env, GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: '' };
+
+  try { execFileSync('git', ['-C', token.repository_root, 'rev-list', '--objects', '--no-object-names', token.tree], { env, stdio: ['ignore', descriptor, 'pipe'] }); }
+  finally { fs.closeSync(descriptor); }
+
+  const retained = new Set(fs.readFileSync(list, 'utf8').trim().split('\n'));
+  fs.rmSync(list);
+
+  for (const prefix of fs.readdirSync(objects)) {
+    if (!/^[a-f0-9]{2}$/.test(prefix)) continue;
+
+    for (const suffix of fs.readdirSync(path.join(objects, prefix))) {
+      if (!retained.has(prefix + suffix)) fs.rmSync(path.join(objects, prefix, suffix));
+    }
+  }
 }
 
 function snapshotMetadata(token, retained) {
@@ -440,10 +513,36 @@ function importFallbacks(retained) {
 
   for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
     if (!entry.isDirectory() || !entry.name.startsWith('pi-desktop-diff-')) continue;
-    const record = ownedFallback(path.join(parent, entry.name));
+    const directory = path.join(parent, entry.name);
+
+    if (cleanupMaterialization(directory)) continue;
+    const record = ownedFallback(directory);
 
     if (record) retainRequested(retained, record);
   }
+}
+
+function processIdentity(pid) {
+  try { return fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ').at(-1).split(' ')[19]; }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+
+function cleanupMaterialization(directory) {
+  const file = path.join(directory, 'materialization.json');
+
+  if (!fs.existsSync(file)) return false;
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+
+  if (!Number.isSafeInteger(saved.pid) || saved.pid < 1) throw new Error('Invalid comparison reader ownership');
+  let alive = true;
+
+  try { process.kill(saved.pid, 0); }
+  catch (error) { if (error.code !== 'ESRCH') throw error; alive = false; }
+
+  if (alive && (!saved.identity || processIdentity(saved.pid) === saved.identity)) return false;
+  fs.rmSync(directory, { recursive: true });
+
+  return true;
 }
 
 function checkCaptureSize() {
@@ -473,6 +572,7 @@ function captureSnapshot(root, retained) {
   git(['read-tree', seed], env);
   git(['add', '-A', '--', '.'], env);
   const token = { root: snapshot, tree: git(['write-tree'], env).toString().trim(), repository_root: root };
+  fs.rmSync(path.join(snapshot, 'index'), { force: true });
 
   if (!owner?.sessionId) return token;
 

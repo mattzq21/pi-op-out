@@ -265,12 +265,24 @@ pub(super) fn write_atomic(path: &Path, data: &Value) -> Result<()> {
     let result = (|| {
         let mut file = options.open(&temporary).map_err(|error| error.to_string())?;
         writeln!(file, "{}", serde_json::to_string_pretty(data).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
-        std::fs::rename(&temporary, path).map_err(|error| error.to_string())
+        file.sync_all().map_err(|error| error.to_string())?;
+        std::fs::rename(&temporary, path).map_err(|error| error.to_string())?;
+        sync_catalog_parent(path)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&temporary);
     }
     result
+}
+
+fn sync_catalog_parent(path: &Path) -> Result<()> {
+    let parent = path.parent().ok_or("Provider configuration has no parent directory")?;
+    File::open(parent).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync provider configuration directory: {error}"))
+}
+
+fn sync_existing_catalog(path: &Path) -> Result<()> {
+    File::open(path).and_then(|file| file.sync_all()).map_err(|error| format!("Could not sync provider configuration: {error}"))?;
+    sync_catalog_parent(path)
 }
 
 pub(super) async fn save_provider(path: &Path, id: &str, config: &Value, previous: Option<&Value>) -> Result<()> {
@@ -284,7 +296,7 @@ pub(super) async fn save_provider(path: &Path, id: &str, config: &Value, previou
             return Err("Could not save the provider. Check models.json and host file permissions.".into());
         }
         if previous == config {
-            return Ok(());
+            return sync_existing_catalog(path);
         }
     } else if providers.contains_key(id) {
         return Err("That provider ID already exists. Choose another ID.".into());

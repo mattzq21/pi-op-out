@@ -111,20 +111,27 @@ pub(crate) fn save(cwd: &str, path: &str, content: &str, expected: &str) -> Resu
     if content.len() as u64 > FILE_LIMIT { return Err("File exceeds the 2 MB editor limit".into()); }
     let _guard = SAVE_LOCK.lock().map_err(|_| "File save lock unavailable")?;
     let (root, path) = resolve(cwd, path)?;
-    let current = read_text(&path)?;
-    if revision(&current) != expected { return Err("This file changed on disk. Reload it before saving to avoid overwriting those changes.".into()); }
-    replace_file(&path, content)?;
+    check_revision(&path, expected)?;
+    replace_file(&path, content, expected)?;
     Ok(json!({ "path": relative(&root, &path), "content": content, "revision": revision(content) }))
 }
 
-fn replace_file(path: &Path, content: &str) -> Result<(), String> {
+fn check_revision(path: &Path, expected: &str) -> Result<(), String> {
+    if revision(&read_text(path)?) != expected { return Err("This file changed on disk. Reload it before saving to avoid overwriting those changes.".into()); }
+    Ok(())
+}
+
+fn replace_file(path: &Path, content: &str, expected: &str) -> Result<(), String> {
     let temporary = path.with_file_name(format!(".piop-save-{}", uuid::Uuid::new_v4()));
     let result = (|| {
         let mut file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
         file.set_permissions(fs::metadata(path)?.permissions())?;
         file.write_all(content.as_bytes())?;
         file.sync_all()?;
-        fs::rename(&temporary, path)
+        check_revision(path, expected).map_err(std::io::Error::other)?;
+        fs::rename(&temporary, path)?;
+        let parent = path.parent().ok_or_else(|| std::io::Error::other("Saved file has no parent directory"))?;
+        File::open(parent)?.sync_all()
     })();
     if result.is_err() { let _ = fs::remove_file(&temporary); }
     result.map_err(|error: std::io::Error| format!("Could not save file: {error}"))

@@ -154,7 +154,7 @@ function prepare(root, request) {
   if (source !== destinationPath(root, source)) throw new Error('Invalid fork source');
 
   if (exists(destination) || exists(destination.replace(/\.jsonl$/, '.diffs.json'))) throw new Error('Fork destination already exists');
-  const lines = fs.readFileSync(request.branch, 'utf8').split('\n').filter(line => line.trim());
+  const lines = fs.readFileSync(request.inline ? 0 : request.branch, 'utf8').split('\n').filter(line => line.trim());
   const header = JSON.parse(lines[0]);
 
   if (header.type !== 'session' || header.id !== request.sessionId) throw new Error('Fork session identity changed');
@@ -224,4 +224,19 @@ function remove(root, request) {
   recoverTransaction(root, directory);
 }
 
-module.exports = { publish, recover, remove };
+function published(root, request) {
+  const destination = destinationPath(root, request.destination);
+
+  if (!exists(destination)) return false;
+  const header = JSON.parse(fs.readFileSync(destination, 'utf8').split('\n')[0]);
+
+  if (header.type !== 'session' || header.id !== request.sessionId) throw new Error('Fork publication destination was replaced');
+  const sidecar = destination.replace(/\.jsonl$/, '.diffs.json');
+
+  if (!Check(diffsSchema, JSON.parse(fs.readFileSync(sidecar, 'utf8')))) throw new Error('Fork publication history is unavailable');
+  sync(sidecar); sync(destination); sync(path.dirname(destination));
+
+  return true;
+}
+
+module.exports = { publish, recover, remove, published };

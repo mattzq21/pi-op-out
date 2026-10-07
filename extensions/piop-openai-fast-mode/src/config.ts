@@ -203,6 +203,7 @@ async function migrateConfigPath(path: string): Promise<void> {
 
     try { await file.writeFile(contents, "utf8"); await file.sync(); }
     finally { await file.close(); }
+
     await publishMigration(path, temporary);
   } finally { await fs.rm(temporary, { force: true }); }
 }

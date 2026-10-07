@@ -122,7 +122,11 @@ fn update_lease(lease: &mut Option<Lease>, editor: &Editor<'_>, action: &str) {
 
 pub(crate) fn initialize() -> Result<(), String> {
     let root = notes_root()?.join("chats");
-    crate::ensure_private_dir(&root)
+    crate::ensure_private_dir(&root)?;
+    let notes = root.parent().ok_or("Note directory has no parent")?;
+    File::open(notes).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync note directory: {error}"))?;
+    let storage = notes.parent().ok_or("Notes directory has no parent")?;
+    File::open(storage).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync notes storage: {error}"))
 }
 
 fn field<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
@@ -131,7 +135,7 @@ fn field<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
 
 fn note_path(session: &str) -> Result<PathBuf, String> {
     let root = notes_root()?.join("chats");
-    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    initialize()?;
     let path = fs::canonicalize(root).map_err(|error| error.to_string())?.join(format!("{session}.md"));
     validate_path(path)
 }
@@ -196,7 +200,7 @@ fn write_note(path: &Path, body: &str, args: &Value) -> Result<(), String> {
     check_version(path, args)?;
     let create = !path.exists();
     let temporary = path.with_file_name(format!(".piop-note-{}.tmp", Uuid::new_v4()));
-    let result = (|| {
+    let result: Result<(), String> = (|| {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -213,7 +217,9 @@ fn write_note(path: &Path, body: &str, args: &Value) -> Result<(), String> {
         Ok(())
     })();
     let _ = fs::remove_file(&temporary);
-    result
+    result?;
+    let parent = path.parent().ok_or("Note file has no parent directory")?;
+    File::open(parent).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync saved note: {error}"))
 }
 
 pub(super) fn dispatch(args: Value, enabled: bool) -> Result<Value, String> {

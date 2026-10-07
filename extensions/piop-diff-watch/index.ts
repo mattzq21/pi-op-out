@@ -1,5 +1,7 @@
 import { GitError, runGit } from "./git.ts";
 import { pinPromptHistory } from "./pin-checkpoints.ts";
+import { publishFork, ForkPublicationPending } from "./fork-publication.ts";
+import { registerPreparedCheckpoints } from "./fork-preparation.ts";
 import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
 import { resolvePromptHistory, recordRecoveredCheckpoints } from "./prompt-history.ts";
 import { Check } from "typebox/value";
@@ -334,22 +336,20 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
   let created = false;
-  let sessionWritten = false;
 
   try {
     await assertWorktreeAvailable(root, branch, target);
     await runGit(root, ["worktree", "add", "-b", branch, target, checkpoint.commit]);
     created = true;
     const entries = await branchSessionEntries(ctx, root, id, history, owner, checkpoint, timestamp, target, afterResponse, entryId);
-    const session = await open(sessionPath, "wx", 0o600);
-    sessionWritten = true;
+    const source = ctx.sessionManager.getSessionFile();
 
-    try { await session.writeFile(entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n"); }
-    finally { await session.close(); }
+    if (!source) throw new Error("The original conversation has no session file");
+    await publishFork({ source, destination: sessionPath, sessionId: id, content: entries.map(entry => JSON.stringify(entry)).join("\n") + "\n" });
 
     return { branch, path: target, sessionPath, sessionId: id };
   } catch (error) {
-    if (sessionWritten) await rm(sessionPath, { force: true });
+    if (error instanceof ForkPublicationPending) throw error;
 
     for (const { ref, commit } of [...await promptRefs(root, id), ...await sessionSnapshots(root, id)]) await runGit(root, ["update-ref", "-d", ref, commit]);
 
@@ -519,6 +519,7 @@ export default function diffWatch(pi: ExtensionAPI) {
 
     if (event.reason !== "fork" && !ctx.sessionManager.getHeader()?.parentSession) return;
     snapshotQueue = snapshotQueue.then(async () => {
+      await registerPreparedCheckpoints(ctx.sessionManager.getSessionId(), ctx.cwd, ctx.sessionManager.getEntries());
       await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile);
       const root = await repositoryRoot(ctx.cwd);
       const parentFile = ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile;

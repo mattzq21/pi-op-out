@@ -1,15 +1,16 @@
 mod publication;
+mod preparation;
 
 use super::{
     controller::{Host, ReadonlyView},
     ownership::{ownership_error, Guard},
-    protocol::{kind, text, LaunchSpec, Result, SessionLaunch},
+    protocol::{expand_home, kind, text, LaunchSpec, Result, SessionLaunch},
     session::Session,
 };
 use serde_json::{json, Value};
 use std::{
     fs::OpenOptions,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -20,6 +21,7 @@ struct Destination {
     spec: LaunchSpec,
     path: String,
     existing: bool,
+    cwd: Option<String>,
 }
 
 fn requires_idle_source(session: &Session, command: &Value) -> bool {
@@ -39,8 +41,9 @@ pub(super) async fn switch(host: &Arc<Host>, session: &Arc<Session>, runtime: &s
             .ok_or("The conversation has no session file")?;
         return fork(host, session, runtime, command.clone(), &state, path).await;
     }
-    let destination = destination(session, &command, &state)?;
+    let mut destination = destination(session, &command, &state)?;
     let guard = destination_ownership(host, session, &destination).await?;
+    destination.resolve_cwd(host, &guard)?;
     if !guard.owned {
         return attach_readonly(host, session, runtime, destination).await;
     }
@@ -72,7 +75,35 @@ fn destination(session: &Session, command: &Value, state: &Value) -> Result<Dest
         spec,
         path: value,
         existing: kind(command) == "switch_session",
+        cwd: session.cwd.clone(),
     })
+}
+
+impl Destination {
+    fn resolve_cwd(&mut self, host: &Host, guard: &Guard) -> Result<()> {
+        if !self.existing { return Ok(()); }
+        let header = match &guard.saved {
+            Some(saved) => saved.header.clone(),
+            None => destination_header(&self.path)?,
+        };
+        if header["id"] != self.key { return Err("The destination conversation changed while switching".into()); }
+        let cwd = header["cwd"].as_str().filter(|cwd| !cwd.trim().is_empty()).ok_or("The destination conversation has no working directory")?;
+        let cwd = expand_home(cwd, &host.home).to_string_lossy().into_owned();
+        if self.spec.env.contains_key("PIOP_REMOTE_SESSION_CLAIMS") {
+            self.spec.env.insert("PIOP_SESSION_CWD".into(), cwd.clone());
+        } else {
+            self.spec.cwd = Some(cwd.clone());
+        }
+        self.cwd = Some(cwd);
+        Ok(())
+    }
+}
+
+fn destination_header(path: &str) -> Result<Value> {
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut header = String::new();
+    BufReader::new(file).take(64 * 1024).read_line(&mut header).map_err(|error| error.to_string())?;
+    serde_json::from_str(&header).map_err(|error| error.to_string())
 }
 
 async fn destination_ownership(host: &Host, session: &Session, destination: &Destination) -> Result<Guard> {
@@ -99,6 +130,7 @@ async fn attach_readonly(host: &Host, session: &Session, runtime: &str, destinat
             .unwrap_or(json!({}));
         packet["spec"] = json!(destination.spec);
         packet["sessionKey"] = json!(destination.key);
+        packet["cwd"] = json!(destination.cwd);
         registry.attachments.insert(runtime.into(), Arc::new(packet));
         registry.readonly.insert(
             runtime.into(),
@@ -135,7 +167,7 @@ async fn open_destination(host: &Arc<Host>, session: &Arc<Session>, runtime: &st
             ephemeral: session.ephemeral,
             transient: false,
             client_id: session.client_id(),
-            cwd: session.cwd.clone(),
+            cwd: destination.cwd,
         })?,
     };
     let result = transfer(host, session, &next, runtime).await;
@@ -190,8 +222,7 @@ async fn finish_transfer(host: &Host, session: &Session) -> Result<()> {
 }
 
 async fn fork(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: Value, state: &Value, path: &str) -> Result<Value> {
-    let directory = std::env::temp_dir().join(format!("piop-branch-{}", Uuid::new_v4()));
-    crate::ensure_private_dir(&directory)?;
+    let (directory, preparation_lock) = preparation::create(host)?;
     let mut branch = Branch {
         host,
         session,
@@ -199,6 +230,7 @@ async fn fork(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: 
         state,
         path,
         directory,
+        preparation_lock: Some(preparation_lock),
         worker: None,
         next: None,
         destination: None,
@@ -217,6 +249,7 @@ struct Branch<'a> {
     state: &'a Value,
     path: &'a str,
     directory: PathBuf,
+    preparation_lock: Option<std::fs::File>,
     worker: Option<Arc<Session>>,
     next: Option<Arc<Session>>,
     destination: Option<PathBuf>,
@@ -247,6 +280,7 @@ impl Branch<'_> {
     fn spawn_preparing(&self) -> Result<Arc<Session>> {
         let source = self.snapshot_source()?;
         let mut spec = self.session.spec.session("--fork", &source.to_string_lossy());
+        spec.env.insert("PIOP_FORK_PREPARATION_DIRECTORY".into(), self.directory.to_string_lossy().into_owned());
         spec.args
             .extend(["--session-dir".into(), self.directory.to_string_lossy().into_owned()]);
         self.spawn(Uuid::new_v4().to_string(), spec)
@@ -352,7 +386,8 @@ impl Branch<'_> {
         } else {
             Ok(None)
         };
-        let cleanup = cleanup_paths(&self.directory);
+        self.preparation_lock.take();
+        let cleanup = publication::recover(self.host);
         for worker in workers {
             self.host.forget_worker(worker);
         }
@@ -386,11 +421,4 @@ fn validate_branch(host: &Host, path: &Path, id: &str, initial: &Value, state: &
         return Err("Pi did not create the requested branch".into());
     }
     Ok(())
-}
-
-fn cleanup_paths(directory: &Path) -> Result<()> {
-    match std::fs::remove_dir_all(directory) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.to_string()),
-        _ => Ok(()),
-    }
 }

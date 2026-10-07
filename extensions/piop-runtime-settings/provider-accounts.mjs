@@ -39,8 +39,15 @@ export async function allocateProviderAccount(authPath, providerId, occupied) {
     const record = { providerId, number, id: providerId + '--piop-account-' + number };
     records.push(record);
     const temporary = path + '.' + require('node:crypto').randomUUID();
-    fs.writeFileSync(temporary, JSON.stringify(records), { mode: 0o600 });
-    fs.renameSync(temporary, path);
+    const file = fs.openSync(temporary, 'wx', 0o600);
+    try {
+      try { fs.writeFileSync(file, JSON.stringify(records)); fs.fsyncSync(file); }
+      finally { fs.closeSync(file); }
+      fs.renameSync(temporary, path);
+    } finally { fs.rmSync(temporary, { force: true }); }
+    const directory = fs.openSync(require('node:path').dirname(path), 'r');
+    try { fs.fsyncSync(directory); }
+    finally { fs.closeSync(directory); }
     process.stdout.write(JSON.stringify(record));
   `;
 

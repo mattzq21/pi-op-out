@@ -166,6 +166,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let runtime_settings_extension = shell_quote(include_str!("../../../extensions/piop-runtime-settings/index.ts"));
     let provider_accounts = shell_quote(include_str!("../../resources/provider-accounts.bundle.mjs"));
     let app_rpc = shell_quote(include_str!("../../resources/app-rpc.cjs"));
+    let sdk_storage = shell_quote(include_str!("../../resources/sdk-storage.mjs"));
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
     let broker = shell_quote(include_str!("../../resources/session-broker.ts"));
     let ask_user = shell_quote(include_str!("../../resources/ask-user.ts"));
@@ -193,6 +194,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json""#);
     let remote = format!(r#"{remote} && printf %s {provider_accounts} > "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs""#);
     let remote = format!(r#"{remote} && printf %s {app_rpc} > "$HOME/{STORAGE_DIRECTORY}/app-rpc.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/app-rpc.cjs""#);
+    let remote = format!(r#"{remote} && printf %s {sdk_storage} > "$HOME/{STORAGE_DIRECTORY}/sdk-storage.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/sdk-storage.mjs""#);
     let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && printf %s {rtk_license} > "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts" "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE""#);
     let mut remote = remote;
     remote.push_str(&format!(r#" && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw/references" && chmod 700 "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw" "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw/references""#));
@@ -283,7 +285,7 @@ fn local_pi_command(settings: &AppSettings, host_id: &str, launch: PiLaunch<'_>,
         let session_dir = ensure_desktop_sessions_dir(desktop_home)?;
         let mut command = local_worker_command(&pi_path, is_rpc)?;
         configure_local_extensions(&mut command, settings, host_id, (broker_port, broker_token), &session_dir)?;
-        if is_rpc { command.env("PIOP_RPC_ENTRY", generated_extension_root()?.join("app-rpc.cjs")); }
+        command.env("PIOP_RPC_ENTRY", generated_extension_root()?.join("app-rpc.cjs"));
         configure_local_launch(&mut command, launch, &pi_path)?;
         if !is_rpc && !default_model.trim().is_empty() { command.arg("--model").arg(default_model.trim()); }
         if !settings.default_thinking.trim().is_empty() { command.arg("--thinking").arg(settings.default_thinking.trim()); }
@@ -294,7 +296,8 @@ fn remote_pi_command(settings: &AppSettings, host_id: &str, launch: PiLaunch<'_>
     let is_rpc = matches!(launch, PiLaunch::Rpc { .. });
     let default_model = &settings.default_model;
     let host = remote_host(settings, host_id)?; stage_remote_extensions(host, settings)?; let remote_port = daemon_port.unwrap_or_else(remote_broker_port); let remote_pi = remote_pi_path(&host.pi_path);
-    let mut arguments = if is_rpc { vec!["node".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/app-rpc.cjs\""), remote_pi.clone(), "--mode".into(), "rpc".into()] } else { vec![remote_pi.clone(), "--print".into()] };
+    let mut arguments = vec!["node".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/app-rpc.cjs\""), remote_pi.clone()];
+    if is_rpc { arguments.extend(["--mode".into(), "rpc".into()]); } else { arguments.push("--print".into()); }
     arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-loop-detection/index.ts\"")]);
     arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/rtk.ts\"")]);
     arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts\"")]);

@@ -57,21 +57,65 @@ fn publish(plan: &Plan, phase: &str, error: Option<&str>, pid: Option<u32>) -> R
 
 fn executable() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("PIOP_DAEMON_EXECUTABLE") { return Ok(path.into()); }
+    current_executable()
+}
+
+fn current_executable() -> Result<PathBuf, String> {
     let current = std::env::current_exe().map_err(|error| error.to_string())?;
     let text = current.to_string_lossy();
     Ok(text.strip_suffix(" (deleted)").map(PathBuf::from).unwrap_or(current))
 }
 
+fn remove_fallback(path: &std::path::Path) {
+    if let Err(error) = fs::remove_file(path) {
+        if error.kind() != std::io::ErrorKind::NotFound { eprintln!("Could not remove restart fallback {}: {error}", path.display()); }
+    }
+}
+
+fn fallback_name(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str().and_then(|name| name.strip_prefix("restart-")).and_then(|name| name.strip_suffix(std::env::consts::EXE_SUFFIX)) else { return false; };
+    name.len() == 36 && uuid::Uuid::parse_str(name).is_ok()
+}
+
+fn retained_restart_executables() -> Result<Vec<PathBuf>, String> {
+    let mut retained = vec![current_executable()?, executable()?];
+    if daemon_endpoint::restart_active() {
+        let plan = read_plan()?;
+        retained.extend([plan.fallback, plan.executable]);
+    }
+    Ok(retained.into_iter().map(|path| path.canonicalize().unwrap_or(path)).collect())
+}
+
+fn prune_restart_fallbacks() -> Result<(), String> {
+    let retained = retained_restart_executables()?;
+    for entry in fs::read_dir(daemon_endpoint::directory()?).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !fallback_name(&entry.file_name()) || !entry.file_type().map_err(|error| error.to_string())?.is_file() { continue; }
+        let path = entry.path();
+        if !retained.contains(&path.canonicalize().unwrap_or_else(|_| path.clone())) { remove_fallback(&path); }
+    }
+    Ok(())
+}
+
+fn cleanup_restart_fallbacks() {
+    if let Err(error) = prune_restart_fallbacks() { eprintln!("Could not clean old restart fallbacks: {error}"); }
+}
+
 fn backup(id: &str) -> Result<PathBuf, String> {
     let target = path(&format!("restart-{id}{}", std::env::consts::EXE_SUFFIX))?;
+    if let Err(error) = copy_fallback(&target) { remove_fallback(&target); return Err(error); }
+    Ok(target)
+}
+
+fn copy_fallback(target: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let source = PathBuf::from("/proc/self/exe");
     #[cfg(not(target_os = "linux"))]
     let source = std::env::current_exe().map_err(|error| error.to_string())?;
-    fs::copy(source, &target).map_err(|error| error.to_string())?;
+    fs::copy(source, target).map_err(|error| error.to_string())?;
     #[cfg(unix)]
-    { use std::os::unix::fs::PermissionsExt; fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).map_err(|error| error.to_string())?; }
-    Ok(target)
+    { use std::os::unix::fs::PermissionsExt; fs::set_permissions(target, fs::Permissions::from_mode(0o700)).map_err(|error| error.to_string())?; }
+    Ok(())
 }
 
 fn make_plan(app: &AppHandle, prepared: Value) -> Result<Plan, String> {
@@ -79,10 +123,11 @@ fn make_plan(app: &AppHandle, prepared: Value) -> Result<Plan, String> {
     let debug_bind = fs::read(path("debug-mobile.json")?).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
         .and_then(|endpoint| endpoint["url"].as_str().map(|url| url.trim_start_matches("ws://").to_owned()));
     let endpoint = daemon_endpoint::read()?;
+    let executable = executable()?;
+    let enabled = serde_json::from_value(prepared["enabled"].clone()).map_err(|error| error.to_string())?;
+    let previous = serde_json::from_value(prepared["previous"].clone()).map_err(|error| error.to_string())?;
     Ok(Plan {
-        fallback: backup(&id)?, id, owner: std::process::id(), executable: executable()?,
-        enabled: serde_json::from_value(prepared["enabled"].clone()).map_err(|error| error.to_string())?,
-        previous: serde_json::from_value(prepared["previous"].clone()).map_err(|error| error.to_string())?,
+        fallback: backup(&id)?, id, owner: std::process::id(), executable, enabled, previous,
         tickets: prepared["tickets"].clone(),
         bind: restart_bind(&endpoint.url),
         debug_bind, automatic: app.state::<DaemonClients>().automatic(),
@@ -106,6 +151,7 @@ pub(crate) fn prepare(app: AppHandle, mut args: Value) -> Result<Value, String> 
     if PREPARING.swap(true, std::sync::atomic::Ordering::SeqCst) { return Err("A daemon restart is already being prepared".into()); }
     let _preparation = Preparation;
     ensure_restart_safe(&app)?;
+    cleanup_restart_fallbacks();
     args["type"] = json!("prepare_daemon_restart");
     prepare_plugin_handoff(&app, &daemon, args)
 }
@@ -134,12 +180,10 @@ pub(crate) fn ensure_local_idle(app: &AppHandle) -> Result<(), String> {
 }
 
 fn prepare_handoff(plan: &Plan) -> Result<Value, String> {
-    write("restart-plan.json", plan)?;
-    publish(plan, "preparing", None, None)?;
-    let result = arm(plan);
+    let result = write("restart-plan.json", plan).and_then(|()| publish(plan, "preparing", None, None)).and_then(|()| arm(plan));
     if let Err(error) = &result {
         let _ = publish(plan, "failed", Some(error), None);
-        let _ = fs::remove_file(&plan.fallback);
+        remove_fallback(&plan.fallback);
     }
     result.map(|()| json!({"restartId":plan.id}))
 }
@@ -265,7 +309,7 @@ fn run_special(mode: &str) -> Result<(), String> {
     }
     let result = coordinate(&plan);
     if let Err(error) = &result { let _ = publish(&plan, "failed", Some(error), None); }
-    if status(&plan.id).is_ok_and(|value| value["phase"] == "complete") { let _ = fs::remove_file(&plan.fallback); }
+    if status(&plan.id).is_ok_and(|value| value["phase"] == "complete") { remove_fallback(&plan.fallback); }
     result
 }
 
@@ -284,6 +328,7 @@ pub(crate) fn initialize_candidate(app: AppHandle) -> Result<(), String> {
 }
 
 pub(crate) fn ready() -> Result<(), String> {
+    cleanup_restart_fallbacks();
     if std::env::args().nth(1).as_deref() != Some("--restart-candidate") { return Ok(()); }
     let plan = read_plan()?;
     write("restart-ready.json", &json!({"restartId":plan.id,"processId":std::process::id()}))

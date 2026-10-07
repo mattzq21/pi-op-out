@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, open, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,17 +9,47 @@ function hasErrorCode(cause: unknown, code: string) {
   return cause instanceof Error && "code" in cause && cause.code === code;
 }
 
+async function syncPath(path: string) {
+  const file = await open(path, "r");
+
+  try { await file.sync(); }
+  finally { await file.close(); }
+}
+
+async function durableDirectory(path: string) {
+  const created = await mkdir(resolve(path), { recursive: true, mode: 0o700 });
+
+  if (!created) return;
+  const boundary = dirname(created);
+
+  for (let current = resolve(path); ; current = dirname(current)) {
+    await syncPath(current);
+
+    if (current === boundary) break;
+  }
+}
+
+async function writeTemporary(path: string, contents: string) {
+  const file = await open(path, "wx", 0o600);
+
+  try { await file.writeFile(contents); await file.sync(); }
+  finally { await file.close(); }
+}
+
 export async function writeConfig(value: Config, createOnly = false) {
+  await durableDirectory(dirname(configPath));
   const temporary = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
 
   try {
-    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await writeTemporary(temporary, `${JSON.stringify(value, null, 2)}\n`);
 
     if (createOnly) {
       try { await link(temporary, configPath); }
-      catch (error) { if (!hasErrorCode(error, "EEXIST")) throw error; }
+      catch (error) { if (!hasErrorCode(error, "EEXIST")) throw error; await syncPath(configPath); }
     } else await rename(temporary, configPath);
   } finally { await rm(temporary, { force: true }); }
+
+  await syncPath(dirname(configPath));
 }
 
 export const configPath = process.env.PIOP_AGENT_CONFIG_PATH || join(dirname(fileURLToPath(import.meta.url)), "config.json");
@@ -57,15 +87,17 @@ export function resolvePromptPath(path: string) {
 
 export async function ensurePromptFile(relativePath: string, contents: string) {
   const path = resolvePromptPath(relativePath);
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await durableDirectory(dirname(path));
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
 
   try {
-    await writeFile(temporary, contents, { mode: 0o600, flag: "wx" });
+    await writeTemporary(temporary, contents);
 
     try { await link(temporary, path); }
-    catch (error) { if (!hasErrorCode(error, "EEXIST")) throw error; }
+    catch (error) { if (!hasErrorCode(error, "EEXIST")) throw error; await syncPath(path); }
   } finally { await rm(temporary, { force: true }); }
+
+  await syncPath(dirname(path));
 }
 
 export async function snapshotPrompt(contents: string) {

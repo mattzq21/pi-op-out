@@ -43,6 +43,8 @@ async function loadRuntime() {
       const sdk = await import(pathToFileURL(join(directory, 'dist/core/model-runtime.js')).href).catch(() => undefined);
 
       if (!sdk?.ModelRuntime?.create) break;
+      const { FileAuthStorageBackend } = await import(pathToFileURL(join(directory, 'dist/core/auth-storage.js')).href);
+      installAuthStorage(FileAuthStorageBackend);
       const config = await import(pathToFileURL(join(directory, 'dist/config.js')).href);
       const { SettingsManager } = await import(pathToFileURL(join(directory, 'dist/core/settings-manager.js')).href);
       const settings = SettingsManager.create(process.cwd(), config.getAgentDir());

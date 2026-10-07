@@ -71,18 +71,7 @@ fn initialize_session_tools(settings: &mut AppSettings) {
     }
 }
 
-pub(super) fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
-    let body = match fs::read(path) {
-        Ok(body) => Some(body),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.to_string()),
-    };
-    let mut settings = match &body { Some(body) => serde_json::from_slice(body).map_err(|error| error.to_string())?, None => default_settings() };
-    settings.settings_revision = Some(settings_revision(body.as_deref()));
-    migrate_question_tool(&mut settings);
-    migrate_goal_tools(&mut settings);
-    initialize_session_tools(&mut settings);
-    if settings.default_agent == "voice-orchestrator" { settings.default_agent = default_agent(); }
+fn migrate_builtin_tools(settings: &mut AppSettings) {
     for (legacy, replacements) in [
         ("exec_command", &["read", "bash", "grep", "find", "ls"][..]),
         ("apply_patch", &["edit", "write"][..]),
@@ -99,6 +88,21 @@ pub(super) fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
     if !settings.tools.iter().any(|tool| tool.get("name").and_then(Value::as_str) == Some("web_search")) {
         settings.tools.push(codex_web_search_tool());
     }
+}
+
+pub(super) fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
+    let body = match fs::read(path) {
+        Ok(body) => Some(body),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut settings = match &body { Some(body) => serde_json::from_slice(body).map_err(|error| error.to_string())?, None => default_settings() };
+    settings.settings_revision = Some(settings_revision(body.as_deref()));
+    migrate_question_tool(&mut settings);
+    migrate_goal_tools(&mut settings);
+    initialize_session_tools(&mut settings);
+    if settings.default_agent == "voice-orchestrator" { settings.default_agent = default_agent(); }
+    migrate_builtin_tools(&mut settings);
     migrate_keybindings(&mut settings);
     if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("Settings contain more than {MAX_REMOTE_HOSTS} remote machines")); }
     Ok(settings)
@@ -142,6 +146,15 @@ pub(super) fn validate_settings_for_save(settings: &AppSettings) -> Result<(), S
     Ok(())
 }
 
+fn lock_settings_revision(path: &Path, expected: &Option<String>) -> Result<fs::File, String> {
+    let lock = lock_settings(path)?;
+    let previous = read_settings_at(path)?;
+    if expected.is_none() || expected != &previous.settings_revision {
+        return Err("Settings changed in another window or client. Reload the latest settings before saving.".into());
+    }
+    Ok(lock)
+}
+
 pub(super) fn save_settings_with(
     runtime: &PiRuntime, mut settings: AppSettings, agent_host_id: Option<String>,
     path: impl FnOnce() -> Result<PathBuf, String>,
@@ -152,11 +165,7 @@ pub(super) fn save_settings_with(
     validate_settings_for_save(&settings)?;
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let path = path()?;
-    let file_lock = lock_settings(&path)?;
-    let previous = read_settings_at(&path)?;
-    if settings.settings_revision.is_none() || settings.settings_revision != previous.settings_revision {
-        return Err("Settings changed in another window or client. Reload the latest settings before saving.".into());
-    }
+    let file_lock = lock_settings_revision(&path, &settings.settings_revision)?;
     let mut revisions = agent_host_id.as_ref().map(|_| runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")).transpose()?;
     settings.settings_revision = None;
     let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
@@ -170,9 +179,17 @@ pub(super) fn save_settings_with(
         change["agentConfigChange"] = json!({"hostId":host_id,"revision":revision});
     }
     drop(revisions);
-    let mut warnings = Vec::new();
-    if let Err(error) = invalidate(&settings) { warnings.push(format!("Settings were saved, but applying connection changes failed: {error}")); }
-    if let Err(error) = synchronize(&settings) { warnings.push(format!("Settings were saved, but updating running sessions failed: {error}")); }
-    change["warnings"] = json!(warnings);
+    change["warnings"] = json!(apply_saved_settings(&settings, invalidate, synchronize));
     Ok(change)
+}
+
+fn apply_saved_settings(
+    settings: &AppSettings,
+    invalidate: impl FnOnce(&AppSettings) -> Result<(), String>,
+    synchronize: impl FnOnce(&AppSettings) -> Result<(), String>,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if let Err(error) = invalidate(settings) { warnings.push(format!("Settings were saved, but applying connection changes failed: {error}")); }
+    if let Err(error) = synchronize(settings) { warnings.push(format!("Settings were saved, but updating running sessions failed: {error}")); }
+    warnings
 }

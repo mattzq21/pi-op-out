@@ -7,6 +7,8 @@ import { writeSessionFile } from "./session-file.ts";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from "../piop-diff-watch/pin-checkpoints.ts";
+import { publishFork, ForkPublicationPending } from "../piop-diff-watch/fork-publication.ts";
+import { registerPreparedCheckpoints } from "../piop-diff-watch/fork-preparation.ts";
 
 export type ForkOptions = { cwd?: string; worktree?: string; entryId?: string };
 
@@ -42,12 +44,19 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   let checkpoints: PinnedCheckpoint[] = [];
 
   try {
+    await registerPreparedCheckpoints(sessionId, header.cwd, retained);
     checkpoints = await pinPromptHistory(header.cwd, sessionId, retained);
-    await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source }, ...retained]);
-    created = true;
+    const entries = [{ ...header, id: sessionId, timestamp, cwd, parentSession: source }, ...retained];
 
-    await copyRetainedDiffs(source, sessionPath, new Set(retained.map(entry => entry.id)));
+    if (process.env.PIOP_FORK_PREPARATION_DIRECTORY) {
+      await writeSessionFile(sessionPath, entries);
+      created = true;
+      await copyRetainedDiffs(source, sessionPath, new Set(retained.map(entry => entry.id)));
+    } else await publishFork({ source, destination: sessionPath, sessionId, content: entries.map(entry => JSON.stringify(entry)).join("\n") + "\n" });
+
   } catch (error) {
+    if (error instanceof ForkPublicationPending) throw error;
+
     if (created) {
       await rm(sessionPath, { force: true });
       await rm(sessionPath.replace(/\.jsonl$/, ".diffs.json"), { force: true });
