@@ -10,9 +10,10 @@ use uuid::Uuid;
 
 mod storage;
 mod durability;
+mod holding;
 mod recovery;
 pub(super) use storage::QueueStorage;
-pub(super) use recovery::recover_missing_transcripts;
+pub(super) use recovery::{recover_missing_transcripts, Recovery};
 
 pub(super) trait Execution: Send + Sync {
     fn execute(&self, command: Value) -> BoxFuture<'_, Result<Value>>;
@@ -56,7 +57,7 @@ impl QueueState {
         }
         let pending: Vec<_> = pending.iter().cloned().map(|mut item| {
             if let Some(fields) = item.as_object_mut() {
-                for field in ["consumedContent", "consumedTimestamp", "deliveryStarted"] { fields.remove(field); }
+                for field in ["consumedContent", "consumedTimestamp", "consumedInputId", "deliveryStarted"] { fields.remove(field); }
             }
             if let Some(images) = item.get_mut("images").and_then(Value::as_array_mut) {
                 for image in images { if let Some(fields) = image.as_object_mut() { fields.remove("data"); } }
@@ -302,15 +303,8 @@ impl SessionQueue {
     }
 
     async fn execute(&self, command: Value) -> Result<Value> {
-        let clearing = kind(&command) == "clear_queue";
-        if clearing {
-            self.state().clearing = true;
-        }
-        let result = self.executor.execute(command).await;
-        if clearing {
-            self.state().clearing = false;
-        }
-        result
+        let _clearing = holding::Clearing::new(self, &command);
+        self.executor.execute(command).await
     }
 
     async fn deliver(&self, item: &Value) -> Result<Value> {
@@ -319,70 +313,13 @@ impl SessionQueue {
         self.retain_item(&retained)?;
         let id = text(item, "id");
         self.state().sending.insert(id.clone());
-        let mut command = json!({"type":"prompt","message":item["message"],"streamingBehavior":item["behavior"]});
+        let mut command = json!({"type":"prompt","message":item["message"],"streamingBehavior":item["behavior"],"queueInputId":id});
         if item["images"].as_array().is_some_and(|images| !images.is_empty()) {
             command["images"] = item["images"].clone();
         }
         let result = self.execute(command).await;
         self.state().sending.remove(&id);
         result
-    }
-
-    async fn hold(&self) -> Result<()> {
-        let originals = {
-            let mut state = self.state();
-            if state.held.is_some() {
-                return Ok(());
-            }
-            for behavior in ["steer", "followUp"] {
-                for message in state.texts(behavior) {
-                    let saved = state
-                        .pending
-                        .iter()
-                        .filter(|item| !flag(item, "retry") && item["behavior"] == behavior && item["message"] == *message)
-                        .count();
-                    if saved < state.texts(behavior).iter().filter(|item| *item == message).count() {
-                        return Err("Cannot preserve all queued attachments while pausing. Wait for messages sent outside this window to finish first.".into());
-                    }
-                }
-            }
-            state.changing = true;
-            state.pending.clone()
-        };
-        let result = self.execute(json!({"type":"clear_queue"})).await;
-        {
-            let mut state = self.state();
-            if let Ok(cleared) = &result {
-                let mut held = Vec::new();
-                for (field, behavior) in [("steering", "steer"), ("followUp", "followUp")] {
-                    let texts = array(cleared, field);
-                    let mut matches = std::collections::HashMap::new();
-                    for message in &texts {
-                        let count = texts.iter().filter(|item| *item == message).count();
-                        let candidates: Vec<_> = originals
-                            .iter()
-                            .filter(|item| !flag(item, "retry") && item["behavior"] == behavior && item["message"] == *message)
-                            .cloned()
-                            .collect();
-                        let candidates = candidates[candidates.len().saturating_sub(count)..].to_vec();
-                        matches.insert(message.to_string(), candidates);
-                    }
-                    for message in &texts {
-                        let original =
-                            matches
-                                .get_mut(&message.to_string())
-                                .and_then(|items| if items.is_empty() { None } else { Some(items.remove(0)) });
-                        held.push(original.unwrap_or_else(
-                            || json!({"id":Uuid::new_v4().to_string(),"message":message,"behavior":behavior,"retry":true}),
-                        ));
-                    }
-                }
-                state.held = Some(held);
-            }
-            state.changing = false;
-        }
-        self.publish()?;
-        result.map(|_| ())
     }
 
     fn held_failed(&self) -> Result<()> {
@@ -608,6 +545,7 @@ impl SessionQueue {
         target["retry"] = json!(false);
         target["consumedTimestamp"] = Value::Null;
         target["consumedContent"] = Value::Null;
+        target["consumedInputId"] = Value::Null;
         target["behavior"] = json!(if behavior == "steer" { "steer" } else { "followUp" });
         if let Some(item) = self.state().pending.iter_mut().find(|item| item["id"] == id) {
             *item = target.clone();

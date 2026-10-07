@@ -150,7 +150,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
         const cached = previous.get(message.deferredToolPayload);
 
-        return cached ? { ...message, content: cached.content, details: cached.details, toolInput: cached.toolInput, toolPayloadLoaded: true, loadToolPayload: cached.loadToolPayload } : message;
+        return cached && cached.loadedToolPayloadVersion === message.toolPayloadVersion ? { ...message, content: cached.content, details: cached.details, toolInput: cached.toolInput, nestedCalls: cached.nestedCalls, toolPayloadLoaded: true, loadedToolPayloadVersion: cached.loadedToolPayloadVersion, loadToolPayload: cached.loadToolPayload } : message;
       });
 
       if (snapshot.history.omittedEntries) nextMessages.unshift({ id: "client-memory-limit", role: "system", content: "Older history was omitted to fit this client's memory limit. The full conversation remains on the host." });

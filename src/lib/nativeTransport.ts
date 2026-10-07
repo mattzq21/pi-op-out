@@ -488,7 +488,7 @@ export class NativeTransport {
   saveHostSettings(settings: AppSettings, agentsChanged = false) { return this.settings.saveHost(settings, agentsChanged); }
   loadCodexUsage() { return call("codex_usage", undefined, codexUsageSchema); }
   loadOpencodeGoUsage() { return call("opencode_go_usage", undefined, opencodeGoUsageSchema); }
-  saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" = "all") {
+  saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" | "daemon" = "all") {
     return this.settings.save(settings, reconnect, agentHostId, scope);
   }
   async selectProjectDirectory(defaultPath?: string) { const selected = await open({ directory: true, multiple: false, title: "Open project", defaultPath });

@@ -2,6 +2,9 @@ mod platform;
 mod daemon_endpoint;
 mod desktop_daemon;
 mod client_settings;
+mod settings_concurrency;
+#[path = "backend/private_fs.rs"]
+mod private_fs;
 mod clipboard_image;
 use clipboard_image::{configure_image_copy, read_clipboard_image};
 use client_settings::{load_client_settings, save_client_settings};

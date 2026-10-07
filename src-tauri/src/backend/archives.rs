@@ -307,6 +307,20 @@ fn finish_deleted_sessions(app: &AppHandle, host_id: &str, paths: &[(String, boo
     }
 }
 
+fn close_deleted_session_terminals(app: &AppHandle, settings: &AppSettings, host_id: &str, paths: &[(String, bool)]) -> Result<(), String> {
+    let session_ids = paths.iter().map(|(path, _)| session_identity(settings, host_id, path)).collect::<Result<Vec<_>, _>>()?;
+    let terminals = app.state::<TerminalRuntime>();
+    let terminal_ids = terminal_lookup::session_terminals(&terminals, host_id, &session_ids)?;
+    stop_terminals(&terminals, &terminal_ids)
+}
+
+fn delete_conversation_files(app: &AppHandle, runtime: &PiRuntime, settings: &AppSettings, host_id: &str, paths: &[(String, bool)]) -> Result<(), String> {
+    let targets = deletion_targets(settings, host_id, paths)?;
+    let host = if host_id == "local" { None } else { Some(remote_host(settings, host_id)?) };
+    close_deleted_session_terminals(app, settings, host_id, paths)?;
+    delete_session_targets(runtime, &targets, host_id, host)
+}
+
 fn delete_stored_sessions(app: AppHandle, runtime: &PiRuntime, session_paths: Vec<String>, host_id: Option<String>, archived: bool, client_id: String) -> Result<Vec<String>, String> {
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
@@ -314,9 +328,7 @@ fn delete_stored_sessions(app: AppHandle, runtime: &PiRuntime, session_paths: Ve
     if session_paths.is_empty() { return Err("Select at least one conversation to delete".into()); }
     let (mut paths, mut mutations) = initial_deletion_paths(&app, &settings, &host_id, session_paths, archived, &client_id)?;
     acquire_deletion_descendants(&app, &host_id, &client_id, &mut paths, &mut mutations)?;
-    let targets = deletion_targets(&settings, &host_id, &paths)?;
-    let host = if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) };
-    delete_session_targets(runtime, &targets, &host_id, host.as_ref())?;
+    delete_conversation_files(&app, runtime, &settings, &host_id, &paths)?;
     finish_deleted_sessions(&app, &host_id, &paths, mutations);
     Ok(paths.into_iter().map(|(path, _)| path).collect())
 }
@@ -455,7 +467,7 @@ pub(super) fn restore_archived_worktree(app: AppHandle, session_path: String, ho
 }
 
 fn run_worktree_restoration(command: &mut Command) -> Result<serde_json::Value, String> {
-    let output = run_limited(command, 64 * 1024, "Could not restore archived worktree")?;
+    let output = run_limited(command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not restore archived worktree")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid worktree restoration response: {error}"))
 }

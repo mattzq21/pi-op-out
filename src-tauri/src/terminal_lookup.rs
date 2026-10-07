@@ -99,8 +99,16 @@ pub(crate) fn detach(runtime: &TerminalRuntime, owner: &str) {
 }
 
 pub(crate) fn session_terminals(runtime: &TerminalRuntime, host_id: &str, session_ids: &[String]) -> Result<Vec<String>, String> {
+    let processes = runtime.processes.lock().map_err(|_| "Terminal runtime unavailable")?;
     let history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
-    Ok(history.iter().filter(|(_, item)| item.host_id == host_id && session_ids.contains(&item.session_id)).map(|(id, _)| id.clone()).collect())
+    let mut ids: Vec<_> = history.iter().filter(|(_, item)| item.host_id == host_id && session_ids.contains(&item.session_id)).map(|(id, _)| id.clone()).collect();
+    ids.extend(processes.iter().filter(|(_, process)| {
+        let session_id = process.session_key.rsplit_once(':').map_or(process.session_key.as_str(), |(_, id)| id);
+        process.host_id == host_id && session_ids.iter().any(|id| id == session_id)
+    }).map(|(id, _)| id.clone()));
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 pub(crate) fn discard_drafts(runtime: &TerminalRuntime, owner_prefix: &str) -> Result<(), String> {
@@ -183,9 +191,11 @@ fn adopt_listed_terminals(runtime: &TerminalRuntime, session_id: &str, owner: &s
 }
 
 fn shared_start(context: &SharedTerminalRequest<'_>, id: &str) -> Result<Value, String> {
+    let session_runtime = context.app.state::<PiRuntime>();
+    let _lifecycle = session_runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
     if !session_owned(context.app, context.session_id, context.client, true, false)? { return Err("Take ownership of this session before changing its terminals".into()); }
     adopt_shared_terminal(context, id)?;
-    start_terminal_for_owner(context.app.clone(), context.owner.clone(), context.app.state::<TerminalRuntime>(), StartTerminalOptions {
+    super::launch_terminal_for_owner(context.app, context.owner.clone(), context.runtime, StartTerminalOptions {
         terminal_id: id.into(), session_key: format!("local:{}", context.session_id), cwd: context.request["cwd"].as_str().ok_or("Missing working directory")?.into(),
         cols: dimension(context.request, "cols")?, rows: dimension(context.request, "rows")?, host_id: Some("local".into()),
     })?;
@@ -220,21 +230,34 @@ fn missing_closed_terminal(action: &str, id: &str, history: &HashMap<String, Tra
 }
 
 fn shared_update(context: &SharedTerminalRequest<'_>, id: &str, action: &str) -> Result<Value, String> {
+    let session_runtime = context.app.state::<PiRuntime>();
+    let _lifecycle = if action == "reassign" { Some(session_runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?) } else { None };
+    update_shared_terminal(context, id, action)
+}
+
+fn update_shared_terminal(context: &SharedTerminalRequest<'_>, id: &str, action: &str) -> Result<Value, String> {
     let mut processes = context.runtime.processes.lock().map_err(|_| "Terminal runtime unavailable")?;
     let mut history = context.runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
     if missing_closed_terminal(action, id, &history, &processes) { return Ok(Value::Null); }
     let item = history.get_mut(id).ok_or("Terminal is unavailable")?;
     let previous_session = item.session_id.clone();
     shared_access(context, item, action)?;
-    let closed = match action {
-        "reassign" => { reassign_shared(item, &mut processes, id, context.session_id); None },
-        "close" => { history.remove(id); processes.remove(id) },
-        _ => { shared_running_action(context, id, action, item, &processes)?; None },
-    };
+    match action {
+        "reassign" => { reassign_shared(item, &mut processes, id, context.session_id); Ok(()) },
+        "close" => close_shared_terminal(id, &mut history, &mut processes),
+        _ => shared_running_action(context, id, action, item, &processes),
+    }?;
     drop(history);
     drop(processes);
-    finish_shared_update(context, action, &previous_session, closed);
+    finish_shared_update(context, action, &previous_session);
     Ok(Value::Null)
+}
+
+fn close_shared_terminal(id: &str, history: &mut HashMap<String, Transcript>, processes: &mut HashMap<String, TerminalProcess>) -> Result<(), String> {
+    if let Some(process) = processes.get_mut(id) { super::stop_terminal_process(process).map_err(|error| format!("Could not close terminal {id}: {error}"))?; }
+    processes.remove(id);
+    history.remove(id);
+    Ok(())
 }
 
 fn reassign_shared(item: &mut Transcript, processes: &mut HashMap<String, TerminalProcess>, id: &str, session_id: &str) {
@@ -242,8 +265,7 @@ fn reassign_shared(item: &mut Transcript, processes: &mut HashMap<String, Termin
     if let Some(process) = processes.get_mut(id) { process.session_key = format!("local:{session_id}"); }
 }
 
-fn finish_shared_update(context: &SharedTerminalRequest<'_>, action: &str, previous_session: &str, closed: Option<TerminalProcess>) {
-    if let Some(mut process) = closed { let _ = process.child.kill(); let _ = process.child.wait(); }
+fn finish_shared_update(context: &SharedTerminalRequest<'_>, action: &str, previous_session: &str) {
     if action == "close" || action == "reassign" { changed(context.app, previous_session); }
     if action == "reassign" && context.session_id != previous_session { changed(context.app, context.session_id); }
 }

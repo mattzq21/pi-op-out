@@ -1,5 +1,6 @@
 mod attachment;
 mod requests;
+mod recovery;
 
 use super::{
     ownership::{ownership_error, ConversationOwnership, Guard, Revocation},
@@ -154,6 +155,8 @@ impl Revocation for Callbacks {
 }
 
 impl Host {
+    pub fn storage_root(&self) -> PathBuf { self.home.join(&self.storage) }
+
     pub async fn new(
         home: PathBuf,
         storage: &str,
@@ -177,9 +180,7 @@ impl Host {
         });
         let ownership = ConversationOwnership::new(&host.home, storage, Arc::new(Callbacks(Arc::downgrade(&host)))).await?;
         let _ = host.ownership.set(ownership);
-        for error in super::queue::recover_missing_transcripts(&host.home.join(storage), host.ownership()) {
-            host.output(json!({"type":"diagnostic","line":format!("Queued input retained for recovery: {error}")}));
-        }
+        host.recover_queued_input();
         host.services.bind(Arc::downgrade(&host));
         host.watch_removals();
         Ok(host)
@@ -383,19 +384,21 @@ impl Host {
     async fn drain_captures(&self, id: &str) -> Result<()> {
         let keys = self.registry().captures.get(id).cloned().unwrap_or_default();
         for key in keys {
-            let request = Uuid::new_v4().to_string();
-            let (sender, receiver) = oneshot::channel();
-            self.registry().drains.insert(request.clone(), sender);
-            self.output(json!({"type":"ownership_drain","id":request,"sessionKey":key}));
-            receiver
-                .await
-                .map_err(|_| "Host daemon disconnected while saving project changes")??;
+            self.flush_capture(&key).await?;
             if let Some(keys) = self.registry().captures.get_mut(id) {
                 keys.remove(&key);
             }
         }
         self.registry().captures.remove(id);
         Ok(())
+    }
+
+    pub async fn flush_capture(&self, key: &str) -> Result<()> {
+        let request = Uuid::new_v4().to_string();
+        let (sender, receiver) = oneshot::channel();
+        self.registry().drains.insert(request.clone(), sender);
+        self.output(json!({"type":"ownership_drain","id":request,"sessionKey":key}));
+        receiver.await.map_err(|_| "Host daemon disconnected while saving project changes")?
     }
 
     async fn configure(self: &Arc<Self>, configuration: &Value) -> Result<()> {

@@ -2,7 +2,7 @@ import { batch, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import type { NativeConnectionTarget } from "./lib/nativeTransport";
 import type { StateUpdate } from "./lib/solid";
 import type { ComposerUpload } from "./types";
-import { createDraftStorage, type ConversationDraft, type DraftChanges } from "./lib/conversationDraftStorage";
+import { createDraftStorage, type ConversationDraft, type DraftChanges, type DraftConflict } from "./lib/conversationDraftStorage";
 
 export type { ConversationDraft } from "./lib/conversationDraftStorage";
 
@@ -40,12 +40,18 @@ export function createConversationDrafts(options: DraftOptions) {
   const targets = new Map<string, NativeConnectionTarget>();
   const pending: Array<(current: Drafts) => Drafts> = [];
   const dirty: DraftChanges = new Map();
+  const conflicts = new Map<string, DraftConflict>();
+  const moves = new Map<string, string>();
+  const discarded = new Set<string>();
+  const removals = new Set<string>();
   const [isSaving, setIsSaving] = createSignal(false);
   const [isReady, setIsReady] = createSignal(false);
   const [saveError, setSaveError] = createSignal<string>();
   let hydrated = false;
   let loading: Promise<void> | undefined;
   let saving: Promise<void> | undefined;
+  let changesVersion = 0;
+  let attemptedVersion = 0;
 
   const failed = (reason: Error | string) => {
     const message = `Could not save or restore drafts. Keep this window open and try editing again. ${String(reason)}`;
@@ -56,7 +62,7 @@ export function createConversationDrafts(options: DraftOptions) {
 
   const queueChanges = (previous: Drafts, next: Drafts) => {
     for (const key of new Set([...Object.keys(previous), ...Object.keys(next)])) {
-      if (previous[key] !== next[key]) dirty.set(key, next[key]);
+      if (previous[key] !== next[key]) { dirty.set(key, next[key]); changesVersion += 1; }
     }
   };
 
@@ -78,18 +84,58 @@ export function createConversationDrafts(options: DraftOptions) {
     return loading;
   };
 
+  const discardConflict = (key: string) => {
+    const conflict = conflicts.get(key);
+
+    if (!conflict) return;
+    storage.acceptConflict(key, conflict);
+    conflicts.delete(key); dirty.delete(key); moves.delete(key); discarded.delete(key);
+
+    if (conflict.draft?.target) targets.set(key, conflict.draft.target);
+    else targets.delete(key);
+    setRecords(current => {
+      const next = { ...current };
+
+      if (conflict.draft) next[key] = conflict.draft;
+      else delete next[key];
+
+      return next;
+    });
+  };
+
+  const acknowledgeSaved = (changes: DraftChanges, saved: Set<string>) => {
+    for (const key of saved) {
+      if (!dirty.has(key) || dirty.get(key) !== changes.get(key)) continue;
+      dirty.delete(key); conflicts.delete(key); moves.delete(key); discarded.delete(key); removals.delete(key);
+    }
+  };
+
+  const recordConflicts = (detected: Map<string, DraftConflict>) => {
+    for (const [key, conflict] of detected) {
+      if (!dirty.has(key)) continue;
+      conflicts.set(key, conflict);
+
+      if (dirty.get(key) === undefined && discarded.has(key)) discardConflict(key);
+    }
+  };
+
   const persist = async () => {
     await hydrate();
+    const attempted = new Set<string>();
 
     while (dirty.size) {
-      const changes = new Map(dirty);
-      await storage.save(changes);
+      const changes = new Map([...dirty].filter(([key]) => !attempted.has(key)));
 
-      for (const [key, draft] of changes) {
-        if (dirty.get(key) === draft) dirty.delete(key);
-      }
+      if (!changes.size) break;
+      attemptedVersion = changesVersion;
+      const result = await storage.save(changes, moves, new Set(conflicts.keys()), removals);
+      acknowledgeSaved(changes, result.saved);
+      recordConflicts(result.conflicts);
+
+      for (const key of [...result.conflicts.keys(), ...result.blocked]) attempted.add(key);
     }
 
+    if (conflicts.size) throw new Error("A draft changed in another Piop window. Unrelated drafts are saved normally. Your changes remain here; clear that draft's text and attachments to discard your version and restore the other window's saved version.");
     setSaveError(undefined);
   };
 
@@ -101,7 +147,7 @@ export function createConversationDrafts(options: DraftOptions) {
       saving = undefined;
       setIsSaving(false);
 
-      if (succeeded && dirty.size) return flush();
+      if ((succeeded || changesVersion > attemptedVersion) && dirty.size) return flush();
     });
 
     return saving;
@@ -134,7 +180,13 @@ export function createConversationDrafts(options: DraftOptions) {
     void flush().catch(() => undefined);
   };
 
-  const modify = (key: string, update: (draft: ConversationDraft) => ConversationDraft) => updateDrafts(current => setDraft(current, key, draft => ({ ...update(draft), target: targets.get(key) ?? draft.target, updatedAt: Date.now() })));
+  const modify = (key: string, update: (draft: ConversationDraft) => ConversationDraft) => {
+    removals.delete(key);
+    updateDrafts(current => setDraft(current, key, draft => ({ ...update(draft), target: targets.get(key) ?? draft.target, updatedAt: Date.now() })));
+
+    if (!untrack(records)[key]) { discarded.add(key); discardConflict(key); }
+    else discarded.delete(key);
+  };
 
   const setComposerDraft = (key: string, update: StateUpdate<string>) => modify(key, draft => ({ ...draft, text: update instanceof Function ? update(draft.text) : update }));
   const setComposerUploads = (key: string, update: StateUpdate<ComposerUpload[]>) => modify(key, draft => ({ ...draft, uploads: update instanceof Function ? update(draft.uploads) : update }));
@@ -154,7 +206,14 @@ export function createConversationDrafts(options: DraftOptions) {
 
     if (target && !targets.has(nextKey)) targets.set(nextKey, target);
 
-    if (!copy) targets.delete(previousKey);
+    if (!copy) {
+      targets.delete(previousKey);
+
+      for (const [source, destination] of moves) if (destination === previousKey) moves.set(source, nextKey);
+      moves.set(previousKey, nextKey);
+      discarded.add(previousKey);
+    }
+
     updateDrafts(current => {
       if (!(previousKey in current)) return current;
       const next = { ...current, [nextKey]: mergeDraft(current[previousKey], current[nextKey]) };
@@ -165,10 +224,33 @@ export function createConversationDrafts(options: DraftOptions) {
     });
   };
 
-  const removeDraft = (key: string) => updateDrafts(current => {
+  const deleteLocalDraft = (key: string) => {
+    updateDrafts(current => {
+      const next = { ...current };
+      delete next[key];
+      targets.delete(key);
+
+      return next;
+    });
+  };
+
+  const removeDraft = (key: string) => { removals.add(key); discarded.delete(key); deleteLocalDraft(key); };
+
+  const discard = (key: string) => { discarded.add(key); removals.delete(key); deleteLocalDraft(key); discardConflict(key); };
+
+  const removeSessionDrafts = (hostId: string, sessionPath?: string, sessionId?: string) => updateDrafts(current => {
     const next = { ...current };
-    delete next[key];
-    targets.delete(key);
+
+    for (const [key, draft] of Object.entries(current)) {
+      const target = draft.target;
+      const sameId = Boolean(sessionId && (key === `${hostId}:${sessionId}` || target?.sessionId === sessionId));
+      const samePath = Boolean(sessionPath && target?.sessionPath === sessionPath);
+      const host = target?.hostId ?? key.slice(0, key.lastIndexOf(":"));
+
+      if (host !== hostId || !sameId && !samePath) continue;
+      removals.add(key); discarded.delete(key); targets.delete(key);
+      delete next[key];
+    }
 
     return next;
   });
@@ -177,5 +259,5 @@ export function createConversationDrafts(options: DraftOptions) {
   const uploadsFor = (key: string) => records()[key]?.uploads ?? [];
   const hasDraft = (key: string) => Boolean(records()[key] && hasContent(records()[key]));
 
-  return { records, ready, flush, isReady, isSaving, saveError, composerDrafts, uploadsFor, setComposerDraft, setComposerUploads, setDraftTarget, hasDraft, rekeyDraft, removeDraft, discard: removeDraft };
+  return { records, ready, flush, isReady, isSaving, saveError, composerDrafts, uploadsFor, setComposerDraft, setComposerUploads, setDraftTarget, hasDraft, rekeyDraft, removeDraft, removeSessionDrafts, discard };
 }

@@ -1,5 +1,5 @@
 import { Key } from "@solid-primitives/keyed";
-import { createMemo, createSignal, For } from "solid-js";
+import { createMemo, createSignal, For, onCleanup } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import { createTerminalTranscript } from "../lib/terminalTranscript";
 import { Plus, RotateCcw, TerminalSquare, Trash2, X } from "lucide-solid";
@@ -9,6 +9,7 @@ import type { TerminalViewProps } from "./TerminalView";
 
 export function MobileTerminalView(componentProps: TerminalViewProps) {
   const [command, setCommand] = createSignal("");
+  const [sending, setSending] = createSignal(false);
   const host = createRef<HTMLDivElement>(null);
   const input = createRef<HTMLSpanElement>(null);
   const tabRefs = createRef(new Map<string, HTMLButtonElement>());
@@ -19,6 +20,9 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
   let parser = createTerminalTranscript();
   let parsedId = "";
   let parsedEnd = 0;
+  let commandRevision = 0;
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
 
   const transcript = createMemo(() => {
     const start = componentProps.outputEnd - componentProps.output.length;
@@ -58,35 +62,48 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     if (componentProps.visible !== false) tabRefs.current.get(componentProps.activeId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, () => [componentProps.activeId]);
 
-  const send = () => {
-    if (disabled()) return;
-    const value = command();
-    componentProps.onDraft("");
-    componentProps.onData(value + "\r");
-
-    if (value && history.at(-1) !== value) {
+  const finishInput = (value: string, interrupting: boolean, revision: number) => {
+    if (!interrupting && value && history.at(-1) !== value) {
+      const atLatest = historyIndex === history.length;
       history.push(value);
 
-      if (history.length > 100) history.shift();
+      if (history.length > 100) { history.shift(); historyIndex = Math.max(0, historyIndex - 1); }
+
+      if (atLatest) historyIndex = history.length;
     }
 
+    if (revision !== commandRevision) return;
+    commandRevision++;
     historyIndex = history.length; draft = ""; setCommand(""); followOutput = true;
 
     if (host.current) host.current.scrollTop = host.current.scrollHeight;
     input.current?.focus();
   };
 
+  const submit = async (interrupting = false) => {
+    if (disabled() || sending()) return;
+    const value = command();
+    const id = componentProps.activeId;
+    const revision = commandRevision;
+    setSending(true);
+    let accepted;
+
+    try { accepted = await componentProps.onData(interrupting ? "\u0003" : value + "\r", true); }
+    finally { if (!disposed) setSending(false); }
+
+    if (!accepted || disposed || componentProps.activeId !== id) return;
+    finishInput(value, interrupting, revision);
+  };
+
   createDependencyEffect(() => {
+    commandRevision++;
     setCommand(componentProps.inputDraft ?? "");
     historyIndex = history.length; draft = "";
-  }, () => [componentProps.ownershipRequired]);
+  }, () => [componentProps.activeId, componentProps.ownershipRequired]);
 
-  const interrupt = () => {
-    if (disabled()) return;
-    componentProps.onDraft("");
-    componentProps.onData("\u0003"); setCommand(""); historyIndex = history.length; draft = "";
-    input.current?.focus();
-  };
+  const send = () => { void submit(); };
+
+  const interrupt = () => { void submit(true); };
 
   const sendControl = (data: string) => {
     if (disabled()) return;
@@ -102,6 +119,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
   };
 
   const editCommand = (value: string) => {
+    commandRevision++;
     setCommand(value);
     componentProps.onDraft(value);
   };
@@ -162,7 +180,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
         </form>}
       </div>
       <div class="terminal-controls" role="group" aria-label="Terminal controls">
-        <button type="button" disabled={disabled()} onClick={send}>Send</button>
+        <button type="button" disabled={disabled() || sending()} onClick={send}>Send</button>
         <Key each={[["Esc", "\u001b"], ["Tab", "\t"], ["Ctrl+C", "\u0003"], ["Ctrl+D", "\u0004"], ["↑", "\u001b[A"], ["↓", "\u001b[B"], ["←", "\u001b[D"], ["→", "\u001b[C"]]} by={entry => entry[0]}>{entry =>
           <button type="button" disabled={disabled()} onPointerDown={event => event.preventDefault()} onClick={() => sendControl(entry()[1])}>{entry()[0]}</button>
         }</Key>

@@ -1,3 +1,5 @@
+mod publication;
+
 use super::{
     controller::{Host, ReadonlyView},
     ownership::{ownership_error, Guard},
@@ -199,7 +201,6 @@ async fn fork(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: 
         directory,
         worker: None,
         next: None,
-        pending: None,
         destination: None,
         guard: None,
         committed: false,
@@ -218,7 +219,6 @@ struct Branch<'a> {
     directory: PathBuf,
     worker: Option<Arc<Session>>,
     next: Option<Arc<Session>>,
-    pending: Option<PathBuf>,
     destination: Option<PathBuf>,
     guard: Option<Guard>,
     committed: bool,
@@ -235,6 +235,7 @@ impl Branch<'_> {
         }
         let branch = preparing.execute(json!({"type":"get_state"})).await?;
         preparing.stop().await;
+        self.host.flush_capture(&self.session.key()).await?;
         let destination = self.persist(&branch, &initial)?;
         let opened = self.open(&branch, &destination).await?;
         self.commit(&opened).await?;
@@ -284,18 +285,7 @@ impl Branch<'_> {
             .parent()
             .ok_or("Invalid conversation path")?
             .join(branch_file.file_name().ok_or("Invalid branch path")?);
-        let pending_path = destination
-            .parent()
-            .ok_or("Invalid branch path")?
-            .join(format!(".piop-branch-{}.pending", Uuid::new_v4()));
-        let (header, content) = branch_content(&branch_file, &branch_id, self.path)?;
-        let mut file = private_file(&pending_path)?;
-        self.pending = Some(pending_path.clone());
-        writeln!(file, "{header}")
-            .and_then(|_| file.write_all(&content))
-            .map_err(|error| error.to_string())?;
-        drop(file);
-        std::fs::hard_link(&pending_path, &destination).map_err(|error| error.to_string())?;
+        publication::publish(self.host, self.path, &branch_file, &branch_id, &destination, self.session.ephemeral)?;
         self.destination = Some(destination.clone());
         Ok(destination)
     }
@@ -358,11 +348,11 @@ impl Branch<'_> {
             worker.stop().await;
         }
         let destination = if !self.committed {
-            self.destination.take().map(|path| std::fs::remove_file(path).map_err(|error| error.to_string())).transpose()
+            self.destination.take().map(|path| publication::remove(self.host, &path, self.session.ephemeral)).transpose()
         } else {
             Ok(None)
         };
-        let cleanup = cleanup_paths(self.pending.as_deref(), &self.directory);
+        let cleanup = cleanup_paths(&self.directory);
         for worker in workers {
             self.host.forget_worker(worker);
         }
@@ -372,20 +362,6 @@ impl Branch<'_> {
         destination?;
         cleanup
     }
-}
-
-fn branch_content(path: &Path, id: &str, parent: &str) -> Result<(Value, Vec<u8>)> {
-    let content = std::fs::read(path).map_err(|error| error.to_string())?;
-    let newline = content
-        .iter()
-        .position(|byte| *byte == b'\n')
-        .ok_or("The branch has no session header")?;
-    let mut header: Value = serde_json::from_slice(&content[..newline]).map_err(|error| error.to_string())?;
-    if header["type"] != "session" || header["id"] != id {
-        return Err("The branch has an invalid session identity".into());
-    }
-    header["parentSession"] = json!(parent);
-    Ok((header, content[newline + 1..].to_vec()))
 }
 
 fn private_file(path: &Path) -> Result<std::fs::File> {
@@ -412,18 +388,9 @@ fn validate_branch(host: &Host, path: &Path, id: &str, initial: &Value, state: &
     Ok(())
 }
 
-fn cleanup_paths(pending: Option<&Path>, directory: &Path) -> Result<()> {
-    let pending = if let Some(path) = pending {
-        match std::fs::remove_file(path) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.to_string()),
-            _ => Ok(()),
-        }
-    } else {
-        Ok(())
-    };
-    let directory = match std::fs::remove_dir_all(directory) {
+fn cleanup_paths(directory: &Path) -> Result<()> {
+    match std::fs::remove_dir_all(directory) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.to_string()),
         _ => Ok(()),
-    };
-    pending.and(directory)
+    }
 }

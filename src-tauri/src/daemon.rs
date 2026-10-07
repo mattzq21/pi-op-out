@@ -325,6 +325,7 @@ fn handle_notice(app: &AppHandle, host_id: &str, packet: &Value) {
                 Some("provider_auth_changed") => { let _ = app.emit("pi://provider-auth-changed", json!({"hostId":host_id})); },
                 Some("chatgpt_changed") => { let _ = app.emit("pi://chatgpt-changed", json!({"hostId":host_id,"providerId":packet["providerId"],"scope":packet["scope"]})); },
                 Some("diagnostic") => { let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":packet["line"]})); },
+                Some("sessions_changed") => { let _ = app.emit("pi://sessions-changed", ()); },
         _ => {},
     }
 }

@@ -3,6 +3,40 @@ const { dirname, join, isAbsolute } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { execFileSync } = require("node:child_process");
 const { PassThrough } = require("node:stream");
+const { AsyncLocalStorage } = require("node:async_hooks");
+
+const queuedInput = new AsyncLocalStorage();
+
+const taggedAgents = new WeakSet();
+
+function tagQueuedInput(input) {
+  const delivery = queuedInput.getStore();
+
+  if (!delivery || delivery.tagged) return;
+  const message = (Array.isArray(input) ? input : [input]).find(value => value?.role === "user");
+
+  if (!message) return;
+  message.piopQueueInputId = delivery.id;
+  delivery.tagged = true;
+}
+
+function bindQueuedInputs(agent) {
+  if (taggedAgents.has(agent)) return;
+  taggedAgents.add(agent);
+
+  for (const name of ["prompt", "steer", "followUp"]) {
+    const original = agent[name];
+    agent[name] = function (input, ...args) {
+      tagQueuedInput(input);
+
+      return original.call(this, input, ...args);
+    };
+  }
+}
+
+function isQueuedPrompt(command) {
+  return command?.type === "prompt" && Object.hasOwn(command, "queueInputId");
+}
 
 function runtimeRoot(executable) {
   const path = realpathSync(isAbsolute(executable) ? executable : execFileSync("which", [executable], { encoding: "utf8" }).trim());
@@ -37,7 +71,7 @@ function appInput(dispatch) {
 
       try { command = JSON.parse(line); } catch {}
 
-      if (command?.type === "piop_request") void dispatch(command);
+      if (command?.type === "piop_request" || isQueuedPrompt(command)) void dispatch(command);
       else input.write(`${line}\n`);
     }
   });
@@ -45,6 +79,8 @@ function appInput(dispatch) {
 }
 
 async function dispatch(command, session, output) {
+  if (isQueuedPrompt(command)) return dispatchQueuedPrompt(command, session, output);
+
   try {
     const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.app-rpc"))?.value;
 
@@ -60,6 +96,28 @@ async function dispatch(command, session, output) {
   }
 }
 
+async function dispatchQueuedPrompt(command, session, output) {
+  let accepted = false;
+
+  const accept = disposition => {
+    if (accepted) return;
+    accepted = true;
+    output({ type: "response", id: command.id, command: "prompt", success: true, data: { disposition } });
+  };
+
+  try {
+    if (!session) throw new Error("Piop app requests are unavailable");
+    const queueInputId = String(command.queueInputId);
+
+    if (command.queueInputId !== queueInputId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(queueInputId)) throw new Error("Invalid queued input identity");
+    await session.prompt(command.message, { images: command.images, streamingBehavior: command.streamingBehavior,
+      source: "rpc", piopQueueInputId: queueInputId, preflightResult: accept });
+    accept("completed");
+  } catch (error) {
+    if (!accepted) output({ type: "response", id: command.id, command: "prompt", success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const root = runtimeRoot(executable);
@@ -72,13 +130,16 @@ async function main() {
     const value = text.match(/^\/goal\s+([\s\S]*)$/)?.[1].trim();
     const objective = value && !["edit", "clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget ");
 
-    return prompt.call(this, text, objective ? { ...options, expandPromptTemplates: false } : options);
+    const delivery = options?.piopQueueInputId ? { id: options.piopQueueInputId, tagged: false } : undefined;
+
+    return queuedInput.run(delivery, () => prompt.call(this, text, objective ? { ...options, expandPromptTemplates: false } : options));
   };
 
   let session;
   const bind = AgentSession.prototype.bindExtensions;
   AgentSession.prototype.bindExtensions = async function (...bindings) {
     await bind.apply(this, bindings);
+    bindQueuedInputs(this.agent);
     session = this;
   };
 

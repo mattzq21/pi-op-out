@@ -613,7 +613,7 @@ export function createAppConversations(preloadChat: () => void) {
   const archives = createConversationArchive({
     runtimePool, transport, chatSession, activeHostId, activeTransportRef, activeConversationKeyRef,
     transportConversationKeys, isSelectedSession, isSplitSession, conversationTerminalIds,
-    removeConversationTerminals: terminals.removeConversationTerminals, removeDraft: drafts.removeDraft,
+    removeConversationTerminals: terminals.removeConversationTerminals, removeDraft: drafts.removeDraft, removeSessionDrafts: drafts.removeSessionDrafts,
     setSessions, setActiveCwd, activateTransport, activateConversationKey, updateConnected,
     closeSplitPane, syncSessionIndex, addNotice,
   });

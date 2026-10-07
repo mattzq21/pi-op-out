@@ -332,14 +332,18 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     const leaseToken = ownership().token;
     const current = generation;
 
-    if (!leaseToken) return;
+    if (!leaseToken) { relinquish();
+
+    return; }
     setLeaseValid(false);
 
     try {
       const next = await call("release", { leaseToken });
 
       if (!disposed && current === generation) { relinquish(); receiveUpdate(next); }
-    } catch { }
+    } catch {
+      if (!disposed && current === generation && !visible() && durable()) relinquish();
+    }
   };
 
   const release = (): Promise<void> => {

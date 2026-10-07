@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use crate::platform::AppHandle;
 use crate::{DEVELOPMENT, STORAGE_DIRECTORY};
 use crate::environment::home_dir;
+pub(super) use crate::settings_concurrency::{lock_settings, settings_revision};
 
 pub(super) fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     settings_path_at(&home_dir()?, DEVELOPMENT, || app.path().app_config_dir().map_err(|error| error.to_string()).map(|dir| dir.join("settings.json")))
@@ -20,6 +21,7 @@ pub(super) fn settings_path_at(home: &Path, development: bool, legacy_path: impl
     let dir = home.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("settings.json");
+    let _lock = lock_settings(&path)?;
     if !development && !path.exists() {
         let legacy = legacy_path()?;
         migrate_legacy_settings(&legacy, &path)?;

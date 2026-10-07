@@ -12,6 +12,7 @@ pub(crate) use markdown::preserve_leases_for_restart;
 const BUNDLED: &[&str] = &["chatgpt", "markdown"];
 const CHATGPT_SOURCE: &str = concat!(
     include_str!("../../resources/chatgpt-stream.mjs"), "\n",
+    include_str!("../../resources/chatgpt-storage.mjs"), "\n",
     include_str!("../../resources/chatgpt-service.mjs"),
     "\nconst bundledPlugin = { call: handleChatGpt, idle: chatGptIdle, checkpoint: chatGptTicketSnapshot, restore: chatGptRestore };"
 );

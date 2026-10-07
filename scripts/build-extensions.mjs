@@ -56,7 +56,7 @@ async function mcpBridge() {
 }
 
 async function backendScripts() {
-  const scripts = ["cleanup-ephemeral-session", "session-descendants", "archive-conversations", "archive-worktree", "restore-archived-worktree", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "preserve-archive-checkpoints", "capture-git-diff"];
+  const scripts = ["cleanup-ephemeral-session", "session-descendants", "archive-conversations", "archive-worktree", "restore-archived-worktree", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "preserve-archive-checkpoints", "capture-git-diff", "publish-fork"];
 
   const commandInputs = await agentCommandInputs();
 

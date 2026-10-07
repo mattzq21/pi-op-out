@@ -96,6 +96,33 @@ function rejectNestedRepositories(directory, top = directory) {
   }
 }
 
+function presentSkippedPaths(directory, entries) {
+  return entries.flatMap((entry) => {
+    if (entry[0].toUpperCase() !== 'S') return [];
+    const file = entry.slice(2);
+
+    try { fs.lstatSync(path.join(directory, file));
+
+    return [file]; }
+    catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return [];
+      throw error;
+    }
+  });
+}
+
+function captureWorkingFiles(group, index, env) {
+  fs.copyFileSync(path.join(group.own, 'index'), index);
+  const entries = git(group.path, ['ls-files', '-v', '-z'], { env }).split('\0').filter(Boolean);
+  const paths = entries.map((entry) => entry.slice(2));
+  const presentSkipped = presentSkippedPaths(group.path, entries);
+
+  if (paths.length) git(group.path, ['update-index', '--no-assume-unchanged', '-z', '--stdin'], { env, input: paths.join('\0') + '\0' });
+
+  if (presentSkipped.length) git(group.path, ['update-index', '--no-skip-worktree', '-z', '--stdin'], { env, input: presentSkipped.join('\0') + '\0' });
+  git(group.path, ['add', '--all', '--sparse', '--', '.'], { env });
+}
+
 function snapshot(group, transaction) {
   rejectNestedRepositories(group.path);
   const index = path.join(transaction, `${randomUUID()}.index`);
@@ -108,7 +135,7 @@ function snapshot(group, transaction) {
 
   if (group.branchRef && !group.branchRef.startsWith('refs/heads/')) throw new Error('Invalid worktree branch');
 
-  fs.copyFileSync(path.join(group.own, 'index'), index);
+  captureWorkingFiles(group, index, env);
   const tree = git(group.path, ['write-tree'], { env });
   group.commit = git(group.path, ['commit-tree', tree, '-p', head], { env, input: 'Archive conversation working directory\n' });
   fs.unlinkSync(index);

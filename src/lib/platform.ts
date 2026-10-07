@@ -18,7 +18,7 @@ export function htmlPreviewSize() {
   return typeof width === "number" && Number.isFinite(width) && width >= 2560 ? 750 : 600;
 }
 
-const clientPreferences = registerPlugin<{ load(): Promise<{ settings: unknown }>; save(options: { settings: unknown }): Promise<void> }>("ClientPreferences");
+const clientPreferences = registerPlugin<{ load(): Promise<{ settings: unknown; revision: string }>; save(options: { settings: unknown; expectedRevision: unknown }): Promise<{ revision: string }> }>("ClientPreferences");
 
 const conversationClientId = (() => {
   const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}-${Math.random()}`;
@@ -63,9 +63,9 @@ export async function invoke(command: string, args?: NativeArguments, schema: z.
     return schema.parse(response);
   }
 
-  if (command === "load_client_settings") return clientPreferences.load().then(result => schema.parse(result.settings));
+  if (command === "load_client_settings") return clientPreferences.load().then(result => schema.parse(result));
 
-  if (command === "save_client_settings") return clientPreferences.save({ settings: args.settings }).then(() => schema.parse(undefined));
+  if (command === "save_client_settings") return clientPreferences.save({ settings: args.settings, expectedRevision: args.expectedRevision }).then(result => schema.parse(result));
 
   if (command === "open_external_url") {
     const url = String(args?.url);

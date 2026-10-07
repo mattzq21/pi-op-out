@@ -281,7 +281,11 @@ export function SplitChatPane(componentProps: Props) {
 
  try { if (!message.entryId) throw new Error("Could not find the response to branch from"); const sourcePath = capturedTransport.currentSessionPath(); const sourceDiffs = await capturedRuntimePool0.captureMemoryDiffs(capturedTransport); const result = await capturedTransport.command({ type: "fork_after", entryId: message.entryId }, z.object({ cancelled: z.boolean().optional() }));
 
- if (result.cancelled) return false; const nextState = await capturedSession.refresh(); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport); const history = await capturedTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) })); await capturedRuntimePool0.copySavedDiffs(capturedTransport, sourcePath, capturedTransport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)), sourceDiffs);
+ if (result.cancelled) return false; const nextState = await capturedSession.refresh(); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport);
+
+ if (sourceDiffs !== undefined) {
+   const history = await capturedTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) })); await capturedRuntimePool0.copySavedDiffs(capturedTransport, sourcePath, capturedTransport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)), sourceDiffs);
+ }
 
  return true; } catch (reason) { reportControlError(reason);
 

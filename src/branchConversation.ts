@@ -103,6 +103,8 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     let sourceDiffs: import("./types").GitDiffSnapshots | undefined;
 
     const copyBranchDiffs = async (nextState: AgentState, history: { entries: PiEntry[]; leafId: string | null }) => {
+      if (sourceDiffs === undefined) return;
+
       try { await runtimePool.copySavedDiffs(ownerTransport, sourcePath, nextState.sessionFile, new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)), sourceDiffs); }
       catch (reason) { addNotice({ title: "Conversation branched, but project changes could not be copied", message: reason instanceof Error ? reason.message : String(reason) }); }
 

@@ -19,6 +19,7 @@ type ArchiveContext = {
   conversationTerminalIds: (key: string) => string[];
   removeConversationTerminals: (key: string) => void;
   removeDraft: (key: string) => void;
+  removeSessionDrafts: (hostId: string, sessionPath?: string, sessionId?: string) => void;
   setSessions: Setter<SessionSummary[]>;
   setActiveCwd: Setter<string | undefined>;
   activateTransport: (transport: NativeTransport) => void;
@@ -205,6 +206,8 @@ export function createConversationArchive(context: ArchiveContext) {
   };
 
   const finishRemovedConversation = (pool: SessionRuntimePool, hostId: string, sessionPath: string | undefined, sessionId: string | undefined, summaries: SessionSummary[], id: string | undefined) => {
+    context.removeSessionDrafts(hostId, sessionPath, sessionId ?? id);
+
     if (id) archivedSessionKeys.current.add(hostId + ":" + id);
 
     for (const session of summaries) {

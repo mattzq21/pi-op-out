@@ -23,6 +23,14 @@ export interface ConversationDraft { text: string; uploads: ComposerUpload[]; ta
 
 export type DraftChanges = Map<string, ConversationDraft | undefined>;
 
+export interface DraftConflict { draft?: ConversationDraft; revision?: string; }
+
+export interface DraftSaveResult { saved: Set<string>; conflicts: Map<string, DraftConflict>; blocked: Set<string>; }
+
+interface DraftSaveAttempt { versions: Map<string, number>; cancelled: boolean; transaction?: IDBTransaction; }
+
+interface DraftSaveOptions { moves: Map<string, string>; conflicted: Set<string>; removals: Set<string>; attempt: DraftSaveAttempt; versions: Map<string, number>; }
+
 type Drafts = Record<string, ConversationDraft>;
 
 function storageNamespace() {
@@ -137,44 +145,108 @@ function revisionMatches(value: z.JSONType | undefined, expected: string | undef
   return expected !== undefined && parsed.success && parsed.data.revision === expected;
 }
 
-async function writeDrafts(database: IDBDatabase, namespace: string, changes: DraftChanges, revisions: Map<string, string>) {
-  const validated = [...changes].map(([key, draft]) => ({ key, draft: draft ? draftSchema.parse(draft) : undefined }));
+function conflictingDestination(key: string, moves: Map<string, string>, conflicts: Set<string>) {
+  const visited = new Set<string>();
+  let destination = moves.get(key);
+
+  while (destination && !visited.has(destination)) {
+    if (conflicts.has(destination)) return true;
+    visited.add(destination);
+    destination = moves.get(destination);
+  }
+
+  return false;
+}
+
+function readConflicts(store: IDBObjectStore, namespace: string, changes: DraftChanges, revisions: Map<string, string>, options: DraftSaveOptions, done: (conflicts: Map<string, DraftConflict>) => void) {
+  const conflicts = new Map<string, DraftConflict>();
+  let remaining = changes.size;
+
+  for (const key of changes.keys()) {
+    const request = store.get([namespace, key]);
+    request.onsuccess = () => {
+      const permanentRemoval = options.removals.has(key) && changes.get(key) === undefined;
+
+      if (!permanentRemoval && (options.conflicted.has(key) || !revisionMatches(request.result, revisions.get(key)))) {
+        const parsed = storedDraftSchema.safeParse(request.result);
+        conflicts.set(key, parsed.success ? { draft: parsed.data, revision: parsed.data.revision } : {});
+      }
+
+      remaining -= 1;
+
+      if (remaining === 0) done(conflicts);
+    };
+  }
+}
+
+function putDrafts(store: IDBObjectStore, namespace: string, changes: DraftChanges, options: DraftSaveOptions, result: DraftSaveResult, saved: Map<string, string | undefined>) {
+  const conflicted = new Set([...options.conflicted, ...result.conflicts.keys()]);
+
+  for (const [key, draft] of changes) {
+    if (result.conflicts.has(key)) continue;
+
+    if (!draft && conflictingDestination(key, options.moves, conflicted)) { result.blocked.add(key);
+
+      continue; }
+
+    const revision = draft ? crypto.randomUUID() : undefined;
+
+    if (draft) store.put({ ...draft, namespace, key, revision });
+    else store.delete([namespace, key]);
+    result.saved.add(key);
+    saved.set(key, revision);
+  }
+}
+
+function attemptCurrent(options: DraftSaveOptions) {
+  return !options.attempt.cancelled && [...options.attempt.versions].every(([key, version]) => (options.versions.get(key) ?? 0) === version);
+}
+
+function cancelAttempt(attempt: DraftSaveAttempt) {
+  attempt.cancelled = true;
+
+  try { attempt.transaction?.abort(); } catch { }
+}
+
+function emptySaveResult(): DraftSaveResult {
+  return { saved: new Set(), conflicts: new Map(), blocked: new Set() };
+}
+
+async function writeDrafts(database: IDBDatabase, namespace: string, changes: DraftChanges, revisions: Map<string, string>, options: DraftSaveOptions): Promise<DraftSaveResult> {
+  const validated: DraftChanges = new Map([...changes].map(([key, draft]) => [key, draft ? draftSchema.parse(draft) : undefined]));
+  const result = emptySaveResult();
+
+  if (!validated.size || !attemptCurrent(options)) return result;
   const transaction = database.transaction("drafts", "readwrite", { durability: "strict" });
+  options.attempt.transaction = transaction;
   const done = transactionDone(transaction);
   const store = transaction.objectStore("drafts");
   const saved = new Map<string, string | undefined>();
   let failure: Error | undefined;
 
-  for (const { key, draft } of validated) {
-    const request = store.get([namespace, key]);
-    request.onsuccess = () => {
-      if (!revisionMatches(request.result, revisions.get(key))) {
-        failure = new Error("This draft changed in another Piop window. Your current version remains here; copy it before reloading this window.");
-        transaction.abort();
+  readConflicts(store, namespace, validated, revisions, options, conflicts => {
+    if (!attemptCurrent(options)) { cancelAttempt(options.attempt);
 
-        return;
-      }
+      return; }
 
-      const revision = draft ? crypto.randomUUID() : undefined;
+    result.conflicts = conflicts;
 
-      try {
-        if (draft) store.put({ ...draft, namespace, key, revision });
-        else store.delete([namespace, key]);
-        saved.set(key, revision);
-      } catch (reason) {
-        failure = new Error(String(reason));
-        transaction.abort();
-      }
-    };
-  }
+    try { putDrafts(store, namespace, validated, options, result, saved); }
+    catch (reason) { failure = new Error(String(reason)); transaction.abort(); }
+  });
 
   try { await done; }
-  catch (reason) { throw failure ?? reason; }
+  catch (reason) {
+    if (options.attempt.cancelled) return emptySaveResult();
+    throw failure ?? reason;
+  }
 
   for (const [key, revision] of saved) {
     if (revision) revisions.set(key, revision);
     else revisions.delete(key);
   }
+
+  return result;
 }
 
 async function migrateLegacy(database: IDBDatabase, namespace: string, onError: (message: string) => void) {
@@ -205,6 +277,8 @@ async function migrateLegacy(database: IDBDatabase, namespace: string, onError: 
 export function createDraftStorage(onError: (message: string) => void) {
   let namespace: string | undefined;
   const revisions = new Map<string, string>();
+  const versions = new Map<string, number>();
+  const attempts = new Set<DraftSaveAttempt>();
 
   try { namespace = storageNamespace(); }
   catch (reason) { onError(`Could not identify this host's draft storage. ${String(reason)}`); }
@@ -227,7 +301,38 @@ export function createDraftStorage(onError: (message: string) => void) {
     return readDrafts(database, scope, revisions, onError);
   });
 
-  const save = (changes: DraftChanges) => withDatabase((database, scope) => writeDrafts(database, scope, changes, revisions));
+  const save = (changes: DraftChanges, moves = new Map<string, string>(), conflicted = new Set<string>(), removals = new Set<string>()) => {
+    const pending = new Map(changes);
+    const previous = new Map(revisions);
+    const committed = new Map(previous);
+    const attempt: DraftSaveAttempt = { versions: new Map([...pending.keys()].map(key => [key, versions.get(key) ?? 0])), cancelled: false };
+    const options = { moves: new Map(moves), conflicted: new Set(conflicted), removals: new Set(removals), attempt, versions };
+    attempts.add(attempt);
 
-  return { legacy, load, save };
+    return withDatabase((database, scope) => writeDrafts(database, scope, pending, committed, options)).then(result => {
+      for (const key of result.conflicts.keys()) {
+        if (revisions.get(key) !== previous.get(key)) result.conflicts.delete(key);
+      }
+
+      for (const key of result.saved) {
+        const revision = committed.get(key);
+
+        if (revision) revisions.set(key, revision);
+        else revisions.delete(key);
+      }
+
+      return result;
+    }).finally(() => attempts.delete(attempt));
+  };
+
+  const acceptConflict = (key: string, conflict: DraftConflict) => {
+    versions.set(key, (versions.get(key) ?? 0) + 1);
+
+    for (const attempt of attempts) if (attempt.versions.has(key)) cancelAttempt(attempt);
+
+    if (conflict.revision) revisions.set(key, conflict.revision);
+    else revisions.delete(key);
+  };
+
+  return { legacy, load, save, acceptConflict };
 }

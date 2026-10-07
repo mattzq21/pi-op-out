@@ -47,9 +47,9 @@ export function MobileApp() {
     setDisconnecting(true);
 
     try { await Promise.all(tasks); }
-    catch (reason) { if (connected()) { setError(String(reason)); setDisconnecting(false);
+    catch (reason) { setError(String(reason)); setDisconnecting(false);
 
-    return; } }
+    return; }
 
     intentionalDisconnect.current = true; generation.current++; clearTimeout(retry.current);
     setWorkspaceOpen(false); remoteClient.close(); setConnected(false); setConnecting(false); setError("");

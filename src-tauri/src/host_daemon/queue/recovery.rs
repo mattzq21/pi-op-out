@@ -7,28 +7,39 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) fn recover_missing_transcripts(root: &Path, ownership: &ConversationOwnership) -> Vec<String> {
-    recover_storage(root, ownership).unwrap_or_else(|error| vec![error])
+#[derive(Default)]
+pub(crate) struct Recovery {
+    pub errors: Vec<String>,
+    pub recovered: bool,
+    pub retry: bool,
+    pub transactions_pending: bool,
 }
 
-fn recover_storage(root: &Path, ownership: &ConversationOwnership) -> Result<Vec<String>> {
+pub(crate) fn recover_missing_transcripts(root: &Path, ownership: &ConversationOwnership) -> Recovery {
+    recover_storage(root, ownership).unwrap_or_else(|error| Recovery { errors: vec![error], ..Recovery::default() })
+}
+
+fn recover_storage(root: &Path, ownership: &ConversationOwnership) -> Result<Recovery> {
     let entries = match fs::read_dir(root.join("queued-input")) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Recovery::default()),
         Err(error) => return Err(error.to_string()),
     };
-    let Some(_storage_locks) = storage_locks(root)? else { return Ok(Vec::new()); };
-    if transactions_pending(root)? { return Err("Session storage transactions must finish before queued-input recovery".into()); }
+    let Some(_storage_locks) = storage_locks(root)? else { return Ok(Recovery { retry: true, ..Recovery::default() }); };
+    if transactions_pending(root)? { return Ok(Recovery { retry: true, transactions_pending: true, ..Recovery::default() }); }
     Ok(recover_entries(root, ownership, entries))
 }
 
-fn recover_entries(root: &Path, ownership: &ConversationOwnership, entries: fs::ReadDir) -> Vec<String> {
-    let mut errors = Vec::new();
+fn recover_entries(root: &Path, ownership: &ConversationOwnership, entries: fs::ReadDir) -> Recovery {
+    let mut recovery = Recovery::default();
     for entry in entries {
         let result = entry.map_err(|error| error.to_string()).and_then(|entry| recover_journal(root, ownership, &entry.path()));
-        if let Err(error) = result { errors.push(error); }
+        match result {
+            Ok(recovered) => recovery.recovered |= recovered,
+            Err(error) => recovery.errors.push(error),
+        }
     }
-    errors
+    recovery
 }
 
 fn storage_locks(root: &Path) -> Result<Option<(File, File)>> {
@@ -42,7 +53,7 @@ fn transactions_pending(root: &Path) -> Result<bool> {
         let entry = entry.map_err(|error| error.to_string())?;
         if entry.file_name().to_string_lossy().starts_with("archive-transaction-") { return Ok(true); }
     }
-    for area in ["restore-transactions", "deleted-sessions"] {
+    for area in ["restore-transactions", "fork-transactions", "deleted-sessions"] {
         if directory_has_entries(&root.join(area))? { return Ok(true); }
     }
     deletion_pending(&root.join("sessions")).and_then(|active| {
@@ -70,10 +81,10 @@ fn deletion_pending(path: &Path) -> Result<bool> {
     Ok(false)
 }
 
-fn recover_journal(root: &Path, ownership: &ConversationOwnership, path: &Path) -> Result<()> {
-    let Some((id, _ownership_lock, _worker_lock)) = lock_journal(root, path)? else { return Ok(()); };
+fn recover_journal(root: &Path, ownership: &ConversationOwnership, path: &Path) -> Result<bool> {
+    let Some((id, _ownership_lock, _worker_lock)) = lock_journal(root, path)? else { return Ok(false); };
     remove_temporary(&root.join("sessions").join(format!(".queued-input-recovery-{id}")))?;
-    if ownership.removed(&id)? || transcript_exists(root, &id)? { return Ok(()); }
+    if ownership.removed(&id)? || transcript_exists(root, &id)? { return Ok(false); }
     recover_contents(root, path, &id)
 }
 
@@ -86,9 +97,9 @@ fn lock_journal(root: &Path, path: &Path) -> Result<Option<(String, File, File)>
     Ok(Some((id.into(), ownership_lock, worker_lock)))
 }
 
-fn recover_contents(root: &Path, path: &Path, id: &str) -> Result<()> {
+fn recover_contents(root: &Path, path: &Path, id: &str) -> Result<bool> {
     let pending = QueueStorage::new(&root.join("queued-input"), id)?.load()?;
-    if pending.is_empty() { return Ok(()); }
+    if pending.is_empty() { return Ok(false); }
     let journal: Value = serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     let cwd = journal["origin"]["cwd"].as_str().filter(|cwd| Path::new(cwd).is_absolute())
         .ok_or("Queued input retained: recovery working directory is missing")?;
@@ -154,7 +165,7 @@ fn recovery_path(root: &Path, id: &str, origin: &Value) -> Result<PathBuf> {
     Ok(directory.join(format!("recovered_{id}.jsonl")))
 }
 
-fn create_transcript(path: &Path, id: &str, cwd: &str, name: &str) -> Result<()> {
+fn create_transcript(path: &Path, id: &str, cwd: &str, name: &str) -> Result<bool> {
     let name: String = name.chars().take(120).collect();
     let output = crate::node_command().args(["-e", TRANSCRIPT, id, cwd, &name]).output().map_err(|error| error.to_string())?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().into()); }
@@ -178,7 +189,7 @@ fn remove_temporary(path: &Path) -> Result<()> {
     }
 }
 
-fn install_transcript(path: &Path, temporary: &Path, body: &[u8]) -> Result<()> {
+fn install_transcript(path: &Path, temporary: &Path, body: &[u8]) -> Result<bool> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -190,11 +201,12 @@ fn install_transcript(path: &Path, temporary: &Path, body: &[u8]) -> Result<()> 
     file.write_all(body).and_then(|_| file.sync_all()).map_err(|error| error.to_string())?;
     match fs::hard_link(temporary, path) {
         Ok(()) => {},
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
         Err(error) => return Err(error.to_string()),
     }
     let parent = path.parent().ok_or("Queued-input transcript has no directory")?;
-    File::open(parent).and_then(|directory| directory.sync_all()).map_err(|error| error.to_string())
+    File::open(parent).and_then(|directory| directory.sync_all()).map_err(|error| error.to_string())?;
+    Ok(true)
 }
 
 const TRANSCRIPT: &str = r#"

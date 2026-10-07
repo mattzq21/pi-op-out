@@ -36,12 +36,16 @@ pub(super) fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runti
 }
 
 pub(super) fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<TerminalRuntime>, options: StartTerminalOptions) -> Result<(), String> {
-    let StartTerminalOptions { terminal_id, session_key, cwd, cols, rows, host_id } = options;
     let session_runtime = app.state::<PiRuntime>();
     let _lifecycle = session_runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
+    launch_terminal_for_owner(&app, owner, &runtime, options)
+}
+
+fn launch_terminal_for_owner(app: &AppHandle, owner: String, runtime: &TerminalRuntime, options: StartTerminalOptions) -> Result<(), String> {
+    let StartTerminalOptions { terminal_id, session_key, cwd, cols, rows, host_id } = options;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let event_app = app.clone();
-    start_terminal_with(&runtime, TerminalLaunch { terminal_id, session_key, cwd: cwd.clone(), cols, rows, host_id: host_id.clone(), window_label: owner },
+    start_terminal_with(runtime, TerminalLaunch { terminal_id, session_key, cwd: cwd.clone(), cols, rows, host_id: host_id.clone(), window_label: owner },
         || if host_id == "local" {
             let working_dir = PathBuf::from(&cwd);
             if !working_dir.is_dir() { return Err(format!("Terminal working directory does not exist: {}", working_dir.display())); }
@@ -185,17 +189,25 @@ pub(super) fn resize_terminal_pty(runtime: &TerminalRuntime, terminal_id: &str, 
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn close_terminal(runtime: State<TerminalRuntime>, terminal_id: String) -> Result<(), String> {
-    if let Some(mut process) = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.remove(&terminal_id) { let _ = process.child.kill(); let _ = process.child.wait(); }
-    runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?.remove(&terminal_id);
-    Ok(())
+    stop_terminals(&runtime, &[terminal_id])
 }
 
 pub(super) fn stop_terminals(runtime: &TerminalRuntime, terminal_ids: &[String]) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
+    let mut history = runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?;
     for id in terminal_ids {
-        if let Some(mut process) = processes.remove(id) { let _ = process.child.kill(); let _ = process.child.wait(); }
-        runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?.remove(id);
+        if let Some(process) = processes.get_mut(id) { stop_terminal_process(process).map_err(|error| format!("Could not close terminal {id}: {error}"))?; }
+        processes.remove(id);
+        history.remove(id);
     }
+    Ok(())
+}
+
+fn stop_terminal_process(process: &mut TerminalProcess) -> Result<(), String> {
+    if process.child.try_wait().map_err(|error| error.to_string())?.is_none() {
+        process.child.kill().map_err(|error| error.to_string())?;
+    }
+    process.child.wait().map_err(|error| error.to_string())?;
     Ok(())
 }
 

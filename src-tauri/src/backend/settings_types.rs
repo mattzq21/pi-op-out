@@ -19,6 +19,8 @@ pub(super) struct RemoteHost {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct AppSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) settings_revision: Option<String>,
     #[serde(default = "default_agent")]
     pub(super) review_agent: String,
     #[serde(default = "default_review_prompt")]
@@ -82,6 +84,7 @@ pub(super) fn default_review_prompt() -> String { include_str!("../../resources/
 
 pub(super) fn default_settings() -> AppSettings {
     AppSettings {
+        settings_revision: None,
         review_agent: default_agent(),
         review_prompt: default_review_prompt(),
         dictation_model_path: None,

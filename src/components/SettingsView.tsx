@@ -105,17 +105,16 @@ export function SettingsView(props: SettingsViewProps) {
   const [settingsConflict, setSettingsConflict] = createSignal(false);
   const [agentsConflict, setAgentsConflict] = createSignal(false);
   const conflict = () => settingsConflict() || agentsConflict();
-  const incomingSettingsSnapshot = createRef(settingsSnapshot(settingsProps().settings));
+  const incomingSettingsSnapshot = createRef("");
   createDependencyEffect(() => {
     if (saving()) return;
     const incoming = settingsProps().settings;
-    const incomingSnapshot = settingsSnapshot(incoming);
+    const incomingSnapshot = stableSnapshot([settingsSnapshot(incoming), incoming.settingsRevision, incoming.clientSettingsRevision]);
 
     if (incomingSnapshot === incomingSettingsSnapshot.current) return;
     incomingSettingsSnapshot.current = incomingSnapshot;
     const baseline = baselineValue();
 
-    if (settingsSnapshot(incoming) === baselineSettings()) return;
     const local = draft();
     const merged = { ...incoming };
     let collisions = false;

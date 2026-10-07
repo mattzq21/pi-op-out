@@ -1,11 +1,12 @@
 use super::*;
 
 impl SessionQueue {
-    pub(super) async fn execute_held_prompt(&self, command: Value) -> Result<Value> {
+    pub(super) async fn execute_held_prompt(&self, mut command: Value) -> Result<Value> {
         let id = Uuid::new_v4().to_string();
         let mut item = json!({"id":id,"message":command["message"],"behavior":"followUp","deliveryStarted":true});
         if let Some(images) = command.get("images") { item["images"] = images.clone(); }
         self.retain_item(&item)?;
+        command["queueInputId"] = json!(id);
         {
             let mut state = self.state();
             state.pending.push(item);
@@ -82,15 +83,12 @@ impl SessionQueue {
         if !message["timestamp"].is_number() { return Ok(()); }
         let mut state = self.state();
         let mut retained = state.retained.clone();
-        let content = message_text(&message["content"], "");
-        if retained.iter().any(|item| item["consumedTimestamp"] == message["timestamp"]) { return Ok(()); }
-        let candidates: Vec<_> = retained.iter().enumerate().filter(|(_, item)| {
-            match_consumed(item, message, &content) && available_for_consumption(&state, item)
-        }).map(|(index, _)| index).collect();
+        let candidates = consumption_candidates(&state, &retained, message);
         if let [index] = candidates.as_slice() {
             let item = &mut retained[*index];
             item["consumedTimestamp"] = message["timestamp"].clone();
             item["consumedContent"] = message["content"].clone();
+            item["consumedInputId"] = message["piopQueueInputId"].clone();
             self.save_retained(&retained)?;
             state.retained = retained;
         }
@@ -103,7 +101,7 @@ impl SessionQueue {
         let mut state = self.state();
         let consumed: HashSet<_> = state.retained.iter().filter(|item| {
             item["consumedTimestamp"].is_number() && messages.iter().any(|message| {
-                message["timestamp"] == item["consumedTimestamp"] && message["content"] == item["consumedContent"]
+                matches_recorded_consumption(item, message)
             })
         }).map(|item| text(item, "id")).collect();
         if consumed.is_empty() { return Ok(()); }
@@ -127,11 +125,29 @@ fn update_item(items: &mut Vec<Value>, item: &Value) {
 }
 
 fn preserve_delivery(item: &mut Value, saved: &Value) {
-    for field in ["consumedTimestamp", "consumedContent", "deliveryStarted"] {
+    for field in ["consumedTimestamp", "consumedContent", "consumedInputId", "deliveryStarted"] {
         if item.get(field).is_none() {
             if let Some(value) = saved.get(field) { item[field] = value.clone(); }
         }
     }
+}
+
+fn consumption_candidates(state: &QueueState, retained: &[Value], message: &Value) -> Vec<usize> {
+    if let Some(id) = message["piopQueueInputId"].as_str() {
+        return retained.iter().enumerate().filter(|(_, item)| {
+            item["id"] == id && flag(item, "deliveryStarted") && item["consumedTimestamp"].is_null()
+        }).map(|(index, _)| index).collect();
+    }
+    if retained.iter().any(|item| item["consumedTimestamp"] == message["timestamp"]) { return Vec::new(); }
+    let content = message_text(&message["content"], "");
+    retained.iter().enumerate().filter(|(_, item)| {
+        match_consumed(item, message, &content) && available_for_consumption(state, item)
+    }).map(|(index, _)| index).collect()
+}
+
+fn matches_recorded_consumption(item: &Value, message: &Value) -> bool {
+    let identified = item["consumedInputId"].as_str().is_none_or(|id| message["piopQueueInputId"] == id);
+    identified && message["timestamp"] == item["consumedTimestamp"] && message["content"] == item["consumedContent"]
 }
 
 fn match_consumed(item: &Value, message: &Value, content: &str) -> bool {

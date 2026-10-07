@@ -336,6 +336,8 @@ function restoreGroup(root, records, directoryPlans = [], worktreePlans = []) {
     worktrees: worktreePlans,
   };
 
+  if (Buffer.byteLength(JSON.stringify(transaction.result)) + 1 > 64 * 1024 * 1024) throw new Error('Restore group is too large; restore fewer conversations at a time');
+
   const journalDirectory = path.join(root, 'restore-transactions');
   fs.mkdirSync(journalDirectory, { recursive: true, mode: 0o700 });
   sync(root);

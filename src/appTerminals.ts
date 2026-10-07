@@ -31,6 +31,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const [terminalsBySession, setTerminalsBySession] = createSignal<Record<string, SessionTerminals>>({});
   const closingTerminals = createRef(new Set<string>());
   const startingTerminals = createRef(new Set<string>());
+  const draftRevisions = new Map<string, symbol>();
   const terminalPanelRevision = createRef(0);
   const terminalSessionId = createMemo(() => terminalConversationKey(terminalTarget(), conversationKey()));
   const terminalSessionIdRef = createRef(terminalSessionId());
@@ -300,6 +301,8 @@ export function createTerminalController({ transport, sessionTransport, conversa
     return; }
     finally { closingTerminals.current.delete(terminalId); }
 
+    draftRevisions.delete(terminalId);
+
     if (closingLast && terminalSessionIdRef.current === panelTarget && terminalPanelRevision.current === panelRevision) { setPrepareTerminal(false); setTerminalOpen(false); }
 
     const sessionKey = panelTarget;
@@ -322,6 +325,8 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
   const forgetConversation = (key: string) => setTerminalsBySession(current => {
     if (!(key in current)) return current;
+
+    for (const tab of current[key].tabs) draftRevisions.delete(tab.id);
     const next = { ...current }; delete next[key];
 
     return next;
@@ -372,15 +377,38 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
   const close = () => { terminalPanelRevision.current += 1; setTerminalOpen(false); };
 
-  const write = (data: string) => {
-    if (!ready() || !owned()) return;
-    const id = state.activeTerminal.id;
-    void transport().writeTerminal(id, data).catch(reason => { addNotice({ title: "Terminal input failed", message: String(reason) }); void refreshShared(); });
+  const syncDraft = (id: string, data: string) => {
+    draftRevisions.set(id, Symbol());
+    void nativeTerminals.write(id, data, "draft").catch(reason => addNotice({ title: "Could not sync terminal input", message: String(reason) }));
+  };
+
+  const clearAcceptedDraft = (key: string, id: string, generation: string | undefined, revision: symbol | undefined) => {
+    const target = terminalsBySession()[key]?.tabs.find(tab => tab.id === id);
+
+    if (!target || target.generation !== generation || !sessionTransport(key)?.hasConfirmedOwnership()) return;
+
+    if (revision === draftRevisions.get(id)) syncDraft(id, "");
+  };
+
+  const write = async (data: string, clearDraft = false) => {
+    if (!ready() || !owned()) return false;
+    const { id, generation } = state.activeTerminal;
+    const key = terminalSessionId();
+    const revision = draftRevisions.get(id);
+
+    try { await transport().writeTerminal(id, data); }
+    catch (reason) { addNotice({ title: "Terminal input failed", message: String(reason) }); void refreshShared();
+
+      return false; }
+
+    if (clearDraft) clearAcceptedDraft(key, id, generation, revision);
+
+    return true;
   };
 
   const updateDraft = (data: string) => {
     if (!ready() || !owned()) return;
-    void nativeTerminals.write(state.activeTerminal.id, data, "draft").catch(reason => addNotice({ title: "Could not sync terminal input", message: String(reason) }));
+    syncDraft(state.activeTerminal.id, data);
   };
 
   const resize = async (cols: number, rows: number) => {

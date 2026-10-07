@@ -36,6 +36,7 @@ function retainedPreview(prompt: string | undefined, previous: SessionSummary | 
 
 export class SessionRuntimePool {
   private readonly transports = new Set<NativeTransport>();
+  private readonly releasing = new Map<NativeTransport, Promise<void>>();
   private readonly sessions = new Map<string, NativeTransport>();
   private readonly runningTransports = new Set<NativeTransport>();
   private readonly unseenTransports = new Set<NativeTransport>();
@@ -130,7 +131,7 @@ export class SessionRuntimePool {
   private retainSession(transport: NativeTransport, prompt?: string, lastMessageAt?: number) {
     this.retainedTransports.add(transport);
     void transport.command({ type: "get_state" }, agentStateSchema).then((state) => {
-      if (!state.sessionId || !this.transports.has(transport)) return;
+      if (!state.sessionId || !this.transports.has(transport) || this.releasing.has(transport)) return;
 
       if (state.sessionFile && this.removedPaths.has(`${transport.currentHostId()}:${state.sessionFile}`)) return;
       this.bind(transport.currentHostId(), state.sessionId, transport);
@@ -237,13 +238,15 @@ export class SessionRuntimePool {
     const hostId = session.hostId ?? "local"; const key = sessionKey(session.daemonId ?? hostId, session.id);
     const existing = this.sessions.get(key) ?? this.sessions.get(sessionKey(hostId, session.id));
 
-    if (existing) return existing;
+    if (existing && !this.releasing.has(existing)) return existing;
     const transport = this.create({ cwd: session.cwd || undefined, sessionPath: session.path || undefined, hostId }); this.sessions.set(key, transport);
 
     return transport;
   }
 
   bind(hostId: string, sessionId: string, transport: NativeTransport) {
+    if (this.releasing.has(transport)) return;
+
     for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key);
 
     if (!sessionId) { this.publishSessionStates();
@@ -325,20 +328,38 @@ export class SessionRuntimePool {
   }
 
   async remove(session: SessionSummary) {
-    const key = sessionKey(session.daemonId ?? session.hostId ?? "local", session.id); const transport = this.sessions.get(key); this.sessions.delete(key);
+    const key = sessionKey(session.daemonId ?? session.hostId ?? "local", session.id); const transport = this.sessions.get(key);
 
     if (transport) await this.release(transport);
+
+    if (this.sessions.get(key) === transport) this.sessions.delete(key);
   }
 
   isInteractive(transport: NativeTransport) { return this.interactiveTransports.has(transport); }
 
-  async release(transport: NativeTransport) { if (!this.transports.has(transport) || this.isInteractive(transport)) return; forgetSession(transport);
+  async release(transport: NativeTransport) {
+    const pending = this.releasing.get(transport);
 
-  for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport); this.diffStates.delete(transport);
+    if (pending) return pending;
 
-  if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); }
+    if (!this.transports.has(transport) || this.isInteractive(transport)) return;
 
-  this.publishSessionStates(); await transport.dispose(); }
+    const release = Promise.resolve().then(async () => {
+      await transport.dispose();
+      forgetSession(transport);
+
+      for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key);
+      this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport); this.diffStates.delete(transport);
+
+      if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); }
+
+      this.publishSessionStates();
+    }).finally(() => this.releasing.delete(transport));
+
+    this.releasing.set(transport, release);
+
+    return release;
+  }
 
   subscribe(listener: () => void) { this.listeners.add(listener);
 

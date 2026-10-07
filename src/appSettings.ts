@@ -36,7 +36,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     const next = recordSeenModels((capturedSettings), capturedSession.models.map((model) => `${model.provider}/${model.id}`));
 
     if (!next) return;
-    void saveClientSettings(next).then(() => setSettings(current => current ? { ...current, knownModels: next.knownModels, hiddenModels: next.hiddenModels } : current)).catch(() => undefined);
+    void saveClientSettings(next).then(saved => setSettings(current => current && (current.clientSettingsRevision === capturedSettings.clientSettingsRevision || current.clientSettingsRevision === saved.clientSettingsRevision) ? { ...current, knownModels: saved.knownModels, hiddenModels: saved.hiddenModels, clientSettingsRevision: saved.clientSettingsRevision } : current)).catch(() => undefined);
   }, () => [chatSession().models, settings(), transport()]);
   createDependencyEffect(() => {
     let revision = 0; let pendingSettings: AppSettings | undefined;
@@ -67,14 +67,14 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
 
     return nextSettings; };
 
-  const saveSettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig) => {
+  const saveSettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig, scope: "all" | "client" | "daemon" = "all") => {
     if (settingsSavePending.current || debugModePending.current) throw new Error("Wait for the current settings save to finish");
     settingsSavePending.current = true; setSettingsSaving(true);
 
-    try { await applySettings(value, nextConfig, previousConfig); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
+    try { await applySettings(value, nextConfig, previousConfig, scope); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
   };
 
-  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig) => { const capturedSettings = settings(); const capturedTransport = transport();
+  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig, scope: "all" | "client" | "daemon" = "all") => { const capturedSettings = settings(); const capturedTransport = transport();
 
     if (!capturedSettings) throw new Error("Settings are still loading");
     const next = value; const agentHostId = nextConfig ? "local" : undefined;
@@ -94,7 +94,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     try {
       if (nextConfig) { await writeAgents(nextConfig); agentsSaved = true; }
 
-      savedChange = await capturedTransport.saveSettings(next, false, agentHostId);
+      savedChange = await capturedTransport.saveSettings(next, false, agentHostId, scope);
     } catch (reason) {
       if (agentsSaved && previousConfig) {
         try { await writeAgents(previousConfig); }
@@ -112,7 +112,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
   const toggleDebugMode = () => {
     if (!settings() || debugModePending.current || settingsSavePending.current) return; debugModePending.current = true; setDebugModeSaving(true);
     const next = { ...required((settings())), debugMode: !required((settings())).debugMode };
-    void saveClientSettings(next).then(() => { setSettings(current => current ? { ...current, debugMode: next.debugMode } : current); }).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
+    void saveClientSettings(next).then(saved => { setSettings(current => current && (current.clientSettingsRevision === next.clientSettingsRevision || current.clientSettingsRevision === saved.clientSettingsRevision) ? { ...current, debugMode: saved.debugMode, clientSettingsRevision: saved.clientSettingsRevision } : current); }).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
   };
 
  return { settings, setSettings, runtimeSettings, applyRuntimeSettings, settingsSavePending, settingsSaving, setSettingsSaving, debugModeSaving, setDebugModeSaving, debugModePending, settingsDirty, setSettingsDirty, loadSettings, saveSettings, applySettings, toggleDebugMode };

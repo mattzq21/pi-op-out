@@ -18,7 +18,7 @@ interface Props {
   settings: AppSettings;
   pendingSettingsCount: number;
   sessions: SessionSummary[];
-  onSave: (settings: AppSettings, config?: AgentConfig, previousConfig?: AgentConfig) => Promise<void>;
+  onSave: (settings: AppSettings, config?: AgentConfig, previousConfig?: AgentConfig, scope?: "all" | "client" | "daemon") => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
   onSavingChange?: (saving: boolean) => void;
   selectedSection?: Section;
@@ -115,7 +115,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   const save = async (next: AppSettings, config?: AgentConfig) => { const capturedHostId = hostId(); const capturedResources = resources(); const capturedTarget0 = componentProps.target; const capturedOnSave1 = componentProps.onSave;
     setSaveWarning(undefined);
 
-    if (capturedTarget0 === "client" || capturedHostId === "local") await capturedOnSave1(next, config, capturedResources?.config);
+    if (capturedTarget0 === "client" || capturedHostId === "local") await capturedOnSave1(next, config, capturedResources?.config, capturedTarget0 === "client" ? "client" : "daemon");
     else {
       const writer = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
       let agentsSaved = false;

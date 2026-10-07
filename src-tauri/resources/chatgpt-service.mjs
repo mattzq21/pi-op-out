@@ -1,4 +1,4 @@
-import { mkdir as chatMkdir, readFile as chatRead, readdir as chatReadDir, rename as chatRename, writeFile as chatWrite, rm as chatRemove } from 'node:fs/promises';
+import { mkdir as chatMkdir, readFile as chatRead, readdir as chatReadDir, writeFile as chatWrite } from 'node:fs/promises';
 import { dirname as chatDirname, join as chatJoin } from 'node:path';
 import { createHash as chatHash, randomUUID as chatUuid } from 'node:crypto';
 import { getDefaultAutoSelectFamilyAttemptTimeout, setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net';
@@ -64,14 +64,24 @@ function chatGptLeaseLive(key, lease) { return Boolean(lease && (lease.expires >
 
 function chatGptLeaseOwner(request) { return JSON.stringify([request.clientId, chatGptId(request.leaseId)]); }
 
+function chatGptForgetLease(key, lease) { chatGptLeases.delete(key); chatGptReleaseStorage(lease.lock); }
+
+function chatGptExpireLeases() {
+  for (const [key, lease] of chatGptLeases) if (!chatGptLeaseLive(key, lease)) chatGptForgetLease(key, lease);
+}
+
+const chatGptLeaseTimer = setInterval(chatGptExpireLeases, 1000);
+
+chatGptLeaseTimer.unref();
+
 function chatGptUpdateLease(key, owner, action) {
   let lease = chatGptLeases.get(key);
 
   if (action === 'release' && lease?.owner === owner) {
-    if (chatGptLeaseBusy(key, lease)) lease.expires = 0;
-    else { chatGptLeases.delete(key); lease = undefined; }
-  } else if (lease?.owner === owner || (action === 'claim' && !lease)) {
-    lease ??= { owner, busy: 0, expires: 0 };
+    if (chatGptLeaseBusy(key, lease)) { lease.expires = 0; lease.released = true; }
+    else { chatGptForgetLease(key, lease); lease = undefined; }
+  } else if (lease?.owner === owner && (!lease.released || action === 'claim')) {
+    lease.released = false;
     lease.expires = Date.now() + 30000;
     chatGptLeases.set(key, lease);
   }
@@ -83,10 +93,33 @@ function chatGptOwnership(identity, request, action = 'read') {
   const key = chatGptKey(identity, request.chatId);
   const owner = chatGptLeaseOwner(request);
 
-  for (const [id, lease] of chatGptLeases) if (!chatGptLeaseLive(id, lease)) chatGptLeases.delete(id);
+  chatGptExpireLeases();
+  chatGptEnsureLease(identity, request.chatId, owner, action);
   const lease = chatGptUpdateLease(key, owner, action);
 
-  return { owned: lease?.owner === owner, available: !lease };
+  if (lease) return { owned: lease.owner === owner && !lease.released, available: false };
+  const lock = chatGptAcquireStorage(identity, chatGptId(request.chatId));
+  chatGptReleaseStorage(lock);
+
+  return { owned: false, available: Boolean(lock) };
+}
+
+function chatGptEnsureLease(identity, id, owner, action) {
+  const key = chatGptKey(identity, id);
+  let lease = chatGptLeases.get(key);
+
+  if (!lease && action !== 'claim') return;
+
+  if (lease?.lock) return;
+  const lock = chatGptAcquireStorage(identity, id);
+
+  if (!lock) { if (lease) chatGptForgetLease(key, lease);
+
+  return; }
+
+  lease ??= { owner, busy: 0, expires: 0 };
+  lease.lock = lock;
+  chatGptLeases.set(key, lease);
 }
 
 async function chatGptOwnedOperation(identity, request, run) {
@@ -114,7 +147,7 @@ export function chatGptRestore(snapshot) {
 
   for (const [id, ticket] of tickets) if (ticket.expires > Date.now()) chatGptTickets.set(id, ticket);
 
-  for (const [id, lease] of snapshot.leases ?? []) chatGptLeases.set(id, { owner: lease.owner, busy: 0, expires: Date.now() + 30000 });
+  for (const [id, lease] of snapshot.leases ?? []) if (!chatGptLeases.has(id)) chatGptLeases.set(id, { owner: lease.owner, busy: 0, expires: Date.now() + 30000 });
 }
 
 function chatGptId(value) {
@@ -139,6 +172,8 @@ async function chatGptIdentity(loaded, providerId = 'openai-codex') {
   const key = chatHash('sha256').update(`${claims.sub}:${account}`).digest('hex');
   const directory = chatJoin(chatDirname(loaded.authPath), 'piop-chatgpt', key);
   await chatMkdir(directory, { recursive: true, mode: 0o700 });
+  await chatGptSyncStorageDirectory(chatDirname(directory));
+  await chatGptSyncStorageDirectory(chatDirname(chatDirname(directory)));
   const device = await chatGptDevice(directory);
 
   return { key, directory, providerId, headers: {
@@ -209,18 +244,16 @@ function chatGptKey(identity, id) { return `${identity.key}:${chatGptId(id)}`; }
 async function chatGptSave(identity, chat) {
   const path = chatGptFile(identity, chat.id);
   const data = JSON.stringify(chat);
+  const lock = chatGptRetainStorage(identity, chat.id);
   const previous = chatGptWrites.get(path) ?? Promise.resolve();
 
   const write = previous.catch(() => undefined).then(async () => {
-    const temporary = `${path}.${chatUuid()}.tmp`;
-
-    try { await chatWrite(temporary, data, { mode: 0o600 }); await chatRename(temporary, path); chatGptChanged(identity.providerId, 'chats'); }
-    finally { await chatRemove(temporary, { force: true }); }
+    await chatGptPublishDocument(path, data); chatGptChanged(identity.providerId, 'chats');
   });
 
   chatGptWrites.set(path, write);
 
-  try { await write; } finally { if (chatGptWrites.get(path) === write) chatGptWrites.delete(path); }
+  try { await write; } finally { if (chatGptWrites.get(path) === write) chatGptWrites.delete(path); chatGptReleaseStorage(lock); }
 }
 
 async function chatGptLoad(identity, id) {
@@ -265,10 +298,18 @@ async function chatGptReadChat(identity, id) {
 
   if (chatGptStopping.has(key)) return { ...await chatGptLoad(identity, id), status: 'stopping' };
 
-  const value = await chatGptQueuedOperation(identity, id, async () => {
+  const value = await chatGptQueuedOperation(identity, id, () => chatGptReadOwned(identity, id, key));
+
+  return chatGptStopping.has(key) ? { ...value, status: 'stopping' } : value;
+}
+
+async function chatGptReadOwned(identity, id, key) {
+  const lock = chatGptAcquireStorage(identity, chatGptId(id));
+
+  try {
     const chat = await chatGptLoad(identity, id);
 
-    if (chatGptStopping.has(key)) return chat;
+    if (!lock || chatGptStopping.has(key)) return chat;
 
     try { return await chatGptRecover(identity, chat); }
     catch (error) {
@@ -276,9 +317,7 @@ async function chatGptReadChat(identity, id) {
 
       return { ...chat, error: error.message || chat.error };
     }
-  });
-
-  return chatGptStopping.has(key) ? { ...value, status: 'stopping' } : value;
+  } finally { chatGptReleaseStorage(lock); }
 }
 
 async function chatGptQueuedOperation(identity, id, run) {

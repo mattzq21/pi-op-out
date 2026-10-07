@@ -25,7 +25,7 @@ use std::sync::atomic::Ordering;
 use crate::platform::AppHandle;
 use crate::{AppSettings, MAX_REMOTE_HOSTS, PiRuntime, daemon, peers};
 use crate::pi_launch::{validate_remote_host};
-use crate::settings_storage::{atomic_write_private, migrate_keybindings, settings_path, validate_keybindings};
+use crate::settings_storage::{atomic_write_private, lock_settings, migrate_keybindings, settings_path, settings_revision, validate_keybindings};
 
 
 
@@ -72,7 +72,13 @@ fn initialize_session_tools(settings: &mut AppSettings) {
 }
 
 pub(super) fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
-    let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
+    let body = match fs::read(path) {
+        Ok(body) => Some(body),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut settings = match &body { Some(body) => serde_json::from_slice(body).map_err(|error| error.to_string())?, None => default_settings() };
+    settings.settings_revision = Some(settings_revision(body.as_deref()));
     migrate_question_tool(&mut settings);
     migrate_goal_tools(&mut settings);
     initialize_session_tools(&mut settings);
@@ -145,8 +151,18 @@ pub(super) fn save_settings_with(
     migrate_keybindings(&mut settings);
     validate_settings_for_save(&settings)?;
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+    let path = path()?;
+    let file_lock = lock_settings(&path)?;
+    let previous = read_settings_at(&path)?;
+    if settings.settings_revision.is_none() || settings.settings_revision != previous.settings_revision {
+        return Err("Settings changed in another window or client. Reload the latest settings before saving.".into());
+    }
     let mut revisions = agent_host_id.as_ref().map(|_| runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")).transpose()?;
-    atomic_write_private(&path()?, &serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?)?;
+    settings.settings_revision = None;
+    let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
+    atomic_write_private(&path, &body)?;
+    settings.settings_revision = Some(settings_revision(Some(&body)));
+    drop(file_lock);
     let mut change = json!({"settings":settings});
     if let (Some(host_id), Some(revisions)) = (agent_host_id, revisions.as_mut()) {
         let revision = runtime.agent_config_revision.fetch_add(1, Ordering::SeqCst) + 1;

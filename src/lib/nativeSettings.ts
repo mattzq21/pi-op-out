@@ -50,7 +50,7 @@ export class NativeSettings {
     }
   }
 
-  save(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" = "all") {
+  save(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" | "daemon" = "all") {
     const save = () => this.saveNow(settings, reconnect, agentHostId, scope);
     const result = this.lifecycle.then(save, save);
     this.lifecycle = result.then(() => undefined, () => undefined);
@@ -58,7 +58,7 @@ export class NativeSettings {
     return result;
   }
 
-  private async saveNow(settings: AppSettings, reconnect: boolean, agentHostId: string | undefined, scope: "all" | "client") {
+  private async saveNow(settings: AppSettings, reconnect: boolean, agentHostId: string | undefined, scope: "all" | "client" | "daemon") {
     const shortcutError = keybindingsError(settings.keybindings);
 
     if (shortcutError) throw new Error(shortcutError);
@@ -66,26 +66,26 @@ export class NativeSettings {
     const previousClient = await withClientSettings(previous);
     const daemonSettings = scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
     const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
-    const clientChanged = JSON.stringify(preferences(settings)) !== JSON.stringify(preferences(previousClient));
+    const clientChanged = scope !== "daemon" && JSON.stringify(preferences(settings)) !== JSON.stringify(preferences(previousClient));
 
-    if (clientChanged) await saveClientSettings(settings);
+    const savedClient = clientChanged ? await saveClientSettings(settings) : previousClient;
     let change;
 
     try { change = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { settings: previous }; }
     catch (reason) {
-      await this.restoreClientSettings(previousClient, clientChanged, String(reason));
+      await this.restoreClientSettings(previousClient, clientChanged ? savedClient.clientSettingsRevision : undefined, String(reason));
       throw reason;
     }
 
-    change.settings = { ...change.settings, ...preferences(settings) };
+    change.settings = { ...change.settings, ...preferences(savedClient), clientSettingsRevision: savedClient.clientSettingsRevision };
 
     if (reconnect && daemonChanged) await this.reconnectAfterSave(settings);
 
     return change;
   }
 
-  private async restoreClientSettings(settings: AppSettings, changed: boolean, reason: string) {
-    try { if (changed) await saveClientSettings(settings); }
+  private async restoreClientSettings(settings: AppSettings, expectedRevision: string | undefined, reason: string) {
+    try { if (expectedRevision) await saveClientSettings(settings, expectedRevision); }
     catch (rollback) { throw new Error(`Settings save failed: ${String(reason)}. Client preferences could not be restored: ${String(rollback)}. Reload settings before retrying.`); }
   }
 

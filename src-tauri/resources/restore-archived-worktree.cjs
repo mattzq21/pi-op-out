@@ -89,12 +89,14 @@ function worktreePlan(entries, header) {
   const saved = header.worktreeRestore;
   verifyLocation(header, saved);
   const git = args => execFileSync('git', ['-C', saved.repositoryRoot, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3, 4] }).trim();
+
+  if (git(['rev-parse', '--verify', saved.ref]) !== saved.commit) throw new Error('The recovery checkpoint is missing or has changed');
+  git(['cat-file', '-e', `${saved.commit}^{commit}`]);
+  verifySnapshot(entries, saved);
   const existing = existingWorktree(saved, git);
 
   if (existing) return existing;
 
-  if (git(['rev-parse', '--verify', saved.ref]) !== saved.commit) throw new Error('The recovery checkpoint is missing or has changed');
-  verifySnapshot(entries, saved);
   absent(saved.path);
 
   return {

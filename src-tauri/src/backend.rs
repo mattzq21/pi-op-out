@@ -346,6 +346,7 @@ mod tests;
 
 #[path = "backend/settings_storage.rs"]
 mod settings_storage;
+mod settings_concurrency;
 #[path = "backend/extensions.rs"]
 mod extensions;
 #[path = "backend/settings.rs"]

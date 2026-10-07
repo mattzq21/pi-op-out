@@ -19,19 +19,28 @@ export function preferences(settings: AppSettings): ClientSettings {
   return { keybindings: settings.keybindings, hiddenModels: settings.hiddenModels, knownModels: settings.knownModels, debugMode: settings.debugMode };
 }
 
-async function storedPreferences(): Promise<{ settings: StoredPreferences; persisted: boolean }> {
-  const stored = await invoke("load_client_settings", undefined, clientSettingsSchema.nullable());
+async function storedPreferences(): Promise<{ settings: StoredPreferences; persisted: boolean; revision: string }> {
+  const stored = await invoke("load_client_settings", undefined, z.object({ settings: clientSettingsSchema.nullable(), revision: z.string() }));
 
-  if (stored) return { settings: clientSettingsSchema.parse(stored), persisted: true };
+  if (stored.settings) return { settings: stored.settings, persisted: true, revision: stored.revision };
 
-  try { return { settings: clientSettingsSchema.parse(JSON.parse(localStorage.getItem(storageKey) ?? "null")), persisted: false }; } catch { return { settings: {}, persisted: false }; }
+  try { return { settings: clientSettingsSchema.parse(JSON.parse(localStorage.getItem(storageKey) ?? "null")), persisted: false, revision: stored.revision }; } catch { return { settings: {}, persisted: false, revision: stored.revision }; }
 }
 
 export async function withClientSettings(source: AppSettings | Promise<AppSettings>, migrate = false): Promise<AppSettings> {
   const [settings, preferences] = await Promise.all([source, storedPreferences()]);
-  const merged = mergeClientSettings(settings, preferences.settings);
+  const merged = { ...mergeClientSettings(settings, preferences.settings), clientSettingsRevision: preferences.revision };
 
-  if (migrate && !preferences.persisted) await saveClientSettings(merged);
+  if (migrate && !preferences.persisted) {
+    try { return await saveClientSettings(merged); }
+    catch (reason) {
+      const latest = await storedPreferences();
+
+      if (!latest.persisted) throw reason;
+
+      return { ...mergeClientSettings(settings, latest.settings), clientSettingsRevision: latest.revision };
+    }
+  }
 
   return merged;
 }
@@ -45,10 +54,13 @@ function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): 
   };
 }
 
-export async function saveClientSettings(settings: AppSettings) {
-  await invoke("save_client_settings", { settings: preferences(settings) });
+export async function saveClientSettings(settings: AppSettings, expectedRevision = settings.clientSettingsRevision): Promise<AppSettings> {
+  if (!expectedRevision) throw new Error("Reload settings before saving client preferences.");
+  const saved = await invoke("save_client_settings", { settings: preferences(settings), expectedRevision }, z.object({ revision: z.string() }));
 
   try { localStorage.removeItem(storageKey); } catch { }
+
+  return { ...settings, clientSettingsRevision: saved.revision };
 }
 
 export function preserveDaemonPreferences(settings: AppSettings, daemonSettings: AppSettings): AppSettings {
