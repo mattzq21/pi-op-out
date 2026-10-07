@@ -17,8 +17,8 @@
 .quick-chat-context-toggle input { margin: 0; accent-color: var(--accent); }
 .quick-chat-composer textarea { box-sizing: border-box; width: 100%; min-height: 85px; max-height: 220px; resize: vertical; color: var(--ink); background: var(--dark-control, var(--paper)); border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: inherit; font-size: 14px; }
 .quick-chat-composer textarea::placeholder { color: var(--faint); }
-.quick-chat-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
-.quick-chat-model-controls { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; }
+.quick-chat-controls { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.quick-chat-model-controls { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; margin-left: auto; }
 .quick-chat-picker { position: relative; min-width: 0; }
 .quick-chat-picker select { appearance: none; -webkit-appearance: none; display: block; width: auto; max-width: 148px; height: 28px; margin: 0; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer; color-scheme: inherit; transition: background .12s, color .12s; }
 .quick-chat-picker select:hover:not(:disabled) { background: var(--dark-control-hover, var(--panel)); color: var(--ink); }

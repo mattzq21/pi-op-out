@@ -1,5 +1,5 @@
 import { For, Show, createEffect } from "solid-js";
-import { Plus, Send, Square } from "lucide-solid";
+import { Plus, Square } from "lucide-solid";
 import { IconButton } from "../../components/IconButton";
 import { Markdown } from "../../components/Markdown";
 import { useChatGpt, type QuickChatRequest } from "./useChatGpt";
@@ -43,10 +43,11 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
       <textarea ref={composer} aria-label="Message ChatGPT" placeholder="Message ChatGPT" value={state.prompt()} maxLength={100000} disabled={state.busy()} readOnly={!state.editable()} onInput={event => state.setPrompt(event.currentTarget.value)} onKeyDown={event => {
         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); follow = true; void state.send(); }
       }} />
-      <div class="quick-chat-controls">{renderModelControls()}
-        <Show when={active()} fallback={<button type="submit" aria-label="Send to ChatGPT" disabled={!state.editable() || !state.prompt().trim() || state.loading() || !state.models().length}><Send size={17} /></button>}>
+      <div class="quick-chat-controls">
+        <Show when={active()}>
           <button type="button" aria-label={state.recovering() ? "Stop recovery" : "Stop ChatGPT"} disabled={!state.editable() || state.chat()?.status === "stopping"} onClick={() => void state.stop()}><Square size={16} /><Show when={state.recovering()}>Stop recovery</Show></button>
         </Show>
+        {renderModelControls()}
       </div>
     </form>;
 
