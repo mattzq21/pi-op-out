@@ -23,9 +23,10 @@ struct Configuration {
     previous: Vec<String>,
 }
 
+#[derive(Clone)]
 struct Runtime {
     enabled: Vec<String>,
-    chatgpt: Option<Sdk>,
+    chatgpt: Option<Arc<Sdk>>,
 }
 
 struct State {
@@ -55,16 +56,25 @@ impl Runtime {
         validate(&enabled)?;
         if enabled.iter().any(|id| id == "markdown") { markdown::initialize()?; }
         let chatgpt = if enabled.iter().any(|id| id == "chatgpt") {
-            Some(start_chatgpt(executable, events).await?)
+            Some(Arc::new(start_chatgpt(executable, events).await?))
         } else { None };
         Ok(Self { enabled, chatgpt })
     }
 
-    async fn drain(&self) -> Result<()> {
-        let Some(sdk) = &self.chatgpt else { return Ok(()); };
+    async fn drain(&self, disabling: bool) -> Result<bool> {
+        let Some(sdk) = &self.chatgpt else { return Ok(true); };
         tokio::time::timeout(Duration::from_secs(30), async {
             loop {
-                if sdk.request(json!({"method":"plugin_idle"})).await? == true { return Ok(()); }
+                let idle = tokio::time::timeout(Duration::from_secs(5), sdk.request(json!({"method":"plugin_idle"}))).await
+                    .map_err(|_| "ChatGPT worker did not respond to the restart readiness check".to_owned())
+                    .and_then(|result| result)
+                    .and_then(|value| value.as_bool().ok_or_else(|| "ChatGPT worker returned an invalid readiness response".to_owned()));
+                match idle {
+                    Ok(true) => return Ok(true),
+                    Ok(false) => {},
+                    Err(error) if disabling => { eprintln!("Disabling unavailable ChatGPT worker: {error}"); return Ok(false); },
+                    Err(error) => return Err(error),
+                }
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
         }).await.map_err(|_| "ChatGPT is still responding. The previous plugins remain active; restart again when it finishes.".to_owned())?
@@ -180,15 +190,18 @@ impl PluginService {
         if packet["type"] == "plugin_idle" { return self.idle().await; }
         self.initialize().await;
         if packet["type"] == "prepare_daemon_restart" { return self.prepare_restart(&packet).await; }
-        let state = self.state.read().await;
-        let state = state.as_ref().ok_or("Plugins are unavailable")?;
-        if packet["type"] == "plugin_status" { return Ok(state.status()); }
-        state.runtime.call(&packet).await
+        let runtime = {
+            let state = self.state.read().await;
+            let state = state.as_ref().ok_or("Plugins are unavailable")?;
+            if packet["type"] == "plugin_status" { return Ok(state.status()); }
+            state.runtime.clone()
+        };
+        runtime.call(&packet).await
     }
 
     async fn idle(&self) -> Result<Value> {
-        let state = self.state.read().await;
-        match state.as_ref().and_then(|state| state.runtime.chatgpt.as_ref()) {
+        let sdk = self.state.read().await.as_ref().and_then(|state| state.runtime.chatgpt.clone());
+        match sdk {
             Some(sdk) => sdk.request(json!({"method":"plugin_idle"})).await,
             None => Ok(json!(true)),
         }
@@ -200,7 +213,7 @@ impl PluginService {
         let state = self.state.write().await;
         let current = state.as_ref().ok_or("Plugins are unavailable")?;
         if packet["revision"].as_str() != Some(&current.revision) { return Err("Plugin setup changed in another client. Reload the plugin setup before restarting.".into()); }
-        let tickets = checkpoint(&current.runtime).await?;
+        let tickets = checkpoint(&current.runtime, !enabled.iter().any(|id| id == "chatgpt")).await?;
         Ok(json!({"enabled":enabled,"previous":current.runtime.enabled,"tickets":tickets}))
     }
 
@@ -209,10 +222,17 @@ impl PluginService {
     }
 }
 
-async fn checkpoint(runtime: &Runtime) -> Result<Value> {
-    runtime.drain().await?;
+async fn checkpoint(runtime: &Runtime, disabling: bool) -> Result<Value> {
+    if !runtime.drain(disabling).await? { return Ok(json!([])); }
     match &runtime.chatgpt {
-        Some(sdk) => sdk.request(json!({"method":"plugin_checkpoint"})).await,
+        Some(sdk) => {
+            let snapshot = tokio::time::timeout(Duration::from_secs(5), sdk.request(json!({"method":"plugin_checkpoint"}))).await
+                .map_err(|_| "ChatGPT checkpoint timed out".to_owned()).and_then(|result| result);
+            match snapshot {
+                Err(error) if disabling => { eprintln!("Disabling ChatGPT without an in-memory checkpoint: {error}"); Ok(json!([])) },
+                result => result,
+            }
+        },
         None => Ok(json!([])),
     }
 }

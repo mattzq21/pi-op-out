@@ -114,11 +114,12 @@ pub(crate) fn prepare(app: AppHandle, mut args: Value) -> Result<Value, String> 
 }
 
 fn prepare_plugin_handoff(app: &AppHandle, daemon: &crate::daemon::Daemon, args: Value) -> Result<Value, String> {
-    let leases = crate::host_supervisor::preserve_leases_for_restart()?;
     let prepared = daemon.request(args)?;
+    let preserving_notes = ["enabled", "previous"].iter().all(|key| prepared[key].as_array().is_some_and(|ids| ids.iter().any(|id| id == "markdown")));
+    let leases = if preserving_notes { Some(crate::host_supervisor::preserve_leases_for_restart()?) } else { None };
     let plan = make_plan(app, prepared)?;
     let result = prepare_handoff(&plan)?;
-    leases.commit();
+    if let Some(leases) = leases { leases.commit(); }
     Ok(result)
 }
 

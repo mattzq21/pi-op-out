@@ -53,21 +53,40 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   createEffect(() => {
     const enabled = enabledPlugins();
     const current = ++generation;
-    void Promise.all(enabled.map(async definition => ({ definition, module: await definition.load() }))).then(loaded => {
-      if (disposed || current !== generation) return;
-      const previous = untrack(running);
+    const previous = untrack(running);
+    const retained = previous.filter(item => enabled.some(definition => definition.id === item.id));
+    setRunning(retained);
 
-      const next = loaded.map(({ definition, module }) => previous.find(item => item.id === definition.id) ?? createRoot(dispose => ({
-        id: definition.id, name: definition.name, dispose,
-        instance: module.createPlugin({ source, visible: () => open() && visible() && active() === definition.id, activate: () => activate(definition.id) }),
-      }), owner));
+    for (const item of previous) if (!retained.includes(item)) item.dispose();
+    void Promise.allSettled(enabled.map(async definition => ({ definition, module: retained.some(item => item.id === definition.id) ? undefined : await definition.load() }))).then(loaded => {
+      if (disposed || current !== generation) return;
+      const next: RunningPlugin[] = [];
+      const failures: string[] = [];
+
+      for (const [index, result] of loaded.entries()) {
+        if (result.status === "rejected") { failures.push(`${enabled[index].name}: ${String(result.reason)}`); continue; }
+
+        const { definition, module } = result.value;
+        const existing = retained.find(item => item.id === definition.id);
+
+        if (existing) { next.push(existing); continue; }
+
+        if (!module) continue;
+
+        try {
+          next.push(createRoot(dispose => {
+            try {
+              return { id: definition.id, name: definition.name, dispose,
+                instance: module.createPlugin({ source, visible: () => open() && visible() && active() === definition.id, activate: () => activate(definition.id) }) };
+            } catch (reason) { dispose(); throw reason; }
+          }, owner));
+        } catch (reason) { failures.push(`${definition.name}: ${String(reason)}`); }
+      }
 
       setRunning(next);
 
-      for (const item of previous) if (!next.includes(item)) item.dispose();
-
       if (!next.length) setOpen(false);
-      setLoadError(undefined);
+      setLoadError(failures.length ? `Plugins could not load: ${failures.join("\n")}` : undefined);
     }).catch(reason => { if (current === generation) setLoadError(`Plugins could not load: ${String(reason)}`); });
   });
   createEffect(() => { if (!tabs().some(item => item.id === active())) setActive(tabs()[0]?.id ?? ""); });

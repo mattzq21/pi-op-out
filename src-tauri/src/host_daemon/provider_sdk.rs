@@ -154,13 +154,14 @@ impl Sdk {
             if connection.closed.load(Ordering::SeqCst) {
                 return Err("Pi provider SDK disconnected".into());
             }
-            connection
-                .stdin
-                .lock()
-                .await
-                .write_all(data.as_bytes())
+            let mut stdin = connection.stdin.lock().await;
+            if self.plugin.is_some() && packet["method"] == "plugin_call" && crate::daemon_restart::blocking() {
+                return Err("The daemon is restarting. Reconnect before retrying.".into());
+            }
+            stdin.write_all(data.as_bytes())
                 .await
                 .map_err(|error| error.to_string())?;
+            drop(stdin);
             tokio::time::timeout(Duration::from_secs(630), incoming)
                 .await
                 .map_err(|_| "Pi provider SDK request timed out")?

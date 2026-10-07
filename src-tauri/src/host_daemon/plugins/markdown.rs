@@ -15,13 +15,13 @@ fn now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default
 fn notes_root() -> Result<PathBuf, String> { Ok(crate::home_dir()?.join(crate::STORAGE_DIRECTORY).join("notes")) }
 
 fn lock_notes() -> Result<File, String> {
-    let root = notes_root()?;
+    let root = crate::home_dir()?.join(crate::STORAGE_DIRECTORY);
     crate::ensure_private_dir(&root)?;
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
     { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
-    let file = options.open(validate_path(root.join("ownership.lock"))?).map_err(|error| error.to_string())?;
+    let file = options.open(validate_path(root.join("note-mutations.lock"))?).map_err(|error| error.to_string())?;
     file.lock().map_err(|error| error.to_string())?;
     Ok(file)
 }

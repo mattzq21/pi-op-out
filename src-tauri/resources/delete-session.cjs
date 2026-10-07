@@ -200,7 +200,7 @@ async function main() {
       }));
       await journal.sync();
     } finally { await journal.close(); }
-    const staged = await Promise.allSettled(files.map(stageFile));
+    const staged = await Promise.allSettled(files.map(stageDeletionFile));
     const stageFailures = staged.filter((result) => result.status === "rejected");
     if (stageFailures.length) throw new Error(`Could not stage session files for deletion: ${stageFailures.map((result) => result.reason.message).join("; ")}`);
 
@@ -247,9 +247,25 @@ async function appendConversationNote(files, header, target) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)) return undefined;
   const storage = target.root ? path.dirname(await fs.realpath(target.root)) : path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
 
-  const note = await readFile(path.join(storage, "notes", "chats", `${header.id.toLowerCase()}.md`), true);
+  let note;
 
-  if (note && !files.some(saved => saved.file === note.file)) files.push(note);
+  try { note = await readFile(path.join(storage, "notes", "chats", `${header.id.toLowerCase()}.md`), true); }
+  catch (error) {
+    console.error(`Could not clean up conversation note: ${error.message}`);
+
+    return;
+  }
+
+  if (note && !files.some(saved => saved.file === note.file)) files.push({ ...note, note: true });
+}
+
+async function stageDeletionFile(saved) {
+  try { await stageFile(saved); }
+  catch (error) {
+    if (!saved.note) throw error;
+    await restoreFile(saved);
+    console.error(`Could not clean up conversation note ${saved.file}: ${error.message}`);
+  }
 }
 
 async function archivedDirectoryMetadata(directory) {

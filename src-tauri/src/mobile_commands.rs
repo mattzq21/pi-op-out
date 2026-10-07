@@ -35,6 +35,10 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
             .map_err(|_| "Pending daemon requests did not finish within 30 seconds. Try restarting again once they finish.")?;
         return handle_restart_daemon(app.clone(), owner, args).await;
     }
+    if command == "plugin_call" {
+        if crate::daemon_restart::blocking() { return Err("The daemon is restarting. Reconnect before retrying.".into()); }
+        return dispatch_command(app.clone(), owner, command, args).await;
+    }
     let _guard = if command == "check_daemon_idle" {
         state.gate.try_read().map_err(|_| "The remote daemon is preparing a restart")?
     } else { state.gate.read().await };
