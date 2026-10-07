@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./index.ts";
+import type { Agent, AgentSnapshot } from "./contracts.ts";
 
 function hasErrorCode(cause: unknown, code: string) {
   return cause instanceof Error && "code" in cause && cause.code === code;
@@ -75,6 +76,7 @@ async function publishConfig(value: Config, createOnly: boolean) {
 
   try {
     await writeTemporary(temporary, body);
+
     if (createOnly) await link(temporary, configPath);
     else await rename(temporary, configPath);
     published = true;
@@ -92,14 +94,27 @@ async function publishConfig(value: Config, createOnly: boolean) {
 
 export async function writeConfig(value: Config, createOnly = false): Promise<{ revision?: string; warnings: string[] } | void> {
   const lock = await configLock();
+  let saved: Awaited<ReturnType<typeof publishConfig>> | undefined;
 
   try {
     const current = await existingConfigRevision();
-    if (createOnly && current !== "missing") { value.revision = current; return; }
+
+    if (createOnly && current !== "missing") { value.revision = current;
+
+    return; }
+
     if (!createOnly && (!value.revision || value.revision !== current)) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
 
-    return await publishConfig(value, createOnly);
-  } finally { await lock.close(); }
+    saved = await publishConfig(value, createOnly);
+
+    return saved;
+  } finally {
+    try { await lock.close(); }
+    catch (error) {
+      if (!saved) throw error;
+      saved.warnings.push(`Agent definitions were saved, but their lock could not be closed: ${String(error)}`);
+    }
+  }
 }
 
 export const configPath = process.env.PIOP_AGENT_CONFIG_PATH || join(dirname(fileURLToPath(import.meta.url)), "config.json");
@@ -156,6 +171,13 @@ export async function snapshotPrompt(contents: string) {
   await ensurePromptFile(path, contents);
 
   return path;
+}
+
+export async function snapshotPrompts(definition: Agent, systemPrompt: string, agentPrompt: string): Promise<AgentSnapshot> {
+  return { version: 2, definition: { ...definition,
+    path_systemprompt: await snapshotPrompt(systemPrompt),
+    path_agent_prompt: agentPrompt ? await snapshotPrompt(agentPrompt) : "",
+  } };
 }
 
 export async function ensureDefaultAgentPrompt() {

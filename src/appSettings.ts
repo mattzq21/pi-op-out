@@ -5,6 +5,7 @@ import type { Accessor } from "solid-js";
 import { createSignal } from "solid-js";
 import { saveClientSettings,withClientSettings } from "./lib/clientSettings";
 import { agentConfigChangeSchema } from "./lib/agentSchemas";
+import { restoreAgentConfiguration, saveAgentConfiguration } from "./lib/agentConfiguration";
 import { ConversationChangedError } from "./lib/conversationChanged";
 import { recordSeenModels } from "./lib/modelVisibility";
 import { NativeTransport } from "./lib/nativeTransport";
@@ -100,26 +101,15 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
       } finally { await writer.dispose().catch(() => undefined); }
     };
 
-    let savedAgentRevision: string | undefined;
+    let restoreAgents: (() => Promise<void>) | undefined;
     let savedChange: SettingsChange;
 
     try {
-      if (nextConfig) {
-        if (!nextConfig.revision || nextConfig.revision !== previousConfig?.revision) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
-        savedAgentRevision = await writeAgents(nextConfig);
-        nextConfig.revision = savedAgentRevision;
-      }
+      if (nextConfig) restoreAgents = await saveAgentConfiguration(nextConfig, previousConfig, writeAgents);
 
       savedChange = await capturedTransport.saveSettings(next, false, agentHostId, scope);
     } catch (reason) {
-      if (savedAgentRevision && previousConfig && nextConfig) {
-        try {
-          const restoredRevision = await writeAgents({ ...previousConfig, revision: savedAgentRevision });
-          previousConfig.revision = restoredRevision; nextConfig.revision = restoredRevision;
-        }
-        catch (rollback) { throw new Error(`Settings save failed: ${String(reason)}. Agent definitions could not be restored: ${String(rollback)}. Reload settings before retrying.`); }
-      }
-
+      await restoreAgentConfiguration(restoreAgents, String(reason));
       throw reason;
     }
 

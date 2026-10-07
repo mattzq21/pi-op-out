@@ -180,9 +180,9 @@ pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, s
     terminal_ids.extend(terminal_lookup::session_terminals(&runtime, &host_id, &session_ids)?);
     stop_terminals(&runtime, &terminal_ids)?;
     archive_conversations(&app, &host_id, &paths)?;
-    for (path, guard) in paths.iter().zip(mutations) {
+    for ((path, session_id), guard) in paths.iter().zip(&session_ids).zip(mutations) {
         guard.finish()?;
-        let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":path}));
+        let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":path,"sessionId":session_id}));
     }
     Ok(())
 }
@@ -298,27 +298,28 @@ fn deletion_targets(settings: &AppSettings, host_id: &str, paths: &[(String, boo
     Ok(targets)
 }
 
-fn finish_deleted_sessions(app: &AppHandle, host_id: &str, paths: &[(String, bool)], mutations: Vec<conversation_ownership::MutationGuard>) {
-    for ((path, _), mutation) in paths.iter().zip(mutations) {
+fn finish_deleted_sessions(app: &AppHandle, host_id: &str, paths: &[(String, bool)], session_ids: &[String], mutations: Vec<conversation_ownership::MutationGuard>) {
+    for (((path, _), session_id), mutation) in paths.iter().zip(session_ids).zip(mutations) {
         if let Err(error) = mutation.finish_committed() {
             eprintln!("Conversation deletion committed, but ownership cleanup failed for {path}: {error}");
         }
-        let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":path}));
+        let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":path,"sessionId":session_id}));
     }
 }
 
-fn close_deleted_session_terminals(app: &AppHandle, settings: &AppSettings, host_id: &str, paths: &[(String, bool)]) -> Result<(), String> {
-    let session_ids = paths.iter().map(|(path, _)| session_identity(settings, host_id, path)).collect::<Result<Vec<_>, _>>()?;
+fn close_deleted_session_terminals(app: &AppHandle, host_id: &str, session_ids: &[String]) -> Result<(), String> {
     let terminals = app.state::<TerminalRuntime>();
-    let terminal_ids = terminal_lookup::session_terminals(&terminals, host_id, &session_ids)?;
+    let terminal_ids = terminal_lookup::session_terminals(&terminals, host_id, session_ids)?;
     stop_terminals(&terminals, &terminal_ids)
 }
 
-fn delete_conversation_files(app: &AppHandle, runtime: &PiRuntime, settings: &AppSettings, host_id: &str, paths: &[(String, bool)]) -> Result<(), String> {
+fn delete_conversation_files(app: &AppHandle, runtime: &PiRuntime, settings: &AppSettings, host_id: &str, paths: &[(String, bool)]) -> Result<Vec<String>, String> {
     let targets = deletion_targets(settings, host_id, paths)?;
     let host = if host_id == "local" { None } else { Some(remote_host(settings, host_id)?) };
-    close_deleted_session_terminals(app, settings, host_id, paths)?;
-    delete_session_targets(runtime, &targets, host_id, host)
+    let session_ids = paths.iter().map(|(path, _)| session_identity(settings, host_id, path)).collect::<Result<Vec<_>, _>>()?;
+    close_deleted_session_terminals(app, host_id, &session_ids)?;
+    delete_session_targets(runtime, &targets, host_id, host)?;
+    Ok(session_ids)
 }
 
 fn delete_stored_sessions(app: AppHandle, runtime: &PiRuntime, session_paths: Vec<String>, host_id: Option<String>, archived: bool, client_id: String) -> Result<Vec<String>, String> {
@@ -328,8 +329,8 @@ fn delete_stored_sessions(app: AppHandle, runtime: &PiRuntime, session_paths: Ve
     if session_paths.is_empty() { return Err("Select at least one conversation to delete".into()); }
     let (mut paths, mut mutations) = initial_deletion_paths(&app, &settings, &host_id, session_paths, archived, &client_id)?;
     acquire_deletion_descendants(&app, &host_id, &client_id, &mut paths, &mut mutations)?;
-    delete_conversation_files(&app, runtime, &settings, &host_id, &paths)?;
-    finish_deleted_sessions(&app, &host_id, &paths, mutations);
+    let session_ids = delete_conversation_files(&app, runtime, &settings, &host_id, &paths)?;
+    finish_deleted_sessions(&app, &host_id, &paths, &session_ids, mutations);
     Ok(paths.into_iter().map(|(path, _)| path).collect())
 }
 

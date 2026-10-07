@@ -9,6 +9,7 @@ import { createDependencyEffect } from "../lib/solid";
 import { Monitor } from "lucide-solid";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
 import { agentConfigChangeSchema, agentConfigSchema, definedAgentsCapabilitySchema } from "../lib/agentSchemas";
+import { restoreAgentConfiguration, saveAgentConfiguration } from "../lib/agentConfiguration";
 import { NativeTransport } from "../lib/nativeTransport";
 import { isMobile, listen } from "../lib/platform";
 import type { AgentConfig, AppSettings, Model, SessionSummary } from "../types";
@@ -22,6 +23,13 @@ interface Props {
   onDirtyChange: (dirty: boolean) => void;
   onSavingChange?: (saving: boolean) => void;
   selectedSection?: Section;
+}
+
+async function loadAgentConfiguration(reader: NativeTransport, target: string, discovered: () => AgentConfig | undefined) {
+  if (target === "client") return discovered() ?? { agents: [] };
+  const config = await reader.command({ type: "get_agent_configuration" }, agentConfigSchema);
+
+  return { ...config, fastModeModels: discovered()?.fastModeModels };
 }
 
 export function LocalSettingsView(props: Props) {
@@ -98,14 +106,10 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
         const [models, levels, storedConfig] = await Promise.all([
           reader.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })),
           reader.command({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })),
-          capturedTarget0 === "client" ? undefined : reader.command({ type: "get_agent_configuration" }, agentConfigSchema),
+          loadAgentConfiguration(reader, capturedTarget0, () => config),
         ]);
 
-        if (storedConfig) config = { ...storedConfig, fastModeModels: config?.fastModeModels };
-        if (!config && capturedTarget0 !== "client") throw new Error("Agent definitions are unavailable");
-        config ??= { agents: [] };
-
-        if (!cancelled) setResources({ config, models: models.models, levels: levels.levels });
+        if (!cancelled) setResources({ config: storedConfig, models: models.models, levels: levels.levels });
       } catch (reason) { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); }
       finally { unsubscribe(); await reader.dispose().catch(() => undefined); }
     })();
@@ -114,17 +118,11 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   }, () => [hostId(), componentProps.target, revision()]);
   const current = createMemo(() => (componentProps.target === "client" || hostId() === "local" ? componentProps.settings : hostSettings()));
 
-  const save = async (next: AppSettings, config?: AgentConfig) => { const capturedHostId = hostId(); const capturedResources = resources(); const capturedTarget0 = componentProps.target; const capturedOnSave1 = componentProps.onSave;
-    setSaveWarning(undefined);
-
-    if (capturedTarget0 === "client" || capturedHostId === "local") {
-      try { await capturedOnSave1(next, config, capturedResources?.config, capturedTarget0 === "client" ? "client" : "daemon"); }
-      catch (reason) { setRevision(value => value + 1); throw reason; }
-    }
-    else {
-      const writer = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
-      let savedAgentRevision: string | undefined;
+  const saveRemote = async (target: string, next: AppSettings, config: AgentConfig | undefined, previous: AgentConfig | undefined) => {
+      const writer = new NativeTransport({ hostId: target, cwd: "~" });
+      let restoreAgents: (() => Promise<void>) | undefined;
       const warnings: string[] = [];
+
       const writeAgents = async (value: AgentConfig) => {
         const change = await writer.command({ type: "configure_agents", configuration: value }, agentConfigChangeSchema);
         warnings.push(...change.warnings ?? []);
@@ -132,35 +130,34 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
         return change.revision;
       };
 
-      const restoreAgents = async (cause: unknown) => {
-        if (!savedAgentRevision || !capturedResources?.config || !config) return;
-
-        try {
-          const restoredRevision = await writeAgents({ ...capturedResources.config, revision: savedAgentRevision });
-          capturedResources.config.revision = restoredRevision; config.revision = restoredRevision;
-        }
-        catch (rollback) { throw new Error(`Settings save failed: ${String(cause)}. Agent definitions could not be restored: ${String(rollback)}. Reload settings before retrying.`); }
-      };
-
       try {
         if (config) {
-          if (!config.revision || config.revision !== capturedResources?.config.revision) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
           await writer.connect(undefined, undefined, undefined, undefined, true);
-          savedAgentRevision = await writeAgents(config); config.revision = savedAgentRevision;
+          restoreAgents = await saveAgentConfiguration(config, previous, writeAgents);
         }
 
         const change = await writer.saveHostSettings(next, Boolean(config));
         setHostSettings(change.settings);
         warnings.push(...change.warnings ?? []);
       } catch (reason) {
-        try { await restoreAgents(reason); }
+        try { await restoreAgentConfiguration(restoreAgents, String(reason)); }
         finally { setRevision(value => value + 1); }
+
         throw reason;
       } finally {
         setSaveWarning(warnings.length ? warnings.join("; ") : undefined);
         await writer.dispose().catch(() => undefined);
       }
+  };
+
+  const save = async (next: AppSettings, config?: AgentConfig) => { const capturedHostId = hostId(); const capturedResources = resources(); const capturedTarget0 = componentProps.target; const capturedOnSave1 = componentProps.onSave;
+    setSaveWarning(undefined);
+
+    if (capturedTarget0 === "client" || capturedHostId === "local") {
+      try { await capturedOnSave1(next, config, capturedResources?.config, capturedTarget0 === "client" ? "client" : "daemon"); }
+      catch (reason) { setRevision(value => value + 1); throw reason; }
     }
+    else await saveRemote(capturedHostId, next, config, capturedResources?.config);
 
     if (config) setResources((value) => value ? { ...value, config } : value);
   };

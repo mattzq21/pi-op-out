@@ -15,7 +15,7 @@ export const isMobile = import.meta.env.MODE === "mobile";
 export function htmlPreviewSize() {
   const width = typeof window === "undefined" ? undefined : window.screen?.width;
 
-  return typeof width === "number" && Number.isFinite(width) && width >= 2560 ? 750 : 600;
+  return Number.isFinite(width) && (width ?? 0) >= 2560 ? 750 : 600;
 }
 
 const clientPreferences = registerPlugin<{ load(): Promise<{ settings: unknown; revision: string }>; save(options: { settings: unknown; expectedRevision: unknown }): Promise<{ revision: string }> }>("ClientPreferences");

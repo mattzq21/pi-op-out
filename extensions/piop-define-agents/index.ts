@@ -1,10 +1,10 @@
 import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState } from "./state.ts";
 import { Type } from "typebox";
 import { Check, Errors, Parse } from "typebox/value";
-import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, readConfigDocument, writeConfig } from "./prompts.ts";
+import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readConfigDocument, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
 import { readDaemonDefinitions } from "./daemon-definitions.ts";
-import { selectedProfileState } from "./profiles.ts";
+import { fallbackConfig, migrateQuestionSnapshot, selectedProfileState } from "./profiles.ts";
 import { migrateExcalidrawAgent } from "./excalidraw.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
@@ -29,10 +29,6 @@ type ConfigRuntime = { events: { emit(channel: "piop:runtime-settings", request:
 
 export type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: typeof writeConfig };
 
-const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
-
-const fallbackConfig: Config = { agents: [{ name: "general", model: development ? "openai-codex/gpt-6-luna" : "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agent_prompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: {} }] };
-
 function defaultAgent(pi: ConfigRuntime): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
 
@@ -40,13 +36,6 @@ function defaultAgent(pi: ConfigRuntime): Agent {
   agent.tools.push(...sessionTools.filter((tool) => desktopList(pi, "tools")?.includes(tool)));
 
   return agent;
-}
-
-async function snapshotPrompts(definition: Agent, systemPrompt: string, agentPrompt: string): Promise<AgentSnapshot> {
-  return { version: 2, definition: { ...definition,
-    path_systemprompt: await snapshotPrompt(systemPrompt),
-    path_agent_prompt: agentPrompt ? await snapshotPrompt(agentPrompt) : "",
-  } };
 }
 
 type StoredAgent = Omit<Agent, "path_systemprompt" | "path_agent_prompt" | "mcpServers"> & { mcpServers?: McpServers | LegacyMcpServer[]; path_systemprompt?: string; path_agent_prompt?: string; path_agentprompt?: string; ignoreGeneralAgentsMd?: boolean; agentsMd?: string; systemPrompt?: string; developerPrompt?: string };
@@ -147,7 +136,7 @@ async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined,
     const stored = supplied ?? await readConfigDocument();
     const config = await migratePrompts(stored, pi, storage);
 
-    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (Array.isArray(agent.mcpServers) || agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agent_prompt === undefined || "path_agentprompt" in agent || "ignoreGeneralAgentsMd" in agent || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await storage.writeConfig(config);
+    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (Array.isArray(agent.mcpServers) || agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || agent.path_systemprompt === undefined || agent.path_agent_prompt === undefined || ["description", "path_agentprompt", "ignoreGeneralAgentsMd", "agentsMd", "systemPrompt", "developerPrompt"].some(key => key in agent)))) await storage.writeConfig(config);
 
     return config;
   }
@@ -218,16 +207,6 @@ function migrateTerminalAgent(config: Config, pi: ConfigRuntime) {
   config.terminalAgentDefaultApplied = true;
 
   return true;
-}
-
-function migrateQuestionSnapshot(stored: AgentSnapshot | undefined) {
-  if (stored?.version !== 1 && stored?.version !== 2) return undefined;
-
-  if (!stored.definition || !Array.isArray(stored.definition.tools)) return undefined;
-  const snapshot = structuredClone(stored);
-  snapshot.definition.tools = [...new Set(snapshot.definition.tools.map((tool) => tool === "request_user_input_async" ? "request_user_input" : tool))];
-
-  return snapshot;
 }
 
 async function migrateDiagramist(config: Config, pi: ConfigRuntime, storage: ConfigStorage) {
@@ -301,6 +280,7 @@ function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options
   const instructions = agentPrompt.trim() ? agentPrompt : "";
   options.customPrompt = prompt || " ";
   options.sections = { ...options.sections, instructions };
+
   const toolInstructions = (options.selectedTools ?? []).flatMap(name => {
     const guidelines = (options.toolGuidelines?.[name] ?? []).map(text => text.trim()).filter(Boolean);
 
@@ -741,7 +721,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   pi.events.on("piop:rpc", request => {
-    if (request.command === "get_agent_configuration") { request.ready = loadConfig(pi); return; }
+    if (request.command === "get_agent_configuration") { request.ready = loadConfig(pi);
+
+    return; }
+
     if (request.command !== "configure_agents") return;
     const ctx = request.ctx;
     request.ready = (async () => {
@@ -757,7 +740,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
       const saved = await writeConfig(next);
 
       if (!daemonDefinitions) config = next;
-      publish(ctx);
+
+      try { publish(ctx); } catch (error) { saved?.warnings.push(`Agent definitions were saved, but their status could not be updated: ${String(error)}`); }
 
       return { revision: next.revision, warnings: saved?.warnings };
     })();

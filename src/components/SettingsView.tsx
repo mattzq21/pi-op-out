@@ -172,12 +172,13 @@ export function SettingsView(props: SettingsViewProps) {
 
   const applyIncomingAgents = (config?: AgentConfig) => {
     const next = config ? structuredClone(config) : undefined;
+    const agents = next?.agents ?? [];
     const selectedName = agentDrafts()[agentIndex()]?.name;
-    const selectedIndex = next?.agents.findIndex(item => item.name === selectedName) ?? -1;
+    const selectedIndex = agents.findIndex(item => item.name === selectedName);
     setHasAgentConfigDraft(next !== undefined);
     setMcpDrafts([]);
-    setAgentDrafts(next?.agents ?? []);
-    setAgentIndex(selectedIndex >= 0 ? selectedIndex : firstAgentIndex(next?.agents ?? []));
+    setAgentDrafts(agents);
+    setAgentIndex(selectedIndex >= 0 ? selectedIndex : firstAgentIndex(agents));
     setBaselineAgentConfig(agentEditsSnapshot(next));
     setBaselineAgentRevision(next?.revision);
   };

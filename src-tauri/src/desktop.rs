@@ -1,5 +1,6 @@
 mod platform;
 mod daemon_endpoint;
+mod daemon_log;
 mod desktop_daemon;
 mod client_settings;
 mod settings_concurrency;
@@ -11,7 +12,7 @@ use client_settings::{load_client_settings, save_client_settings};
 use desktop_daemon::daemon_invoke;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashMap, fs::{self, OpenOptions}, io::Read, path::{Path, PathBuf}, process::{Command, Stdio}, sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, thread, time::Duration};
+use std::{collections::HashMap, fs, io::Read, path::{Path, PathBuf}, process::{Command, Stdio}, sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, thread, time::Duration};
 use crate::platform::AppHandle;
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
@@ -194,6 +195,10 @@ async fn reload_development_window(app: AppHandle, window: tauri::WebviewWindow)
 
 #[cfg(feature = "desktop")]
 pub fn run() {
+    if std::env::args().nth(1).as_deref() == Some("--daemon-log-writer") {
+        if let Err(error) = daemon_log::run() { eprintln!("Piop daemon log writer: {error}"); std::process::exit(1); }
+        return;
+    }
     let mut context = tauri::generate_context!();
     if DEVELOPMENT {
         let config = context.config_mut();

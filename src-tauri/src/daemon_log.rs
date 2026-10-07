@@ -24,15 +24,15 @@ fn archive_path(directory: &Path, index: usize) -> PathBuf {
     directory.join(format!("daemon.log.{index}"))
 }
 
-fn remove_oldest(directory: &Path) -> io::Result<()> {
-    match fs::remove_file(archive_path(directory, BACKUP_COUNT)) {
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }
 }
 
 fn rotate(directory: &Path) -> io::Result<()> {
-    remove_oldest(directory)?;
+    remove_if_present(&archive_path(directory, BACKUP_COUNT))?;
     for index in (1..BACKUP_COUNT).rev() {
         match fs::rename(archive_path(directory, index), archive_path(directory, index + 1)) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
@@ -44,10 +44,11 @@ fn rotate(directory: &Path) -> io::Result<()> {
 
 fn trim_legacy_log(directory: &Path) -> io::Result<()> {
     let path = directory.join("daemon.log");
+    let temporary = directory.join("daemon.log.trim");
+    remove_if_present(&temporary)?;
     let mut source = private_file(&path, true)?;
     if source.metadata()?.len() <= MAX_FILE_BYTES { return Ok(()); }
     source.seek(SeekFrom::End(-(MAX_FILE_BYTES as i64)))?;
-    let temporary = directory.join("daemon.log.trim");
     let result = (|| {
         let mut target = private_file(&temporary, false)?;
         target.set_len(0)?;
@@ -111,7 +112,7 @@ pub(crate) fn run() -> Result<(), String> {
     let directory = match initialize() {
         Ok(directory) => directory,
         Err(error) => {
-            let _ = io::stdout().write_all(error.as_bytes());
+            let _ = io::stdout().write_all(error.as_bytes()).and_then(|()| io::stdout().flush());
             return Err(error);
         }
     };
