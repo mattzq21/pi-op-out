@@ -22,14 +22,21 @@ export class TaskWidget extends WidgetType {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.className = "notes-task-checkbox";
+    this.updateDOM(input, view);
+
+    return input;
+  }
+
+  updateDOM(input: HTMLElement, view: EditorView) {
+    if (!(input instanceof HTMLInputElement)) return false;
     input.checked = this.checked;
     input.disabled = this.disabled;
     input.setAttribute("aria-label", this.checked ? "Mark task incomplete" : "Mark task complete");
-    input.addEventListener("change", () => {
+    input.onchange = () => {
       if (view.state.readOnly) return;
       view.dispatch({ changes: { from: this.from, to: this.to, insert: input.checked ? "[x]" : "[ ]" }, userEvent: "input" });
-    });
+    };
 
-    return input;
+    return true;
   }
 }
