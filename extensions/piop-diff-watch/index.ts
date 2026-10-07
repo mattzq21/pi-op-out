@@ -67,7 +67,8 @@ async function sessionSnapshots(root: string, sessionId: string) {
 }
 
 async function currentSnapshot(root: string, sessionId: string) {
-  const [snapshot] = await sessionSnapshots(root, sessionId);
+  const archivePrefix = `${sessionRefPrefix(sessionId)}archive/`;
+  const snapshot = (await sessionSnapshots(root, sessionId)).find(({ ref }) => !ref.startsWith(archivePrefix));
 
   if (snapshot) return snapshot;
   const ref = legacySessionRef(sessionId);
