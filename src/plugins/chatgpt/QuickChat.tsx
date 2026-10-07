@@ -1,4 +1,4 @@
-import { For, Show, createEffect } from "solid-js";
+import { For, Show, createEffect, onCleanup, onMount } from "solid-js";
 import { Plus, Square } from "lucide-solid";
 import { IconButton } from "../../components/IconButton";
 import { Markdown } from "../../components/Markdown";
@@ -10,6 +10,27 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
   let messages: HTMLDivElement | undefined;
   let composer: HTMLTextAreaElement | undefined;
   let follow = true;
+
+  const resizeComposer = () => {
+    if (!composer?.clientWidth) return;
+    composer.style.height = "0px";
+    composer.style.height = `${composer.scrollHeight}px`;
+  };
+
+  createEffect(() => { state.prompt(); props.open; queueMicrotask(resizeComposer); });
+  onMount(() => {
+    if (!composer) return;
+    let width = 0;
+
+    const observer = new ResizeObserver(() => {
+      if (!composer || composer.clientWidth === width) return;
+      width = composer.clientWidth; resizeComposer();
+    });
+
+    observer.observe(composer);
+    onCleanup(() => observer.disconnect());
+  });
+
   const active = () => state.busy() || state.responding();
   const status = () => state.chat()?.status === "stopping" ? "Stopping…" : state.busy() ? "Preparing…" : state.recovering() ? "Checking whether your message was received. Stop recovery to continue chatting." : "Responding…";
   createEffect(() => {
@@ -37,7 +58,7 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
 
   const renderComposer = () => <form class="quick-chat-composer" onSubmit={event => { event.preventDefault(); follow = true; void state.send(); }}>
     <div class="quick-chat-input">
-      <textarea ref={composer} aria-label="Message ChatGPT" placeholder="Message ChatGPT" value={state.prompt()} maxLength={100000} disabled={state.busy()} readOnly={!state.editable()} onInput={event => state.setPrompt(event.currentTarget.value)} onKeyDown={event => {
+      <textarea ref={composer} rows={1} aria-label="Message ChatGPT" placeholder="Message ChatGPT" value={state.prompt()} maxLength={100000} disabled={state.busy()} readOnly={!state.editable()} onInput={event => state.setPrompt(event.currentTarget.value)} onKeyDown={event => {
         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); follow = true; void state.send(); }
       }} />
       <div class="quick-chat-controls">
