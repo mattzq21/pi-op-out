@@ -107,6 +107,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .response-navigator { position: absolute; top: 14px; left: 5px; z-index: 3; width: 24px; display: flex; flex-direction: column; align-items: center; overflow-y: auto; scrollbar-width: none; }
 .response-navigator::-webkit-scrollbar { display: none; }
 .response-navigator-marker { flex: 0 0 10px; width: 24px; min-height: 10px; display: grid; place-items: center; border: 0; padding: 0; background: transparent; cursor: pointer; }
+.response-navigator-marker:first-child { margin-top: auto; }
+.response-navigator-marker:last-child { margin-bottom: auto; }
 .response-navigator-marker span { width: 6px; height: 2px; border-radius: 1px; background: var(--faint); opacity: .55; transition: width .12s, opacity .12s, background .12s; }
 .response-navigator-marker:hover span, .response-navigator-marker:focus-visible span { width: 14px; background: var(--ink); opacity: 1; }
 .response-navigator-marker[aria-current] span { width: 12px; background: var(--accent); opacity: 1; }
