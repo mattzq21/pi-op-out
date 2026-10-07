@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createRoot, createSignal, For, getOwner, onCleanup, Show, untrack, type Accessor } from "solid-js";
-import { PanelRight } from "lucide-solid";
+import { PanelRight, X } from "lucide-solid";
 import { z } from "zod";
 import { IconButton } from "../components/IconButton";
 import { listen } from "../lib/platform";
@@ -97,6 +97,14 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
 
   const close = () => setOpen(false);
 
+  const removeTab = (id: string) => {
+    setSelectedTabs(previous => previous.filter(tab => tab !== id));
+    queueMicrotask(() => {
+      const target = document.getElementById(`plugin-tab-${active()}`) ?? document.querySelector<HTMLElement>(".plugin-tab-picker summary");
+      target?.focus();
+    });
+  };
+
   const changeTab = (event: KeyboardEvent) => {
     const items = tabs();
     const index = items.findIndex(item => item.id === active());
@@ -115,7 +123,10 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const panel = () => <Sidepane open={open() && visible()}>
     <header class="plugin-pane-header">
       <PluginTabPicker items={running()} onSelect={activate} />
-      <div role="tablist" aria-label="Sidepane plugins" onKeyDown={changeTab}><For each={tabs()}>{item => <button id={`plugin-tab-${item.id}`} role="tab" aria-controls={`plugin-panel-${item.id}`} aria-selected={active() === item.id} tabIndex={active() === item.id ? 0 : -1} onClick={() => setActive(item.id)}>{item.name}</button>}</For></div>
+      <div role="tablist" aria-label="Sidepane plugins" onKeyDown={changeTab}><For each={tabs()}>{item => <div class="plugin-tab" role="presentation">
+        <button id={`plugin-tab-${item.id}`} role="tab" aria-controls={`plugin-panel-${item.id}`} aria-selected={active() === item.id} tabIndex={active() === item.id ? 0 : -1} onClick={() => setActive(item.id)}>{item.name}</button>
+        <button class="plugin-tab-remove" type="button" aria-label={`Remove ${item.name} tab`} tabIndex={active() === item.id ? 0 : -1} onClick={() => removeTab(item.id)}><X size={13} /></button>
+      </div>}</For></div>
     </header>
     <Show when={error()}><p class="plugin-error" role="alert">{error()}</p></Show>
     <For each={tabs()}>{item => <div class="plugin-panel" id={`plugin-panel-${item.id}`} role="tabpanel" aria-labelledby={`plugin-tab-${item.id}`} hidden={active() !== item.id}>{item.instance.panel()}</div>}</For>

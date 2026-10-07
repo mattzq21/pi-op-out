@@ -3,7 +3,13 @@
 .plugin-pane-header { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-bottom: 1px solid var(--line); background: var(--panel); flex-shrink: 0; }
 .app.dark .plugin-pane-header { background: #141413; }
 .plugin-pane-header [role=tablist] { display: flex; min-width: 0; overflow-x: auto; gap: 4px; }
-.plugin-pane-header [role=tab] { border: 0; padding: 7px 10px; border-radius: 6px; background: transparent; color: var(--muted); font-size: 14px; white-space: nowrap; }
+.plugin-pane-header [role=tab] { border: 0; padding: 7px 28px 7px 10px; border-radius: 6px; background: transparent; color: var(--muted); font-size: 14px; white-space: nowrap; }
+.plugin-tab { position: relative; flex-shrink: 0; }
+.plugin-tab-remove { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); opacity: 0; pointer-events: none; cursor: pointer; }
+.plugin-tab:hover .plugin-tab-remove, .plugin-tab:focus-within .plugin-tab-remove { opacity: 1; pointer-events: auto; }
+.plugin-tab-remove:hover { color: var(--ink); background: var(--hover); }
+.plugin-tab-remove:focus-visible { outline: 2px solid var(--accent); }
+@media (hover: none) { .plugin-tab-remove { opacity: 1; pointer-events: auto; } }
 .plugin-pane-header [aria-selected=true] { color: var(--ink); background: var(--hover); }
 .plugin-pane-header [role=tab]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .plugin-tab-picker { position: relative; flex-shrink: 0; }
