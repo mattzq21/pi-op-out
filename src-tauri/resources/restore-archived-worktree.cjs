@@ -2,10 +2,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { randomUUID } = require('node:crypto');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { exists, recover, restoreGroup, restoredResult } = require('./restore-transaction.cjs');
+const { exists, restoreGroup, restoredResult } = require('./restore-transaction.cjs');
+const { recoverStorage } = require('./storage-recovery.cjs');
+const { runWithStorageLock } = require('./storage-lock.cjs');
 
 const checkpointSchema = Type.Object({ path: Type.String(), repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-f0-9]{40,64}$' }) });
 
@@ -70,7 +72,7 @@ function existingWorktree(saved, git) {
   if (!exists(saved.path)) return undefined;
 
   if (!fs.lstatSync(saved.path).isDirectory()) throw new Error('The archived worktree path is no longer a directory');
-  const current = args => execFileSync('git', ['-C', saved.path, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3] }).trim();
+  const current = args => execFileSync('git', ['-C', saved.path, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3, 4] }).trim();
   const common = fs.realpathSync(git(['rev-parse', '--path-format=absolute', '--git-common-dir']));
 
   if (fs.realpathSync(current(['rev-parse', '--show-toplevel'])) !== fs.realpathSync(saved.path)
@@ -86,7 +88,7 @@ function existingWorktree(saved, git) {
 function worktreePlan(entries, header) {
   const saved = header.worktreeRestore;
   verifyLocation(header, saved);
-  const git = args => execFileSync('git', ['-C', saved.repositoryRoot, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3] }).trim();
+  const git = args => execFileSync('git', ['-C', saved.repositoryRoot, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3, 4] }).trim();
   const existing = existingWorktree(saved, git);
 
   if (existing) return existing;
@@ -286,8 +288,9 @@ function restoreArchives(files) {
 }
 
 function main() {
+  recoverStorage(root);
+
   if (process.argv[1] === '--result') return restoredResult(root, process.argv[2]);
-  recover(root);
 
   if (process.argv[1] === '--recover') return;
 
@@ -298,15 +301,4 @@ function main() {
   return restoreArchives([...new Set(files.map(file => fs.realpathSync(file)))]);
 }
 
-if (process.argv.at(-1) !== '--locked') {
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const lock = fs.openSync(path.join(root, 'restore.lock'), 'a', 0o600);
-  const child = spawnSync('sh', ['-c', 'flock --exclusive 3 || exit $?; exec "$@"', 'piop-restore', process.execPath, ...process.execArgv, '--', ...process.argv.slice(1), '--locked'], { stdio: ['inherit', 'inherit', 'inherit', lock] });
-  fs.closeSync(lock);
-
-  if (child.error) throw child.error;
-  process.exitCode = child.status ?? 1;
-} else {
-  try { const result = main(); process.stdout.write(JSON.stringify(result ?? null)); }
-  catch (error) { console.error(error.message); process.exitCode = 1; }
-}
+runWithStorageLock(root, () => process.stdout.write(JSON.stringify(main() ?? null)));

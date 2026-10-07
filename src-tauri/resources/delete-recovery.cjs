@@ -1,0 +1,340 @@
+const fs = require("node:fs");
+const path = require("node:path");
+const { createHash, randomUUID } = require("node:crypto");
+const { execFileSync } = require("node:child_process");
+const { isDeepStrictEqual } = require("node:util");
+
+const lockPattern = /^\.delete-[a-f0-9]{64}\.lock$/;
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function exists(file) {
+  try { return fs.lstatSync(file); }
+  catch (error) { if (error.code === "ENOENT") return undefined; throw error; }
+}
+
+function identity(file) {
+  const metadata = fs.lstatSync(file, { bigint: true });
+
+  return `${metadata.dev}:${metadata.ino}`;
+}
+
+function sync(file) {
+  const descriptor = fs.openSync(file, "r");
+
+  try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
+}
+
+function syncTree(file) {
+  const metadata = fs.lstatSync(file);
+
+  if (metadata.isSymbolicLink()) return;
+
+  if (metadata.isDirectory()) for (const entry of fs.readdirSync(file)) syncTree(path.join(file, entry));
+  sync(file);
+}
+
+function rename(source, destination) {
+  fs.renameSync(source, destination);
+  sync(path.dirname(destination));
+  sync(path.dirname(source));
+}
+
+function write(file, body, directory = path.dirname(file)) {
+  const temporary = path.join(directory, `.recovery-${randomUUID()}.tmp`);
+  const descriptor = fs.openSync(temporary, "wx", 0o600);
+
+  try { fs.writeFileSync(descriptor, body); fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
+
+  rename(temporary, file);
+}
+
+function git(repository, args, input) {
+  return execFileSync("git", ["-C", repository.cwd, "-c", "core.fsync=all", "-c", "core.fsyncMethod=fsync", ...args], {
+    encoding: "utf8", input, timeout: 120000, maxBuffer: 4 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe", 3, 4],
+  }).trim();
+}
+
+function updateRefs(repository, updates) {
+  if (updates.length) git(repository, ["update-ref", "--stdin"], ["start", ...updates, "prepare", "commit", ""].join("\n"));
+}
+
+function currentRefs(repository) {
+  const refs = repository.refs.flatMap(ref => [ref.ref, ...(ref.reservation ? [ref.reservation] : [])]);
+  const output = git(repository, ["for-each-ref", "--format=%(refname) %(objectname)", ...refs]);
+
+  return new Map(output.split("\n").filter(Boolean).map(line => line.split(" ")));
+}
+
+function removeCheckpointRefs(repository) {
+  const updates = repository.refs.flatMap(({ ref, oid, reservation }) => [`create ${reservation} ${oid}`, `delete ${ref} ${oid}`]);
+  updateRefs(repository, updates);
+}
+
+function restoreRepository(repository) {
+  const current = currentRefs(repository);
+  const updates = [];
+
+  for (const ref of repository.refs) {
+    const oid = current.get(ref.ref);
+
+    if (oid === undefined) updates.push(`create ${ref.ref} ${ref.oid}`);
+    else if (oid !== ref.oid) throw new Error(`Refusing to overwrite a changed checkpoint: ${ref.ref}`);
+  }
+
+  updateRefs(repository, updates);
+}
+
+function releaseReservations(repository) {
+  if (!repository.refs.some(ref => ref.reservation)) return;
+  const current = currentRefs(repository);
+  const updates = [];
+
+  for (const { reservation, oid } of repository.refs) {
+    if (!reservation || !current.has(reservation)) continue;
+
+    if (current.get(reservation) !== oid) throw new Error(`Deletion checkpoint reservation changed: ${reservation}`);
+    updates.push(`delete ${reservation} ${oid}`);
+  }
+
+  updateRefs(repository, updates);
+}
+
+function ownershipRecords(root, sessionIds) {
+  return [...new Set(sessionIds)].flatMap(id => {
+    if (!uuidPattern.test(id)) return [];
+    const key = createHash("sha256").update(id.toLowerCase()).digest("hex").slice(0, 40);
+    const file = path.join(root, "conversation-ownership", `${key}.json`);
+
+    if (!exists(file)) return [];
+    const before = fs.readFileSync(file, "utf8");
+    const after = JSON.stringify({ ...JSON.parse(before), deleted: true, client: null });
+
+    return [{ path: file, before, after }];
+  });
+}
+
+function createJournal(root, lock, childLocks, files, repositories, sessionIds) {
+  const id = randomUUID();
+  const garbageRoot = path.join(root, "deleted-sessions");
+  fs.mkdirSync(garbageRoot, { recursive: true, mode: 0o700 });
+
+  if (!fs.lstatSync(garbageRoot).isDirectory()) throw new Error("Invalid deleted conversation directory");
+  sync(root);
+
+  const journal = {
+    version: 2, id, root, garbagePath: path.join(garbageRoot, id),
+    locks: [lock, ...childLocks].map(file => ({ path: file, identity: identity(file) })),
+    files: files.map((saved, index) => ({ path: saved.file, staged: `${index}.staged`, identity: identity(saved.file), directory: Boolean(saved.directory) })),
+    repositories: repositories.map((repository, repositoryIndex) => ({ cwd: repository.cwd,
+      refs: repository.refs.map((ref, index) => ({ ...ref, reservation: `refs/piop-deletions/${id}/${repositoryIndex}/${index}` })),
+    })),
+    ownership: ownershipRecords(root, sessionIds),
+  };
+
+  files.forEach((saved, index) => { saved.stagedPath = path.join(lock, journal.files[index].staged); });
+  write(path.join(lock, "recovery.json"), JSON.stringify(journal));
+  sync(path.dirname(lock));
+
+  for (const childLock of childLocks) sync(path.dirname(childLock));
+
+  return journal;
+}
+
+function contained(root, file) {
+  const relative = path.relative(root, file);
+
+  return Boolean(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function validateFile(root, file) {
+  if (!path.isAbsolute(file.path) || !contained(root, file.path) || !/^\d+\.staged$/.test(file.staged)) throw new Error("Invalid deletion recovery file");
+
+  if (file.identity !== undefined && !/^\d+:\d+$/.test(file.identity)) throw new Error("Invalid deletion file identity");
+}
+
+function validateOwnership(root, record) {
+  if (path.dirname(record.path) !== path.join(root, "conversation-ownership") || !/^[a-f0-9]{40}\.json$/.test(path.basename(record.path))) throw new Error("Invalid deletion ownership record");
+  JSON.parse(record.before);
+  const after = JSON.parse(record.after);
+
+  if (after.deleted !== true || after.client !== null) throw new Error("Invalid deleted conversation ownership");
+}
+
+function validateRepository(repository) {
+  if (!path.isAbsolute(repository.cwd) || !Array.isArray(repository.refs) || !repository.refs.length) throw new Error("Invalid deletion checkpoint repository");
+
+  for (const ref of repository.refs) {
+    if (!/^refs\/pi-session-snapshots\/[^\s]+$/.test(ref.ref) || !/^[a-f0-9]{40,64}$/.test(ref.oid)) throw new Error("Invalid deletion checkpoint");
+
+    if (ref.reservation && !/^refs\/piop-deletions\/[a-f0-9-]+\/\d+\/\d+$/.test(ref.reservation)) throw new Error("Invalid deletion checkpoint reservation");
+  }
+}
+
+function verifyJournalDirectory(root, directory, journal) {
+  if (journal.version !== 2) return;
+
+  if (journal.root !== root || journal.locks?.[0]?.identity !== identity(directory)) throw new Error(`Deletion recovery directory changed: ${directory}`);
+}
+
+function readJournal(root, directory) {
+  const journal = JSON.parse(fs.readFileSync(path.join(directory, "recovery.json"), "utf8"));
+
+  if (journal.version !== undefined && journal.version !== 2) throw new Error("Unsupported deletion recovery journal");
+
+  if (!Array.isArray(journal.files) || !journal.files.length || !Array.isArray(journal.repositories)) throw new Error("Invalid deletion recovery journal");
+  journal.files.forEach(file => validateFile(root, file));
+  journal.repositories.forEach(validateRepository);
+  (journal.ownership ?? []).forEach(record => validateOwnership(root, record));
+
+  verifyJournalDirectory(root, directory, journal);
+
+  return journal;
+}
+
+function validStaged(file, staged) {
+  const metadata = exists(staged);
+
+  if (!metadata) return false;
+
+  if (file.identity && identity(staged) !== file.identity) throw new Error(`Deletion recovery file changed: ${staged}`);
+
+  if (!metadata.isFile() && !metadata.isDirectory()) throw new Error(`Invalid deletion recovery file: ${staged}`);
+
+  return true;
+}
+
+function restoreFile(directory, file) {
+  const staged = path.join(directory, file.staged);
+  const source = exists(file.path);
+
+  if (!validStaged(file, staged)) {
+    if (!source) throw new Error(`Deleted file has no recovery copy: ${file.path}`);
+
+    if (file.identity && identity(file.path) !== file.identity) throw new Error(`Deleted file was replaced: ${file.path}`);
+
+    return;
+  }
+
+  if (!source) {
+    if (fs.realpathSync(path.dirname(file.path)) !== path.dirname(file.path)) throw new Error(`Deleted file parent directory changed: ${file.path}`);
+
+    if (fs.lstatSync(staged).isDirectory()) {
+      rename(staged, file.path);
+
+      return;
+    }
+
+    fs.linkSync(staged, file.path);
+    sync(path.dirname(file.path));
+  }
+
+  if (identity(file.path) !== identity(staged)) throw new Error(`Refusing to overwrite a replacement created during deletion: ${file.path}`);
+  fs.unlinkSync(staged);
+  sync(directory);
+}
+
+function inferredLocks(journal) {
+  return journal.files.flatMap(file => file.path.endsWith(".jsonl") ? [{
+    path: path.join(path.dirname(file.path), `.delete-${createHash("sha256").update(file.path).digest("hex")}.lock`),
+  }] : []);
+}
+
+function removeLocks(root, directory, journal) {
+  for (const lock of journal.locks ?? inferredLocks(journal)) {
+    if (lock.path === directory || !exists(lock.path)) continue;
+
+    if (!contained(root, lock.path) || !lockPattern.test(path.basename(lock.path))) throw new Error("Invalid deletion recovery lock");
+
+    if (lock.identity && identity(lock.path) !== lock.identity) throw new Error(`Deletion lock was replaced: ${lock.path}`);
+    fs.rmdirSync(lock.path);
+    sync(path.dirname(lock.path));
+  }
+}
+
+function reconcileOwnership(directory, journal) {
+  for (const record of journal.ownership ?? []) {
+    const current = exists(record.path) ? fs.readFileSync(record.path, "utf8") : undefined;
+
+    if (current && isDeepStrictEqual(JSON.parse(current), JSON.parse(record.after))) continue;
+
+    if (current !== record.before) throw new Error(`Conversation ownership changed during deletion recovery: ${record.path}`);
+    write(record.path, record.after, directory);
+  }
+}
+
+function rollback(root, directory, journal) {
+  for (const repository of journal.repositories) restoreRepository(repository);
+
+  for (const file of journal.files) restoreFile(directory, file);
+
+  for (const repository of journal.repositories) releaseReservations(repository);
+  removeLocks(root, directory, journal);
+  fs.rmSync(directory, { recursive: true });
+  sync(path.dirname(directory));
+}
+
+function cleanupCommitted(root) {
+  const garbageRoot = path.join(root, "deleted-sessions");
+
+  if (!exists(garbageRoot)) return;
+
+  for (const entry of fs.readdirSync(garbageRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !uuidPattern.test(entry.name)) continue;
+    const directory = path.join(garbageRoot, entry.name);
+
+    if (!exists(path.join(directory, "recovery.json"))) {
+      fs.rmSync(directory, { recursive: true }); sync(garbageRoot);
+
+      continue;
+    }
+
+    const journal = readJournal(root, directory);
+    sync(garbageRoot);
+
+    for (const lock of journal.locks ?? inferredLocks(journal)) sync(path.dirname(lock.path));
+    reconcileOwnership(directory, journal);
+    removeLocks(root, directory, journal);
+
+    for (const repository of journal.repositories) releaseReservations(repository);
+    fs.rmSync(directory, { recursive: true });
+    sync(garbageRoot);
+  }
+}
+
+function deletionLocks(directory, locks) {
+  if (!exists(directory)) return;
+
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.endsWith(".snapshots")) continue;
+    const file = path.join(directory, entry.name);
+
+    if (lockPattern.test(entry.name)) locks.push(file);
+    else deletionLocks(file, locks);
+  }
+}
+
+function removeUnstarted(directory) {
+  const entries = fs.readdirSync(directory);
+
+  if (entries.some(name => !/^\.recovery-[a-f0-9-]+\.tmp$/.test(name))) throw new Error(`Deletion recovery journal is missing: ${directory}`);
+  fs.rmSync(directory, { recursive: true });
+  sync(path.dirname(directory));
+}
+
+function recover(root) {
+  if (!exists(root)) return;
+  root = fs.realpathSync(root);
+  cleanupCommitted(root);
+  const locks = [];
+  deletionLocks(path.join(root, "sessions"), locks);
+  deletionLocks(path.join(root, "archived"), locks);
+
+  for (const directory of locks) {
+    if (exists(path.join(directory, "recovery.json"))) rollback(root, directory, readJournal(root, directory));
+  }
+
+  for (const directory of locks) if (exists(directory)) removeUnstarted(directory);
+}
+
+module.exports = { recover, createJournal, removeCheckpointRefs, cleanupCommitted, sync, syncTree };

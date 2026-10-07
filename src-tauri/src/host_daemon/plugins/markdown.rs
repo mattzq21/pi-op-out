@@ -157,11 +157,6 @@ fn conversation_exists(storage: &Path, session: &str, recorded: &Path) -> Result
     Ok(false)
 }
 
-pub(crate) fn with_note_deletion(operation: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
-    let _guard = lock_notes()?;
-    operation()
-}
-
 fn validate_path(path: PathBuf) -> Result<PathBuf, String> {
     match fs::symlink_metadata(&path) {
         Ok(metadata) if !metadata.is_file() || metadata.file_type().is_symlink() => Err("The chat note must be a regular file".into()),

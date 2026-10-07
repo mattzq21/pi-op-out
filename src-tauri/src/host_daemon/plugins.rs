@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 mod markdown;
 
-pub(crate) use markdown::{preserve_leases_for_restart, with_note_deletion};
+pub(crate) use markdown::preserve_leases_for_restart;
 
 const BUNDLED: &[&str] = &["chatgpt", "markdown"];
 const CHATGPT_SOURCE: &str = concat!(

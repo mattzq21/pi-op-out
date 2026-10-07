@@ -4,8 +4,11 @@ const os = require('node:os');
 const { randomUUID } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const { validSessionHeader } = require('./checkpoint-schemas.cjs');
+const { archiveGroup, cleanup, prepare } = require('./archive-transaction.cjs');
+const { recoverStorage } = require('./storage-recovery.cjs');
+const { runWithStorageLock } = require('./storage-lock.cjs');
 
-const request = JSON.parse(process.argv[1]);
+const request = process.argv[1] === '--recover' ? null : JSON.parse(process.argv[1]);
 
 const root = fs.realpathSync(path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop'));
 
@@ -20,9 +23,9 @@ const inside = (parent, child) => child === parent || child.startsWith(parent + 
 const safeId = (id) => id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
 
 function git(cwd, args, options = {}) {
-  return execFileSync('git', ['-C', cwd, '-c', 'core.fsmonitor=false', ...args], {
+  return execFileSync('git', ['-C', cwd, '-c', 'core.fsmonitor=false', '-c', 'core.fsync=all', '-c', 'core.fsyncMethod=fsync', ...args], {
     encoding: 'utf8', timeout: 120000, maxBuffer: 64 * 1024 * 1024,
-    stdio: ['pipe', 'pipe', 'pipe'], ...options,
+    stdio: ['pipe', 'pipe', 'pipe', 3, 4], ...options,
   }).trim();
 }
 
@@ -105,17 +108,11 @@ function snapshot(group, transaction) {
 
   if (group.branchRef && !group.branchRef.startsWith('refs/heads/')) throw new Error('Invalid worktree branch');
 
-  if (group.kind === 'git' && !group.shared) {
-    group.metadata = path.join(transaction, `${randomUUID()}.git`);
-    fs.cpSync(group.own, group.metadata, { recursive: true, verbatimSymlinks: true });
-  }
-
   fs.copyFileSync(path.join(group.own, 'index'), index);
   const tree = git(group.path, ['write-tree'], { env });
   group.commit = git(group.path, ['commit-tree', tree, '-p', head], { env, input: 'Archive conversation working directory\n' });
   fs.unlinkSync(index);
   group.refs = group.records.map(({ header }) => `refs/pi-session-snapshots/chats/${safeId(header.id)}/archive/${randomUUID()}`);
-  git(group.common, ['update-ref', '--stdin'], { input: ['start', ...group.refs.map((ref) => `create ${ref} ${group.commit}`), 'prepare', 'commit', ''].join('\n') });
 }
 
 function rewriteCheckpoints(record, group) {
@@ -133,44 +130,6 @@ function rewriteCheckpoints(record, group) {
   }
 
   record.entries.forEach(rewrite);
-}
-
-function restoreGroup(group) {
-  if (!group.moved) return;
-
-  if (group.kind === 'directory') fs.renameSync(group.retiredPath, group.path);
-  else if (!group.removed) git(group.common, ['worktree', 'move', '--force', '--force', group.storedPath, group.path]);
-  else {
-    if (group.branchDeleted) git(group.common, ['update-ref', '--stdin'], { input: `create ${group.branchRef} ${group.head}\n` });
-    git(group.common, ['worktree', 'add', '--detach', group.path, group.head]);
-    git(group.path, ['restore', '--source', group.commit, '--worktree', '--', '.']);
-    const own = git(group.path, ['rev-parse', '--absolute-git-dir']);
-
-    for (const entry of fs.readdirSync(group.metadata)) {
-      if (entry === 'gitdir' || entry === 'commondir') continue;
-      fs.cpSync(path.join(group.metadata, entry), path.join(own, entry), { recursive: true, verbatimSymlinks: true });
-    }
-  }
-}
-
-function rollback(groups, records) {
-  const errors = [];
-
-  for (const group of [...groups].reverse()) {
-    try {
-      restoreGroup(group);
-    } catch (error) { errors.push(`Recovery for ${group.path}: ${error.message}`); }
-  }
-
-  for (const record of [...records].reverse()) {
-    try {
-      for (const move of [...record.moves].reverse()) fs.renameSync(move.to, move.from);
-
-      if (record.backup) fs.copyFileSync(record.backup, record.file);
-    } catch (error) { errors.push(`Recovery for ${record.file}: ${error.message}`); }
-  }
-
-  return errors;
 }
 
 function preserveSharedDirectories(groups, selected) {
@@ -207,7 +166,6 @@ function recordRecovery(record, group, index) {
 
 function prepareRecord(record, group, index, transaction) {
   record.backup = path.join(transaction, `${randomUUID()}.jsonl`);
-  fs.copyFileSync(record.file, record.backup, fs.constants.COPYFILE_EXCL);
   record.header.archiveSessionPath = fs.realpathSync(record.file);
   record.previousDirectory = record.header.worktreeRestore?.kind === 'directory' ? record.header.worktreeRestore.storedPath : undefined;
   recordRecovery(record, group, index);
@@ -217,35 +175,13 @@ function prepareRecord(record, group, index, transaction) {
   record.prepared = prepared;
 }
 
-function moveRecord(record) {
-  fs.renameSync(record.prepared, record.file);
-
-  for (const [from, to] of [[record.file.replace(/\.jsonl$/, '.snapshots'), record.destination.replace(/\.jsonl$/, '.snapshots')], [record.file.replace(/\.jsonl$/, '.diffs.json'), record.destination.replace(/\.jsonl$/, '.diffs.json')], [`${record.file}.loop-detection.json`, `${record.destination}.loop-detection.json`], [record.file, record.destination]]) {
-    try { fs.renameSync(from, to); record.moves.push({ from, to }); }
-    catch (error) { if (error.code !== 'ENOENT' || from === record.file) throw error; }
-  }
-}
-
-function removeWorktree(group) {
-  git(group.common, ['worktree', 'remove', '--force', '--force', group.storedPath]);
-  group.removed = true;
-
-  if (group.branchRef) {
-    const worktrees = git(group.common, ['worktree', 'list', '--porcelain', '-z']).split('\0');
-
-    if (worktrees.includes(`branch ${group.branchRef}`)) throw new Error('The branch is still checked out in another worktree');
-    git(group.common, ['update-ref', '-d', group.branchRef, group.head]);
-    group.branchDeleted = true;
-  }
-}
-
 function prepareArchive() {
   const selected = new Set(request.paths.map((file) => fs.realpathSync(file)));
 
   const records = [...selected].map((file) => {
     if (!inside(sessions, file) || !file.endsWith('.jsonl') || !fs.lstatSync(file).isFile()) throw new Error('Only active piop sessions can be archived');
 
-    return { ...readSession(file), moves: [] };
+    return readSession(file);
   });
 
   const byDirectory = new Map();
@@ -304,41 +240,10 @@ function prepareGroups(groups, transaction) {
 
 }
 
-function cleanupPreviousDirectories(records) {
-  const previous = new Set(records.flatMap(record => record.previousDirectory ? [record.previousDirectory] : []));
-
-  if (!previous.size) return;
-
-  for (const directory of [sessions, archive]) {
-    walkSessions(directory, file => previous.delete(readSession(file).header.worktreeRestore?.storedPath));
-  }
-
-  for (const directory of previous) {
-    let canonical;
-
-    try { canonical = fs.realpathSync(directory); }
-    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
-
-    if (path.dirname(canonical) !== fs.realpathSync(storedDirectories)) throw new Error('Invalid previous archived directory');
-    fs.rmSync(canonical, { recursive: true });
-  }
-}
-
-function publishArchive(groups, records, removable) {
-  for (const group of groups.filter(candidate => candidate.kind === 'directory')) fs.renameSync(group.preparedDirectory, group.storedPath);
-
-  for (const group of removable) {
-    if (group.kind === 'directory') fs.renameSync(group.path, group.retiredPath);
-    else git(group.common, ['worktree', 'move', '--force', '--force', group.path, group.storedPath]);
-    group.moved = true;
-  }
-
-  for (const record of records) moveRecord(record);
-
-  for (const group of removable.filter(candidate => candidate.kind === 'git')) removeWorktree(group);
-}
-
 function main() {
+  recoverStorage(root);
+
+  if (!request) return;
   const { records, groups, removable } = prepareArchive();
 
   if (request.inspect) {
@@ -351,21 +256,16 @@ function main() {
 
   if (groups.some(group => group.kind === 'directory') || removable.length) fs.mkdirSync(storedDirectories, { recursive: true });
   const transaction = fs.mkdtempSync(path.join(root, 'archive-transaction-'));
+  prepare(transaction);
 
   try {
     prepareGroups(groups, transaction);
-
-    fs.writeFileSync(path.join(transaction, 'recovery.json'), JSON.stringify({ groups, records }), { flag: 'wx', mode: 0o600 });
-
-    publishArchive(groups, records, removable);
   } catch (error) {
-    const failures = rollback(groups, records);
-    throw new Error(`${error.message}\nArchiving failed.${failures.length ? '\n' + failures.join('\n') : ' Conversations remain active.'}\nRecovery data: ${transaction}`);
+    cleanup(transaction);
+    throw error;
   }
 
-  try { cleanupPreviousDirectories(records); fs.rmSync(transaction, { recursive: true, force: true }); }
-  catch (error) { console.error(`Archived successfully; temporary recovery files remain at ${transaction}: ${error.message}`); }
+  archiveGroup(root, transaction, groups, records, removable);
 }
 
-try { main(); }
-catch (error) { console.error(error.message); process.exitCode = 1; }
+runWithStorageLock(root, main);

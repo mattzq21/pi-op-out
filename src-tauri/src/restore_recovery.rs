@@ -5,8 +5,8 @@ pub(crate) fn recover_remote(host: &crate::RemoteHost) -> Result<(), String> {
     use crate::worktree_setup::{run_limited, shell_quote};
     let script = include_str!("../resources/restore-archived-worktree.bundle.mjs");
     let storage = crate::STORAGE_DIRECTORY;
-    let command = format!("for pending in \"$HOME/{storage}/restore-transactions/\"*.json; do [ -f \"$pending\" ] || continue; PIOP_STORAGE_DIRECTORY={storage} node -e {} -- --recover; exit $?; done", shell_quote(script));
-    let output = run_limited(ssh(host).arg(remote_login_command(&command)), 64 * 1024, "Could not recover session restoration")?;
+    let command = format!(r#"piopPending=; for candidate in "$HOME/{storage}/restore-transactions/"*.json "$HOME/{storage}/archive-transaction-"* "$HOME/{storage}/deleted-sessions/"*; do [ ! -e "$candidate" ] || piopPending=1; done; for area in sessions archived; do [ -d "$HOME/{storage}/$area" ] || continue; candidate=$(find "$HOME/{storage}/$area" -type d -name '*.snapshots' -prune -o -type d -name '.delete-*.lock' -print -quit) || exit $?; [ -z "$candidate" ] || piopPending=1; done; [ -n "$piopPending" ] || exit 0; PIOP_STORAGE_DIRECTORY={storage} node -e {} -- --recover"#, shell_quote(script));
+    let output = run_limited(ssh(host).arg(remote_login_command(&command)), 64 * 1024, "Could not recover session storage")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().into()); }
     Ok(())
 }
@@ -25,12 +25,47 @@ fn restoration_pending(root: &Path) -> Result<bool, String> {
     Ok(pending)
 }
 
+fn archive_pending(root: &Path) -> Result<bool, String> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.to_string()),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry.file_type().map_err(|error| error.to_string())?.is_dir() && entry.file_name().to_string_lossy().starts_with("archive-transaction-") { return Ok(true); }
+    }
+    Ok(false)
+}
+
+fn deletion_pending(root: &Path, area: &str) -> Result<bool, String> {
+    let directory = root.join(area);
+    if !directory.try_exists().map_err(|error| error.to_string())? { return Ok(false); }
+    let entries = walkdir::WalkDir::new(directory).min_depth(1).follow_links(false).into_iter()
+        .filter_entry(|entry| !entry.file_name().to_string_lossy().ends_with(".snapshots"));
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry.file_type().is_dir() { continue; }
+        let name = entry.file_name().to_string_lossy();
+        if area == "deleted-sessions" || (name.starts_with(".delete-") && name.ends_with(".lock")) { return Ok(true); }
+    }
+    Ok(false)
+}
+
+fn transaction_directories_pending(root: &Path) -> Result<bool, String> {
+    if archive_pending(root)? { return Ok(true); }
+    for area in ["sessions", "archived", "deleted-sessions"] {
+        if deletion_pending(root, area)? { return Ok(true); }
+    }
+    Ok(false)
+}
+
 pub(crate) fn recover(root: &Path) -> Result<(), String> {
-    if !restoration_pending(root)? { return Ok(()); }
+    if !restoration_pending(root)? && !transaction_directories_pending(root)? { return Ok(()); }
     let output = crate::node_command()
         .env("PIOP_RESTORE_ROOT", root)
         .args(["-e", include_str!("../resources/restore-archived-worktree.bundle.mjs"), "--", "--recover"])
         .output().map_err(|error| error.to_string())?;
-    if !output.status.success() { return Err(format!("Session restore recovery is pending: {}", String::from_utf8_lossy(&output.stderr).trim())); }
+    if !output.status.success() { return Err(format!("Session storage recovery is pending: {}", String::from_utf8_lossy(&output.stderr).trim())); }
     Ok(())
 }
