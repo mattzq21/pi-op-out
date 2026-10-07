@@ -2,7 +2,7 @@ import { createEffect, onCleanup, onMount } from "solid-js";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { markdown, markdownKeymap } from "@codemirror/lang-markdown";
+import { markdown, markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
 import { liveMarkdown } from "./liveMarkdown";
 
 export function LiveMarkdownEditor(props: { content: string; editable: boolean; visible: boolean; onChange: (value: string) => void; onSave: () => void }) {
@@ -11,8 +11,9 @@ export function LiveMarkdownEditor(props: { content: string; editable: boolean; 
   let editable = props.editable;
   const permissions = new Compartment();
   const permissionExtensions = () => [EditorState.readOnly.of(!props.editable), EditorView.editable.of(props.editable)];
+
   const state = () => EditorState.create({ doc: props.content, extensions: [
-    markdown(), liveMarkdown, history(), EditorView.lineWrapping,
+    markdown({ base: markdownLanguage }), liveMarkdown, history(), EditorView.lineWrapping,
     permissions.of(permissionExtensions()),
     placeholder("Write a note for this chat…"),
     EditorView.contentAttributes.of({ "aria-label": "Chat note", "aria-multiline": "true", spellcheck: "true" }),
