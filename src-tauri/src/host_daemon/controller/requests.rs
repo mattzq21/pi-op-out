@@ -192,7 +192,7 @@ impl Host {
         session.reconcile(false).await;
         if let Some(error) = session.configuration_error() { return Err(error); }
         if self.registry().cancelled_deliveries.contains(&text(packet, "deliveryId")) { return Err("Agent delivery was cancelled".into()); }
-        queue_command(&session, json!({"type":"orchestration_message","sourceSessionId":packet["sourceSessionId"],
+        queue_command(&session, json!({"type":"orchestration_message","deliveryId":packet["deliveryId"],"sourceSessionId":packet["sourceSessionId"],
             "sourceHostId":packet["sourceHostId"],"message":packet["message"],"wake":packet["wake"]})).await
     }
 

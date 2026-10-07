@@ -8,6 +8,7 @@ import { registerFastModeStatus } from "./session-broker/fast-mode.ts";
 import { registerTurnCapture } from "./session-broker/turn-capture.ts";
 import { registerForkAndForget } from "./session-broker/operations.ts";
 import { registerSubagents } from "./session-broker/subagents.ts";
+import { registerSubagentMailbox } from "./session-broker/subagent-mailbox.ts";
 import { registerBrokerTools } from "./session-broker/tools.ts";
 import { registerGoals } from "./session-broker/goals.ts";
 import { registerReview } from "./session-broker/review.ts";
@@ -37,8 +38,9 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerPauseControl(pi);
   registerFastModeStatus(pi);
   registerForkAndForget(pi);
-  registerSubagents(pi);
+  const mailbox = registerSubagentMailbox(pi);
   registerOrchestration(pi);
+  registerSubagents(pi, mailbox);
   registerRequestUserInput(pi);
   registerBrokerTools(pi);
   registerGoals(pi);

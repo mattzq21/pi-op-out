@@ -43,7 +43,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 22] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 24] = [
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
     ("pause.ts", include_str!("../../resources/session-broker/pause.ts")),
@@ -53,9 +53,11 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 22] = [
     ("fork.ts", include_str!("../../resources/session-broker/fork.ts")),
     ("subagents.ts", include_str!("../../resources/session-broker/subagents.ts")),
     ("orchestration.ts", include_str!("../../resources/session-broker/orchestration.ts")),
+    ("durable-mailbox.ts", include_str!("../../resources/session-broker/durable-mailbox.ts")),
     ("agent-profiles.ts", include_str!("../../resources/session-broker/agent-profiles.ts")),
     ("subagent-usage.ts", include_str!("../../resources/session-broker/subagent-usage.ts")),
     ("subagent-mailbox.ts", include_str!("../../resources/session-broker/subagent-mailbox.ts")),
+    ("subagent-results.ts", include_str!("../../resources/session-broker/subagent-results.ts")),
     ("operations.ts", include_str!("../../resources/session-broker/operations.ts")),
     ("tools.ts", include_str!("../../resources/session-broker/tools.ts")),
     ("html-preview.ts", include_str!("../../resources/session-broker/html-preview.ts")),

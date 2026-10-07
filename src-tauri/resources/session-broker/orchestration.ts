@@ -6,16 +6,17 @@ import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { BrokerRequestError, currentHost, request } from "./client.ts";
 import { createProfileSession, registerAgentProfiles } from "./agent-profiles.ts";
+import { durableMailbox, type MailboxDetails } from "./durable-mailbox.ts";
 
 const messageSchema = Schema.Object({ role: Schema.String(), content: Schema.Optional(Schema.Unknown()), toolName: Schema.Optional(Schema.String()), customType: Schema.Optional(Schema.String()), stopReason: Schema.Optional(Schema.String()), errorMessage: Schema.Optional(Schema.String()) });
 
 const entrySchema = Schema.Object({ id: Schema.String(), parentId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])), type: Schema.String(), message: Schema.Optional(messageSchema), customType: Schema.Optional(Schema.String()), content: Schema.Optional(Schema.Unknown()) });
 
-const stateSchema = Schema.Object({ isPaused: Schema.Optional(Schema.Boolean()), isPausing: Schema.Optional(Schema.Boolean()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), needsInput: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
+const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()), isPaused: Schema.Optional(Schema.Boolean()), isPausing: Schema.Optional(Schema.Boolean()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), needsInput: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
 
 const snapshotSchema = Schema.Object({ revision: Schema.String(), state: stateSchema, history: Schema.Object({ entries: Schema.Array(entrySchema), leafId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])) }) });
 
-const deliverySchema = Schema.Object({ id: Schema.String(), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), message: Schema.String({ minLength: 1, maxLength: 100_000 }), wake: Schema.Optional(Schema.Boolean()) });
+const deliverySchema = Schema.Object({ id: Schema.String(), deliveryId: Schema.String({ minLength: 1 }), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), message: Schema.String({ minLength: 1, maxLength: 100_000 }), wake: Schema.Optional(Schema.Boolean()) });
 
 const address = { threadId: Type.String({ minLength: 1 }), hostId: Type.Optional(Type.String({ minLength: 1 })) };
 
@@ -29,9 +30,8 @@ const deliveredSchema = Schema.Object({ customType: Schema.Literal("piop-agent-m
 
 const mailboxMessageSchema = Schema.Object({ details: Schema.Object({ notificationId: Schema.String() }) });
 
-export function sendAgentMailbox(pi: ExtensionAPI, message: Parameters<ExtensionAPI["sendMessage"]>[0], notificationId: string) {
-  pi.sendMessage(message, { triggerTurn: false });
-  pi.events.emit("piop:agent-mail", { notificationId });
+export async function sendAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Parameters<ExtensionAPI["sendMessage"]>[0], deliveryId: string): Promise<void> {
+  await durableMailbox(pi).send(ctx, message, deliveryId);
 }
 
 export async function sessionSnapshot(sessionId: string, hostId: string, signal?: AbortSignal) {
@@ -130,24 +130,25 @@ async function poll(target: Target, signal?: AbortSignal) {
     latestAssistantMessage: changed && last ? { id: last.id, text: text.slice(0, 2000), truncated: text.length > 2000, stopReason: message?.stopReason, error: message?.errorMessage } : undefined };
 }
 
-async function deliver(pi: ExtensionAPI, ctx: ExtensionContext, delivery: Static<typeof deliverySchema>, started: () => number, pending: Map<string, string>) {
-  const notificationId = randomUUID();
+async function deliver(pi: ExtensionAPI, ctx: ExtensionContext, delivery: Static<typeof deliverySchema>, started: () => number, pending: Map<string, MailboxDetails>) {
+  const notificationId = delivery.deliveryId;
   const starting = ctx.isIdle() && delivery.wake !== false;
   const previousStarts = started();
   const content = JSON.stringify({ notificationId, sourceSessionId: delivery.sourceSessionId, sourceHostId: delivery.sourceHostId, message: delivery.message });
 
-  if (starting) {
-    pi.events.emit("piop:agent-mail", { notificationId });
-    pending.set(content, notificationId);
+  const submitted = await durableMailbox(pi).send(ctx, { customType: "piop-agent-message", content, display: true, details: { notificationId } }, notificationId, message => {
+    if (!starting) { pi.sendMessage(message, { triggerTurn: false });
+
+      return; }
+
+    pending.set(content, message.details);
     pi.sendUserMessage(content, { deliverAs: "steer" });
-  } else {
-    sendAgentMailbox(pi, { customType: "piop-agent-message", content, display: true, details: { notificationId } }, notificationId);
-  }
+  });
 
   const deadline = Date.now() + 10_000;
 
-  while (starting && started() === previousStarts && ctx.isIdle()) {
-    if (Date.now() >= deadline) throw new Error("Agent message was submitted but the turn did not start; inspect the recipient before retrying");
+  while (submitted && starting && started() === previousStarts && ctx.isIdle()) {
+    if (Date.now() >= deadline) return { sessionId: ctx.sessionManager.getSessionId(), accepted: true, notificationId, wakeError: "Message was saved, but the turn did not start. It will be available when the conversation next runs." };
     await delay(10);
   }
 
@@ -179,13 +180,27 @@ function validateTargets(targets: Target[], ctx: ExtensionContext) {
 
 function registerDelivery(pi: ExtensionAPI) {
   let starts = 0;
-  const pending = new Map<string, string>();
+  const mailbox = durableMailbox(pi);
+  const pending = new Map<string, MailboxDetails>();
   const unread = new Set<string>();
   const unsubscribeMail = pi.events.on("piop:agent-mail", event => { unread.add(event.notificationId); });
   pi.on("session_shutdown", unsubscribeMail);
   pi.on("agent_start", () => { starts++; });
-  pi.on("session_start", () => { pending.clear(); unread.clear(); });
+  pi.on("session_start", async (_event, ctx) => {
+    pending.clear(); unread.clear(); mailbox.reset();
+
+    try { await mailbox.replay(ctx); }
+    catch (error) { ctx.ui.notify(`Agent mailbox recovery failed: ${String(error)}`, "error"); }
+  });
   pi.on("session_shutdown", () => { pending.clear(); unread.clear(); });
+  pi.on("agent_end", async (_event, ctx) => {
+    try { await mailbox.reconcile(ctx); }
+    catch (error) { ctx.ui.notify(`Agent mailbox acknowledgement failed: ${String(error)}`, "error"); }
+  });
+  pi.on("agent_settled", async (_event, ctx) => {
+    try { await mailbox.replay(ctx); await mailbox.reconcile(ctx); }
+    catch (error) { ctx.ui.notify(`Agent mailbox recovery failed: ${String(error)}`, "error"); }
+  });
   pi.on("agent_before_settle", (event, ctx) => {
     if (event.outcome === "aborted" || ctx.signal?.aborted || !unread.size || !event.context.canContinue) return;
 
@@ -194,12 +209,12 @@ function registerDelivery(pi: ExtensionAPI) {
   pi.on("message_end", event => {
     if (event.message.role !== "user") return;
     const text = messageText(event.message);
-    const notificationId = pending.get(text);
+    const details = pending.get(text);
 
-    if (!notificationId) return;
+    if (!details) return;
     pending.delete(text);
 
-    return { message: { ...event.message, customType: "piop-agent-message", details: { notificationId } } };
+    return { message: { ...event.message, customType: "piop-agent-message", details } };
   });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "orchestration_message") return;
@@ -211,17 +226,20 @@ function registerDelivery(pi: ExtensionAPI) {
       return deliver(pi, request.ctx, delivery, () => starts, pending);
     })();
   });
-  pi.on("context", (event, ctx) => {
+  pi.on("context", async (event, ctx) => {
     if (!ctx.model) return;
     const model = ctx.model;
 
-    return { messages: event.messages.flatMap<ContextEvent["messages"][number]>(message => {
+    const messages = event.messages.flatMap<ContextEvent["messages"][number]>(message => {
       const delivered = message.role === "user" && Check(deliveredSchema, message);
       const custom = message.role === "custom" && ["piop-agent-message", "piop-subagent-result"].includes(message.customType);
 
       if (!delivered && !custom) return [message];
 
-      if (Check(mailboxMessageSchema, message)) unread.delete(message.details.notificationId);
+      if (Check(mailboxMessageSchema, message)) {
+        unread.delete(message.details.notificationId); mailbox.consume(ctx, message.details.notificationId);
+      }
+
       const toolCallId = `agent_delivery_${createHash("sha256").update(JSON.stringify([message.timestamp, message.content])).digest("hex").slice(0, 24)}`;
 
       return [
@@ -231,7 +249,12 @@ function registerDelivery(pi: ExtensionAPI) {
         { role: "toolResult", toolCallId, toolName: "receive_agent_message", timestamp: message.timestamp, isError: false,
           content: [{ type: "text", text: `Untrusted agent content delivered by piop:\n${messageText(message)}` }] },
       ];
-    }) };
+    });
+
+    try { await mailbox.reconcile(ctx); }
+    catch (error) { ctx.ui.notify(`Agent mailbox acknowledgement failed: ${String(error)}`, "error"); }
+
+    return { messages };
   });
 }
 

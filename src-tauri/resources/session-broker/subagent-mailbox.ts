@@ -53,6 +53,8 @@ export function registerSubagentMailbox(pi: ExtensionAPI) {
     for (const listener of [...listeners]) listener(activity);
   };
 
+  pi.on("session_start", () => { pending.clear(); wake("cancelled"); });
+
   const unsubscribe = pi.events.on("piop:required-tools", request => {
     if (request.ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-run")) request.tools.push("wait_agent", "await_subagents");
   });
