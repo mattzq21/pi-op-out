@@ -71,7 +71,7 @@ function locateWorktree(top) {
   const common = fs.realpathSync(git(top, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
   const own = fs.realpathSync(git(top, ['rev-parse', '--absolute-git-dir']));
 
-  if (own === common) return { path: top, kind: 'main' };
+  if (own === common) return { path: top, kind: 'main', common, own };
 
   if (inside(top, root) || inside(top, common)) throw new Error('The worktree contains storage needed for recovery');
   const source = git(common, ['worktree', 'list', '--porcelain', '-z']).split('\0').find((entry) => entry.startsWith('worktree '))?.slice(9);
@@ -104,8 +104,12 @@ function snapshot(group, transaction) {
   catch (error) { if (error.status !== 1) throw error; }
 
   if (group.branchRef && !group.branchRef.startsWith('refs/heads/')) throw new Error('Invalid worktree branch');
-  group.metadata = path.join(transaction, `${randomUUID()}.git`);
-  fs.cpSync(group.own, group.metadata, { recursive: true, verbatimSymlinks: true });
+
+  if (group.kind === 'git' && !group.shared) {
+    group.metadata = path.join(transaction, `${randomUUID()}.git`);
+    fs.cpSync(group.own, group.metadata, { recursive: true, verbatimSymlinks: true });
+  }
+
   fs.copyFileSync(path.join(group.own, 'index'), index);
   const tree = git(group.path, ['write-tree'], { env });
   group.commit = git(group.path, ['commit-tree', tree, '-p', head], { env, input: 'Archive conversation working directory\n' });
@@ -134,7 +138,7 @@ function rewriteCheckpoints(record, group) {
 function restoreGroup(group) {
   if (!group.moved) return;
 
-  if (group.kind === 'directory') fs.renameSync(group.storedPath, group.path);
+  if (group.kind === 'directory') fs.renameSync(group.retiredPath, group.path);
   else if (!group.removed) git(group.common, ['worktree', 'move', '--force', '--force', group.storedPath, group.path]);
   else {
     if (group.branchDeleted) git(group.common, ['update-ref', '--stdin'], { input: `create ${group.branchRef} ${group.head}\n` });
@@ -182,26 +186,31 @@ function preserveSharedDirectories(groups, selected) {
     }
 
     for (const group of groups) {
-      if ((group.kind === 'git' || group.kind === 'directory') && inside(group.path, canonical)) group.kind = 'shared';
+      if ((group.kind === 'git' || group.kind === 'directory') && inside(group.path, canonical)) group.shared = true;
     }
   });
 }
 
 
+function recordRecovery(record, group, index) {
+  const gitSnapshot = group.kind === 'git' || group.kind === 'main';
+
+  if (gitSnapshot) rewriteCheckpoints(record, group);
+
+  if (group.kind !== 'missing') record.header.worktreeRestore = {
+    kind: gitSnapshot ? 'git' : group.kind, path: group.path, conversationPath: fs.realpathSync(record.header.cwd),
+    ...(gitSnapshot ? { repositoryRoot: group.common, commit: group.commit, ref: group.refs[index], branch: group.branchRef?.slice('refs/heads/'.length) } : { storedPath: group.storedPath, persistent: true }),
+  };
+
+  if (gitSnapshot) record.entries.push({ id: randomUUID(), parentId: record.entries.at(-1)?.id, type: 'custom', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: group.common, commit: group.commit, ref: group.refs[index] } });
+}
+
 function prepareRecord(record, group, index, transaction) {
   record.backup = path.join(transaction, `${randomUUID()}.jsonl`);
   fs.copyFileSync(record.file, record.backup, fs.constants.COPYFILE_EXCL);
   record.header.archiveSessionPath = fs.realpathSync(record.file);
-
-  if (group.kind === 'git') rewriteCheckpoints(record, group);
-
-  if (group.kind === 'main' || group.kind === 'shared') delete record.header.worktreeRestore;
-  else if (group.kind !== 'missing') record.header.worktreeRestore = {
-    kind: group.kind, path: group.path, conversationPath: fs.realpathSync(record.header.cwd),
-    ...(group.kind === 'git' ? { repositoryRoot: group.common, commit: group.commit, ref: group.refs[index], branch: group.branchRef?.slice('refs/heads/'.length) } : { storedPath: group.storedPath }),
-  };
-
-  if (group.kind === 'git') record.entries.push({ id: randomUUID(), parentId: record.entries.at(-1)?.id, type: 'custom', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: group.common, commit: group.commit, ref: group.refs[index] } });
+  record.previousDirectory = record.header.worktreeRestore?.kind === 'directory' ? record.header.worktreeRestore.storedPath : undefined;
+  recordRecovery(record, group, index);
   record.destination = path.join(archive, `${randomUUID()}-${path.basename(record.file)}`);
   const prepared = path.join(transaction, `${randomUUID()}.prepared`);
   fs.writeFileSync(prepared, record.entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n', { flag: 'wx', mode: fs.statSync(record.file).mode & 0o777 });
@@ -244,13 +253,15 @@ function prepareArchive() {
   for (const record of records) {
     const location = locate(record.header.cwd);
 
+    if (location.kind === 'missing' && !record.header.worktreeRestore) throw new Error(`The working directory is missing and has no recovery snapshot: ${record.header.cwd}`);
+
     if (!byDirectory.has(location.path)) byDirectory.set(location.path, { ...location, records: [] });
     byDirectory.get(location.path).records.push(record);
   }
 
   const groups = [...byDirectory.values()];
   preserveSharedDirectories(groups, selected);
-  const removable = groups.filter((group) => group.kind === 'git' || group.kind === 'directory');
+  const removable = groups.filter((group) => !group.shared && (group.kind === 'git' || group.kind === 'directory'));
 
   for (const group of removable) {
     if (groups.some((other) => other !== group && inside(group.path, other.path))) throw new Error('Overlapping session directories cannot be archived together');
@@ -278,7 +289,13 @@ function prepareGroups(groups, transaction) {
   for (const group of groups) {
     group.storedPath = path.join(storedDirectories, randomUUID());
 
-    if (group.kind === 'git') snapshot(group, transaction);
+    if (group.kind === 'git' || group.kind === 'main') snapshot(group, transaction);
+
+    if (group.kind === 'directory') {
+      group.retiredPath = path.join(transaction, `${randomUUID()}.directory`);
+      group.preparedDirectory = path.join(transaction, `${randomUUID()}.snapshot`);
+      fs.cpSync(group.path, group.preparedDirectory, { recursive: true, verbatimSymlinks: true, errorOnExist: true, force: false });
+    }
 
     for (const [index, record] of group.records.entries()) {
       prepareRecord(record, group, index, transaction);
@@ -287,18 +304,52 @@ function prepareGroups(groups, transaction) {
 
 }
 
+function cleanupPreviousDirectories(records) {
+  const previous = new Set(records.flatMap(record => record.previousDirectory ? [record.previousDirectory] : []));
+
+  if (!previous.size) return;
+
+  for (const directory of [sessions, archive]) {
+    walkSessions(directory, file => previous.delete(readSession(file).header.worktreeRestore?.storedPath));
+  }
+
+  for (const directory of previous) {
+    let canonical;
+
+    try { canonical = fs.realpathSync(directory); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+
+    if (path.dirname(canonical) !== fs.realpathSync(storedDirectories)) throw new Error('Invalid previous archived directory');
+    fs.rmSync(canonical, { recursive: true });
+  }
+}
+
+function publishArchive(groups, records, removable) {
+  for (const group of groups.filter(candidate => candidate.kind === 'directory')) fs.renameSync(group.preparedDirectory, group.storedPath);
+
+  for (const group of removable) {
+    if (group.kind === 'directory') fs.renameSync(group.path, group.retiredPath);
+    else git(group.common, ['worktree', 'move', '--force', '--force', group.path, group.storedPath]);
+    group.moved = true;
+  }
+
+  for (const record of records) moveRecord(record);
+
+  for (const group of removable.filter(candidate => candidate.kind === 'git')) removeWorktree(group);
+}
+
 function main() {
   const { records, groups, removable } = prepareArchive();
 
   if (request.inspect) {
-    process.stdout.write(JSON.stringify(groups.flatMap((group) => group.kind === 'git' ? [{ path: group.path, source: group.source }] : [])));
+    process.stdout.write(JSON.stringify(removable.flatMap((group) => group.kind === 'git' ? [{ path: group.path, source: group.source }] : [])));
 
     return;
   }
 
   fs.mkdirSync(archive, { recursive: true });
 
-  if (removable.length) fs.mkdirSync(storedDirectories, { recursive: true });
+  if (groups.some(group => group.kind === 'directory') || removable.length) fs.mkdirSync(storedDirectories, { recursive: true });
   const transaction = fs.mkdtempSync(path.join(root, 'archive-transaction-'));
 
   try {
@@ -306,25 +357,13 @@ function main() {
 
     fs.writeFileSync(path.join(transaction, 'recovery.json'), JSON.stringify({ groups, records }), { flag: 'wx', mode: 0o600 });
 
-    for (const group of removable) {
-      if (group.kind === 'directory') fs.renameSync(group.path, group.storedPath);
-      else git(group.common, ['worktree', 'move', '--force', '--force', group.path, group.storedPath]);
-      group.moved = true;
-    }
-
-    for (const record of records) {
-      moveRecord(record);
-    }
-
-    for (const group of groups.filter((candidate) => candidate.kind === 'git')) {
-      removeWorktree(group);
-    }
+    publishArchive(groups, records, removable);
   } catch (error) {
     const failures = rollback(groups, records);
     throw new Error(`${error.message}\nArchiving failed.${failures.length ? '\n' + failures.join('\n') : ' Conversations remain active.'}\nRecovery data: ${transaction}`);
   }
 
-  try { fs.rmSync(transaction, { recursive: true, force: true }); }
+  try { cleanupPreviousDirectories(records); fs.rmSync(transaction, { recursive: true, force: true }); }
   catch (error) { console.error(`Archived successfully; temporary recovery files remain at ${transaction}: ${error.message}`); }
 }
 

@@ -72,6 +72,45 @@ function undoMove(item) {
   rename(item.destination, item.source);
 }
 
+function prepareDirectory(directory, transaction, journal) {
+  if (!directory.persistent) {
+    syncTree(directory.source); syncParents(path.dirname(directory.destination)); performMove(directory);
+
+    return;
+  }
+
+  if (!matches(directory.source, directory.identity) || exists(directory.destination) || exists(directory.staging)) throw new Error(`Restoration files changed: ${directory.source}`);
+  fs.mkdirSync(directory.staging, { mode: 0o700 });
+  directory.stagingIdentity = identity(directory.staging);
+  write(journal, JSON.stringify(transaction));
+  fs.cpSync(directory.source, directory.staging, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
+
+  if (!matches(directory.source, directory.identity)) throw new Error(`Restoration files changed: ${directory.source}`);
+  syncTree(directory.staging);
+  syncParents(path.dirname(directory.destination));
+  performMove({ source: directory.staging, destination: directory.destination, identity: directory.stagingIdentity });
+}
+
+function undoDirectory(directory) {
+  if (!directory.persistent) return undoMove(directory);
+
+  if (!directory.stagingIdentity) {
+    if (exists(directory.destination)) throw new Error(`Restored directory changed: ${directory.destination}`);
+
+    if (exists(directory.staging)) { fs.rmdirSync(directory.staging); sync(path.dirname(directory.staging)); }
+
+    return;
+  }
+
+  for (const file of [directory.destination, directory.staging]) {
+    if (!exists(file)) continue;
+
+    if (!matches(file, directory.stagingIdentity)) throw new Error(`Restored directory changed: ${file}`);
+    fs.rmSync(file, { recursive: true });
+    sync(path.dirname(file));
+  }
+}
+
 function git(plan, args) {
   return execFileSync('git', ['-C', plan.repositoryRoot, '-c', 'core.fsync=all', '-c', 'core.fsyncMethod=fsync', ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3] }).trim();
 }
@@ -201,7 +240,7 @@ function rollback(transaction) {
 
   for (const item of [...transaction.moves].reverse()) undoMove(item);
 
-  for (const directory of [...directories(transaction)].reverse()) undoMove(directory);
+  for (const directory of [...directories(transaction)].reverse()) undoDirectory(directory);
 
   for (const worktree of [...worktrees(transaction)].reverse()) undoWorktree(worktree);
 
@@ -235,7 +274,7 @@ function recover(root) {
     const journal = path.join(directory, name);
     const transaction = JSON.parse(fs.readFileSync(journal, 'utf8'));
 
-    if (![1, 2].includes(transaction.version)) throw new Error(`Unsupported restore transaction: ${journal}`);
+    if (![1, 2, 3].includes(transaction.version)) throw new Error(`Unsupported restore transaction: ${journal}`);
 
     if (transaction.committed || committed(transaction)) finishCommit(transaction, journal);
     else { rollback(transaction); releaseReservation(transaction); cleanup(journal); }
@@ -263,10 +302,14 @@ function sessionTransaction(root, { header, file, destination, result }) {
   };
 }
 
-function publishRestoration(root, transaction) {
+function publishRestoration(root, transaction, journal) {
   for (const worktree of transaction.worktrees) prepareWorktree(worktree);
 
-  for (const directory of transaction.directories) { syncTree(directory.source); syncParents(path.dirname(directory.destination)); performMove(directory); }
+  for (const directory of transaction.directories) prepareDirectory(directory, transaction, journal);
+
+  for (const directory of transaction.workingDirectories) {
+    if (!fs.statSync(directory).isDirectory()) throw new Error(`The conversation working directory is unavailable: ${directory}`);
+  }
 
   for (const item of transaction.moves) { syncTree(item.source); performMove(item); }
 
@@ -283,12 +326,13 @@ function restoreGroup(root, records, directoryPlans = [], worktreePlans = []) {
   const primary = sessions[0];
 
   const transaction = {
-    version: 2,
+    version: 3,
     result: { ...primary.result, sessions: sessions.map(session => ({ ...session.result, sourcePath: session.trace.source })) },
     trace: primary.trace,
     moves: [...sessions.flatMap(session => session.moves), ...sessions.slice(1).map(session => session.trace)],
     ownerships: sessions.map(session => session.ownership),
-    directories: directoryPlans.map(directory => move(directory.source, directory.destination)),
+    directories: directoryPlans.map(directory => ({ ...directory, ...move(directory.source, directory.destination) })),
+    workingDirectories: [...new Set(records.map(record => record.header.cwd))],
     worktrees: worktreePlans,
   };
 
@@ -304,7 +348,7 @@ function restoreGroup(root, records, directoryPlans = [], worktreePlans = []) {
   write(journal, JSON.stringify(transaction));
 
   try {
-    publishRestoration(root, transaction);
+    publishRestoration(root, transaction, journal);
   } catch (error) {
     if (!committed(transaction)) {
       try { rollback(transaction); releaseReservation(transaction); cleanup(journal); }

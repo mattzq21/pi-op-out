@@ -289,10 +289,6 @@ async function cleanupCommitted(root) {
   } catch (error) { console.error(`Deletion committed; could not clean up ${root}: ${error.message}`); }
 }
 
-function archiveRoot(target) {
-  return fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "archived"));
-}
-
 async function appendConversationNote(files, header, target) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)) return undefined;
   const storage = target.root ? path.dirname(await fs.realpath(target.root)) : path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
@@ -310,36 +306,52 @@ async function archivedDirectoryMetadata(directory) {
   return { file: directory, metadata, directory: true, stagedPath: "", staged: false };
 }
 
+async function referencesDirectory(file, storedPath) {
+  const first = (await fs.readFile(file, "utf8")).split("\n").find((line) => line.trim());
+  const header = JSON.parse(first);
+
+  return header.worktreeRestore?.kind === "directory" && header.worktreeRestore.storedPath === storedPath;
+}
+
+async function directoryReferenced(location, storedPath, selected) {
+  let entries;
+
+  try { entries = await fs.readdir(location, { withFileTypes: true }); }
+  catch (error) { if (error.code === "ENOENT") return false; throw error; }
+
+  for (const entry of entries) {
+    const file = path.join(location, entry.name);
+
+    if (entry.isDirectory() && await directoryReferenced(file, storedPath, selected)) return true;
+
+    if (!entry.isFile() || !file.endsWith(".jsonl") || selected.has(file)) continue;
+
+    if (await referencesDirectory(file, storedPath)) return true;
+  }
+
+  return false;
+}
+
 async function archivedDirectory(source, header, target, selected = new Set([source])) {
   const saved = header.worktreeRestore;
 
-  if (target.area !== "archived" || saved?.kind !== "directory") return undefined;
-  const archive = await archiveRoot(target);
-  const root = await fs.realpath(path.join(archive, '..', 'archived-tmp'));
+  if (saved?.kind !== "directory") return undefined;
+  const area = await deletionStorageRoot(target);
+  const storage = path.dirname(area);
   let directory;
 
   try { directory = await fs.realpath(saved.storedPath); }
   catch (error) { if (error.code === "ENOENT") return undefined; throw error; }
 
+  const root = await fs.realpath(path.join(storage, "archived-tmp"));
+
   if (path.dirname(directory) !== root) throw new Error("Invalid archived working directory");
 
-  async function referenced(location) {
-    for (const entry of await fs.readdir(location, { withFileTypes: true })) {
-      const file = path.join(location, entry.name);
+  const locations = new Set([area, path.join(storage, "sessions"), path.join(storage, "archived")]);
 
-      if (entry.isDirectory() && await referenced(file)) return true;
-
-      if (!entry.isFile() || !file.endsWith(".jsonl") || selected.has(file)) continue;
-      const first = (await fs.readFile(file, "utf8")).split("\n").find((line) => line.trim());
-      const other = JSON.parse(first);
-
-      if (other.worktreeRestore?.kind === "directory" && other.worktreeRestore.storedPath === saved.storedPath) return true;
-    }
-
-    return false;
+  for (const location of locations) {
+    if (await directoryReferenced(location, saved.storedPath, selected)) return undefined;
   }
-
-  if (await referenced(archive)) return undefined;
 
   return archivedDirectoryMetadata(directory);
 }
