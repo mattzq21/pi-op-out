@@ -94,8 +94,9 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const button = () => <Show when={running().length || error()}><IconButton class="open-plugins-button" label="Open sidepane" aria-controls="plugin-sidepane" aria-expanded={open()} onClick={() => { if (open()) close(); else { onOpen(); setOpen(true); } }}><PanelRight size={19} /></IconButton></Show>;
 
   const panel = () => <Sidepane open={open() && visible()}>
-    <header class="plugin-pane-header"><div role="tablist" aria-label="Sidepane plugins" onKeyDown={changeTab}><For each={tabs()}>{item => <button id={`plugin-tab-${item.id}`} role="tab" aria-controls={`plugin-panel-${item.id}`} aria-selected={active() === item.id} tabIndex={active() === item.id ? 0 : -1} onClick={() => setActive(item.id)}>{item.name}</button>}</For></div>
+    <header class="plugin-pane-header">
       <PluginTabPicker items={running()} onSelect={activate} />
+      <div role="tablist" aria-label="Sidepane plugins" onKeyDown={changeTab}><For each={tabs()}>{item => <button id={`plugin-tab-${item.id}`} role="tab" aria-controls={`plugin-panel-${item.id}`} aria-selected={active() === item.id} tabIndex={active() === item.id ? 0 : -1} onClick={() => setActive(item.id)}>{item.name}</button>}</For></div>
     </header>
     <Show when={error()}><p class="plugin-error" role="alert">{error()}</p></Show>
     <For each={tabs()}>{item => <div class="plugin-panel" id={`plugin-panel-${item.id}`} role="tabpanel" aria-labelledby={`plugin-tab-${item.id}`} hidden={active() !== item.id}>{item.instance.panel()}</div>}</For>
