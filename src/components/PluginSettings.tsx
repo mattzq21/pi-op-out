@@ -8,6 +8,7 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const [message, setMessage] = createSignal<string>();
+  const [terminalConfirmation, setTerminalConfirmation] = createSignal<number>();
   let disposed = false;
 
   const reload = async () => {
@@ -25,16 +26,23 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
   onCleanup(() => { disposed = true; props.onBusyChange?.(false); });
   const change = (id: string, checked: boolean) => { setMessage(undefined); setEnabled(previous => checked ? [...previous, id] : previous.filter(value => value !== id)); };
 
-  const restart = async () => {
+  const restart = async (closeTerminals = false) => {
     const current = status();
 
     if (!current || busy()) return;
     setBusy(true); setError(undefined); setMessage("Restarting the daemon and reconnecting…");
 
     try {
-      const result = await restartPlugins(props.hostId, enabled(), current.revision);
+      const result = await restartPlugins(props.hostId, enabled(), current.revision, closeTerminals);
 
       if (disposed) return;
+
+      if ("confirmationRequired" in result) {
+        setMessage(undefined); setTerminalConfirmation(result.terminalCount);
+
+        return;
+      }
+
       setStatus(result); setEnabled(result.enabled);
       setMessage(result.error ? undefined : "Restarted. Your plugins are ready.");
     } catch (reason) {
@@ -52,5 +60,27 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
     </div>}</For></div>
     <button type="button" disabled={busy() || !status()} onClick={() => void restart()}>{busy() ? "Please wait…" : "Restart daemon"}</button>
     <Show when={error()}><button type="button" disabled={busy()} onClick={() => void reload()}>Reload plugin setup</button></Show>
+    <Show when={terminalConfirmation()}>{count => <RestartTerminalsDialog count={count()} onCancel={() => setTerminalConfirmation(undefined)} onConfirm={() => {
+      setTerminalConfirmation(undefined); void restart(true);
+    }} />}</Show>
   </>;
+}
+
+function RestartTerminalsDialog(props: { count: number; onCancel: () => void; onConfirm: () => void }) {
+  let dialog: HTMLDialogElement | undefined;
+  onMount(() => {
+    const returnFocus = document.activeElement;
+    dialog?.showModal();
+    onCleanup(() => {
+      dialog?.close();
+
+      if (returnFocus instanceof HTMLElement) returnFocus.focus();
+    });
+  });
+
+  return <dialog ref={dialog} class="extension-dialog" aria-label="Close terminals and restart?" onCancel={event => { event.preventDefault(); props.onCancel(); }}>
+    <h2>Close terminals and restart?</h2>
+    <p>Restarting this daemon will close {props.count} running {props.count === 1 ? "terminal" : "terminals"}, including any commands running in them.</p>
+    <div class="dialog-actions"><button autofocus onClick={props.onCancel}>Cancel</button><button class="primary-button" onClick={props.onConfirm}>Close terminals and restart</button></div>
+  </dialog>;
 }

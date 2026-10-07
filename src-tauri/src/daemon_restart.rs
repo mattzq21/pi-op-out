@@ -101,7 +101,10 @@ fn restart_bind(url: &str) -> String {
 pub(crate) fn prepare(app: AppHandle, mut args: Value) -> Result<Value, String> {
     if !args.is_object() { return Err("Restart arguments must be an object".into()); }
     if daemon_endpoint::restart_active() { return Err("A daemon restart is already in progress".into()); }
-    if !app.state::<crate::TerminalRuntime>().working_directories("local")?.is_empty() { return Err("Close running terminals before restarting the daemon".into()); }
+    let terminals = app.state::<crate::TerminalRuntime>().running_count()?;
+    if terminals > 0 && args["closeTerminals"].as_bool() != Some(true) {
+        return Ok(json!({"confirmationRequired":"terminals","terminalCount":terminals}));
+    }
     let daemon = crate::plugins::connection(&app)?;
     if PREPARING.swap(true, std::sync::atomic::Ordering::SeqCst) { return Err("A daemon restart is already being prepared".into()); }
     let _preparation = Preparation;
