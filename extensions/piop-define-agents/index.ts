@@ -404,7 +404,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const saveState = (submit = false) => {
     const state = { active, modelOverride, effortOverride, fastModeOverride: fastModeOverride ?? null, snapshot };
 
-    if (!submit) {
+    if (!submit && !locked) {
       process.env[DRAFT_STATE_ENV] = JSON.stringify({ session: runtimeSession, identity: savedState, state });
 
       return;
@@ -677,13 +677,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {
-    if (!locked) { locked = true; publish(ctx); }
-
     const error = await useAgent(active, ctx, true, false);
 
     if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error");
 
     return { action: "handled" }; }
+
+    if (!locked) { locked = true; publish(ctx); }
 
     saveState(true);
 
