@@ -166,8 +166,16 @@ function undoWorktree(plan) {
   syncTree(path.join(common, 'refs'));
 }
 
+function worktrees(transaction) { return transaction.worktrees ?? (transaction.worktree ? [transaction.worktree] : []); }
+
+function directories(transaction) { return transaction.directories ?? (transaction.directory ? [transaction.directory] : []); }
+
+function ownerships(transaction) { return transaction.ownerships ?? [transaction.ownership]; }
+
 function releaseReservation(transaction) {
-  if (transaction.worktree && hasReservation(transaction.worktree)) git(transaction.worktree, ['update-ref', '-d', transaction.worktree.reservation, transaction.worktree.commit]);
+  for (const plan of worktrees(transaction)) {
+    if (hasReservation(plan)) git(plan, ['update-ref', '-d', plan.reservation, plan.commit]);
+  }
 }
 
 function committed(transaction) { return matches(transaction.trace.destination, transaction.trace.identity); }
@@ -193,13 +201,16 @@ function rollback(transaction) {
 
   for (const item of [...transaction.moves].reverse()) undoMove(item);
 
-  if (transaction.directory) undoMove(transaction.directory);
+  for (const directory of [...directories(transaction)].reverse()) undoMove(directory);
 
-  if (transaction.worktree) undoWorktree(transaction.worktree);
-  const current = fs.readFileSync(transaction.ownership.path, 'utf8');
+  for (const worktree of [...worktrees(transaction)].reverse()) undoWorktree(worktree);
 
-  if (current !== transaction.ownership.before && current !== transaction.ownership.after) throw new Error('Session ownership changed during restoration');
-  write(transaction.ownership.path, transaction.ownership.before);
+  for (const ownership of ownerships(transaction)) {
+    const current = fs.readFileSync(ownership.path, 'utf8');
+
+    if (current !== ownership.before && current !== ownership.after) throw new Error('Session ownership changed during restoration');
+    write(ownership.path, ownership.before);
+  }
 }
 
 function cleanup(journal) { fs.unlinkSync(journal); sync(path.dirname(journal)); }
@@ -224,23 +235,19 @@ function recover(root) {
     const journal = path.join(directory, name);
     const transaction = JSON.parse(fs.readFileSync(journal, 'utf8'));
 
-    if (transaction.version !== 1) throw new Error(`Unsupported restore transaction: ${journal}`);
+    if (![1, 2].includes(transaction.version)) throw new Error(`Unsupported restore transaction: ${journal}`);
 
     if (transaction.committed || committed(transaction)) finishCommit(transaction, journal);
     else { rollback(transaction); releaseReservation(transaction); cleanup(journal); }
   }
 }
 
-function restore(root, header, file, destination, result, directory, worktree) {
+function sessionTransaction(root, { header, file, destination, result }) {
   const key = createHash('sha256').update(header.id.toLowerCase()).digest('hex').slice(0, 40);
   const ownershipPath = path.join(root, 'conversation-ownership', `${key}.json`);
   const record = JSON.parse(fs.readFileSync(ownershipPath, 'utf8'));
-  const journalDirectory = path.join(root, 'restore-transactions');
-  fs.mkdirSync(journalDirectory, { recursive: true, mode: 0o700 });
-  sync(root);
 
-  const transaction = {
-    version: 1,
+  return {
     result: { ...result, sessionId: header.id },
     trace: move(file, destination),
     moves: [
@@ -253,27 +260,51 @@ function restore(root, header, file, destination, result, directory, worktree) {
       before: JSON.stringify({ ...record, path: file, deleted: true, client: null }),
       after: JSON.stringify({ ...record, path: destination, deleted: false, client: null }),
     },
-    directory: directory ? move(directory.source, directory.destination) : undefined,
-    worktree,
+  };
+}
+
+function publishRestoration(root, transaction) {
+  for (const worktree of transaction.worktrees) prepareWorktree(worktree);
+
+  for (const directory of transaction.directories) { syncTree(directory.source); syncParents(path.dirname(directory.destination)); performMove(directory); }
+
+  for (const item of transaction.moves) { syncTree(item.source); performMove(item); }
+
+  for (const ownership of transaction.ownerships) write(ownership.path, ownership.after);
+  syncTree(transaction.trace.source);
+  fs.mkdirSync(path.join(root, 'restore-receipts'), { recursive: true, mode: 0o700 });
+  sync(root);
+  write(receiptPath(root, transaction.trace.source), JSON.stringify({ trace: transaction.trace, result: transaction.result }));
+  performMove(transaction.trace);
+}
+
+function restoreGroup(root, records, directoryPlans = [], worktreePlans = []) {
+  const sessions = records.map(record => sessionTransaction(root, record));
+  const primary = sessions[0];
+
+  const transaction = {
+    version: 2,
+    result: { ...primary.result, sessions: sessions.map(session => ({ ...session.result, sourcePath: session.trace.source })) },
+    trace: primary.trace,
+    moves: [...sessions.flatMap(session => session.moves), ...sessions.slice(1).map(session => session.trace)],
+    ownerships: sessions.map(session => session.ownership),
+    directories: directoryPlans.map(directory => move(directory.source, directory.destination)),
+    worktrees: worktreePlans,
   };
 
+  const journalDirectory = path.join(root, 'restore-transactions');
+  fs.mkdirSync(journalDirectory, { recursive: true, mode: 0o700 });
+  sync(root);
+
+  const key = createHash('sha256').update(primary.result.sessionId.toLowerCase()).digest('hex').slice(0, 40);
+
   const journal = path.join(journalDirectory, `${key}.json`);
-  write(ownershipPath, transaction.ownership.before);
+
+  for (const ownership of transaction.ownerships) write(ownership.path, ownership.before);
   write(journal, JSON.stringify(transaction));
 
   try {
-    if (worktree) prepareWorktree(worktree);
-
-    if (transaction.directory) { syncTree(transaction.directory.source); syncParents(path.dirname(transaction.directory.destination)); performMove(transaction.directory); }
-
-    for (const item of transaction.moves) { syncTree(item.source); performMove(item); }
-
-    write(ownershipPath, transaction.ownership.after);
-    syncTree(file);
-    fs.mkdirSync(path.join(root, 'restore-receipts'), { recursive: true, mode: 0o700 });
-    sync(root);
-    write(receiptPath(root, file), JSON.stringify({ trace: transaction.trace, result: transaction.result }));
-    performMove(transaction.trace);
+    publishRestoration(root, transaction);
   } catch (error) {
     if (!committed(transaction)) {
       try { rollback(transaction); releaseReservation(transaction); cleanup(journal); }
@@ -289,4 +320,8 @@ function restore(root, header, file, destination, result, directory, worktree) {
   return transaction.result;
 }
 
-module.exports = { exists, recover, restore, restoredResult };
+function restore(root, header, file, destination, result, directory, worktree) {
+  return restoreGroup(root, [{ header, file, destination, result }], directory ? [directory] : [], worktree ? [worktree] : []);
+}
+
+module.exports = { exists, recover, restore, restoreGroup, restoredResult };

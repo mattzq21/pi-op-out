@@ -26,7 +26,7 @@ async function metadata(file) {
 
       if (entry.type === "custom" && ["piop-subagent-parent", "piop-review-parent"].includes(entry.customType)) parent = entry.data?.parentSessionId;
 
-      if (parent || entry.type === "message") break;
+      if (parent || fork) break;
     }
   } finally { lines.close(); input.destroy(); }
 

@@ -191,6 +191,7 @@ function preserveSharedDirectories(groups, selected) {
 function prepareRecord(record, group, index, transaction) {
   record.backup = path.join(transaction, `${randomUUID()}.jsonl`);
   fs.copyFileSync(record.file, record.backup, fs.constants.COPYFILE_EXCL);
+  record.header.archiveSessionPath = fs.realpathSync(record.file);
 
   if (group.kind === 'git') rewriteCheckpoints(record, group);
 

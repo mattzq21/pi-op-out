@@ -31,7 +31,7 @@ export function ArchivedSessionPanel() {
 
     try {
       await restoreArchivedConversation(path, hostId);
-      setReport(current => current ? { hosts: current.hosts.map(host => host.hostId === hostId ? { ...host, archives: host.archives.filter(archive => archive.path !== path) } : host) } : current);
+      await refresh();
     } catch (reason) { setError(`Could not restore conversation: ${String(reason)}`); }
     finally { setRestoring(undefined); }
   };

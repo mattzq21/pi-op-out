@@ -399,6 +399,32 @@ fn restore_result(settings: &AppSettings, host_id: &str, path: &str) -> Result<s
     Ok(result)
 }
 
+fn restored_conversations(result: &serde_json::Value) -> &[serde_json::Value] {
+    result.get("sessions").and_then(serde_json::Value::as_array).map(Vec::as_slice).unwrap_or_else(|| std::slice::from_ref(result))
+}
+
+fn restore_mutations(app: &AppHandle, host_id: &str, path: &str, client_id: &str, parent: conversation_ownership::MutationGuard) -> Result<Vec<(String, conversation_ownership::MutationGuard)>, String> {
+    let mut mutations = vec![(path.to_owned(), parent)];
+    for (child, _) in session_descendants(app, host_id, path, true, false)? {
+        let mutation = conversation_ownership::MutationGuard::acquire(app, host_id, &child, client_id, true, "restore")?;
+        mutations.push((child, mutation));
+    }
+    Ok(mutations)
+}
+
+fn finish_restore_mutations(mutations: Vec<(String, conversation_ownership::MutationGuard)>, result: &serde_json::Value) -> Result<(), String> {
+    let restored = restored_conversations(result);
+    let paths = mutations.iter().map(|(source, _)| {
+        restored.iter().find(|session| session["sourcePath"].as_str() == Some(source.as_str()))
+            .or_else(|| (mutations.len() == 1).then_some(result))
+            .and_then(|session| session["sessionPath"].as_str()).map(str::to_owned).ok_or("Restored session path missing".to_owned())
+    }).collect::<Result<Vec<_>, _>>()?;
+    for ((_, mutation), path) in mutations.into_iter().zip(paths) {
+        if let Err(error) = mutation.finish_restore(&path) { eprintln!("Restore committed; could not acknowledge ownership release: {error}"); }
+    }
+    Ok(())
+}
+
 fn perform_restore(app: &AppHandle, settings: &AppSettings, host_id: &str, session_path: &str, client_id: &str) -> Result<serde_json::Value, String> {
     let path = match archived_session_file(settings, host_id, session_path) {
         Ok(path) => path,
@@ -408,10 +434,11 @@ fn perform_restore(app: &AppHandle, settings: &AppSettings, host_id: &str, sessi
         Ok(mutation) => mutation,
         Err(error) => return restore_result(settings, host_id, &path).map_err(|_| error),
     };
-    let mut command = restore_worktree_command(settings, host_id, &[&path])?;
+    let mutations = restore_mutations(app, host_id, &path, client_id, mutation)?;
+    let paths = json!(mutations.iter().map(|(source, _)| source).collect::<Vec<_>>()).to_string();
+    let mut command = restore_worktree_command(settings, host_id, &["--group", &paths])?;
     let result = run_worktree_restoration(&mut command).or_else(|error| restore_result(settings, host_id, &path).map_err(|_| error))?;
-    let restored_path = result["sessionPath"].as_str().ok_or("Restored session path missing")?;
-    if let Err(error) = mutation.finish_restore(restored_path) { eprintln!("Restore committed; could not acknowledge ownership release: {error}"); }
+    finish_restore_mutations(mutations, &result)?;
     Ok(result)
 }
 
@@ -422,7 +449,9 @@ pub(super) fn restore_archived_worktree(app: AppHandle, session_path: String, ho
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
     let settings = load_app_settings(app.clone())?;
     let result = perform_restore(&app, &settings, &host_id, &session_path, &client_id)?;
-    let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":result["sessionId"],"sessionPath":result["sessionPath"]}));
+    for session in restored_conversations(&result) {
+        let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":session["sessionId"],"sessionPath":session["sessionPath"]}));
+    }
     let _ = app.emit("pi://sessions-changed", json!({}));
     Ok(result)
 }

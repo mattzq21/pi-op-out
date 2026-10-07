@@ -5,7 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { exists, recover, restore, restoredResult } = require('./restore-transaction.cjs');
+const { exists, recover, restoreGroup, restoredResult } = require('./restore-transaction.cjs');
 
 const checkpointSchema = Type.Object({ path: Type.String(), repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-f0-9]{40,64}$' }) });
 
@@ -102,25 +102,99 @@ function readArchive(file) {
 
   if (header?.type !== 'session' || !Check(Type.String({ minLength: 1 }), header.id) || !path.isAbsolute(header.cwd ?? '')) throw new Error('Invalid archived session header');
 
-  return { entries, header };
+  return { file, entries, header };
 }
 
-function restoreArchive(file) {
-  const { entries, header } = readArchive(file);
-  const sessions = path.join(root, 'sessions');
-  fs.mkdirSync(sessions, { recursive: true });
+function referencedPaths(records) {
+  const paths = new Map();
 
-  const destination = path.join(fs.realpathSync(sessions), path.basename(file));
+  for (const { entries } of records) {
+    for (const entry of entries) {
+      if (entry.type !== 'custom') continue;
+      const data = entry.data;
 
-  for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.diffs.json'), `${destination}.loop-detection.json`]) absent(target);
+      if (['piop-review', 'piop-subagent-run'].includes(entry.customType) && Check(Type.String(), data?.sessionPath)) paths.set(data.sessionId, data.sessionPath);
+
+      if (entry.customType === 'piop-subagent-parent' && Check(Type.String(), data?.parentSessionPath)) paths.set(data.parentSessionId, data.parentSessionPath);
+    }
+  }
+
+  return paths;
+}
+
+function prepareSessionDirectory(sessions, relative) {
+  let parent = sessions;
+
+  for (const component of relative.split(path.sep).slice(0, -1)) {
+    parent = path.join(parent, component);
+
+    if (!exists(parent)) fs.mkdirSync(parent, { mode: 0o700 });
+
+    if (!fs.lstatSync(parent).isDirectory()) throw new Error('Invalid restored conversation directory');
+  }
+}
+
+function destinationPath(sessions, record, references) {
+  const destination = record.header.archiveSessionPath ?? references.get(record.header.id) ?? path.join(sessions, path.basename(record.file));
+
+  if (!Check(Type.String(), destination) || !path.isAbsolute(destination) || !destination.endsWith('.jsonl')) throw new Error('Invalid saved conversation path');
+  const relative = path.relative(sessions, destination);
+
+  if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw new Error('Restored conversations must remain in session storage');
+  prepareSessionDirectory(sessions, relative);
+
+  return path.join(sessions, relative);
+}
+
+function sharedPlan(locations, header, entries) {
   const saved = header.worktreeRestore;
 
-  if (!saved) return restore(root, header, file, destination, { path: header.cwd, branch: null, sessionPath: destination });
+  if (!saved) return undefined;
+  const kind = saved.kind === 'directory' ? 'directory' : 'git';
+  const plan = kind === 'directory' ? directoryPlan(saved) : worktreePlan(entries, header);
+  const location = kind === 'directory' ? plan.destination : plan.path;
+  const signature = JSON.stringify(kind === 'directory' ? [kind, plan.source] : [kind, fs.realpathSync(plan.repositoryRoot), plan.commit]);
+  const previous = locations.get(location);
 
-  if (saved.kind === 'directory') return restore(root, header, file, destination, { path: saved.path, branch: null, sessionPath: destination }, directoryPlan(saved));
-  const worktree = worktreePlan(entries, header);
+  if (previous) {
+    if (previous.signature !== signature) throw new Error(`Archived conversations disagree about their working directory: ${location}`);
 
-  return restore(root, header, file, destination, { path: saved.path, branch: worktree.branch, sessionPath: destination }, undefined, worktree);
+    return previous;
+  }
+
+  if (kind === 'git' && [...locations.values()].some(item => item.kind === 'git' && item.plan.repositoryRoot === plan.repositoryRoot && item.plan.branch === plan.branch)) plan.branch = `piop-restored-${randomUUID()}`;
+  const shared = { kind, plan, signature };
+  locations.set(location, shared);
+
+  return shared;
+}
+
+function restoreArchives(files) {
+  const records = files.map(readArchive);
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions, { recursive: true });
+  const canonicalSessions = fs.realpathSync(sessions);
+  const references = referencedPaths(records);
+  const destinations = new Set();
+  const ids = new Set();
+  const locations = new Map();
+
+  for (const record of records) {
+    const destination = destinationPath(canonicalSessions, record, references);
+
+    if (ids.has(record.header.id) || destinations.has(destination)) throw new Error('Duplicate conversation in restoration');
+    ids.add(record.header.id); destinations.add(destination);
+
+    for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.diffs.json'), `${destination}.loop-detection.json`]) absent(target);
+
+    const shared = sharedPlan(locations, record.header, record.entries);
+    record.destination = destination;
+    record.result = { path: record.header.worktreeRestore?.path ?? record.header.cwd, branch: shared?.plan.branch ?? null, sessionPath: destination };
+  }
+
+  const plans = [...locations.values()];
+
+  return restoreGroup(root, records, plans.flatMap(item => item.kind === 'directory' ? [item.plan] : []), plans.flatMap(item => item.kind === 'git' ? [item.plan] : []));
 }
 
 function main() {
@@ -129,7 +203,11 @@ function main() {
 
   if (process.argv[1] === '--recover') return;
 
-  return restoreArchive(fs.realpathSync(process.argv[1]));
+  const files = process.argv[1] === '--group' ? JSON.parse(process.argv[2]) : [process.argv[1]];
+
+  if (!Check(Type.Array(Type.String(), { minItems: 1 }), files)) throw new Error('No archived conversations selected');
+
+  return restoreArchives([...new Set(files.map(file => fs.realpathSync(file)))]);
 }
 
 if (process.argv.at(-1) !== '--locked') {
