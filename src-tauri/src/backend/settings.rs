@@ -181,9 +181,7 @@ pub(super) fn save_settings_with(
         change["agentConfigChange"] = json!({"hostId":host_id,"revision":revision});
     }
     drop(revisions);
-    let mut warnings = apply_saved_settings(&settings, invalidate, synchronize);
-    if let Some(error) = publication.error { warnings.push(format!("Settings were published, but disk durability is unconfirmed: {error}. Retry saving to confirm them.")); }
-    change["warnings"] = json!(warnings);
+    change["warnings"] = json!(apply_saved_settings(&settings, invalidate, synchronize, publication.error.as_deref()));
     Ok(change)
 }
 
@@ -191,9 +189,11 @@ fn apply_saved_settings(
     settings: &AppSettings,
     invalidate: impl FnOnce(&AppSettings) -> Result<(), String>,
     synchronize: impl FnOnce(&AppSettings) -> Result<(), String>,
+    publication_error: Option<&str>,
 ) -> Vec<String> {
     let mut warnings = Vec::new();
     if let Err(error) = invalidate(settings) { warnings.push(format!("Settings were saved, but applying connection changes failed: {error}")); }
     if let Err(error) = synchronize(settings) { warnings.push(format!("Settings were saved, but updating running sessions failed: {error}")); }
+    if let Some(error) = publication_error { warnings.push(format!("Settings were published, but disk durability is unconfirmed: {error}. Retry saving to confirm them.")); }
     warnings
 }

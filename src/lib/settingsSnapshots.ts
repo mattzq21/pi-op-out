@@ -21,7 +21,7 @@ export function stableSnapshot(value: SettingsSnapshotValue) {
 export function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {
   const { settingsRevision: _settingsRevision, clientSettingsRevision: _clientSettingsRevision, settingsDurabilityError: _settingsDurabilityError, clientSettingsDurabilityError: _clientSettingsDurabilityError, ...value } = settings;
 
-  return stableSnapshot({ settings: value, agentConfig });
+  return stableSnapshot({ settings: value, agentConfig: agentConfig && { ...agentConfig, revision: undefined } });
 }
 
 export function agentEditsSnapshot(config?: AgentConfig) {

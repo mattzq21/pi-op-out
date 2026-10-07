@@ -17,6 +17,20 @@ type SettingsConnection = {
   emit: (event: RpcEvent) => void;
 };
 
+function needsDaemonSave(settings: AppSettings, previous: AppSettings, agentHostId: string | undefined, scope: string) {
+  return scope !== "client" && (Boolean(settings.settingsDurabilityError) || settingsSnapshot(settings) !== settingsSnapshot(previous) || Boolean(agentHostId));
+}
+
+function needsClientSave(settings: AppSettings, previous: AppSettings, scope: string) {
+  return scope !== "daemon" && (Boolean(settings.clientSettingsDurabilityError ?? previous.clientSettingsDurabilityError) || JSON.stringify(preferences(settings)) !== JSON.stringify(preferences(previous)));
+}
+
+function mergeSavedClient(change: SettingsChange, saved: AppSettings) {
+  change.settings = { ...change.settings, ...preferences(saved), clientSettingsRevision: saved.clientSettingsRevision, clientSettingsDurabilityError: saved.clientSettingsDurabilityError };
+
+  if (saved.clientSettingsDurabilityError) change.warnings = [...change.warnings ?? [], `Client preferences were published, but disk durability is unconfirmed: ${saved.clientSettingsDurabilityError}. Retry saving to confirm them.`];
+}
+
 export class NativeSettings {
   private lifecycle: Promise<void> = Promise.resolve();
   private pending?: { settings: AppSettings };
@@ -66,8 +80,8 @@ export class NativeSettings {
     const previous = await this.call("load_app_settings", undefined, appSettingsSchema);
     const previousClient = await withClientSettings(previous);
     const daemonSettings = scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
-    const daemonChanged = scope !== "client" && (Boolean(settings.settingsDurabilityError) || settingsSnapshot(daemonSettings) !== settingsSnapshot(previous) || Boolean(agentHostId));
-    const clientChanged = scope !== "daemon" && (Boolean(settings.clientSettingsDurabilityError ?? previousClient.clientSettingsDurabilityError) || JSON.stringify(preferences(settings)) !== JSON.stringify(preferences(previousClient)));
+    const daemonChanged = needsDaemonSave(daemonSettings, previous, agentHostId, scope);
+    const clientChanged = needsClientSave(settings, previousClient, scope);
 
     const savedClient = clientChanged ? await saveClientSettings(settings) : previousClient;
     let change: SettingsChange;
@@ -78,8 +92,7 @@ export class NativeSettings {
       throw reason;
     }
 
-    change.settings = { ...change.settings, ...preferences(savedClient), clientSettingsRevision: savedClient.clientSettingsRevision, clientSettingsDurabilityError: savedClient.clientSettingsDurabilityError };
-    if (savedClient.clientSettingsDurabilityError) change.warnings = [...change.warnings ?? [], `Client preferences were published, but disk durability is unconfirmed: ${savedClient.clientSettingsDurabilityError}. Retry saving to confirm them.`];
+    mergeSavedClient(change, savedClient);
 
     if (reconnect && daemonChanged) await this.reconnectAfterSave(settings);
 
@@ -90,6 +103,7 @@ export class NativeSettings {
     try {
       if (changed && expectedRevision) {
         const restored = await saveClientSettings(settings, expectedRevision);
+
         if (restored.clientSettingsDurabilityError) throw new Error(`The previous preferences were published, but disk durability is unconfirmed: ${restored.clientSettingsDurabilityError}`);
       }
     }

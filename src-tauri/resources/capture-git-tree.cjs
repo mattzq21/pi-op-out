@@ -355,7 +355,7 @@ function retainComparison(retained, token, request) {
   copySnapshot(baseline, path.join(preparing, 'before'));
   copySnapshot(token.root, path.join(preparing, 'after'));
   const saved = readSnapshot(token.root);
-  const sources = [request.baseline, JSON.stringify(token)];
+  const sources = [...new Set([request.baseline, JSON.stringify(token), request.originalBaseline].filter(Boolean))];
   const record = { version: 1, sessionId: owner.sessionId, turnId: request.turnId, messageId: request.messageId, cwd: token.repository_root, createdAt: saved.capturedAt, sources };
   fs.writeFileSync(path.join(preparing, 'comparison.json'), JSON.stringify(record), { flag: 'wx', mode: 0o600 });
   syncTree(preparing);
@@ -484,7 +484,7 @@ function storeFallback(token, retained) {
   try {
     linkSnapshot(validateToken(original), baseline.root);
     syncTree(token.root);
-    const record = { version: 1, sessionId: owner.sessionId, sessionPath: owner.sessionPath, turnId: owner.turnId, messageId: owner.messageId, cwd: token.repository_root, baseline: JSON.stringify(baseline), current: JSON.stringify(token) };
+    const record = { version: 1, sessionId: owner.sessionId, sessionPath: owner.sessionPath, turnId: owner.turnId, messageId: owner.messageId, cwd: token.repository_root, baseline: JSON.stringify(baseline), originalBaseline: owner.baseline, current: JSON.stringify(token) };
     writeJson(path.join(token.root, 'comparison-retry.json'), record);
     syncPath(path.dirname(token.root));
   } catch (error) {

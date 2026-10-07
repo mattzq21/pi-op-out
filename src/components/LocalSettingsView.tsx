@@ -8,7 +8,7 @@ import { createDependencyEffect } from "../lib/solid";
 
 import { Monitor } from "lucide-solid";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
-import { definedAgentsCapabilitySchema } from "../lib/agentSchemas";
+import { agentConfigChangeSchema, agentConfigSchema, definedAgentsCapabilitySchema } from "../lib/agentSchemas";
 import { NativeTransport } from "../lib/nativeTransport";
 import { isMobile, listen } from "../lib/platform";
 import type { AgentConfig, AppSettings, Model, SessionSummary } from "../types";
@@ -95,11 +95,13 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
 
         if (cancelled) return;
 
-        const [models, levels] = await Promise.all([
+        const [models, levels, storedConfig] = await Promise.all([
           reader.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })),
           reader.command({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })),
+          capturedTarget0 === "client" ? undefined : reader.command({ type: "get_agent_configuration" }, agentConfigSchema),
         ]);
 
+        if (storedConfig) config = { ...storedConfig, fastModeModels: config?.fastModeModels };
         if (!config && capturedTarget0 !== "client") throw new Error("Agent definitions are unavailable");
         config ??= { agents: [] };
 
@@ -115,29 +117,49 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   const save = async (next: AppSettings, config?: AgentConfig) => { const capturedHostId = hostId(); const capturedResources = resources(); const capturedTarget0 = componentProps.target; const capturedOnSave1 = componentProps.onSave;
     setSaveWarning(undefined);
 
-    if (capturedTarget0 === "client" || capturedHostId === "local") await capturedOnSave1(next, config, capturedResources?.config, capturedTarget0 === "client" ? "client" : "daemon");
+    if (capturedTarget0 === "client" || capturedHostId === "local") {
+      try { await capturedOnSave1(next, config, capturedResources?.config, capturedTarget0 === "client" ? "client" : "daemon"); }
+      catch (reason) { setRevision(value => value + 1); throw reason; }
+    }
     else {
       const writer = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
-      let agentsSaved = false;
-      const writeAgents = async (value: AgentConfig) => { await writer.command({ type: "configure_agents", configuration: value }); };
+      let savedAgentRevision: string | undefined;
+      const warnings: string[] = [];
+      const writeAgents = async (value: AgentConfig) => {
+        const change = await writer.command({ type: "configure_agents", configuration: value }, agentConfigChangeSchema);
+        warnings.push(...change.warnings ?? []);
+
+        return change.revision;
+      };
 
       const restoreAgents = async (cause: unknown) => {
-        if (!agentsSaved || !capturedResources?.config) return;
+        if (!savedAgentRevision || !capturedResources?.config || !config) return;
 
-        try { await writeAgents(capturedResources.config); }
-        catch { throw new Error(`Settings could not be saved and agent definitions could not be restored: ${String(cause)}`); }
+        try {
+          const restoredRevision = await writeAgents({ ...capturedResources.config, revision: savedAgentRevision });
+          capturedResources.config.revision = restoredRevision; config.revision = restoredRevision;
+        }
+        catch (rollback) { throw new Error(`Settings save failed: ${String(cause)}. Agent definitions could not be restored: ${String(rollback)}. Reload settings before retrying.`); }
       };
 
       try {
-        if (config) { await writer.connect(undefined, undefined, undefined, undefined, true); await writeAgents(config); agentsSaved = true; }
+        if (config) {
+          if (!config.revision || config.revision !== capturedResources?.config.revision) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
+          await writer.connect(undefined, undefined, undefined, undefined, true);
+          savedAgentRevision = await writeAgents(config); config.revision = savedAgentRevision;
+        }
 
         const change = await writer.saveHostSettings(next, Boolean(config));
         setHostSettings(change.settings);
-        setSaveWarning(change.warnings?.length ? `Settings saved, but could not be applied to all sessions: ${change.warnings.join("; ")}` : undefined);
+        warnings.push(...change.warnings ?? []);
       } catch (reason) {
-        await restoreAgents(reason);
+        try { await restoreAgents(reason); }
+        finally { setRevision(value => value + 1); }
         throw reason;
-      } finally { await writer.dispose().catch(() => undefined); }
+      } finally {
+        setSaveWarning(warnings.length ? warnings.join("; ") : undefined);
+        await writer.dispose().catch(() => undefined);
+      }
     }
 
     if (config) setResources((value) => value ? { ...value, config } : value);

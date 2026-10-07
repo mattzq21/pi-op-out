@@ -94,19 +94,25 @@ export function SettingsView(props: SettingsViewProps) {
   const [baselineValue, setBaselineValue] = createSignal(structuredClone(settingsProps().settings));
   const baselineSettings = () => settingsSnapshot(baselineValue());
   const [baselineAgentConfig, setBaselineAgentConfig] = createSignal(agentEditsSnapshot(agentConfig()));
+  const [baselineAgentRevision, setBaselineAgentRevision] = createSignal(agentConfig()?.revision);
   const agentConfigSnapshot = createMemo(() => (agentEditsSnapshot(agentConfig())));
-  const incomingAgentConfigRef = createRef(agentConfigSnapshot());
+  const incomingAgentConfigRef = createRef(JSON.stringify([agentConfigSnapshot(), agentConfig()?.revision]));
   const [hasAgentConfigDraft, setHasAgentConfigDraft] = createSignal(agentConfig() !== undefined);
-  const currentAgentConfig = createMemo(() => (hasAgentConfigDraft() ? { agents: agentDrafts().map(item => item.extensions ? { ...item, extensions: item.extensions.map(path => path.trim()).filter(Boolean) } : item), fastModeModels: agentConfig()?.fastModeModels } : undefined));
+  const currentAgentConfig = createMemo(() => (hasAgentConfigDraft() ? { revision: baselineAgentRevision(), agents: agentDrafts().map(item => item.extensions ? { ...item, extensions: item.extensions.map(path => path.trim()).filter(Boolean) } : item), fastModeModels: agentConfig()?.fastModeModels } : undefined));
   const currentSnapshot = createMemo(() => (settingsSnapshot(draft(), currentAgentConfig())));
   const currentSnapshotRef = createRef(currentSnapshot()); createComputed(() => { currentSnapshotRef.current = currentSnapshot(); });
   const agentConfigDirty = createMemo(() => (Boolean(mcpError()) || agentEditsSnapshot(currentAgentConfig()) !== baselineAgentConfig()));
+
   const durabilityError = () => {
     const error = settingsProps().scope === "client" ? settingsProps().settings.clientSettingsDurabilityError : settingsProps().settings.settingsDurabilityError;
 
     return error ? `Changes were published, but disk durability is unconfirmed: ${error}. Retry saving to confirm them.` : undefined;
   };
+
   const dirty = createMemo(() => (Boolean(durabilityError()) || settingsSnapshot(draft()) !== baselineSettings() || agentConfigDirty()));
+
+  const saveLabel = () => saved() && !dirty() ? "Saved" : saving() ? "Saving…" : durabilityError() ? "Retry save" : "Save changes";
+
   const [settingsConflict, setSettingsConflict] = createSignal(false);
   const [agentsConflict, setAgentsConflict] = createSignal(false);
   const conflict = () => settingsConflict() || agentsConflict();
@@ -148,7 +154,8 @@ export function SettingsView(props: SettingsViewProps) {
     setAgentDrafts(structuredClone(agentConfig()?.agents ?? []));
     setHasAgentConfigDraft(agentConfig() !== undefined);
     setBaselineAgentConfig(agentEditsSnapshot(agentConfig()));
-    incomingAgentConfigRef.current = agentConfigSnapshot();
+    setBaselineAgentRevision(agentConfig()?.revision);
+    incomingAgentConfigRef.current = JSON.stringify([agentConfigSnapshot(), agentConfig()?.revision]);
     setSettingsConflict(false); setAgentsConflict(false);
   };
 
@@ -172,21 +179,23 @@ export function SettingsView(props: SettingsViewProps) {
     setAgentDrafts(next?.agents ?? []);
     setAgentIndex(selectedIndex >= 0 ? selectedIndex : firstAgentIndex(next?.agents ?? []));
     setBaselineAgentConfig(agentEditsSnapshot(next));
+    setBaselineAgentRevision(next?.revision);
   };
 
   createDependencyEffect(() => { const capturedAgentConfigSnapshot = agentConfigSnapshot(); const capturedAgentConfigDirty = agentConfigDirty(); const capturedAgentConfig = agentConfig();
 
-    if (saving() || incomingAgentConfigRef.current === capturedAgentConfigSnapshot) return;
+    const incoming = JSON.stringify([capturedAgentConfigSnapshot, capturedAgentConfig?.revision]);
+
+    if (saving() || incomingAgentConfigRef.current === incoming) return;
+    incomingAgentConfigRef.current = incoming;
 
     if (capturedAgentConfigDirty) {
-      if (agentEditsSnapshot(currentAgentConfig()) !== capturedAgentConfigSnapshot) setAgentsConflict(true);
+      if (capturedAgentConfigSnapshot === baselineAgentConfig()) setBaselineAgentRevision(capturedAgentConfig?.revision);
+      else setAgentsConflict(true);
 
       return;
     }
 
-    incomingAgentConfigRef.current = capturedAgentConfigSnapshot;
-
-    if (agentEditsSnapshot(currentAgentConfig()) === capturedAgentConfigSnapshot) return;
     applyIncomingAgents(capturedAgentConfig);
   }, () => [agentConfigDirty(), agentConfig(), agentConfigSnapshot(), saving()]);
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
@@ -199,7 +208,7 @@ export function SettingsView(props: SettingsViewProps) {
 
  try { await capturedSettingsProps.onSave(capturedDraft, capturedAgentConfigDirty ? capturedCurrentAgentConfig : undefined); setBaselineValue(structuredClone(capturedDraft));
 
- if (capturedAgentConfigDirty) setBaselineAgentConfig(agentEditsSnapshot(capturedCurrentAgentConfig)); setSaved(currentSnapshotRef.current === capturedCurrentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
+ if (capturedAgentConfigDirty) setBaselineAgentConfig(agentEditsSnapshot(capturedCurrentAgentConfig)); setSaved(currentSnapshotRef.current === capturedCurrentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { if (capturedAgentConfigDirty) setBaselineAgentRevision(capturedCurrentAgentConfig?.revision); savingRef.current = false; setSaving(false); } };
 
   const nextAgentSuffixRef = createRef(agentDrafts().length);
   const addHost = () => setDraft((current) => ({ ...current, hosts: [...current.hosts, { id: uid("host"), enabled: true, name: "New machine", target: "", piPath: "piopd" }] }));
@@ -355,7 +364,7 @@ export function SettingsView(props: SettingsViewProps) {
 
       const renderSaveButtonLabel = () => {
         const renderSaveStatus = () => (saved() && !dirty() ? <Check size={15} /> : <Save size={15} />);
-        const renderSaveLabel = () => (saved() && !dirty() ? "Saved" : saving() ? "Saving…" : durabilityError() ? "Retry save" : "Save changes");
+        const renderSaveLabel = () => saveLabel();
 
         return (<button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || conflict() || !dirty() || !formValidation().formValid} onClick={() => void save()}>{renderSaveStatus()}{renderSaveLabel()}</button>);
       };
@@ -462,7 +471,7 @@ export function SettingsView(props: SettingsViewProps) {
       {renderSettingsContent()}</div>);
   };
 
-  const renderSettingsSaveFab = () => (dirty() && pastHeader() && <div class="settings-save-fab"><button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || conflict() || !dirty() || !formValidation().formValid} onClick={() => void save()}><Save size={15} />{saving() ? "Saving…" : durabilityError() ? "Retry save" : "Save changes"}</button></div>);
+  const renderSettingsSaveFab = () => (dirty() && pastHeader() && <div class="settings-save-fab"><button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || conflict() || !dirty() || !formValidation().formValid} onClick={() => void save()}><Save size={15} />{saveLabel()}</button></div>);
 
   return <main class={dirty() ? "settings-shell has-unsaved" : "settings-shell"}>{renderSettingsHeader()}
     {renderSettingsLayout()}

@@ -750,7 +750,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
       if (errors.length) throw new Error(`Invalid agent configuration: ${errors.map(error => `${error.instancePath} ${error.message}`).join('; ')}`);
       const { configuration: supplied } = Parse(schema, request.payload);
-      const next = normalize({ ...supplied, webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
+      const stored = await loadConfig(pi);
+      const next = normalize({ ...stored, ...supplied }, pi);
 
       for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
       const saved = await writeConfig(next);

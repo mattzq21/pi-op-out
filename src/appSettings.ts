@@ -4,6 +4,7 @@ import { required } from "./lib/required";
 import type { Accessor } from "solid-js";
 import { createSignal } from "solid-js";
 import { saveClientSettings,withClientSettings } from "./lib/clientSettings";
+import { agentConfigChangeSchema } from "./lib/agentSchemas";
 import { ConversationChangedError } from "./lib/conversationChanged";
 import { recordSeenModels } from "./lib/modelVisibility";
 import { NativeTransport } from "./lib/nativeTransport";
@@ -30,13 +31,21 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
   const [debugModeSaving, setDebugModeSaving] = createSignal(false);
   const debugModePending = createRef(false);
   const [settingsDirty, setSettingsDirty] = createSignal(false);
+
+  const reportClientDurability = (saved: AppSettings) => {
+    if (saved.clientSettingsDurabilityError) addNotice({ title: "Client preferences need a save retry", message: `Preferences were published, but disk durability is unconfirmed: ${saved.clientSettingsDurabilityError}. Open client settings and retry saving.` });
+  };
+
   createDependencyEffect(() => { const capturedSettings = settings(); const capturedSession = { ...chatSession() };
 
     if (!capturedSettings || capturedSession.models.length === 0 || settingsSavePending.current) return;
     const next = recordSeenModels((capturedSettings), capturedSession.models.map((model) => `${model.provider}/${model.id}`));
 
     if (!next) return;
-    void saveClientSettings(next).then(saved => setSettings(current => current && (current.clientSettingsRevision === capturedSettings.clientSettingsRevision || current.clientSettingsRevision === saved.clientSettingsRevision) ? { ...current, knownModels: saved.knownModels, hiddenModels: saved.hiddenModels, clientSettingsRevision: saved.clientSettingsRevision } : current)).catch(() => undefined);
+    void saveClientSettings(next).then(saved => {
+      setSettings(current => current && (current.clientSettingsRevision === capturedSettings.clientSettingsRevision || current.clientSettingsRevision === saved.clientSettingsRevision) ? { ...current, knownModels: saved.knownModels, hiddenModels: saved.hiddenModels, clientSettingsRevision: saved.clientSettingsRevision, clientSettingsDurabilityError: saved.clientSettingsDurabilityError } : current);
+      reportClientDurability(saved);
+    }).catch(() => undefined);
   }, () => [chatSession().models, settings(), transport()]);
   createDependencyEffect(() => {
     let revision = 0; let pendingSettings: AppSettings | undefined;
@@ -84,21 +93,31 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
 
       try {
         await writer.connect(undefined, undefined, undefined, undefined, true);
-        await writer.command({ type: "configure_agents", configuration: configuration });
+        const change = await writer.command({ type: "configure_agents", configuration }, agentConfigChangeSchema);
+        change.warnings?.forEach(message => addNotice({ title: "Agent definitions saved with a warning", message }));
+
+        return change.revision;
       } finally { await writer.dispose().catch(() => undefined); }
     };
 
-    let agentsSaved = false;
+    let savedAgentRevision: string | undefined;
     let savedChange: SettingsChange;
 
     try {
-      if (nextConfig) { await writeAgents(nextConfig); agentsSaved = true; }
+      if (nextConfig) {
+        if (!nextConfig.revision || nextConfig.revision !== previousConfig?.revision) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
+        savedAgentRevision = await writeAgents(nextConfig);
+        nextConfig.revision = savedAgentRevision;
+      }
 
       savedChange = await capturedTransport.saveSettings(next, false, agentHostId, scope);
     } catch (reason) {
-      if (agentsSaved && previousConfig) {
-        try { await writeAgents(previousConfig); }
-        catch { throw new Error(`Settings could not be saved, and the agent definitions could not be restored: ${reason instanceof Error ? reason.message : String(reason)}`); }
+      if (savedAgentRevision && previousConfig && nextConfig) {
+        try {
+          const restoredRevision = await writeAgents({ ...previousConfig, revision: savedAgentRevision });
+          previousConfig.revision = restoredRevision; nextConfig.revision = restoredRevision;
+        }
+        catch (rollback) { throw new Error(`Settings save failed: ${String(reason)}. Agent definitions could not be restored: ${String(rollback)}. Reload settings before retrying.`); }
       }
 
       throw reason;
@@ -106,13 +125,16 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
 
     setSettings(savedChange.settings);
     applyRuntimeSettings(savedChange.settings);
-    savedChange.warnings?.forEach(warning => addNotice({ title: "Settings saved; some sessions could not apply them", message: warning }));
+    savedChange.warnings?.forEach(warning => addNotice({ title: "Settings save warning", message: warning }));
   };
 
   const toggleDebugMode = () => {
     if (!settings() || debugModePending.current || settingsSavePending.current) return; debugModePending.current = true; setDebugModeSaving(true);
     const next = { ...required((settings())), debugMode: !required((settings())).debugMode };
-    void saveClientSettings(next).then(saved => { setSettings(current => current && (current.clientSettingsRevision === next.clientSettingsRevision || current.clientSettingsRevision === saved.clientSettingsRevision) ? { ...current, debugMode: saved.debugMode, clientSettingsRevision: saved.clientSettingsRevision } : current); }).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
+    void saveClientSettings(next).then(saved => {
+      setSettings(current => current && (current.clientSettingsRevision === next.clientSettingsRevision || current.clientSettingsRevision === saved.clientSettingsRevision) ? { ...current, debugMode: saved.debugMode, clientSettingsRevision: saved.clientSettingsRevision, clientSettingsDurabilityError: saved.clientSettingsDurabilityError } : current);
+      reportClientDurability(saved);
+    }).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
   };
 
  return { settings, setSettings, runtimeSettings, applyRuntimeSettings, settingsSavePending, settingsSaving, setSettingsSaving, debugModeSaving, setDebugModeSaving, debugModePending, settingsDirty, setSettingsDirty, loadSettings, saveSettings, applySettings, toggleDebugMode };

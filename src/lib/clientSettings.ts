@@ -6,6 +6,7 @@ import { settingsPublicationSchema } from "./responseSchemas";
 type ClientSettings = Pick<AppSettings, "keybindings" | "hiddenModels" | "knownModels" | "debugMode">;
 
 const storageKey = "piop-client-settings";
+
 let durabilityFailure: { revision: string; error: string } | undefined;
 
 const clientSettingsSchema = z.object({

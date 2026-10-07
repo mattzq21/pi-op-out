@@ -60,6 +60,15 @@ fn trim_legacy_log(directory: &Path) -> io::Result<()> {
     result
 }
 
+fn write_chunk(file: &mut File, pending: &mut &[u8], count: usize) -> io::Result<()> {
+    match file.write(&pending[..count]) {
+        Ok(0) => Err(io::Error::new(io::ErrorKind::WriteZero, "Could not write daemon diagnostics")),
+        Ok(written) => { *pending = &pending[written..]; Ok(()) },
+        Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 fn append(directory: &Path, pending: &mut &[u8]) -> io::Result<()> {
     let _lock = lock(directory)?;
     while !pending.is_empty() {
@@ -67,12 +76,7 @@ fn append(directory: &Path, pending: &mut &[u8]) -> io::Result<()> {
         let length = file.metadata()?.len();
         if length >= MAX_FILE_BYTES { drop(file); rotate(directory)?; continue; }
         let count = pending.len().min((MAX_FILE_BYTES - length) as usize);
-        match file.write(&pending[..count]) {
-            Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "Could not write daemon diagnostics")),
-            Ok(written) => *pending = &pending[written..],
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
-            Err(error) => return Err(error),
-        }
+        write_chunk(&mut file, pending, count)?;
     }
     Ok(())
 }
@@ -87,23 +91,30 @@ fn collect(directory: &Path) -> io::Result<()> {
         };
         if count == 0 { return Ok(()); }
         let mut pending = &buffer[..count];
-        if let Err(error) = append(directory, &mut pending) {
-            let mut fallback = io::stderr().lock();
-            writeln!(fallback, "Could not save daemon diagnostics: {error}")?;
-            fallback.write_all(pending)?;
-            io::copy(&mut input, &mut fallback)?;
-            return Ok(());
+        while append(directory, &mut pending).is_err() {
+            thread::sleep(Duration::from_secs(1));
         }
     }
 }
 
-pub(crate) fn run() -> Result<(), String> {
+fn initialize() -> Result<PathBuf, String> {
     let directory = crate::daemon_endpoint::directory()?;
     crate::ensure_private_dir(&directory)?;
     {
         let _lock = lock(&directory).map_err(|error| error.to_string())?;
         trim_legacy_log(&directory).map_err(|error| error.to_string())?;
     }
+    Ok(directory)
+}
+
+pub(crate) fn run() -> Result<(), String> {
+    let directory = match initialize() {
+        Ok(directory) => directory,
+        Err(error) => {
+            let _ = io::stdout().write_all(error.as_bytes());
+            return Err(error);
+        }
+    };
     io::stdout().write_all(&[READY]).and_then(|()| io::stdout().flush()).map_err(|error| error.to_string())?;
     collect(&directory).map_err(|error| error.to_string())
 }
@@ -130,18 +141,23 @@ fn wait_ready(writer: &mut Child) -> Result<(), String> {
     let (send, receive) = std::sync::mpsc::sync_channel(1);
     thread::spawn(move || {
         let mut ready = [0];
-        let result = output.read_exact(&mut ready).map(|()| ready[0]).map_err(|error| error.to_string());
+        let result = output.read_exact(&mut ready).map_err(|error| error.to_string()).and_then(|()| {
+            if ready[0] == READY { return Ok(()); }
+            let mut error = vec![ready[0]];
+            output.take(8192).read_to_end(&mut error).map_err(|error| error.to_string())?;
+            Err(String::from_utf8_lossy(&error).into_owned())
+        });
         let _ = send.send(result);
     });
     match receive.recv_timeout(Duration::from_secs(10)) {
-        Ok(Ok(READY)) => Ok(()),
-        _ => Err("Daemon log writer did not become ready".into()),
+        Ok(result) => result.map_err(|error| format!("Could not initialize daemon log writer: {error}")),
+        Err(error) => Err(format!("Daemon log writer did not become ready: {error}")),
     }
 }
 
 pub(crate) fn spawn(mut command: Command) -> Result<Child, String> {
     let mut logging = Command::new(writer_executable()?);
-    logging.arg("--daemon-log-writer").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+    logging.arg("--daemon-log-writer").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     detach(&mut logging);
     let mut writer = logging.spawn().map_err(|error| format!("Could not start daemon log writer: {error}"))?;
     if let Err(error) = wait_ready(&mut writer) {
