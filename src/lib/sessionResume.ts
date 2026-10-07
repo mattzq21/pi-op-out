@@ -18,14 +18,23 @@ const restoredTargetSchema = z.union([savedSessionTargetSchema, draftTargetSchem
 
 function storageKey() {
   const host = isMobile ? localStorage.getItem("piop-mobile-host") ?? "" : "desktop";
-  const windowTarget = new URLSearchParams(window.location.search).get("target") ?? "main";
+  const windowTarget = new URLSearchParams(window.location.search).get("target");
 
-  return `piop-last-session:${host}:${windowTarget}`;
+  if (windowTarget) {
+    localStorage.removeItem(`piop-last-session:${host}:${windowTarget}`);
+
+    return;
+  }
+
+  return `piop-last-session:${host}:main`;
 }
 
 export function restoredSessionTarget(): NativeConnectionTarget {
   try {
-    const value = JSON.parse(localStorage.getItem(storageKey()) ?? "null");
+    const key = storageKey();
+
+    if (!key) return {};
+    const value = JSON.parse(localStorage.getItem(key) ?? "null");
 
     return restoredTargetSchema.parse(value);
   } catch { return {}; }

@@ -324,6 +324,10 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     } finally { checking = false; }
   };
 
+  const relinquishHidden = (current: number) => {
+    if (!disposed && current === generation && !visible() && durable()) relinquish();
+  };
+
   const releaseOwned = async () => {
     await save();
     await storageOperations;
@@ -335,15 +339,14 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     if (!leaseToken) { relinquish();
 
     return; }
+
     setLeaseValid(false);
 
     try {
       const next = await call("release", { leaseToken });
 
       if (!disposed && current === generation) { relinquish(); receiveUpdate(next); }
-    } catch {
-      if (!disposed && current === generation && !visible() && durable()) relinquish();
-    }
+    } catch { relinquishHidden(current); }
   };
 
   const release = (): Promise<void> => {

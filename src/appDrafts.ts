@@ -14,6 +14,16 @@ interface DraftOptions {
 
 const hasContent = (draft: ConversationDraft) => Boolean(draft.text || draft.uploads.length);
 
+function matchesSessionDraft(key: string, draft: ConversationDraft, hostId: string, sessionPath?: string, sessionId?: string) {
+  const target = draft.target;
+  const host = target?.hostId ?? key.slice(0, key.lastIndexOf(":"));
+
+  if (host !== hostId) return false;
+  const sameId = Boolean(sessionId && (key === `${hostId}:${sessionId}` || target?.sessionId === sessionId));
+
+  return sameId || Boolean(sessionPath && target?.sessionPath === sessionPath);
+}
+
 function setDraft(current: Drafts, key: string, update: (draft: ConversationDraft) => ConversationDraft) {
   const next = { ...current };
   const draft = update(current[key] ?? { text: "", uploads: [], updatedAt: Date.now() });
@@ -242,12 +252,7 @@ export function createConversationDrafts(options: DraftOptions) {
     const next = { ...current };
 
     for (const [key, draft] of Object.entries(current)) {
-      const target = draft.target;
-      const sameId = Boolean(sessionId && (key === `${hostId}:${sessionId}` || target?.sessionId === sessionId));
-      const samePath = Boolean(sessionPath && target?.sessionPath === sessionPath);
-      const host = target?.hostId ?? key.slice(0, key.lastIndexOf(":"));
-
-      if (host !== hostId || !sameId && !samePath) continue;
+      if (!matchesSessionDraft(key, draft, hostId, sessionPath, sessionId)) continue;
       removals.add(key); discarded.delete(key); targets.delete(key);
       delete next[key];
     }

@@ -1,8 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
-use std::fs;
 use std::time::Duration;
-use super::environment::home_dir;
+use super::environment::pi_executable;
 #[cfg(test)]
 use serde_json::json;
 #[cfg(test)]
@@ -23,14 +22,6 @@ pub(super) struct OpencodeGoUsage {
     pub(super) rolling: OpencodeGoUsageWindow,
     pub(super) weekly: OpencodeGoUsageWindow,
     pub(super) monthly: OpencodeGoUsageWindow,
-}
-
-fn opencode_go_api_key() -> Option<String> {
-    if let Ok(home) = home_dir() {
-        let credentials = fs::read_to_string(home.join(".pi/agent/auth.json")).ok().and_then(|body| serde_json::from_str::<Value>(&body).ok());
-        if let Some(key) = credentials.as_ref().and_then(|credentials| credentials.pointer("/opencode-go/key")).and_then(Value::as_str) { return Some(key.to_string()); }
-    }
-    std::env::var("OPENCODE_API_KEY").ok().filter(|key| !key.trim().is_empty())
 }
 
 fn opencode_go_digits(characters: &mut std::str::Chars<'_>, length: usize) -> Option<i64> {
@@ -104,9 +95,9 @@ fn opencode_go_usage_values(response: &Value) -> Option<OpencodeGoUsage> {
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) async fn opencode_go_usage() -> Result<OpencodeGoUsage, String> {
-    let api_key = opencode_go_api_key().ok_or("OpenCode Go API key is not configured")?;
+    let auth = crate::host_supervisor::resolve_provider_auth(pi_executable().to_string_lossy().into_owned(), "opencode-go").await?;
     let client = reqwest::Client::builder().timeout(Duration::from_secs(8)).build().map_err(|error| format!("Could not create HTTP client: {error}"))?;
-    let response = client.get("https://opencode.ai/zen/go/v1/usage").bearer_auth(api_key).send().await.map_err(|error| format!("OpenCode Go usage request failed: {error}"))?;
+    let response = opencode_go_request(&client, &auth)?.send().await.map_err(|error| format!("OpenCode Go usage request failed: {error}"))?;
     if !response.status().is_success() {
         let status = response.status();
         let message = response.json::<Value>().await.ok().and_then(|body| body.pointer("/error/message").and_then(Value::as_str).map(String::from)).unwrap_or_else(|| status.to_string());
@@ -114,6 +105,15 @@ pub(super) async fn opencode_go_usage() -> Result<OpencodeGoUsage, String> {
     }
     let body = response.json::<Value>().await.map_err(|error| format!("OpenCode Go usage could not be read: {error}"))?;
     opencode_go_usage_values(&body).ok_or_else(|| "OpenCode Go usage is unavailable".into())
+}
+
+fn opencode_go_request(client: &reqwest::Client, auth: &Value) -> Result<reqwest::RequestBuilder, String> {
+    let api_key = auth["apiKey"].as_str().filter(|key| !key.trim().is_empty()).ok_or("OpenCode Go API key is not configured")?;
+    let mut request = client.get("https://opencode.ai/zen/go/v1/usage").bearer_auth(api_key);
+    for (name, value) in auth["headers"].as_object().into_iter().flatten() {
+        request = request.header(name, value.as_str().ok_or("Invalid OpenCode Go authentication header")?);
+    }
+    Ok(request)
 }
 
 #[cfg(test)]

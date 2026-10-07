@@ -109,7 +109,7 @@ export function SettingsView(props: SettingsViewProps) {
   createDependencyEffect(() => {
     if (saving()) return;
     const incoming = settingsProps().settings;
-    const incomingSnapshot = stableSnapshot([settingsSnapshot(incoming), incoming.settingsRevision, incoming.clientSettingsRevision]);
+    const incomingSnapshot = JSON.stringify([settingsSnapshot(incoming), incoming.settingsRevision, incoming.clientSettingsRevision]);
 
     if (incomingSnapshot === incomingSettingsSnapshot.current) return;
     incomingSettingsSnapshot.current = incomingSnapshot;

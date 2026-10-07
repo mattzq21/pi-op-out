@@ -20,6 +20,20 @@ pub(super) trait Events: Send + Sync {
     fn event(&self, packet: Value);
 }
 
+struct QuietEvents;
+
+impl Events for QuietEvents {
+    fn event(&self, _packet: Value) {}
+}
+
+pub(crate) async fn resolve_provider_auth(executable: String, provider_id: &str) -> Result<Value> {
+    let sdk = Sdk::new(executable, Arc::new(QuietEvents));
+    let result = tokio::time::timeout(Duration::from_secs(30), sdk.request(json!({"method":"auth","providerId":provider_id})))
+        .await.map_err(|_| "Pi provider credential resolution timed out".to_owned());
+    sdk.shutdown().await;
+    result?
+}
+
 pub(super) struct Sdk {
     executable: String,
     plugin: Option<&'static str>,
@@ -33,6 +47,14 @@ struct Connection {
     pending: Mutex<HashMap<String, oneshot::Sender<Result<Value>>>>,
     closed: AtomicBool,
     stop: mpsc::UnboundedSender<()>,
+}
+
+impl Drop for Sdk {
+    fn drop(&mut self) {
+        if let Some(connection) = self.connection.get_mut().take() {
+            let _ = connection.stop.send(());
+        }
+    }
 }
 
 struct PendingRequest<'a> {
@@ -62,7 +84,9 @@ impl Sdk {
     }
 
     pub fn plugin(executable: String, events: Arc<dyn Events>, source: &'static str) -> Self {
-        Self { plugin: Some(source), ..Self::new(executable, events) }
+        let mut sdk = Self::new(executable, events);
+        sdk.plugin = Some(source);
+        sdk
     }
 
     async fn connect(&self) -> Result<Arc<Connection>> {

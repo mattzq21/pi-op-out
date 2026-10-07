@@ -223,9 +223,15 @@ async function appendQueuedInput(files, header, target) {
   catch (error) { if (error.code === "ENOENT") return; throw error; }
 
   if (!metadata.isDirectory()) throw new Error("Invalid queued input directory");
-  const queued = await readFile(path.join(directory, `${header.id.toLowerCase()}.json`), true);
+  const name = `${header.id.toLowerCase()}.json`;
+  const temporary = new RegExp(`^\\.${name.replaceAll(".", "\\.")}\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.tmp$`, "i");
 
-  if (queued && !files.some(saved => saved.file === queued.file)) files.push(queued);
+  for (const entry of await fs.readdir(directory)) {
+    if (entry !== name && !temporary.test(entry)) continue;
+    const queued = await readFile(path.join(directory, entry), true);
+
+    if (queued && !files.some(saved => saved.file === queued.file)) files.push(queued);
+  }
 }
 
 async function archivedDirectoryMetadata(directory) {

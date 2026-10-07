@@ -16,6 +16,7 @@ mod tool_failures;
 mod worker;
 
 pub(crate) use plugins::{preserve_leases_for_restart, validate_configuration};
+pub(crate) use provider_sdk::resolve_provider_auth;
 
 use futures_util::FutureExt;
 use serde_json::{json, Value};

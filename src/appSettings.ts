@@ -74,7 +74,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     try { await applySettings(value, nextConfig, previousConfig, scope); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
   };
 
-  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig, scope: "all" | "client" | "daemon" = "all") => { const capturedSettings = settings(); const capturedTransport = transport();
+  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig, scope?: "all" | "client" | "daemon") => { const capturedSettings = settings(); const capturedTransport = transport();
 
     if (!capturedSettings) throw new Error("Settings are still loading");
     const next = value; const agentHostId = nextConfig ? "local" : undefined;

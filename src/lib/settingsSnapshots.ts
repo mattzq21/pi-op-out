@@ -19,7 +19,9 @@ export function stableSnapshot(value: SettingsSnapshotValue) {
 }
 
 export function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {
-  return stableSnapshot({ settings, agentConfig });
+  const { settingsRevision: _settingsRevision, clientSettingsRevision: _clientSettingsRevision, ...value } = settings;
+
+  return stableSnapshot({ settings: value, agentConfig });
 }
 
 export function agentEditsSnapshot(config?: AgentConfig) {

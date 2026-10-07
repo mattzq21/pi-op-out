@@ -46,16 +46,12 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
     let deadline = message_deadline(broker, deadline_ms)?;
     let (settings, _claim, _ownership) = message_context(app, broker, session, client_id)?;
     if Instant::now() >= deadline { return Err("Agent message expired".into()); }
-    let mut command = message_command(broker, &settings, session, client_id)?;
-    let output = MessageOutput::prepare(&mut command)?;
-    let child = spawn_message(&mut command, &output, broker, request_id, deadline)?;
-    let _writer = BrokerWriter { child: child.clone(), _claim };
-    register_message_job(broker, request_id, &child, &output)?;
-    write_message_input(&child, message)?;
-    let status = wait_message(broker, request_id, &child, &output, deadline);
-    broker.jobs.lock().ok().map(|mut jobs| jobs.remove(request_id));
-    broker.cancelled.lock().ok().map(|mut cancelled| cancelled.remove(request_id));
-    message_output(output, status)
+    let command = message_command(broker, &settings, session, client_id)?;
+    let job = start_message_job(command, broker, request_id, deadline)?;
+    let _writer = BrokerWriter { job: job.clone(), broker, request_id, _claim };
+    write_message_input(&job.child, message)?;
+    let status = wait_message(broker, request_id, &job.child, &job.output, deadline);
+    message_output(&job.output, status)
 }
 
 pub(super) fn broker_response(mut stream: TcpStream, status: &str, body: Value) {
@@ -234,8 +230,8 @@ fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
             if let Some(operation) = broker.operations.lock().map_err(|_| "Broker operations unavailable")?.get(request_id) { operation.store(true, Ordering::SeqCst); }
             #[cfg(not(feature = "desktop"))]
             peers::cancel_message(&app, request_id)?;
-            let child = broker.jobs.lock().map_err(|_| "Broker job lock was poisoned")?.get(request_id).cloned();
-            if let Some(child) = child { stop_locked_message(&child); }
+            let job = broker.jobs.lock().map_err(|_| "Broker job lock was poisoned")?.get(request_id).cloned();
+            if let Some(job) = job { stop_locked_message(&job.child); }
             Ok(json!({"cancelled":true}))
         })(),
         _ => Err("Unknown session broker endpoint".into()),
@@ -282,27 +278,40 @@ struct MessageOutput { root: PathBuf, stdout: PathBuf, stderr: PathBuf }
 
 impl MessageOutput {
     fn prepare(command: &mut Command) -> Result<Self, String> {
-    let output_root = std::env::temp_dir().join(format!("pi-desktop-broker-{}", Uuid::new_v4()));
-    ensure_private_dir(&output_root).map_err(|error| format!("Could not prepare agent message: {error}"))?;
-    let stdout_path = output_root.join("stdout"); let stderr_path = output_root.join("stderr");
-    let stdout = fs::File::create(&stdout_path).map_err(|error| format!("Could not capture agent output: {error}"))?;
-    let stderr = fs::File::create(&stderr_path).map_err(|error| format!("Could not capture agent errors: {error}"))?;
-    command.stdin(Stdio::piped()).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
-        Ok(Self { root: output_root, stdout: stdout_path, stderr: stderr_path })
+        let root = std::env::temp_dir().join(format!("pi-desktop-broker-{}", Uuid::new_v4()));
+        let output = Self { stdout: root.join("stdout"), stderr: root.join("stderr"), root };
+        ensure_private_dir(&output.root).map_err(|error| format!("Could not prepare agent message: {error}"))?;
+        let stdout = fs::File::create(&output.stdout).map_err(|error| format!("Could not capture agent output: {error}"))?;
+        let stderr = fs::File::create(&output.stderr).map_err(|error| format!("Could not capture agent errors: {error}"))?;
+        command.stdin(Stdio::piped()).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+        Ok(output)
+    }
+
+    fn remove(&self) {
+        if let Err(error) = fs::remove_dir_all(&self.root) {
+            if error.kind() != std::io::ErrorKind::NotFound { eprintln!("Could not remove agent output {}: {error}", self.root.display()); }
+        }
     }
 }
 
-fn spawn_message(command: &mut Command, output: &MessageOutput, broker: &BrokerRuntime, request_id: &str, deadline: Instant) -> Result<Arc<Mutex<Child>>, String> {
-    if Instant::now() >= deadline { let _ = fs::remove_dir_all(&output.root); return Err("Agent message expired".into()); }
-    if broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?.remove(request_id) { let _ = fs::remove_dir_all(&output.root); return Err("Agent message was cancelled".into()); }
-    let spawned = command.spawn();
-    let child = match spawned { Ok(child) => Arc::new(Mutex::new(child)), Err(error) => { let _ = fs::remove_dir_all(&output.root); return Err(format!("Could not message agent: {error}")); } };
-    Ok(child)
+impl Drop for MessageOutput {
+    fn drop(&mut self) { self.remove(); }
 }
 
-fn register_message_job(broker: &BrokerRuntime, request_id: &str, child: &Arc<Mutex<Child>>, output: &MessageOutput) -> Result<(), String> {
-    match broker.jobs.lock() { Ok(mut jobs) => { if broker.closing.load(Ordering::SeqCst) { stop_locked_message(child); return Err("App is closing".into()); } jobs.insert(request_id.to_string(), child.clone()); }, Err(_) => { stop_locked_message(child); let _ = fs::remove_dir_all(&output.root); return Err("Broker job lock was poisoned".into()); } }
-    Ok(())
+struct MessageJob { child: Mutex<Child>, output: MessageOutput }
+
+fn start_message_job(mut command: Command, broker: &BrokerRuntime, request_id: &str, deadline: Instant) -> Result<Arc<MessageJob>, String> {
+    let mut jobs = broker.jobs.lock().map_err(|_| "Broker job lock was poisoned")?;
+    if broker.closing.load(Ordering::SeqCst) { return Err("App is closing".into()); }
+    if jobs.contains_key(request_id) { return Err("Agent message request is already running".into()); }
+    if Instant::now() >= deadline { return Err("Agent message expired".into()); }
+    if broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?.remove(request_id) { return Err("Agent message was cancelled".into()); }
+    let output = MessageOutput::prepare(&mut command)?;
+    let child = command.spawn().map_err(|error| format!("Could not message agent: {error}"));
+    drop(command);
+    let job = Arc::new(MessageJob { child: Mutex::new(child?), output });
+    jobs.insert(request_id.into(), job.clone());
+    Ok(job)
 }
 
 fn write_message_input(child: &Mutex<Child>, message: &str) -> Result<(), String> {
@@ -313,6 +322,7 @@ fn write_message_input(child: &Mutex<Child>, message: &str) -> Result<(), String
 
 fn wait_message(broker: &BrokerRuntime, request_id: &str, child: &Mutex<Child>, output: &MessageOutput, deadline: Instant) -> Result<ExitStatus, String> {
     loop {
+        if broker.closing.load(Ordering::SeqCst) { return Err("App is closing".into()); }
         if broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?.contains(request_id) {
             stop_locked_message(child);
             break Err("Agent message was cancelled".to_string());
@@ -327,12 +337,13 @@ fn wait_message(broker: &BrokerRuntime, request_id: &str, child: &Mutex<Child>, 
     }
 }
 
-fn message_output(output: MessageOutput, status: Result<ExitStatus, String>) -> Result<String, String> {
-    let status = match status { Ok(status) => status, Err(error) => { let _ = fs::remove_dir_all(&output.root); return Err(error); } };
+fn message_output(output: &MessageOutput, status: Result<ExitStatus, String>) -> Result<String, String> {
+    let status = status?;
     let output_bytes = fs::metadata(&output.stdout).map(|metadata| metadata.len()).unwrap_or(0)
         .saturating_add(fs::metadata(&output.stderr).map(|metadata| metadata.len()).unwrap_or(0));
-    if output_bytes > MAX_AGENT_OUTPUT_BYTES { let _ = fs::remove_dir_all(&output.root); return Err("Agent output exceeded the 16 MiB limit".into()); }
-    let stdout = fs::read(&output.stdout).unwrap_or_default(); let stderr = fs::read(&output.stderr).unwrap_or_default(); let _ = fs::remove_dir_all(&output.root);
+    if output_bytes > MAX_AGENT_OUTPUT_BYTES { return Err("Agent output exceeded the 16 MiB limit".into()); }
+    let stdout = fs::read(&output.stdout).map_err(|error| format!("Could not read agent output: {error}"))?;
+    let stderr = fs::read(&output.stderr).map_err(|error| format!("Could not read agent errors: {error}"))?;
     if !status.success() { return Err(String::from_utf8_lossy(&stderr).trim().to_string()); }
     Ok(String::from_utf8_lossy(&stdout).trim().to_string())
 }
@@ -453,7 +464,7 @@ pub(super) struct BrokerRuntime {
     pub(super) port: Arc<Mutex<u16>>,
     pub(super) token: String,
     pub(super) busy: Arc<Mutex<HashSet<String>>>,
-    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+    jobs: Arc<Mutex<HashMap<String, Arc<MessageJob>>>>>,
     cancelled: Arc<Mutex<HashSet<String>>>,
     operations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
@@ -502,12 +513,15 @@ impl Drop for BusyAgent {
     fn drop(&mut self) { if let Ok(mut busy) = self.busy.lock() { busy.remove(&self.key); } }
 }
 
-struct BrokerWriter { child: Arc<Mutex<Child>>, _claim: BusyAgent }
+struct BrokerWriter<'a> { job: Arc<MessageJob>, broker: &'a BrokerRuntime, request_id: &'a str, _claim: BusyAgent }
 
-impl Drop for BrokerWriter {
+impl Drop for BrokerWriter<'_> {
     fn drop(&mut self) {
-        let mut child = self.child.lock().unwrap_or_else(|error| error.into_inner());
+        let mut child = self.job.child.lock().unwrap_or_else(|error| error.into_inner());
         stop_message_worker(&mut child);
+        drop(child);
+        self.broker.jobs.lock().unwrap_or_else(|error| error.into_inner()).remove(self.request_id);
+        self.broker.cancelled.lock().unwrap_or_else(|error| error.into_inner()).remove(self.request_id);
     }
 }
 
@@ -536,8 +550,12 @@ impl BrokerRuntime {
 
     pub(super) fn shutdown(&self) {
         self.closing.store(true, Ordering::SeqCst);
-        let jobs = self.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
-        for child in jobs { if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); } }
+        let jobs = self.jobs.lock().unwrap_or_else(|error| error.into_inner()).drain().map(|(_, job)| job).collect::<Vec<_>>();
+        for job in jobs {
+            let mut child = job.child.lock().unwrap_or_else(|error| error.into_inner());
+            stop_message_worker(&mut child);
+            job.output.remove();
+        }
     }
 
     pub(super) fn with_uncancelled_request<T>(&self, id: &str, register: impl FnOnce() -> Result<T, String>) -> Result<T, String> {

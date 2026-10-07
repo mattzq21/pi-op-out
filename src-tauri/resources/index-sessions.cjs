@@ -83,8 +83,8 @@ class SessionIndex {
     if (Number.isFinite(amount) && amount >= 0) this.cost += amount;
   }
 
-  line(line) {
-    this.bytes += line.length + 1;
+  line(line, terminated = true) {
+    this.bytes += line.length + Number(terminated);
     let entry;
 
     try { entry = JSON.parse(line.toString('utf8')); } catch { return; }
@@ -127,6 +127,7 @@ async function indexFile(path) {
     if (start < chunk.length) pending.push(chunk.subarray(start));
   }
 
+  if (pending.length) index.line(Buffer.concat(pending), false);
   index.print(path);
 }
 

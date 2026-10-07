@@ -73,7 +73,7 @@ export class NativeSettings {
 
     try { change = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { settings: previous }; }
     catch (reason) {
-      await this.restoreClientSettings(previousClient, clientChanged ? savedClient.clientSettingsRevision : undefined, String(reason));
+      await this.restoreClientSettings(previousClient, clientChanged, savedClient.clientSettingsRevision, String(reason));
       throw reason;
     }
 
@@ -84,8 +84,8 @@ export class NativeSettings {
     return change;
   }
 
-  private async restoreClientSettings(settings: AppSettings, expectedRevision: string | undefined, reason: string) {
-    try { if (expectedRevision) await saveClientSettings(settings, expectedRevision); }
+  private async restoreClientSettings(settings: AppSettings, changed: boolean, expectedRevision: string | undefined, reason: string) {
+    try { if (changed && expectedRevision) await saveClientSettings(settings, expectedRevision); }
     catch (rollback) { throw new Error(`Settings save failed: ${String(reason)}. Client preferences could not be restored: ${String(rollback)}. Reload settings before retrying.`); }
   }
 
