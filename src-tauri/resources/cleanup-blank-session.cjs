@@ -31,6 +31,9 @@ for (const candidate of candidates) {
   if (header?.type !== "session" || !header.id || (target.id && header.id !== target.id)) continue;
 
   if (entries.some(entry => entry.type === "message")) continue;
+
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)
+    && fs.existsSync(path.join(path.dirname(realRoot), "queued-input", `${header.id.toLowerCase()}.json`))) continue;
   fs.unlinkSync(file);
   const sidecar = file.replace(/\.jsonl$/, ".diffs.json");
 

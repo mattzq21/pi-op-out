@@ -133,6 +133,7 @@ async function collectDeletionFiles(targets, sources, request, files) {
       validateHeader(header, request);
       trace.sessionId = header.id;
       await appendConversationNote(files, header, target);
+      await appendQueuedInput(files, header, target);
       const directory = await archivedDirectory(source, header, target, selected);
 
       if (directory && !files.some(saved => saved.file === directory.file)) files.push(directory);
@@ -210,6 +211,21 @@ async function appendConversationNote(files, header, target) {
   const note = await readFile(path.join(storage, "notes", "chats", `${header.id.toLowerCase()}.md`), true);
 
   if (note && !files.some(saved => saved.file === note.file)) files.push(note);
+}
+
+async function appendQueuedInput(files, header, target) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)) return;
+  const storage = path.dirname(await deletionStorageRoot(target));
+  const directory = path.join(storage, "queued-input");
+  let metadata;
+
+  try { metadata = await fs.lstat(directory); }
+  catch (error) { if (error.code === "ENOENT") return; throw error; }
+
+  if (!metadata.isDirectory()) throw new Error("Invalid queued input directory");
+  const queued = await readFile(path.join(directory, `${header.id.toLowerCase()}.json`), true);
+
+  if (queued && !files.some(saved => saved.file === queued.file)) files.push(queued);
 }
 
 async function archivedDirectoryMetadata(directory) {

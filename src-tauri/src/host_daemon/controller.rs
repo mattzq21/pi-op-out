@@ -70,6 +70,7 @@ pub(super) struct Host {
 struct Callbacks(Weak<Host>);
 
 impl SessionHost for Callbacks {
+    fn queue_root(&self) -> Option<PathBuf> { self.0.upgrade().map(|host| host.home.join(&host.storage).join("queued-input")) }
     fn record_tool_failure(&self, record: Value) {
         if let Some(host) = self.0.upgrade() {
             if let Err(error) = host.tool_failures.record(record) {
@@ -176,6 +177,9 @@ impl Host {
         });
         let ownership = ConversationOwnership::new(&host.home, storage, Arc::new(Callbacks(Arc::downgrade(&host)))).await?;
         let _ = host.ownership.set(ownership);
+        for error in super::queue::recover_missing_transcripts(&host.home.join(storage), host.ownership()) {
+            host.output(json!({"type":"diagnostic","line":format!("Queued input retained for recovery: {error}")}));
+        }
         host.services.bind(Arc::downgrade(&host));
         host.watch_removals();
         Ok(host)

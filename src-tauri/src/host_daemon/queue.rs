@@ -8,15 +8,22 @@ use std::{
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
+mod storage;
+mod durability;
+mod recovery;
+pub(super) use storage::QueueStorage;
+pub(super) use recovery::recover_missing_transcripts;
 
 pub(super) trait Execution: Send + Sync {
     fn execute(&self, command: Value) -> BoxFuture<'_, Result<Value>>;
     fn publish(&self, event: Value);
+    fn saved_user_messages(&self) -> Result<Vec<Value>> { Ok(Vec::new()) }
 }
 
 #[derive(Default)]
 struct QueueState {
     pending: Vec<Value>,
+    retained: Vec<Value>,
     held: Option<Vec<Value>>,
     steering: Vec<Value>,
     follow_up: Vec<Value>,
@@ -48,6 +55,9 @@ impl QueueState {
             }
         }
         let pending: Vec<_> = pending.iter().cloned().map(|mut item| {
+            if let Some(fields) = item.as_object_mut() {
+                for field in ["consumedContent", "consumedTimestamp", "deliveryStarted"] { fields.remove(field); }
+            }
             if let Some(images) = item.get_mut("images").and_then(Value::as_array_mut) {
                 for image in images { if let Some(fields) = image.as_object_mut() { fields.remove("data"); } }
             }
@@ -186,19 +196,28 @@ pub(super) struct SessionQueue {
     publication: Mutex<()>,
     pub gate: AsyncMutex<()>,
     executor: Arc<dyn Execution>,
+    storage: Option<QueueStorage>,
 }
 
 impl SessionQueue {
     pub fn new(executor: Arc<dyn Execution>, pending: Vec<Value>) -> Self {
         Self {
             state: Mutex::new(QueueState {
+                retained: pending.clone(),
                 pending,
                 ..QueueState::default()
             }),
             gate: AsyncMutex::new(()),
             publication: Mutex::new(()),
             executor,
+            storage: None,
         }
+    }
+
+    pub fn with_storage(executor: Arc<dyn Execution>, recovered: Vec<Value>, storage: QueueStorage) -> Self {
+        let mut queue = Self::new(executor, recovered);
+        queue.storage = Some(storage);
+        queue
     }
 
     fn state(&self) -> MutexGuard<'_, QueueState> {
@@ -220,10 +239,15 @@ impl SessionQueue {
     pub fn is_empty(&self) -> bool {
         self.state().pending.is_empty()
     }
-    fn publish(&self) {
+    fn publish(&self) -> Result<()> {
         let _publication = self.publication.lock().unwrap_or_else(|error| error.into_inner());
-        let event = self.state().publish();
+        let event = {
+            let mut state = self.state();
+            self.persist_state(&mut state)?;
+            state.publish()
+        };
         self.executor.publish(event);
+        Ok(())
     }
     pub fn tag_entries(&self, entries: &mut Value) {
         let state = self.state();
@@ -236,6 +260,7 @@ impl SessionQueue {
 
     pub fn receive(&self, mut event: Value) {
         let _publication = self.publication.lock().unwrap_or_else(|error| error.into_inner());
+        self.observe_consumption(&event);
         let queue_event = {
             let mut state = self.state();
             if kind(&event) == "agent_start" {
@@ -251,6 +276,7 @@ impl SessionQueue {
                 Some(state.publish())
             } else if kind(&event) == "queue_update" {
                 state.receive_queue(&event);
+                if let Err(error) = self.persist_state(&mut state) { self.journal_error(error); }
                 if state.changing {
                     return;
                 }
@@ -288,6 +314,9 @@ impl SessionQueue {
     }
 
     async fn deliver(&self, item: &Value) -> Result<Value> {
+        let mut retained = item.clone();
+        retained["deliveryStarted"] = json!(true);
+        self.retain_item(&retained)?;
         let id = text(item, "id");
         self.state().sending.insert(id.clone());
         let mut command = json!({"type":"prompt","message":item["message"],"streamingBehavior":item["behavior"]});
@@ -352,14 +381,20 @@ impl SessionQueue {
             }
             state.changing = false;
         }
-        self.publish();
+        self.publish()?;
         result.map(|_| ())
     }
 
-    fn held_failed(&self) {
+    fn held_failed(&self) -> Result<()> {
         let _publication = self.publication.lock().unwrap_or_else(|error| error.into_inner());
-        let event = self.state().failed_held();
+        let event = {
+            let mut state = self.state();
+            let event = state.failed_held();
+            self.persist_state(&mut state)?;
+            event
+        };
         self.executor.publish(event);
+        Ok(())
     }
 
     async fn restore(&self) -> Result<()> {
@@ -382,13 +417,13 @@ impl SessionQueue {
             }
             if let Err(error) = self.deliver(&item).await {
                 self.state().held.get_or_insert_with(Vec::new).insert(0, item);
-                self.held_failed();
+                self.held_failed()?;
                 return Err(error);
             }
-            self.publish();
+            self.publish()?;
         }
         self.state().held = None;
-        self.publish();
+        self.publish()?;
         Ok(())
     }
 
@@ -425,7 +460,7 @@ impl SessionQueue {
             self.hold().await?;
             let result = self.execute(command).await;
             if result.is_err() {
-                self.held_failed();
+                self.held_failed()?;
             }
             return result;
         }
@@ -440,7 +475,9 @@ impl SessionQueue {
     async fn resume_command(&self, command: Value, name: &str) -> Result<Value> {
         let revision = self.state().inference_revision;
         let slash = text(&command, "message").starts_with('/');
-        let result = self.execute(command).await?;
+        let result = if name == "prompt" && !slash {
+            self.execute_held_prompt(command).await?
+        } else { self.execute(command).await? };
         if matches!(name, "resume" | "orchestration_message") || !slash || self.state().inference_revision != revision {
             self.restore().await?;
         }
@@ -453,6 +490,7 @@ impl SessionQueue {
         if let Some(images) = command.get("images") {
             pending["images"] = images.clone();
         }
+        self.retain_item(&pending)?;
         let held = {
             let mut state = self.state();
             state.pending.push(pending.clone());
@@ -466,18 +504,18 @@ impl SessionQueue {
             }
         };
         if held {
-            self.publish();
+            self.publish()?;
             return Ok(Value::Null);
         }
         let result = self.deliver(&pending).await;
         {
             let mut state = self.state();
             if result.is_err() {
-                state.pending.retain(|item| item["id"] != id);
+                if let Some(item) = state.pending.iter_mut().find(|item| item["id"] == id) { item["retry"] = json!(true); }
             }
             state.sending.remove(&id);
         }
-        self.publish();
+        self.publish()?;
         result
     }
     async fn stop(&self, result: Result<Value>) -> Result<Value> {
@@ -502,7 +540,7 @@ impl SessionQueue {
             state.follow_up.clear();
             state.awaiting_steering.clear();
         }
-        self.publish();
+        self.publish()?;
         self.executor.publish(json!({"type":"disconnected"}));
         Ok(Value::Null)
     }
@@ -516,30 +554,29 @@ impl SessionQueue {
         } else {
             self.gate.lock().await
         };
-        let (target, behavior, neighbor) = {
-            let state = self.state();
-            let Some(target) = state.pending.iter().find(|item| item["id"] == id).cloned() else {
-                return Ok(Value::Null);
-            };
-            let behavior = action.as_str().unwrap_or("reorder").to_owned();
-            let moving = matches!(behavior.as_str(), "moveUp" | "moveDown" | "reorder");
-            let neighbor = queue_neighbor(&state.pending, &target, &action, &behavior);
-            if moving && (flag(&target, "retry") || neighbor.is_none()) {
-                return Ok(Value::Null);
-            }
-            (target, behavior, neighbor)
-        };
+        let Some((target, behavior, neighbor)) = self.pending_change(id, &action) else { return Ok(Value::Null); };
         if cancelling {
             return self.change_live(id, "remove", None, &action).await;
         }
         if self.change_held(id, &behavior, neighbor.as_deref(), &action) {
-            self.publish();
+            if behavior == "remove" { self.forget_item(id)?; }
+            self.publish()?;
             return Ok(Value::Null);
         }
         if flag(&target, "retry") {
             return self.retry(id, target, &behavior).await;
         }
         self.change_live(id, &behavior, neighbor.as_deref(), &action).await
+    }
+
+    fn pending_change(&self, id: &str, action: &Value) -> Option<(Value, String, Option<String>)> {
+        let state = self.state();
+        let target = state.pending.iter().find(|item| item["id"] == id)?.clone();
+        let behavior = action.as_str().unwrap_or("reorder").to_owned();
+        let moving = matches!(behavior.as_str(), "moveUp" | "moveDown" | "reorder");
+        let neighbor = queue_neighbor(&state.pending, &target, action, &behavior);
+        if moving && (flag(&target, "retry") || neighbor.is_none()) { return None; }
+        Some((target, behavior, neighbor))
     }
 
     fn change_held(&self, id: &str, behavior: &str, neighbor: Option<&str>, action: &Value) -> bool {
@@ -564,11 +601,13 @@ impl SessionQueue {
 
     async fn retry(&self, id: &str, mut target: Value, behavior: &str) -> Result<Value> {
         if behavior == "remove" {
-            self.state().pending.retain(|item| item["id"] != id);
-            self.publish();
+            self.forget_item(id)?;
+            self.publish()?;
             return Ok(Value::Null);
         }
         target["retry"] = json!(false);
+        target["consumedTimestamp"] = Value::Null;
+        target["consumedContent"] = Value::Null;
         target["behavior"] = json!(if behavior == "steer" { "steer" } else { "followUp" });
         if let Some(item) = self.state().pending.iter_mut().find(|item| item["id"] == id) {
             *item = target.clone();
@@ -579,7 +618,7 @@ impl SessionQueue {
                 item["retry"] = json!(true);
             }
         }
-        self.publish();
+        self.publish()?;
         result.map(|_| Value::Null)
     }
 
@@ -603,7 +642,7 @@ impl SessionQueue {
         };
         let result = self.replace_live(id, behavior, neighbor, action, originals).await;
         self.state().changing = false;
-        self.publish();
+        self.publish()?;
         result
     }
 
@@ -615,11 +654,13 @@ impl SessionQueue {
         }
         if behavior == "remove" {
             remaining.retain(|item| item["id"] != id);
+            self.forget_item(id)?;
         }
         {
             let mut state = self.state();
             state.pending = originals.into_iter().filter(|item| flag(item, "retry")).collect();
             state.pending.extend(remaining.clone());
+            self.persist_state(&mut state)?;
         }
         if remaining.iter().any(|item| flag(item, "retry")) {
             self.mark_retry(&remaining);

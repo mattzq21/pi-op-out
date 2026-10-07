@@ -1,12 +1,13 @@
 mod configuration;
 mod events;
 mod requests;
+mod queued_input;
 
 use super::{
     payload::{assistant_delta, saved_tool_payload},
     tool_payload::{ToolPayload, ToolPayloadCache},
     protocol::{array, flag, kind, text, LaunchSpec, Result, SessionLaunch},
-    queue::{Execution, SessionQueue},
+    queue::{Execution, QueueStorage, SessionQueue},
     worker::{Observer, Request, Worker},
 };
 use futures_util::future::BoxFuture;
@@ -22,6 +23,7 @@ use uuid::Uuid;
 
 pub(super) trait SessionHost: Send + Sync {
     fn output(&self, packet: Value);
+    fn queue_root(&self) -> Option<std::path::PathBuf> { None }
     fn record_tool_failure(&self, _record: Value) {}
     fn configuration(&self) -> Option<Value>;
     fn readonly_views(&self, identity: &str) -> Vec<String>;
@@ -99,6 +101,13 @@ pub(super) struct Session {
 struct SessionCallbacks(Weak<Session>);
 
 impl Execution for SessionCallbacks {
+    fn saved_user_messages(&self) -> Result<Vec<Value>> {
+        let session = self.0.upgrade().ok_or("Pi is not running")?;
+        if session.ephemeral { return Ok(Vec::new()); }
+        let saved = session.saved_state();
+        let Some(path) = saved["sessionFile"].as_str().or_else(|| session.spec.argument("--session")) else { return Ok(Vec::new()); };
+        queued_input::saved_user_messages(Path::new(path), &session.spec.identity(&session.key())?)
+    }
     fn execute(&self, command: Value) -> BoxFuture<'_, Result<Value>> {
         Box::pin(async move { self.0.upgrade().ok_or("Pi is not running")?.execute(command).await })
     }
@@ -165,6 +174,8 @@ impl Session {
         } = launch;
         spec.prepare(&key, &client_id, home);
         spec.env.insert("PIOP_EPHEMERAL_SESSION".into(), u8::from(ephemeral).to_string());
+        let storage = queue_storage(host.as_ref(), &spec, cwd.as_deref(), home, &key, ephemeral)?;
+        let pending = match &storage { Some(storage) => storage.recover(pending)?, None => pending };
         let identity = if spec.argument("--session").is_some() {
             key.clone()
         } else {
@@ -182,7 +193,10 @@ impl Session {
             ephemeral,
             timeout,
             epoch: Uuid::new_v4().to_string(),
-            queue: SessionQueue::new(Arc::new(SessionCallbacks(weak.clone())), pending),
+            queue: match storage {
+                Some(storage) => SessionQueue::with_storage(Arc::new(SessionCallbacks(weak.clone())), pending, storage),
+                None => SessionQueue::new(Arc::new(SessionCallbacks(weak.clone())), pending),
+            },
             orchestration_interrupt: AsyncMutex::new(None),
             worker: OnceLock::new(),
             host,
@@ -225,6 +239,7 @@ impl Session {
                 provider_revision: 0,
             }),
         });
+        session.reconcile_queue();
         let worker = Worker::spawn(
             &session.spec,
             &session.identity,
@@ -238,6 +253,11 @@ impl Session {
 
     fn state(&self) -> MutexGuard<'_, SessionState> {
         self.state.lock().unwrap_or_else(|error| error.into_inner())
+    }
+    fn reconcile_queue(&self) {
+        if let Err(error) = self.queue.confirm_consumed() {
+            self.host.output(json!({"type":"diagnostic","line":format!("Queued input retained for review: {error}")}));
+        }
     }
     pub fn key(&self) -> String {
         self.state().key.clone()
@@ -560,6 +580,14 @@ impl Session {
     pub async fn send(&self, command: &Value) -> Result<()> {
         self.worker.get().ok_or("Pi is not running")?.send(command).await
     }
+}
+
+fn queue_storage(host: &dyn SessionHost, spec: &LaunchSpec, cwd: Option<&str>, home: &Path, key: &str, ephemeral: bool) -> Result<Option<QueueStorage>> {
+    if ephemeral { return Ok(None); }
+    let Some(root) = host.queue_root() else { return Ok(None); };
+    let directory = cwd.or(spec.cwd.as_deref()).or_else(|| spec.env.get("PIOP_SESSION_CWD").map(String::as_str))
+        .map(Path::new).unwrap_or(home);
+    QueueStorage::new(&root, &spec.identity(key)?)?.with_origin(directory, spec.argument("--session")).map(Some)
 }
 
 fn set<T>(items: &mut Vec<(String, T)>, key: String, value: T) {

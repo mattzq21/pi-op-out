@@ -12,6 +12,12 @@ const piopRoot = path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || "
 
 const sessionRoots = [path.join(piopRoot, "sessions"), path.join(piopRoot, "archived")];
 
+function queuedInputPath(sessionId) {
+  return Check(Type.String(), sessionId) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
+    ? path.join(piopRoot, "queued-input", `${sessionId.toLowerCase()}.json`)
+    : undefined;
+}
+
 function promptRepository(entry, header) { return entry.data?.repositoryRoot ?? header.checkpointRepositoryRoot ?? header.cwd; }
 
 async function regularFileSize(file) {
@@ -148,6 +154,8 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
   const metadata = await fs.lstat(file);
   const diffFile = file.replace(/\.jsonl$/, ".diffs.json");
   const diffBytes = await regularFileSize(diffFile);
+  const queuedFile = queuedInputPath(header?.id);
+  const queuedBytes = queuedFile ? await regularFileSize(queuedFile) : 0;
   const validHeader = validSessionHeader(header);
   const deletable = validHeader && !malformed && !checkpointError;
 
@@ -159,7 +167,7 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
     ...archiveLocation(header, file),
     name: explicitName || firstPrompt || "Untitled conversation",
     modifiedAt: Math.floor(metadata.mtimeMs / 1000),
-    byteSize: metadata.size + diffBytes,
+    byteSize: metadata.size + diffBytes + queuedBytes,
     deletable,
     ...await archivedWorktree(header),
   };
@@ -422,7 +430,7 @@ function snapshotCategory(target, category, metadata) {
   return category;
 }
 
-async function diskStorage(worktreeRoots) {
+async function diskStorage(worktreeRoots, queuedInputCategories) {
   const sizes = new Map();
   const seen = new Set();
   const directories = new Set();
@@ -444,6 +452,8 @@ async function diskStorage(worktreeRoots) {
   }
 
   function childCategory(target, category, name) {
+    if (target === path.join(root, "queued-input")) return queuedInputCategories.get(name) ?? "other-storage";
+
     if (target !== root) return category;
 
     return Object.hasOwn(categories, name) ? categories[name] : 'other-storage';
@@ -514,12 +524,19 @@ function collectArchivedSession(details, archived, archivedSessionIds) {
   if (archived && details.sessionId) archivedSessionIds.add(details.sessionId);
 }
 
-async function collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedSessionIds) {
+function collectQueuedInput(sessionId, archived, categories) {
+  const queuedFile = queuedInputPath(sessionId);
+
+  if (queuedFile) categories.set(path.basename(queuedFile), archived ? "archived-conversations" : "active-conversations");
+}
+
+async function collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedSessionIds, queuedInputCategories) {
   for (const candidate of sessionFiles) {
     try {
       const details = await inspectSession(candidate.file, candidate.archived);
       details.checkpointRepositories.forEach((repository) => checkpointRoots.add(repository.root));
       collectArchivedSession(details, candidate.archived, archivedSessionIds);
+      collectQueuedInput(details.sessionId, candidate.archived, queuedInputCategories);
 
       if (details.cwd) {
         const worktree = await currentWorktree(details.cwd);
@@ -560,20 +577,21 @@ async function main() {
   const archivedSessionIds = new Set();
   const worktreeRoots = new Set();
   const archives = [];
+  const queuedInputCategories = new Map();
 
   const sessionFiles = [
     ...active.files.filter((file) => file.endsWith(".jsonl")).map((file) => ({ file, archived: false })),
     ...archived.files.filter((file) => file.endsWith(".jsonl")).map((file) => ({ file, archived: true })),
   ];
 
-  await collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedSessionIds);
+  await collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedSessionIds, queuedInputCategories);
 
-  const disk = await diskStorage(worktreeRoots);
+  const disk = await diskStorage(worktreeRoots, queuedInputCategories);
   const checkpoints = await checkpointStorage(checkpointRoots, disk.directories, archivedSessionIds);
 
   const directoryCandidates = {
-    'active-conversations': [activeRoot],
-    'archived-conversations': [archiveRoot],
+    'active-conversations': [activeRoot, path.join(piopRoot, 'queued-input')],
+    'archived-conversations': [archiveRoot, path.join(piopRoot, 'queued-input')],
     'project-checkpoints': checkpoints.directories,
     'archived-project-checkpoints': checkpoints.archived.directories,
     'git-diff-snapshots': [path.join(piopRoot, 'git-snapshots'), ...active.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots'))],

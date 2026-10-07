@@ -198,6 +198,7 @@ impl Session {
         if let Some((old, new)) = rekey {
             self.host.rekey(&old, &new, &self.epoch);
         }
+        self.reconcile_queue();
         self.publish_state();
     }
 
