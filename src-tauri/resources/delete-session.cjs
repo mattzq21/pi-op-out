@@ -7,7 +7,7 @@ const os = require("node:os");
 const { createHash } = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { recover, createJournal, removeCheckpointRefs, cleanupCommitted, sync, syncTree } = require("./delete-recovery.cjs");
-const { runWithStorageLock } = require("./storage-lock.cjs");
+const { runWithStorageLock, withReferencePublicationLock } = require("./storage-lock.cjs");
 const { recoverStorage } = require("./storage-recovery.cjs");
 const { collectRetention } = require("./deletion-retention.cjs");
 
@@ -435,7 +435,7 @@ async function start() {
   const roots = await Promise.all(targets.map(async target => path.dirname(await deletionStorageRoot(target))));
 
   if (new Set(roots).size !== 1) throw new Error("Conversation deletion targets must share storage");
-  await runWithStorageLock(roots[0], () => main(roots[0]));
+  await runWithStorageLock(roots[0], () => withReferencePublicationLock(roots[0], () => main(roots[0])));
 }
 
 start().catch((error) => { console.error(error.message); process.exitCode = 1; });

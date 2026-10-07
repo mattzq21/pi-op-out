@@ -44,6 +44,8 @@ impl QueueStorage {
 
     pub fn save(&self, items: &[Value]) -> Result<()> {
         let parent = self.path.parent().ok_or("Queued-input journal has no directory")?;
+        let root = parent.parent().ok_or("Queued-input storage has no root")?;
+        let _publication = super::super::reference_publication::lock(root)?;
         if fs::symlink_metadata(parent).is_ok_and(|meta| meta.file_type().is_symlink()) {
             return Err("Queued-input directory cannot be a symbolic link".into());
         }

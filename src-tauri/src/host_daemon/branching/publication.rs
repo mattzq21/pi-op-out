@@ -3,7 +3,12 @@ use serde_json::json;
 use std::{fs, io::Write, path::Path};
 
 pub(super) fn publish(host: &Host, source: &str, branch: &Path, session_id: &str, destination: &Path, ephemeral: bool) -> Result<()> {
-    if ephemeral { return publish_ephemeral(source, branch, session_id, destination); }
+    if ephemeral {
+        let root = host.storage_root();
+        let _publication = super::super::reference_publication::lock(&root)?;
+        super::super::reference_publication::register_transcript(&root, destination)?;
+        return publish_ephemeral(source, branch, session_id, destination);
+    }
     crate::git_diff_retry::retry_pending_git_diffs(source, None)?;
     let request = json!({"root":host.storage_root(),"source":source,"branch":branch,"sessionId":session_id,"destination":destination});
     match publication_request(&request) {

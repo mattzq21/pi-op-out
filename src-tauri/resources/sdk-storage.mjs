@@ -1,9 +1,48 @@
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
+import { homedir as storageHome } from "node:os";
+import { spawnSync as storageSpawn } from "node:child_process";
+import { createHash as storageHash, randomUUID as storageUuid } from "node:crypto";
 
 const installedStorageClasses = new WeakSet();
 
 const failedSessionStorage = new WeakSet();
+
+function registerExternalTranscript(root, transcript) {
+  if (!transcript) return;
+  const file = storagePath.resolve(transcript);
+  const relative = storagePath.relative(root, file);
+
+  if (["sessions", "archived", "fork-transactions", "fork-preparations"].some(area => relative.startsWith(area + storagePath.sep))) return;
+  const directory = storagePath.join(root, "external-transcripts");
+  storageFs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+
+  if (!storageFs.lstatSync(directory).isDirectory()) throw new Error("Invalid external transcript registry");
+  const record = storagePath.join(directory, storageHash("sha256").update(file).digest("hex") + ".json");
+  const body = JSON.stringify({ path: file });
+
+  if (storageReadOptional(record) === body) return;
+  storagePublish(record, record + "." + storageUuid() + ".tmp", body, false);
+  storageSyncDirectory(root);
+}
+
+export function acquireSessionReferencePublication(transcript) {
+  const root = storagePath.join(storageHome(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
+  storageFs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const descriptor = storageFs.openSync(storagePath.join(root, "reference-publication.lock"), storageFs.constants.O_CREAT | storageFs.constants.O_RDWR | storageFs.constants.O_NOFOLLOW, 0o600);
+
+  try {
+    if (!storageFs.fstatSync(descriptor).isFile()) throw new Error("Invalid reference publication lock");
+    const locked = storageSpawn("flock", ["--shared", "3"], { stdio: ["ignore", "pipe", "pipe", descriptor] });
+
+    if (locked.error) throw locked.error;
+
+    if (locked.status !== 0) throw new Error(locked.stderr.toString().trim() || "Could not lock reference publication");
+    registerExternalTranscript(root, transcript);
+
+    return () => storageFs.closeSync(descriptor);
+  } catch (error) { storageFs.closeSync(descriptor); throw error; }
+}
 
 function storageSyncDirectory(path) {
   const descriptor = storageFs.openSync(path, storageFs.constants.O_RDONLY | storageFs.constants.O_NOFOLLOW);
@@ -131,15 +170,23 @@ function sessionStorageTemporary(path) {
 
 function sessionStoragePublish(manager, entries, exclusive) {
   const path = manager.sessionFile;
+  const release = acquireSessionReferencePublication(path);
 
   try { storagePublish(path, sessionStorageTemporary(path), entries.map(entry => JSON.stringify(entry) + "\n").join(""), exclusive); }
   catch (error) {
     if (storageFs.existsSync(path)) failedSessionStorage.add(manager);
     throw error;
-  }
+  } finally { release(); }
 }
 
 function sessionStorageAppend(manager, entry) {
+  const release = acquireSessionReferencePublication(manager.sessionFile);
+
+  try { appendSessionStorage(manager, entry); }
+  finally { release(); }
+}
+
+function appendSessionStorage(manager, entry) {
   const descriptor = storageFs.openSync(manager.sessionFile, storageFs.constants.O_WRONLY | storageFs.constants.O_APPEND | storageFs.constants.O_NOFOLLOW);
 
   try {

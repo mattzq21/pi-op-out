@@ -9,6 +9,7 @@ mod provider_sdk;
 mod providers;
 mod plugins;
 mod queue;
+mod reference_publication;
 mod services;
 mod session;
 mod tool_payload;

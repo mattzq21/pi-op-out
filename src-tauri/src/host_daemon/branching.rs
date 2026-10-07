@@ -301,6 +301,7 @@ impl Branch<'_> {
     }
 
     fn snapshot_source(&self) -> Result<PathBuf> {
+        let _publication = super::reference_publication::lock(&self.host.storage_root())?;
         let source = std::fs::File::open(self.path).map_err(|error| error.to_string())?;
         let length = source.metadata().map_err(|error| error.to_string())?.len();
         let mut content = Vec::new();

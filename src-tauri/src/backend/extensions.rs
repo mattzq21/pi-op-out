@@ -74,6 +74,7 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 24] = [
 pub(super) fn prepare_session_broker() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
+    atomic_write_private(&dir.join("sdk-storage.mjs"), include_str!("../../resources/sdk-storage.mjs").as_bytes())?;
     remove_obsolete_side_chat_extensions(&dir)?;
     let modules = dir.join("session-broker");
     ensure_private_dir(&modules)?;

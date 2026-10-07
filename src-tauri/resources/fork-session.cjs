@@ -1,5 +1,51 @@
 const fs = require('node:fs');
 const { createInterface } = require('node:readline');
+const path = require('node:path');
+const { homedir } = require('node:os');
+const { createHash, randomUUID } = require('node:crypto');
+const { spawnSync } = require('node:child_process');
+
+function referencePublication(destination) {
+  const root = path.join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop');
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const descriptor = fs.openSync(path.join(root, 'reference-publication.lock'), fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
+
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid reference publication lock');
+    const locked = spawnSync('flock', ['--shared', '3'], { stdio: ['ignore', 'pipe', 'pipe', descriptor] });
+
+    if (locked.error) throw locked.error;
+
+    if (locked.status !== 0) throw new Error(locked.stderr.toString().trim() || 'Could not lock reference publication');
+    registerTranscript(root, path.resolve(destination));
+
+    return () => fs.closeSync(descriptor);
+  } catch (error) { fs.closeSync(descriptor); throw error; }
+}
+
+function registerTranscript(root, destination) {
+  const directory = path.join(root, 'external-transcripts');
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+
+  if (!fs.lstatSync(directory).isDirectory()) throw new Error('Invalid external transcript registry');
+  const record = path.join(directory, createHash('sha256').update(destination).digest('hex') + '.json');
+  const temporary = record + '.' + randomUUID() + '.tmp';
+  const output = fs.openSync(temporary, 'wx', 0o600);
+
+  try {
+    try { fs.writeFileSync(output, JSON.stringify({ path: destination })); fs.fsyncSync(output); }
+    finally { fs.closeSync(output); }
+
+    fs.renameSync(temporary, record);
+
+    for (const location of [directory, root]) {
+      const file = fs.openSync(location, 'r');
+
+      try { fs.fsyncSync(file); }
+      finally { fs.closeSync(file); }
+    }
+  } finally { fs.rmSync(temporary, { force: true }); }
+}
 
 async function copyThroughLeaf(source, output, id, leafId) {
   let copiedHeader = false;
@@ -31,6 +77,13 @@ async function copyThroughLeaf(source, output, id, leafId) {
 
 (async () => {
   const [source, destination, id, leafId] = process.argv.slice(1);
+  const release = referencePublication(destination);
+
+  try { await copySession(source, destination, id, leafId); }
+  finally { release(); }
+})().catch(error => { console.error(error.message); process.exitCode = 1; });
+
+async function copySession(source, destination, id, leafId) {
   const output = await fs.promises.open(destination, 'wx', 0o600); let header = Buffer.alloc(0), copiedHeader = false;
 
   try {
@@ -58,4 +111,4 @@ async function copyThroughLeaf(source, output, id, leafId) {
   } catch (error) { await output.close(); await fs.promises.rm(destination, { force: true }); throw error; }
 
   await output.close();
-})().catch(error => { console.error(error.message); process.exitCode = 1; });
+}
