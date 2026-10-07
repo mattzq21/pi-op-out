@@ -6,14 +6,17 @@ import { listen } from "../lib/platform";
 import { pluginError, pluginStatus, plugins, refreshPlugins, setPluginError } from ".";
 import type { PluginConversation, PluginInstance } from "./types";
 import { Sidepane } from "./Sidepane";
+import { PluginTabPicker } from "./PluginTabPicker";
 import "./workspace.css";
 
 interface RunningPlugin { id: string; name: string; instance: PluginInstance; dispose: () => void }
 
 export function createPluginWorkspace(source: Accessor<PluginConversation>, visible: Accessor<boolean>, onOpen: () => void) {
   const [open, setOpen] = createSignal(false);
-  const [active, setActive] = createSignal("chatgpt");
+  const [active, setActive] = createSignal("");
+  const [selectedTabs, setSelectedTabs] = createSignal<string[]>([]);
   const [running, setRunning] = createSignal<RunningPlugin[]>([]);
+  const tabs = createMemo(() => running().filter(item => selectedTabs().includes(item.id)));
   const [loadError, setLoadError] = createSignal<string>();
   const owner = getOwner();
   let generation = 0;
@@ -24,7 +27,11 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const conversationReady = createMemo(() => Boolean(source().sessionId) && (source().messageCount ?? 0) > 0);
   const enabledPlugins = createMemo(() => plugins.filter(plugin => (plugin.scope === "client" || conversationReady()) && pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
   const error = () => loadError() ?? hosts().map(pluginError).filter(Boolean).join("\n");
-  const activate = (id: string) => { onOpen(); setActive(id); setOpen(true); };
+
+  const activate = (id: string) => {
+    setSelectedTabs(previous => previous.includes(id) ? previous : [...previous, id]);
+    onOpen(); setActive(id); setOpen(true);
+  };
 
   createEffect(() => {
     for (const target of hosts()) void refreshPlugins(target).catch(reason => setPluginError(target, String(reason)));
@@ -59,12 +66,11 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
 
       for (const item of previous) if (!next.includes(item)) item.dispose();
 
-      if (!next.some(item => item.id === untrack(active))) setActive(next[0]?.id ?? "");
-
       if (!next.length) setOpen(false);
       setLoadError(undefined);
     }).catch(reason => { if (current === generation) setLoadError(`Plugins could not load: ${String(reason)}`); });
   });
+  createEffect(() => { if (!tabs().some(item => item.id === active())) setActive(tabs()[0]?.id ?? ""); });
   createEffect(() => { if (open()) running().find(item => item.id === active())?.instance.show?.(); });
   onCleanup(() => { disposed = true; generation++;
 
@@ -73,7 +79,7 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const close = () => setOpen(false);
 
   const changeTab = (event: KeyboardEvent) => {
-    const items = running();
+    const items = tabs();
     const index = items.findIndex(item => item.id === active());
 
     const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
@@ -88,10 +94,11 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const button = () => <Show when={running().length || error()}><IconButton class="open-plugins-button" label="Open sidepane" aria-controls="plugin-sidepane" aria-expanded={open()} onClick={() => { if (open()) close(); else { onOpen(); setOpen(true); } }}><PanelRight size={19} /></IconButton></Show>;
 
   const panel = () => <Sidepane open={open() && visible()}>
-    <header class="plugin-pane-header"><div role="tablist" aria-label="Sidepane plugins" onKeyDown={changeTab}><For each={running()}>{item => <button id={`plugin-tab-${item.id}`} role="tab" aria-controls={`plugin-panel-${item.id}`} aria-selected={active() === item.id} tabIndex={active() === item.id ? 0 : -1} onClick={() => setActive(item.id)}>{item.name}</button>}</For></div>
+    <header class="plugin-pane-header"><div role="tablist" aria-label="Sidepane plugins" onKeyDown={changeTab}><For each={tabs()}>{item => <button id={`plugin-tab-${item.id}`} role="tab" aria-controls={`plugin-panel-${item.id}`} aria-selected={active() === item.id} tabIndex={active() === item.id ? 0 : -1} onClick={() => setActive(item.id)}>{item.name}</button>}</For></div>
+      <PluginTabPicker items={running()} onSelect={activate} />
     </header>
     <Show when={error()}><p class="plugin-error" role="alert">{error()}</p></Show>
-    <For each={running()}>{item => <div class="plugin-panel" id={`plugin-panel-${item.id}`} role="tabpanel" aria-labelledby={`plugin-tab-${item.id}`} hidden={active() !== item.id}>{item.instance.panel()}</div>}</For>
+    <For each={tabs()}>{item => <div class="plugin-panel" id={`plugin-panel-${item.id}`} role="tabpanel" aria-labelledby={`plugin-tab-${item.id}`} hidden={active() !== item.id}>{item.instance.panel()}</div>}</For>
   </Sidepane>;
 
   return { open, close, button, panel, transcripts: () => running().flatMap(item => item.instance.transcript ? [item.instance.transcript] : []) };
