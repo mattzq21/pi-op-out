@@ -238,7 +238,7 @@ export class SessionRuntimePool {
     const existing = this.sessions.get(key) ?? this.sessions.get(sessionKey(hostId, session.id));
 
     if (existing) return existing;
-    const transport = this.create({ cwd: session.cwd, sessionPath: session.path, hostId }); this.sessions.set(key, transport);
+    const transport = this.create({ cwd: session.cwd || undefined, sessionPath: session.path || undefined, hostId }); this.sessions.set(key, transport);
 
     return transport;
   }

@@ -1,81 +1,163 @@
-import { createSignal } from "solid-js";
-import type { NativeTransport } from "./lib/nativeTransport";
+import { batch, createMemo, createSignal, onCleanup, untrack } from "solid-js";
+import type { NativeConnectionTarget } from "./lib/nativeTransport";
 import type { StateUpdate } from "./lib/solid";
 import type { ComposerUpload } from "./types";
-import { z } from "zod";
-import { isMobile } from "./lib/platform";
+import { createDraftStorage, type ConversationDraft, type DraftChanges } from "./lib/conversationDraftStorage";
 
-const draftsSchema = z.record(z.string(), z.string());
+export type { ConversationDraft } from "./lib/conversationDraftStorage";
 
-function draftStorageKey() {
-  try {
-    const host = isMobile ? localStorage.getItem("piop-mobile-host") ?? "mobile" : "desktop";
+type Drafts = Record<string, ConversationDraft>;
 
-    return `piop-conversation-drafts:v1:${host}`;
-  } catch { return undefined; }
+interface DraftOptions {
+  onError: (message: string) => void;
 }
 
-function restoreDrafts(key?: string): Record<string, string> {
-  if (!key) return {};
+const hasContent = (draft: ConversationDraft) => Boolean(draft.text || draft.uploads.length);
 
-  try {
-    return draftsSchema.parse(JSON.parse(localStorage.getItem(key) ?? "{}"));
-  } catch { return {}; }
+function setDraft(current: Drafts, key: string, update: (draft: ConversationDraft) => ConversationDraft) {
+  const next = { ...current };
+  const draft = update(current[key] ?? { text: "", uploads: [], updatedAt: Date.now() });
+
+  if (hasContent(draft)) next[key] = draft;
+  else delete next[key];
+
+  return next;
 }
 
-function persistDraftChanges(key: string | undefined, previous: Record<string, string>, next: Record<string, string>) {
-  if (!key) return;
+function mergeDraft(source: ConversationDraft, destination?: ConversationDraft): ConversationDraft {
+  if (!destination) return source;
+  const text = source.text === destination.text ? source.text : [destination.text, source.text].filter(Boolean).join("\n\n");
+  const uploads = new Map(destination.uploads.map(upload => [upload.id, upload]));
 
-  try {
-    const stored = restoreDrafts(key);
+  for (const upload of source.uploads) uploads.set(upload.id, upload);
 
-    for (const [session, text] of Object.entries(next)) {
-      if (previous[session] !== text) stored[session] = text;
+  return { ...destination, text, uploads: [...uploads.values()], updatedAt: Math.max(source.updatedAt, destination.updatedAt) };
+}
+
+export function createConversationDrafts(options: DraftOptions) {
+  const storage = createDraftStorage(options.onError);
+  const [records, setRecords] = createSignal<Drafts>(storage.legacy);
+  const targets = new Map<string, NativeConnectionTarget>();
+  const pending: Array<(current: Drafts) => Drafts> = [];
+  const dirty: DraftChanges = new Map();
+  const [isSaving, setIsSaving] = createSignal(false);
+  const [isReady, setIsReady] = createSignal(false);
+  const [saveError, setSaveError] = createSignal<string>();
+  let hydrated = false;
+  let loading: Promise<void> | undefined;
+  let saving: Promise<void> | undefined;
+
+  const failed = (reason: Error | string) => {
+    const message = `Could not save or restore drafts. Keep this window open and try editing again. ${String(reason)}`;
+
+    if (untrack(saveError) !== message) options.onError(message);
+    setSaveError(message);
+  };
+
+  const queueChanges = (previous: Drafts, next: Drafts) => {
+    for (const key of new Set([...Object.keys(previous), ...Object.keys(next)])) {
+      if (previous[key] !== next[key]) dirty.set(key, next[key]);
+    }
+  };
+
+  const hydrate = () => {
+    if (hydrated) return Promise.resolve();
+
+    if (loading) return loading;
+    loading = storage.load().then(stored => {
+      let restored = stored;
+
+      for (const update of pending) restored = update(restored);
+      pending.length = 0;
+      hydrated = true;
+      queueChanges(stored, restored);
+      setRecords(restored);
+      setIsReady(true);
+    }).finally(() => { loading = undefined; });
+
+    return loading;
+  };
+
+  const persist = async () => {
+    await hydrate();
+
+    while (dirty.size) {
+      const changes = new Map(dirty);
+      await storage.save(changes);
+
+      for (const [key, draft] of changes) {
+        if (dirty.get(key) === draft) dirty.delete(key);
+      }
     }
 
-    for (const session of Object.keys(previous)) {
-      if (!(session in next)) delete stored[session];
-    }
+    setSaveError(undefined);
+  };
 
-    if (Object.keys(stored).length) localStorage.setItem(key, JSON.stringify(stored));
-    else localStorage.removeItem(key);
-  } catch { }
-}
+  const flush = (): Promise<void> => {
+    if (saving) return saving;
+    let succeeded = false;
+    setIsSaving(true);
+    saving = persist().then(() => { succeeded = true; }).catch(reason => { failed(reason); throw reason; }).finally(() => {
+      saving = undefined;
+      setIsSaving(false);
 
-export function createConversationDrafts() {
-  const storageKey = draftStorageKey();
-  const [composerDrafts, setComposerDrafts] = createSignal(restoreDrafts(storageKey));
-  const [uploadsByTransport, setUploadsByTransport] = createSignal<Map<NativeTransport, ComposerUpload[]>>(new Map());
+      if (succeeded && dirty.size) return flush();
+    });
 
-  const updateDrafts = (update: (current: Record<string, string>) => Record<string, string>) => setComposerDrafts(current => {
-    const next = update(current);
-    persistDraftChanges(storageKey, current, next);
+    return saving;
+  };
 
-    return next;
+  const ready = flush();
+  void ready.catch(() => undefined);
+
+  const retry = () => {
+    if (!hydrated || untrack(saveError)) void flush().catch(() => undefined);
+  };
+
+  window.addEventListener("focus", retry);
+  window.addEventListener("online", retry);
+  onCleanup(() => {
+    window.removeEventListener("focus", retry);
+    window.removeEventListener("online", retry);
   });
 
-  const setComposerUploads = (ownerTransport: NativeTransport, update: StateUpdate<ComposerUpload[]>) => setUploadsByTransport((current) => {
-    const next = new Map(current);
-    const uploads = Array.isArray(update) ? update : update(next.get(ownerTransport) ?? []);
+  const updateDrafts = (update: (current: Drafts) => Drafts) => {
+    const previous = untrack(records);
+    const next = update(previous);
 
-    if (uploads.length) next.set(ownerTransport, uploads); else next.delete(ownerTransport);
+    if (hydrated && previous === next) return;
+    batch(() => {
+      if (hydrated) queueChanges(previous, next);
+      else pending.push(update);
+      setRecords(next);
+    });
+    void flush().catch(() => undefined);
+  };
 
-    return next;
-  });
+  const modify = (key: string, update: (draft: ConversationDraft) => ConversationDraft) => updateDrafts(current => setDraft(current, key, draft => ({ ...update(draft), target: targets.get(key) ?? draft.target, updatedAt: Date.now() })));
 
-  const transportHasDraft = (owner: NativeTransport, key?: string) => Boolean(key && composerDrafts()[key]) || (uploadsByTransport().get(owner)?.length ?? 0) > 0;
+  const setComposerDraft = (key: string, update: StateUpdate<string>) => modify(key, draft => ({ ...draft, text: update instanceof Function ? update(draft.text) : update }));
+  const setComposerUploads = (key: string, update: StateUpdate<ComposerUpload[]>) => modify(key, draft => ({ ...draft, uploads: update instanceof Function ? update(draft.uploads) : update }));
 
-  const setComposerDraft = (sessionKey: string, update: StateUpdate<string>) => updateDrafts((current) => { const value = update instanceof Function ? update(current[sessionKey] ?? "") : update;
+  const setDraftTarget = (key: string, target: NativeConnectionTarget) => {
+    targets.set(key, target);
+    updateDrafts(current => {
+      const draft = current[key];
 
-  if (value) return { ...current, [sessionKey]: value }; const next = { ...current }; delete next[sessionKey];
-
-  return next; });
+      return draft && JSON.stringify(draft.target) !== JSON.stringify(target) ? { ...current, [key]: { ...draft, target } } : current;
+    });
+  };
 
   const rekeyDraft = (previousKey: string, nextKey: string, copy = false) => {
     if (previousKey === nextKey) return;
+    const target = targets.get(previousKey);
+
+    if (target && !targets.has(nextKey)) targets.set(nextKey, target);
+
+    if (!copy) targets.delete(previousKey);
     updateDrafts(current => {
       if (!(previousKey in current)) return current;
-      const next = { ...current, [nextKey]: current[previousKey] };
+      const next = { ...current, [nextKey]: mergeDraft(current[previousKey], current[nextKey]) };
 
       if (!copy) delete next[previousKey];
 
@@ -83,14 +165,17 @@ export function createConversationDrafts() {
     });
   };
 
-  const removeDraft = (key: string) => setComposerDraft(key, "");
+  const removeDraft = (key: string) => updateDrafts(current => {
+    const next = { ...current };
+    delete next[key];
+    targets.delete(key);
 
-  const discard = (owner: NativeTransport, key?: string) => {
-    setComposerUploads(owner, []);
+    return next;
+  });
 
-    if (key) removeDraft(key);
-  };
+  const composerDrafts = createMemo(() => Object.fromEntries(Object.entries(records()).map(([key, draft]) => [key, draft.text])));
+  const uploadsFor = (key: string) => records()[key]?.uploads ?? [];
+  const hasDraft = (key: string) => Boolean(records()[key] && hasContent(records()[key]));
 
-
-  return { composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, transportHasDraft, rekeyDraft, removeDraft, discard };
+  return { records, ready, flush, isReady, isSaving, saveError, composerDrafts, uploadsFor, setComposerDraft, setComposerUploads, setDraftTarget, hasDraft, rekeyDraft, removeDraft, discard: removeDraft };
 }

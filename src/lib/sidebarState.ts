@@ -88,7 +88,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const sessions = createMemo(() => {
     const parents = new Set(source().map(session => `${session.hostId ?? "local"}:${session.id}`));
 
-    return source().filter(session => !session.isDraft && (!session.subagentParentId || !parents.has(`${session.hostId ?? "local"}:${session.subagentParentId}`)));
+    return source().filter(session => !session.subagentParentId || !parents.has(`${session.hostId ?? "local"}:${session.subagentParentId}`));
   });
 
   const storedGroups = projects ?? useSessionProjects(sessions);
@@ -298,9 +298,11 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const normalizedQuery = createMemo(() => (query().trim().toLowerCase()));
   const customGroupsByKey = createMemo(() => (new Map(customGroups().map((group) => [group.id, group]))));
 
+  const draftProjectGroup = (session: SessionSummary) => session.isDraft && session.cwd ? savedGroups().find(group => group.cwd === session.cwd && (group.hostId ?? "local") === (session.hostId ?? "local"))?.id : undefined;
+
   const visualProjectKey = (session: SessionSummary) => {
     if (session.cwdExists === false) return DIRLESS_KEY;
-    const destination = storedGroups.state?.assignments[sessionKey(session)];
+    const destination = storedGroups.state?.assignments[sessionKey(session)] ?? draftProjectGroup(session);
 
     if (!destination) return RECENT_KEY;
     const group = savedGroupsById().get(destination);

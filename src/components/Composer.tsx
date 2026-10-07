@@ -375,12 +375,6 @@ export function Composer(props: Props) {
     return Boolean((hasVisibleText(message) || images.length) && !sendingRef.current && !readingUploads());
   };
 
-  const restoreSubmission = (submittedValue: string, submittedUploads: ComposerUpload[], cause: unknown, changeDraft: (value: StateUpdate<string>) => void, changeUploads: (value: StateUpdate<ComposerUpload[]>) => void) => {
-    changeDraft((newerDraft) => newerDraft && newerDraft !== submittedValue ? `${submittedValue}\n\n${newerDraft}` : submittedValue);
-    changeUploads((current) => [...submittedUploads.filter((item) => !current.some((other) => other.id === item.id)), ...current]);
-    setUploadError(cause instanceof Error ? cause.message : String(cause));
-  };
-
   const submit = async (behavior: "steer" | "followUp" = "followUp") => { const capturedUploads = uploads(); const capturedValue = value(); const capturedComposer = { ...composer() };
 
     if (controlsBlocked()) return;
@@ -391,14 +385,15 @@ export function Composer(props: Props) {
     const submittedValue = capturedValue; const submittedUploads = capturedUploads;
     const changeDraft = capturedComposer.onDraftChange ?? setLocalValue;
     const changeUploads = attachments.captureUploadWriter();
-    setValue(""); updateUploads([]);
 
     try {
       const accepted = await capturedComposer.onSend(message, capturedComposer.streaming ? behavior : undefined, images);
 
       if (accepted === false) throw new Error("Message was not submitted");
+      changeDraft(current => current === submittedValue ? "" : current);
+      changeUploads(current => current.filter(item => !submittedUploads.some(submitted => submitted.id === item.id)));
     } catch (reason) {
-      restoreSubmission(submittedValue, submittedUploads, reason, changeDraft, changeUploads);
+      setUploadError(reason instanceof Error ? reason.message : String(reason));
     } finally { sendingRef.current = false; setSending(false); }
   };
 
