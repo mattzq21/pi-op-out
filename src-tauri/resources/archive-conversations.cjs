@@ -107,7 +107,6 @@ function snapshot(group, transaction) {
   group.metadata = path.join(transaction, `${randomUUID()}.git`);
   fs.cpSync(group.own, group.metadata, { recursive: true, verbatimSymlinks: true });
   fs.copyFileSync(path.join(group.own, 'index'), index);
-  git(group.path, ['add', '--update', '--', '.'], { env });
   const tree = git(group.path, ['write-tree'], { env });
   group.commit = git(group.path, ['commit-tree', tree, '-p', head], { env, input: 'Archive conversation working directory\n' });
   fs.unlinkSync(index);
