@@ -284,7 +284,7 @@ export function Message(componentProps: Props) {
       </div>);
     };
 
-    return (<article class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} aria-label={metadata().responseLabel}>
+    return (<article class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} data-response-id={componentProps.message.id} aria-label={metadata().responseLabel}>
       {renderMessageBody()}
     </article>);
   };

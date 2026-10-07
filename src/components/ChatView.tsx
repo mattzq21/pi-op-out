@@ -22,6 +22,7 @@ import { NewChatBranchPicker } from "./NewChatBranchPicker";
 import { Composer } from "./Composer";
 import { ConversationQuestions } from "./ConversationQuestions";
 import { DeferredTurn } from "./DeferredTurn";
+import { ResponseNavigator, type ResponseDestination } from "./ResponseNavigator";
 import { DiffViewer } from "./DiffViewer";
 import { Message } from "./Message";
 import { ConversationImageProject } from "./markdownImages";
@@ -86,6 +87,13 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
   const composerStack = createRef<HTMLDivElement>(null);
   const messages = () => props.messages;
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), previous), []);
+  const responses = createMemo(() => turns().flatMap(turn => {
+    const message = turn.messages[finalResponseIndex(turn.messages)];
+
+    if (!message) return [];
+
+    return [{ turnId: turn.messages[0].id, messageId: message.id, preview: textOf(message.content).replace(/\s+/g, " ").trim().slice(0, 160) || "Response interrupted" } satisfies ResponseDestination];
+  }));
   const hasSentPrompt = createMemo(() => messages().some((message) => message.role === "user"));
 
   const sessionUsage = createMemo(() => {
@@ -237,7 +245,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
         scrollToLatest();
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>πop</span></div>}
-        {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn  scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn messages={turn().messages} promptContexts={turn().promptContexts} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={onBranch} canRollback={props.canRollback} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} /></DeferredTurn>}</Key>}
+        {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn messages={turn().messages} promptContexts={turn().promptContexts} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={onBranch} canRollback={props.canRollback} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} /></DeferredTurn>}</Key>}
         {pendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><Message message={required(pendingSubmission()).message} showActions={false} /><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(pendingSubmission()).status}</span></div></section>}
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
           {mcpPendingMessage() && <div class="mcp-pending-message"><Message message={required(mcpPendingMessage())} showActions={false} /></div>}
@@ -257,6 +265,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
 
     return (<div class="conversation-content">
       <ConversationImageProject.Provider value={imageProject}><MessagesSection /></ConversationImageProject.Provider>
+      <ResponseNavigator responses={responses()} scrollRoot={messagesRef} onNavigate={() => { followLatest.current = false; }} />
       <ComposerStack />
     </div>);
   };
