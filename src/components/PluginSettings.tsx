@@ -51,7 +51,6 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
   };
 
   return <>
-    <p>Choose your plugins, then restart to apply changes. If a plugin cannot load, the previous setup stays active.</p>
     <Show when={error() || status()?.error || pluginError(props.hostId)}><p role="alert">{error() || status()?.error || pluginError(props.hostId)}</p></Show>
     <Show when={message()}><p role="status">{message()}</p></Show>
     <div class="config-list"><For each={plugins}>{plugin => <div class="config-row plugin-settings-row">
