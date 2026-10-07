@@ -4,7 +4,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 
-const ownerSchema = Type.Object({ sessionId: Type.String({ pattern: '^[a-zA-Z0-9_-]+$' }), roots: Type.Array(Type.String()) });
+const ownerSchema = Type.Object({ sessionId: Type.String({ pattern: '^[a-zA-Z0-9_-]+$' }), roots: Type.Array(Type.String()), destination: Type.Optional(Type.String()) });
 
 const sessionSchema = Type.Object({ type: Type.Literal('session'), id: Type.String() });
 
@@ -25,7 +25,10 @@ function savedIdentity(file) {
   try {
     const buffer = Buffer.alloc(64 * 1024);
     const count = fs.readSync(descriptor, buffer);
-    const header = JSON.parse(buffer.subarray(0, count).toString().split('\n')[0]);
+    let header;
+
+    try { header = JSON.parse(buffer.subarray(0, count).toString().split('\n')[0]); }
+    catch (error) { if (error instanceof SyntaxError) return undefined; throw error; }
 
     return Check(sessionSchema, header) ? header.id : undefined;
   } finally { fs.closeSync(descriptor); }
@@ -38,6 +41,9 @@ function savedOwners(directory, owners) {
     if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) savedOwners(file, owners);
 
     if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+    const filenameId = entry.name.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.jsonl$/i)?.[1];
+
+    if (filenameId) owners.add(filenameId);
     const id = savedIdentity(file);
 
     if (id) owners.add(id);
@@ -80,8 +86,21 @@ function removeCheckpoints(directory, published) {
 
     if (!Check(ownerSchema, record) || entry.name !== `${record.sessionId}.json`) throw new Error('Invalid preparatory checkpoint owner');
 
-    if (!published.has(record.sessionId)) removeRefs(record);
+    if (!published.has(record.sessionId) && !publishedDestination(record)) removeRefs(record);
   }
+}
+
+function publishedDestination(record) {
+  if (!record.destination) return false;
+
+  if (!path.isAbsolute(record.destination) || !record.destination.endsWith('.jsonl')) throw new Error('Invalid prepared fork destination');
+
+  try {
+    const id = savedIdentity(record.destination);
+
+    return id === undefined || id === record.sessionId;
+  }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
 }
 
 function removeDirectory(directory) {
@@ -113,6 +132,7 @@ function recoverDirectory(directory, owners) {
 function recover(root) {
   const directory = path.join(root, 'fork-preparations');
   let published;
+
   const owners = () => {
     if (published) return published;
     published = new Set();

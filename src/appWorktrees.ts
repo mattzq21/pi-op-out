@@ -97,7 +97,7 @@ export function createWorktreeActions(context: WorktreeContext) {
     const branchTransport = capturedRuntimePool.forSession(session);
     const cutoff = messages.findIndex(entry => entry.entryId === message.entryId);
 
-    try { await capturedRuntimePool.copySavedDiffs(branchTransport, sourcePath, result.sessionPath, new Set(messages.slice(0, cutoff + (beforePrompt ? 0 : 1)).map(entry => entry.id)), sourceDiffs); }
+    try { if (sourceDiffs !== undefined) await capturedRuntimePool.copySavedDiffs(branchTransport, sourcePath, result.sessionPath, new Set(messages.slice(0, cutoff + (beforePrompt ? 0 : 1)).map(entry => entry.id)), sourceDiffs); }
     catch (reason) { addNotice({ title: "Worktree created, but project changes could not be copied", message: String(reason) }); }
 
     setComposerUploads(branchTransport, beforePrompt && Array.isArray(sourceMessage.content) ? sourceMessage.content.flatMap((part): ComposerUpload[] => part.type === "image" && part.data && part.mimeType ? [{ id: crypto.randomUUID(), name: "Attached image", kind: "image", byteSize: Math.ceil(part.data.length * 3 / 4), image: { type: "image", data: part.data, mimeType: part.mimeType } }] : []) : []);

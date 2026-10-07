@@ -9,6 +9,7 @@ const { execFileSync } = require("node:child_process");
 const { recover, createJournal, removeCheckpointRefs, cleanupCommitted, sync, syncTree } = require("./delete-recovery.cjs");
 const { runWithStorageLock } = require("./storage-lock.cjs");
 const { recoverStorage } = require("./storage-recovery.cjs");
+const { collectRetention } = require("./deletion-retention.cjs");
 
 function git(cwd, args, input = "") {
   try {
@@ -183,7 +184,12 @@ async function main(root) {
     for (const child of sources.slice(1)) childLocks.push(await acquireDeletionLock(child));
     const repositories = await collectDeletionFiles(targets, sources, request, files);
     const sessionIds = files.flatMap(saved => saved.sessionId ? [saved.sessionId] : []);
-    const journal = createJournal(root, lock, childLocks, files, repositories, sessionIds);
+    const retention = collectRetention(root, sources, files.filter(saved => saved.sessionId));
+
+    for (const directory of retention.directories) files.push(await readSnapshotDirectory(directory));
+
+    for (const file of retention.files) files.push(await readFile(file));
+    const journal = createJournal(root, lock, childLocks, files, repositories, sessionIds, retention.registryIds);
     await stageDeletion(files, journal.repositories);
     await fs.rename(lock, journal.garbagePath);
     committed = true;

@@ -318,7 +318,9 @@ export function SplitChatPane(componentProps: Props) {
         const history = await owner.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
         const messages = branchMessages(history.entries, history.leafId);
         const cutoff = messages.findIndex(entry => entry.entryId === message.entryId);
-        await pool.copySavedDiffs(owner, source.path, result.sessionPath, new Set(messages.slice(0, cutoff + 1).map(entry => entry.id)), await pool.captureMemoryDiffs(owner));
+        const sourceDiffs = await pool.captureMemoryDiffs(owner);
+
+        await pool.copyMemoryDiffs(owner, source.path, result.sessionPath, new Set(messages.slice(0, cutoff + 1).map(entry => entry.id)), sourceDiffs);
         await owner.disconnect();
         await owner.connect(result.path, result.sessionPath, hostId);
         await session().refresh();

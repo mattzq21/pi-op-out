@@ -342,10 +342,7 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
     await runGit(root, ["worktree", "add", "-b", branch, target, checkpoint.commit]);
     created = true;
     const entries = await branchSessionEntries(ctx, root, id, history, owner, checkpoint, timestamp, target, afterResponse, entryId);
-    const source = ctx.sessionManager.getSessionFile();
-
-    if (!source) throw new Error("The original conversation has no session file");
-    await publishFork({ source, destination: sessionPath, sessionId: id, content: entries.map(entry => JSON.stringify(entry)).join("\n") + "\n" });
+    await publishCheckpointSession(ctx, entries, sessionPath, id);
 
     return { branch, path: target, sessionPath, sessionId: id };
   } catch (error) {
@@ -360,6 +357,13 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
 
     throw error;
   } finally { await cleanupCheckpointContainer(target); }
+}
+
+async function publishCheckpointSession(ctx: ExtensionContext, entries: Awaited<ReturnType<typeof branchSessionEntries>>, destination: string, sessionId: string) {
+  const source = ctx.sessionManager.getSessionFile();
+
+  if (!source) throw new Error("The original conversation has no session file");
+  await publishFork({ source, destination, sessionId, content: entries.map(entry => JSON.stringify(entry)).join("\n") + "\n" });
 }
 
 async function cleanupCheckpointContainer(target: string) {
@@ -519,7 +523,7 @@ export default function diffWatch(pi: ExtensionAPI) {
 
     if (event.reason !== "fork" && !ctx.sessionManager.getHeader()?.parentSession) return;
     snapshotQueue = snapshotQueue.then(async () => {
-      await registerPreparedCheckpoints(ctx.sessionManager.getSessionId(), ctx.cwd, ctx.sessionManager.getEntries());
+      await registerPreparedCheckpoints(ctx.sessionManager.getSessionId(), ctx.cwd, ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionFile());
       await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile);
       const root = await repositoryRoot(ctx.cwd);
       const parentFile = ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile;

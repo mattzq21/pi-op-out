@@ -89,6 +89,7 @@ pub(super) fn capture_local_git_tree(root: &Path, repository_objects: &Path, sna
         let mut write_tree = Command::new("git"); write_tree.args(["-C", cwd, "write-tree"]); configure(&mut write_tree);
         let output = run_limited(&mut write_tree, 64 * 1024, "Could not finalize Git snapshot")?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         let tree = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        fs::remove_file(&index).map_err(|error| format!("Could not remove temporary Git index: {error}"))?;
         serde_json::to_string(&GitSnapshotToken { root: snapshot_root.to_string_lossy().into_owned(), tree, repository_root: cwd.to_owned() }).map_err(|error| error.to_string())
     })();
     if result.is_err() { let _ = fs::remove_dir_all(&snapshot_root); }
@@ -117,5 +118,5 @@ pub(super) fn local_git_diff_between(cwd: &str, base: &GitSnapshotToken, current
     let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, "Git patch is too large")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let patch = String::from_utf8_lossy(&output.stdout).into_owned();
-    Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: current.repository_root.clone(), tool_paths: Vec::new() }))
+    Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: String::new(), tool_paths: Vec::new() }))
 }

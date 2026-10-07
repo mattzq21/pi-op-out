@@ -73,11 +73,25 @@ function repositoryState(cwd, exists) {
   return { repository, remote, url, branch, upstream, head };
 }
 
-function record(session) {
-  if (!session.sessionId || !path.isAbsolute(session.cwd || '')) return;
-  const checked = session.checkedAt || Date.now();
-  const exists = directoryExists(session.cwd);
-  const { repository, remote, url, branch, upstream, head } = repositoryState(session.cwd, exists);
+function savedSession(session) {
+  if (!path.isAbsolute(session.sessionPath || '')) return false;
+  let file;
+
+  try { file = fs.openSync(session.sessionPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); }
+  catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false; throw error; }
+
+  try {
+    if (!fs.fstatSync(file).isFile()) return false;
+    const buffer = Buffer.alloc(65536);
+    const count = fs.readSync(file, buffer);
+    const header = JSON.parse(buffer.subarray(0, count).toString().split('\n')[0]);
+
+    return header?.type === 'session' && header.id === session.sessionId;
+  } finally { fs.closeSync(file); }
+}
+
+function insertRecord(session, checked, exists, state) {
+  const { repository, remote, url, branch, upstream, head } = state;
 
   db.prepare(`INSERT INTO session_repositories VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, cwd=excluded.cwd,
@@ -92,6 +106,19 @@ function record(session) {
       directory_exists=excluded.directory_exists
     WHERE excluded.checked_at >= session_repositories.checked_at`).run(
     session.sessionId, session.sessionPath || null, session.cwd, repository, remote, url, branch, upstream, head, checked, exists ? checked : null, Number(exists));
+}
+
+function record(session) {
+  if (!session.sessionId || !path.isAbsolute(session.cwd || '') || !savedSession(session)) return;
+  const checked = session.checkedAt || Date.now();
+  const exists = directoryExists(session.cwd);
+  const state = repositoryState(session.cwd, exists);
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    if (savedSession(session)) insertRecord(session, checked, exists, state);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
 function scan(directory) {

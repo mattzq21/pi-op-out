@@ -28,7 +28,20 @@ fn requires_idle_source(session: &Session, command: &Value) -> bool {
     !matches!(kind(command), "fork" | "fork_after") && (session.working() || !session.queue.is_empty())
 }
 
+async fn checkpoint(host: &Host, session: &Session, command: Value) -> Result<Value> {
+    let state = session.execute(json!({"type":"get_state"})).await?;
+    let path = state["sessionFile"].as_str().filter(|path| !path.is_empty()).ok_or("The conversation has no session file")?;
+    host.flush_capture(&session.key()).await?;
+    if !session.ephemeral { crate::git_diff_retry::retry_pending_git_diffs(path, None)?; }
+    session.raw(command).await
+}
+
 pub(super) async fn switch(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: Value) -> Result<Value> {
+    if kind(&command) == "branch_checkpoint" { return checkpoint(host, session, command).await; }
+    switch_destination(host, session, runtime, command).await
+}
+
+async fn switch_destination(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: Value) -> Result<Value> {
     if requires_idle_source(session, &command) {
         return Err("Stop or pause the response and finish queued messages before switching".into());
     }
@@ -281,6 +294,7 @@ impl Branch<'_> {
         let source = self.snapshot_source()?;
         let mut spec = self.session.spec.session("--fork", &source.to_string_lossy());
         spec.env.insert("PIOP_FORK_PREPARATION_DIRECTORY".into(), self.directory.to_string_lossy().into_owned());
+        spec.env.insert("PIOP_FORK_DESTINATION_DIRECTORY".into(), Path::new(self.path).parent().ok_or("Invalid fork source path")?.to_string_lossy().into_owned());
         spec.args
             .extend(["--session-dir".into(), self.directory.to_string_lossy().into_owned()]);
         self.spawn(Uuid::new_v4().to_string(), spec)

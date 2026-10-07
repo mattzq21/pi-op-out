@@ -3,6 +3,7 @@ const path = require("node:path");
 const { createHash, randomUUID } = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { isDeepStrictEqual } = require("node:util");
+const { cleanupRegistry } = require("./deletion-retention.cjs");
 
 const lockPattern = /^\.delete-[a-f0-9]{64}\.lock$/;
 
@@ -114,7 +115,7 @@ function ownershipRecords(root, sessionIds) {
   });
 }
 
-function createJournal(root, lock, childLocks, files, repositories, sessionIds) {
+function createJournal(root, lock, childLocks, files, repositories, sessionIds, registryIds = []) {
   const id = randomUUID();
   const garbageRoot = path.join(root, "deleted-sessions");
   fs.mkdirSync(garbageRoot, { recursive: true, mode: 0o700 });
@@ -129,7 +130,7 @@ function createJournal(root, lock, childLocks, files, repositories, sessionIds) 
     repositories: repositories.map((repository, repositoryIndex) => ({ cwd: repository.cwd,
       refs: repository.refs.map((ref, index) => ({ ...ref, reservation: `refs/piop-deletions/${id}/${repositoryIndex}/${index}` })),
     })),
-    ownership: ownershipRecords(root, sessionIds),
+    ownership: ownershipRecords(root, sessionIds), registryIds,
   };
 
   files.forEach((saved, index) => { saved.stagedPath = path.join(lock, journal.files[index].staged); });
@@ -186,6 +187,8 @@ function readJournal(root, directory) {
   journal.files.forEach(file => validateFile(root, file));
   journal.repositories.forEach(validateRepository);
   (journal.ownership ?? []).forEach(record => validateOwnership(root, record));
+
+  if (journal.registryIds !== undefined && (!Array.isArray(journal.registryIds) || journal.registryIds.some(id => !uuidPattern.test(id)))) throw new Error("Invalid deleted registry sessions");
 
   verifyJournalDirectory(root, directory, journal);
 
@@ -294,6 +297,7 @@ function cleanupCommitted(root) {
 
     for (const lock of journal.locks ?? inferredLocks(journal)) sync(path.dirname(lock.path));
     reconcileOwnership(directory, journal);
+    cleanupRegistry(root, journal.registryIds ?? []);
     removeLocks(root, directory, journal);
 
     for (const repository of journal.repositories) releaseReservations(repository);

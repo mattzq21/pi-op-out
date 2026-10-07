@@ -330,7 +330,7 @@ enum GitDiffSnapshot {
     Legacy(String),
     Located {
         patch: String,
-        #[serde(rename = "repositoryRoot")]
+        #[serde(default, rename = "repositoryRoot", skip_serializing_if = "String::is_empty")]
         repository_root: String,
         #[serde(default, rename = "toolPaths", skip_serializing_if = "Vec::is_empty")]
         tool_paths: Vec<DiffToolPathMapping>,

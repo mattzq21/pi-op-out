@@ -300,6 +300,10 @@ export class SessionRuntimePool {
     return { ...saved, ...state.snapshots };
   }
 
+  async copyMemoryDiffs(transport: NativeTransport, sourcePath: string | undefined, destinationPath: string | undefined, retainedMessageIds: ReadonlySet<string>, sourceSnapshots: GitDiffSnapshots | undefined) {
+    if (sourceSnapshots !== undefined) await this.copySavedDiffs(transport, sourcePath, destinationPath, retainedMessageIds, sourceSnapshots);
+  }
+
   async copySavedDiffs(transport: NativeTransport, sourcePath: string | undefined, destinationPath: string | undefined, retainedMessageIds?: ReadonlySet<string>, sourceSnapshots?: GitDiffSnapshots) {
     if (!sourcePath || !destinationPath || sourcePath === destinationPath) return;
     const state = this.diffState(transport); const hostId = transport.currentHostId(); const key = `${hostId}:${destinationPath}`;

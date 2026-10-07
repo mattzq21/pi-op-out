@@ -94,7 +94,7 @@ export interface OpencodeGoUsage { rolling: UsageWindow; weekly: UsageWindow; mo
 
 export interface ToolPathMapping { toolCallId: string; path: string; absolutePath: string; canonicalPath: string; }
 
-export type GitDiffSnapshot = string | { patch: string; repositoryRoot: string; toolPaths?: ToolPathMapping[] };
+export type GitDiffSnapshot = string | { patch: string; toolPaths?: ToolPathMapping[] };
 
 export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;
 

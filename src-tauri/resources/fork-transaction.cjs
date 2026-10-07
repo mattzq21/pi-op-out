@@ -3,10 +3,9 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
+const { loadDiffs } = require('./session-diff-store.cjs');
 
-const maximumDiffBytes = 16 * 1024 * 1024;
-
-const diffsSchema = Type.Record(Type.String(), Type.Union([Type.String(), Type.Object({ patch: Type.String(), repositoryRoot: Type.String(), toolPaths: Type.Optional(Type.Array(Type.Unknown())) })]));
+const diffsSchema = Type.Record(Type.String(), Type.Union([Type.String(), Type.Object({ patch: Type.String(), toolPaths: Type.Optional(Type.Array(Type.Unknown())) })]));
 
 function exists(file) {
   try { return fs.lstatSync(file); }
@@ -61,13 +60,7 @@ function retainedIds(entries) {
 }
 
 function inheritedDiffs(source, entries) {
-  const file = source.replace(/\.jsonl$/, '.diffs.json');
-  const stat = exists(file);
-
-  if (!stat) return '{}';
-
-  if (!stat.isFile() || stat.size > maximumDiffBytes) throw new Error('Saved fork diffs are invalid or exceed the 16 MiB limit');
-  const diffs = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const diffs = loadDiffs(source);
 
   if (!Check(diffsSchema, diffs)) throw new Error('Invalid saved fork diffs');
   const ids = retainedIds(entries);

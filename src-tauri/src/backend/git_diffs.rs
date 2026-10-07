@@ -6,12 +6,11 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 use crate::platform::AppHandle;
-use crate::{GitDiffSnapshot, GitDiffSnapshots, MAX_GIT_DIFFS_BYTES, MAX_GIT_PATCH_BYTES, RemoteHost, STORAGE_DIRECTORY, conversation_ownership};
+use crate::{GitDiffSnapshot, GitDiffSnapshots, MAX_GIT_DIFFS_BYTES, MAX_GIT_PATCH_BYTES, RemoteHost, STORAGE_DIRECTORY, conversation_ownership, node_command};
 use crate::archives::{local_desktop_session_file_at};
 use crate::worktree_setup::{GitSnapshotToken, ensure_desktop_sessions_dir, run_limited, shell_quote};
 use crate::pi_launch::{remote_login_command, saved_remote_host, ssh};
 use crate::environment::home_dir;
-use crate::settings_storage::{atomic_write_private};
 use crate::snapshot_capture::{local_git_diff, local_git_diff_between, local_git_tree, parse_local_snapshot};
 
 pub(super) fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
@@ -105,7 +104,7 @@ pub(super) fn load_remote_git_diff_between(base_tree: &str, current_token: &str,
     let output = run_limited(&mut command(script), MAX_GIT_PATCH_BYTES, &format!("Git patch on {host_name} is too large"))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let patch = String::from_utf8_lossy(&output.stdout).into_owned();
-    Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: current.repository_root, tool_paths: Vec::new() }))
+    Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: String::new(), tool_paths: Vec::new() }))
 }
 
 pub(super) fn remote_session_sidecar_script(session_path: &str, action: &str) -> String {
@@ -132,22 +131,26 @@ pub(super) fn load_local_git_diffs(home: &Path, session_path: &str) -> Result<Gi
         validate_unsaved_session(home, &candidate)?;
         return Ok(HashMap::new());
     }
-    let path = local_desktop_session_file_at(home, session_path)?.with_extension("diffs.json");
-    if !path.exists() { return Ok(HashMap::new()); }
-    if fs::metadata(&path).map_err(|error| format!("Could not inspect saved diffs: {error}"))?.len() > MAX_GIT_DIFFS_BYTES as u64 { return Err("Saved diffs exceed the 16 MiB limit".into()); }
-    let content = fs::read_to_string(&path).map_err(|error| format!("Could not read saved diffs: {error}"))?;
-    serde_json::from_str(&content).map_err(|error| format!("Could not parse saved diffs: {error}"))
+    let path = local_desktop_session_file_at(home, session_path)?;
+    let mut command = node_command();
+    command.args(["-e", &diff_store_script(), "load"]).arg(path);
+    query_remote_git_diffs(&mut command, "this host")
+}
+
+fn diff_store_script() -> String {
+    format!("{}\nrunDiffStore(process.argv[1], process.argv[2]);", include_str!("../../resources/session-diff-store.cjs"))
 }
 
 pub(super) fn load_git_diffs_at_host(session_path: &str, host: Option<&RemoteHost>) -> Result<GitDiffSnapshots, String> {
     let Some(host) = host else { return load_local_git_diffs(&home_dir()?, session_path); };
-    let mut command = ssh(host); command.arg(remote_session_sidecar_script(session_path, "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi"));
+    let action = format!("node -e {} load \"$session\"", shell_quote(&diff_store_script()));
+    let mut command = ssh(host); command.arg(remote_session_sidecar_script(session_path, &action));
     query_remote_git_diffs(&mut command, &host.name)
 }
 
 pub(super) fn query_remote_git_diffs(command: &mut Command, host_name: &str) -> Result<GitDiffSnapshots, String> {
     let content = {
-        let output = run_limited(command, MAX_GIT_DIFFS_BYTES, &format!("Saved diffs on {host_name} exceed the limit"))?;
+        let output = command.output().map_err(|error| format!("Could not read saved diffs on {host_name}: {error}"))?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         String::from_utf8(output.stdout).map_err(|_| "Saved remote diffs were not valid UTF-8".to_string())?
     };
@@ -163,7 +166,9 @@ pub(super) fn save_git_diffs(app: AppHandle, session_path: String, snapshots: Gi
 
 pub(super) fn save_git_diffs_at_host(session_path: &str, snapshots: GitDiffSnapshots, host: Option<&RemoteHost>) -> Result<(), String> {
     let body = serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?;
-    if body.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff history exceeds the 16 MiB limit".into()); }
+    for snapshot in snapshots.values() {
+        if serde_json::to_vec(snapshot).map_err(|error| error.to_string())?.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff record exceeds the 16 MiB limit".into()); }
+    }
     let Some(host) = host else { return merge_local_git_diffs(&home_dir()?, session_path, snapshots); };
     let mut command = ssh(host); command.arg(remote_save_git_diffs_script(session_path));
     write_remote_git_diffs(&mut command, &body)
@@ -179,31 +184,19 @@ fn merge_local_git_diffs(home: &Path, session_path: &str, snapshots: GitDiffSnap
     { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600).custom_flags(libc::O_NOFOLLOW); }
     let lock = options.open(directory.join("diff-write.lock")).map_err(|error| error.to_string())?;
     lock.lock().map_err(|error| error.to_string())?;
-    let mut saved = load_local_git_diffs(home, session_path)?;
-    saved.extend(snapshots);
-    let body = serde_json::to_string(&saved).map_err(|error| error.to_string())?;
-    if body.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff history exceeds the 16 MiB limit".into()); }
+    let body = serde_json::to_string(&snapshots).map_err(|error| error.to_string())?;
     save_local_git_diffs(home, session_path, &body)
 }
 
 pub(super) fn save_local_git_diffs(home: &Path, session_path: &str, body: &str) -> Result<(), String> {
-    let path = local_desktop_session_file_at(home, session_path)?.with_extension("diffs.json");
-    atomic_write_private(&path, body.as_bytes()).map_err(|error| format!("Could not save diffs: {error}"))?;
-    fs::File::open(&path).and_then(|file| file.sync_all()).map_err(|error| format!("Could not sync saved diffs: {error}"))?;
-    fs::File::open(path.parent().ok_or("Diff storage directory missing")?).and_then(|directory| directory.sync_all()).map_err(|error| format!("Could not sync diff storage: {error}"))
+    let path = local_desktop_session_file_at(home, session_path)?;
+    let mut command = node_command();
+    command.args(["-e", &diff_store_script(), "save"]).arg(path);
+    write_remote_git_diffs(&mut command, body)
 }
 
 pub(super) fn remote_save_git_diffs_script(session_path: &str) -> String {
-    let script = r#"const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
-const target=process.argv[1], incoming=JSON.parse(fs.readFileSync(0,'utf8'));
-const saved=fs.existsSync(target)?JSON.parse(fs.readFileSync(target,'utf8')):{};
-const body=JSON.stringify({...saved,...incoming});
-if(Buffer.byteLength(body)>16*1024*1024)throw Error('Diff history exceeds the 16 MiB limit');
-const temporary=target+'.'+crypto.randomUUID()+'.tmp';
-try{const file=fs.openSync(temporary,'wx',0o600);try{fs.writeFileSync(file,body);fs.fsyncSync(file);}finally{fs.closeSync(file);}
-fs.renameSync(temporary,target);const directory=fs.openSync(path.dirname(target),'r');try{fs.fsyncSync(directory);}finally{fs.closeSync(directory);}}
-finally{fs.rmSync(temporary,{force:true});}"#;
-    let action = format!("umask 077; snapshots=${{session%.jsonl}}.snapshots; mkdir -p -- \"$snapshots\" || exit 1; [ ! -L \"$snapshots\" ] || exit 1; exec flock --exclusive --no-fork \"$snapshots/diff-write.lock\" node -e {} \"$sidecar\"", shell_quote(script));
+    let action = format!("umask 077; snapshots=${{session%.jsonl}}.snapshots; mkdir -p -- \"$snapshots\" || exit 1; [ ! -L \"$snapshots\" ] || exit 1; exec flock --exclusive --no-fork \"$snapshots/diff-write.lock\" node -e {} save \"$session\"", shell_quote(&diff_store_script()));
     remote_session_sidecar_script(session_path, &action)
 }
 

@@ -1,12 +1,13 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import { readFile, realpath, mkdir, rmdir, open, rm } from "node:fs/promises";
+import { realpath, mkdir, rmdir, open, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "./client.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from "../piop-diff-watch/pin-checkpoints.ts";
+import { loadDiffs } from "../session-diff-store.cjs";
 import { publishFork, ForkPublicationPending } from "../piop-diff-watch/fork-publication.ts";
 import { registerPreparedCheckpoints } from "../piop-diff-watch/fork-preparation.ts";
 
@@ -44,7 +45,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   let checkpoints: PinnedCheckpoint[] = [];
 
   try {
-    await registerPreparedCheckpoints(sessionId, header.cwd, retained);
+    await registerPreparedCheckpoints(sessionId, header.cwd, retained, sessionPath);
     checkpoints = await pinPromptHistory(header.cwd, sessionId, retained);
     const entries = [{ ...header, id: sessionId, timestamp, cwd, parentSession: source }, ...retained];
 
@@ -74,7 +75,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
 
 async function copyRetainedDiffs(source: string, destination: string, ids: ReadonlySet<string>) {
   try {
-    const diffs = JSON.parse(await readFile(source.replace(/\.jsonl$/, ".diffs.json"), "utf8"));
+    const diffs = loadDiffs(source);
     const file = await open(destination.replace(/\.jsonl$/, ".diffs.json"), "wx", 0o600);
 
     try { await file.writeFile(JSON.stringify(Object.fromEntries(Object.entries(diffs).filter(([id]) => ids.has(id))))); }

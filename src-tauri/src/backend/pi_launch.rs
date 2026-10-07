@@ -217,6 +217,9 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
         ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
         ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
         ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
+        ("fork-publication.ts", include_str!("../../../extensions/piop-diff-watch/fork-publication.ts")),
+        ("fork-preparation.ts", include_str!("../../../extensions/piop-diff-watch/fork-preparation.ts")),
+        ("publish-fork.bundle.mjs", include_str!("../../resources/publish-fork.bundle.mjs")),
     ] {
         remote.push_str(&format!(r#" && printf %s {} > "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}""#, shell_quote(content)));
     }

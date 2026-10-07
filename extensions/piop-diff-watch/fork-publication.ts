@@ -25,6 +25,7 @@ function invoke(script: string, request: string, content?: string): Promise<stri
       if (error) reject(new Error(stderr.trim() || error.message));
       else resolve(stdout);
     });
+
     child.stdin?.on("error", () => undefined);
     child.stdin?.end(content);
   });

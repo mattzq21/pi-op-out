@@ -3,7 +3,7 @@ import { toolPathSchema } from "./messageSchemas";
 
 export const gitDiffSnapshotSchema = z.union([
   z.string(),
-  z.object({ patch: z.string(), repositoryRoot: z.string(), toolPaths: z.array(toolPathSchema).optional() }),
+  z.object({ patch: z.string(), toolPaths: z.array(toolPathSchema).optional() }),
 ]);
 
 const diffLineSchema = z.object({

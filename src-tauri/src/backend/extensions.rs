@@ -207,6 +207,9 @@ pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
         ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
         ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
         ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
+        ("fork-publication.ts", include_str!("../../../extensions/piop-diff-watch/fork-publication.ts")),
+        ("fork-preparation.ts", include_str!("../../../extensions/piop-diff-watch/fork-preparation.ts")),
+        ("publish-fork.bundle.mjs", include_str!("../../resources/publish-fork.bundle.mjs")),
     ] {
         atomic_write_private(&dir.join(name), content.as_bytes())?;
     }
