@@ -432,7 +432,7 @@ fn handle_load_git_diff(app: AppHandle, _owner: String, args: Value) -> CommandF
 
 fn handle_load_git_diffs(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(load_git_diffs(app.clone(), argument(&args, "sessionPath")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || load_git_diffs(app.clone(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "cursor")?)).await.map_err(|error| error.to_string())?
     })
 }
 

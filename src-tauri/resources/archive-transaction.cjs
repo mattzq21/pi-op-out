@@ -3,6 +3,7 @@ const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { execFileSync } = require('node:child_process');
+const { pruneReceipts } = require('./deletion-retention.cjs');
 const { recoverLegacy } = require('./archive-legacy-recovery.cjs');
 
 function exists(file) {
@@ -285,6 +286,7 @@ function finishCommit(root, transaction, directory) {
   }
 
   cleanupPreviousDirectories(root, transaction.previousDirectories);
+  pruneReceipts(root);
   cleanup(directory);
 }
 

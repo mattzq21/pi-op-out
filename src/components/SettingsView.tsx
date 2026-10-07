@@ -101,7 +101,12 @@ export function SettingsView(props: SettingsViewProps) {
   const currentSnapshot = createMemo(() => (settingsSnapshot(draft(), currentAgentConfig())));
   const currentSnapshotRef = createRef(currentSnapshot()); createComputed(() => { currentSnapshotRef.current = currentSnapshot(); });
   const agentConfigDirty = createMemo(() => (Boolean(mcpError()) || agentEditsSnapshot(currentAgentConfig()) !== baselineAgentConfig()));
-  const dirty = createMemo(() => (settingsSnapshot(draft()) !== baselineSettings() || agentConfigDirty()));
+  const durabilityError = () => {
+    const error = settingsProps().scope === "client" ? settingsProps().settings.clientSettingsDurabilityError : settingsProps().settings.settingsDurabilityError;
+
+    return error ? `Changes were published, but disk durability is unconfirmed: ${error}. Retry saving to confirm them.` : undefined;
+  };
+  const dirty = createMemo(() => (Boolean(durabilityError()) || settingsSnapshot(draft()) !== baselineSettings() || agentConfigDirty()));
   const [settingsConflict, setSettingsConflict] = createSignal(false);
   const [agentsConflict, setAgentsConflict] = createSignal(false);
   const conflict = () => settingsConflict() || agentsConflict();
@@ -109,7 +114,7 @@ export function SettingsView(props: SettingsViewProps) {
   createDependencyEffect(() => {
     if (saving()) return;
     const incoming = settingsProps().settings;
-    const incomingSnapshot = JSON.stringify([settingsSnapshot(incoming), incoming.settingsRevision, incoming.clientSettingsRevision]);
+    const incomingSnapshot = JSON.stringify([settingsSnapshot(incoming), incoming.settingsRevision, incoming.clientSettingsRevision, incoming.settingsDurabilityError, incoming.clientSettingsDurabilityError]);
 
     if (incomingSnapshot === incomingSettingsSnapshot.current) return;
     incomingSettingsSnapshot.current = incomingSnapshot;
@@ -344,13 +349,13 @@ export function SettingsView(props: SettingsViewProps) {
 
   const renderSettingsHeader = () => {
     const renderSaveControls = () => {
-      const renderUnsavedBadge = () => (dirty() && !saving() && <small role="status" class="unsaved-badge"><span aria-hidden="true" />Unsaved changes</small>);
+      const renderUnsavedBadge = () => (dirty() && !saving() && <small role="status" class="unsaved-badge"><span aria-hidden="true" />{durabilityError() ? "Save needs confirmation" : "Unsaved changes"}</small>);
       const renderPendingSettingsCount = () => (settingsProps().pendingSettingsCount > 0 && !dirty() && <small role="status">Saved · waiting for {settingsProps().pendingSettingsCount} session{settingsProps().pendingSettingsCount === 1 ? "" : "s"} to apply changes</small>);
-      const renderSaveButton = () => (conflict() ? <small role="alert">Settings changed in another window. <button disabled={saving()} onClick={reloadLatest}>Reload latest settings and discard local edits</button></small> : (saveError() || validationError() || formValidation().fastModeValidationError) && <small role="alert">{saveError() || validationError() || formValidation().fastModeValidationError}</small>);
+      const renderSaveButton = () => (conflict() ? <small role="alert">Settings changed in another window. <button disabled={saving()} onClick={reloadLatest}>Reload latest settings and discard local edits</button></small> : (saveError() || validationError() || formValidation().fastModeValidationError || durabilityError()) && <small role="alert">{saveError() || validationError() || formValidation().fastModeValidationError || durabilityError()}</small>);
 
       const renderSaveButtonLabel = () => {
         const renderSaveStatus = () => (saved() && !dirty() ? <Check size={15} /> : <Save size={15} />);
-        const renderSaveLabel = () => (saved() && !dirty() ? "Saved" : saving() ? "Saving…" : "Save changes");
+        const renderSaveLabel = () => (saved() && !dirty() ? "Saved" : saving() ? "Saving…" : durabilityError() ? "Retry save" : "Save changes");
 
         return (<button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || conflict() || !dirty() || !formValidation().formValid} onClick={() => void save()}>{renderSaveStatus()}{renderSaveLabel()}</button>);
       };
@@ -457,7 +462,7 @@ export function SettingsView(props: SettingsViewProps) {
       {renderSettingsContent()}</div>);
   };
 
-  const renderSettingsSaveFab = () => (dirty() && pastHeader() && <div class="settings-save-fab"><button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || conflict() || !dirty() || !formValidation().formValid} onClick={() => void save()}><Save size={15} />{saving() ? "Saving…" : "Save changes"}</button></div>);
+  const renderSettingsSaveFab = () => (dirty() && pastHeader() && <div class="settings-save-fab"><button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || conflict() || !dirty() || !formValidation().formValid} onClick={() => void save()}><Save size={15} />{saving() ? "Saving…" : durabilityError() ? "Retry save" : "Save changes"}</button></div>);
 
   return <main class={dirty() ? "settings-shell has-unsaved" : "settings-shell"}>{renderSettingsHeader()}
     {renderSettingsLayout()}

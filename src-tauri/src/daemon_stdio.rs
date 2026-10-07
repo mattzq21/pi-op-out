@@ -34,24 +34,10 @@ async fn open(scope: &str) -> Result<(Socket, Value), String> {
 }
 
 fn start_daemon(mode: &str) -> Result<PathBuf, String> {
-    let directory = daemon_endpoint::directory()?;
-    ensure_private_dir(&directory)?;
-    let log_path = directory.join("daemon.log");
-    let log = OpenOptions::new().create(true).append(true).open(&log_path).map_err(|error| error.to_string())?;
-    set_private_file_permissions(&log_path)?;
+    let log_path = daemon_endpoint::directory()?.join("daemon.log");
     let mut command = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
-    command.arg(mode).stdin(Stdio::null()).stdout(Stdio::null()).stderr(log);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x00000008 | 0x00000200);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe { command.pre_exec(|| { if libc::setsid() < 0 { return Err(std::io::Error::last_os_error()); } Ok(()) }); }
-    }
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    command.arg(mode).stdin(Stdio::null()).stdout(Stdio::null());
+    let mut child = crate::daemon_log::spawn(command)?;
     thread::spawn(move || { let _ = child.wait(); });
     Ok(log_path)
 }

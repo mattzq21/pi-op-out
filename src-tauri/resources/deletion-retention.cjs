@@ -68,7 +68,9 @@ function references(value, candidates, found) {
 
     if (Check(Type.String(), current)) {
       for (const candidate of candidates) if (current.includes(candidate)) found.add(candidate);
-    } else if (Array.isArray(current)) pending.push(...current);
+    } else if (Array.isArray(current)) {
+      for (const item of current) pending.push(item);
+    }
     else if (Check(Type.Object({}), current)) {
       for (const [key, item] of Object.entries(current)) pending.push(key, item);
     }
@@ -124,8 +126,28 @@ function goalReferences(found, goals, candidates, inventory) {
       if (!/\.(md|txt)$/.test(entry.name)) continue;
 
       if (!entry.isFile()) { inventory.uncertain = true; continue; }
+
       references(fs.readFileSync(path.join(directory, entry.name), 'utf8'), candidates, found);
     }
+  }
+}
+
+function queuedReferences(root, excluded, candidates, found, inventory) {
+  const directory = path.join(root, 'queued-input');
+
+  for (const entry of entries(directory)) {
+    const file = path.join(directory, entry.name);
+
+    if (!entry.name.endsWith('.json') || excluded.has(file)) continue;
+
+    if (!entry.isFile()) { inventory.uncertain = true; continue; }
+
+    let value;
+
+    try { value = JSON.parse(fs.readFileSync(file, 'utf8')); }
+    catch (error) { if (!(error instanceof SyntaxError)) throw error; inventory.uncertain = true; continue; }
+
+    references(value, candidates, found);
   }
 }
 
@@ -173,22 +195,37 @@ function invalidReceipts(root, excluded) {
   });
 }
 
-function recoveryPending(root) {
-  return ['archive-transactions', 'restore-transactions', 'deleted-sessions'].some(name => entries(path.join(root, name)).length);
+function discardReceipt(file) {
+  fs.unlinkSync(file);
+  const directory = fs.openSync(path.dirname(file), 'r');
+
+  try { fs.fsyncSync(directory); }
+  finally { fs.closeSync(directory); }
 }
 
-function collectRetention(root, sources, deleted) {
+function pruneReceipts(root) {
+  for (const file of invalidReceipts(root, new Set())) discardReceipt(file);
+}
+
+function recoveryPending(root) {
+  return entries(root).some(entry => entry.isDirectory() && entry.name.startsWith('archive-transaction-'))
+    || ['restore-transactions', 'deleted-sessions'].some(name => entries(path.join(root, name)).length);
+}
+
+function collectRetention(root, sources, savedFiles) {
   const inventory = { goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: recoveryPending(root) };
 
-  for (const area of ['sessions', 'archived', 'fork-transactions']) sessionFiles(path.join(root, area), inventory);
+  for (const area of ['sessions', 'archived', 'fork-transactions', 'fork-preparations']) sessionFiles(path.join(root, area), inventory);
   const candidates = new Set([...inventory.goals, ...worktreeContainers(root)]);
   const owned = new Set();
   const ignored = { sessionIds: new Set(), uncertain: false };
+  const deleted = savedFiles.filter(saved => saved.sessionId);
 
   for (const saved of deleted) transcriptReferences(saved.body.toString('utf8'), candidates, owned, ignored);
   goalReferences(owned, inventory.goals, candidates, inventory);
-  const excluded = new Set(sources);
+  const excluded = new Set([...sources, ...savedFiles.map(saved => saved.file)]);
   const retained = survivingReferences(inventory, candidates, excluded);
+  queuedReferences(root, excluded, candidates, retained, inventory);
   goalReferences(retained, inventory.goals, candidates, inventory);
 
   return {
@@ -214,12 +251,18 @@ function cleanupRegistry(root, sessionIds) {
 
     if (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_repositories'").get()) {
       const remove = db.prepare('DELETE FROM session_repositories WHERE lower(session_id) = ?');
+      const read = db.prepare('SELECT session_id, session_path FROM session_repositories WHERE lower(session_id) = ?');
 
-      for (const id of sessionIds) remove.run(id.toLowerCase());
+      for (const id of sessionIds) {
+        const record = read.get(id.toLowerCase());
+
+        if (record?.session_path && survivingSession(record.session_path, record.session_id, new Set())) continue;
+        remove.run(id.toLowerCase());
+      }
     }
 
     db.exec('COMMIT');
   } finally { db.close(); }
 }
 
-module.exports = { collectRetention, cleanupRegistry };
+module.exports = { collectRetention, cleanupRegistry, validReceipt, discardReceipt, pruneReceipts };

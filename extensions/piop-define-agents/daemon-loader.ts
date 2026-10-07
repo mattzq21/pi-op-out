@@ -4,7 +4,7 @@ import { Check } from "typebox/value";
 import { Type } from "typebox";
 import { loadConfig } from "./index.ts";
 import { agentSchema, agentThinkingLevels } from "./state.ts";
-import { configPath, resolvePromptPath } from "./prompts.ts";
+import { configPath, readConfigDocument, resolvePromptPath } from "./prompts.ts";
 import type { RuntimeSettingsRequest } from "./contracts.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
@@ -31,7 +31,7 @@ if (initialize) await mkdir(dirname(configPath), { recursive: true, mode: 0o700 
 let stored;
 
 try {
-  stored = JSON.parse(await readFile(configPath, "utf8"));
+  stored = await readConfigDocument();
 
   if (!stored || !Array.isArray(stored.agents) || stored.agents.length === 0) throw new Error("Agent configuration must contain an agents array");
   const names = new Set<string>();

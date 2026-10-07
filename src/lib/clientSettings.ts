@@ -1,10 +1,12 @@
 import type { AppSettings } from "../types";
 import { invoke } from "./platform";
 import { z } from "zod";
+import { settingsPublicationSchema } from "./responseSchemas";
 
 type ClientSettings = Pick<AppSettings, "keybindings" | "hiddenModels" | "knownModels" | "debugMode">;
 
 const storageKey = "piop-client-settings";
+let durabilityFailure: { revision: string; error: string } | undefined;
 
 const clientSettingsSchema = z.object({
   keybindings: z.record(z.string(), z.string()).optional().catch(undefined),
@@ -29,7 +31,7 @@ async function storedPreferences(): Promise<{ settings: StoredPreferences; persi
 
 export async function withClientSettings(source: AppSettings | Promise<AppSettings>, migrate = false): Promise<AppSettings> {
   const [settings, preferences] = await Promise.all([source, storedPreferences()]);
-  const merged = { ...mergeClientSettings(settings, preferences.settings), clientSettingsRevision: preferences.revision };
+  const merged = { ...mergeClientSettings(settings, preferences.settings), ...clientRevision(preferences.revision) };
 
   if (migrate && !preferences.persisted) {
     try { return await saveClientSettings(merged); }
@@ -38,7 +40,7 @@ export async function withClientSettings(source: AppSettings | Promise<AppSettin
 
       if (!latest.persisted) throw reason;
 
-      return { ...mergeClientSettings(settings, latest.settings), clientSettingsRevision: latest.revision };
+      return { ...mergeClientSettings(settings, latest.settings), ...clientRevision(latest.revision) };
     }
   }
 
@@ -56,11 +58,17 @@ function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): 
 
 export async function saveClientSettings(settings: AppSettings, expectedRevision = settings.clientSettingsRevision): Promise<AppSettings> {
   if (!expectedRevision) throw new Error("Reload settings before saving client preferences.");
-  const saved = await invoke("save_client_settings", { settings: preferences(settings), expectedRevision }, z.object({ revision: z.string() }));
+  const saved = await invoke("save_client_settings", { settings: preferences(settings), expectedRevision }, z.object({ revision: z.string(), publication: settingsPublicationSchema.optional() }));
+  const error = saved.publication?.durable === false ? saved.publication.error ?? "Disk durability could not be confirmed." : undefined;
+  durabilityFailure = error ? { revision: saved.revision, error } : undefined;
 
-  try { localStorage.removeItem(storageKey); } catch { }
+  if (!error) { try { localStorage.removeItem(storageKey); } catch { } }
 
-  return { ...settings, clientSettingsRevision: saved.revision };
+  return { ...settings, ...clientRevision(saved.revision) };
+}
+
+function clientRevision(revision: string): Pick<AppSettings, "clientSettingsRevision" | "clientSettingsDurabilityError"> {
+  return { clientSettingsRevision: revision, clientSettingsDurabilityError: durabilityFailure?.revision === revision ? durabilityFailure.error : undefined };
 }
 
 export function preserveDaemonPreferences(settings: AppSettings, daemonSettings: AppSettings): AppSettings {

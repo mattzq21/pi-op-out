@@ -167,6 +167,16 @@ async function stageDeletion(files, repositories) {
 
 }
 
+async function appendRetentionFiles(files, retention) {
+  for (const directory of retention.directories) {
+    const saved = await readSnapshotDirectory(directory);
+
+    if (saved) files.push(saved);
+  }
+
+  for (const file of retention.files) files.push(await readFile(file));
+}
+
 async function main(root) {
   const request = JSON.parse(process.argv[1]);
   const targets = request.targets || [request];
@@ -184,11 +194,9 @@ async function main(root) {
     for (const child of sources.slice(1)) childLocks.push(await acquireDeletionLock(child));
     const repositories = await collectDeletionFiles(targets, sources, request, files);
     const sessionIds = files.flatMap(saved => saved.sessionId ? [saved.sessionId] : []);
-    const retention = collectRetention(root, sources, files.filter(saved => saved.sessionId));
+    const retention = collectRetention(root, sources, files);
 
-    for (const directory of retention.directories) files.push(await readSnapshotDirectory(directory));
-
-    for (const file of retention.files) files.push(await readFile(file));
+    await appendRetentionFiles(files, retention);
     const journal = createJournal(root, lock, childLocks, files, repositories, sessionIds, retention.registryIds);
     await stageDeletion(files, journal.repositories);
     await fs.rename(lock, journal.garbagePath);

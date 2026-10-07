@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
+const { validReceipt, discardReceipt } = require('./deletion-retention.cjs');
 
 function exists(file) {
   try { return fs.lstatSync(file); }
@@ -227,12 +228,12 @@ function restoredResult(root, source) {
   const receipt = receiptPath(root, source);
 
   if (!exists(receipt)) return null;
-  const transaction = JSON.parse(fs.readFileSync(receipt, 'utf8'));
 
-  if (!committed(transaction)) return null;
-  const header = JSON.parse(fs.readFileSync(transaction.trace.destination, 'utf8').split('\n')[0]);
+  if (!validReceipt(receipt, new Set())) { discardReceipt(receipt);
 
-  return header.id === transaction.result.sessionId ? transaction.result : null;
+    return null; }
+
+  return JSON.parse(fs.readFileSync(receipt, 'utf8')).result;
 }
 
 function rollback(transaction) {

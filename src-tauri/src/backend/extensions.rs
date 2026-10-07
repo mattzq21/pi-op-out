@@ -79,6 +79,7 @@ pub(super) fn prepare_session_broker() -> Result<PathBuf, String> {
     ensure_private_dir(&modules)?;
     for (name, content) in SESSION_BROKER_MODULES { atomic_write_private(&modules.join(name), content.as_bytes())?; }
     let path = dir.join("session-broker.ts");
+    atomic_write_private(&dir.join("session-diff-store.cjs"), include_str!("../../resources/session-diff-store.cjs").as_bytes())?;
     atomic_write_private(&dir.join("ask-user.ts"), include_str!("../../resources/ask-user.ts").as_bytes())?;
     atomic_write_private(&path, include_str!("../../resources/session-broker.ts").as_bytes())?;
     Ok(path)
@@ -230,6 +231,7 @@ fn migrate_agent_prompt_paths(config: &mut Value, legacy_dir: &Path) {
 }
 
 fn migrate_agent_config(config: &Path, legacy_dir: &Path) -> Result<(), String> {
+    let _lock = crate::settings_concurrency::lock_settings(config)?;
     if DEVELOPMENT || config.exists() || !legacy_dir.join("config.json").exists() { return Ok(()); }
     let mut migrated: Value = serde_json::from_slice(&fs::read(legacy_dir.join("config.json")).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     migrate_agent_prompt_paths(&mut migrated, legacy_dir);

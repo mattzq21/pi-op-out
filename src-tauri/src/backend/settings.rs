@@ -25,7 +25,8 @@ use std::sync::atomic::Ordering;
 use crate::platform::AppHandle;
 use crate::{AppSettings, MAX_REMOTE_HOSTS, PiRuntime, daemon, peers};
 use crate::pi_launch::{validate_remote_host};
-use crate::settings_storage::{atomic_write_private, lock_settings, migrate_keybindings, settings_path, settings_revision, validate_keybindings};
+use crate::settings_storage::{lock_settings, migrate_keybindings, settings_path, settings_revision, validate_keybindings};
+use crate::private_fs::publish_private;
 
 
 
@@ -169,17 +170,20 @@ pub(super) fn save_settings_with(
     let mut revisions = agent_host_id.as_ref().map(|_| runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")).transpose()?;
     settings.settings_revision = None;
     let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
-    atomic_write_private(&path, &body)?;
+    let publication = publish_private(&path, &body)?;
     settings.settings_revision = Some(settings_revision(Some(&body)));
     drop(file_lock);
-    let mut change = json!({"settings":settings});
+    let mut change = json!({"settings":settings,"publication":publication});
+    if let Some(error) = &publication.error { change["settings"]["settingsDurabilityError"] = json!(error); }
     if let (Some(host_id), Some(revisions)) = (agent_host_id, revisions.as_mut()) {
         let revision = runtime.agent_config_revision.fetch_add(1, Ordering::SeqCst) + 1;
         revisions.insert(host_id.clone(), revision);
         change["agentConfigChange"] = json!({"hostId":host_id,"revision":revision});
     }
     drop(revisions);
-    change["warnings"] = json!(apply_saved_settings(&settings, invalidate, synchronize));
+    let mut warnings = apply_saved_settings(&settings, invalidate, synchronize);
+    if let Some(error) = publication.error { warnings.push(format!("Settings were published, but disk durability is unconfirmed: {error}. Retry saving to confirm them.")); }
+    change["warnings"] = json!(warnings);
     Ok(change)
 }
 

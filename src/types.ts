@@ -54,13 +54,14 @@ export interface Model { provider: string; id: string; name?: string; reasoning?
 
 export interface AgentProfile { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; extensions?: string[]; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers; }
 
-export interface AgentConfig { agents: AgentProfile[]; fastModeModels?: string[]; }
+export interface AgentConfig { revision?: string; agents: AgentProfile[]; fastModeModels?: string[]; }
 
 export interface DefinedAgentsCapability { version: number; active: string; locked?: boolean; saved?: boolean; unavailable?: boolean; config: AgentConfig; }
 
 export interface AgentConfigChange { hostId: string; revision: number; }
 
-export interface SettingsChange { settings: AppSettings; agentConfigChange?: AgentConfigChange; warnings?: string[]; }
+export interface SettingsPublication { committed: true; durable: boolean; error?: string; }
+export interface SettingsChange { settings: AppSettings; publication?: SettingsPublication; agentConfigChange?: AgentConfigChange; warnings?: string[]; }
 
 export type RpcCommand = z.infer<typeof rpcCommandSchema>;
 
@@ -84,7 +85,7 @@ export interface ComposerUpload { id: string; name: string; kind: "image" | "tex
 
 export interface WorktreeSetupScript { id: string; name: string; script: string; cleanupScript?: string; enabled: boolean; projectPath?: string; hostId?: string; }
 
- export interface AppSettings { settingsRevision?: string; clientSettingsRevision?: string; reviewAgent?: string; reviewPrompt?: string; dictationModelPath?: string; localEnabled?: boolean; worktreeSetupScripts: WorktreeSetupScript[]; defaultAgent?: string; defaultModel: string; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
+ export interface AppSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; reviewAgent?: string; reviewPrompt?: string; dictationModelPath?: string; localEnabled?: boolean; worktreeSetupScripts: WorktreeSetupScript[]; defaultAgent?: string; defaultModel: string; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
 
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 

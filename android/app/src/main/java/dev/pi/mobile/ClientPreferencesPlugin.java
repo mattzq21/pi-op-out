@@ -50,12 +50,18 @@ public class ClientPreferencesPlugin extends Plugin {
             return;
         }
         String revision = java.util.UUID.randomUUID().toString();
-        if (!preferences.edit().putString("settings", settings.toString()).putString("revision", revision).commit()) {
+        boolean durable = preferences.edit().putString("settings", settings.toString()).putString("revision", revision).commit();
+        if (!revision.equals(revision(preferences)) || !settings.toString().equals(preferences.getString("settings", null))) {
             call.reject("Could not save client preferences");
             return;
         }
+        JSObject publication = new JSObject();
+        publication.put("committed", true);
+        publication.put("durable", durable);
+        if (!durable) publication.put("error", "Client preferences changed in memory, but could not be confirmed on disk.");
         JSObject result = new JSObject();
         result.put("revision", revision);
+        result.put("publication", publication);
         call.resolve(result);
         }
     }

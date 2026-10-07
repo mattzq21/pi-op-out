@@ -5,6 +5,7 @@ use crate::broker::start_session_broker;
 
 #[cfg(not(feature = "desktop"))]
 pub fn run_daemon() -> Result<(), String> {
+    if std::env::args().nth(1).as_deref() == Some("--daemon-log-writer") { return crate::daemon_log::run(); }
     if let Some(result) = crate::daemon_restart::special_mode() { return result; }
     if let Some(action @ ("start" | "stop")) = std::env::args().nth(1).as_deref() { return daemon_stdio::control(action); }
     if std::env::args().nth(1).as_deref() == Some("--stdio-client") { return daemon_stdio::run(); }

@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, open, rename, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { link, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./index.ts";
 
@@ -36,20 +38,68 @@ async function writeTemporary(path: string, contents: string) {
   finally { await file.close(); }
 }
 
-export async function writeConfig(value: Config, createOnly = false) {
+export async function readConfigDocument() {
+  const body = await readFile(configPath, "utf8");
+
+  return { ...JSON.parse(body), revision: createHash("sha256").update(body).digest("hex") };
+}
+
+async function configLock() {
   await durableDirectory(dirname(configPath));
-  const temporary = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
+  const path = join(dirname(configPath), `${basename(configPath, extname(configPath))}.lock`);
+  const file = await open(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
 
   try {
-    await writeTemporary(temporary, `${JSON.stringify(value, null, 2)}\n`);
+    if (!(await file.stat()).isFile()) throw new Error("Agent configuration lock is not a regular file");
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn("flock", ["--exclusive", "--wait", "10", "3"], { stdio: ["ignore", "ignore", "ignore", file.fd], timeout: 15_000, killSignal: "SIGKILL" });
+      child.once("error", reject);
+      child.once("exit", code => code === 0 ? resolve() : reject(new Error("Agent definitions are busy; try saving again")));
+    });
 
-    if (createOnly) {
-      try { await link(temporary, configPath); }
-      catch (error) { if (!hasErrorCode(error, "EEXIST")) throw error; await syncPath(configPath); }
-    } else await rename(temporary, configPath);
-  } finally { await rm(temporary, { force: true }); }
+    return file;
+  } catch (error) { await file.close(); throw error; }
+}
 
-  await syncPath(dirname(configPath));
+async function existingConfigRevision() {
+  try { return (await readConfigDocument()).revision; }
+  catch (error) { if (hasErrorCode(error, "ENOENT")) return "missing"; throw error; }
+}
+
+async function publishConfig(value: Config, createOnly: boolean) {
+  const { revision: _revision, ...configuration } = value;
+  const body = `${JSON.stringify({ ...configuration, _revision: randomUUID() }, null, 2)}\n`;
+  const temporary = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
+  const warnings: string[] = [];
+  let published = false;
+
+  try {
+    await writeTemporary(temporary, body);
+    if (createOnly) await link(temporary, configPath);
+    else await rename(temporary, configPath);
+    published = true;
+    value.revision = createHash("sha256").update(body).digest("hex");
+    await syncPath(dirname(configPath));
+  } catch (error) {
+    if (!published) throw error;
+    warnings.push(`Agent definitions were saved, but durability could not be confirmed: ${String(error)}`);
+  } finally {
+    await rm(temporary, { force: true }).catch(error => warnings.push(`Could not clean the agent configuration temporary file: ${String(error)}`));
+  }
+
+  return { revision: value.revision, warnings };
+}
+
+export async function writeConfig(value: Config, createOnly = false): Promise<{ revision?: string; warnings: string[] } | void> {
+  const lock = await configLock();
+
+  try {
+    const current = await existingConfigRevision();
+    if (createOnly && current !== "missing") { value.revision = current; return; }
+    if (!createOnly && (!value.revision || value.revision !== current)) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
+
+    return await publishConfig(value, createOnly);
+  } finally { await lock.close(); }
 }
 
 export const configPath = process.env.PIOP_AGENT_CONFIG_PATH || join(dirname(fileURLToPath(import.meta.url)), "config.json");

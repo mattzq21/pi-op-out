@@ -221,19 +221,12 @@ pub(crate) fn commit(app: AppHandle, id: &str) {
 }
 
 fn launch(plan: &Plan, executable: &std::path::Path, mode: &str) -> Result<Child, String> {
-    let log_path = path("daemon.log")?;
-    let log = fs::OpenOptions::new().create(true).append(true).open(&log_path).map_err(|error| error.to_string())?;
-    crate::set_private_file_permissions(&log_path)?;
     let mut command = Command::new(executable);
-    command.args([mode, &plan.id]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(log)
+    command.args([mode, &plan.id]).stdin(Stdio::null()).stdout(Stdio::null())
         .env("PIOP_DAEMON_EXECUTABLE", &plan.executable).env("PIOP_MOBILE_BIND", &plan.bind);
     if let Some(bind) = &plan.debug_bind { command.env("PIOP_DEBUG_MOBILE_BIND", bind); }
     if plan.automatic { command.env("PIOP_RESTART_AUTOMATIC", "1"); } else { command.env_remove("PIOP_RESTART_AUTOMATIC"); }
-    #[cfg(unix)]
-    { use std::os::unix::process::CommandExt; unsafe { command.pre_exec(|| { if libc::setsid() < 0 { return Err(std::io::Error::last_os_error()); } Ok(()) }); } }
-    #[cfg(windows)]
-    { use std::os::windows::process::CommandExt; command.creation_flags(0x00000008 | 0x00000200); }
-    command.spawn().map_err(|error| format!("Could not start {}: {error}", executable.display()))
+    crate::daemon_log::spawn(command)
 }
 
 fn validate(plan: &Plan) -> Result<(), String> {

@@ -1,8 +1,9 @@
 import { appSettingsSchema, settingsChangeSchema } from "./responseSchemas";
-import type { AppSettings, RpcEvent } from "../types";
+import type { AppSettings, RpcEvent, SettingsChange } from "../types";
 import { preferences, preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import { keybindingsError } from "./keybindings";
 import type { NativeCall } from "./nativeCall";
+import { settingsSnapshot } from "./settingsSnapshots";
 
 type SettingsTarget = { cwd?: string; sessionPath?: string; sessionId?: string; hostId: string };
 
@@ -65,11 +66,11 @@ export class NativeSettings {
     const previous = await this.call("load_app_settings", undefined, appSettingsSchema);
     const previousClient = await withClientSettings(previous);
     const daemonSettings = scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
-    const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
-    const clientChanged = scope !== "daemon" && JSON.stringify(preferences(settings)) !== JSON.stringify(preferences(previousClient));
+    const daemonChanged = scope !== "client" && (Boolean(settings.settingsDurabilityError) || settingsSnapshot(daemonSettings) !== settingsSnapshot(previous) || Boolean(agentHostId));
+    const clientChanged = scope !== "daemon" && (Boolean(settings.clientSettingsDurabilityError ?? previousClient.clientSettingsDurabilityError) || JSON.stringify(preferences(settings)) !== JSON.stringify(preferences(previousClient)));
 
     const savedClient = clientChanged ? await saveClientSettings(settings) : previousClient;
-    let change;
+    let change: SettingsChange;
 
     try { change = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { settings: previous }; }
     catch (reason) {
@@ -77,7 +78,8 @@ export class NativeSettings {
       throw reason;
     }
 
-    change.settings = { ...change.settings, ...preferences(savedClient), clientSettingsRevision: savedClient.clientSettingsRevision };
+    change.settings = { ...change.settings, ...preferences(savedClient), clientSettingsRevision: savedClient.clientSettingsRevision, clientSettingsDurabilityError: savedClient.clientSettingsDurabilityError };
+    if (savedClient.clientSettingsDurabilityError) change.warnings = [...change.warnings ?? [], `Client preferences were published, but disk durability is unconfirmed: ${savedClient.clientSettingsDurabilityError}. Retry saving to confirm them.`];
 
     if (reconnect && daemonChanged) await this.reconnectAfterSave(settings);
 
@@ -85,7 +87,12 @@ export class NativeSettings {
   }
 
   private async restoreClientSettings(settings: AppSettings, changed: boolean, expectedRevision: string | undefined, reason: string) {
-    try { if (changed && expectedRevision) await saveClientSettings(settings, expectedRevision); }
+    try {
+      if (changed && expectedRevision) {
+        const restored = await saveClientSettings(settings, expectedRevision);
+        if (restored.clientSettingsDurabilityError) throw new Error(`The previous preferences were published, but disk durability is unconfirmed: ${restored.clientSettingsDurabilityError}`);
+      }
+    }
     catch (rollback) { throw new Error(`Settings save failed: ${String(reason)}. Client preferences could not be restored: ${String(rollback)}. Reload settings before retrying.`); }
   }
 

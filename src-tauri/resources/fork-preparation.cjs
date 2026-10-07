@@ -4,7 +4,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 
-const ownerSchema = Type.Object({ sessionId: Type.String({ pattern: '^[a-zA-Z0-9_-]+$' }), roots: Type.Array(Type.String()), destination: Type.Optional(Type.String()) });
+const ownerSchema = Type.Object({ sessionId: Type.String({ pattern: '^[a-zA-Z0-9_-]+$' }), roots: Type.Array(Type.String()), repositories: Type.Optional(Type.Array(Type.String())), destination: Type.Optional(Type.String()) });
 
 const sessionSchema = Type.Object({ type: Type.Literal('session'), id: Type.String() });
 
@@ -67,7 +67,8 @@ function commonRepository(root) {
 function removeRefs(record) {
   const prefix = `refs/pi-session-snapshots/chats/${record.sessionId}/`;
   const legacy = `refs/pi-session-snapshots/${record.sessionId}`;
-  const repositories = new Set(record.roots.map(commonRepository).filter(Boolean));
+  const resolved = (record.repositories ?? record.roots).map(commonRepository);
+  const repositories = new Set(resolved.filter(Boolean));
 
   for (const repository of repositories) {
     const references = git(repository, ['for-each-ref', '--format=%(refname) %(objectname)', prefix, legacy]).split('\n')
@@ -75,10 +76,13 @@ function removeRefs(record) {
 
     if (references.length) git(repository, ['update-ref', '--stdin'], ['start', ...references.map(([ref, commit]) => `delete ${ref} ${commit}`), 'prepare', 'commit', ''].join('\n'));
   }
+
+  return resolved.every(Boolean);
 }
 
 function removeCheckpoints(directory, published) {
   const owners = path.join(directory, 'checkpoint-owners');
+  let complete = true;
 
   for (const entry of children(owners)) {
     if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
@@ -86,8 +90,10 @@ function removeCheckpoints(directory, published) {
 
     if (!Check(ownerSchema, record) || entry.name !== `${record.sessionId}.json`) throw new Error('Invalid preparatory checkpoint owner');
 
-    if (!published.has(record.sessionId) && !publishedDestination(record)) removeRefs(record);
+    if (!published.has(record.sessionId) && !publishedDestination(record) && !removeRefs(record)) complete = false;
   }
+
+  return complete;
 }
 
 function publishedDestination(record) {
@@ -124,8 +130,8 @@ function recoverDirectory(directory, owners) {
     if (locked.status === 1) return;
 
     if (locked.status !== 0) throw new Error(locked.stderr.toString().trim() || 'Could not lock fork preparation');
-    removeCheckpoints(directory, owners());
-    removeDirectory(directory);
+
+    if (removeCheckpoints(directory, owners())) removeDirectory(directory);
   } finally { fs.closeSync(descriptor); }
 }
 

@@ -112,10 +112,32 @@ pub(super) fn remote_session_sidecar_script(session_path: &str, action: &str) ->
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-pub(super) fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<GitDiffSnapshots, String> {
+pub(super) fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>, cursor: Option<String>) -> Result<serde_json::Value, String> {
     let host = saved_remote_host(app, host_id)?;
     if let Err(error) = crate::git_diff_retry::retry_pending_git_diffs(&session_path, host.as_ref()) { eprintln!("Pending project changes retained for retry: {error}"); }
-    load_git_diffs_at_host(&session_path, host.as_ref())
+    if let Some(cursor) = cursor { return load_git_diff_page(&session_path, host.as_ref(), &cursor); }
+    serde_json::to_value(load_git_diffs_at_host(&session_path, host.as_ref())?).map_err(|error| error.to_string())
+}
+
+fn load_git_diff_page(session_path: &str, host: Option<&RemoteHost>, cursor: &str) -> Result<serde_json::Value, String> {
+    let mut command = if let Some(host) = host {
+        let action = format!("node -e {} page \"$session\" {}", shell_quote(&diff_store_script()), shell_quote(cursor));
+        let mut command = ssh(host);
+        command.arg(remote_session_sidecar_script(session_path, &action));
+        command
+    } else {
+        if !Path::new(session_path).exists() {
+            validate_unsaved_session(&home_dir()?, Path::new(session_path))?;
+            return Ok(serde_json::json!({"snapshots":{},"nextCursor":null}));
+        }
+        let path = local_desktop_session_file_at(&home_dir()?, session_path)?;
+        let mut command = node_command();
+        command.args(["-e", &diff_store_script(), "page"]).arg(path).arg(cursor);
+        command
+    };
+    let output = run_limited(&mut command, MAX_GIT_DIFFS_BYTES + 1024 * 1024, "Diff history page exceeds its size limit")?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid diff history page: {error}"))
 }
 
 fn validate_unsaved_session(home: &Path, candidate: &Path) -> Result<(), String> {

@@ -1,6 +1,6 @@
 use super::*;
 use crate::settings_concurrency::{lock_settings, settings_revision};
-use crate::private_fs::atomic_write_private;
+use crate::private_fs::publish_private;
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,7 +43,7 @@ pub(crate) fn save_client_settings(app: AppHandle, mut settings: ClientSettings,
     }
     settings.revision = Some(Uuid::new_v4().to_string());
     let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
-    atomic_write_private(&path, &body)?;
+    let publication = publish_private(&path, &body)?;
     for window in app.webview_windows().values() { let _ = window.emit("pi://client-settings-changed", ()); }
-    Ok(json!({"revision":settings_revision(Some(&body))}))
+    Ok(json!({"revision":settings_revision(Some(&body)),"publication":publication}))
 }

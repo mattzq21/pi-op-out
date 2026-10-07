@@ -455,8 +455,38 @@ export class NativeTransport {
   captureGitTree(cwd: string, hostId = "local") { return call("capture_git_tree", { cwd, hostId }, z.union([z.string(), z.null()])); }
   discardGitTree(snapshot: string, hostId = "local") { return call("discard_git_tree", { snapshot, hostId }, voidResultSchema); }
   loadGitDiff(cwd: string, baseTree: string, hostId = "local") { return call("load_git_diff", { cwd, baseTree, hostId }, z.union([gitDiffSnapshotSchema, z.null()])); }
-  loadGitDiffs(sessionPath: string, hostId = "local") { return call("load_git_diffs", { sessionPath, hostId }, gitDiffSnapshotsSchema); }
-  saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId = "local") { return call("save_git_diffs", { sessionPath, snapshots, hostId }, voidResultSchema); }
+  async loadGitDiffs(sessionPath: string, hostId = "local") {
+    const snapshots: GitDiffSnapshots = {};
+    let cursor = "";
+
+    for (;;) {
+      const page = await call("load_git_diffs", { sessionPath, hostId, cursor }, z.object({ snapshots: gitDiffSnapshotsSchema, nextCursor: z.string().nullable() }));
+      Object.assign(snapshots, page.snapshots);
+
+      if (page.nextCursor === null) return snapshots;
+
+      if (page.nextCursor <= cursor) throw new Error("Diff history pagination did not advance");
+      cursor = page.nextCursor;
+    }
+  }
+  async saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId = "local") {
+    let batch: GitDiffSnapshots = {};
+    let bytes = 0;
+
+    for (const [id, snapshot] of Object.entries(snapshots)) {
+      const size = new TextEncoder().encode(JSON.stringify([id, snapshot])).byteLength;
+
+      if (bytes && bytes + size > 8 * 1024 * 1024) {
+        await call("save_git_diffs", { sessionPath, snapshots: batch, hostId }, voidResultSchema);
+        batch = {}; bytes = 0;
+      }
+
+      batch[id] = snapshot;
+      bytes += size;
+    }
+
+    if (bytes) await call("save_git_diffs", { sessionPath, snapshots: batch, hostId }, voidResultSchema);
+  }
   archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionPath, hostId, terminalIds }, voidResultSchema); }
   deleteSession(sessionPath: string, hostId = "local") { return call("delete_session", { sessionPath, hostId }, z.array(z.string())); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call("relocate_session", { sessionPath, cwd, hostId }, voidResultSchema); }

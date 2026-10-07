@@ -4,6 +4,20 @@ use std::io::Write;
 use std::path::Path;
 use uuid::Uuid;
 
+#[derive(serde::Serialize)]
+pub(super) struct Publication {
+    committed: bool,
+    durable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) error: Option<String>,
+}
+
+impl Publication {
+    fn committed(result: Result<(), String>) -> Self {
+        Self { committed: true, durable: result.is_ok(), error: result.err() }
+    }
+}
+
 pub(super) fn set_private_file_permissions(path: &Path) -> Result<(), String> {
     if !path.exists() { return Ok(()); }
     if path.is_dir() { return Err(format!("Configuration path is a directory: {}", path.display())); }
@@ -46,11 +60,16 @@ fn private_file_matches(path: &Path, body: &[u8]) -> Result<bool, String> {
 }
 
 pub(super) fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
+    match publish_private(path, body)?.error { Some(error) => Err(error), None => Ok(()) }
+}
+
+pub(super) fn publish_private(path: &Path, body: &[u8]) -> Result<Publication, String> {
     let parent = path.parent().ok_or("Configuration file has no parent directory")?;
     ensure_private_dir(parent)?;
     if private_file_matches(path, body)? {
-        fs::File::open(path).and_then(|file| file.sync_all()).map_err(|error| format!("Could not sync saved configuration: {error}"))?;
-        return sync_private_parent(parent);
+        let result = fs::File::open(path).and_then(|file| file.sync_all()).map_err(|error| format!("Could not sync saved configuration: {error}"))
+            .and_then(|()| sync_private_parent(parent));
+        return Ok(Publication::committed(result));
     }
     let temporary = parent.join(format!(".{}.{}.tmp", path.file_name().and_then(|name| name.to_str()).unwrap_or("config"), Uuid::new_v4()));
     let result = (|| {
@@ -68,7 +87,7 @@ pub(super) fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), Strin
         }
         file.write_all(body).and_then(|_| file.sync_all()).map_err(|error| error.to_string())?;
         fs::rename(&temporary, path).map_err(|error| if path.is_dir() { format!("Configuration path is a directory: {}", path.display()) } else { error.to_string() })?;
-        sync_private_parent(parent)
+        Ok(Publication::committed(sync_private_parent(parent)))
     })();
     if result.is_err() { let _ = fs::remove_file(&temporary); }
     result

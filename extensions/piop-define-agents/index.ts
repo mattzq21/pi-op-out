@@ -1,7 +1,7 @@
 import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState } from "./state.ts";
 import { Type } from "typebox";
 import { Check, Errors, Parse } from "typebox/value";
-import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
+import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, readConfigDocument, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
 import { readDaemonDefinitions } from "./daemon-definitions.ts";
 import { selectedProfileState } from "./profiles.ts";
@@ -23,7 +23,7 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["subagent"];
 
-export type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
+export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
 
 type ConfigRuntime = { events: { emit(channel: "piop:runtime-settings", request: RuntimeSettingsRequest): void } };
 
@@ -134,7 +134,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
   const agents = unique.some((agent) => agent.name === "general") ? unique : [defaultAgent(pi), ...unique];
 
-  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, terminalAgentDefaultApplied: value.terminalAgentDefaultApplied === true, excalidrawAgentDefaultApplied: value.excalidrawAgentDefaultApplied === true };
+  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, terminalAgentDefaultApplied: value.terminalAgentDefaultApplied === true, excalidrawAgentDefaultApplied: value.excalidrawAgentDefaultApplied === true };
 }
 
 async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
@@ -144,7 +144,7 @@ async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined,
   }
 
   try {
-    const stored = supplied ?? JSON.parse(await readFile(configPath, "utf8"));
+    const stored = supplied ?? await readConfigDocument();
     const config = await migratePrompts(stored, pi, storage);
 
     if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (Array.isArray(agent.mcpServers) || agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agent_prompt === undefined || "path_agentprompt" in agent || "ignoreGeneralAgentsMd" in agent || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await storage.writeConfig(config);
@@ -741,10 +741,11 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   pi.events.on("piop:rpc", request => {
+    if (request.command === "get_agent_configuration") { request.ready = loadConfig(pi); return; }
     if (request.command !== "configure_agents") return;
     const ctx = request.ctx;
     request.ready = (async () => {
-      const schema = Type.Object({ configuration: Type.Object({ agents: Type.Optional(Type.Array(agentSchema)) }) });
+      const schema = Type.Object({ configuration: Type.Object({ revision: Type.String({ minLength: 1 }), agents: Type.Optional(Type.Array(agentSchema)) }) });
       const errors = Errors(schema, request.payload);
 
       if (errors.length) throw new Error(`Invalid agent configuration: ${errors.map(error => `${error.instancePath} ${error.message}`).join('; ')}`);
@@ -752,10 +753,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
       const next = normalize({ ...supplied, webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
 
       for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
-      await writeConfig(next);
+      const saved = await writeConfig(next);
 
       if (!daemonDefinitions) config = next;
       publish(ctx);
+
+      return { revision: next.revision, warnings: saved?.warnings };
     })();
   });
 }
