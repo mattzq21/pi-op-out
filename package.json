@@ -41,6 +41,7 @@
     "tauri": "node scripts/tauri.mjs",
     "prebuild:mobile": "npm run setup:dependencies",
     "build:mobile": "node scripts/build-frontend.mjs --mode mobile",
+    "mobile": "python3 \"$HOME/.agents/skills/mobile-piop/scripts/setup-debug.py\" --project .",
     "prebuild:daemon": "npm run setup:dependencies",
     "build:daemon": "node scripts/build-daemon.mjs --install",
     "daemon": "npm run build:daemon && src-tauri/target/release/piopd start",
