@@ -2,6 +2,7 @@ import { For, Show, createEffect, onCleanup, onMount } from "solid-js";
 import { Plus, Square } from "lucide-solid";
 import { IconButton } from "../../components/IconButton";
 import { Markdown } from "../../components/Markdown";
+import { ChatHistoryPicker } from "./ChatHistoryPicker";
 import { useChatGpt, type QuickChatRequest } from "./useChatGpt";
 import "./quick-chat.css";
 
@@ -39,11 +40,11 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
   });
   createEffect(() => { if (props.open) queueMicrotask(() => composer?.focus()); });
 
-  const renderChatPicker = () => <select class="quick-chat-history" aria-label="ChatGPT chat" disabled={state.busy() || state.loading()} onChange={event => { follow = true;
+  const renderChatPicker = () => <ChatHistoryPicker chats={state.chats()} selected={state.chat()} disabled={state.busy() || state.loading()} onSelect={id => {
+    follow = true;
 
-      if (event.currentTarget.value) void state.select(event.currentTarget.value); else { props.onNew(); state.fresh(); } }}>
-        <option value="" selected={!state.chat()}>New chat</option><For each={state.chats()}>{chat => <option value={chat.id} selected={state.chat()?.id === chat.id}>{chat.title}</option>}</For>
-      </select>;
+    if (id) void state.select(id); else { props.onNew(); state.fresh(); }
+  }} />;
 
   const renderSelection = () => <Show when={!state.chat() && state.source()?.selected}><blockquote class="quick-chat-selection">{state.source()?.selected?.text.slice(0, 300)}</blockquote></Show>;
 
