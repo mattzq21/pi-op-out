@@ -267,7 +267,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
     <TranscriptPlugins messages={() => messagesRef.current} source={() => ({ hostId: props.transport?.currentHostId() ?? "local", sessionId: props.state.sessionId, title: props.state.sessionName || "Current conversation", messages: [...props.messages] })} />
   </main>;
 
-  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><ReviewNavigationContext.Provider value={async id => { if (!props.transport) throw new Error("Conversation is unavailable"); await props.transport.command({ type: "open_review", reviewId: id }); }}><ConversationShell /></ReviewNavigationContext.Provider></ConversationHostContext.Provider>;
+  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><ReviewNavigationContext.Provider value={{ sessionId: () => props.state.sessionId, open: async id => { if (!props.transport) throw new Error("Conversation is unavailable"); await props.transport.command({ type: "open_review", reviewId: id }); } }}><ConversationShell /></ReviewNavigationContext.Provider></ConversationHostContext.Provider>;
 }
 
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };
