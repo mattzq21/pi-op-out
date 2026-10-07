@@ -44,7 +44,7 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
       }
 
       setStatus(result); setEnabled(result.enabled);
-      setMessage(result.error ? undefined : "Restarted. Your plugins are ready.");
+      setMessage(undefined);
     } catch (reason) {
       if (!disposed) { setError(String(reason)); setMessage(undefined); }
     } finally { if (!disposed) setBusy(false); }
