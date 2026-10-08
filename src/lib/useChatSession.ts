@@ -12,6 +12,7 @@ import { contextUsageAfterCompaction } from "./contextUsage";
 import { appendFileChanges, appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
+import { reconcileMessages } from "./reconcileMessages";
 
 interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 
@@ -212,7 +213,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       activeMessageIds.current.clear();
 
       for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
-      session.setMessages(nextMessages);
+      session.setMessages(reconcileMessages(cachedMessages, nextMessages));
     };
 
     const replaySnapshotEvents = (snapshot: SessionSnapshot) => {

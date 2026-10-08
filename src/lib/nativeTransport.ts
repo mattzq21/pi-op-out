@@ -90,6 +90,28 @@ export const removeArchivedWorktree = (cwd: string, hostId = "local") => call("r
 
 export class NativeTransport {
   readonly promptControls = new PromptControls();
+  private automaticBehavior = Promise.resolve();
+  private automaticBehaviorGeneration = 0;
+  private automaticRetry: boolean | undefined;
+
+  configureAutomaticBehavior(autoRetry: boolean) {
+    const generation = this.automaticBehaviorGeneration;
+
+    const operation = this.automaticBehavior.then(async () => {
+      if (generation !== this.automaticBehaviorGeneration || this.automaticRetry === autoRetry) return;
+      await Promise.all([
+        this.command({ type: "set_auto_compaction", enabled: true }),
+        this.command({ type: "set_auto_retry", enabled: autoRetry }),
+      ]);
+
+      if (generation === this.automaticBehaviorGeneration) this.automaticRetry = autoRetry;
+    });
+
+    this.automaticBehavior = operation.catch(() => undefined);
+
+    return operation;
+  }
+
   async submitPrompt(command: RpcCommand) {
     await this.promptControls.flush(value => this.command(value), enabled => this.setFastMode(enabled));
 
@@ -299,6 +321,11 @@ export class NativeTransport {
     this.sessionPath = state.sessionFile; this.sessionId = state.sessionId;
   }
   private emit(event: RpcEvent) {
+    if (["disconnected", "connection_restored", "session_switched", "settings_applied", "ownership_lost"].includes(event.type)) {
+      this.automaticRetry = undefined;
+      this.automaticBehaviorGeneration += 1;
+    }
+
     if (event.type === "session_switched") this.retainClassification(event.ephemeral);
 
     if (event.type === "ownership_lost") this.promptControls.reset();

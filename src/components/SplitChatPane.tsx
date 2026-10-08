@@ -115,7 +115,7 @@ export function SplitChatPane(componentProps: Props) {
     const configure = async () => {
       const runtimeSettings = capturedTransport.currentHostId() === "local" ? capturedSettings1 : await capturedTransport.loadHostSettings();
 
-      await Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: runtimeSettings.autoRetry })]);
+      await capturedTransport.configureAutomaticBehavior(runtimeSettings.autoRetry);
     };
 
     const sendInitialPrompt = async (initial: boolean) => {
@@ -146,9 +146,10 @@ export function SplitChatPane(componentProps: Props) {
 
       try {
         await capturedTransport.connect();
-        await capturedSession.refresh();
 
         if (capturedTransport.ownsConversation()) await configure();
+
+        await capturedSession.refresh();
 
         if (closing) return;
         updateConnected(capturedTransport.ownsConversation()); connectedOnce = true; setError(undefined); setControlError(undefined);
@@ -160,12 +161,10 @@ export function SplitChatPane(componentProps: Props) {
 
     reconnectRef.current = () => void connectRuntime(false);
 
-    let refreshTimer: number | undefined;
-
     const unsubscribe = capturedTransport.subscribe((event: RpcEvent) => {
       capturedSession.handleEvent(event);
 
-      const handleOwnershipLost = () => {
+      const handleOwnershipLost = (): void => {
         updateConnected(false);
         void capturedOnDialogTransportClosed7(capturedTransport);
       };
@@ -181,7 +180,7 @@ export function SplitChatPane(componentProps: Props) {
       };
 
       const handleSessionInfoChanged = () => {
-        if (event.type === "session_info_changed" || event.type === "session_switched") void capturedSession.refresh().catch(reportControlError);
+        if (!reconnecting) void capturedSession.refresh().catch(reportControlError);
       };
 
       const handleExtensionUiRequest = () => {
@@ -202,7 +201,7 @@ export function SplitChatPane(componentProps: Props) {
               try { setDefinedAgents(request.statusText?.startsWith("json:") ? definedAgentsCapabilitySchema.parse(decodeAgentValue(request.statusText.slice(5))) : undefined); }
               catch { setDefinedAgents(undefined); }
 
-              void capturedSession.refresh().catch(reportControlError);
+              if (!reconnecting) void capturedSession.refresh().catch(reportControlError);
             } else if (request.statusKey && !["pi-desktop-prompt-context", "pi-desktop-mcp-status"].includes(request.statusKey)) {
               setStatuses((current) => { const next = { ...current };
 
@@ -229,17 +228,6 @@ export function SplitChatPane(componentProps: Props) {
         setNotices((current) => [...current, { id: crypto.randomUUID(), title: "Extension error", message: String(event.error ?? "An extension failed") }]);
       };
 
-      const handleMessageEnd = () => {
-        setError(undefined);
-
-        if (refreshTimer !== undefined) return;
-        refreshTimer = window.setTimeout(() => {
-          refreshTimer = undefined;
-
-          if (!closing) void capturedSession.refresh().catch(reportControlError);
-        }, 30);
-      };
-
       const handleSettingsApplied = () => {
         if (closing) return;
 
@@ -247,7 +235,7 @@ export function SplitChatPane(componentProps: Props) {
 
         return; }
 
-        void capturedSession.refresh().then(() => { if (!closing) updateConnected(capturedTransport.ownsConversation()); }).catch(reportControlError);
+        if (!reconnecting) void capturedSession.refresh().then(() => { if (!closing) updateConnected(capturedTransport.ownsConversation()); }).catch(reportControlError);
       };
 
       const handleDisconnected = () => {
@@ -262,6 +250,7 @@ export function SplitChatPane(componentProps: Props) {
       };
 
       const handlers = new Map(Object.entries({
+        "agent_settled": () => { if (!closing && !reconnecting) void capturedSession.refresh().catch(reportControlError); },
         "ownership_lost": handleOwnershipLost,
         "ownership_acquired": handleOwnershipAcquired,
         "extension_ui_resolved": handleExtensionUiResolved,
@@ -269,7 +258,7 @@ export function SplitChatPane(componentProps: Props) {
         "session_switched": handleSessionInfoChanged,
         "extension_ui_request": handleExtensionUiRequest,
         "extension_error": handleExtensionError,
-        "message_end": handleMessageEnd,
+        "message_end": (): void => { setError(undefined); },
         "settings_applied": handleSettingsApplied,
         "disconnected": handleDisconnected,
         "connection_restored": handleDisconnected
@@ -280,12 +269,12 @@ export function SplitChatPane(componentProps: Props) {
 
     void connectRuntime(true);
 
-    return () => { closing = true; window.clearTimeout(refreshTimer); capturedRuntimePool0.setInteractive(capturedTransport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void capturedOnReleaseTransport11(capturedTransport); }); };
+    return () => { closing = true; capturedRuntimePool0.setInteractive(capturedTransport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void capturedOnReleaseTransport11(capturedTransport); }); };
   }, () => [transport(), componentProps.freshReview, componentProps.initialPrompt, session().handleEvent, session().refresh, componentProps.onDialogRequest, componentProps.onDialogTransportClosed, componentProps.onReleaseTransport]);
   createDependencyEffect(() => {
     const capturedConnected = connected(); const capturedTransport = transport(); const capturedSettings0 = componentProps.settings;
 
- if (!capturedConnected || capturedTransport.currentHostId() !== "local") return; void Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: capturedSettings0.autoRetry })]).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, () => [connected(), componentProps.settings.autoRetry, transport()]);
+ if (!capturedConnected || capturedTransport.currentHostId() !== "local") return; void capturedTransport.configureAutomaticBehavior(capturedSettings0.autoRetry).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, () => [connected(), componentProps.settings.autoRetry, transport()]);
 
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => { const capturedTransport = transport();
 

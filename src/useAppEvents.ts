@@ -56,26 +56,29 @@ type AppEventsContext = {
 
 export function useAppEvents(options: Accessor<AppEventsContext>) {
   createDependencyEffect(() => { const capturedOptions = options();
-    let cancelled = false; let reconnecting = false; let refreshTimer: number | undefined;
+    let cancelled = false; let reconnecting = false; let initializing = false;
     const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
     capturedOptions.setError(undefined);
     document.title = "piop"; capturedOptions.setStatuses({}); capturedOptions.setWidgets({});
 
     const loadSelectedSession = async () => {
-      if (!await capturedOptions.prepareSession(capturedOptions.transport) || !current()) return;
+      initializing = true;
 
-      const ready = await initializeSession(current, {
-        connect: () => capturedOptions.transport.connect(),
-        loadSettings: () => capturedOptions.loadSettings(),
-        refresh: (settings) => options().refresh(undefined, settings),
-        configure: (settings) => options().configureRuntime(settings),
-        restore: () => options().refreshSession(),
-      });
+      try {
+        if (!await capturedOptions.prepareSession(capturedOptions.transport) || !current()) return;
 
-      if (!ready) return;
-      capturedOptions.setActiveCwd(capturedOptions.transport.currentCwd());
-      capturedOptions.setError(undefined);
-      capturedOptions.updateConnected(true);
+        const ready = await initializeSession(current, {
+          connect: () => capturedOptions.transport.connect(),
+          loadSettings: () => capturedOptions.loadSettings(),
+          refresh: (settings) => options().refresh(undefined, settings),
+          configure: (settings) => options().configureRuntime(settings),
+        });
+
+        if (!ready) return;
+        capturedOptions.setActiveCwd(capturedOptions.transport.currentCwd());
+        capturedOptions.setError(undefined);
+        capturedOptions.updateConnected(true);
+      } finally { initializing = false; }
     };
 
     const unsubscribe = capturedOptions.transport.subscribe((event: RpcEvent) => {
@@ -83,15 +86,6 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
       const handleExtensionUiResolved = () => {
         capturedOptions.setDialogs((current) => current.filter((dialog) => dialog.transport !== capturedOptions.transport || dialog.request.id !== event.id));
-      };
-
-      const handleMessageEnd = () => {
-        if (refreshTimer !== undefined) return;
-        refreshTimer = window.setTimeout(() => {
-          refreshTimer = undefined;
-
-          if (current()) void capturedOptions.refreshSession().catch(() => undefined);
-        }, 30);
       };
 
       const handleTerminalOutput = () => {
@@ -163,7 +157,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
             const capability = request.statusText?.startsWith("json:") ? definedAgentsCapabilitySchema.parse(decodeAgentValue(request.statusText.slice(5))) : undefined;
             capturedOptions.setDefinedAgents(capability);
 
-            if (capability) void capturedOptions.refreshSession().catch(() => undefined);
+            if (capability && !initializing) void capturedOptions.refreshSession().catch(() => undefined);
           } catch { capturedOptions.setDefinedAgents(undefined); }
         };
 
@@ -216,7 +210,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       };
 
       const handleSessionSwitched = () => {
-        void capturedOptions.refresh().catch(() => undefined);
+        if (!initializing) void capturedOptions.refresh().catch(() => undefined);
       };
 
       const handleSettingsApplied = () => {
@@ -231,11 +225,11 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
           capturedOptions.setTerminalOpen(false); capturedOptions.setTerminalTarget(undefined);
         }
 
-        void capturedOptions.refresh().then((value) => current() ? capturedOptions.configureRuntime(value) : undefined).then(() => { if (current()) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason) => { if (current() && !isConversationChanged(reason)) capturedOptions.setError(String(reason)); });
+        if (!initializing) void capturedOptions.refresh().then((value) => current() ? capturedOptions.configureRuntime(value) : undefined).then(() => { if (current()) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason) => { if (current() && !isConversationChanged(reason)) capturedOptions.setError(String(reason)); });
       };
 
       const handleSessionInfoChanged = () => {
-        void capturedOptions.refresh().catch(() => undefined);
+        if (!initializing) void capturedOptions.refreshSession().catch(() => undefined);
       };
 
       const handleOwnershipLost = () => {
@@ -264,8 +258,8 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       };
 
       const handlers = new Map(Object.entries({
+        "agent_settled": () => { if (current() && !initializing) void capturedOptions.refreshSession().catch(() => undefined); },
         "extension_ui_resolved": handleExtensionUiResolved,
-        "message_end": handleMessageEnd,
         "terminal_output": handleTerminalOutput,
         "terminal_exit": handleTerminalExit,
         "extension_error": handleExtensionError,
@@ -284,6 +278,6 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
     loadSelectedSession().catch((cause: unknown) => { if (current() && !isConversationChanged(cause)) capturedOptions.setError(cause instanceof Error ? cause.message : String(cause)); });
 
-    return () => { cancelled = true; window.clearTimeout(refreshTimer); unsubscribe(); capturedOptions.flushTerminalOutput(); };
+    return () => { cancelled = true; unsubscribe(); capturedOptions.flushTerminalOutput(); };
   }, () => [options().addNotice, options().configureRuntime, options().handleEvent, options().loadSettings, options().queueExtensionDialog, options().queueTerminalOutput, options().refresh, options().refreshSession, options().transport]);
 }

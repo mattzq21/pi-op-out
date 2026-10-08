@@ -114,10 +114,7 @@ export async function configureConversationRuntime(value: AppSettings, transport
 
   if (!current()) return;
 
-  await Promise.all([
-    transport.command({ type: "set_auto_compaction", enabled: true }),
-    transport.command({ type: "set_auto_retry", enabled: value.autoRetry }),
-  ]);
+  await transport.configureAutomaticBehavior(value.autoRetry);
 
   if (!current()) return;
   const inherited = projectControls.get(transport);
