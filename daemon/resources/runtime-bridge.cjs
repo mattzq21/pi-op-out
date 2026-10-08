@@ -319,11 +319,54 @@ const isReview = text => /^\/review(?:\s|$)/.test(text);
 
 const reviewText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
-function bindFollowUpDrain(agent) {
+function hasGoal(session) {
+  const entries = session.sessionManager.getEntries();
+
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+
+    if (entry.type === "custom" && entry.customType === "piop-goal") return entry.data !== null;
+  }
+
+  return false;
+}
+
+function bindGoalQueue(session) {
+  const queue = session.agent.followUpQueue;
+
+  for (const [name, blocked] of [["hasItems", false], ["peek", []]]) {
+    const read = queue[name];
+    queue[name] = function (...args) {
+      return hasGoal(session) ? blocked : read.apply(this, args);
+    };
+  }
+
+  const manager = session.sessionManager;
+  const appendCustomEntry = manager.appendCustomEntry;
+  manager.appendCustomEntry = function (customType, data, ...args) {
+    const release = customType === "piop-goal" && data === null && hasGoal(session);
+    const result = appendCustomEntry.call(this, customType, data, ...args);
+
+    if (release) setImmediate(() => {
+      if (!session.isIdle || hasGoal(session)) return;
+      const messages = session.agent.followUpQueue.drain();
+
+      if (messages.length) void session._runAgentPrompt(messages).catch(error => {
+        session.extensionRunner.createContext().ui.notify(String(error), "error");
+      });
+    });
+
+    return result;
+  };
+}
+
+function bindFollowUpDrain(session) {
+  const agent = session.agent;
   const queue = agent.followUpQueue;
   const drain = queue.drain;
 
   queue.drain = function () {
+    if (hasGoal(session)) return [];
     const messages = drain.call(this);
     const review = messages.findIndex(message => isReview(reviewText(message)));
 
@@ -388,7 +431,7 @@ async function drainReviews(session, drain) {
 
 function bindReviewQueue(session) {
   const agent = session.agent;
-  bindFollowUpDrain(agent);
+  bindFollowUpDrain(session);
   const createLoopConfig = agent.createLoopConfig;
   const runPromptMessages = agent.runPromptMessages;
 
@@ -415,6 +458,22 @@ function bindReviewQueue(session) {
   };
 }
 
+function holdFollowUp(session, options) {
+  return options?.streamingBehavior === "followUp" && options?.source === "rpc" && !options?.goalPrepared && !session.isStreaming && hasGoal(session);
+}
+
+async function queueHeldFollowUp(session, text, options) {
+  if (isReview(text)) {
+    await session._queueFollowUp(text, options.images);
+    options.preflightResult?.("queued");
+  } else if (text.startsWith("/") && options.expandPromptTemplates !== false && await session._tryExecuteExtensionCommand(text)) {
+    options.preflightResult?.("handled");
+  } else {
+    const disposition = await session._queueUserInput(text, options.images, "followUp", options.source);
+    options.preflightResult?.(disposition);
+  }
+}
+
 async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const root = runtimeRoot(executable);
@@ -431,7 +490,9 @@ async function main() {
   const { writeRawStdout } = await import(pathToFileURL(join(root, "dist/core/output-guard.js")).href);
   const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);
   const prompt = AgentSession.prototype.prompt;
-  AgentSession.prototype.prompt = function (text, options) {
+  AgentSession.prototype.prompt = async function (text, options) {
+    if (holdFollowUp(this, options)) return queueHeldFollowUp(this, text, options);
+
     if (isReview(text) && this.isStreaming) {
       return this._queueFollowUp(text, options?.images).then(() => options?.preflightResult?.("queued"));
     }
@@ -445,9 +506,13 @@ async function main() {
   const bind = AgentSession.prototype.bindExtensions;
   AgentSession.prototype.bindExtensions = async function (...bindings) {
     installQueueProtocol(this, output);
+    if (session !== this) {
+      bindGoalQueue(this);
+      bindReviewQueue(this);
+    }
     await bind.apply(this, bindings);
 
-    if (session !== this) bindReviewQueue(this);
+    this.extensionRunner.hasPendingMessagesFn = () => this.getSteeringMessages().length > 0 || (!hasGoal(this) && this.getFollowUpMessages().length > 0);
     session = this;
   };
 
