@@ -246,12 +246,15 @@ function publishObservedRun(execution: SubagentExecution, run: SubagentRun) {
 }
 
 async function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "ready">, pending: Set<Promise<void>>) {
-  return new Promise<void>((ready) => {
+  return new Promise<void>((ready, reject) => {
     const completion = (async () => {
       if (task.sessionId) await recoverPreviousRuns(task.sessionId, execution);
       await executeSubagent(task, { ...execution, ready });
     })()
-      .catch(error => execution.ctx.ui.notify(`Subagent failed: ${String(error)}`, "error"))
+      .catch(error => {
+        reject(error);
+        execution.ctx.ui.notify(`Subagent failed: ${String(error)}`, "error");
+      })
       .finally(() => { ready(); pending.delete(completion); });
 
     pending.add(completion);
