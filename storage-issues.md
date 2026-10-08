@@ -1,0 +1,357 @@
+# Piop storage issues
+
+Triage date: 2026-10-08. Baseline: `11596dea` in `/home/matt/.codex/worktrees/4758/piop`.
+
+Original findings #1–6 are excluded by request. Original IDs #7–31 are retained; IDs #32 onward identify the originally unnumbered lifecycle/accounting findings. This file separates defects needing fixes from justified redundancy and diagnostic retention. Triage is based on current source, not stale documentation. No tests were written or run.
+
+Status: triage complete. 37 open source-confirmed issues: 4 P1, 28 P2, and 5 P3. Each entry preserves its qualifications; no runtime reproduction is claimed. The four P1 issues are #13 (transaction replay), #19 (early draft clearing), #29 (cross-daemon transcript clobber), and #31 (temporary recovery directory durability).
+
+## Execution rules and order
+
+The active goal is to fix all open issues in this file. No tests may be written or run without a later explicit instruction. Edit only with apply_patch, preserve existing work, and use bounded subagents. Update each resolved entry with the implementation, permitted verification, and any remaining limitation. Do not claim crash/restore/concurrency behavior was dynamically verified by static checks. No commit or push is requested.
+
+1. Prevent direct input loss: implement a coherent durable submission/draft model for #19–23, beginning with #19. Keep older string-only drafts recoverable and uncertain sends distinct from accepted sends.
+2. Protect interrupted storage transactions and shared archive resources: establish ownership/replay invariants before adding cleanup. Preserve every surviving active/archived/forked reference.
+3. Restore broker control/status and delivery semantics, then correct settings and ChatGPT commit/isolation behavior.
+4. Fix scoped sidebar and window-resume persistence; combine group-order cleanup with sidebar mutations.
+5. Add bounded, ownership-aware cleanup and correct storage reporting. Never remove failed-rollback recovery data or a running daemon's executable.
+
+Checks after code changes should be relevant source review, lint/type checks, and compile checks where appropriate. A source-confirmed issue remains open until its completion criterion is handled; writing this triage file does not fix it.
+
+## Frontend persistence
+
+### #19 — Drafts are cleared before the daemon accepts a submission
+
+- Status: open; source-confirmed. Priority: P1.
+- Trigger and impact: Send a composed message, then reload or terminate the renderer while worktree preparation, connection, or prompt-control flushing is pending. The persisted draft has already been removed; the pending submission and rejection recovery exist only in memory. Retry consumes matching draft text early too.
+- Evidence: [src/components/Composer.tsx:394](/home/matt/.codex/worktrees/4758/piop/src/components/Composer.tsx:394), [src/components/ChatView.tsx:142](/home/matt/.codex/worktrees/4758/piop/src/components/ChatView.tsx:142), [src/lib/newChatWorktree.ts:74](/home/matt/.codex/worktrees/4758/piop/src/lib/newChatWorktree.ts:74), [src/lib/nativeTransport.ts:90](/home/matt/.codex/worktrees/4758/piop/src/lib/nativeTransport.ts:90).
+- Fix: Stage the submitted text and attachment references durably before clearing the visible composer. Retire that record only on a reliable acceptance/acknowledgment; preserve ambiguous submissions without automatically resending them.
+- Done when: Reload during preparation or uncertain send acknowledgment preserves a discoverable submission; success retires only the acknowledged submission and keeps any newer draft. Coordinate with #20–23.
+
+### #20 — Worktree-switch send failures recover into the old conversation
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: A send changes to a newly prepared worktree, then connection or submission fails. The captured draft and upload writers still address the original transport/key. The original empty transport may have been released, so the recovered input is not reachable from the new conversation.
+- Evidence: [src/components/Composer.tsx:392](/home/matt/.codex/worktrees/4758/piop/src/components/Composer.tsx:392), [src/lib/newChatWorktree.ts:83](/home/matt/.codex/worktrees/4758/piop/src/lib/newChatWorktree.ts:83), [src/appConversations.ts:632](/home/matt/.codex/worktrees/4758/piop/src/appConversations.ts:632), [src/appTransportActivation.ts:95](/home/matt/.codex/worktrees/4758/piop/src/appTransportActivation.ts:95).
+- Fix: Give pending submissions a stable durable identity and explicitly transfer their destination when a worktree is activated. Restore rejected input and uploads to the selected destination, or retain a separately selectable recovery draft if destination ownership changes.
+- Done when: A rejected send after worktree activation is visible and retryable in the intended destination, including attachments and newer edits. Depends on the submission/draft ownership work in #19.
+
+### #21 — Inactive unsent drafts lack selectable restoration metadata
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Create unsent draft A, switch to saved chat B, then reload. A's text can remain in the persisted dictionary, but its selectable summary and working directory existed in the runtime pool. The saved session-list cache explicitly excludes drafts.
+- Evidence: [src/appDrafts.ts:45](/home/matt/.codex/worktrees/4758/piop/src/appDrafts.ts:45), [src/appTransportActivation.ts:78](/home/matt/.codex/worktrees/4758/piop/src/appTransportActivation.ts:78), [src/lib/sessionRuntimePool.ts:50](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionRuntimePool.ts:50), [src/lib/sessionListCache.ts:47](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionListCache.ts:47), [src/appConversations.ts:480](/home/matt/.codex/worktrees/4758/piop/src/appConversations.ts:480).
+- Fix: Persist draft identity, endpoint/host, project location, activity metadata, text, and attachment references together. Rebuild every valid draft summary at startup; preserve old string-only records in a visible recovery list rather than guessing their project.
+- Done when: All inactive drafts reappear after reload with correct destinations; legacy draft text remains accessible when metadata cannot be inferred. Shares the envelope/migration work with #19, #22, and #23.
+
+### #22 — Failed startup rekeys draft text before updating its resume pointer
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Startup immediately moves the selected draft from its saved key to a new random key. The last-session pointer is updated only after connection becomes ready. If startup fails, the pointer continues to reference the now-empty old key.
+- Evidence: [src/appConversations.ts:62](/home/matt/.codex/worktrees/4758/piop/src/appConversations.ts:62), [src/appConversations.ts:134](/home/matt/.codex/worktrees/4758/piop/src/appConversations.ts:134), [src/appDrafts.ts:74](/home/matt/.codex/worktrees/4758/piop/src/appDrafts.ts:74), [src/lib/sessionResume.ts:42](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionResume.ts:42).
+- Fix: Keep a stable restored draft identity, or migrate its record and pointer together with recoverable commit ordering. Do not remove the old reference before the replacement can be discovered independently.
+- Done when: Repeated failed starts and reloads keep the selected draft and its text reachable, without creating unreferenced random-key copies. Depends on #21's durable discovery model.
+
+### #23 — Unsent attachments are memory-only and attachment-only drafts cannot resume
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Reload a draft containing images or text attachments: text persistence contains only strings and uploads are held in a transport-keyed Map. An attachment-only draft does not get a draft resume pointer because that pointer is conditioned on composer text.
+- Evidence: [src/appDrafts.ts:48](/home/matt/.codex/worktrees/4758/piop/src/appDrafts.ts:48), [src/appDrafts.ts:57](/home/matt/.codex/worktrees/4758/piop/src/appDrafts.ts:57), [src/appConversations.ts:169](/home/matt/.codex/worktrees/4758/piop/src/appConversations.ts:169).
+- Fix: Persist attachment content or durable attachment-file references with draft metadata, and include attachments in draft discovery/resume. Clean up only after confirmed submission or explicit discard; account for shared references and report persistence failure.
+- Done when: Reload restores text, images, and text attachments, including attachment-only and inactive drafts. Use the shared draft model from #19–22.
+
+### #24 — Client preference saves can overwrite a peer window's unrelated changes
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: The UI merges incoming settings when it receives updates, but a save still sends a captured complete preference snapshot. A peer window can commit another field while that save is pending or before its change event is incorporated. Serialization and atomic replacement do not merge stale snapshots.
+- Evidence: [src/components/SettingsView.tsx:110](/home/matt/.codex/worktrees/4758/piop/src/components/SettingsView.tsx:110), [src/components/SettingsView.tsx:190](/home/matt/.codex/worktrees/4758/piop/src/components/SettingsView.tsx:190), [src/lib/clientSettings.ts:48](/home/matt/.codex/worktrees/4758/piop/src/lib/clientSettings.ts:48), [src-tauri/src/client_settings.rs:34](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/client_settings.rs:34).
+- Fix: Send intended preference mutations plus an editing baseline/revision. Merge disjoint field or keybinding changes against the latest stored value under the storage lock and surface conflicting edits rather than overwriting them.
+- Done when: Overlapping saves of disjoint preferences both survive; same-field conflicts are resolved explicitly. Keep existing atomic file publication and incoming UI reconciliation. Coordinate protocol changes with #27.
+
+### #25 — Sidebar writes lose peer-window changes and collide across mobile hosts
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Sidebar collapse/order/group collections are saved from locally held complete snapshots. A stale window can erase a peer's unrelated change. On mobile, keys are global and project identity uses hostId='local', so equal project paths/branches on different connected daemons share saved state.
+- Evidence: [src/lib/sidebarState.ts:17](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:17), [src/lib/sidebarState.ts:200](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:200), [src/lib/sidebarState.ts:409](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:409), [src/lib/sessionGroups.ts:124](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionGroups.ts:124).
+- Fix: Scope storage by stable endpoint identity and apply keyed mutations against current persisted state. Reconcile storage events and same-item conflicts. Migrate ambiguous legacy global data without silently assigning it to the wrong mobile host.
+- Done when: Independent window edits survive and two mobile endpoints with identical project paths retain separate state. Preserve ordering semantics and coordinate group deletion cleanup with #40.
+
+### #26 — Secondary-window resume records are bypassed on reload
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: A targeted window opens A, switches to B, and persists B under its URL-specific last-session key. Reload always prefers the original URL target A, so that saved selection has no effective startup consumer.
+- Evidence: [src/lib/nativeTransport.ts:20](/home/matt/.codex/worktrees/4758/piop/src/lib/nativeTransport.ts:20), [src/lib/sessionResume.ts:19](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionResume.ts:19), [src/lib/sessionResume.ts:45](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionResume.ts:45).
+- Fix: Distinguish initial targeted-window launch from subsequent reloads. Restore the validated per-window saved selection after initialization while retaining the original target as the first-open fallback.
+- Done when: A new targeted window starts at A; after selecting B, reloading that same window returns to B. Independent windows and read-only targets retain their intended semantics.
+
+### #40 — Removing a custom group leaves unread child-order records
+
+- Status: open; source-confirmed. Priority: P3.
+- Trigger and impact: Group removal updates group parents, session orders, collapsed projects, and sidebar order, but does not delete groupChildOrders[groupId]. Recreated groups use new UUIDs, making the old ordering entry unreachable.
+- Evidence: [src/lib/sidebarState.ts:167](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:167), [src/lib/sidebarState.ts:394](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:394), [src/lib/sidebarState.ts:409](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:409), [src/lib/sidebarState.ts:418](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:418).
+- Fix: Prune the removed group's child-order entry as part of its confirmed removal, applying the same scoped mutation discipline as other sidebar updates. Keep child items' surviving placement and do not prune hidden but existing groups.
+- Done when: Deleted custom groups leave no stale child-order entries; unrelated groups and released child order remain intact. Implement with #25.
+
+## Broker control, lineage, and goal assets
+
+### #15 — Restored delegation records do not recreate supervision or completion delivery
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: After a parent watcher is interrupted, saved unresolved child runs can still be read, but active and pending collections restart empty. await_subagents can immediately report completion, and surviving child work lacks result delivery, slot accounting, or cancellation supervision. Normal shutdown/switch already intentionally cancels children; completed history must not restart.
+- Evidence: [src-tauri/resources/session-broker/subagents.ts:414](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:414), [src-tauri/resources/session-broker/subagents.ts:417](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:417), [src-tauri/resources/session-broker/subagents.ts:572](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:572).
+- Fix: Reconcile unresolved runs owned by the current parent with actual child state and recreate observation without resending tasks. Persist completion-delivery/accounting progress, and distinguish interrupted observation from intentionally canceled or inherited historical runs.
+- Done when: Reopening reports unresolved children accurately and delivers each outstanding result once; completed/canceled/inherited runs are not relaunched. Coordinate with #16 and #17.
+
+### #16 — A partial usage-channel file blocks subsequent child dispatch
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Termination after exclusive creation but before JSON publication leaves an empty/truncated .goal-usage.json. Reclaim parses it before checking dead ownership, so a later dispatch fails before sending its task.
+- Evidence: [src-tauri/resources/session-broker/subagent-usage.ts:25](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagent-usage.ts:25), [src-tauri/resources/session-broker/subagent-usage.ts:90](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagent-usage.ts:90), [src-tauri/resources/session-broker/subagents.ts:318](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:318).
+- Fix: Atomically publish complete channel metadata under a lifetime ownership lock. Reclaim malformed residue only after exclusive ownership establishes no live writer; preserve live channels and reliable usage accounting.
+- Done when: Interrupted publication does not permanently block later child dispatch, while concurrent live parents cannot steal each other's channel. Provides the ownership foundation for #15.
+
+### #17 — Cold snapshots lose saved pause and unanswered-question status
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Reading a saved conversation without a resident session omits isPaused and needsInput. Orchestration interprets it as idle, which can make polling classify paused or unanswered work as finished. The underlying records still restore on opening.
+- Evidence: [src-tauri/src/host_daemon/controller/requests.rs:110](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/host_daemon/controller/requests.rs:110), [src-tauri/src/host_daemon/ownership.rs:351](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/host_daemon/ownership.rs:351), [src-tauri/resources/session-broker/orchestration.ts:108](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/orchestration.ts:108), [src-tauri/resources/session-broker/pause.ts:102](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/pause.ts:102), [src-tauri/resources/ask-user.ts:35](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/ask-user.ts:35).
+- Fix: Reduce saved control state along the selected conversation branch, using the latest pause state and latest record for each question request. Match existing live restoration semantics, including answered/canceled questions.
+- Done when: Cold and live snapshots agree on paused/needs-input status; later clears and responses suppress historical state correctly. Supports #15's child reconciliation.
+
+### #18 — Forked history contains review links that the fork cannot open
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Forked history copies review records with the original parentSessionId. Opening or submitting feedback from the fork fails current-parent checks even though the original review exists. The original owner's authorization guard is valid.
+- Evidence: [src-tauri/resources/session-broker/fork.ts:126](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/fork.ts:126), [src-tauri/resources/session-broker/review.ts:127](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/review.ts:127), [src-tauri/resources/session-broker/review.ts:82](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/review.ts:82).
+- Fix: Represent inherited reviews as references to their original owner. Permit appropriate navigation to that origin or read-only viewing; do not rewrite historical ownership or grant the fork feedback authority.
+- Done when: Inherited review links open through a valid read-only/origin path and explain feedback ownership. Original-parent editing protection remains intact.
+
+### #28 — Failed goal preparation empties the submitted objective without rejecting it
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: The handler empties user message content before goal materialization/preparation commits. Invalid input, attachment errors, filesystem failure, or preparation conflict produce a notification without restoring/rejecting the submission; empty messages are excluded from model context. Effective delivery loss is confirmed; permanent JSONL disappearance remains SDK-dependent.
+- Evidence: [src-tauri/resources/session-broker/goal-controls.ts:173](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/goal-controls.ts:173), [src-tauri/resources/session-broker/goal-controls.ts:108](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/goal-controls.ts:108), [src-tauri/resources/session-broker/goal-controls.ts:179](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/goal-controls.ts:179), [src-tauri/resources/session-broker/goal-files.ts:35](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/goal-files.ts:35).
+- Fix: Keep the original submission until goal preparation commits. On failure, stop/reject it and preserve a retryable draft, without sending encoded attachment payloads into model context. Preserve existing failed-materialization cleanup.
+- Done when: Preparation failure neither silently accepts empty input nor loses the objective/attachments. A retry has the original content, and success materializes once. Coordinate acknowledgment/recovery with #19 and #23.
+
+### #32 — Goal assets have no ownership-aware permanent-deletion or archive lifecycle
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Accepted goal objectives/attachments live in a shared attachments/goal-* tree and are referenced by absolute paths. Permanent deletion does not collect them; archives depend on the original attachment tree. Completion alone is not an orphan condition because histories and forks still reference these assets.
+- Evidence: [src-tauri/resources/session-broker/goal-files.ts:24](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/goal-files.ts:24), [src-tauri/resources/session-broker/goal-controls.ts:120](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/goal-controls.ts:120), [src-tauri/resources/delete-session.cjs:166](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/delete-session.cjs:166), [src-tauri/resources/archive-conversations.cjs:214](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:214), [src-tauri/resources/session-broker/fork.ts:21](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/fork.ts:21).
+- Fix: Track asset references across surviving active conversations, archives, forks, and historical entries. Give archive/restore an explicit durable asset dependency contract, and collect only assets with no surviving reference after confirmed permanent deletion.
+- Done when: An archived/forked objective keeps working after other owners are deleted; assets with no remaining owner are discoverable and safely reclaimable. Never delete an entire attachment tree merely because its creating goal completed. Coordinate archive transaction recovery and #43 inventory.
+
+### #41 — Unpublished review files and crash-left session temporary files lack recovery
+
+- Status: open; source-confirmed. Priority: P3.
+- Trigger and impact: Failure between review-file creation and successful parent publication leaves a hidden review. Parent metadata can still make it discoverable for lifecycle cleanup, so it is not necessarily permanently orphaned. Session-file success/error paths clean temporary files, but abrupt termination bypasses finally and may leave the only complete unpublished transcript.
+- Evidence: [src-tauri/resources/session-broker/review.ts:111](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/review.ts:111), [src-tauri/resources/index-sessions.cjs:108](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/index-sessions.cjs:108), [src-tauri/resources/session-broker/session-file.ts:5](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/session-file.ts:5).
+- Fix: Track review creation/publication and recover or safely clean unowned unpublished files. On startup, recover or quarantine abandoned temporary transcripts only after establishing writer death and ownership. Preserve published reviews when merely opening the UI fails.
+- Done when: Unpublished recoverable history can be found after a crash; incomplete residue is quarantined or safely reclaimed, and no live writer or published review loses its data. Coordinate with #13's startup recovery and #32 ownership.
+
+## Archive, checkpoint, and directory recovery
+
+### #7 — Sequential archive of a shared worktree strands an earlier archive
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Archive A while B still uses the shared directory: A loses its worktree recovery descriptor. Archive B later: active-only sharing discovery removes the directory and rewrites B's records, leaving A without a descriptor and with historical paths into the removed checkout.
+- Evidence: [src-tauri/resources/archive-conversations.cjs:173](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:173), [src-tauri/resources/archive-conversations.cjs:198](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:198).
+- Fix: Track a shared archive resource and all active/archived owners. When its last active owner is archived, update the recovery contract for every surviving archived owner, preserving verified historical checkpoint roots.
+- Done when: Archive A then B, and restore A first: A obtains a valid directory and historical checkpoint access. Preserve existing co-owner deletion protection. Implement with #8 and #11.
+
+### #8 — Restoring one archived co-owner prevents restoring another
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Chats archived together share one destination/recovery directory. Each restore requires an absent destination; ordinary-directory restoration also consumes the shared stored directory. Restoring the first chat therefore blocks the next co-owner despite retained transcripts.
+- Evidence: [src-tauri/resources/archive-conversations.cjs:199](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:199), [src-tauri/resources/restore-archived-worktree.cjs:76](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/restore-archived-worktree.cjs:76), [src-tauri/resources/restore-archived-worktree.cjs:85](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/restore-archived-worktree.cjs:85), [src-tauri/resources/delete-session.cjs:342](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/delete-session.cjs:342).
+- Fix: Use a shared-resource identity and verified restoration record to let later co-owners reuse the same restored directory. Reuse only a destination proven to belong to that shared resource; never adopt or overwrite an unrelated existing checkout.
+- Done when: Parent/child or sibling chats sharing an archived directory can restore in either order, and deleting one co-owner cannot delete another's resource. Shares the ownership contract with #7.
+
+### #9 — Archive/restore leaves stale child paths and grows transcript filenames
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Every archive prefixes the transcript name with another UUID, and restore keeps that basename. Repeated cycles grow filenames; parent/child records retain former absolute paths, breaking child open/follow-up consumers after relocation. Current indexing reads header IDs, so filename variation alone is not an indexing defect.
+- Evidence: [src-tauri/resources/archive-conversations.cjs:205](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:205), [src-tauri/resources/restore-archived-worktree.cjs:113](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/restore-archived-worktree.cjs:113), [src-tauri/resources/restore-transaction.cjs:245](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/restore-transaction.cjs:245), [src-tauri/resources/session-broker/subagents.ts:233](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:233), [src-tauri/resources/session-broker/subagents.ts:297](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:297).
+- Fix: Preserve a stable original filename and journal transcript/sidecar relocation mappings. Resolve saved conversation references by stable IDs, or transactionally update all supported path-bearing fields while preserving lineage and owner checks.
+- Done when: After repeated parent/child archive and restore cycles, filenames remain bounded and child opening/follow-up resolves the actual transcript. Implement mapping with #13's replay and coordinate #10 lineage.
+
+### #10 — Descendant discovery stops before a child's own delegation marker
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Inherited messages precede the child-specific parent marker, but discovery stops at the first message. Archive/delete cascades can omit that child and its descendants; an inherited earlier parent marker can also assign the wrong ancestor.
+- Evidence: [src-tauri/resources/session-descendants.cjs:25](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-descendants.cjs:25), [src-tauri/resources/session-broker/subagents.ts:243](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:243), [src-tauri/src/backend/archives.rs:160](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/archives.rs:160).
+- Fix: Identify the child's own delegation metadata independently of inherited history. Establish an unambiguous marker/lineage contract and scan enough history to find it. Preserve deliberate exclusion of independent forks.
+- Done when: Cascades include inherited-history subagents and their true descendants, without cascading ordinary forks or misassigning inherited parent records. Coordinate #9, #15, and #32 ownership.
+
+### #11 — Removing a relocated chat's old worktree strands active checkpoint metadata
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Relocation keeps unmatched historical checkpoint roots. Worktree removal checks chats' current directories, while preservation scans archives only. Git refs may survive in the common repository, but the active transcript retains a vanished root, breaking historical access and preventing verified checkpoint deletion.
+- Evidence: [src-tauri/resources/relocate-session.cjs:41](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/relocate-session.cjs:41), [src-tauri/src/backend/worktrees.rs:498](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/worktrees.rs:498), [src-tauri/resources/preserve-archive-checkpoints.cjs:193](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/preserve-archive-checkpoints.cjs:193), [src-tauri/resources/delete-session.cjs:406](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/delete-session.cjs:406).
+- Fix: Before removal, reconcile verified checkpoint roots for both active and archived owners to a durable canonical repository under ownership locks. Preserve actual refs and historical ownership rather than deleting them or assuming the current cwd is their sole repository.
+- Done when: A relocated active chat retains usable and deletable historical checkpoints after its former clean worktree is removed. Reuse canonical-root handling for #7 and #34.
+
+### #12 — Archive refs incorrectly outrank later completed-turn baselines
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Baseline selection sorts ref names descending and excludes only prompts. archive/UUID names outrank timestamped completed snapshots, so new turns after restore compare against the archive snapshot and repeat already-settled changes. UUID ordering also does not establish archive recency.
+- Evidence: [extensions/piop-diff-watch/index.ts:59](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/index.ts:59), [extensions/piop-diff-watch/index.ts:237](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/index.ts:237), [extensions/piop-diff-watch/index.ts:643](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/index.ts:643), [src-tauri/resources/archive-conversations.cjs:114](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:114).
+- Fix: Select the latest valid recorded completed baseline explicitly, with archive checkpoints as a deliberate fallback when appropriate. Do not remove recovery refs merely to influence sorting.
+- Done when: After archive, restore, and a new completed turn, subsequent comparisons use that turn's baseline. Multiple archive UUIDs cannot determine chronological precedence. Coordinate #33 cleanup.
+
+### #13 — Archive and deletion journals lack crash replay
+
+- Status: open; source-confirmed. Priority: P1.
+- Trigger and impact: Termination bypasses in-process rollback and can leave moved worktrees/transcripts, numbered staged files, removed refs, and a stale deletion lock that blocks retry. Recovery bytes exist but normal replay only scans restore journals. Archive also creates refs/backups before its journal and does not durably advance progress flags.
+- Evidence: [src-tauri/resources/archive-conversations.cjs:305](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:305), [src-tauri/resources/archive-conversations.cjs:322](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:322), [src-tauri/resources/delete-session.cjs:260](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/delete-session.cjs:260), [src-tauri/resources/delete-session.cjs:466](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/delete-session.cjs:466), [src-tauri/src/restore_recovery.rs:14](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/restore_recovery.rs:14).
+- Fix: Write versioned operation journals before mutation, with durable progress/commit boundaries, identity checks, conditional ref operations, and idempotent archive/delete replay. Distinguish pending rollback from committed-deletion garbage; retain ambiguous recovery copies.
+- Done when: Startup/retry restores a consistent discoverable state or safely finishes a proven commit after interruption at any mutation boundary. No stale lock permanently prevents recovery. Foundation for #7–11, #33, #36, #38, #39, and #41.
+
+### #14 — Whole-map diff persistence has a permanent size ceiling and loses retry snapshots
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: The cumulative .diffs.json map eventually exceeds 16 MiB, causing new saves to fail and oversized files to fail loading. The daemon discards both comparison snapshots even when saving fails, so the failed diff has no retained comparison pair. Existing within-limit history survives; there is no confirmed automatic retry loop.
+- Evidence: [src-tauri/src/backend/git_diffs.rs:135](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/git_diffs.rs:135), [src-tauri/src/backend/git_diffs.rs:148](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/git_diffs.rs:148), [src-tauri/src/backend/git_diffs.rs:164](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/git_diffs.rs:164), [src-tauri/src/daemon.rs:177](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon.rs:177), [src-tauri/src/daemon.rs:184](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon.rs:184), [src/lib/sessionRuntimePool.ts:308](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionRuntimePool.ts:308).
+- Fix: Use bounded indexed chunks or another incremental diff store with backward-compatible migration. Preserve failed comparisons or a durable pending diff until persistence commits, and distinguish permanent size errors from transient failures. Keep fork/archive/restore consumers compatible.
+- Done when: Growing histories accept later diffs beyond the old aggregate cap; interrupted/failed persistence remains recoverable without duplicating entries or losing old diffs. Coordinate sidecar consumers without reassessing #1–6.
+
+### #31 — Missing-directory recovery makes a normal conversation depend on /tmp
+
+- Status: open; source-confirmed. Priority: P1.
+- Trigger and impact: Both empty and remote recovery persist newly created temporary paths as the conversation's real working directory. OS temporary cleanup can remove later work; cloned main checkouts are outside profile inventory and are not linked-worktree discoveries. Exact-commit restoration is a separate limitation: current UI explicitly offers recovery of a remote branch, not the registry's saved HEAD.
+- Evidence: [src-tauri/resources/recover-missing-session.cjs:30](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/recover-missing-session.cjs:30), [src-tauri/resources/recover-missing-session.cjs:60](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/recover-missing-session.cjs:60), [src-tauri/resources/recover-missing-session.cjs:62](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/recover-missing-session.cjs:62), [src/components/MissingDirectoryDialog.tsx:47](/home/matt/.codex/worktrees/4758/piop/src/components/MissingDirectoryDialog.tsx:47), [src-tauri/resources/storage-inventory.cjs:181](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:181).
+- Fix: Allocate durable managed recovery directories, register their ownership and inventory, and relocate existing recovery directories with recoverable publication while preserving contents. Update the recovery UI to match the durable destination. Keep latest-remote-branch semantics explicit; do not silently promise recovery of unavailable/unpushed commits.
+- Done when: A recovered normal conversation's files survive temporary-directory cleanup and are tracked as owned recovery storage. Metadata retains the actual recovered revision. Exact saved-HEAD recovery is excluded from the mandatory fix unless an explicit product promise is added; retained registry HEAD alone cannot supply unavailable Git objects.
+
+### #33 — Successful archive rollback leaves created refs and transaction backups
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Rollback can restore conversations successfully but leave transaction-created archive refs and the transaction directory. Repeated failures accumulate backups/Git retention; leftover archive refs also interfere with the current baseline selector.
+- Evidence: [src-tauri/resources/archive-conversations.cjs:115](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:115), [src-tauri/resources/archive-conversations.cjs:193](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:193), [src-tauri/resources/archive-conversations.cjs:322](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:322).
+- Fix: Keep provenance of transaction-created refs and remove them only with expected-commit checks after verified rollback. Reclaim the transaction directory only after rollback completion is proven; retain failed or uncertain rollback data.
+- Done when: Successful rollback leaves no unnecessary transaction-created refs/backups, while incomplete rollback retains usable recovery state. Depends on #13 and cooperates with #12.
+
+### #34 — Failed child creation leaks checkpoint pins in historical repositories
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Pin creation returns exact created-ref handles across historical repositories, but the child-creation caller discards them. A later failure cleans only the current repository, leaving historical-repository child pins without a published child owner.
+- Evidence: [extensions/piop-diff-watch/pin-checkpoints.ts:40](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/pin-checkpoints.ts:40), [extensions/piop-diff-watch/index.ts:444](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/index.ts:444), [extensions/piop-diff-watch/index.ts:353](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/index.ts:353).
+- Fix: Carry created-ref handles through child publication and conditionally clean those owned by a failed operation across every affected repository. Preserve successful child's independent refs and preexisting refs sharing objects.
+- Done when: Failed child publication leaves no unowned transaction-created pins in any touched repository; successful children retain historical checkpoint ownership. Coordinate #11 root resolution and #43 provenance.
+
+### #39 — Invalid or rolled-back restore receipts accumulate without pruning
+
+- Status: open; source-confirmed. Priority: P3.
+- Trigger and impact: A receipt is written before the final transcript move; failure/replay can roll back and remove its journal while leaving the receipt. Deleted/replaced destinations likewise make receipts stale. Existing destination inode/session-ID checks reject those stale receipts, so ordinary stale receipts do not establish false committed success.
+- Evidence: [src-tauri/resources/restore-transaction.cjs:275](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/restore-transaction.cjs:275), [src-tauri/resources/restore-transaction.cjs:279](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/restore-transaction.cjs:279), [src-tauri/resources/restore-transaction.cjs:179](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/restore-transaction.cjs:179).
+- Fix: Prune only matching receipts proven uncommitted or invalid after considering active journals and current destination identity. Retain valid committed receipts supporting safe retries.
+- Done when: Rollback/permanent deletion can reclaim invalid receipts without invalidating legitimate committed-restore retries or acting on another operation's receipt. Coordinate #13 replay and #38 deletion cleanup.
+
+## Settings, ChatGPT, lifecycle cleanup, and accounting
+
+### #27 — Settings can report failure after committing a partially synchronized configuration
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Settings are published before fallible daemon invalidation, revision bookkeeping, and synchronization. A later failure reports an error and skips the normal notification despite committed disk state. Frontend error handling can roll back already-saved agent definitions, and daemon/client preferences are saved in separate phases.
+- Evidence: [src-tauri/src/backend/settings.rs:148](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/settings.rs:148), [src-tauri/src/backend/settings.rs:115](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/settings.rs:115), [src-tauri/src/daemon.rs:120](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon.rs:120), [extensions/piop-define-agents/index.ts:755](/home/matt/.codex/worktrees/4758/piop/extensions/piop-define-agents/index.ts:755), [src/appSettings.ts:94](/home/matt/.codex/worktrees/4758/piop/src/appSettings.ts:94), [src/lib/nativeSettings.ts:61](/home/matt/.codex/worktrees/4758/piop/src/lib/nativeSettings.ts:61).
+- Fix: Separate failure-before-commit from committed-with-synchronization-pending. Return the committed revision, publish the committed state, and durably retry failed synchronization. Prevalidate and coordinate agent/settings/client-preference commits, or expose recoverable partial outcomes; do not blindly roll agents back after a recognized settings commit.
+- Done when: Reported save outcome matches disk state, all affected views converge, and retry cannot overwrite unrelated later changes. Existing frontend writers are per-transport serialized, but cross-window revision handling in #24 is still needed.
+
+### #29 — Separate daemons sharing an account can clobber ChatGPT transcripts
+
+- Status: open; source-confirmed. Priority: P1.
+- Trigger and impact: Storage derives from a shared Pi auth directory/account, while chat ownership and operation/write queues are process-local. Two daemons can read stale snapshots, both believe they own editing, and replace each other's messages/status. Recovery reads can also write without an editing lease.
+- Evidence: [src-tauri/resources/chatgpt-service.mjs:139](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:139), [src-tauri/resources/chatgpt-service.mjs:82](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:82), [src-tauri/resources/chatgpt-service.mjs:209](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:209), [src-tauri/resources/chatgpt-service.mjs:629](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:629).
+- Fix: Coordinate shared per-chat ownership over the full streaming lifetime, with revision-checked updates. Cover progress/final writes, recovery, and stop, and prevent recovery from rewriting a chat another daemon actively owns. Keep atomic publication for torn-write protection.
+- Done when: Concurrent daemons cannot lose accepted local transcript updates or both edit one chat; stale/recovery writes surface conflict or merge safely. Ordinary windows using one daemon remain supported. Ownership foundation for #30 repair.
+
+### #30 — One malformed ChatGPT record blocks its account's healthy catalog
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: A matching record file with invalid JSON, null, or invalid record identity causes Promise.all to reject the selected account's entire chat list. Initial UI loading combines history and model availability. Malformed model arrays can independently fail model loading. This is not evidence that unrelated daemon/provider catalogs are poisoned.
+- Evidence: [src-tauri/resources/chatgpt-service.mjs:235](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:235), [src-tauri/resources/chatgpt-service.mjs:368](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:368), [src/plugins/chatgpt/useChatGpt.ts:90](/home/matt/.codex/worktrees/4758/piop/src/plugins/chatgpt/useChatGpt.ts:90), [src-tauri/resources/provider-sdk.mjs:224](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/provider-sdk.mjs:224), [src-tauri/src/host_daemon/providers.rs:516](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/host_daemon/providers.rs:516).
+- Fix: Validate and isolate persisted records individually, checking filename/record identity and preserving damaged files with visible diagnostics. Keep healthy history usable; independently validate model catalogs and preserve the last usable model catalog where available.
+- Done when: Healthy chats can list/read/send when another selected-account record is damaged, with a visible repair path for that record. Any repair write respects #29's shared coordination.
+
+### #35 — Failed ephemeral cleanup is untracked before it succeeds
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Runtime removal and shutdown drain tracking before SSH/Node/filesystem/Git cleanup. Failure only logs, leaving transcripts, sidecars, or refs without a retry owner while callers can observe success.
+- Evidence: [src-tauri/src/backend/pi_launch.rs:67](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/pi_launch.rs:67), [src-tauri/src/backend/pi_launch.rs:76](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/pi_launch.rs:76), [src-tauri/src/backend/pi_launch.rs:379](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/pi_launch.rs:379).
+- Fix: Return actual cleanup outcomes and retain failed cleanup in a durable retry queue. Untrack only after successful cleanup or after transferring ownership to that queue; verify session/ref identities and inactive eligibility before retries.
+- Done when: Cleanup failure remains visible and retryable across restart, and live/reusable ephemeral sessions are not reclaimed. Coordinate journal/provenance work with #13 and inventory coverage with #43.
+
+### #36 — Permanent deletion can commit while its note cleanup silently fails
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: An existing note cannot be read or staged, but conversation deletion proceeds, leaving the note after its conversation is tombstoned. Warnings go to stderr and backend result handling returns success; a missing note alone is harmless.
+- Evidence: [src-tauri/resources/delete-session.cjs:302](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/delete-session.cjs:302), [src-tauri/resources/delete-session.cjs:312](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/delete-session.cjs:312), [src-tauri/src/backend/archives.rs:354](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/archives.rs:354).
+- Fix: Require necessary note cleanup staging before committing deletion, or return an explicit partial-completion result backed by durable cleanup work. Include note operations in crash replay and preserve missing-note tolerance.
+- Done when: An unreadable/unremovable note cannot silently escape a supposedly complete permanent deletion; partial cleanup has a visible durable owner and safe retry. Depends on #13's transaction contract. This is backend deletion cleanup, not a reassessment of #5–6.
+
+### #37 — Restart preparation failures and old stopped fallbacks leave unowned executables
+
+- Status: open; source-confirmed. Priority: P3.
+- Trigger and impact: Backup creation precedes fallible preparation/publication, and there is no stale-backup reconciliation after failure or coordinator termination. Rolled-back daemons can legitimately execute the fallback, so a retained backup is not an orphan while a live process or plan uses it.
+- Evidence: [src-tauri/src/daemon_restart.rs:83](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_restart.rs:83), [src-tauri/src/daemon_restart.rs:140](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_restart.rs:140), [src-tauri/src/daemon_restart.rs:227](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_restart.rs:227), [src-tauri/src/daemon_restart.rs:272](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_restart.rs:272).
+- Fix: Add preparation cleanup guards and reconcile old restart artifacts using active plan/process/executable ownership. Do not infer safe deletion solely from status expiration; retain live rollback/candidate/coordinator executables.
+- Done when: Proven unused preparation and stopped-fallback artifacts are reclaimable, while every live process and active rollback plan keeps its needed binary.
+
+### #38 — Confirmed permanent deletion leaves registry and group-assignment metadata
+
+- Status: open; source-confirmed. Priority: P3.
+- Trigger and impact: Registry rows and assignment keys accumulate after permanent deletion. Missing-directory repository metadata and offline assignments are valid retention; absence from a current listing is not sufficient proof of deletion. Stale rows alone do not resurrect conversations.
+- Evidence: [src-tauri/resources/session-registry.cjs:119](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-registry.cjs:119), [src-tauri/src/session_groups.rs:198](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/session_groups.rs:198), [src-tauri/src/backend/archives.rs:301](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/archives.rs:301), [src-tauri/src/backend/session_index.rs:138](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/session_index.rs:138).
+- Fix: Prune using explicitly committed permanently deleted IDs, including verified descendants. Use deletion tombstones to reject late asynchronous registry writes. Preserve active/archived sessions, missing-directory recovery metadata, offline-host assignments, and intentional placement choices.
+- Done when: Permanent deletion removes its obsolete metadata and late writers cannot recreate it; archiving and offline/missing-directory recovery keep needed metadata. Depends on #10 and #13.
+
+### #42 — Daemon logs grow without a retention bound
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Ordinary startup, restart, and daemon diagnostics append across launches without size/age bounds, eventually consuming storage. This is unbounded diagnostic retention, not proof that conversation content is lost.
+- Evidence: [src-tauri/src/daemon_stdio.rs:40](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_stdio.rs:40), [src-tauri/src/desktop_daemon.rs:245](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/desktop_daemon.rs:245), [src-tauri/src/daemon_restart.rs:185](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_restart.rs:185).
+- Fix: Use bounded logging/rotation across all producers, accounting for concurrent writers and already-open stderr handles. Preserve useful recent startup/restart failure diagnostics and report covered log storage.
+- Done when: Production log storage has a reliable bound across launches/restarts, rotation remains compatible with live writers, and recent failure diagnostics are retained.
+
+### #43 — Inventory conflates referenced storage with ownership and incomplete archive row sizes
+
+- Status: open; source-confirmed. Priority: P2.
+- Trigger and impact: Conversation cwd can cause user-created worktrees to count as Piop storage without proving ownership. External ChatGPT/recovery/ephemeral roots can be omitted. Archive row bytes count only JSONL plus .diffs.json, while category totals already use allocated blocks and inode deduplication. Count units vary and other-storage is always 1; these figures do not establish reclaimable space. Checkpoint repositories/owners without readable provenance are incompletely discovered or classified as active.
+- Evidence: [src-tauri/resources/storage-inventory.cjs:162](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:162), [src-tauri/resources/storage-inventory.cjs:399](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:399), [src-tauri/resources/storage-inventory.cjs:458](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:458), [src-tauri/resources/storage-inventory.cjs:481](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:481), [src-tauri/resources/storage-inventory.cjs:524](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:524), [src-tauri/resources/storage-inventory.cjs:601](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:601), [src/components/StorageSettings.tsx:221](/home/matt/.codex/worktrees/4758/piop/src/components/StorageSettings.tsx:221), [src-tauri/resources/chatgpt-service.mjs:140](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:140).
+- Fix: Report owned, referenced/shared, estimated, unattributed, and reclaimable components separately, including count units/coverage and known external roots. Retain repository/ref provenance and expose unavailable roots. Clarify archive row size semantics or include owned/shared sidecars without double-counting. Classify goal assets using actual surviving owners.
+- Done when: Displayed rows/categories clearly state what their bytes/counts cover and what can be reclaimed. Known external recovery/ChatGPT/ephemeral storage and unassigned checkpoints are discoverable, with existing inode deduplication retained. Discovery alone never authorizes deleting user worktrees, active snapshots, nonempty workdirs, shared assets, or unresolved recovery artifacts. Coordinate #11, #13, #31–35, and #41.
+
+## Qualified findings and retention excluded from cleanup goals
+
+- **Tool-failure database:** its duplicate-record reader and 500-row cap justify diagnostic retention. No product recovery consumer was found, but no promise requiring one was established. Preserve it; do not add an unrequested recovery feature or remove diagnostics merely because the UI meter uses transcripts. Evidence: [tool_failures.rs:71](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/host_daemon/tool_failures.rs:71), [tool_failures.rs:123](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/host_daemon/tool_failures.rs:123).
+- **Recorded registry fields:** `head_commit`, `repository_root`, `remote_name`, and `observed_at` are recorded/exported metadata, not proof of exact checkout restoration. The UI explicitly offers remote-branch recovery. Exact-HEAD recovery is a product limitation, not an extra mandatory feature in this goal; #31 fixes the durable-directory defect and truthful recovery state. Evidence: [session-registry.cjs:82](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-registry.cjs:82), [MissingDirectoryDialog.tsx:47](/home/matt/.codex/worktrees/4758/piop/src/components/MissingDirectoryDialog.tsx:47).
+- **Goal files after completion/clear:** retained history and forks can still refer to them. Completion-time deletion is not a valid fix. #32 covers ownership after the last real reference is permanently removed.
+- **Independent forks and inherited reviews:** copied history is deliberate retention. Forks must not become owned descendants in deletion cascades, and a fork must not gain its origin parent's review-editing authority. #10 and #18 preserve those distinctions.
+- **Failed/uncertain rollback copies and valid restore receipts:** they have recovery/retry consumers. #13, #33, and #39 reclaim only proven unnecessary operation-owned artifacts.
+- **Live daemon fallback executables, active snapshots, missing-directory registry rows, and offline group assignments:** retain them while their owners or recovery consumers need them. Absence from the current UI is not proof of orphaning.
+
+## Valid redundancies to preserve
+
+| Copies | Reason they remain useful |
+|---|---|
+| JSONL, session index/mobile list cache, and session registry | Authoritative history, discovery/offline summaries, and missing-directory repository metadata have different readers. |
+| Goal/pause/agent state transitions and prompt-context records | Current state and historical/branch restoration require retained transitions and context composition. |
+| Git checkpoints, snapshot packs, and saved turn diffs | Historical checkouts, durable comparison baselines, and rendered turn patches require distinct artifacts. |
+| Parent/child refs and forked transcripts | Independent owners retain shared Git objects and independently usable history. |
+| Pending/completed checkpoint records | Recovery reconciles incomplete checkpoint publication. |
+| Child transcripts, parent delegation records, and delivered results | Independent history, orchestration metadata, and parent-visible delivery are all necessary; #15 repairs their reconciliation. |
+| Live usage accounting and transcript reconciliation | Current budgeting and high-water recovery serve different stages and must not double-count. |
+| Review transcripts and parent/link metadata | Separate history and navigation/ownership links need independent records. |
+| Shared goal assets | Sharing avoids large copies; ownership-aware retention in #32 must consider every surviving reference. |
+| Restore journal, reservation, and receipt | Rollback ownership, commit recognition, and idempotent retry each have readers. |
+| Ownership files, leases, and deletion tombstones | They coordinate writers and protect committed deletion/recovery state. |
+| Local ChatGPT records and remote conversations | Local list/read/send/recovery consumers justify the local transcript; #29 repairs shared-writer coordination. |
+| Daemon defaults and native client preferences | Device-specific overrides are intentional; migration removes fallback records only after a successful native save. |
+| Mobile group caches and authoritative daemon groups | Host-scoped caches serve startup/offline display. |
+| Memory and sessionStorage stopped-prompt markers | Tab-lifetime suppression survives reloads without being permanent history. |
+| Content-addressed historical prompt files and inline agent prompt snapshots | Persisted prompt paths have readers and hashes deduplicate files; ordinary agent snapshots preserve their own inline prompt content. |
+
+## Progress
+
+Triage is complete. All open entries above remain implementation work; source review does not mark them fixed. Record each completed issue's change and permitted verification here and update its status before removing it from the active goal's backlog.
