@@ -133,8 +133,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
       return false;
     }
 
-    const uploads = draftUploadsFromImages(images);
-    const durable = staged ?? await stageSubmission({ rawText: text, uploads, consume: props.draft === text && !props.uploads?.length });
+    const durable = staged ?? await stageSubmission({ rawText: text, uploads: draftUploadsFromImages(images), consume: props.draft === text && !props.uploads?.length });
 
     return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)));
   };

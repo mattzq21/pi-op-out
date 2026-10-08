@@ -16,6 +16,7 @@ export function preserveChatSelection(owner: NativeTransport, listing: ProjectBr
 }
 
 export function updateChatPreparation(owner: NativeTransport, status: string) {
+  if (chatSubmission(owner)?.status === status) return;
   setSubmissions(current => current.map(item => item.owner === owner ? { ...item, status } : item));
 }
 
@@ -75,13 +76,12 @@ function waitForConnection(owner: NativeTransport, active: Accessor<NativeTransp
 }
 
 export async function prepareChatWorktree(owner: NativeTransport, select: (path: string, host: string, onActivate: (destination: NativeTransport) => Promise<void>) => Promise<void>, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
-  const path = await registeredWorktreePreparation(owner);
+  const preparation = registeredWorktreePreparation(owner);
+  const path = preparation ? await preparation : undefined;
 
   if (active() !== owner) throw new Error("Conversation changed");
 
-  if (!path) { updateChatPreparation(owner, "Sending message…");
-
-  return owner; }
+  if (!path) return owner;
 
   let selected: NativeTransport | undefined;
   await select(path, owner.currentHostId(), async (destination) => {

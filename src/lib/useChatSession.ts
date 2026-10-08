@@ -12,7 +12,7 @@ import { contextUsageAfterCompaction } from "./contextUsage";
 import { appendFileChanges, appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
-import { reconcileMessages } from "./reconcileMessages";
+import { reconcileMessages, upsertLiveMessage } from "./reconcileMessages";
 
 interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 
@@ -417,7 +417,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
       if (message.customType === "pi-desktop-btw") return;
       message = updateAssistant(message);
-      session.setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? { ...message, toolInput: message.toolInput ?? item.toolInput, details: message.details ?? item.details, fileChanges: item.fileChanges, promptContext: item.promptContext } : item) : [...current, message]);
+      session.setMessages(current => upsertLiveMessage(current, message));
     };
 
     const handleMessageUpdate = () => {
@@ -518,7 +518,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       "auto_compaction_end": handleCompactionEnd,
       "auto_retry_start": handleAutoRetryStart,
       "thinking_level_changed": handleThinkingLevelChanged,
-      "model_select": refreshCapabilities
+      "model_select": () => { if (!transport().promptControls?.isApplying()) refreshCapabilities(); }
     }));
 
     handlers.get(event.type)?.();

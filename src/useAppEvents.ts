@@ -229,7 +229,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       };
 
       const handleSessionInfoChanged = () => {
-        if (!initializing) void capturedOptions.refreshSession().catch(() => undefined);
+        if (!initializing && !capturedOptions.transport.promptControls.isApplying()) void capturedOptions.refreshSession().catch(() => undefined);
       };
 
       const handleOwnershipLost = () => {

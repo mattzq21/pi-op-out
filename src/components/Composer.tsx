@@ -190,7 +190,6 @@ export function Composer(props: Props) {
   const attachments = useComposerAttachments(composer);
   const { uploads, updateUploads, uploadError, setUploadError, readingUploads, imageInputError, setImageInputError, addFiles, addPaths } = attachments;
   const [sending, setSending] = createSignal(false);
-  const sendingRef = createRef(false);
   const [controlAction, setControlAction] = createSignal<"pause" | "resume">();
   const [stopping, setStopping] = createSignal(false);
   const stoppingRef = createRef(false);
@@ -378,7 +377,7 @@ export function Composer(props: Props) {
   const canSubmit = (message: string, images: ImageAttachment[]) => {
     if (!attachments.acceptsImages(images.length)) return false;
 
-    return Boolean((hasVisibleText(message) || images.length) && !sendingRef.current && !readingUploads());
+    return Boolean((hasVisibleText(message) || images.length) && !sending() && !readingUploads());
   };
 
   const submit = async (behavior: "steer" | "followUp" = "followUp") => { const capturedUploads = uploads(); const capturedValue = value(); const capturedComposer = { ...composer() };
@@ -387,7 +386,7 @@ export function Composer(props: Props) {
     const { message, images } = buildComposerPrompt(capturedValue, capturedUploads, capturedComposer.commands);
 
     if (!canSubmit(message, images)) return;
-    sendingRef.current = true; setSending(true); setUploadError(undefined);
+    setSending(true); setUploadError(undefined);
     const submittedValue = capturedValue; const submittedUploads = capturedUploads;
     const changeDraft = capturedComposer.onDraftChange ?? setLocalValue;
     const changeUploads = attachments.captureUploadWriter();
@@ -407,7 +406,7 @@ export function Composer(props: Props) {
       clearUnstaged(submission);
     } catch (reason) {
       setUploadError(reason instanceof Error ? reason.message : String(reason));
-    } finally { sendingRef.current = false; setSending(false); }
+    } finally { setSending(false); }
   };
 
   const abort = async () => { const capturedComposer = { ...composer() }; const capturedControlAction = controlAction();

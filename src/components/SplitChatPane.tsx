@@ -180,7 +180,10 @@ export function SplitChatPane(componentProps: Props) {
       };
 
       const handleSessionInfoChanged = () => {
-        if (!reconnecting) void capturedSession.refresh().catch(reportControlError);
+        if (reconnecting) return;
+
+        if (event.type === "session_info_changed" && capturedTransport.promptControls.isApplying()) return;
+        void capturedSession.refresh().catch(reportControlError);
       };
 
       const handleExtensionUiRequest = () => {
