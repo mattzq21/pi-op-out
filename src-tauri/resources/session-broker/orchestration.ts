@@ -194,6 +194,15 @@ function validateTargets(targets: Target[], ctx: ExtensionContext) {
 }
 
 function registerDelivery(pi: ExtensionAPI) {
+  let generation = 0;
+  let navigationTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancel = () => {
+    generation++;
+    clearTimeout(navigationTimer);
+    navigationTimer = undefined;
+    mailboxes.delete(pi);
+  };
+
   const flush = (ctx: ExtensionContext) => {
     const queued = mailboxes.get(pi);
 
@@ -202,14 +211,35 @@ function registerDelivery(pi: ExtensionAPI) {
     deliverMailbox(pi, queued);
   };
 
-  pi.on("session_start", () => { mailboxes.delete(pi); });
-  pi.on("session_shutdown", () => { mailboxes.delete(pi); });
-  pi.on("agent_settled", (_event, ctx) => { flush(ctx); });
+  const unsubscribeCancellation = pi.events.on("piop:cancel-preparation", cancel);
+  pi.on("session_start", cancel);
+  pi.on("session_shutdown", () => { cancel(); unsubscribeCancellation(); });
+  pi.on("agent_settled", (_event, ctx) => {
+    if (ctx.signal?.aborted) { cancel(); return; }
+
+    flush(ctx);
+  });
+  pi.on("session_before_tree", (_event, ctx) => {
+    clearTimeout(navigationTimer);
+    const version = generation;
+    const sessionId = ctx.sessionManager.getSessionId();
+    const checkIdle = () => {
+      navigationTimer = undefined;
+
+      if (version !== generation || ctx.sessionManager.getSessionId() !== sessionId) return;
+
+      if (ctx.isIdle()) { flush(ctx); return; }
+      navigationTimer = setTimeout(checkIdle, 20);
+    };
+
+    navigationTimer = setTimeout(checkIdle, 0);
+  });
   pi.on("session_compact", (_event, ctx) => {
+    const version = generation;
     const sessionId = ctx.sessionManager.getSessionId();
 
     setTimeout(() => {
-      if (ctx.sessionManager.getSessionId() === sessionId) flush(ctx);
+      if (version === generation && ctx.sessionManager.getSessionId() === sessionId) flush(ctx);
     }, 0);
   });
   pi.on("session_compact_failed", (_event, ctx) => { flush(ctx); });
