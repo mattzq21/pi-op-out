@@ -1,4 +1,5 @@
 import { required } from "../lib/required";
+import { trackToastMessage, trackToastNotices } from "../lib/toastHistory";
 import { extensionUiSchema } from "../lib/extensionUiSchema";
 import { inheritSessionGroup } from "../lib/sessionGroups";
 import { resolveMessageEntry } from "../lib/resolveMessageEntry";
@@ -52,6 +53,8 @@ export function SplitChatPane(componentProps: Props) {
   const [statuses, setStatuses] = createSignal<Record<string, string>>({});
   const [widgets, setWidgets] = createSignal<Record<string, string[]>>({});
   const [notices, setNotices] = createSignal<Array<{ id: string; title: string; message: string }>>([]);
+  trackToastNotices("Side pane", notices);
+  trackToastMessage("Side pane", "Conversation error", controlError);
   const [extensionFocusRequest, setExtensionFocusRequest] = createSignal(0);
   const reconnectRef = createRef<() => void>(() => undefined);
   const lifecycleRef = createRef(0);

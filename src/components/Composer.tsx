@@ -1,6 +1,7 @@
 import { ToolFailureMeter } from "./ToolFailureMeter";
 import { CacheIcon } from "./CacheIcon";
 import { required } from "../lib/required";
+import { trackToastMessage } from "../lib/toastHistory";
 import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -190,6 +191,7 @@ export function Composer(props: Props) {
 
   const attachments = useComposerAttachments(composer);
   const { uploads, updateUploads, uploadError, setUploadError, readingUploads, imageInputError, setImageInputError, addFiles, addPaths } = attachments;
+  trackToastMessage("Composer", "Image input error", () => imageInputError() ? "This model does not support image inputs. Try a different model" : undefined);
   const [sending, setSending] = createSignal(false);
   const [controlAction, setControlAction] = createSignal<"pause" | "resume">();
   const [stopping, setStopping] = createSignal(false);
