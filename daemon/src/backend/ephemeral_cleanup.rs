@@ -1,5 +1,6 @@
-use std::{fs::{self, File, OpenOptions}, io::{BufRead, BufReader, Read, Write}, path::{Path, PathBuf}, process::{Command, Stdio}, sync::Once, thread, time::Duration};
+use std::{fs::{File, OpenOptions}, io::{BufRead, BufReader, Read, Write}, path::{Path, PathBuf}, process::{Command, Stdio}, sync::Once, thread, time::Duration};
 use serde::{Deserialize, Serialize};
+use rusqlite::OptionalExtension;
 use uuid::Uuid;
 use crate::{RemoteHost, STORAGE_DIRECTORY, hash_claim_key, node_command};
 use crate::environment::home_dir;
@@ -90,30 +91,48 @@ fn sync_parent(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn database(root: &Path) -> Result<rusqlite::Connection, String> {
+    let profile = root.parent().and_then(Path::parent).ok_or("Cleanup ownership has no profile")?;
+    crate::session_registry::open(profile)
+}
+
+fn record_key(path: &Path) -> Result<&str, String> {
+    path.file_stem().and_then(|value| value.to_str()).ok_or_else(|| "Invalid cleanup ownership key".into())
+}
+
+fn saved_body(path: &Path) -> Result<Option<String>, String> {
+    let db = database(path.parent().ok_or("Missing ownership root")?)?;
+    db.query_row("SELECT record_json FROM ephemeral_cleanup_owners WHERE owner_key=?", [record_key(path)?], |row| row.get(0))
+        .optional().map_err(|error| error.to_string())
+}
+
 fn save(path: &Path, record: &Record) -> Result<(), String> {
-    let temporary = path.with_extension(format!("{}.tmp", Uuid::new_v4()));
-    let result = (|| {
-        let mut file = private_open(&temporary, true)?;
-        file.write_all(&serde_json::to_vec(record).map_err(|error| error.to_string())?).and_then(|_| file.sync_all()).map_err(|error| error.to_string())?;
-        fs::rename(&temporary, path).map_err(|error| error.to_string())?;
-        sync_parent(path)
-    })();
-    if result.is_err() { let _ = fs::remove_file(temporary); }
-    result
+    let db = database(path.parent().ok_or("Missing ownership root")?)?;
+    let body = serde_json::to_string(record).map_err(|error| error.to_string())?;
+    db.execute("INSERT INTO ephemeral_cleanup_owners VALUES (?, ?) ON CONFLICT(owner_key) DO UPDATE SET record_json=excluded.record_json",
+        rusqlite::params![record_key(path)?, body]).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn remove_record(path: &Path) -> Result<(), String> {
+    let db = database(path.parent().ok_or("Missing ownership root")?)?;
+    db.execute("DELETE FROM ephemeral_cleanup_owners WHERE owner_key=?", [record_key(path)?]).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn read(path: &Path) -> Result<Record, String> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    { use std::os::unix::fs::OpenOptionsExt; options.custom_flags(libc::O_NOFOLLOW); }
-    let file = options.open(path).map_err(|error| format!("Ownership record is unavailable: {error}"))?;
-    let record: Record = serde_json::from_reader(file).map_err(|error| format!("Invalid ephemeral ownership record: {error}"))?;
+    let body = saved_body(path)?.ok_or("Ownership record is unavailable")?;
+    let record: Record = serde_json::from_str(&body).map_err(|error| format!("Invalid ephemeral ownership record: {error}"))?;
+    validate_record(&record)?;
+    if record_path(path.parent().ok_or("Missing ownership root")?, &record.location.session()) != path { return Err("Ephemeral ownership location changed".into()); }
+    Ok(record)
+}
+
+fn validate_record(record: &Record) -> Result<(), String> {
     if record.version != 1 || record.owner.is_empty() || record.identity.is_empty() { return Err("Invalid ephemeral ownership provenance".into()); }
     Uuid::parse_str(&record.token).map_err(|_| "Invalid ephemeral ownership token")?;
     Uuid::parse_str(&record.session_id).map_err(|_| "Invalid ephemeral session identity")?;
-    if record_path(path.parent().ok_or("Missing ownership root")?, &record.location.session()) != path { return Err("Ephemeral ownership location changed".into()); }
-    Ok(record)
+    Ok(())
 }
 
 fn command(session: &EphemeralSession, request: &serde_json::Value, locked: bool) -> Result<Command, String> {
@@ -145,7 +164,7 @@ pub(super) fn register_at(home: &Path, session: &EphemeralSession, owner: &str, 
     let root = root_at(home);
     let _lock = lock(&root)?;
     let path = record_path(&root, session);
-    if path.exists() { return adopt_record(&path, owner, expected_id); }
+    if saved_body(&path)?.is_some() { return adopt_record(&path, owner, expected_id); }
     let request = serde_json::json!({"action":"inspect", "path":session.path(), "sessionId":expected_id});
     let inspected: Inspection = serde_json::from_slice(&output(&mut command(session, &request, false)?)?).map_err(|error| format!("Invalid ephemeral inspection: {error}"))?;
     Uuid::parse_str(&inspected.session_id).map_err(|_| "Invalid ephemeral session identity")?;
@@ -277,8 +296,7 @@ fn perform(record: &Record, authorized: impl FnOnce(bool) -> Result<(), String>)
 
 fn attempt(path: &Path, record: &Record) -> Result<(), String> {
     perform(record, |recover| recover_pending(record, recover))?;
-    fs::remove_file(path).map_err(|error| error.to_string())?;
-    sync_parent(path)
+    remove_record(path)
 }
 
 pub(super) fn release(session: &EphemeralSession, drain: impl FnOnce() -> Result<(), String>) -> CleanupOutcome {
@@ -292,7 +310,7 @@ pub(super) fn release(session: &EphemeralSession, drain: impl FnOnce() -> Result
                 save(&path, &record)?;
                 transferred = true;
                 recover_pending(&request, recover)
-            }).and_then(|_| { fs::remove_file(&path).map_err(|error| error.to_string())?; sync_parent(&path) });
+            }).and_then(|_| remove_record(&path));
             if let Err(error) = &result {
                 let mut failed = record;
                 failed.last_error = Some(error.clone());
@@ -323,12 +341,15 @@ fn queue(session: &EphemeralSession) -> Result<(PathBuf, Record, File), String> 
 fn retry() -> Result<(), String> {
     let root = root_at(&home_dir()?);
     let _lock = lock(&root)?;
-    for entry in fs::read_dir(&root).map_err(|error| error.to_string())? {
-        let path = entry.map_err(|error| error.to_string())?.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("json") { continue; }
-        retry_record(&path)?;
-    }
+    for key in owner_keys(&root)? { retry_record(&root.join(format!("{key}.json")))?; }
     Ok(())
+}
+
+fn owner_keys(root: &Path) -> Result<Vec<String>, String> {
+    let db = database(root)?;
+    let mut statement = db.prepare("SELECT owner_key FROM ephemeral_cleanup_owners ORDER BY owner_key").map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| row.get(0)).map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
 }
 
 fn retry_record(path: &Path) -> Result<(), String> {

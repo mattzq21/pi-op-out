@@ -1,3 +1,5 @@
+const path = require('node:path');
+
 function initialize(db) {
   db.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;`);
 
@@ -63,6 +65,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS snapshot_comparison_retries (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS snapshot_pending_diffs (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ephemeral_cleanup_records (token TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS ephemeral_cleanup_owners (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_comparison_state (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_completed_comparisons (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, turn_id TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY(session_id, turn_id));`);
 
@@ -85,7 +88,6 @@ function repositoryQuery(db, columns, suffix = '') {
 
 function movePaths(root, moves) {
   const fs = require('node:fs');
-  const path = require('node:path');
   const file = path.join(root, 'sessions.sqlite');
 
   if (!fs.existsSync(file)) return;
@@ -134,7 +136,6 @@ function registerPath(root, sessionId, sessionPath) {
 
 function importDirectory(db, directory) {
   const fs = require('node:fs');
-  const path = require('node:path');
   let entries;
 
   try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
@@ -186,14 +187,39 @@ function importSessions(db, root) {
     importSnapshotDirectories(db, root);
     importComparisonRetries(db);
     importPendingDiffs(db);
+    importEphemeralOwners(db, root);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importEphemeralOwners(db, root) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('ephemeral-cleanup-owners-v1')) return;
+  const fs = require('node:fs');
+  const directory = path.join(root, 'ephemeral-cleanup', 'owners');
+  let entries;
+
+  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    db.prepare('INSERT INTO ephemeral_cleanup_owners VALUES (?, ?)')
+      .run(entry.name.slice(0, -5), fs.readFileSync(path.join(directory, entry.name), 'utf8'));
+  }
+
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('ephemeral-cleanup-owners-v1');
+}
+
+function ephemeralOwners(root) {
+  const db = open(root);
+
+  try { return db.prepare('SELECT owner_key, record_json FROM ephemeral_cleanup_owners ORDER BY owner_key').all(); }
+  finally { db.close(); }
 }
 
 function importPendingDiffs(db) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-pending-diffs-v1')) return;
   const fs = require('node:fs');
-  const path = require('node:path');
 
   for (const row of db.prepare('SELECT directory FROM snapshot_directories').all()) {
     let body;
@@ -215,7 +241,6 @@ function pendingDiffs(root) {
 }
 
 function pendingDiff(directory) {
-  const path = require('node:path');
   const db = open(path.dirname(path.dirname(directory)));
 
   try {
@@ -226,7 +251,6 @@ function pendingDiff(directory) {
 }
 
 function savePendingDiff(directory, record) {
-  const path = require('node:path');
   const db = open(path.dirname(path.dirname(directory)));
 
   try {
@@ -238,7 +262,6 @@ function savePendingDiff(directory, record) {
 function importComparisonRetries(db) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-comparison-retries-v1')) return;
   const fs = require('node:fs');
-  const path = require('node:path');
 
   for (const row of db.prepare('SELECT directory FROM snapshot_directories').all()) {
     let body;
@@ -253,7 +276,6 @@ function importComparisonRetries(db) {
 }
 
 function comparisonRetry(directory) {
-  const path = require('node:path');
   const db = open(path.dirname(path.dirname(directory)));
 
   try {
@@ -269,7 +291,6 @@ function comparisonRetry(directory) {
 }
 
 function saveComparisonRetry(directory, record) {
-  const path = require('node:path');
   const db = open(path.dirname(path.dirname(directory)));
 
   try {
@@ -279,7 +300,6 @@ function saveComparisonRetry(directory, record) {
 }
 
 function removeComparisonRetry(directory) {
-  const path = require('node:path');
   const db = open(path.dirname(path.dirname(directory)));
 
   try { db.prepare('DELETE FROM snapshot_comparison_retries WHERE directory=?').run(directory); }
@@ -328,7 +348,6 @@ function completedComparisons(root, sessionId, retained, completed) {
 function importSnapshotDirectories(db, root) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-directories-v1')) return;
   const fs = require('node:fs');
-  const path = require('node:path');
   const parent = path.join(root, 'git-snapshots');
   let entries;
 
@@ -350,7 +369,6 @@ function importSnapshotDirectories(db, root) {
 }
 
 function saveSnapshotOwner(directory, owner) {
-  const path = require('node:path');
   const db = open(path.dirname(path.dirname(directory)));
 
   try {
@@ -367,7 +385,6 @@ function snapshotDirectories(root) {
 }
 
 function snapshotOwner(directory) {
-  const path = require('node:path');
   const db = open(path.dirname(path.dirname(directory)));
 
   try {
@@ -378,7 +395,6 @@ function snapshotOwner(directory) {
 }
 
 function removeSnapshotDirectory(directory) {
-  const path = require('node:path');
   const db = open(path.dirname(path.dirname(directory)));
 
   try {
@@ -393,7 +409,6 @@ function removeSnapshotDirectory(directory) {
 function importReaderReleases(db, root) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-reader-releases-v1')) return;
   const fs = require('node:fs');
-  const path = require('node:path');
   const directory = path.join(root, 'git-snapshots', '.released-readers');
   let entries;
 
@@ -436,7 +451,6 @@ function removeSnapshotReaderRelease(root, row) {
 function importRecoveryDirectories(db, root) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('recovery-directories-v1')) return;
   const fs = require('node:fs');
-  const path = require('node:path');
   const directory = path.join(root, 'recovery');
   let entries;
 
@@ -477,7 +491,6 @@ function saveRecoveryRecord(root, record) {
 function importWorktrees(db, root) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('worktree-allocations-v1')) return;
   const fs = require('node:fs');
-  const path = require('node:path');
   const directory = path.join(root, 'worktrees');
   let entries;
 
@@ -501,7 +514,6 @@ function importWorktrees(db, root) {
 }
 
 function recordWorktree(container, target, branch, parentBranch) {
-  const path = require('node:path');
   const fs = require('node:fs');
   const db = open(path.dirname(path.dirname(container)));
 
@@ -536,7 +548,6 @@ function worktreeContainers(root) {
 function importCleanupRequests(db, root) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('cleanup-requests-v1')) return;
   const fs = require('node:fs');
-  const path = require('node:path');
 
   for (const kind of ['goal', 'worktree']) {
     let metadata;
@@ -575,7 +586,6 @@ function finishCleanup(root, kind, revision) {
 function importRetention(db, root) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('retention-candidates-v1')) return;
   const fs = require('node:fs');
-  const path = require('node:path');
   const directory = path.join(root, 'retention-candidates');
   let names;
 
@@ -605,7 +615,6 @@ function importRestorations(db, root, receipts = false) {
 
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get(migration)) return;
   const fs = require('node:fs');
-  const path = require('node:path');
   const directory = path.join(root, configuration.directory);
   let names;
 
@@ -628,7 +637,6 @@ function importRestorations(db, root, receipts = false) {
 function importPublications(db, root) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('session-publications-v1')) return;
   const fs = require('node:fs');
-  const path = require('node:path');
   const directory = path.join(root, 'session-publications');
   let names;
 
@@ -717,7 +725,6 @@ function paths(root) {
 }
 
 function storageRoot(file) {
-  const path = require('node:path');
   let directory = path.dirname(file);
 
   while (path.dirname(directory) !== directory) {
@@ -730,4 +737,4 @@ function storageRoot(file) {
 
 module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot,
   publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
-  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons, comparisonRetry, saveComparisonRetry, removeComparisonRetry, pendingDiffs, pendingDiff, savePendingDiff };
+  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons, comparisonRetry, saveComparisonRetry, removeComparisonRetry, pendingDiffs, pendingDiff, savePendingDiff, ephemeralOwners };

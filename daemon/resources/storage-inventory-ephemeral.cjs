@@ -24,25 +24,6 @@ const manifestSchema = Type.Object({ phase: Type.Union(['waiting', 'prepared', '
 
 const headerSchema = Type.Object({ type: Type.Literal('session'), id: uuid });
 
-async function entries(directory, warnings) {
-  try {
-    if (!(await fs.lstat(directory)).isDirectory()) throw new Error('Storage root is not a regular directory');
-
-    return await fs.readdir(directory, { withFileTypes: true });
-  } catch (error) {
-    if (error.code !== 'ENOENT') warnings.push(`${directory}: cleanup/pending ownership discovery unavailable: ${error.message}`);
-
-    return [];
-  }
-}
-
-async function json(file) {
-  const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
-
-  try { return JSON.parse(await handle.readFile('utf8')); }
-  finally { await handle.close(); }
-}
-
 function ownerFilename(record) {
   const machine = record.location.kind === 'local' ? 'local' : record.location.host.target;
 
@@ -87,17 +68,15 @@ async function ownedArtifacts(record, file, discovery) {
   }
 }
 
-async function ownerRecord(file, discovery) {
-  const root = addRoot(discovery.cleanup, file, 'Ephemeral cleanup ownership record; validation pending', 'owned');
-  root.state = 'unresolved';
+async function ownerRecord(file, row, discovery) {
 
   try {
-    const record = await json(file);
+    const record = JSON.parse(row.record_json);
 
-    if (!Check(ownerSchema, record) || ownerFilename(record) !== path.basename(file) || !absolute(record.location.path) || !record.location.path.endsWith('.jsonl')) throw new Error('Invalid ephemeral ownership identity or location');
-    root.state = record.queued ? 'queued-eligible' : 'active-record';
-    root.provenance = [`Durable owner: ${record.owner}; token: ${record.token}; ${record.claims.length} recorded claim identities, not live owners`];
-    root.owners = [{ sessionId: record.sessionId, sessionPath: record.location.path, kind: record.queued ? 'cleanup-queue-provenance' : 'ephemeral-owner-provenance' }];
+    if (!Check(ownerSchema, record) || ownerFilename(record) !== `${row.owner_key}.json` || !absolute(record.location.path) || !record.location.path.endsWith('.jsonl')) throw new Error('Invalid ephemeral ownership identity or location');
+    const owners = [{ sessionId: record.sessionId, sessionPath: record.location.path, kind: record.queued ? 'cleanup-queue-provenance' : 'ephemeral-owner-provenance' }];
+    const root = addRoot(discovery.cleanup, file, `Cleanup owner ${row.owner_key}: ${record.queued ? 'queued' : 'active'}; token: ${record.token}`, 'shared', owners);
+    root.state = 'stored-cleanup-records';
 
     if (record.lastError) discovery.warnings.push(`${file}: retained ephemeral cleanup: ${record.lastError}`);
 
@@ -167,8 +146,8 @@ async function manifests(root, discovery) {
 async function discoverEphemeral(profile, discovery) {
   const root = path.join(profile, 'ephemeral-cleanup');
 
-  for (const entry of await entries(path.join(root, 'owners'), discovery.warnings)) {
-    if (entry.isFile() && entry.name.endsWith('.json')) await ownerRecord(path.join(root, 'owners', entry.name), discovery);
+  for (const row of require('./session-database.cjs').ephemeralOwners(profile)) {
+    await ownerRecord(path.join(profile, 'sessions.sqlite'), row, discovery);
   }
 
   await manifests(root, discovery);
