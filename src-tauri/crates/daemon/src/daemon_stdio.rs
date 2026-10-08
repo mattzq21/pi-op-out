@@ -110,10 +110,11 @@ fn validate_control(text: &str, action: &str) -> Result<(), String> {
     Err("The running daemon does not support start/stop control; restart it after upgrading".into())
 }
 
-async fn wait_until_stopped() -> Result<(), String> {
+async fn wait_until_stopped(endpoint: &daemon_endpoint::Endpoint) -> Result<(), String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     while tokio::time::Instant::now() < deadline {
         if daemon_endpoint::claim().is_ok() { return Ok(()); }
+        if daemon_endpoint::read().is_ok_and(|current| current.url != endpoint.url || current.token != endpoint.token) { return Ok(()); }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     Err("Daemon is still shutting down; check daemon.log".into())
@@ -123,9 +124,10 @@ pub(super) fn control(action: &str) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|error| error.to_string())?;
     runtime.block_on(async {
         let Some(mut socket) = control_socket(action).await? else { println!("Piop daemon is not running."); return Ok(()); };
+        let endpoint = daemon_endpoint::read()?;
         tokio::time::timeout(Duration::from_secs(10), send_control(&mut socket, action)).await.map_err(|_| "Daemon control timed out; the running daemon may need upgrading")??;
         drop(socket);
-        if action == "stop" { wait_until_stopped().await?; }
+        if action == "stop" { wait_until_stopped(&endpoint).await?; }
         println!("Piop daemon {}.", if action == "start" { "running in the background" } else { "stopped" });
         Ok(())
     })
