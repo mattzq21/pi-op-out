@@ -60,6 +60,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS snapshot_recovery (directory TEXT PRIMARY KEY, identity TEXT NOT NULL, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS snapshot_reader_releases (scope TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS snapshot_directories (directory TEXT PRIMARY KEY, owner_json TEXT);
+      CREATE TABLE IF NOT EXISTS snapshot_comparison_retries (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_comparison_state (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_completed_comparisons (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, turn_id TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY(session_id, turn_id));`);
 
@@ -181,8 +182,60 @@ function importSessions(db, root) {
     importRecoveryDirectories(db, root);
     importReaderReleases(db, root);
     importSnapshotDirectories(db, root);
+    importComparisonRetries(db);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importComparisonRetries(db) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-comparison-retries-v1')) return;
+  const fs = require('node:fs');
+  const path = require('node:path');
+
+  for (const row of db.prepare('SELECT directory FROM snapshot_directories').all()) {
+    let body;
+
+    try { body = fs.readFileSync(path.join(row.directory, 'comparison-retry.json'), 'utf8'); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+
+    db.prepare('INSERT INTO snapshot_comparison_retries VALUES (?, ?)').run(row.directory, body);
+  }
+
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('snapshot-comparison-retries-v1');
+}
+
+function comparisonRetry(directory) {
+  const path = require('node:path');
+  const db = open(path.dirname(path.dirname(directory)));
+
+  try {
+    const row = db.prepare('SELECT record_json FROM snapshot_comparison_retries WHERE directory=?').get(directory);
+
+    if (!row) return undefined;
+    const record = JSON.parse(row.record_json);
+
+    if (!record || record.version !== 1 || !['sessionId', 'turnId', 'messageId', 'baseline', 'current'].every(key => String(record[key]) === record[key])) throw new Error('Invalid comparison retry record');
+
+    return record;
+  } finally { db.close(); }
+}
+
+function saveComparisonRetry(directory, record) {
+  const path = require('node:path');
+  const db = open(path.dirname(path.dirname(directory)));
+
+  try {
+    db.prepare('INSERT INTO snapshot_comparison_retries VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET record_json=excluded.record_json')
+      .run(directory, JSON.stringify(record));
+  } finally { db.close(); }
+}
+
+function removeComparisonRetry(directory) {
+  const path = require('node:path');
+  const db = open(path.dirname(path.dirname(directory)));
+
+  try { db.prepare('DELETE FROM snapshot_comparison_retries WHERE directory=?').run(directory); }
+  finally { db.close(); }
 }
 
 function importCompletedComparisons(db, sessionId, retained) {
@@ -624,4 +677,4 @@ function storageRoot(file) {
 
 module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot,
   publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
-  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons };
+  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons, comparisonRetry, saveComparisonRetry, removeComparisonRetry };

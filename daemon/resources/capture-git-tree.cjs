@@ -482,14 +482,11 @@ function retainFallback(retained, current, request) {
 }
 
 function removeFallback(current, turnId) {
-  const fallback = path.join(current.root, 'comparison-retry.json');
+  const record = require('./session-database.cjs').comparisonRetry(current.root);
 
-  if (fs.existsSync(fallback)) {
-    const record = JSON.parse(fs.readFileSync(fallback, 'utf8'));
-
+  if (record) {
     if (record.sessionId !== owner.sessionId || record.turnId !== turnId) throw new Error('Comparison recovery identity changed');
-    fs.rmSync(fallback);
-    syncPath(current.root);
+    require('./session-database.cjs').removeComparisonRetry(current.root);
   }
 }
 
@@ -502,19 +499,18 @@ function storeFallback(token, retained) {
     linkSnapshot(validateToken(original), baseline.root);
     syncTree(token.root);
     const record = { version: 1, sessionId: owner.sessionId, sessionPath: owner.sessionPath, turnId: owner.turnId, messageId: owner.messageId, cwd: token.repository_root, baseline: JSON.stringify(baseline), originalBaseline: owner.baseline, current: JSON.stringify(token) };
-    writeJson(path.join(token.root, 'comparison-retry.json'), record);
+    require('./session-database.cjs').saveComparisonRetry(token.root, record);
     syncPath(path.dirname(token.root));
   } catch (error) {
-    if (!fs.existsSync(path.join(token.root, 'comparison-retry.json'))) fs.rmSync(baseline.root, { recursive: true, force: true });
+    if (!require('./session-database.cjs').comparisonRetry(token.root)) fs.rmSync(baseline.root, { recursive: true, force: true });
     throw error;
   }
 }
 
 function ownedFallback(directory) {
-  const file = path.join(directory, 'comparison-retry.json');
+  const record = require('./session-database.cjs').comparisonRetry(directory);
 
-  if (!fs.existsSync(file)) return undefined;
-  const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!record) return undefined;
 
   if (record.sessionId !== owner.sessionId) return undefined;
 

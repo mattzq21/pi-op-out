@@ -76,13 +76,23 @@ function protectComparison(capture, sources) {
   protectReference(capture?.current, sources);
 }
 
+function protectionRecord(directory, name) {
+  const database = require('./session-database.cjs');
+
+  if (name === 'temporary-owner.json') return database.snapshotOwner(directory);
+
+  if (name === 'comparison-retry.json') return database.comparisonRetry(directory);
+
+  return read(path.join(directory, name));
+}
+
 function protectDirectory(directory, sources, warnings) {
   const records = [];
   let uncertain = false;
 
   for (const name of ['comparison-retry.json', 'pending-diff.json', 'temporary-owner.json', 'snapshot.json']) {
     try {
-      const record = name === 'temporary-owner.json' ? require('./session-database.cjs').snapshotOwner(directory) : read(path.join(directory, name));
+      const record = protectionRecord(directory, name);
       records.push(record);
 
       if (record) protectRecord(name, record, directory, sources);
@@ -351,7 +361,7 @@ function recoverDirectory(directory, state) {
   const blocked = blockedSources(directory, owner, state);
 
   if (!blocked && owner && readerEnded(owner, state, released)) {
-    if (fs.existsSync(path.join(directory, 'comparison-retry.json'))) return 0;
+    if (require('./session-database.cjs').comparisonRetry(directory)) return 0;
     discard(directory);
 
     return 0;
