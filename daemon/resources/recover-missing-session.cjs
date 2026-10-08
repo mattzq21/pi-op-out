@@ -64,14 +64,16 @@ function assertMissingDirectory() {
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
 
+function allocationBranch() {
+  const container = path.dirname(header.cwd);
+
+  if (path.dirname(container) !== path.join(profileRoot, 'worktrees') || !/^[a-f0-9]{4}$/.test(path.basename(container))) return;
+
+  try { return require('./session-database.cjs').worktreeMetadata(container)?.branch; } catch { }
+}
+
 function remoteBranch() {
-  let branch = request.branch?.trim() || saved?.upstream_branch || saved?.branch;
-
-  if (!branch) {
-    try { branch = require('./session-database.cjs').worktreeMetadata(path.dirname(header.cwd))?.branch; } catch { }
-  }
-
-  return branch;
+  return request.branch?.trim() || saved?.upstream_branch || saved?.branch || allocationBranch();
 }
 
 function remoteRepository() {

@@ -194,6 +194,7 @@ function importWorktrees(db, root) {
 
     try { parent = JSON.parse(fs.readFileSync(path.join(container, 'parent.json'), 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
+
     const value = { ...parent, containerIdentity: `${info.dev}:${info.ino}` };
     db.prepare('INSERT INTO worktree_allocations VALUES (?, ?)').run(container, JSON.stringify(value));
   }
