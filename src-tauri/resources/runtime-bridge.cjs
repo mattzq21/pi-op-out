@@ -18,9 +18,58 @@ const wrappedAgents = new WeakSet();
 
 const wrappedManagers = new WeakSet();
 
+const reloadOperations = new WeakMap();
+
+const configurationOperations = new WeakMap();
+
+const configurationCommands = new Set(["runtime_settings", "provider_auth_refresh", "get_agent_configuration", "configure_agents", "select_agent", "fork_after", "fork_and_forget", "prepare_fork", "branch_checkpoint"]);
+
 let queueValidation;
 
 class GoalPreparationError extends Error {}
+
+function installReloadLifecycle(AgentSession) {
+  const reload = AgentSession.prototype.reload;
+  AgentSession.prototype.reload = function (...args) {
+    const previous = reloadOperations.get(this) ?? Promise.resolve();
+    const operation = previous.then(() => reload.apply(this, args));
+    const settled = operation.then(() => undefined, () => undefined);
+    reloadOperations.set(this, settled);
+    settled.then(() => { if (reloadOperations.get(this) === settled) reloadOperations.delete(this); });
+
+    return operation;
+  };
+}
+
+async function afterReload(session, work) {
+  while (reloadOperations.has(session)) await reloadOperations.get(session);
+
+  return work();
+}
+
+function serializeConfiguration(session, work) {
+  const previous = configurationOperations.get(session) ?? Promise.resolve();
+  const operation = previous.then(work);
+  const settled = operation.then(() => undefined, () => undefined);
+  configurationOperations.set(session, settled);
+  settled.then(() => { if (configurationOperations.get(session) === settled) configurationOperations.delete(session); });
+
+  return operation;
+}
+
+function runtimeRequest(session, command, payload) {
+  return afterReload(session, () => {
+    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"))?.value;
+
+    if (!emit) throw new Error("Piop app requests are unavailable");
+    const request = { command, payload, ctx: session.extensionRunner.createCommandContext() };
+    emit(request);
+
+    if (!request.ready) throw new Error(`Unknown app request: ${command}`);
+
+    return request.ready;
+  });
+}
 
 function promptError(command, error, output) {
   const response = { type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) };
@@ -172,14 +221,7 @@ function appInput(dispatch) {
 
 async function resolveQueuedAnswer(payload, session) {
   if (!payload.questionResponse) return false;
-  const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"))?.value;
-
-  if (!emit) throw new Error("Piop app requests are unavailable");
-  const request = { command: "answer_question", payload: { ...payload.questionResponse, action: "resolve", queueId: payload.queueId }, ctx: session.extensionRunner.createCommandContext() };
-  emit(request);
-
-  if (!request.ready) throw new Error("Question answer resolution is unavailable");
-  await request.ready;
+  await runtimeRequest(session, "answer_question", { ...payload.questionResponse, action: "resolve", queueId: payload.queueId });
 
   return session.sessionManager.getBranch().some(entry => entry.type === "message" && entry.message.role === "user" && entry.message.piopQueueId === payload.queueId);
 }
@@ -233,14 +275,7 @@ async function prepareGoalPrompt(text, session, goalSubmissionId, images, prepar
   if (!goalObjective(text, images) && !prepared) return { message: text };
 
   try {
-    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"))?.value;
-
-    if (!emit) throw new Error("Goal prompt preparation is unavailable");
-    const request = { command: "prepare_goal_prompt", payload: { message: text, goalSubmissionId, images, prepared }, ctx: session.extensionRunner.createCommandContext() };
-    emit(request);
-
-    if (!request.ready) throw new Error("Goal prompt preparation is unavailable");
-    const result = await request.ready;
+    const result = await runtimeRequest(session, "prepare_goal_prompt", { message: text, goalSubmissionId, images, prepared });
 
     if (!result?.message) throw new Error("Goal prompt preparation did not produce an objective");
 
@@ -285,7 +320,17 @@ function installGoalAcceptance(AgentSession) {
   };
 }
 
-async function dispatch(command, session, output) {
+async function dispatch(command, currentSession, output) {
+  try {
+    const session = currentSession();
+    const work = () => afterReload(currentSession(), () => dispatchReady(command, currentSession(), output));
+
+    if (session && configurationCommands.has(command.command)) await serializeConfiguration(session, work);
+    else await work();
+  } catch (error) { promptError(command, error, output); }
+}
+
+async function dispatchReady(command, session, output) {
   try {
     if (!session) throw new Error("Piop app requests are unavailable");
 
@@ -301,14 +346,7 @@ async function dispatch(command, session, output) {
       return;
     }
 
-    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"))?.value;
-
-    if (!emit) throw new Error("Piop app requests are unavailable");
-    const request = { command: command.command, payload: command.payload, ctx: session.extensionRunner.createCommandContext() };
-    emit(request);
-
-    if (!request.ready) throw new Error(`Unknown app request: ${command.command}`);
-    const data = await request.ready;
+    const data = await runtimeRequest(session, command.command, command.payload);
     output({ type: "response", id: command.id, command: command.command, success: true, data });
   } catch (error) {
     promptError(command, command.command === "prepare_goal_prompt" ? new GoalPreparationError(error instanceof Error ? error.message : String(error)) : error, output);
@@ -335,7 +373,11 @@ function bindFollowUpDrain(agent) {
   };
 }
 
-async function executeQueuedReview(session, text, images) {
+function executeQueuedReview(session, text, images) {
+  return afterReload(session, () => executeQueuedReviewReady(session, text, images));
+}
+
+async function executeQueuedReviewReady(session, text, images) {
   const ctx = session.extensionRunner.createCommandContext();
   const signal = ctx.signal;
   const request = { command: "start_review", payload: { args: text.slice(7).trim(), images }, ctx };
@@ -428,6 +470,7 @@ async function main() {
   if (args.includes("--print")) return import(pathToFileURL(join(root, "dist/cli.js")).href);
   queueValidation = await queueContracts(root);
   const { AgentSession } = await import(pathToFileURL(join(root, "dist/index.js")).href);
+  installReloadLifecycle(AgentSession);
   const { writeRawStdout } = await import(pathToFileURL(join(root, "dist/core/output-guard.js")).href);
   const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);
   const prompt = AgentSession.prototype.prompt;
@@ -451,7 +494,7 @@ async function main() {
     session = this;
   };
 
-  appInput(command => dispatch(command, session, output));
+  appInput(command => dispatch(command, () => session, output));
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
   await import(pathToFileURL(join(root, "dist/cli.js")).href);
 }
