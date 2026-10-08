@@ -301,6 +301,7 @@ export class SessionRuntimePool {
   }
 
   isInteractive(transport: NativeTransport) { return this.interactiveTransports.has(transport); }
+  isActive(transport: NativeTransport) { return transport === this.activeTransport; }
 
   observe(transport: NativeTransport) {
     this.observers.set(transport, (this.observers.get(transport) ?? 0) + 1);

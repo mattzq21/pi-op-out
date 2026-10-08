@@ -30,7 +30,7 @@ export function createPlugin(context: PluginContext): PluginInstance {
     panel: () => {
       onCleanup(() => setSelectedSource(undefined));
 
-      return <Rerun on={target}>{() => <DiffPane source={source} />}</Rerun>;
+      return <Rerun on={target}>{(_target) => <DiffPane source={source} />}</Rerun>;
     },
   };
 }
