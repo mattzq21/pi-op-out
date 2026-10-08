@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
-import { SettingsView } from '../../src/components/SettingsView.tsx';
-import { defaultKeybindings } from '../../src/lib/keybindings.ts';
+import { SettingsView } from '../../clients/ui/components/SettingsView.tsx';
+import { defaultKeybindings } from '../../clients/ui/lib/keybindings.ts';
 
 describe('settings editor', () => {
   let dom, view, props, saves, dirty;

@@ -17,7 +17,7 @@ for (const mode of ['production', 'e2e', 'development']) test(`application short
 
   const hooks = registerHooks({
     resolve(specifier, context, nextResolve) {
-      if (specifier === 'solid-js/web' && new URL(context.parentURL).pathname.endsWith('/src/main.tsx')) {
+      if (specifier === 'solid-js/web' && new URL(context.parentURL).pathname.endsWith('/clients/ui/main.tsx')) {
         return { url: 'data:text/javascript,export const createComponent = (component, props) => ({ component, props }); export const render = () => () => {}', shortCircuit: true };
       }
 
@@ -26,7 +26,7 @@ for (const mode of ['production', 'e2e', 'development']) test(`application short
   });
 
   try {
-    await import(`../../src/main.tsx?startup=${mode}`);
+    await import(`../../clients/ui/main.tsx?startup=${mode}`);
     const undo = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
     input.dispatchEvent(undo);
     assert.equal(undo.defaultPrevented, true);

@@ -17,7 +17,7 @@ const hooks = registerHooks({
   },
 });
 
-const { default: traceReader, cleanTrace } = await import('../../src-tauri/resources/trace-reader.ts');
+const { default: traceReader, cleanTrace } = await import('../../daemon/resources/trace-reader.ts');
 
 hooks.deregister();
 

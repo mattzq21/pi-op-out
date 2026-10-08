@@ -33,7 +33,7 @@ export default defineConfig({
       allow: [searchForWorkspaceRoot(projectRoot), ...(modulesDirectory ? [modulesDirectory] : []), ...(sharedInstallations ? [sharedInstallations] : [])],
     },
     watch: {
-      ignored: ["**/src-tauri/target/**"]
+      ignored: ["**/target/**"]
     }
   }
 });

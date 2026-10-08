@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
-import { ProjectDialog } from '../../src/components/ProjectDialog.tsx';
+import { ProjectDialog } from '../../clients/ui/components/ProjectDialog.tsx';
 
 describe('project directory palette', () => {
   let dom, view, props, opened, requested, cancelled;

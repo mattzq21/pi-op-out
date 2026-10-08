@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderHook, act } from '../dom.mjs';
-import { installTextEditingShortcuts } from '../../src/lib/textEditingShortcuts.ts';
-import { usePendingMessageDrag } from '../../src/lib/usePendingMessageDrag.ts';
-import { useSessionGroups, isTemporaryChatCwd } from '../../src/lib/sessionGroups.ts';
+import { installTextEditingShortcuts } from '../../clients/ui/lib/textEditingShortcuts.ts';
+import { usePendingMessageDrag } from '../../clients/ui/lib/usePendingMessageDrag.ts';
+import { useSessionGroups, isTemporaryChatCwd } from '../../clients/ui/lib/sessionGroups.ts';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { emit } from '@tauri-apps/api/event';
-import { useAppKeyboard } from '../../src/useAppKeyboard.ts';
-import { defaultKeybindings } from '../../src/lib/keybindings.ts';
+import { useAppKeyboard } from '../../clients/ui/useAppKeyboard.ts';
+import { defaultKeybindings } from '../../clients/ui/lib/keybindings.ts';
 
 test('configured Alt shortcuts work while editing a message', async () => {
   const dom = installDom();

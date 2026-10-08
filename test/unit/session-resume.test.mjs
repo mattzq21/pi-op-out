@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRoot, createSignal } from 'solid-js';
 import { act, installDom } from '../dom.mjs';
-import { useSessionResume, restoredSessionTarget } from '../../src/lib/sessionResume.ts';
+import { useSessionResume, restoredSessionTarget } from '../../clients/ui/lib/sessionResume.ts';
 
 test('a new unsent conversation restores its draft identity and host without opening a nonexistent session file', async () => {
   const dom = installDom();

@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'Piop',
   webDir: 'dist-mobile',
   server: { androidScheme: 'https' },
-  android: { backgroundColor: '#181817', allowMixedContent: false },
+  android: { path: 'clients/android', backgroundColor: '#181817', allowMixedContent: false },
 };
 
 export default config;

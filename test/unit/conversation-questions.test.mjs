@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createComponent } from 'solid-js';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
-import { ConversationQuestions, ConversationQuestionsContext, createConversationQuestions } from '../../src/components/ConversationQuestions.tsx';
+import { ConversationQuestions, ConversationQuestionsContext, createConversationQuestions } from '../../clients/ui/components/ConversationQuestions.tsx';
 
 test('question progress and typed answers survive switching conversations', async () => {
   const dom = installDom(); let view;

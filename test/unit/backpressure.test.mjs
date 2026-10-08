@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { installDom } from '../dom.mjs';
 import { mockIPC } from '../mock-ipc.mjs';
-import { invoke } from '../../src/lib/platform.ts';
+import { invoke } from '../../clients/ui/lib/platform.ts';
 
 test('desktop daemon requests recover from explicit busy rejections', async context => {
   context.mock.timers.enable({ apis: ['setTimeout'] });

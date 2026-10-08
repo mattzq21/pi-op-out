@@ -22,7 +22,7 @@ registerHooks({
 
     const result = nextLoad(url, context);
 
-    if (url.endsWith('/src/lib/nativeTransport.ts') || url.endsWith('/src/lib/platform.ts')) {
+    if (url.endsWith('/clients/ui/lib/nativeTransport.ts') || url.endsWith('/clients/ui/lib/platform.ts')) {
       return { ...result, source: String(result.source).replaceAll('import.meta.env.MODE', '(globalThis.__PIOP_TEST_MODE__ ?? "test")') };
     }
 

@@ -3,7 +3,7 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { emit } from '@tauri-apps/api/event';
-import { SessionRuntimePool } from '../../src/lib/sessionRuntimePool.ts';
+import { SessionRuntimePool } from '../../clients/ui/lib/sessionRuntimePool.ts';
 
 describe('session runtime pool', () => {
   let pool, calls, responses, errors;

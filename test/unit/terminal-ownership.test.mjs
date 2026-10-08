@@ -4,10 +4,10 @@ import { createComponent, Show } from 'solid-js';
 import { installDom, renderComponent, renderHook, act } from '../dom.mjs';
 import { mockIPC } from '../mock-ipc.mjs';
 import { terminals } from '../terminal-runtime.mjs';
-import { createTerminalController } from '../../src/appTerminals.ts';
-import { TerminalView } from '../../src/components/TerminalView.tsx';
-import { nativeTerminals } from '../../src/lib/nativeTerminals.ts';
-import { beginBranching } from '../../src/lib/branchActivity.ts';
+import { createTerminalController } from '../../clients/ui/appTerminals.ts';
+import { TerminalView } from '../../clients/ui/components/TerminalView.tsx';
+import { nativeTerminals } from '../../clients/ui/lib/nativeTerminals.ts';
+import { beginBranching } from '../../clients/ui/lib/branchActivity.ts';
 
 test('opening an empty terminal then taking ownership starts the shell before input', async () => {
   const dom = installDom();

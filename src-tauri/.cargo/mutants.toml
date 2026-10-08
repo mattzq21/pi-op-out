@@ -1,3 +1,0 @@
-examine_globs = ["src/**/*.rs"]
-additional_cargo_args = ["--locked"]
-minimum_test_timeout = 20

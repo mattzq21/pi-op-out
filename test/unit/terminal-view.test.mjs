@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
-import { TerminalView } from '../../src/components/TerminalView.tsx';
+import { TerminalView } from '../../clients/ui/components/TerminalView.tsx';
 import { terminals } from '../terminal-runtime.mjs';
 
 describe('terminal view', () => {

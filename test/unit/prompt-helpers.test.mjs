@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { textOf, thinkingOf, uid } from '../../src/lib/content.ts';
-import { encodeAgentValue, decodeAgentValue } from '../../src/lib/agentProtocol.ts';
-import { contextUsageAfterCompaction } from '../../src/lib/contextUsage.ts';
-import { findReplaceableAbortedTurn } from '../../src/lib/abortedTurn.ts';
-import { appendTerminalOutput, TERMINAL_OUTPUT_LIMIT } from '../../src/lib/terminalOutput.ts';
-import { matchesShortcut, shortcutFromEvent } from '../../src/lib/keybindings.ts';
+import { textOf, thinkingOf, uid } from '../../clients/ui/lib/content.ts';
+import { encodeAgentValue, decodeAgentValue } from '../../clients/ui/lib/agentProtocol.ts';
+import { contextUsageAfterCompaction } from '../../clients/ui/lib/contextUsage.ts';
+import { findReplaceableAbortedTurn } from '../../clients/ui/lib/abortedTurn.ts';
+import { appendTerminalOutput, TERMINAL_OUTPUT_LIMIT } from '../../clients/ui/lib/terminalOutput.ts';
+import { matchesShortcut, shortcutFromEvent } from '../../clients/ui/lib/keybindings.ts';
 
 test('content helpers separate visible text, reasoning and attachments', () => {
   const content = [{ type: 'text', text: 'Hello' }, { type: 'thinking', thinking: 'First' }, { type: 'image', data: 'abc' }, { type: 'text', text: ' world' }, { type: 'thinking', thinking: 'Second' }];

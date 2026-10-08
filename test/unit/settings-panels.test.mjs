@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
-import { StorageSettings } from '../../src/components/StorageSettings.tsx';
-import { PromptContextBar } from '../../src/components/PromptContextBar.tsx';
+import { StorageSettings } from '../../clients/ui/components/StorageSettings.tsx';
+import { PromptContextBar } from '../../clients/ui/components/PromptContextBar.tsx';
 
 describe('settings panels', () => {
   let dom, views, calls, responses;

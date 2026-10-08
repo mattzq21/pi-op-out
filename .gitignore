@@ -3,9 +3,9 @@ dist/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
-src-tauri/target/
-src-tauri/binaries/
-src-tauri/gen/
+target/
+clients/desktop/binaries/
+clients/desktop/gen/
 logs/
 .trace/
 .stryker-tmp/
@@ -20,10 +20,10 @@ piop.png
 piop-settings.png
 
 dist-mobile/
-android/.gradle/
-android/**/build/
-android/local.properties
-android/app/src/main/assets/public/
-android/app/src/main/assets/capacitor*.json
-android/*.jks
-android/*.keystore
+clients/android/.gradle/
+clients/android/**/build/
+clients/android/local.properties
+clients/android/app/src/main/assets/public/
+clients/android/app/src/main/assets/capacitor*.json
+clients/android/*.jks
+clients/android/*.keystore

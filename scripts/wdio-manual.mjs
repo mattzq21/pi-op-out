@@ -6,7 +6,6 @@ import { cleanupWdioSession, startWdioSession } from "@wdio/tauri-service";
 import { selectWindowBounds } from "./window-placement.mjs";
 
 const defaultBinary = path.resolve(
-  "src-tauri",
   "target",
   "release",
   process.platform === "win32" ? "piop.exe" : "piop",

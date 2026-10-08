@@ -12,7 +12,7 @@ const extension = process.platform === 'win32' ? '.exe' : '';
 
 const env = { ...process.env, VITE_PIOP_DEBUG: "true" };
 
-const localProperties = join(root, 'android/local.properties');
+const localProperties = join(root, 'clients/android/local.properties');
 
 const configuredSdk = existsSync(localProperties)
   ? readFileSync(localProperties, 'utf8').match(/^sdk\.dir=(.+)$/m)?.[1].trim().replace(/\\([\\: ])/g, '$1')
@@ -56,7 +56,7 @@ try {
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'daemon:dev']);
   console.log(`Rebuilding Piop for ${serial}…`);
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'android:build']);
-  run(adb, ['-s', serial, 'install', '-r', join(root, 'android/app/build/outputs/apk/debug/app-debug.apk')]);
+  run(adb, ['-s', serial, 'install', '-r', join(root, 'clients/android/app/build/outputs/apk/debug/app-debug.apk')]);
   run(adb, ['-s', serial, 'shell', 'am', 'start', '-n', 'dev.pi.mobile/.MainActivity']);
   console.log('Piop reinstalled and opened. App data preserved.');
 } catch (error) {

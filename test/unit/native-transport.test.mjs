@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { emit } from '@tauri-apps/api/event';
-import * as native from '../../src/lib/nativeTransport.ts';
+import * as native from '../../clients/ui/lib/nativeTransport.ts';
 import { appSettings } from '../settings-fixture.mjs';
 
 describe('native transport', () => {

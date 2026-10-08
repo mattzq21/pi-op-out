@@ -7,5 +7,5 @@
   },
   "coverageAnalysis": "off",
   "reporters": ["clear-text", "progress", "html", "json"],
-  "ignorePatterns": ["src-tauri/target/**", "dist/**", "reports/**"]
+  "ignorePatterns": ["target/**", "dist/**", "reports/**"]
 }

@@ -17,7 +17,7 @@ async function desktop() {
 }
 
 async function e2e() {
-  const cargo = ["build", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--release"];
+  const cargo = ["build", "--locked", "--manifest-path", "Cargo.toml", "--release"];
 
   await parallelBuilds([
     runBuild(process.execPath, ["scripts/build-frontend.mjs", "--mode", "e2e"]),

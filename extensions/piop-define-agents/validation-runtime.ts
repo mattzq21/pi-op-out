@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { agentExtensions } from "./extension-loader.ts";
 import type { ExtensionAPI, ExtensionRuntime, ModelRegistry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import commandNames from "../../src-tauri/resources/agent-commands.json";
+import commandNames from "../../daemon/resources/agent-commands.json";
 import { bindValidationSession } from "./validation-session.ts";
 import type { Agent } from "./contracts.ts";
 

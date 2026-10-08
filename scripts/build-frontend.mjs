@@ -30,7 +30,7 @@ async function frontend() {
 
   await cachedBuild({
     name: `Vite ${outDir}`,
-    inputs: ["src", "public", "index.html", "scripts/build-frontend.mjs", "scripts/build-cache.mjs", ...files, ...(resolved.configFileDependencies ?? [])],
+    inputs: ["clients/ui", "public", "index.html", "scripts/build-frontend.mjs", "scripts/build-cache.mjs", ...files, ...(resolved.configFileDependencies ?? [])],
     outputs: [outDir],
     key: [mode, version, resolved.env, process.env.NODE_ENV ?? "production", resolved.define],
   }, () => build(configuration));

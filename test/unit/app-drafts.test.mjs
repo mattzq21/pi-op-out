@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { installDom } from '../dom.mjs';
-import { createConversationDrafts } from '../../src/appDrafts.ts';
+import { createConversationDrafts } from '../../clients/ui/appDrafts.ts';
 
 test('unsent conversation drafts survive recreating the workspace and stay scoped to their conversation', () => {
   const dom = installDom();

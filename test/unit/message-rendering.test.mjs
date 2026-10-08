@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
-import { Message } from '../../src/components/Message.tsx';
-import { DiffViewer } from '../../src/components/DiffViewer.tsx';
-import { parseDiff } from '../../src/lib/diff.ts';
+import { Message } from '../../clients/ui/components/Message.tsx';
+import { DiffViewer } from '../../clients/ui/components/DiffViewer.tsx';
+import { parseDiff } from '../../clients/ui/lib/diff.ts';
 
 describe('message rendering', () => {
   let dom, view, copied, opened, openError;

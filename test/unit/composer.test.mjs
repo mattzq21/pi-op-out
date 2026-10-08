@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
-import { Composer } from '../../src/components/Composer.tsx';
+import { Composer } from '../../clients/ui/components/Composer.tsx';
 import { mockIPC, mockWindows, clearMocks } from '../mock-ipc.mjs';
 import { emit } from '@tauri-apps/api/event';
 

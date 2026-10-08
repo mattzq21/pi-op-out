@@ -14,7 +14,7 @@ async function fastMode() {
 
   await buildBundle({
     entryPoints: ["extensions/piop-openai-fast-mode/src/index.ts"],
-    outfile: "src-tauri/resources/fast-mode.bundle.mjs",
+    outfile: "daemon/resources/fast-mode.bundle.mjs",
     bundle: true,
     platform: "node",
     format: "esm",
@@ -22,14 +22,14 @@ async function fastMode() {
     minify: true,
     banner: { js: `/*! piop-openai-fast-mode 0.3.0-piop.1.${license ? `\n${license}` : ""}*/` },
     external: ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"],
-  }, "src-tauri/resources/fast-mode.bundle.mjs", { script: import.meta.url });
+  }, "daemon/resources/fast-mode.bundle.mjs", { script: import.meta.url });
 }
 
 async function mcpBridge() {
   await buildInParallel([
     buildBundle({
-      entryPoints: ["src-tauri/resources/mcp-bridge.ts"],
-      outfile: "src-tauri/resources/mcp-bridge.bundle.mjs",
+      entryPoints: ["daemon/resources/mcp-bridge.ts"],
+      outfile: "daemon/resources/mcp-bridge.bundle.mjs",
       bundle: true,
       platform: "node",
       format: "esm",
@@ -37,7 +37,7 @@ async function mcpBridge() {
       minify: true,
       legalComments: "none",
       external: ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"],
-    }, "src-tauri/resources/mcp-bridge.bundle.mjs", { script: import.meta.url }),
+    }, "daemon/resources/mcp-bridge.bundle.mjs", { script: import.meta.url }),
 
     buildBundle({
       entryPoints: ["extensions/piop-define-agents/mcp-schema.ts"],
@@ -47,7 +47,7 @@ async function mcpBridge() {
       target: "node20",
       minify: true,
       legalComments: "none",
-    }, "src-tauri/resources/mcp-schema.bundle.mjs", { script: import.meta.url, transform(content) {
+    }, "daemon/resources/mcp-schema.bundle.mjs", { script: import.meta.url, transform(content) {
       const payload = gzipSync(content, { level: 9 }).toString("base64");
 
       const source = `import { gunzipSync } from "node:zlib";\nconst { mcpServerSchema, mcpServersSchema } = await import("data:text/javascript;base64," + gunzipSync(Buffer.from("${payload}", "base64")).toString("base64"));\nexport { mcpServerSchema, mcpServersSchema };\n`;
@@ -67,14 +67,14 @@ async function backendScripts() {
   await buildInParallel([
     ...scripts.map(async name => {
       await buildBundle({
-        entryPoints: [`src-tauri/resources/${name}.${name === "capture-git-diff" ? "ts" : "cjs"}`],
+        entryPoints: [`daemon/resources/${name}.${name === "capture-git-diff" ? "ts" : "cjs"}`],
         bundle: true,
         platform: "node",
         format: "iife",
         target: "node22",
         minify: true,
         plugins: [storageSchemaImports()],
-      }, `src-tauri/resources/${name}.bundle.mjs`, { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))], transform(content) {
+      }, `daemon/resources/${name}.bundle.mjs`, { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))], transform(content) {
         const payload = brotliCompressSync(content, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).toString("base64");
         const script = `eval(require("node:zlib").brotliDecompressSync(Buffer.from("${payload}", "base64")).toString("utf8"));\n`;
 
@@ -87,7 +87,7 @@ async function backendScripts() {
     buildBundle({
       entryPoints: ["extensions/piop-runtime-settings/provider-accounts.mjs"],
       bundle: true, platform: "node", format: "esm", target: "node22", minify: true,
-    }, "src-tauri/resources/provider-accounts.bundle.mjs", { script: import.meta.url, transform(content) {
+    }, "daemon/resources/provider-accounts.bundle.mjs", { script: import.meta.url, transform(content) {
       const accountsPayload = gzipSync(content, { level: 9 }).toString("base64");
       const accountExports = "providerAccountsPath, readProviderAccounts, allocateProviderAccount, accountProvider, loadAccountProviders";
       const accountsModule = `import { gunzipSync as unpackProviderAccounts } from "node:zlib";\nconst { ${accountExports} } = await import("data:text/javascript;base64," + unpackProviderAccounts(Buffer.from("${accountsPayload}", "base64")).toString("base64"));\nexport { ${accountExports} };\n`;
@@ -98,7 +98,7 @@ async function backendScripts() {
     } }),
 
     buildArtifact({
-      output: "src-tauri/resources/agent-commands.json",
+      output: "daemon/resources/agent-commands.json",
       inputs: [fileURLToPath(import.meta.url), fileURLToPath(new URL("./agent-command-inventory.mjs", import.meta.url)), ...commandInputs],
       key: "agent-command-inventory",
     }, async () => ({ content: `${JSON.stringify(await agentCommandInventory(commandInputs), null, 2)}\n` })),
@@ -106,7 +106,7 @@ async function backendScripts() {
     buildBundle({
       entryPoints: ["extensions/piop-define-agents/daemon-loader.ts"],
       bundle: true, platform: "node", format: "esm", target: "node22", minify: true,
-    }, "src-tauri/resources/agent-definitions.bundle.mjs", { script: import.meta.url, transform(content) {
+    }, "daemon/resources/agent-definitions.bundle.mjs", { script: import.meta.url, transform(content) {
       const agentsPayload = gzipSync(content, { level: 9 }).toString("base64");
 
       return `import { gunzipSync } from "node:zlib";\ntry { await import("data:text/javascript;base64," + gunzipSync(Buffer.from("${agentsPayload}", "base64")).toString("base64")); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; } finally { process.exit(process.exitCode ?? 0); }\n`;

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
-import { SplitChatPane } from '../../src/components/SplitChatPane.tsx';
-import { encodeAgentValue } from '../../src/lib/agentProtocol.ts';
-import { PromptControls } from '../../src/lib/promptControls.ts';
+import { SplitChatPane } from '../../clients/ui/components/SplitChatPane.tsx';
+import { encodeAgentValue } from '../../clients/ui/lib/agentProtocol.ts';
+import { PromptControls } from '../../clients/ui/lib/promptControls.ts';
 import { mockIPC } from '../mock-ipc.mjs';
 
 describe('split conversation lifecycle', () => {

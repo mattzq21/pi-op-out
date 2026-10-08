@@ -7,7 +7,7 @@ test('mobile users can queue a follow-up while the agent is streaming', async ()
   globalThis.__PIOP_TEST_MODE__ = 'mobile';
 
   try {
-    const { Composer } = await import('../../src/components/Composer.tsx');
+    const { Composer } = await import('../../clients/ui/components/Composer.tsx');
     const sent = [];
     view = await renderComponent(Composer, { streaming: true, queued: 0, commands: [], agents: [], models: [], model: null, thinkingLevel: 'off', thinkingLevels: ['off'], onSend: async (...args) => sent.push(args), onPause() {}, onResume() {}, onAbort() {}, onAgent() {}, onModel() {}, onThinking() {}, onToggleFastMode() {} });
     await enterText(document.querySelector('[aria-label="Message piop"]'), 'After this, review the changes');

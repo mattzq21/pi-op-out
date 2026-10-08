@@ -1,7 +1,7 @@
 import { render } from 'solid-js/web';
 import { createSignal } from 'solid-js';
-import { DesktopTerminalView } from '../../src/components/DesktopTerminalView';
-import '../../src/styles.css';
+import { DesktopTerminalView } from '../../clients/ui/components/DesktopTerminalView';
+import '../../clients/ui/styles.css';
 
 const [output, setOutput] = createSignal('');
 

@@ -1,7 +1,7 @@
 import { render } from 'solid-js/web';
 import { createSignal } from 'solid-js';
-import { ChatView } from '../../src/components/ChatView';
-import '../../src/styles.css';
+import { ChatView } from '../../clients/ui/components/ChatView';
+import '../../clients/ui/styles.css';
 
 const [messages, setMessages] = createSignal(Array.from({ length: 10 }, (_, index) => ({ id: String(index), role: 'user', content: 'Hello' })));
 
