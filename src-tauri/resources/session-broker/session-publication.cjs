@@ -6,6 +6,7 @@ const { Check } = require('typebox/value');
 const io = require('./session-publication-io.cjs');
 const reviews = require('./review-publication.cjs');
 const dependencies = require('./session-publication-dependencies.cjs');
+const children = require('./session-child-index.cjs');
 
 const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
 
@@ -87,7 +88,7 @@ function prepareBody(body, id) {
   const header = values[0];
 
   if (!Check(io.headerSchema, header) || !values.every(value => Check(recordSchema, value))) throw new Error('Session publication requires a valid session transcript');
-  values[0] = { ...header, piopPublicationId: id };
+  values[0] = { ...header, piopPublicationId: id, piopChildIndexVersion: 1 };
 
   return { header: values[0], entries: values, body: values.map(value => JSON.stringify(value)).join('\n') + '\n' };
 }
@@ -209,6 +210,7 @@ function retire(journal) {
 function complete(journal, location) {
   io.sync(location.path);
   io.sync(path.dirname(location.path));
+  children.registerTranscript(journal.root, location.path, io.read(location.path).body);
   journal.phase = journal.review ? 'parent-pending' : 'linked';
   save(journal);
   removeTemporary(journal);
@@ -254,6 +256,7 @@ async function publishLocked(root, target, body, options) {
     if (options.beforeWrite) { await options.beforeWrite(); preparedSidecars(journal); }
 
     writeTemporary(operation);
+    children.registerTranscript(root, journal.target, operation.body);
     fs.linkSync(journal.temporary, journal.target);
     complete(journal, { path: journal.target });
 
@@ -317,6 +320,7 @@ function recoverUnlinked(journal) {
   save(journal);
   io.sync(journal.temporary);
   io.sync(path.dirname(journal.temporary));
+  children.registerTranscript(journal.root, journal.target, io.read(journal.temporary).body);
   fs.linkSync(journal.temporary, journal.target);
 
   return null;

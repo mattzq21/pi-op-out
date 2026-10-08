@@ -14,6 +14,8 @@ import { registerGoals } from "./session-broker/goals.ts";
 import { registerReview } from "./session-broker/review.ts";
 import { registerHtmlPreview } from "./session-broker/html-preview.ts";
 import { registerOrchestration } from "./session-broker/orchestration.ts";
+import { existsSync } from "node:fs";
+import { initialize } from "./session-broker/session-child-index.cjs";
 
 export { desktopPauseContext, registerPauseControl, type PauseController } from "./session-broker/pause.ts";
 
@@ -26,6 +28,11 @@ export { writeSessionFile, publicationRetainsDependencies, type PublicationOptio
 export { registerSubagents } from "./session-broker/subagents.ts";
 
 export default function sessionBroker(pi: ExtensionAPI) {
+  pi.on("session_start", async (_event, ctx) => {
+    const file = ctx.sessionManager.getSessionFile();
+
+    if (file) await initialize(file, ctx.sessionManager.getSessionId(), !existsSync(file));
+  });
   pi.on("session_start", async (_event, ctx) => {
     let root: string | null = null;
 
