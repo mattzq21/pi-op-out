@@ -1,5 +1,5 @@
 import { z, type JSONType } from "zod";
-import type { NativeArguments } from "../../src/lib/transportSchemas";
+import type { NativeArguments } from "../../clients/ui/lib/transportSchemas";
 
 const requestSchema = z.object({ action: z.string(), hostId: z.string().default("local"), sessionKey: z.string().default(""), sharedTerminalId: z.string().default("") });
 

@@ -24,7 +24,6 @@ delete process.env.PIOP_DAEMON_URL;
 delete process.env.PIOP_DAEMON_TOKEN;
 
 const defaultBinary = path.resolve(
-  "src-tauri",
   "target",
   "release",
   process.platform === "win32" ? "piop.exe" : "piop",

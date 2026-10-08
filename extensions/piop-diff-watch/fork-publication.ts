@@ -15,7 +15,7 @@ async function publicationScript() {
   catch (error) {
     if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error;
 
-    return readFile(new URL("../../src-tauri/resources/publish-fork.bundle.mjs", import.meta.url), "utf8");
+    return readFile(new URL("../../crates/daemon/resources/publish-fork.bundle.mjs", import.meta.url), "utf8");
   }
 }
 

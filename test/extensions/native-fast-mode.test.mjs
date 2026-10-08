@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { build } from 'esbuild';
 
 const compiled = await build({
-  stdin: { contents: 'export { NativeTransport } from "./src/lib/nativeTransport"; export { calls, setCommands } from "./platform";', resolveDir: process.cwd() },
+  stdin: { contents: 'export { NativeTransport } from "./clients/ui/lib/nativeTransport"; export { calls, setCommands } from "./platform";', resolveDir: process.cwd() },
   bundle: true, write: false, format: 'esm', platform: 'node',
   define: { 'import.meta.env.MODE': '"test"' },
   plugins: [{ name: 'native-bridge', setup(builder) {

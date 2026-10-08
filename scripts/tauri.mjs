@@ -46,7 +46,7 @@ async function developmentPort() {
 }
 
 if (args[0] === "dev") {
-  const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
+  const config = JSON.parse(readFileSync(new URL("../clients/desktop/tauri.conf.json", import.meta.url), "utf8"));
 
   devPort = await developmentPort();
 
@@ -67,8 +67,10 @@ const tauri = fileURLToPath(new URL("../node_modules/.bin/tauri", import.meta.ur
 
 const env = {
   ...process.env,
+  TAURI_APP_PATH: fileURLToPath(new URL("../clients/desktop", import.meta.url)),
+  TAURI_FRONTEND_PATH: fileURLToPath(new URL("../", import.meta.url)),
   VITE_PIOP_DEBUG: String(development),
-  PIOP_PREBUILT_DAEMON_FOR: args[0] === "dev" ? fileURLToPath(new URL("../src-tauri", import.meta.url)) : "",
+  PIOP_PREBUILT_DAEMON_FOR: args[0] === "dev" ? fileURLToPath(new URL("../", import.meta.url)) : "",
 };
 
 if (windowBounds) {

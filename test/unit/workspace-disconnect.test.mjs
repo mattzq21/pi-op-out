@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { installDom, renderHook } from '../dom.mjs';
-import { useWorkspaceDisconnect } from '../../src/appTransportActivation.ts';
+import { useWorkspaceDisconnect } from '../../clients/ui/appTransportActivation.ts';
 
 test('disconnect guards unsent drafts and exposes cleanup completion before socket closure', async t => {
   const dom = installDom();

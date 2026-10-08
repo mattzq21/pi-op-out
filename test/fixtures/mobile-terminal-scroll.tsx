@@ -1,8 +1,8 @@
 import { render } from 'solid-js/web';
 import { createSignal } from 'solid-js';
-import { MobileTerminalView } from '../../src/components/MobileTerminalView';
-import '../../src/styles.css';
-import '../../src/mobile.css';
+import { MobileTerminalView } from '../../clients/ui/components/MobileTerminalView';
+import '../../clients/ui/styles.css';
+import '../../clients/ui/mobile.css';
 
 const [output, setOutput] = createSignal(Array.from({ length: 80 }, (_, i) => `history ${i}\r\n`).join('') + 'demo$ ');
 

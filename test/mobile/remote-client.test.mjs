@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { z } from 'zod';
 
-const compiled = await build({ entryPoints: ['src/lib/remoteClient.ts'], bundle: true, write: false, format: 'esm', platform: 'node' });
+const compiled = await build({ entryPoints: ['clients/ui/lib/remoteClient.ts'], bundle: true, write: false, format: 'esm', platform: 'node' });
 
 const { RemoteClient, validateHost } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 

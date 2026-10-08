@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { appendFileChanges, resumeMarker, isResumeMessage, checkpointLatestUser, cacheHitStats, normalizeMessage, applyAssistantMessageEvent, branchMessages } from '../../src/lib/messages.ts';
+import { appendFileChanges, resumeMarker, isResumeMessage, checkpointLatestUser, cacheHitStats, normalizeMessage, applyAssistantMessageEvent, branchMessages } from '../../clients/ui/lib/messages.ts';
 import { promptContext } from '../prompt-context-fixture.mjs';
 
 test('message normalization preserves content and selects stable identifiers and roles', () => {

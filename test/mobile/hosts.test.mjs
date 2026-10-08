@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test, beforeEach, afterEach } from 'node:test';
 import { build } from 'esbuild';
 
-const compiled = await build({ entryPoints: ['src/lib/mobileHosts.ts'], bundle: true, write: false, format: 'esm', platform: 'node' });
+const compiled = await build({ entryPoints: ['clients/ui/lib/mobileHosts.ts'], bundle: true, write: false, format: 'esm', platform: 'node' });
 
 const { readMobileHosts, saveMobileHost, removeMobileHost } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 

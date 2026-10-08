@@ -1,11 +1,11 @@
 import { $, browser } from "@wdio/globals";
 import { mkdirSync, readFileSync, renameSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
-import { encodeAgentValue } from "../../../src/lib/agentProtocol.js";
-import type { AppSettings, DefinedAgentsCapability } from "../../../src/types.js";
-import { z, appSettingsSchema, modelSchema } from "../../../src/lib/responseSchemas.js";
-import { agentConfigSchema } from "../../../src/lib/agentSchemas.js";
-import { nativeArgumentsSchema, jsonResultSchema } from "../../../src/lib/transportSchemas.js";
+import { encodeAgentValue } from "../../../clients/ui/lib/agentProtocol.js";
+import type { AppSettings, DefinedAgentsCapability } from "../../../clients/ui/types.js";
+import { z, appSettingsSchema, modelSchema } from "../../../clients/ui/lib/responseSchemas.js";
+import { agentConfigSchema } from "../../../clients/ui/lib/agentSchemas.js";
+import { nativeArgumentsSchema, jsonResultSchema } from "../../../clients/ui/lib/transportSchemas.js";
 import { app } from "../pageobjects/app.page.js";
 
 const backendCallSchema = z.object({ command: z.string(), args: nativeArgumentsSchema.default({}), mocked: z.boolean() });

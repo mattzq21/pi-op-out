@@ -13,7 +13,7 @@ export async function watchBackend(command, args, options, root, { port, branchL
   let vite;
   const pending = new Set();
   const watchers = [];
-  const daemon = join(root, "src-tauri/target/debug", process.platform === "win32" ? "piopd.exe" : "piopd");
+  const daemon = join(root, "target/debug", process.platform === "win32" ? "piopd.exe" : "piopd");
 
   const signalChild = (running, signal) => {
     if (!running?.pid) return;
@@ -97,7 +97,7 @@ export async function watchBackend(command, args, options, root, { port, branchL
   };
 
   const compiledInputs = binary => {
-    const info = readFileSync(join(root, "src-tauri/target/debug", binary + ".d"), "utf8").replace(/\\\r?\n/g, "");
+    const info = readFileSync(join(root, "target/debug", binary + ".d"), "utf8").replace(/\\\r?\n/g, "");
     const line = info.split(/\r?\n/)[0];
 
     if (!line.includes(": ")) return undefined;
@@ -112,14 +112,14 @@ export async function watchBackend(command, args, options, root, { port, branchL
 
       if (!desktop || desktop.has(path)) return true;
 
-      if (path.startsWith(join(root, "src-tauri/src") + sep)) return !compiledInputs("piopd")?.has(path);
+      if (path.startsWith(join(root, "clients/desktop/src") + sep)) return !compiledInputs("piopd")?.has(path);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
 
       return true;
     }
 
-    return !["extensions", "src-tauri/resources", "src-tauri/crates/daemon"].some(directory => path.startsWith(join(root, directory) + sep));
+    return !["extensions", "crates/daemon/resources", "crates/daemon"].some(directory => path.startsWith(join(root, directory) + sep));
   };
 
   const applyChanges = async changes => {
@@ -176,10 +176,10 @@ export async function watchBackend(command, args, options, root, { port, branchL
   const observeBackend = () => {
     if (!watch) return;
 
-    for (const directory of ["src-tauri/src", "src-tauri/crates", "src-tauri/capabilities", "src-tauri/resources", "src-tauri/icons", "extensions", "scripts", ".cargo"]) observe(join(root, directory), true);
-    observe(join(root, "src-tauri"));
+    for (const directory of ["clients/desktop/src", "crates", "clients/desktop/capabilities", "clients/desktop/icons", "extensions", "scripts", ".cargo"]) observe(join(root, directory), true);
+    observe(join(root, "clients/desktop"));
 
-    for (const filename of ["package.json", "package-lock.json"]) {
+    for (const filename of ["package.json", "package-lock.json", "Cargo.toml", "Cargo.lock"]) {
       const path = join(root, filename);
 
       if (existsSync(path)) watchers.push(watchFiles(path, () => changed(root, filename)));

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
-import { ExtensionDialog } from '../../src/components/ExtensionDialog.tsx';
-import { WorktreeDialog } from '../../src/components/WorktreeDialog.tsx';
-import { RemoveWorktreeDialog } from '../../src/components/RemoveWorktreeDialog.tsx';
-import { RemoveGroupDialog } from '../../src/components/RemoveGroupDialog.tsx';
-import { ResizableSidebar } from '../../src/components/ResizableSidebar.tsx';
-import { Toggle } from '../../src/components/Toggle.tsx';
+import { ExtensionDialog } from '../../clients/ui/components/ExtensionDialog.tsx';
+import { WorktreeDialog } from '../../clients/ui/components/WorktreeDialog.tsx';
+import { RemoveWorktreeDialog } from '../../clients/ui/components/RemoveWorktreeDialog.tsx';
+import { RemoveGroupDialog } from '../../clients/ui/components/RemoveGroupDialog.tsx';
+import { ResizableSidebar } from '../../clients/ui/components/ResizableSidebar.tsx';
+import { Toggle } from '../../clients/ui/components/Toggle.tsx';
 
 describe('rendered controls and dialogs', () => {
   let dom, views;

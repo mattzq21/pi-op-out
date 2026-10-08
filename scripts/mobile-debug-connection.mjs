@@ -8,15 +8,15 @@ import { fileURLToPath } from "node:url";
 
 const project = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 
-const manifest = join(project, "src-tauri");
+const legacyEndpointIdentity = join(project, "src-tauri");
 
 let key = 0xcbf29ce484222325n;
 
-for (const byte of Buffer.from(manifest)) key = BigInt.asUintN(64, (key ^ BigInt(byte)) * 0x100000001b3n);
+for (const byte of Buffer.from(legacyEndpointIdentity)) key = BigInt.asUintN(64, (key ^ BigInt(byte)) * 0x100000001b3n);
 
 const endpointFile = join(homedir(), ".piop-dev", "daemons", key.toString(16).padStart(16, "0"), "debug-mobile.json");
 
-const daemon = join(manifest, "target", "debug", "piopd");
+const daemon = join(project, "target", "debug", "piopd");
 
 const builtIdentity = createHash("sha256").update(readFileSync(daemon)).digest("hex");
 
@@ -89,7 +89,7 @@ if (!connection) throw new Error("The worktree daemon has no live debug mobile e
 process.stdout.write(JSON.stringify({
   project,
   runtime,
-  apk: join(project, "android/app/build/outputs/apk/debug/app-debug.apk"),
+  apk: join(project, "clients/android/app/build/outputs/apk/debug/app-debug.apk"),
   url: connection,
   exec: { argv: ["am", "start", "-S", "-n", "dev.pi.mobile/.MainActivity", "--es", "piopDebugUrl", connection] },
 }, null, 2) + "\n");

@@ -16,7 +16,7 @@ test('relocation retains the repository of old prompt checkpoints across multipl
   const file = join(dir, 'session.jsonl');
   const entry = { type: 'custom', customType: 'pi-project-prompt-checkpoint', data: { key: 'old', owner: 'session', commit: 'a'.repeat(40), base: null } };
   await writeFile(file, [ { type: 'session', id: 'session', cwd: roots[0] }, entry ].map(JSON.stringify).join('\n') + '\n');
-  const script = await readFile(new URL('../../src-tauri/resources/relocate-session.bundle.mjs', import.meta.url), 'utf8');
+  const script = await readFile(new URL('../../crates/daemon/resources/relocate-session.bundle.mjs', import.meta.url), 'utf8');
   execFileSync(process.execPath, ['-e', script, file, roots[1]]);
   let entries = (await readFile(file, 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(entries[1].data.repositoryRoot, roots[0]);
@@ -53,7 +53,7 @@ test('archive preservation tolerates deleted ancestor refs while preserving chil
 
   const file = join(archive, 'child.jsonl');
   await writeFile(file, entries.map(JSON.stringify).join('\n') + '\n');
-  const script = await readFile(new URL('../../src-tauri/resources/preserve-archive-checkpoints.bundle.mjs', import.meta.url), 'utf8');
+  const script = await readFile(new URL('../../crates/daemon/resources/preserve-archive-checkpoints.bundle.mjs', import.meta.url), 'utf8');
   execFileSync(process.execPath, ['-e', script, child], { env: { ...process.env, HOME: dir, PIOP_STORAGE_DIRECTORY: '.piop' }, stdio: 'pipe' });
   const saved = (await readFile(file, 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(saved[0].worktreeRestore.commit, second);
@@ -70,7 +70,7 @@ test('temporary conversation cleanup removes its refs without deleting parent ch
   git('update-ref', ownRef, commit); git('update-ref', parentRef, commit);
   const file = join(dir, 'side.jsonl');
   await writeFile(file, JSON.stringify({ type: 'session', id: 'side', cwd: dir }) + '\n');
-  const script = await readFile(new URL('../../src-tauri/resources/cleanup-ephemeral-session.bundle.mjs', import.meta.url), 'utf8');
+  const script = await readFile(new URL('../../crates/daemon/resources/cleanup-ephemeral-session.bundle.mjs', import.meta.url), 'utf8');
   execFileSync(process.execPath, ['-e', script, file]);
   assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/pi-session-snapshots/'), parentRef);
   await assert.rejects(readFile(file), { code: 'ENOENT' });

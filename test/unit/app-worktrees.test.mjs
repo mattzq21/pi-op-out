@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createWorktreeActions } from '../../src/appWorktrees.ts';
+import { createWorktreeActions } from '../../clients/ui/appWorktrees.ts';
 
 function fixture(t, options = {}) {
   const calls = [], notices = [], groups = [], sessions = [{ id: 'existing' }];

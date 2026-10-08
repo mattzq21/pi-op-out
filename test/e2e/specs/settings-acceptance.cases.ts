@@ -1,6 +1,6 @@
 import { $, $$, browser, expect } from "@wdio/globals";
 
-import { appSettingsSchema } from "../../../src/lib/responseSchemas.js";
+import { appSettingsSchema } from "../../../clients/ui/lib/responseSchemas.js";
 import { app } from "../pageobjects/app.page.js";
 import { mockBackend, backendCalls, updateBackendResponse, resetApp, emitPiEvent, defaultSettings, enableAgents, connectedSessionResponses } from './acceptance-fixture.js';
 

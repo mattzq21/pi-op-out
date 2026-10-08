@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseDiff } from '../../src/lib/diff.ts';
-import { turnDiff } from '../../src/lib/turnDiff.ts';
-import { GitDiffFilter } from '../../src/lib/diffPolicy.ts';
+import { parseDiff } from '../../clients/ui/lib/diff.ts';
+import { turnDiff } from '../../clients/ui/lib/turnDiff.ts';
+import { GitDiffFilter } from '../../clients/ui/lib/diffPolicy.ts';
 
 const patch = (path, before = 'const value = 1;', after = 'const value = 2;') => `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-${before}\n+${after}\n`;
 

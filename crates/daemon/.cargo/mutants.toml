@@ -1,0 +1,3 @@
+examine_globs = ["clients/ui/**/*.rs"]
+additional_cargo_args = ["--locked"]
+minimum_test_timeout = 20

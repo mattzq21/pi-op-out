@@ -1,0 +1,29 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "piop",
+  "version": "0.1.0",
+  "identifier": "dev.pi.desktop",
+  "build": {
+    "beforeDevCommand": "node scripts/build-daemon.mjs --debug && npm run dev",
+    "devUrl": "http://localhost:1423",
+    "beforeBuildCommand": "node scripts/build.mjs",
+    "frontendDist": "../../dist"
+  },
+  "app": {
+    "windows": [{ "title": "piop", "width": 1280, "height": 800, "minWidth": 900, "minHeight": 640, "focus": true, "decorations": false, "transparent": false, "backgroundColor": "#181817", "dragDropEnabled": true }],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb"],
+    "externalBin": ["binaries/piopd"],
+    "linux": { "deb": { "depends": ["libasound2t64", "libgstreamer1.0-0 (>= 1.28)", "libgstreamer-plugins-base1.0-0 (>= 1.28)", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good"] } },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

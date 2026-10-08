@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
-import { ChatView } from '../../src/components/ChatView.tsx';
+import { ChatView } from '../../clients/ui/components/ChatView.tsx';
 
 describe('conversation behavior', () => {
   let dom, view, props;

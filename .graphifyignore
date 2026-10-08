@@ -1,7 +1,7 @@
 node_modules/
 dist/
-src-tauri/target/
-src-tauri/voice-host/target/
+target/
+clients/desktop/voice-host/target/
 .git/
 .tld/
 graphify-out/

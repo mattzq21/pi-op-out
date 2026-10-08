@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
-import { SessionPanel } from '../../src/components/SessionPanel.tsx';
+import { SessionPanel } from '../../clients/ui/components/SessionPanel.tsx';
 import { createComponent, mergeProps } from 'solid-js';
-import { cacheSessionGroups } from '../../src/lib/sessionGroupsCache.ts';
-import { createSidebarState } from '../../src/lib/sidebarState.ts';
+import { cacheSessionGroups } from '../../clients/ui/lib/sessionGroupsCache.ts';
+import { createSidebarState } from '../../clients/ui/lib/sidebarState.ts';
 
 function SessionPanelFixture(props) {
   const sidebar = createSidebarState(() => props.sessions, () => props.query);

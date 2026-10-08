@@ -14,7 +14,7 @@ const baseline = process.argv.includes('--baseline');
 const root = new URL('../', import.meta.url);
 const source = path => readFileSync(new URL(path, root), 'utf8');
 const backend = await import(`data:text/javascript;base64,${Buffer.from(
-  source('src-tauri/resources/chatgpt-stream.mjs') + '\n' + source('src-tauri/resources/chatgpt-service.mjs') +
+  source('crates/daemon/resources/chatgpt-stream.mjs') + '\n' + source('crates/daemon/resources/chatgpt-service.mjs') +
   '\nexport { chatGptSave, chatGptLoad, chatGptSend, chatGptReadChat, chatGptStop, chatGptTickets, chatGptActive, chatGptKey };'
 ).toString('base64')}`);
 const directory = await mkdtemp(join(tmpdir(), 'piop-recovery-proof-'));
@@ -76,8 +76,8 @@ globalThis.recoveryProofInvoke = async (_command, { request }, schema) => {
 };
 registerHooks({
   load(url, context, next) {
-    if (url.endsWith('/src/lib/platform.ts')) return { format: 'module', shortCircuit: true, source: 'export const invoke = (...args) => globalThis.recoveryProofInvoke(...args);' };
-    if (url.endsWith('/src/components/Markdown.tsx')) return { format: 'module', shortCircuit: true, source: 'export const Markdown = props => props.children;' };
+    if (url.endsWith('/clients/ui/lib/platform.ts')) return { format: 'module', shortCircuit: true, source: 'export const invoke = (...args) => globalThis.recoveryProofInvoke(...args);' };
+    if (url.endsWith('/clients/ui/components/Markdown.tsx')) return { format: 'module', shortCircuit: true, source: 'export const Markdown = props => props.children;' };
     if (url.endsWith('/challenge.js?raw')) return { format: 'module', shortCircuit: true, source: 'export default "";' };
     if (baseline && /\/src\/plugins\/chatgpt\/(QuickChat.tsx|useChatGpt.ts|chatSchemas.ts)$/.test(url)) {
       const path = new URL(url).pathname.slice(root.pathname.length);
@@ -102,7 +102,7 @@ try {
   console.log('PASS: undelivered send remains uncertain; a new send is blocked');
   const { render } = await import('solid-js/web');
   const { createComponent } = await import('solid-js');
-  const { QuickChat } = await import('../src/plugins/chatgpt/QuickChat.tsx');
+  const { QuickChat } = await import('../clients/ui/plugins/chatgpt/QuickChat.tsx');
   dispose = render(() => createComponent(QuickChat, { open: true, onNew() {} }), document.body);
   await until(() => document.querySelector('option[value="lost"]'), 'history loads');
   const picker = document.querySelector('[aria-label="ChatGPT chat"]');

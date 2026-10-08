@@ -25,15 +25,15 @@ const triple = run('rustc', ['-vV'], { encoding: 'utf8', stdio: 'pipe' }).stdout
 
 if (!triple) throw new Error('Could not determine the native Rust target');
 
-run('cargo', ['build', '--locked', '--manifest-path', 'src-tauri/Cargo.toml', '--target-dir', 'src-tauri/target', '-p', 'piop-daemon', '--bin', 'piopd', ...(debug ? [] : ['--release'])]);
+run('cargo', ['build', '--locked', '--manifest-path', 'Cargo.toml', '--target-dir', 'target', '-p', 'piop-daemon', '--bin', 'piopd', ...(debug ? [] : ['--release'])]);
 
 const extension = process.platform === 'win32' ? '.exe' : '';
 
-mkdirSync(new URL('../src-tauri/binaries/', import.meta.url), { recursive: true });
+mkdirSync(new URL('../clients/desktop/binaries', import.meta.url), { recursive: true });
 
-const source = fileURLToPath(new URL(`../src-tauri/target/${debug ? 'debug' : 'release'}/piopd${extension}`, import.meta.url));
+const source = fileURLToPath(new URL(`../target/${debug ? 'debug' : 'release'}/piopd${extension}`, import.meta.url));
 
-const destination = fileURLToPath(new URL(`../src-tauri/binaries/piopd-${triple}${extension}`, import.meta.url));
+const destination = fileURLToPath(new URL(`../clients/desktop/binaries/piopd-${triple}${extension}`, import.meta.url));
 
 const sourceStats = statSync(source);
 

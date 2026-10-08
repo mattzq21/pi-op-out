@@ -1,6 +1,6 @@
 export default {
   mutate: [
-    'src/**/*.{ts,tsx}', 'extensions/**/*.ts', 'src-tauri/resources/*.ts',
+    'clients/ui/**/*.{ts,tsx}', 'extensions/**/*.ts', 'crates/daemon/resources/*.ts',
     '!extensions/piop-define-agents/index.ts', '!**/*.d.ts',
   ],
   testRunner: 'piop-node',
@@ -16,5 +16,5 @@ export default {
   jsonReporter: { fileName: 'reports/mutation/remaining-typescript.json' },
   incremental: true,
   incrementalFile: 'reports/mutation/remaining-typescript-incremental.json',
-  ignorePatterns: ['src-tauri/target/**', 'dist/**', 'dist-mobile/**', 'reports/**'],
+  ignorePatterns: ['target/**', 'dist/**', 'dist-mobile/**', 'reports/**'],
 };

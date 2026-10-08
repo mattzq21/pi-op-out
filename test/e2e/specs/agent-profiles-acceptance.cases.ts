@@ -1,7 +1,7 @@
 import { $, browser, expect } from "@wdio/globals";
 import { readFileSync, writeFileSync } from "node:fs";
 
-import { agentConfigSchema } from "../../../src/lib/agentSchemas.js";
+import { agentConfigSchema } from "../../../clients/ui/lib/agentSchemas.js";
 import { app } from "../pageobjects/app.page.js";
 import { installedAgentConfigPath, mockBackend, backendCalls, resetBackend, resetApp, emitPiEvent, defaultSettings, acceptanceAgents, enableAgents, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
 

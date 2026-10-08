@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderHook, act } from '../dom.mjs';
-import { useChatSession } from '../../src/lib/useChatSession.ts';
+import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
 import { promptContext } from '../prompt-context-fixture.mjs';
 
 describe('chat session hook', () => {

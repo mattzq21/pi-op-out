@@ -47,12 +47,12 @@ const densities = ["mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"];
 
 const androidIcons = ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"];
 
-const resources = join(root, "android/app/src/main/res");
+const resources = join(root, "clients/android/app/src/main/res");
 
 await cachedBuild({
   name: "icons",
   inputs: [source, join(root, "scripts/icon-background.svg"), fileURLToPath(import.meta.url), join(root, "scripts/build-cache.mjs"), join(root, "package-lock.json")],
-  outputs: [...desktopIcons.map(name => join(root, "src-tauri/icons", name)), ...densities.flatMap(density => androidIcons.map(name => join(resources, `mipmap-${density}`, name))), join(resources, "drawable/piop_icon.png")],
+  outputs: [...desktopIcons.map(name => join(root, "clients/desktop/icons", name)), ...densities.flatMap(density => androidIcons.map(name => join(resources, `mipmap-${density}`, name))), join(resources, "drawable/piop_icon.png")],
   key: "tauri-icons",
 }, async () => {
   const output = mkdtempSync(join(tmpdir(), "piop-icons-"));
@@ -80,7 +80,7 @@ await cachedBuild({
     if (result.status !== 0) throw new Error(`Icon generation failed (${result.status})`);
 
     for (const name of desktopIcons) {
-      copyIfChanged(join(output, name), join(root, "src-tauri/icons", name));
+      copyIfChanged(join(output, name), join(root, "clients/desktop/icons", name));
     }
 
     for (const density of densities) {

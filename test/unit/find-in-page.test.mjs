@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
-import { FindInPage } from '../../src/components/FindInPage.tsx';
+import { FindInPage } from '../../clients/ui/components/FindInPage.tsx';
 
 describe('in-page search', () => {
   let dom, view, root, launcher, props, observers;
