@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -54,16 +55,48 @@ function wirelessAddress(connection) {
   return `wss://${route[0].replace(/:443$/, '')}/`;
 }
 
-try {
-  const devices = run(adb, ['devices'], true).split(/\r?\n/).flatMap((line) => {
-    const match = line.match(/^(\S+)\s+device$/);
+function readDevices() {
+  return run(adb, ['devices', '-l'], true).split(/\r?\n/).flatMap(line => {
+    const match = line.match(/^(\S+)\s+(device|offline|unauthorized|no permissions)(?:\s|$)/);
 
-    return match ? [match[1]] : [];
+    return match ? [{ serial: match[1], state: match[2], usb: /\susb:/.test(line) }] : [];
   });
+}
 
-  const serial = process.argv[2] || env.ANDROID_SERIAL || (devices.length === 1 ? devices[0] : undefined);
+function chooseDevice(devices, requested) {
+  const ready = devices.filter(device => device.state === 'device');
 
-  if (!serial || !devices.includes(serial)) throw new Error('Connect and authorize one Android device, or select one with npm run reinstall -- <device-serial>.');
+  if (requested) return ready.find(device => device.serial === requested)?.serial;
+  const usb = ready.filter(device => device.usb);
+
+  if (usb.length === 1) return usb[0].serial;
+
+  if (ready.length === 1) return ready[0].serial;
+
+  if (ready.length > 1) throw new Error(`Multiple Android devices are ready: ${ready.map(device => device.serial).join(', ')}. Select one with npm run reinstall -- <device-serial>.`);
+}
+
+async function waitForDevice() {
+  const requested = process.argv[2] || env.ANDROID_SERIAL;
+  let devices = [];
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    devices = readDevices();
+    const selected = chooseDevice(devices, requested);
+
+    if (selected) return selected;
+
+    if (!attempt) console.log('Waiting for ADB to detect an authorized Android device…');
+    await delay(500);
+  }
+
+  const detected = devices.map(device => `${device.serial} (${device.state})`).join(', ') || 'none';
+  const selection = requested ? `Selected device ${requested} is not ready. ` : '';
+  throw new Error(`${selection}ADB detected: ${detected}. Unlock the phone and accept USB debugging authorization. Check adb devices -l${env.ANDROID_SERIAL ? ' and ANDROID_SERIAL' : ''}.`);
+}
+
+try {
+  const serial = await waitForDevice();
   console.log('Building and starting the Piop debug daemon…');
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'daemon:dev:restart']);
   const connection = JSON.parse(run(process.execPath, ['scripts/mobile-debug-connection.mjs'], true));
