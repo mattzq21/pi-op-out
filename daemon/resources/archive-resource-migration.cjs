@@ -164,7 +164,7 @@ function preparePin(transaction, journal, publication = transaction) {
   if (!migration || migration.kind !== 'git') return;
   const pin = migration.recovery;
   migration.pinAttempted = true;
-  io.write(journal, JSON.stringify(publication));
+  require('./restore-records.cjs').write(journal, JSON.stringify(publication));
 
   if (io.identity(pin.repositoryRoot) !== pin.repositoryIdentity) throw new Error('Legacy checkpoint repository changed');
   io.git(pin.repositoryRoot, ['update-ref', pin.ref, pin.commit, '0'.repeat(pin.commit.length)]);
@@ -184,7 +184,7 @@ function seal(root, transaction, journal, publication = transaction) {
 
   for (const owner of selected) updates.push({ sessionId: owner.sessionId, sessionPath: owner.sessionPath, identity: owner.identity, archiveResourceId: record.id,
     checkpointRepositoryRoot: record.binding.git?.root ?? null, worktreeRestore: { ...record.recovery, resourceId: record.id, conversationPath: path.join(migration.path, owner.relative) } });
-  const save = () => io.write(journal, JSON.stringify(publication));
+  const save = () => require('./restore-records.cjs').write(journal, JSON.stringify(publication));
   peers.planUpdates(transaction, updates, save);
   peers.preparePeers(transaction, save);
   const source = transaction.resourcePeers.find(peer => peer.file === transaction.trace.source);
@@ -216,7 +216,7 @@ function selectGroupOwners(transaction, publication) {
 
 function rollback(transaction, journal, publication = transaction) {
   if (!transaction.migration) return;
-  peers.rollbackPeers(transaction, () => io.write(journal, JSON.stringify(publication)));
+  peers.rollbackPeers(transaction, () => require('./restore-records.cjs').write(journal, JSON.stringify(publication)));
   const migration = transaction.migration;
 
   if (migration.pinAttempted) {
@@ -244,7 +244,7 @@ function retire(transaction, journal, publication) {
   if (!transaction.migration.cleanup) {
     const files = (transaction.resourcePeers ?? []).flatMap(peer => [peer.backup, peer.prepared, peer.rollback]);
     transaction.migration.cleanup = files.flatMap(file => io.exists(file) ? [{ file, entries: io.removalPlan(file) }] : []);
-    io.write(journal, JSON.stringify(publication));
+    require('./restore-records.cjs').write(journal, JSON.stringify(publication));
   }
 
   for (const artifact of transaction.migration.cleanup) {
@@ -254,7 +254,7 @@ function retire(transaction, journal, publication) {
 
   if (fs.readdirSync(container).length) throw new Error('Unknown legacy restoration staging contents retained');
   transaction.migration.retired = true;
-  io.write(journal, JSON.stringify(publication));
+  require('./restore-records.cjs').write(journal, JSON.stringify(publication));
   fs.rmdirSync(container);
   io.sync(path.dirname(container));
 }

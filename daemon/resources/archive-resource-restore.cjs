@@ -43,14 +43,14 @@ function copyDirectory(transaction, journal, publication = transaction) {
   fs.mkdirSync(copy.staging, { mode: 0o700 });
   io.sync(path.dirname(copy.staging));
   copy.stagingIdentity = io.identity(copy.staging);
-  io.write(journal, JSON.stringify(publication));
+  require('./restore-records.cjs').write(journal, JSON.stringify(publication));
   fs.cpSync(copy.source, copy.staging, { recursive: true, verbatimSymlinks: true, force: false, errorOnExist: true, preserveTimestamps: true });
   fs.chmodSync(copy.staging, fs.statSync(copy.source).mode & 0o777);
 
   if (!io.matches(copy.source, copy.sourceProof) || !io.sameContents(copy.staging, copy.sourceProof)) throw new Error('Shared archived directory changed while copying; retained');
   io.syncTree(copy.staging);
   copy.prepared = io.describe(copy.staging);
-  io.write(journal, JSON.stringify(publication));
+  require('./restore-records.cjs').write(journal, JSON.stringify(publication));
   io.mkdir(path.dirname(copy.destination));
   io.move({ source: copy.staging, destination: copy.destination, identity: copy.prepared });
 }
@@ -63,7 +63,7 @@ function seal(root, transaction, journal, publication = transaction) {
     sourceIdentity: transaction.trace.identity, directoryIdentity: transaction.worktree?.stagingIdentity ?? transaction.directoryCopy?.stagingIdentity ?? record.binding.identity,
     created: Boolean(transaction.worktree || transaction.directoryCopy),
   });
-  io.write(journal, JSON.stringify(publication));
+  require('./restore-records.cjs').write(journal, JSON.stringify(publication));
   resources.apply(root, transaction.resource);
 }
 

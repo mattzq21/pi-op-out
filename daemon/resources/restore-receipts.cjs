@@ -67,6 +67,7 @@ function parse(body) {
 }
 
 function readRecord(file) {
+  if (path.basename(path.dirname(file)) === 'restore-transactions') return require('./restore-records.cjs').read(file);
   const metadata = io.exists(file);
 
   if (!metadata) return null;
@@ -258,7 +259,7 @@ function archivePending(root) {
 }
 
 function pending(root, ignoredJournal) {
-  if (pendingDirectory(path.join(root, 'restore-transactions'), ignoredJournal)) return true;
+  if (require('./restore-records.cjs').list(root).some(file => file !== ignoredJournal)) return true;
 
   if (archivePending(root)) return true;
 

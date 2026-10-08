@@ -49,7 +49,8 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS session_group_assignments (session_key TEXT PRIMARY KEY, group_id TEXT);
       CREATE TABLE IF NOT EXISTS session_group_removed_projects (project_id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS session_group_deletions (session_key TEXT PRIMARY KEY);
-      CREATE TABLE IF NOT EXISTS session_publications (publication_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS session_publications (publication_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_restorations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -161,8 +162,32 @@ function importSessions(db, root) {
     }
 
     importPublications(db, root);
+    importRestorations(db, root);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importRestorations(db, root) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('session-restorations-v1')) return;
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const directory = path.join(root, 'restore-transactions');
+  let names;
+
+  try { names = fs.readdirSync(directory); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; names = []; }
+
+  for (const name of names.filter(name => name.endsWith('.json'))) {
+    if (!/^[a-f0-9]{40}\.json$/.test(name)) throw new Error('Invalid restore record name');
+    const descriptor = fs.openSync(path.join(directory, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+
+    try {
+      if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid restore record');
+      db.prepare('INSERT INTO session_restorations VALUES (?, ?)').run(name.slice(0, -5), fs.readFileSync(descriptor, 'utf8'));
+    } finally { fs.closeSync(descriptor); }
+  }
+
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('session-restorations-v1');
 }
 
 function importPublications(db, root) {

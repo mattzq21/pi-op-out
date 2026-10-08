@@ -98,7 +98,7 @@ function prepareDirectory(directory, transaction, journal) {
   verifyDirectoryContents(directory);
   fs.mkdirSync(directory.staging, { mode: 0o700 });
   directory.stagingIdentity = identity(directory.staging);
-  write(journal, JSON.stringify(transaction));
+  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
   fs.cpSync(directory.source, directory.staging, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
 
   if (!matches(directory.source, directory.identity)) throw new Error(`Restoration files changed: ${directory.source}`);
@@ -177,11 +177,11 @@ function prepareReusedDirectory(directory, transaction, journal) {
   const parent = path.dirname(directory);
   const item = { source: path.join(parent, `.piop-restore-${randomUUID()}`), destination: directory, parentIdentity: identity(parent) };
   transaction.createdDirectories.push(item);
-  write(journal, JSON.stringify(transaction));
+  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
   fs.mkdirSync(item.source, { mode: 0o700 });
   item.identity = identity(item.source);
   sync(item.source); sync(parent);
-  write(journal, JSON.stringify(transaction));
+  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
   performMove(item);
 }
 
@@ -226,7 +226,7 @@ function prepareWorktree(plan, transaction, journal) {
   fs.mkdirSync(plan.staging, { mode: 0o700 });
   sync(path.dirname(plan.staging));
   plan.stagingIdentity = identity(plan.staging);
-  write(journal, JSON.stringify(transaction));
+  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
   git(plan, ['update-ref', plan.reservation, plan.commit, '0'.repeat(plan.commit.length)]);
   const common = git(plan, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   syncTree(path.join(common, 'refs'));
@@ -393,7 +393,7 @@ function undoRestorationMove(transaction, item) {
   undoMove(item);
 }
 
-function cleanup(journal) { fs.unlinkSync(journal); sync(path.dirname(journal)); }
+function cleanup(journal) { require('./restore-records.cjs').remove(journal); }
 
 function finishCommit(transaction, journal) {
   const root = path.dirname(path.dirname(journal));
@@ -409,7 +409,7 @@ function finishCommit(transaction, journal) {
     sync(path.dirname(transaction.trace.destination));
     sync(path.dirname(transaction.trace.source));
     transaction.committed = true;
-    write(journal, JSON.stringify(transaction));
+    require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
   }
 
   try { releaseReservation(transaction); retireMigrations(transaction, journal); cleanup(journal); }
@@ -417,13 +417,8 @@ function finishCommit(transaction, journal) {
 }
 
 function recover(root) {
-  const directory = path.join(root, 'restore-transactions');
-
-  if (!exists(directory)) return;
-
-  for (const name of fs.readdirSync(directory).filter(name => name.endsWith('.json'))) {
-    const journal = path.join(directory, name);
-    const transaction = JSON.parse(fs.readFileSync(journal, 'utf8'));
+  for (const journal of require('./restore-records.cjs').list(root)) {
+    const transaction = require('./restore-records.cjs').read(journal).value;
 
     validateTransaction(root, transaction, journal);
 
@@ -445,7 +440,7 @@ function prepareLegacyRollback(root, transaction, journal) {
   }
 
   for (const directory of directories(transaction)) directory.recovery ??= path.join(root, 'restore-recovery', randomUUID());
-  write(journal, JSON.stringify(transaction));
+  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
 }
 
 function sessionTransaction(root, { header, file, destination, result }) {
@@ -492,7 +487,7 @@ function publishRestoration(root, transaction, journal) {
   }
 
   reconcileMigrationTraces(transaction);
-  write(journal, JSON.stringify(transaction));
+  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
 
   for (const item of transaction.moves) { syncTree(item.source); performMove(item); }
 
@@ -549,7 +544,7 @@ function restoreGroupLocked(root, records, directoryPlans, worktreePlans, reused
   const journal = path.join(journalDirectory, `${key}.json`);
 
   for (const resource of resources) resource.worktree = transaction.worktrees.find(plan => plan.path === resource.worktree?.path);
-  write(journal, JSON.stringify(transaction));
+  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
 
   try {
     for (const record of records) goalAssets.retainHistory(root, record.entries, record.header.id, record.destination);
@@ -625,7 +620,7 @@ function restorePlan(root, header, file, destination, result, directory, worktre
   };
 
   const journal = path.join(journalDirectory, `${key}.json`);
-  write(journal, JSON.stringify(transaction));
+  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
 
   return { transaction, journal };
 }

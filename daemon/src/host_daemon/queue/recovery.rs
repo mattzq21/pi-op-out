@@ -61,11 +61,22 @@ fn storage_locks(root: &Path) -> Result<Option<(File, File)>> {
 }
 
 fn transactions_pending(root: &Path) -> Result<bool> {
+    if restoration_pending(root)? { return Ok(true); }
+    files_pending(root)
+}
+
+fn restoration_pending(root: &Path) -> Result<bool> {
+    let database = crate::session_registry::open(root)?;
+    database.query_row("SELECT EXISTS(SELECT 1 FROM session_restorations)", [], |row| row.get(0))
+        .map_err(|error| error.to_string())
+}
+
+fn files_pending(root: &Path) -> Result<bool> {
     for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
         if entry.file_name().to_string_lossy().starts_with("archive-transaction-") { return Ok(true); }
     }
-    for area in ["restore-transactions", "fork-transactions", "deleted-sessions"] {
+    for area in ["fork-transactions", "deleted-sessions"] {
         if directory_has_entries(&root.join(area))? { return Ok(true); }
     }
     deletion_pending(&root.join("sessions")).and_then(|active| {
