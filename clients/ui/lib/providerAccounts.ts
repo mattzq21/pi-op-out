@@ -37,11 +37,3 @@ export function accountModelNameLookup(models: readonly NamedModel[]) {
     return duplicate ? `${name} #${account.number}` : name;
   };
 }
-
-export function accountModelName(model: NamedModel, models: readonly NamedModel[]) {
-  const account = providerAccount(model.provider);
-  const name = (model.name || model.id).replace(/ #\d+$/, "");
-  const duplicate = models.some((candidate) => candidate.id === model.id && candidate.provider !== model.provider && providerAccount(candidate.provider).provider === account.provider);
-
-  return duplicate ? `${name} #${account.number}` : name;
-}
