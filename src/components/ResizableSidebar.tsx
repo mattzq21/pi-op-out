@@ -58,7 +58,6 @@ export function ResizableSidebar(componentProps: { compact: boolean; children: J
       aria-valuemin={MIN_WIDTH}
       aria-valuemax={maxWidth()}
       aria-valuenow={visibleWidth()}
-      data-tooltip="Drag to resize sidebar; double-click to reset"
       onPointerDown={(event) => {
         if (event.button !== 0 || !event.isPrimary) return;
         event.preventDefault();
