@@ -55,8 +55,7 @@ pub(crate) fn read() -> Result<Endpoint, String> {
 
 pub(crate) fn restart_active() -> bool {
     let Ok(directory) = directory() else { return false; };
-    let Ok(bytes) = fs::read(directory.join("restart-status.json")) else { return false; };
-    let Ok(status) = serde_json::from_slice::<Value>(&bytes) else { return false; };
+    let Ok(Some(status)) = crate::restart_storage::read(&directory.join("restart-status.json")) else { return false; };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
     matches!(status["phase"].as_str(), Some("preparing" | "armed" | "restarting")) && status["expiresAt"].as_u64().unwrap_or(0) > now
 }

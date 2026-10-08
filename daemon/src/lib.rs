@@ -1,6 +1,7 @@
 #[path = "host_daemon/mod.rs"]
 mod host_supervisor;
 mod restart_artifacts;
+mod restart_storage;
 mod daemon_log;
 
 pub fn initialize_daemon_process() -> Result<(), String> { restart_artifacts::initialize()?; daemon_log::initialize() }

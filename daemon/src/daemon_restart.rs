@@ -38,15 +38,15 @@ fn path(name: &str) -> Result<PathBuf, String> { Ok(daemon_endpoint::directory()
 
 fn write(name: &str, value: &impl Serialize) -> Result<(), String> {
     let _publication = restart_artifacts::publication_lock()?;
-    crate::atomic_write_private(&path(name)?, &serde_json::to_vec(value).map_err(|error| error.to_string())?)
+    crate::restart_storage::write(&path(name)?, value)
 }
 
 fn read_plan() -> Result<Plan, String> {
-    serde_json::from_slice(&fs::read(path("restart-plan.json")?).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+    serde_json::from_value(crate::restart_storage::read(&path("restart-plan.json")?)?.ok_or("Restart plan is missing")?).map_err(|error| error.to_string())
 }
 
 pub(crate) fn status(id: &str) -> Result<Value, String> {
-    let status: Value = serde_json::from_slice(&fs::read(path("restart-status.json")?).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    let status = crate::restart_storage::read(&path("restart-status.json")?)?.ok_or("Restart status is missing")?;
     if status["restartId"] != id { return Err("This restart has been superseded by another restart".into()); }
     Ok(status)
 }
@@ -240,7 +240,7 @@ fn wait_for_handoff(plan: &Plan) -> Result<(), String> {
 fn start_candidate(plan: &Plan, fallback: bool) -> Result<u32, String> {
     let enabled = if fallback { &plan.previous } else { &plan.enabled };
     write("plugins.json", &json!({"enabled":enabled,"previous":plan.previous}))?;
-    let _ = fs::remove_file(path("restart-ready.json")?);
+    crate::restart_storage::remove(&path("restart-ready.json")?)?;
     let mut child = launch(plan, if fallback { &plan.fallback } else { &plan.executable }, "--restart-candidate")?;
     let result = wait_ready(plan, &mut child);
     if result.is_err() { let _ = child.kill(); let _ = child.wait(); }
@@ -251,7 +251,7 @@ fn wait_ready(plan: &Plan, child: &mut Child) -> Result<u32, String> {
     let deadline = Instant::now() + Duration::from_secs(45);
     while Instant::now() < deadline {
         if child.try_wait().map_err(|error| error.to_string())?.is_some() { return Err("The replacement daemon stopped during startup".into()); }
-        let ready = fs::read(path("restart-ready.json")?).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        let ready = crate::restart_storage::read(&path("restart-ready.json")?).ok().flatten();
         if ready.is_some_and(|ready| ready["restartId"] == plan.id && ready["processId"] == child.id()) { return Ok(child.id()); }
         thread::sleep(Duration::from_millis(100));
     }

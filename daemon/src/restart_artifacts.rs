@@ -128,6 +128,9 @@ impl Drop for Backup {
 }
 
 fn read_value(path: &Path) -> Result<Option<Value>, String> {
+    if matches!(path.file_name().and_then(|name| name.to_str()), Some("restart-plan.json" | "restart-status.json" | "restart-ready.json")) {
+        return crate::restart_storage::read(path);
+    }
     match fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| format!("Could not read {}: {error}", path.display())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -255,10 +258,10 @@ fn cleanup_failed(id: &str) -> Result<(), String> {
 
 fn remove_plan(directory: &Path, id: &str) -> Result<(), String> {
     let plan_path = directory.join("restart-plan.json");
-    if read_value(&plan_path)?.is_some_and(|plan| plan["id"] == id) { fs::remove_file(plan_path).map_err(|error| error.to_string())?; }
+    if read_value(&plan_path)?.is_some_and(|plan| plan["id"] == id) { crate::restart_storage::remove(&plan_path)?; }
     let status_path = directory.join("restart-status.json");
     if read_value(&status_path)?.is_some_and(|status| status["restartId"] == id && active_phase(Some(&status))) {
-        fs::remove_file(status_path).map_err(|error| error.to_string())?;
+        crate::restart_storage::remove(&status_path)?;
     }
     Ok(())
 }
