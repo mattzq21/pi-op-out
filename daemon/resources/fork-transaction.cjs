@@ -101,6 +101,7 @@ function recoverTransaction(root, directory) {
     removeOwned(destination, transaction.transcript);
     removeOwned(sidecar, transaction.diffs);
     sync(path.dirname(destination));
+    forgetPublished(root, destination);
     cleanup(directory);
 
     return;
@@ -110,6 +111,7 @@ function recoverTransaction(root, directory) {
     if (!matches(destination, transaction.transcript)) throw new Error('Fork publication destination was replaced');
 
     if (!exists(sidecar)) fs.linkSync(path.join(directory, 'diffs.json'), sidecar);
+    registerPublished(root, destination);
   } else if (exists(sidecar)) {
     if (!matches(sidecar, transaction.diffs)) throw new Error('Fork publication sidecar was replaced');
     fs.unlinkSync(sidecar);
@@ -124,6 +126,20 @@ function removeOwned(file, expected) {
 
   if (!matches(file, expected)) throw new Error('Fork publication file was replaced');
   fs.unlinkSync(file);
+}
+
+function registerPublished(root, destination) {
+  const header = JSON.parse(fs.readFileSync(destination, 'utf8').split('\n')[0]);
+
+  if (header.type !== 'session' || !Check(Type.String({ minLength: 1 }), header.id)) throw new Error('Invalid published fork identity');
+  require('./session-database.cjs').registerPath(root, header.id, destination);
+}
+
+function forgetPublished(root, destination) {
+  const database = require('./session-database.cjs').open(root);
+
+  try { database.prepare('DELETE FROM sessions WHERE session_path=?').run(destination); }
+  finally { database.close(); }
 }
 
 function recover(root) {
@@ -180,6 +196,7 @@ function publish(root, request) {
     sync(path.dirname(transaction.destination));
     fs.linkSync(path.join(directory, 'session.jsonl'), transaction.destination);
     sync(path.dirname(transaction.destination));
+    registerPublished(root, transaction.destination);
   } catch (error) {
     const committed = matches(transaction.destination, transaction.transcript);
     recoverTransaction(root, directory);
@@ -228,6 +245,7 @@ function published(root, request) {
 
   if (!Check(diffsSchema, JSON.parse(fs.readFileSync(sidecar, 'utf8')))) throw new Error('Fork publication history is unavailable');
   sync(sidecar); sync(destination); sync(path.dirname(destination));
+  registerPublished(root, destination);
 
   return true;
 }

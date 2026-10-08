@@ -11,8 +11,9 @@ if (!fs.existsSync(root)) process.exit(0);
 
 const realRoot = fs.realpathSync(root);
 
-const candidates = target.path ? [target.path] : target.id
-  ? fs.readdirSync(root).filter(name => name.endsWith(`_${target.id}.jsonl`)).map(name => path.join(root, name)) : [];
+const registered = !target.path && target.id ? require('./session-database.cjs').lookup(path.dirname(realRoot), target.id) : undefined;
+
+const candidates = target.path ? [target.path] : registered ? [registered] : [];
 
 for (const candidate of candidates) {
   if (!fs.existsSync(candidate)) continue;
@@ -41,4 +42,9 @@ for (const candidate of candidates) {
   const loopCheckpoint = `${file}.loop-detection.json`;
 
   if (fs.existsSync(loopCheckpoint)) fs.unlinkSync(loopCheckpoint);
+  const database = require('./session-database.cjs').open(path.dirname(realRoot));
+
+  try {
+    database.prepare('DELETE FROM sessions WHERE session_id=? AND session_path=?').run(header.id, file);
+  } finally { database.close(); }
 }

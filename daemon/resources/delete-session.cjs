@@ -243,19 +243,18 @@ async function referencesDirectory(file, storedPath) {
 }
 
 async function directoryReferenced(location, storedPath, selected) {
-  let entries;
+  const files = require('./session-database.cjs').paths(path.dirname(location));
 
-  try { entries = await fs.readdir(location, { withFileTypes: true }); }
-  catch (error) { if (error.code === "ENOENT") return false; throw error; }
+  for (const file of files) {
+    if (!file.startsWith(location + path.sep) || selected.has(file)) continue;
+    let metadata;
 
-  for (const entry of entries) {
-    const file = path.join(location, entry.name);
+    try { metadata = await fs.lstat(file); }
+    catch (error) { if (error.code === "ENOENT") continue; throw error; }
 
-    if (entry.isDirectory() && await directoryReferenced(file, storedPath, selected)) return true;
+    if (metadata.isSymbolicLink()) throw new Error("Session database path must not be a symbolic link");
 
-    if (!entry.isFile() || !file.endsWith(".jsonl") || selected.has(file)) continue;
-
-    if (await referencesDirectory(file, storedPath)) return true;
+    if (metadata.isFile() && await referencesDirectory(file, storedPath)) return true;
   }
 
   return false;

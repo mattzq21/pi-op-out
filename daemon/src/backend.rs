@@ -78,10 +78,10 @@ fn cleanup_blank_session(target: BlankSessionCleanup) {
 
 fn cleanup_blank_session_at(target: BlankSessionCleanup, root: Option<&Path>) {
     if target.submitted { return; }
-    let script = include_str!("../resources/cleanup-blank-session.cjs");
+    let script = session_registry::with_database(include_str!("../resources/cleanup-blank-session.cjs"));
     let arguments = json!({"path":target.path,"id":target.id,"root":root}).to_string();
     let result = if let Some(host) = target.host {
-        ssh(&host).arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&arguments)))).output()
+        ssh(&host).arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(&script), shell_quote(&arguments)))).output()
     } else { node_command().arg("-e").arg(script).arg(arguments).output() };
     match result {
         Ok(output) if output.status.success() => {},

@@ -1,6 +1,7 @@
 use super::{storage::QueueStorage, Result};
 use super::super::ownership::ConversationOwnership;
 use serde_json::Value;
+use rusqlite::OptionalExtension;
 use std::{
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Read, Write},
@@ -116,7 +117,18 @@ fn recover_contents(root: &Path, path: &Path, id: &str) -> Result<bool> {
         .ok_or("Queued input retained: recovery working directory is missing")?;
     let target = recovery_path(root, id, &journal["origin"])?;
     let name = pending.first().and_then(|item| item["message"].as_str()).unwrap_or("Recovered queued input");
-    create_transcript(&target, id, cwd, name)
+    let created = create_transcript(&target, id, cwd, name)?;
+    register_recovered(root, &target, id)?;
+    Ok(created)
+}
+
+fn register_recovered(root: &Path, target: &Path, id: &str) -> Result<()> {
+    if matching_header(target, id)? {
+        let database = crate::session_registry::open(root)?;
+        database.execute("INSERT INTO sessions (session_id, session_path) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path",
+            rusqlite::params![id, target.to_string_lossy()]).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn try_lock(path: &Path) -> Result<Option<File>> {
@@ -137,18 +149,15 @@ fn try_lock(path: &Path) -> Result<Option<File>> {
 }
 
 fn transcript_exists(root: &Path, id: &str) -> Result<bool> {
-    for area in ["sessions", "archived"] {
-        let directory = root.join(area);
-        if !directory.try_exists().map_err(|error| error.to_string())? { continue; }
-        let entries = walkdir::WalkDir::new(directory).follow_links(false).into_iter()
-            .filter_entry(|entry| !entry.file_name().to_string_lossy().ends_with(".snapshots"));
-        for entry in entries {
-            let entry = entry.map_err(|error| error.to_string())?;
-            if entry.file_type().is_file() && entry.path().extension().is_some_and(|extension| extension == "jsonl")
-                && matching_header(entry.path(), id)? { return Ok(true); }
-        }
+    let database = crate::session_registry::open(root)?;
+    let path: Option<String> = database.query_row("SELECT session_path FROM sessions WHERE session_id=?", [id], |row| row.get(0))
+        .optional().map_err(|error| error.to_string())?.flatten();
+    let Some(path) = path.map(PathBuf::from) else { return Ok(false); };
+    if !path.starts_with(root.join("sessions")) && !path.starts_with(root.join("archived")) {
+        return Err("Saved session path is outside session storage".into());
     }
-    Ok(false)
+    if !path.try_exists().map_err(|error| error.to_string())? { return Ok(false); }
+    matching_header(&path, id)
 }
 
 fn matching_header(path: &Path, id: &str) -> Result<bool> {

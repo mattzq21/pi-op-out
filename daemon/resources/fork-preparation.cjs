@@ -34,20 +34,14 @@ function savedIdentity(file) {
   } finally { fs.closeSync(descriptor); }
 }
 
-function savedOwners(directory, owners) {
-  for (const entry of children(directory)) {
-    const file = path.join(directory, entry.name);
+function savedOwners(root) {
+  const database = require('./session-database.cjs').open(root);
 
-    if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) savedOwners(file, owners);
-
-    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
-    const filenameId = entry.name.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.jsonl$/i)?.[1];
-
-    if (filenameId) owners.add(filenameId);
-    const id = savedIdentity(file);
-
-    if (id) owners.add(id);
-  }
+  try {
+    return new Set(database.prepare(`SELECT session_id FROM sessions WHERE session_path IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`)
+      .all().map(row => row.session_id));
+  } finally { database.close(); }
 }
 
 function git(root, args, input) {
@@ -141,9 +135,7 @@ function recover(root) {
 
   const owners = () => {
     if (published) return published;
-    published = new Set();
-    savedOwners(path.join(root, 'sessions'), published);
-    savedOwners(path.join(root, 'archived'), published);
+    published = savedOwners(root);
 
     return published;
   };

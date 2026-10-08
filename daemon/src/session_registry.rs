@@ -2,9 +2,13 @@ use serde_json::{json, Value};
 use std::{collections::HashSet, path::{Path, PathBuf}, sync::{Mutex, OnceLock}, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 pub(crate) fn source() -> String {
+    with_database(include_str!("../resources/session-registry.cjs"))
+}
+
+pub(crate) fn with_database(script: &str) -> String {
     format!("const sessionDatabase = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n{}",
         include_str!("../resources/session-database.cjs"),
-        include_str!("../resources/session-registry.cjs").replace("require('./session-database.cjs')", "sessionDatabase"))
+        script.replace("require('./session-database.cjs')", "sessionDatabase"))
 }
 
 fn run(mut request: Value) {
