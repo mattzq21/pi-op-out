@@ -104,10 +104,7 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("remove_temporary_chat", handle_remove_temporary_chat),
     ("validate_project_directory", handle_validate_project_directory),
     ("list_directories", handle_list_directories),
-    ("list_project_files", handle_list_project_files),
-    ("read_project_file", handle_read_project_file),
     ("read_image_file", handle_read_image_file),
-    ("save_project_file", handle_save_project_file),
     ("is_git_repository", handle_is_git_repository),
     ("git_branch", handle_git_branch),
     ("git_project_kind", handle_git_project_kind),
@@ -335,27 +332,9 @@ fn handle_list_directories(app: AppHandle, _owner: String, args: Value) -> Comma
     })
 }
 
-fn handle_list_project_files(_app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || project_files::list(&argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?)).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_read_project_file(_app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || project_files::read(&argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?)).await.map_err(|error| error.to_string())?
-    })
-}
-
 fn handle_read_image_file(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || project_files::read_image(app, &argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?, &argument::<String>(&args, "hostId")?)).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_save_project_file(_app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || project_files::save(&argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?, &argument::<String>(&args, "content")?, &argument::<String>(&args, "revision")?)).await.map_err(|error| error.to_string())?
     })
 }
 
