@@ -3,7 +3,7 @@ import { Type as Schema } from "typebox";
 import { Check } from "typebox/value";
 import { currentHost } from "./client.ts";
 import { sendAgentMailbox } from "./orchestration.ts";
-import { persistSubagentRun, forgetSubagentRun } from "./subagent-results.ts";
+import { persistSubagentRun, savedSubagentRuns } from "./subagent-results.ts";
 import { runSchema, resultNotificationId, type SubagentRun } from "./subagent-identity.ts";
 
 export { runSchema, type SubagentRun } from "./subagent-identity.ts";
@@ -34,10 +34,7 @@ export function subagentParent(ctx: ExtensionContext) {
 export function ownedRuns(ctx: ExtensionContext) {
   const runs = new Map<string, SubagentRun>();
 
-  for (const entry of ctx.sessionManager.getEntries()) {
-    if (entry.type !== "custom" || entry.customType !== SUBAGENT_RUN || !Check(runSchema, entry.data)) continue;
-    const run = entry.data;
-
+  for (const run of savedSubagentRuns(ctx)) {
     if (run.parentSessionId !== ctx.sessionManager.getSessionId() || run.hostId !== currentHost()) continue;
 
     if (!run.sessionId || !run.sessionPath) continue;
@@ -102,8 +99,6 @@ export function registerSubagentResults(pi: ExtensionAPI) {
     if (!run || run.resultDelivery === "delivered") return;
     run.resultDelivery = "delivered";
     saveRun(pi, ctx, run);
-
-    if (!run.accountingPending) void forgetSubagentRun(ctx, run).catch(error => ctx.ui.notify(`Subagent journal cleanup remains pending: ${String(error)}`, "error"));
   };
 
   pi.on("message_end", (event, ctx) => {

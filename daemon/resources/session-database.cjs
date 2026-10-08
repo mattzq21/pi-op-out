@@ -34,7 +34,14 @@ function initialize(db) {
         session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
         delivery_id TEXT NOT NULL, sequence INTEGER NOT NULL, fingerprint TEXT NOT NULL,
         message_json TEXT NOT NULL, PRIMARY KEY(session_id, delivery_id));
-      CREATE INDEX IF NOT EXISTS session_mailbox_order ON session_mailbox(session_id, sequence);`);
+      CREATE INDEX IF NOT EXISTS session_mailbox_order ON session_mailbox(session_id, sequence);
+      CREATE TABLE IF NOT EXISTS session_subagent_state (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS session_subagent_runs (
+        session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL, started_at REAL NOT NULL, run_json TEXT NOT NULL,
+        PRIMARY KEY(session_id, run_id));
+      CREATE INDEX IF NOT EXISTS session_subagent_order ON session_subagent_runs(session_id, started_at);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -181,4 +188,16 @@ function paths(root) {
   } finally { db.close(); }
 }
 
-module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths };
+function storageRoot(file) {
+  const path = require('node:path');
+  let directory = path.dirname(file);
+
+  while (path.dirname(directory) !== directory) {
+    if (['sessions', 'archived'].includes(path.basename(directory))) return path.dirname(directory);
+    directory = path.dirname(directory);
+  }
+
+  throw new Error('Conversation is outside session storage');
+}
+
+module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot };

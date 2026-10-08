@@ -2,11 +2,11 @@ import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-wor
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, readdir, type FileHandle } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { Type, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import type { DatabaseSync } from "node:sqlite";
-import { open as openDatabase, register } from "../session-database.cjs";
+import { open as openDatabase, register, storageRoot } from "../session-database.cjs";
 
 const detailsSchema = Type.Object({ notificationId: Type.String(), mailboxSessionId: Type.String(), mailboxFingerprint: Type.String() });
 
@@ -168,17 +168,6 @@ async function legacyPendingRecords(ctx: ExtensionContext, root: string) {
 
 function assertSameDelivery(fingerprint: string, message: MailboxMessage) {
   if (fingerprint !== message.details.mailboxFingerprint) throw new Error("Agent delivery ID was reused for a different message");
-}
-
-function storageRoot(file: string) {
-  let directory = dirname(file);
-
-  while (dirname(directory) !== directory) {
-    if (["sessions", "archived"].includes(basename(directory))) return dirname(directory);
-    directory = dirname(directory);
-  }
-
-  throw new Error("Agent mailbox is outside session storage");
 }
 
 async function mailboxDatabase(ctx: ExtensionContext, root: string) {

@@ -4,7 +4,7 @@ import { Check, Parse } from "typebox/value";
 import { setTimeout as delay } from "node:timers/promises";
 import { request } from "./client.ts";
 import { sessionSnapshot, snapshotStatus } from "./orchestration.ts";
-import { accountingUnresolved, forgetSubagentRun, hasSubagentResult, persistSubagentRun, resultNotificationId, savedSubagentRuns, unresolvedSubagentRuns, type SubagentRun } from "./subagent-results.ts";
+import { accountingUnresolved, persistSubagentRun, resultNotificationId, savedSubagentRuns, unresolvedSubagentRuns, type SubagentRun } from "./subagent-results.ts";
 import { subagentParent } from "./subagent-state.ts";
 
 export interface RecoveryScope { signal?: AbortSignal; recoveryDepth?: number; recoveryDeadline?: number }
@@ -155,8 +155,6 @@ export function registerSubagentRecovery(pi: ExtensionAPI, runtime: RecoveryRunt
         }
 
         if (accountingUnresolved(run)) await recover(run, event.ctx, scope);
-
-        if (hasSubagentResult(event.ctx, run)) await forgetSubagentRun(event.ctx, run);
       }
 
       return { complete: true };
