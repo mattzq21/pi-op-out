@@ -26,7 +26,7 @@ const canonicalModules = new Set([
   "checkpoint-schemas.cjs", "delete-recovery.cjs", "delete-transaction.cjs", "deletion-retention.cjs", "directory-liveness.cjs", "fork-preparation.cjs", "fork-transaction.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
   "restore-receipts.cjs", "restore-transaction.cjs", "retention-candidates.cjs", "retention-collection.cjs", "session-diff-store.cjs", "session-transactions.cjs", "snapshot-recovery.cjs", "storage-lock.cjs", "storage-recovery.cjs", "storage-transaction-lock.cjs",
   "transaction-owner-locks.cjs", "transcript-identity.cjs", "worktree-checkpoint-preservation.cjs", "worktree-container.cjs", "worktree-retention.cjs",
-  "git-diff-migration.cjs", "git-diff-store.cjs", "git-diff-pages.cjs", "git-diff-transfer.cjs", "session-publication.cjs", "session-publication-io.cjs", "session-publication-dependencies.cjs", "review-publication.cjs", "goal-assets.cjs",
+  "git-diff-migration.cjs", "git-diff-store.cjs", "git-diff-pages.cjs", "git-diff-transfer.cjs", "session-publication.cjs", "session-publication-io.cjs", "session-publication-dependencies.cjs", "session-child-index.cjs", "checkpoint-owner-index.cjs", "review-publication.cjs", "goal-assets.cjs",
 ]);
 
 function canonicalImports(source, path) {

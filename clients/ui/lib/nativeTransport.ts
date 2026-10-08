@@ -90,8 +90,30 @@ export const removeArchivedWorktree = (cwd: string, hostId = "local") => call("r
 
 export class NativeTransport {
   readonly promptControls = new PromptControls();
+  private automaticBehavior = Promise.resolve();
+  private automaticBehaviorGeneration = 0;
+  private automaticRetry: boolean | undefined;
+
+  configureAutomaticBehavior(autoRetry: boolean) {
+    const generation = this.automaticBehaviorGeneration;
+
+    const operation = this.automaticBehavior.then(async () => {
+      if (generation !== this.automaticBehaviorGeneration || this.automaticRetry === autoRetry) return;
+      await Promise.all([
+        this.command({ type: "set_auto_compaction", enabled: true }),
+        this.command({ type: "set_auto_retry", enabled: autoRetry }),
+      ]);
+
+      if (generation === this.automaticBehaviorGeneration) this.automaticRetry = autoRetry;
+    });
+
+    this.automaticBehavior = operation.catch(() => undefined);
+
+    return operation;
+  }
+
   async submitPrompt(command: RpcCommand) {
-    await this.promptControls.flush(value => this.command(value), enabled => this.setFastMode(enabled));
+    if (this.promptControls.hasPending()) await this.promptControls.flush(value => this.command(value), enabled => this.setFastMode(enabled));
 
     return this.command(command);
   }
@@ -286,13 +308,24 @@ export class NativeTransport {
 
     if (command.type === "get_state" || command.type === "get_snapshot") { const state = command.type === "get_snapshot" ? result.state ?? {} : result;
 
-    if (this.sessionId && this.sessionId !== state.sessionId) forgetSession(this); this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
+    this.retainSessionIdentity(state, command.type === "get_snapshot"); }
 
     if (command.type === "get_snapshot") {
       for (const event of result.extensionState ?? []) this.emit(event);
     }
   }
+  private retainSessionIdentity(state: CommandSession, snapshot: boolean) {
+    if (!state.sessionId) return;
+
+    if (!snapshot && this.sessionId && this.sessionId !== state.sessionId) forgetSession(this);
+    this.sessionPath = state.sessionFile; this.sessionId = state.sessionId;
+  }
   private emit(event: RpcEvent) {
+    if (["disconnected", "connection_restored", "session_switched", "settings_applied", "ownership_lost"].includes(event.type)) {
+      this.automaticRetry = undefined;
+      this.automaticBehaviorGeneration += 1;
+    }
+
     if (event.type === "session_switched") this.retainClassification(event.ephemeral);
 
     if (event.type === "ownership_lost") this.promptControls.reset();

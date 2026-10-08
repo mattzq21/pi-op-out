@@ -68,7 +68,8 @@ export async function submitDurablePrompt(owner: NativeTransport, command: RpcCo
   const submission = active.get(owner);
 
   if (!submission) throw new Error("The submission has not been saved durably");
-  await owner.promptControls.flush(value => owner.command(value), enabled => owner.setFastMode(enabled));
+
+  if (owner.promptControls.hasPending()) await owner.promptControls.flush(value => owner.command(value), enabled => owner.setFastMode(enabled));
   await submission.dispatch();
 
   return owner.command({ ...command, goalSubmissionId: submission.id });

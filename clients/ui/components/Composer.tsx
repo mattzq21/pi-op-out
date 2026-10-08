@@ -1,13 +1,15 @@
 import { ToolFailureMeter } from "./ToolFailureMeter";
 import { CacheIcon } from "./CacheIcon";
 import { required } from "../lib/required";
+import { trackToastMessage } from "../lib/toastHistory";
+import { createComposerPromptHistory } from "../lib/promptHistory";
+import { createComposerEditorKey } from "../lib/composerKeyboard";
 import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createMemo,createSelector,createSignal,Show,splitProps } from "solid-js";
 import { clipboardImageFile,pastedFiles,readClipboardImages } from "../lib/clipboardImages";
 import { buildComposerPrompt,composerReference,isPromptCommand,skillName } from "../lib/composerPrompt";
-import { isMobile } from "../lib/platform";
 import { accountModelNameLookup,providerAccountLabel } from "../lib/providerAccounts";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
 import { useComposerAttachments } from "../lib/useComposerAttachments";
@@ -50,7 +52,9 @@ interface Props {
   toolFailures?: import("../lib/toolFailureStats").ToolFailureStats;
   contextUsage?: ContextUsage;
   controlsDisabled?: boolean;
+  submissionDisabled?: boolean;
   draft?: string;
+  recentPrompts?: () => string[];
   onDraftChange?: (value: StateUpdate<string>) => void;
   uploads?: ComposerUpload[];
   onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void;
@@ -145,10 +149,6 @@ function canPickCommand(event: KeyboardEvent) {
   return (event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey;
 }
 
-function pasteShortcut(event: KeyboardEvent) {
-  return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v" && !event.altKey;
-}
-
 function reviewBehavior(message: string, behavior: "steer" | "followUp") {
   return /^\/(?:review|rs)(?:\s|$)/.test(message) ? "followUp" : behavior;
 }
@@ -185,12 +185,16 @@ export function Composer(props: Props) {
   const fastModeSupported = createMemo(() => (fastModeEnabled() || composer().fastModeStatus === "Fast mode off"));
   const [togglingFastMode, setTogglingFastMode] = createSignal(false);
   const togglingFastModeRef = createRef(false);
-  const setValue = (next: string) => { if (composer().onDraftChange) required((composer().onDraftChange))(next); else setLocalValue(next); };
+  const writeValue = (next: string) => { if (composer().onDraftChange) required((composer().onDraftChange))(next); else setLocalValue(next); };
+
+  const promptHistory = createComposerPromptHistory(value, writeValue, () => props.recentPrompts?.() ?? [], next => { setPaletteDismissed(true); setSelection({ start: next.length, end: next.length }); });
+
+  const setValue = (next: string) => { promptHistory.reset(); writeValue(next); };
 
   const attachments = useComposerAttachments(composer);
   const { uploads, updateUploads, uploadError, setUploadError, readingUploads, imageInputError, setImageInputError, addFiles, addPaths } = attachments;
+  trackToastMessage("Composer", "Image input error", () => imageInputError() ? "This model does not support image inputs. Try a different model" : undefined);
   const [sending, setSending] = createSignal(false);
-  const sendingRef = createRef(false);
   const [controlAction, setControlAction] = createSignal<"pause" | "resume">();
   const [stopping, setStopping] = createSignal(false);
   const stoppingRef = createRef(false);
@@ -309,7 +313,7 @@ export function Composer(props: Props) {
 
     return; }
 
-    if (composer().controlsDisabled || handledFocusRequest === request) return;
+    if (handledFocusRequest === request) return;
 
     const frame = requestAnimationFrame(() => {
       const editor = ref.current;
@@ -321,7 +325,7 @@ export function Composer(props: Props) {
     });
 
     return () => cancelAnimationFrame(frame);
-  }, () => [composer().focusRequest, composer().controlsDisabled, props.ownershipRequired]);
+  }, () => [composer().focusRequest, props.ownershipRequired]);
   createDependencyEffect(() => {
     if (props.ownershipRequired) ref.current?.blur();
   }, () => [props.ownershipRequired]);
@@ -373,12 +377,12 @@ export function Composer(props: Props) {
   };
 
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().pausing, composer().onChangePending)), () => (changePending));
-  const controlsBlocked = () => composer().controlsDisabled || composer().compacting || composer().pausing || controlActionRef.current || stoppingRef.current;
+  const controlsBlocked = () => (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || composer().pausing || controlActionRef.current || stoppingRef.current;
 
   const canSubmit = (message: string, images: ImageAttachment[]) => {
     if (!attachments.acceptsImages(images.length)) return false;
 
-    return Boolean((hasVisibleText(message) || images.length) && !sendingRef.current && !readingUploads());
+    return Boolean((hasVisibleText(message) || images.length) && !sending() && !readingUploads());
   };
 
   const submit = async (behavior: "steer" | "followUp" = "followUp") => { const capturedUploads = uploads(); const capturedValue = value(); const capturedComposer = { ...composer() };
@@ -387,7 +391,9 @@ export function Composer(props: Props) {
     const { message, images } = buildComposerPrompt(capturedValue, capturedUploads, capturedComposer.commands);
 
     if (!canSubmit(message, images)) return;
-    sendingRef.current = true; setSending(true); setUploadError(undefined);
+    const rememberPrompt = promptHistory.captureRemember();
+
+    setSending(true); setUploadError(undefined);
     const submittedValue = capturedValue; const submittedUploads = capturedUploads;
     const changeDraft = capturedComposer.onDraftChange ?? setLocalValue;
     const changeUploads = attachments.captureUploadWriter();
@@ -404,10 +410,11 @@ export function Composer(props: Props) {
 
       if (accepted === false) throw new Error("Message was not submitted");
 
+      rememberPrompt(submittedValue);
       clearUnstaged(submission);
     } catch (reason) {
       setUploadError(reason instanceof Error ? reason.message : String(reason));
-    } finally { sendingRef.current = false; setSending(false); }
+    } finally { setSending(false); }
   };
 
   const abort = async () => { const capturedComposer = { ...composer() }; const capturedControlAction = controlAction();
@@ -496,15 +503,7 @@ export function Composer(props: Props) {
     return () => document.removeEventListener("piop-native-image-paste", handle);
   }, () => []);
 
-  const handleEditorKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (pasteShortcut(event)) pasteWithoutEvent();
-
-    if (props.ownershipRequired) return;
-
-    if (event.isComposing || handlePaletteKey(event)) return;
-
-    if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); }
-  };
+  const handleEditorKey = createComposerEditorKey({ paste: pasteWithoutEvent, ownershipRequired: () => props.ownershipRequired, palette: handlePaletteKey, history: promptHistory.handleKey, submit });
 
   const renderStreamBanner = () => {
     const statusText = () => stopping() ? "Stopping…" : controlAction() === "resume" ? "Resuming…" : composer().pausing || controlAction() === "pause" ? "Pausing…" : composer().compacting ? "Compacting context…" : composer().paused ? "Paused · Completed turns saved" : undefined;
@@ -520,7 +519,7 @@ export function Composer(props: Props) {
     const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div></Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
-        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} disabled={composer().controlsDisabled && !props.ownershipRequired} placeholder={props.ownershipRequired ? "" : composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
+        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
 
     const ComposerBar = () => {
@@ -542,7 +541,7 @@ export function Composer(props: Props) {
         const renderStopButton = () => (<Show when={composer().streaming || composer().compacting || composer().paused || composer().pausing}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton></Show>);
         const showPauseResume = () => (composer().streaming || composer().paused) && !(hasVisibleText(value()) || uploads().length) || composer().pausing;
 
-        const renderSend = () => <Show when={showPauseResume()} fallback={<IconButton title="" label="Send message" class="send" disabled={controls().inputDisabled || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
+        const renderSend = () => <Show when={showPauseResume()} fallback={<IconButton title="" label="Send message" class="send" disabled={controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
           <IconButton title="" label={composer().paused ? "Resume piop" : "Pause piop"} class="send" disabled={controls().inputDisabled} onClick={() => void control(composer().paused ? "resume" : "pause")}>{composer().paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
         </Show>;
 

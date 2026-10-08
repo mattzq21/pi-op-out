@@ -20,6 +20,14 @@ function needsFullContext(parser: Marked, tokens: TokensList) {
   return html || Object.keys(tokens.links).length > 0;
 }
 
+function canReuseSource(source: string, previousSource: string, streaming: boolean, previousStreaming: boolean, detectFiles: boolean, previousDetectFiles: boolean) {
+  return source === previousSource && detectFiles === previousDetectFiles && (streaming === previousStreaming || previousStreaming && !streaming);
+}
+
+function canAppendSource(streaming: boolean, sameOptions: boolean, source: string, previousSource: string) {
+  return streaming && sameOptions && source.startsWith(previousSource);
+}
+
 export function streamingMarkdown(parser: Marked, sanitize: Sanitize) {
   let previousSource = "";
   let previousStreaming = false;
@@ -29,10 +37,28 @@ export function streamingMarkdown(parser: Marked, sanitize: Sanitize) {
   let committed: Block[] = [];
   let offset = 0;
 
+  const cachedBlocks = (streaming: boolean) => {
+    if (previousStreaming && !streaming) {
+      previous = previous.map(block => {
+        const html = block.html.replaceAll('data-complete="false"', 'data-complete="true"');
+
+        return html === block.html ? block : { ...block, html };
+      });
+      committed = []; offset = 0;
+    }
+
+    previousStreaming = streaming;
+
+    return previous.map(block => block.html);
+  };
+
   return (input: string, streaming: boolean, detectFiles: boolean) => {
     const source = input.replace(/\r\n?/g, "\n");
     const sameOptions = streaming === previousStreaming && detectFiles === previousDetectFiles;
-    const append = streaming && sameOptions && source.startsWith(previousSource);
+
+    if (canReuseSource(source, previousSource, streaming, previousStreaming, detectFiles, previousDetectFiles)) return cachedBlocks(streaming);
+
+    const append = canAppendSource(streaming, sameOptions, source, previousSource);
 
     if (!append) { committed = []; offset = 0; }
 

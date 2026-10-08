@@ -133,7 +133,6 @@ export function createAppConversations(preloadChat: () => void) {
   const projectOpenRef = createRef(projectOpen()); createComputed(() => { projectOpenRef.current = projectOpen(); });
   const projectOpenRequest = createRef(0);
   const { composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, transportHasDraft } = drafts;
-  const draftsReady = drafts.loaded;
   const draftSessions = drafts.draftSummaries;
   drafts.bindTransport(transport(), initialConversationKey.current);
   createDependencyEffect(() => drafts.bindTransport(transport(), activeConversationKey()), () => [transport(), activeConversationKey(), activeCwd(), connected()]);
@@ -253,10 +252,8 @@ export function createAppConversations(preloadChat: () => void) {
     return () => { for (const pending of unsubscribes) void pending.then((unlisten) => unlisten()); };
   }, () => [addNotice, syncSessionIndex]);
 
-  const refresh = async (hostId?: string, loadedSettings?: AppSettings) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
-    void syncSessionIndex();
-    const settingsRequest = loadedSettings ? Promise.resolve(settings() ?? loadedSettings) : loadSettings();
-    const [nextState, nextSettings] = await Promise.all([capturedSession.refresh(), settingsRequest]); capturedRuntimePool.bind(hostId ?? capturedTransport.currentHostId(), nextState.sessionId, capturedTransport);
+  const refreshSession = async (hostId?: string) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
+    const nextState = await capturedSession.refresh(); capturedRuntimePool.bind(hostId ?? capturedTransport.currentHostId(), nextState.sessionId, capturedTransport);
     const group = pendingSessionGroups.current.get(capturedTransport);
 
     if (group && nextState.sessionId && nextState.messageCount > 0) {
@@ -265,6 +262,14 @@ export function createAppConversations(preloadChat: () => void) {
         pendingSessionGroups.current.delete(capturedTransport);
       } catch (reason) { addNotice({ title: "Could not add chat to group", message: String(reason) }); }
     }
+
+    return nextState;
+  };
+
+  const refresh = async (hostId?: string, loadedSettings?: AppSettings) => {
+    void syncSessionIndex();
+    const settingsRequest = loadedSettings ? Promise.resolve(settings() ?? loadedSettings) : loadSettings();
+    const [, nextSettings] = await Promise.all([refreshSession(hostId), settingsRequest]);
 
     return nextSettings;
   };
@@ -294,7 +299,7 @@ export function createAppConversations(preloadChat: () => void) {
     }
   };
 
-  useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, pendingReviewRequest, reviewImages, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession: chatSession().refresh, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
+  useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, pendingReviewRequest, reviewImages, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
   createDependencyEffect(() => {
     const capturedTransport = transport(); const capturedRuntimePool = runtimePool();
     const shutdown = () => { for (const id of terminals.draftTerminalIds()) void capturedTransport.closeTerminal(id).catch(() => undefined); void capturedRuntimePool.disconnectAll(); };
@@ -314,18 +319,11 @@ export function createAppConversations(preloadChat: () => void) {
     const capturedRuntimePool = runtimePool(); const capturedView = view(); const capturedTransport = transport();
     capturedRuntimePool.activate(capturedView === "chat" ? capturedTransport : undefined); }, () => [runtimePool(), transport(), view()]);
 
-  const requireRestoredDrafts = () => {
-    if (!draftsReady()) throw new Error("Saved drafts are still loading. Refocus this window to retry if draft storage failed.");
-  };
-
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
-    requireRestoredDrafts();
-
     const capturedTransport = await prepareChatWorktree(transport(), async (cwd, host, onActivate) => { const group = pendingSessionGroups.current.get(transport()); await openProject(cwd, host, true, onActivate);
 
       if (group) pendingSessionGroups.current.set(transport(), group); }, transport, connected, error);
 
-    if (!connectionReadyRef.current) throw new Error("piop is still connecting");
     const ownerTransport = capturedTransport;
     const imagePayload = images.length ? { images } : {};
 
@@ -431,6 +429,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const startNewSession = async (clearProject = false, group?: SessionGroup, discardDraft = false) => {
     if (!canStartNewSession()) return;
+    setPanelOpen(false);
     setArchivesOpen(false);
     const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;
     const isCurrent = () => activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey;
@@ -484,6 +483,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const newSession = async () => {
     if (!canStartNewSession()) return;
+    setPanelOpen(false);
     setArchivesOpen(false);
     const empty = !currentSessionHasSavedMessages() && !chatSession().state.isStreaming && chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
     const repeat = view() === "chat" && empty && lastNewSessionSelection.current === activeConversationKey();

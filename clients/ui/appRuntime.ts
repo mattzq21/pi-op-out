@@ -114,20 +114,15 @@ export async function configureConversationRuntime(value: AppSettings, transport
 
   if (!current()) return;
 
-  const [modelResult] = await Promise.allSettled([
-    transport.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })),
-    transport.command({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })),
-  ]);
+  await transport.configureAutomaticBehavior(value.autoRetry);
 
   if (!current()) return;
-  await Promise.all([
-    transport.command({ type: "set_auto_compaction", enabled: true }),
-    transport.command({ type: "set_auto_retry", enabled: value.autoRetry }),
-  ]);
-
-  if (!current()) return;
-  const availableModels = modelResult.status === "fulfilled" ? modelResult.value.models : [];
   const inherited = projectControls.get(transport);
+
+  if (!inherited && !transport.needsDefaults()) return;
+  const availableModels = await transport.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).then(result => result.models, () => []);
+
+  if (!current()) return;
 
   if (inherited) {
     await applyInherited(transport, inherited, availableModels);
@@ -136,5 +131,5 @@ export async function configureConversationRuntime(value: AppSettings, transport
     return;
   }
 
-  if (transport.needsDefaults()) await applyDefaults(transport, value, availableModels, current);
+  await applyDefaults(transport, value, availableModels, current);
 }

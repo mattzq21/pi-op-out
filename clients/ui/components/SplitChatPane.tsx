@@ -1,6 +1,8 @@
 import { required } from "../lib/required";
+import { trackToastMessage, trackToastNotices } from "../lib/toastHistory";
 import { extensionUiSchema } from "../lib/extensionUiSchema";
 import { inheritSessionGroup } from "../lib/sessionGroups";
+import { resolveMessageEntry } from "../lib/resolveMessageEntry";
 import { Key } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type StateUpdate } from "../lib/solid";
@@ -22,7 +24,7 @@ import { createRepositoryStatus } from "../lib/repositoryStatus";
 import { ChatView } from "./ChatView";
 import type { createConversationDrafts } from "../appDrafts";
 import { draftUploadsFromImages, stageDraftSubmission, submitDurablePrompt } from "../lib/draftSubmission";
-import { trackChatSubmission } from "../lib/newChatWorktree";
+import { trackChatSubmission, updateChatPreparation, waitForConversationReady } from "../lib/newChatWorktree";
 
 interface Props { drafts: ReturnType<typeof createConversationDrafts>; onArchiveOriginal: (session: SessionSummary) => Promise<void>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; freshReview?: boolean; inheritedReviewParent?: string; archivedReview?: boolean; onShowArchive: () => void; initialPrompt?: string; initialImages?: ImageAttachment[]; onMessageMain?: (message: string) => Promise<void>; onReady?: () => void; onFailed?: (cause: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 
@@ -53,6 +55,8 @@ export function SplitChatPane(componentProps: Props) {
   const [statuses, setStatuses] = createSignal<Record<string, string>>({});
   const [widgets, setWidgets] = createSignal<Record<string, string[]>>({});
   const [notices, setNotices] = createSignal<Array<{ id: string; title: string; message: string }>>([]);
+  trackToastNotices("Side pane", notices);
+  trackToastMessage("Side pane", "Conversation error", controlError);
   const [extensionFocusRequest, setExtensionFocusRequest] = createSignal(0);
   const reconnectRef = createRef<() => void>(() => undefined);
   const lifecycleRef = createRef(0);
@@ -117,7 +121,7 @@ export function SplitChatPane(componentProps: Props) {
     const configure = async () => {
       const runtimeSettings = capturedTransport.currentHostId() === "local" ? capturedSettings1 : await capturedTransport.loadHostSettings();
 
-      await Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: runtimeSettings.autoRetry })]);
+      await capturedTransport.configureAutomaticBehavior(runtimeSettings.autoRetry);
     };
 
     const sendInitialPrompt = async (initial: boolean) => {
@@ -148,9 +152,10 @@ export function SplitChatPane(componentProps: Props) {
 
       try {
         await capturedTransport.connect();
-        await capturedSession.refresh();
 
         if (capturedTransport.ownsConversation()) await configure();
+
+        await capturedSession.refresh();
 
         if (closing) return;
         updateConnected(capturedTransport.ownsConversation()); connectedOnce = true; setError(undefined); setControlError(undefined);
@@ -165,7 +170,7 @@ export function SplitChatPane(componentProps: Props) {
     const unsubscribe = capturedTransport.subscribe((event: RpcEvent) => {
       capturedSession.handleEvent(event);
 
-      const handleOwnershipLost = () => {
+      const handleOwnershipLost = (): void => {
         updateConnected(false);
         void capturedOnDialogTransportClosed7(capturedTransport);
       };
@@ -181,7 +186,10 @@ export function SplitChatPane(componentProps: Props) {
       };
 
       const handleSessionInfoChanged = () => {
-        if (event.type === "session_info_changed" || event.type === "session_switched") void capturedSession.refresh().catch(reportControlError);
+        if (reconnecting) return;
+
+        if (event.type === "session_info_changed" && capturedTransport.promptControls.isApplying()) return;
+        void capturedSession.refresh().catch(reportControlError);
       };
 
       const handleExtensionUiRequest = () => {
@@ -201,6 +209,8 @@ export function SplitChatPane(componentProps: Props) {
             if (request.statusKey === DEFINED_AGENTS_STATUS_KEY) {
               try { setDefinedAgents(request.statusText?.startsWith("json:") ? definedAgentsCapabilitySchema.parse(decodeAgentValue(request.statusText.slice(5))) : undefined); }
               catch { setDefinedAgents(undefined); }
+
+              if (!reconnecting) void capturedSession.refresh().catch(reportControlError);
             } else if (request.statusKey && !["pi-desktop-prompt-context", "pi-desktop-mcp-status"].includes(request.statusKey)) {
               setStatuses((current) => { const next = { ...current };
 
@@ -227,11 +237,6 @@ export function SplitChatPane(componentProps: Props) {
         setNotices((current) => [...current, { id: crypto.randomUUID(), title: "Extension error", message: String(event.error ?? "An extension failed") }]);
       };
 
-      const handleMessageEnd = () => {
-        setError(undefined);
-        window.setTimeout(() => void capturedSession.refresh().catch(reportControlError), 30);
-      };
-
       const handleSettingsApplied = () => {
         if (closing) return;
 
@@ -239,7 +244,7 @@ export function SplitChatPane(componentProps: Props) {
 
         return; }
 
-        void capturedSession.refresh().then(() => { if (!closing) updateConnected(capturedTransport.ownsConversation()); }).catch(reportControlError);
+        if (!reconnecting) void capturedSession.refresh().then(() => { if (!closing) updateConnected(capturedTransport.ownsConversation()); }).catch(reportControlError);
       };
 
       const handleDisconnected = () => {
@@ -261,7 +266,7 @@ export function SplitChatPane(componentProps: Props) {
         "session_switched": handleSessionInfoChanged,
         "extension_ui_request": handleExtensionUiRequest,
         "extension_error": handleExtensionError,
-        "message_end": handleMessageEnd,
+        "message_end": (): void => { setError(undefined); },
         "settings_applied": handleSettingsApplied,
         "disconnected": handleDisconnected,
         "connection_restored": handleDisconnected
@@ -277,11 +282,12 @@ export function SplitChatPane(componentProps: Props) {
   createDependencyEffect(() => {
     const capturedConnected = connected(); const capturedTransport = transport(); const capturedSettings0 = componentProps.settings;
 
- if (!capturedConnected || capturedTransport.currentHostId() !== "local") return; void Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: capturedSettings0.autoRetry })]).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, () => [connected(), componentProps.settings.autoRetry, transport()]);
+ if (!capturedConnected || capturedTransport.currentHostId() !== "local") return; void capturedTransport.configureAutomaticBehavior(capturedSettings0.autoRetry).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, () => [connected(), componentProps.settings.autoRetry, transport()]);
 
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => { const capturedTransport = transport();
 
-    if (!connectedRef.current) return Promise.reject(new Error("piop is still connecting"));
+    await waitForConversationReady(capturedTransport, transport, connected, () => error() ?? controlError());
+    updateChatPreparation(capturedTransport, "Sending message…");
 
     const command = { type: behavior ? behavior === "steer" ? "steer" : "follow_up" : "prompt", message: text };
     const result = await submitDurablePrompt(capturedTransport, images.length ? { ...command, images } : command);
@@ -295,7 +301,7 @@ export function SplitChatPane(componentProps: Props) {
     const finishBranching = beginBranching();
     const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSession1 = componentProps.session; const capturedOnSessionChange2 = componentProps.onSessionChange;
 
- try { if (!message.entryId) throw new Error("Could not find the response to branch from"); const result = await capturedTransport.command({ type: "fork_after", entryId: message.entryId }, z.object({ cancelled: z.boolean().optional() }));
+ try { const entryId = await resolveMessageEntry(capturedTransport, message); const result = await capturedTransport.command({ type: "fork_after", entryId }, z.object({ cancelled: z.boolean().optional() }));
 
  if (result.cancelled) return false; const nextState = await capturedSession.refresh(); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport); await capturedRuntimePool0.refreshSavedDiffs(capturedTransport, nextState.sessionFile);
 
@@ -317,14 +323,13 @@ export function SplitChatPane(componentProps: Props) {
     forgettingRef.current = true;
 
     try {
-      if (!message.entryId) throw new Error("Could not find the selected assistant response");
-
       if (conversationBusy()) throw new Error("Wait for the current response and queued messages to finish first");
+      const entryId = await resolveMessageEntry(owner, message);
 
       if (withWorktree) {
         if (source.projectKind !== "worktree") throw new Error("Branch and forget is only available in linked worktrees");
         const hostId = source.hostId ?? "local";
-        const result = await owner.command({ type: "branch_checkpoint", entryId: message.entryId, name: crypto.randomUUID().slice(0, 8), afterResponse: true }, z.object({ branch: z.string(), path: z.string(), sessionPath: z.string(), sessionId: z.string() }));
+        const result = await owner.command({ type: "branch_checkpoint", entryId, name: crypto.randomUUID().slice(0, 8), afterResponse: true }, z.object({ branch: z.string(), path: z.string(), sessionPath: z.string(), sessionId: z.string() }));
         await inheritSessionGroup(`${hostId}:${source.id}`, `${hostId}:${result.sessionId}`, source);
         await owner.runWorktreeSetup(source.cwd, result.path, hostId);
         await owner.disconnect();
@@ -334,7 +339,7 @@ export function SplitChatPane(componentProps: Props) {
         pool.bind(hostId, result.sessionId, owner);
         changeSession({ ...source, id: result.sessionId, path: result.sessionPath, cwd: result.path, worktreeRoot: result.path, branch: result.branch, name: result.branch }, owner);
       } else {
-        if (!await branch(message)) return;
+        if (!await branch({ ...message, entryId })) return;
       }
 
       await archiveOriginal(source);

@@ -8,7 +8,7 @@ import { ReviewNavigationContext } from "./ReviewLink";
 import { chatSubmission, trackChatSubmission } from "../lib/newChatWorktree";
 import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandle, type DraftSubmissionPayload } from "../lib/draftSubmission";
 import { Key, Rerun } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSignal, Index, Show, type Accessor } from "solid-js";
+import { createComputed, createMemo, createSignal, Index, onCleanup, Show, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
 
@@ -112,8 +112,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const sessionCache = createMemo(() => hasSentPrompt() ? cacheHitStats(sessionUsage()) : undefined);
   const sessionToolFailures = createMemo(() => props.debug && hasSentPrompt() ? toolFailureStats(messages()) : undefined);
   const pendingSubmission = createMemo(() => chatSubmission(props.transport));
-  const [submittedMessage, setSubmittedMessage] = createSignal<ChatMessage>();
-  const mcpPendingMessage = () => pendingSubmission()?.message ?? submittedMessage();
 
   const stageSubmission = (payload: DraftSubmissionPayload) => {
     const owner = props.transport;
@@ -126,19 +124,15 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const send: Props["onSend"] = async (text, behavior, images = [], staged) => {
     const capturedOnSend = props.onSend;
 
-    if (!ownsConversation() || props.controlsDisabled || chatSubmission(props.transport)) {
+    if (!ownsConversation() || chatSubmission(props.transport)) {
       await staged?.reject("Message was not submitted");
 
       return false;
     }
 
-    const uploads = draftUploadsFromImages(images);
-    const durable = staged ?? await stageSubmission({ rawText: text, uploads, consume: props.draft === text && !props.uploads?.length });
-    const message: ChatMessage = { id: durable.id, role: "user", content: [{ type: "text", text }, ...images] };
-    setSubmittedMessage(message);
+    const durable = staged ?? await stageSubmission({ rawText: text, uploads: draftUploadsFromImages(images), consume: props.draft === text && !props.uploads?.length });
 
-    try { return await trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable))); }
-    finally { setSubmittedMessage(current => current?.id === message.id ? undefined : current); }
+    return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…");
   };
 
   const actions = createRef({ onSend: send, onBranch: props.onBranch, onForkAndForget: props.onForkAndForget, onCreateWorktree: props.onCreateWorktree });
@@ -185,15 +179,23 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     return props.onAbort();
   };
 
-  const scrollToLatest = () => {
-    const element = messagesRef.current;
+  let scrollFrame: number | undefined;
 
-    if (!element || !followLatest.current) return;
-    element.scrollTop = element.scrollHeight;
-    lastScrollTop.current = element.scrollTop;
+  const scrollToLatest = () => {
+    if (scrollFrame !== undefined || !followLatest.current) return;
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = undefined;
+      const element = messagesRef.current;
+
+      if (!element || !followLatest.current) return;
+      element.scrollTop = element.scrollHeight;
+      lastScrollTop.current = element.scrollTop;
+    });
   };
 
-  createDependencyEffect(scrollToLatest, () => [scrollToLatest, messages(), props.state.isStreaming, mcpLoading(), submittedMessage(), pendingSubmission()]);
+  onCleanup(() => { if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame); });
+
+  createDependencyEffect(scrollToLatest, () => [scrollToLatest, messages(), props.state.isStreaming, mcpLoading(), pendingSubmission()]);
   createDependencyEffect(() => {
     const messages = messagesRef.current;
 
@@ -247,9 +249,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>πop</span></div>}
         {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn messages={turn().messages} promptContexts={turn().promptContexts} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={onBranch} canRollback={props.canRollback} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} /></DeferredTurn>}</Key>}
-        {pendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><Message message={required(pendingSubmission()).message} showActions={false} /><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(pendingSubmission()).status}</span></div></section>}
+        {pendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(pendingSubmission()).status}</span></div></section>}
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
-          {mcpPendingMessage() && <div class="mcp-pending-message"><Message message={required(mcpPendingMessage())} showActions={false} /></div>}
           <div class="mcp-loading-list" role="status">{props.debug ? <Key each={loadingServers()} by={(server) => server.id}>{(server, _index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
         </section>}
       </div></div>);
@@ -259,7 +260,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       const renderNewChatBranch = () => <Show when={Boolean(props.projectCwd && props.onProjectBranch)}><Rerun on={() => props.transport}>{(_owner) => <NewChatBranchPicker transport={props.transport} cwd={required(props.projectCwd)} hostId={props.transport?.currentHostId() ?? "local"} disabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} onSelect={required(props.onProjectBranch)} />}</Rerun></Show>;
       const renderNewChatProject = () => (<Show when={!messages().length && props.state.messageCount === 0}><div class="new-chat-project"><div class="project-picker"><button type="button" class={projectName() ? "selected" : undefined} aria-label={projectName() ? `Selected project: ${required((projectName()))}` : "Choose project"} data-tooltip={displayedProjectCwd()} disabled={selectionDisabled()} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName() ?? "Choose project"}</button>{projectName() && props.onClearProject && <button type="button" class="clear-project" aria-label="Clear project" data-tooltip="Clear project" disabled={selectionDisabled()} onClick={props.onClearProject}><X size={14} /></button>}</div>{renderNewChatBranch()}</div></Show>);
       const renderConversationOwnershipBanner = () => ((takingOwnership() || ownershipError()) && <div class="conversation-ownership-banner"><div>{takingOwnership() && <p role="status">Taking ownership…</p>}{ownershipError() && <p role="alert">{ownershipError()}</p>}</div></div>);
-      const ComposerInteraction = () => (<div class="composer-interaction"><Composer ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache() : undefined} toolFailures={sessionToolFailures()} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn() ? { id: `${required((abortedTurn())).assistant.timestamp ?? required((abortedTurn())).assistant.id}:${required((abortedTurn())).prompt}`, value: required((abortedTurn())).prompt } : undefined} onStageSubmission={stageSubmission} onSend={send} onAbort={stopResponse} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} agentHostLabel={agentDefinitionHost()} agentReloadScope={agentReloadScope()} onReloadAgents={props.transport ? reloadAgentDefinitions : undefined} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
+      const ComposerInteraction = () => (<div class="composer-interaction"><Composer recentPrompts={() => props.messages.filter(message => message.role === "user").map(message => textOf(message.content))} submissionDisabled={!ownsConversation() || Boolean(pendingSubmission())} ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache() : undefined} toolFailures={sessionToolFailures()} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn() ? { id: `${required((abortedTurn())).assistant.timestamp ?? required((abortedTurn())).assistant.id}:${required((abortedTurn())).prompt}`, value: required((abortedTurn())).prompt } : undefined} onStageSubmission={stageSubmission} onSend={send} onAbort={stopResponse} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} agentHostLabel={agentDefinitionHost()} agentReloadScope={agentReloadScope()} onReloadAgents={props.transport ? reloadAgentDefinitions : undefined} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
 
       return (<Show when={!props.readOnly}><div ref={element => { composerStack.current = element; }} class="composer-stack"><GoalBar value={props.statuses["piop-goal"]} disabled={Boolean(props.controlsDisabled || !ownsConversation() || !props.transport)} onCommand={action => required(props.transport).command({ type: "prompt", message: `/goal ${action}` })} />{props.widgets.length > 0 && <div class="extension-widget">{<Index each={stringsSchema.parse(props.widgets)}>{(line, _index) => <div >{line()}</div>}</Index>}</div>} {activity() && <div class="runtime-activity" role="status">{(activity())}</div>}{renderConversationOwnershipBanner()}<Show when={ownsConversation()}><div class="composer-questions"><ConversationQuestions transport={props.transport} /></div></Show><ComposerInteraction /></div></Show>);
     };

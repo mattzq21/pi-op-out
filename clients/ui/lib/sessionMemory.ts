@@ -327,6 +327,22 @@ function memoryFor(transport: Transport, initialState = emptyState) {
   return store;
 }
 
+export function retainSubmittedMessage(transport: Transport, message: ChatMessage) {
+  memoryFor(transport).set("messages", current => current.some(item => item.id === message.id) ? current : [...current, { ...message, submissionId: message.id }]);
+}
+
+export function discardSubmittedMessage(transport: Transport, id: string) {
+  memoryFor(transport).set("messages", current => current.some(item => item.submissionId === id) ? current.filter(item => item.submissionId !== id) : current);
+}
+
+export function moveSubmittedMessage(source: Transport, destination: Transport, id: string) {
+  const message = memoryFor(source).getSnapshot().messages.find(item => item.submissionId === id);
+
+  if (!message) return;
+  retainSubmittedMessage(destination, message);
+  discardSubmittedMessage(source, id);
+}
+
 export function retainSessionResource(transport: Transport, key: string, value: SessionResource, release: () => void) {
   memoryFor(transport).retainResource(key, value, release);
 }

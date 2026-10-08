@@ -76,6 +76,8 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   const [error, setError] = createSignal<string>();
   const [saveWarnings, setSaveWarnings] = createSignal<string[]>();
   const [revision, setRevision] = createSignal(0);
+  const needsResources = createMemo(() => componentProps.target !== "client" || componentProps.selectedSection === "models");
+
   const publications = new SettingsPublication();
 
   const receiveChange = (change: SettingsChange, host: string) => {
@@ -98,6 +100,9 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     for (const listener of listeners) void listener.then((stop) => stop()); };
   }, () => [hostId()]);
   createDependencyEffect(() => { const capturedHostId = hostId(); const capturedTarget0 = componentProps.target;
+    setError(undefined);
+
+    if (!needsResources()) return;
     let cancelled = false;
     const reader = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
     let config: AgentConfig | undefined;
@@ -117,7 +122,6 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
       } catch { config = undefined; }
     });
 
-    setError(undefined);
     void (async () => {
       try {
         const loaded = await reader.loadHostSettingsChange();
@@ -140,7 +144,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     })();
 
     return () => { cancelled = true; unsubscribe(); void reader.dispose().catch(() => undefined); };
-  }, () => [hostId(), componentProps.target, revision()]);
+  }, () => [hostId(), componentProps.target, revision(), needsResources()]);
   const current = createMemo(() => (componentProps.target === "client" || hostId() === "local" ? componentProps.settings : hostSettings()));
 
   const publishSavedAgents = (config?: AgentConfig) => {

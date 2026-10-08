@@ -25,6 +25,13 @@ function clampEffort(level: string, model?: Model) {
 export class PromptControls {
   private selection = createSignal<Selection>({});
   private applied?: Selection;
+  private applying = false;
+  isApplying() { return this.applying; }
+  hasPending() {
+    const selected = this.selection[0]();
+
+    return selected !== this.applied && (selected.model !== undefined || selected.thinkingLevel !== undefined || selected.fastMode !== undefined);
+  }
   reset() { this.selection[1]({}); this.applied = undefined; }
   model(model: Model, thinkingLevel?: string) { this.selection[1](current => ({ ...current, model, thinkingLevel: clampEffort(thinkingLevel ?? current.thinkingLevel ?? "medium", model) })); }
   thinking(thinkingLevel: string) { this.selection[1](current => ({ ...current, thinkingLevel: clampEffort(thinkingLevel, current.model) })); }
@@ -35,6 +42,8 @@ export class PromptControls {
   return model ? modelLevels(model) : fallback; }
   state(state: AgentState): AgentState {
     const selected = this.selection[0]();
+
+    if (!selected.model && selected.thinkingLevel === undefined) return state;
 
     return { ...state, model: selected.model ?? state.model, thinkingLevel: selected.thinkingLevel ?? state.thinkingLevel };
   }
@@ -67,13 +76,16 @@ export class PromptControls {
   async flush<T>(command: (value: RpcCommand) => Promise<T>, fast: (enabled: boolean) => Promise<void>) {
     const selected = this.selection[0]();
 
-    if (selected === this.applied) return;
+    if (!this.hasPending()) return;
+    this.applying = true;
 
-    if (selected.model) await command({ type: "set_model", provider: selected.model.provider, modelId: selected.model.id });
+    try {
+      if (selected.model) await command({ type: "set_model", provider: selected.model.provider, modelId: selected.model.id });
 
-    if (selected.thinkingLevel !== undefined) await command({ type: "set_thinking_level", level: selected.thinkingLevel });
+      if (selected.thinkingLevel !== undefined) await command({ type: "set_thinking_level", level: selected.thinkingLevel });
 
-    if (selected.fastMode !== undefined) await fast(selected.fastMode);
-    this.applied = selected;
+      if (selected.fastMode !== undefined) await fast(selected.fastMode);
+      this.applied = selected;
+    } finally { this.applying = false; }
   }
 }

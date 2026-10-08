@@ -20,10 +20,11 @@ import { ProviderSettings } from "./ProviderSettings";
 import { StorageSettings } from "./StorageSettings";
 import { ReviewSettings } from "./ReviewSettings";
 import { PluginSettings } from "./PluginSettings";
+import { ToastHistory } from "./ToastHistory";
 import { Toggle } from "./Toggle";
 import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
-export type Section = "providers" | "general" | "dictation" | "review" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections" | "plugins";
+export type Section = "providers" | "general" | "dictation" | "review" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
 
 type SettingsSection = { id: Section; label: string; icon: typeof Settings2 };
 
@@ -38,13 +39,14 @@ export const sections: SettingsSection[] = [
   { id: "storage", label: "Storage", icon: HardDrive },
   { id: "environment", label: "Worktree scripts", icon: Wrench },
   { id: "keybinds", label: "Keybinds", icon: Keyboard },
+  { id: "toasts", label: "Toast history", icon: ClipboardCheck },
   { id: "plugins", label: "Plugins", icon: PlugZap },
   { id: "machines", label: "Machines", icon: Server },
   { id: "agents", label: "Agents", icon: Bot },
   ...mobileSections,
 ];
 
-export const clientSections = new Set<Section>(["models", "keybinds", "connections"]);
+export const clientSections = new Set<Section>(["models", "keybinds", "connections", "toasts"]);
 
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 
@@ -474,6 +476,7 @@ export function SettingsView(props: SettingsViewProps) {
       };
 
       return (<section class="settings-content">
+        <Show when={formValidation().visibleSection === "toasts"}><ToastHistory /></Show>
         {formValidation().visibleSection === "plugins" && <PluginSettings hostId={providerHostId()} onBusyChange={settingsProps().onSavingChange} />}
         {!formValidation().matchingSections.length && <div class="empty-small" role="status">No settings match your search.</div>}
         {formValidation().visibleSection === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}

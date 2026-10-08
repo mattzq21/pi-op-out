@@ -3,7 +3,7 @@ import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from
 import { currentSnapshot } from "./snapshot-baseline.ts";
 import { registerPreparedCheckpoints } from "./fork-preparation.ts";
 import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
-import { resolvePromptHistory, recordRecoveredCheckpoints } from "./prompt-history.ts";
+import { resolvePromptHistory, recordRecoveredCheckpoints, indexCheckpoint } from "./prompt-history.ts";
 import { writeSessionFile, publicationRetainsDependencies } from "../session-broker.ts";
 import { copyRetainedStoreLocked } from "../session-broker/git-diff-store.cjs";
 import { retainHistory, releaseHistory, rootForDirectory } from "../session-broker/goal-assets.cjs";
@@ -517,14 +517,14 @@ export default function diffWatch(pi: ExtensionAPI) {
     if (current) return current;
     const copied = await recoverCopiedSnapshot(ctx, root, sessionId);
 
-    if (copied) { pi.appendEntry(SNAPSHOT_ENTRY, copied);
+    if (copied) { indexCheckpoint(ctx, copied.repositoryRoot); pi.appendEntry(SNAPSHOT_ENTRY, copied);
 
     return copied; }
 
     if (!parentSessionFile) return undefined;
     const inherited = await inheritParentSnapshot(root, sessionId, parentSessionFile);
 
-    if (inherited) pi.appendEntry(SNAPSHOT_ENTRY, inherited);
+    if (inherited) { indexCheckpoint(ctx, inherited.repositoryRoot); pi.appendEntry(SNAPSHOT_ENTRY, inherited); }
 
     return inherited;
   };
@@ -543,6 +543,7 @@ export default function diffWatch(pi: ExtensionAPI) {
       const history = await resolvePromptHistory(ctx.sessionManager.getBranch(), entries, ctx.sessionManager.getSessionId(), resolvePromptCommit, sourceOwner);
       await pinPromptHistory(root, ctx.sessionManager.getSessionId(), history, sourceOwner);
 
+      if (root) indexCheckpoint(ctx, root);
       recordRecoveredCheckpoints(pi, history, entries);
       lastError = "";
     }).catch((error) => reportError(ctx, error));
@@ -568,6 +569,7 @@ export default function diffWatch(pi: ExtensionAPI) {
     const capturedAt = new Date().toISOString();
     const key = `${capturedAt.replace(/[-:.]/g, "")}-${randomUUID()}`;
     const cwd = ctx.cwd;
+    indexCheckpoint(ctx, cwd);
     pi.appendEntry(PROMPT_ENTRY, { pending: true, unavailable: true, key, owner: sessionId, capturedAt, repositoryRoot: cwd });
     snapshotQueue = snapshotQueue.then(async () => {
       try {
@@ -575,7 +577,9 @@ export default function diffWatch(pi: ExtensionAPI) {
 
         if (!root) return;
 
-        pi.appendEntry(PROMPT_ENTRY, { ...await capturePrompt(root, sessionId, key, capturedAt), background: true });
+        const checkpoint = await capturePrompt(root, sessionId, key, capturedAt);
+        indexCheckpoint(ctx, root);
+        pi.appendEntry(PROMPT_ENTRY, { ...checkpoint, background: true });
       } catch (error) {
         reportError(ctx, error);
       }
@@ -624,6 +628,7 @@ export default function diffWatch(pi: ExtensionAPI) {
 
       try {
         const snapshot = await saveSnapshot(root, ctx.sessionManager.getSessionId());
+        indexCheckpoint(ctx, snapshot.repositoryRoot);
         pi.appendEntry(SNAPSHOT_ENTRY, { ...snapshot, responseEntryIds });
       } catch (error) {
         pi.appendEntry(SNAPSHOT_ENTRY, { unavailable: true, responseEntryIds });

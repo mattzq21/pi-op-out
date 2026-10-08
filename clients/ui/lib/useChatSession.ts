@@ -4,13 +4,15 @@ import { ConversationChangedError } from "./conversationChanged";
 import { type Accessor, createComputed, createMemo, onCleanup, untrack } from "solid-js";
 import { createDependencyEffect, createRef } from "./solid";
 
-import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../types";
+import type { AgentState, ChatMessage, RpcEvent } from "../types";
+import { DEFINED_AGENTS_STATUS_KEY } from "./agentProtocol";
 import { chatSessionEventSchema, pendingMessagesSchema, type ChatSessionEvent } from "./chatSessionEventSchema";
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 import { contextUsageAfterCompaction } from "./contextUsage";
 import { appendFileChanges, appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
+import { matchesSubmittedMessage, reconcileMessages, sameUserContent, upsertLiveMessage } from "./reconcileMessages";
 
 interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 
@@ -68,12 +70,63 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   };
 
   const capabilityRequest = createRef(0);
+  const capabilityKey = createRef<string | undefined>(undefined);
+  const sessionEpoch = createRef("");
+  const statsOperation = createRef<{ sessionId: string; revision: number; promise: Promise<void> } | undefined>(undefined);
   const refreshOperation = createRef<{ transport: ReturnType<typeof transport>; promise: Promise<AgentState>; buffer: RpcEvent[] } | undefined>(undefined);
   const bufferedEvents = createRef<RpcEvent[] | undefined>(undefined);
   const eventHandler = createRef<(event: RpcEvent) => void>(() => undefined);
   const resumeMarkers = createRef(new Set<string>());
   const liveRevision = createRef(0); const activeAssistantId = createRef<string | undefined>(undefined); const activeMessageIds = createRef(new Map<string, string>()); const liveMessageSequence = createRef(0); const pendingUpdates = createRef<MessageUpdate[]>([]); const frame = createRef<number | undefined>(undefined);
   const pendingRevision = createRef<{ base: string | undefined; next: string } | undefined>(undefined);
+
+  const refreshStats = () => {
+    const sessionId = session.state.sessionId;
+    const revision = liveRevision.current;
+
+    if (statsOperation.current?.sessionId === sessionId && statsOperation.current.revision === revision) return statsOperation.current.promise;
+
+    const promise = load({ type: "get_session_stats" }, z.object({ contextUsage: agentStateSchema.shape["contextUsage"].optional() })).then(stats => {
+      if (owner.current === transport() && session.state.sessionId === sessionId && liveRevision.current === revision && stats.contextUsage) session.setState(current => ({ ...current, contextUsage: stats.contextUsage }));
+    }).catch(() => undefined).finally(() => {
+      if (statsOperation.current?.promise === promise) statsOperation.current = undefined;
+    });
+
+    statsOperation.current = { sessionId, revision, promise };
+
+    return promise;
+  };
+
+  const refreshCapabilities = () => {
+    const key = `${sessionEpoch.current}:${session.state.sessionId}`;
+
+    if (capabilityKey.current === key) return;
+    capabilityKey.current = key;
+    const request = ++capabilityRequest.current;
+    void Promise.all([
+      load({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).catch(() => undefined),
+      load({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })).catch(() => undefined),
+      load({ type: "get_commands" }, z.object({ commands: z.array(slashCommandSchema) })).catch(() => undefined),
+    ]).then(([modelResult, thinkingResult, commandResult]) => {
+      if (owner.current !== transport() || capabilityRequest.current !== request) return;
+      session.memory.batch(() => {
+        if (modelResult) session.setModels(modelResult.models);
+
+        if (thinkingResult) session.setThinkingLevels(thinkingResult.levels);
+
+        if (commandResult) {
+          const visible = commandResult.commands.filter(command => command.sourceInfo?.source !== "inline");
+
+          session.setCommands(visible.some(command => command.name === "compact") ? visible : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visible]);
+        }
+      });
+
+      if (!modelResult || !thinkingResult || !commandResult) capabilityKey.current = undefined;
+    }).catch(() => { if (capabilityRequest.current === request) capabilityKey.current = undefined; });
+  };
+
+  const invalidatesCapabilities = (event: ChatSessionEvent) => ["settings_applied", "model_select", "session_switched", "disconnected", "connection_restored"].includes(event.type) || (event.type === "extension_ui_request" && event.statusKey === DEFINED_AGENTS_STATUS_KEY);
+
   const nextLiveMessageId = (role: string) => `live-${role.slice(0, 32)}-${Date.now()}-${++liveMessageSequence.current}`;
 
   const trackLiveId = (roleKey: string, liveId: string) => {
@@ -145,7 +198,9 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
       if (marker) resumeMarkers.current.add(marker); }
 
-      const previous = new Map(session.memory.getSnapshot().messages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
+      const cachedSession = session.memory.getSnapshot();
+      const cachedMessages = !cachedSession.state.sessionId || cachedSession.state.sessionId === snapshot.state.sessionId ? cachedSession.messages : [];
+      const previous = new Map(cachedMessages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
 
       const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
         const cached = previous.get(message.deferredToolPayload);
@@ -158,18 +213,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       activeMessageIds.current.clear();
 
       for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
-      session.setMessages(nextMessages);
-    };
-
-    const restoreCapabilities = (modelResult?: { models: Model[] }, thinkingResult?: { levels: string[] }, commandResult?: { commands: SlashCommand[] }) => {
-      if (modelResult) session.setModels(modelResult.models);
-
-      if (thinkingResult) session.setThinkingLevels(thinkingResult.levels);
-
-      if (commandResult) {
-        const visible = commandResult.commands.filter((command) => command.sourceInfo?.source !== "inline");
-        session.setCommands(visible.some((command) => command.name === "compact") ? visible : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visible]);
-      }
+      session.setMessages(reconcileMessages(cachedMessages, nextMessages));
     };
 
     const replaySnapshotEvents = (snapshot: SessionSnapshot) => {
@@ -203,18 +247,12 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
           for (const message of session.memory.getSnapshot().messages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
           activeAssistantId.current = [...session.memory.getSnapshot().messages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
 
+          refreshCapabilities();
+
           return session.memory.getSnapshot().state;
         }
 
-        const request = ++capabilityRequest.current;
         const snapshotRequest = load({ type: "get_snapshot" }, sessionSnapshotSchema);
-
-        const capabilities = () => Promise.all([
-          load({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).catch(() => undefined),
-          load({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })).catch(() => undefined),
-          load({ type: "get_commands" }, z.object({ commands: z.array(slashCommandSchema) })).catch(() => undefined),
-          load({ type: "get_session_stats" }, z.object({ contextUsage: agentStateSchema.shape["contextUsage"].optional() })).catch(() => undefined),
-        ]);
 
         const snapshot = await snapshotRequest;
 
@@ -235,16 +273,12 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
           capturedTransport.promptControls?.acknowledge(snapshot.state);
         });
         session.memory.markRevision(snapshot.revision);
+        sessionEpoch.current = snapshot.epoch;
         bufferedEvents.current = undefined;
         replaySnapshotEvents(snapshot);
-        void capabilities().then(([modelResult, thinkingResult, commandResult, statsResult]) => {
-          if (owner.current !== capturedTransport || capabilityRequest.current !== request || !session.memory.revision) return;
-          session.memory.batch(() => {
-            restoreCapabilities(modelResult, thinkingResult, commandResult);
+        refreshCapabilities();
 
-            if (statsResult?.contextUsage) session.setState((current) => ({ ...current, contextUsage: statsResult.contextUsage }));
-          });
-        }).catch(() => undefined);
+        if (!session.state.contextUsage) void refreshStats();
 
         return snapshot.state;
       } finally {
@@ -286,6 +320,11 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     if (raw.type === "extension_ui_request" && raw.method !== "setStatus") return;
     const event = chatSessionEventSchema.parse(raw);
+
+    if (invalidatesCapabilities(event)) {
+      capabilityKey.current = undefined;
+      capabilityRequest.current += 1;
+    }
 
     if (bufferedEvents.current) { bufferedEvents.current.push(event);
 
@@ -343,17 +382,20 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     const handleAgentSettled = () => {
       session.setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
-      const revision = liveRevision.current;
-      void load({ type: "get_session_stats" }, z.object({ contextUsage: agentStateSchema.shape["contextUsage"].optional() })).then((stats) => {
-        if (owner.current === transport() && revision === liveRevision.current && stats.contextUsage) session.setState((current) => ({ ...current, contextUsage: stats.contextUsage }));
-      }).catch(() => undefined);
+      void refreshStats();
     };
 
     const handleDisconnected = () => {
       session.setState((current) => ({ ...current, isStreaming: false, isCompacting: false, isPausing: false, activity: undefined }));
     };
 
-    const messageLiveId = (rawMessage: WireMessage, roleKey: string) => {
+    const messageLiveId = (rawMessage: WireMessage, roleKey: string, normalized: ChatMessage) => {
+      const submitted = session.messages.find(message => matchesSubmittedMessage(message, normalized));
+
+      if (submitted) return submitted.id;
+      const savedUser = event.type === "message_end" ? session.messages.find(message => message.timestamp === normalized.timestamp && sameUserContent(message, normalized)) : undefined;
+
+      if (savedUser) return savedUser.id;
       const toolCallId = rawMessage.toolCallId;
 
       return rawMessage.role === "toolResult" && toolCallId !== undefined ? toolCallId : event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
@@ -374,14 +416,15 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       if (isResumeMessage(rawMessage, resumeMarkers.current)) return;
 
       if (rawMessage.role === "custom" && rawMessage.display === false && !isContextInjection(rawMessage)) return;
-      const liveId = messageLiveId(rawMessage, roleKey);
+      const normalized = normalizeMessage(rawMessage);
+      const liveId = messageLiveId(rawMessage, roleKey, normalized);
 
       if (event.type === "message_start") trackLiveId(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
-      let message = normalizeMessage(rawMessage, undefined, undefined, liveId);
+      let message = { ...normalized, id: liveId };
 
       if (message.customType === "pi-desktop-btw") return;
       message = updateAssistant(message);
-      session.setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? { ...message, toolInput: message.toolInput ?? item.toolInput, details: message.details ?? item.details, fileChanges: item.fileChanges, promptContext: item.promptContext } : item) : [...current, message]);
+      session.setMessages(current => upsertLiveMessage(current, message));
     };
 
     const handleMessageUpdate = () => {
@@ -481,7 +524,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       "compaction_end": handleCompactionEnd,
       "auto_compaction_end": handleCompactionEnd,
       "auto_retry_start": handleAutoRetryStart,
-      "thinking_level_changed": handleThinkingLevelChanged
+      "thinking_level_changed": handleThinkingLevelChanged,
+      "model_select": () => { if (!transport().promptControls?.isApplying()) refreshCapabilities(); }
     }));
 
     handlers.get(event.type)?.();

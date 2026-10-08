@@ -215,6 +215,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let runtime_settings_extension = shell_quote(include_str!("../../../extensions/piop-runtime-settings/index.ts"));
     let provider_accounts = shell_quote(include_str!("../../resources/provider-accounts.bundle.mjs"));
     let app_rpc = shell_quote(include_str!("../../resources/runtime-bridge.cjs"));
+    let runtime_configuration = shell_quote(include_str!("../../resources/runtime-configuration.cjs"));
     let sdk_storage = shell_quote(include_str!("../../resources/sdk-storage.mjs"));
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
     let broker = shell_quote(include_str!("../../resources/session-broker.ts"));
@@ -246,6 +247,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json""#);
     let remote = format!(r#"{remote} && printf %s {provider_accounts} > "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs""#);
     let remote = format!(r#"{remote} && printf %s {app_rpc} > "$HOME/{STORAGE_DIRECTORY}/runtime-bridge.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-bridge.cjs""#);
+    let remote = format!(r#"{remote} && printf %s {runtime_configuration} > "$HOME/{STORAGE_DIRECTORY}/runtime-configuration.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-configuration.cjs""#);
     let remote = format!(r#"{remote} && printf %s {sdk_storage} > "$HOME/{STORAGE_DIRECTORY}/sdk-storage.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/sdk-storage.mjs""#);
     let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts""#);
     let mut remote = remote;

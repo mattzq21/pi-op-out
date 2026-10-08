@@ -185,8 +185,6 @@ fn current_change(path: &Path, journal: &Journal) -> Result<Value, String> {
 
 pub(crate) fn snapshot(app: &AppHandle) -> Result<Value, String> {
     start(app.clone());
-    let runtime = app.state::<PiRuntime>();
-    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let path = settings_path(app)?;
     let _storage = storage_lock(&path)?;
     let journal = Journal::load(&path)?;
@@ -281,7 +279,8 @@ fn retry_locked(app: &AppHandle, runtime: &PiRuntime, path: &Path, applied: &mut
     if !needs_retry(&journal, &progress, applied) { return Ok(false); }
     let phase_revision = if progress.revision == journal.revision { progress.phase_revision } else { 0 };
     write_record(&owner_path, &Progress { revision: journal.revision, phase_revision, ..Progress::default() })?;
-    let settings = settings::read_settings_at(path)?;
+    let mut settings = settings::read_settings_at(path)?;
+    settings::merge_discovered_skills(&mut settings);
     schedule_effects(&settings, applied);
     let mut change = current_change(path, &journal)?;
     let warnings = apply_current(app, runtime, &journal, &settings, &mut change);

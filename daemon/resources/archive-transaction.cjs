@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
@@ -321,7 +322,11 @@ function restoreRecord(transaction, record) {
 
   for (const move of [...record.moves].reverse()) io.undo(move);
 
-  if (io.matches(record.file, record.original) || io.matches(record.file, record.rollbackIdentity)) return;
+  if (io.matches(record.file, record.original) || io.matches(record.file, record.rollbackIdentity)) {
+    checkpointIndex.refresh(record.file);
+
+    return;
+  }
 
   if (!io.matches(record.file, record.preparedIdentity) || !io.matches(record.backup, record.backupIdentity)) throw new Error(`Archive transcript recovery is ambiguous: ${record.file}`);
 
@@ -330,6 +335,7 @@ function restoreRecord(transaction, record) {
   if (!io.matches(record.rollbackCopy, record.rollbackIdentity)) throw new Error(`Archive rollback copy changed: ${record.rollbackCopy}`);
   fs.renameSync(record.rollbackCopy, record.file);
   io.sync(path.dirname(record.file));
+  checkpointIndex.refresh(record.file);
 }
 
 function prepareRollbackCopy(transaction, record) {

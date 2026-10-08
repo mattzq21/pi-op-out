@@ -31,6 +31,14 @@ function forget(root, targets) {
       for (const target of targets) remove.run(target.sessionId.toLowerCase());
     }
 
+    const checkpoints = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='checkpoint_owner_links'").get();
+
+    if (checkpoints) {
+      const remove = db.prepare('DELETE FROM checkpoint_owner_links WHERE lower(session_id) = ?');
+
+      for (const target of targets) remove.run(target.sessionId.toLowerCase());
+    }
+
     db.exec('COMMIT');
   } finally { db.close(); }
 

@@ -4,99 +4,77 @@ const { Check } = require("typebox/value");
 
 const sessionIdSchema = Type.String();
 
-const parentSchema = Type.Object({ parentSessionId: Type.String(), sessionId: Type.Optional(Type.String()) });
-
-const entrySchema = Type.Object({ type: Type.String() });
-
-const headerSchema = Type.Object({ type: Type.Literal("session"), id: Type.String(), parentSession: Type.Optional(Type.Unknown()) });
-
-const { createReadStream } = require("node:fs");
-const { createInterface } = require("node:readline");
 const path = require("node:path");
 const os = require("node:os");
-
-async function metadata(file) {
-  const input = createReadStream(file, { encoding: "utf8" });
-  const lines = createInterface({ input, crlfDelay: Infinity });
-  let id;
-  let parent;
-  let ownParent;
-  let fork = false;
-  let malformed = 0;
-
-  try {
-    for await (const line of lines) {
-      const entry = savedEntry(line);
-
-      if (!entry) { malformed += Number(Boolean(line.trim())); continue; }
-
-      if (id === undefined && Check(headerSchema, entry)) { id = entry.id; fork = Boolean(entry.parentSession); }
-
-      if (!parentEntry(entry)) continue;
-
-      if (entry.data.sessionId === id) ownParent = entry.data.parentSessionId;
-      else if (entry.data.sessionId === undefined) parent = entry.data.parentSessionId;
-    }
-  } finally { lines.close(); input.destroy(); }
-
-  warnMalformed(file, malformed);
-
-  return { file, id, parent: ownParent ?? (fork ? undefined : parent) };
-}
-
-function warnMalformed(file, count) {
-  if (count) console.error(`Skipped ${count} malformed records in ${file}; descendant lineage may be incomplete`);
-}
-
-function savedEntry(line) {
-  let entry;
-
-  try { entry = JSON.parse(line); } catch { return; }
-
-  return Check(entrySchema, entry) ? entry : undefined;
-}
-
-function parentEntry(entry) {
-  return entry.type === "custom" && ["piop-subagent-parent", "piop-review-parent"].includes(entry.customType) && Check(parentSchema, entry.data);
-}
-
-async function collect(root) {
-  const result = [];
-
-  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
-    const file = path.join(root, entry.name);
-
-    if (entry.isDirectory()) result.push(...await collect(file));
-    else if (entry.isFile() && entry.name.endsWith(".jsonl")) result.push(await metadata(file));
-  }
-
-  return result;
-}
+const io = require("./session-broker/session-publication-io.cjs");
+const childIndex = require("./session-broker/session-child-index.cjs");
 
 async function validatedParent(root, source) {
   const relative = path.relative(root, source);
 
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || !source.endsWith(".jsonl")) throw new Error("Invalid conversation path");
-  const parent = await metadata(source);
+  const parent = io.header(source);
 
-  if (!Check(sessionIdSchema, parent.id)) throw new Error("Conversation has no session ID");
+  if (!Check(sessionIdSchema, parent?.id)) throw new Error("Conversation has no session ID");
 
   return parent;
 }
 
-async function collectOtherArea(args, root, sessions, archivedFiles) {
-    const otherRoot = path.join(root, "..", args.archived ? "sessions" : "archived");
-    let exists = true;
+function allowedPath(root, file) {
+  return io.inside(path.join(root, "sessions"), file) || io.inside(path.join(root, "archived"), file);
+}
 
-    try { await fs.access(otherRoot); }
-    catch (error) { if (error.code !== "ENOENT") throw error; exists = false; }
+function resolveChild(root, child) {
+  if (io.deleted(root, child.sessionId)) return;
+  const indexed = childIndex.read(root, child.sessionId);
 
-    const other = exists ? await collect(otherRoot) : [];
-    sessions.push(...other);
+  for (const file of new Set([indexed?.sessionPath, child.sessionPath])) {
+    if (!file || !allowedPath(root, file)) continue;
 
-    if (!args.archived) other.forEach(session => archivedFiles.add(session.file));
+    if (io.header(file)?.id === child.sessionId) return file;
+  }
 
+  const located = io.locate(root, child.sessionId);
 
+  if (located) childIndex.ensure(root, child.sessionId, located.path);
+
+  return located?.path;
+}
+
+function descendants(root, parentId, args) {
+  const traversal = { seen: new Set([parentId]), queue: [parentId], result: [] };
+
+  for (let cursor = 0; cursor < traversal.queue.length; cursor++) {
+    const index = childIndex.read(root, traversal.queue[cursor]);
+
+    if (!index) continue;
+    appendChildren(root, index, traversal, args);
+  }
+
+  return traversal.result;
+}
+
+function appendChildren(root, index, traversal, args) {
+  const missing = new Set();
+
+  for (const child of index.children) {
+    if (traversal.seen.has(child.sessionId)) continue;
+    traversal.seen.add(child.sessionId);
+    const file = resolveChild(root, child);
+
+    if (!file) { missing.add(child.sessionId); continue; }
+
+    const archived = io.inside(path.join(root, "archived"), file);
+
+    if (!args.includeOtherArea && archived !== Boolean(args.archived)) continue;
+    traversal.result.push(args.includeOtherArea ? [file, archived] : file);
+    traversal.queue.push(child.sessionId);
+  }
+
+  if (missing.size) {
+    index.children = index.children.filter(child => !missing.has(child.sessionId));
+    childIndex.store(root, index);
+  }
 }
 
 async function main() {
@@ -105,31 +83,11 @@ async function main() {
   const root = await fs.realpath(args.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", area));
   const source = await fs.realpath(args.path);
   const parent = await validatedParent(root, source);
-  const sessions = await collect(root);
-  const archivedFiles = new Set(args.archived ? sessions.map(session => session.file) : []);
+  const profile = path.dirname(root);
 
-  if (args.includeOtherArea) await collectOtherArea(args, root, sessions, archivedFiles);
+  const children = await io.lockedAsync(profile, () => descendants(profile, parent.id, args));
 
-  const children = descendants(sessions, parent.id, source);
-  process.stdout.write(JSON.stringify(args.includeOtherArea ? children.map(file => [file, archivedFiles.has(file)]) : children));
-}
-
-function descendants(sessions, parentId, source) {
-  const ids = new Set([parentId]);
-  const files = new Set([source]);
-  let added = true;
-
-  while (added) {
-    added = false;
-
-    for (const session of sessions) {
-      if (!files.has(session.file) && Check(sessionIdSchema, session.id) && ids.has(session.parent)) {
-        files.add(session.file); ids.add(session.id); added = true;
-      }
-    }
-  }
-
-  return [...files].filter(file => file !== source);
+  process.stdout.write(JSON.stringify(children));
 }
 
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

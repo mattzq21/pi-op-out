@@ -1,6 +1,7 @@
 import { TranscriptPluginsContext, conversationSource } from "./plugins/transcript";
 import { createPluginWorkspace } from "./plugins/workspace";
 import { required } from "./lib/required";
+import { trackToastMessage, trackToastNotices } from "./lib/toastHistory";
 import { Key,Rerun } from "@solid-primitives/keyed";
 import { Archive,ArrowLeft,Bug,FolderPlus,GitBranch,MessageSquare,Server,Settings } from "lucide-solid";
 import { batch,createEffect,lazy,Show } from "solid-js";
@@ -149,6 +150,8 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
   const renderSettingsView = () => (view() === "settings" && <LocalSettingsView pendingSettingsCount={pendingSettingsCount()} settings={required((settings()))} sessions={sessions()} onSave={saveSettings} onDirtyChange={setSettingsDirty} />);
 
   const connectionError = () => props.suppressConnectionNotices ? undefined : error();
+  trackToastNotices("Chat", notices);
+  trackToastMessage("Chat", "piop could not connect", connectionError);
 
   const renderToastStack = () => (<Show when={connectionError() || notices().length > 0}><div class="toast-stack">
     {connectionError() && <div class="error-toast" role="alert"><strong>piop could not connect</strong><span>{(connectionError())}</span><button onClick={reconnectMain} disabled={reconnectPending.current.has(transport())}>Retry</button><button aria-label="Dismiss connection error" onClick={() => setError(undefined)}>×</button></div>}

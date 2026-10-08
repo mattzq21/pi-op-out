@@ -3,6 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createHash, randomUUID } = require('node:crypto');
 const { execFileSync, spawnSync } = require('node:child_process');
+const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 
 const inside = (parent, child) => child === parent || child.startsWith(parent + path.sep);
 
@@ -179,15 +180,8 @@ function checkPendingDiffs(record, target, common, readDiffStore) {
 }
 
 function checkPendingPointers(storage, target, common) {
-  const directory = path.join(storage, 'git-snapshots');
-  let entries;
-
-  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code === 'ENOENT') return; throw error; }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith('pi-desktop-diff-')) continue;
-    const pointer = path.join(directory, entry.name, 'pending-diff.json');
+  for (const { file: pointer, kind } of checkpointIndex.linked(storage, [target])) {
+    if (kind !== 'pointer') continue;
 
     if (!fs.existsSync(pointer)) continue;
     const fd = fs.openSync(pointer, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -202,23 +196,11 @@ function checkPendingPointers(storage, target, common) {
   }
 }
 
-function visit(directory, archived, target, common, records, readDiffStore) {
-  let children;
-
-  try { children = fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code === 'ENOENT') return; throw error; }
-
-  for (const child of children) {
-    const file = path.join(directory, child.name);
-
-    if (child.isDirectory()) visit(file, archived, target, common, records, readDiffStore);
-    else if (child.isFile() && child.name.endsWith('.jsonl')) inspectTranscript(file, archived, target, common, records, readDiffStore);
-  }
-}
-
-function inspectTranscript(file, archived, target, common, records, readDiffStore) {
+function inspectTranscript(file, archived, target, common, records, readDiffStore, sessionId) {
   try {
     const record = readTranscript(file, archived);
+
+    if (record.header.id !== sessionId) throw new Error('Checkpoint owner index identity changed');
 
     checkPendingDiffs(record, target, common, readDiffStore);
     const mapping = remapCheckpointRoots(record.header, record.entries, archived, target, common);
@@ -230,8 +212,21 @@ function inspectTranscript(file, archived, target, common, records, readDiffStor
 function scan(storage, target, common, readDiffStore) {
   const records = [];
 
-  visit(path.join(storage, 'sessions'), false, target, common, records, readDiffStore);
-  visit(path.join(storage, 'archived'), true, target, common, records, readDiffStore);
+  for (const link of checkpointIndex.linked(storage, [target])) {
+    if (!fs.existsSync(link.file)) continue;
+
+    if (link.kind === 'diff') {
+      checkPendingDiffs({ file: link.file.replace(/\.diffs\.json$/, '.jsonl') }, target, common, readDiffStore);
+      continue;
+    }
+
+    if (link.kind !== 'transcript') continue;
+    const archived = inside(path.join(storage, 'archived'), link.file);
+
+    if (!archived && !inside(path.join(storage, 'sessions'), link.file)) throw new Error('Checkpoint owner index points outside conversation storage');
+    inspectTranscript(link.file, archived, target, common, records, readDiffStore, link.sessionId);
+  }
+
   checkPendingPointers(storage, target, common);
 
   return records.sort((left, right) => left.file.localeCompare(right.file));
@@ -291,6 +286,7 @@ function publish(record, common) {
     verifyTranscript(record);
     fs.renameSync(temporary, record.file);
     syncDirectory(path.dirname(record.file));
+    checkpointIndex.refresh(record.file);
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
     fs.rmSync(temporary, { force: true });

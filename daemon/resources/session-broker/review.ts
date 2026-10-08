@@ -102,21 +102,28 @@ async function publishReview(pi: ExtensionAPI, ctx: ExtensionContext, record: Re
 
     if (!saved.some(entry => entry.type === "custom_message" && entry.customType === "piop-review-link" && Check(reviewSchema, entry.details) && matchesPublication(entry.details, record))) pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
 
-    if (!acknowledge(publication)) ctx.ui.notify(`Review parent publication is pending; the transcript is retained at ${record.sessionPath}`, "warning");
+    if (!await acknowledge(publication)) ctx.ui.notify(`Review parent publication is pending; the transcript is retained at ${record.sessionPath}`, "warning");
   } finally { release(publication); }
 }
 
 async function reconcileReviews(pi: ExtensionAPI, ctx: ExtensionContext) {
   const parent = ctx.sessionManager.getSessionFile();
+  const parentId = ctx.sessionManager.getSessionId();
 
   if (!parent) return;
+  const current = () => ctx.sessionManager.getSessionFile() === parent && ctx.sessionManager.getSessionId() === parentId;
 
   try {
-    const pending = pendingReviews(parent, ctx.sessionManager.getSessionId());
+    const pending = await pendingReviews(parent, parentId);
 
-    try { for (const item of pending) await publishReview(pi, ctx, item.record, item.publication); }
+    try {
+      for (const item of pending) {
+        if (!current()) return;
+        await publishReview(pi, ctx, item.record, item.publication);
+      }
+    }
     finally { for (const item of pending) release(item.publication); }
-  } catch (error) { ctx.ui.notify(`Review publication recovery is pending: ${String(error)}`, "warning"); }
+  } catch (error) { if (current()) ctx.ui.notify(`Review publication recovery is pending: ${String(error)}`, "warning"); }
 }
 
 async function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string, inherited = false, images?: Static<typeof reviewRequestSchema>["images"]) {
@@ -164,6 +171,7 @@ function reviewSubagentCount(args: string, command: string, ctx: ExtensionContex
 
 function subagentReviewTask(state: SessionAgentState, count: number | null, prompt: string) {
   if (count === 0) return prompt;
+
   if (!state.snapshot) throw new Error("Reviewer profile is unavailable for subagent review");
   const limit = state.snapshot.definition.max_subagents ?? 8;
 
@@ -172,11 +180,22 @@ function subagentReviewTask(state: SessionAgentState, count: number | null, prom
 
   if (!tools.includes("subagent")) tools.push("subagent");
   state.locked = true;
+
   const delegation = count === null
     ? "First assess the size, complexity, and risk of the changes, then choose a proportionate number of review subagents. Use only as many subagents as the task warrants, avoiding redundant work."
     : `You must spawn exactly ${count} review subagents.`;
 
   return `${prompt}\n\nFor this review: ${delegation} Spawn them using spawn_agent with worktree: "same" and unique task names. Omit agent to inherit your reviewer profile. Divide the review into complementary scopes and give each child the review instructions above, including the base and committed-change scope. Children must not delegate further, modify files, or run tests. Launch children concurrently, with at most ${limit} active at once; for larger counts, launch the remaining children as slots become available. Collect every subagent's results before giving your final review. Verify and deduplicate their findings, then report one consolidated review.`;
+}
+
+async function reviewProfile(pi: ExtensionAPI, agent: string) {
+  const profile: SubagentProfileRequest = { agent };
+  pi.events.emit("piop:agents:subagent", profile);
+  await profile.ready;
+
+  if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${agent}`);
+
+  return profile.state;
 }
 
 export function registerReview(pi: ExtensionAPI) {
@@ -214,14 +233,11 @@ export function registerReview(pi: ExtensionAPI) {
     signal?.throwIfAborted();
     const settings = await reviewSettings();
     signal?.throwIfAborted();
-    const profile: SubagentProfileRequest = { agent: settings.agent };
-    pi.events.emit("piop:agents:subagent", profile);
-    await profile.ready;
+    const profile = await reviewProfile(pi, settings.agent);
     signal?.throwIfAborted();
 
-    if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${settings.agent}`);
-    const task = subagentReviewTask(profile.state, count, settings.prompt);
-    const { record, publication } = await createReview(ctx, profile.state, signal);
+    const task = subagentReviewTask(profile, count, settings.prompt);
+    const { record, publication } = await createReview(ctx, profile, signal);
     await publishReview(pi, ctx, record, publication);
     signal?.throwIfAborted();
     await openReview(ctx, record, task, false, images);

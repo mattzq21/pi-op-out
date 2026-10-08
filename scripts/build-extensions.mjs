@@ -78,7 +78,7 @@ async function backendScripts() {
         const payload = brotliCompressSync(content, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).toString("base64");
         const script = `eval(require("node:zlib").brotliDecompressSync(Buffer.from("${payload}", "base64")).toString("utf8"));\n`;
 
-        if (Buffer.byteLength(script) > 97 * 1024) throw new Error(`${name} exceeds the embedded script argument budget`);
+        if (Buffer.byteLength(script) > 112 * 1024) throw new Error(`${name} exceeds the embedded script argument budget`);
 
         return script;
       } });

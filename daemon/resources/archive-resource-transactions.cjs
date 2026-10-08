@@ -3,6 +3,7 @@ const path = require('node:path');
 const io = require('./session-transactions.cjs');
 const resources = require('./archive-resources.cjs');
 const checkpoints = require('./worktree-checkpoint-preservation.cjs');
+const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 
 function validateChanges(transaction, changes) {
   for (const change of changes) {
@@ -124,6 +125,7 @@ function publishPeers(transaction) {
     if (!io.matches(peer.file, peer.original) || !io.matches(peer.backup, peer.backupIdentity) || !io.matches(peer.prepared, peer.preparedIdentity)) throw new Error('Shared archive publication changed; recovery retained');
     fs.renameSync(peer.prepared, peer.file);
     io.sync(path.dirname(peer.file));
+    checkpointIndex.refresh(peer.file);
   }
 }
 
@@ -135,7 +137,10 @@ function verifyPeers(transaction) {
 
 function rollbackPeers(transaction, save) {
   for (const peer of [...(transaction.resourcePeers ?? [])].reverse()) {
-    if (io.matches(peer.file, peer.original) || io.matches(peer.file, peer.rollbackIdentity)) continue;
+    if (io.matches(peer.file, peer.original) || io.matches(peer.file, peer.rollbackIdentity)) {
+      checkpointIndex.refresh(peer.file);
+      continue;
+    }
 
     if (!io.matches(peer.file, peer.preparedIdentity) || !io.matches(peer.backup, peer.backupIdentity)) throw new Error('Shared archived owner rollback is ambiguous; retained');
 
@@ -144,6 +149,7 @@ function rollbackPeers(transaction, save) {
     if (!io.matches(peer.rollback, peer.rollbackIdentity)) throw new Error('Shared archive rollback copy ownership changed');
     fs.renameSync(peer.rollback, peer.file);
     io.sync(path.dirname(peer.file));
+    checkpointIndex.refresh(peer.file);
   }
 }
 
