@@ -20,7 +20,7 @@ export function updateChatPreparation(owner: NativeTransport, status: string) {
 }
 
 export async function trackChatSubmission<T>(owner: NativeTransport, text: string, images: ImageAttachment[], durable: DraftSubmissionHandle, work: () => Promise<T>) {
-  const message: ChatMessage = { id: crypto.randomUUID(), role: "user", content: [{ type: "text", text }, ...images] };
+  const message: ChatMessage = { id: durable.id, role: "user", content: [{ type: "text", text }, ...images] };
   setSubmissions(current => [...current, { owner, message, durable, status: "Sending message…" }]);
   ownDraftSubmission(durable);
 

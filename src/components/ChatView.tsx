@@ -8,7 +8,7 @@ import { ReviewNavigationContext } from "./ReviewLink";
 import { chatSubmission, trackChatSubmission } from "../lib/newChatWorktree";
 import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandle, type DraftSubmissionPayload } from "../lib/draftSubmission";
 import { Key, Rerun } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
+import { createComputed, createMemo, createSignal, Index, onCleanup, Show } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
 
@@ -114,8 +114,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
   const sessionCache = createMemo(() => hasSentPrompt() ? cacheHitStats(sessionUsage()) : undefined);
   const sessionToolFailures = createMemo(() => props.debug && hasSentPrompt() ? toolFailureStats(messages()) : undefined);
   const pendingSubmission = createMemo(() => chatSubmission(props.transport));
-  const [submittedMessage, setSubmittedMessage] = createSignal<ChatMessage>();
-  const mcpPendingMessage = () => pendingSubmission()?.message ?? submittedMessage();
+  const mcpPendingMessage = () => pendingSubmission()?.message;
 
   const stageSubmission = (payload: DraftSubmissionPayload) => {
     const owner = props.transport;
@@ -136,11 +135,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
 
     const uploads = draftUploadsFromImages(images);
     const durable = staged ?? await stageSubmission({ rawText: text, uploads, consume: props.draft === text && !props.uploads?.length });
-    const message: ChatMessage = { id: durable.id, role: "user", content: [{ type: "text", text }, ...images] };
-    setSubmittedMessage(message);
 
-    try { return await trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable))); }
-    finally { setSubmittedMessage(current => current?.id === message.id ? undefined : current); }
+    return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)));
   };
 
   const actions = createRef({ onSend: send, onBranch: props.onBranch, onForkAndForget: props.onForkAndForget, onCreateWorktree: props.onCreateWorktree });
@@ -187,15 +183,23 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
     return props.onAbort();
   };
 
-  const scrollToLatest = () => {
-    const element = messagesRef.current;
+  let scrollFrame: number | undefined;
 
-    if (!element || !followLatest.current) return;
-    element.scrollTop = element.scrollHeight;
-    lastScrollTop.current = element.scrollTop;
+  const scrollToLatest = () => {
+    if (scrollFrame !== undefined || !followLatest.current) return;
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = undefined;
+      const element = messagesRef.current;
+
+      if (!element || !followLatest.current) return;
+      element.scrollTop = element.scrollHeight;
+      lastScrollTop.current = element.scrollTop;
+    });
   };
 
-  createDependencyEffect(scrollToLatest, () => [scrollToLatest, messages(), props.gitDiffs, props.state.isStreaming, mcpLoading(), submittedMessage(), pendingSubmission()]);
+  onCleanup(() => { if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame); });
+
+  createDependencyEffect(scrollToLatest, () => [scrollToLatest, messages(), props.gitDiffs, props.state.isStreaming, mcpLoading(), pendingSubmission()]);
   createDependencyEffect(() => {
     const messages = messagesRef.current;
 

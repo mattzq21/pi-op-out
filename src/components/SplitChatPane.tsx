@@ -160,6 +160,8 @@ export function SplitChatPane(componentProps: Props) {
 
     reconnectRef.current = () => void connectRuntime(false);
 
+    let refreshTimer: number | undefined;
+
     const unsubscribe = capturedTransport.subscribe((event: RpcEvent) => {
       capturedSession.handleEvent(event);
 
@@ -199,6 +201,8 @@ export function SplitChatPane(componentProps: Props) {
             if (request.statusKey === DEFINED_AGENTS_STATUS_KEY) {
               try { setDefinedAgents(request.statusText?.startsWith("json:") ? definedAgentsCapabilitySchema.parse(decodeAgentValue(request.statusText.slice(5))) : undefined); }
               catch { setDefinedAgents(undefined); }
+
+              void capturedSession.refresh().catch(reportControlError);
             } else if (request.statusKey && !["pi-desktop-prompt-context", "pi-desktop-mcp-status"].includes(request.statusKey)) {
               setStatuses((current) => { const next = { ...current };
 
@@ -227,7 +231,13 @@ export function SplitChatPane(componentProps: Props) {
 
       const handleMessageEnd = () => {
         setError(undefined);
-        window.setTimeout(() => void capturedSession.refresh().catch(reportControlError), 30);
+
+        if (refreshTimer !== undefined) return;
+        refreshTimer = window.setTimeout(() => {
+          refreshTimer = undefined;
+
+          if (!closing) void capturedSession.refresh().catch(reportControlError);
+        }, 30);
       };
 
       const handleSettingsApplied = () => {
@@ -270,7 +280,7 @@ export function SplitChatPane(componentProps: Props) {
 
     void connectRuntime(true);
 
-    return () => { closing = true; capturedRuntimePool0.setInteractive(capturedTransport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void capturedOnReleaseTransport11(capturedTransport); }); };
+    return () => { closing = true; window.clearTimeout(refreshTimer); capturedRuntimePool0.setInteractive(capturedTransport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void capturedOnReleaseTransport11(capturedTransport); }); };
   }, () => [transport(), componentProps.freshReview, componentProps.initialPrompt, session().handleEvent, session().refresh, componentProps.onDialogRequest, componentProps.onDialogTransportClosed, componentProps.onReleaseTransport]);
   createDependencyEffect(() => {
     const capturedConnected = connected(); const capturedTransport = transport(); const capturedSettings0 = componentProps.settings;

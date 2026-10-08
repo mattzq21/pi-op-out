@@ -253,10 +253,8 @@ export function createAppConversations(preloadChat: () => void) {
     return () => { for (const pending of unsubscribes) void pending.then((unlisten) => unlisten()); };
   }, () => [addNotice, syncSessionIndex]);
 
-  const refresh = async (hostId?: string, loadedSettings?: AppSettings) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
-    void syncSessionIndex();
-    const settingsRequest = loadedSettings ? Promise.resolve(settings() ?? loadedSettings) : loadSettings();
-    const [nextState, nextSettings] = await Promise.all([capturedSession.refresh(), settingsRequest]); capturedRuntimePool.bind(hostId ?? capturedTransport.currentHostId(), nextState.sessionId, capturedTransport);
+  const refreshSession = async (hostId?: string) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
+    const nextState = await capturedSession.refresh(); capturedRuntimePool.bind(hostId ?? capturedTransport.currentHostId(), nextState.sessionId, capturedTransport);
     const group = pendingSessionGroups.current.get(capturedTransport);
 
     if (group && nextState.sessionId && nextState.messageCount > 0) {
@@ -265,6 +263,14 @@ export function createAppConversations(preloadChat: () => void) {
         pendingSessionGroups.current.delete(capturedTransport);
       } catch (reason) { addNotice({ title: "Could not add chat to group", message: String(reason) }); }
     }
+
+    return nextState;
+  };
+
+  const refresh = async (hostId?: string, loadedSettings?: AppSettings) => {
+    void syncSessionIndex();
+    const settingsRequest = loadedSettings ? Promise.resolve(settings() ?? loadedSettings) : loadSettings();
+    const [, nextSettings] = await Promise.all([refreshSession(hostId), settingsRequest]);
 
     return nextSettings;
   };
@@ -294,7 +300,7 @@ export function createAppConversations(preloadChat: () => void) {
     }
   };
 
-  useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, pendingReviewRequest, reviewImages, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession: chatSession().refresh, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
+  useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, pendingReviewRequest, reviewImages, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
   createDependencyEffect(() => {
     const capturedTransport = transport(); const capturedRuntimePool = runtimePool();
     const shutdown = () => { for (const id of terminals.draftTerminalIds()) void capturedTransport.closeTerminal(id).catch(() => undefined); void capturedRuntimePool.disconnectAll(); };

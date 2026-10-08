@@ -56,7 +56,7 @@ type AppEventsContext = {
 
 export function useAppEvents(options: Accessor<AppEventsContext>) {
   createDependencyEffect(() => { const capturedOptions = options();
-    let cancelled = false; let reconnecting = false; const refreshTimers = new Set<number>();
+    let cancelled = false; let reconnecting = false; let refreshTimer: number | undefined;
     const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
     capturedOptions.setError(undefined);
     document.title = "piop"; capturedOptions.setStatuses({}); capturedOptions.setWidgets({});
@@ -86,11 +86,12 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       };
 
       const handleMessageEnd = () => {
-        const timer = window.setTimeout(() => { refreshTimers.delete(timer);
+        if (refreshTimer !== undefined) return;
+        refreshTimer = window.setTimeout(() => {
+          refreshTimer = undefined;
 
-          if (!cancelled) void capturedOptions.refresh().catch(() => undefined); }, 30);
-
-        refreshTimers.add(timer);
+          if (current()) void capturedOptions.refreshSession().catch(() => undefined);
+        }, 30);
       };
 
       const handleTerminalOutput = () => {
@@ -283,6 +284,6 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
     loadSelectedSession().catch((cause: unknown) => { if (current() && !isConversationChanged(cause)) capturedOptions.setError(cause instanceof Error ? cause.message : String(cause)); });
 
-    return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); capturedOptions.flushTerminalOutput(); };
+    return () => { cancelled = true; window.clearTimeout(refreshTimer); unsubscribe(); capturedOptions.flushTerminalOutput(); };
   }, () => [options().addNotice, options().configureRuntime, options().handleEvent, options().loadSettings, options().queueExtensionDialog, options().queueTerminalOutput, options().refresh, options().refreshSession, options().transport]);
 }
