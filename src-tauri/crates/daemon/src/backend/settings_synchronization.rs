@@ -185,8 +185,6 @@ fn current_change(path: &Path, journal: &Journal) -> Result<Value, String> {
 
 pub(crate) fn snapshot(app: &AppHandle) -> Result<Value, String> {
     start(app.clone());
-    let runtime = app.state::<PiRuntime>();
-    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let path = settings_path(app)?;
     let _storage = storage_lock(&path)?;
     let journal = Journal::load(&path)?;
