@@ -60,10 +60,7 @@ fn lease_at(directory: &Path, id: &str) -> Result<File, String> {
 fn record_path(directory: &Path, id: &str) -> PathBuf { directory.join(format!("restart-{id}.artifact.json")) }
 
 fn save_record(directory: &Path, record: &Record) -> Result<(), String> {
-    crate::atomic_write_private(&record_path(directory, &record.id), &serde_json::to_vec(record).map_err(|error| error.to_string())?)?;
-    #[cfg(unix)]
-    File::open(directory).and_then(|file| file.sync_all()).map_err(|error| error.to_string())?;
-    Ok(())
+    crate::restart_storage::save_backup(directory, &record.id, record)
 }
 
 fn hash(path: &Path) -> Result<String, String> {
@@ -127,16 +124,7 @@ impl Drop for Backup {
     }
 }
 
-fn read_value(path: &Path) -> Result<Option<Value>, String> {
-    if matches!(path.file_name().and_then(|name| name.to_str()), Some("restart-plan.json" | "restart-status.json" | "restart-ready.json")) {
-        return crate::restart_storage::read(path);
-    }
-    match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| format!("Could not read {}: {error}", path.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
-}
+fn read_value(path: &Path) -> Result<Option<Value>, String> { crate::restart_storage::read(path) }
 
 fn active_phase(status: Option<&Value>) -> bool {
     status.is_none_or(|status| !matches!(status["phase"].as_str(), Some("failed" | "complete" | "rolled_back")))
@@ -270,7 +258,7 @@ fn remove_backup(directory: &Path, id: &str) -> Result<(), String> {
     for path in [directory.join(name(id)), record_path(directory, id)] {
         match fs::remove_file(path) { Ok(()) => {}, Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}, Err(error) => return Err(error.to_string()) }
     }
-    Ok(())
+    crate::restart_storage::remove_backup(directory, id)
 }
 
 pub(crate) fn reconcile() -> Result<(), String> {
@@ -278,10 +266,9 @@ pub(crate) fn reconcile() -> Result<(), String> {
     let _gate = gate(&directory)?;
     let plan = read_value(&directory.join("restart-plan.json"))?;
     let status = read_value(&directory.join("restart-status.json"))?;
-    for entry in fs::read_dir(&directory).map_err(|error| error.to_string())? {
-        let path = entry.map_err(|error| error.to_string())?.path();
-        let Some(id) = backup_id(&path) else { continue; };
-        reconcile_backup(&directory, &path, &id, plan.as_ref(), status.as_ref())?;
+    for id in crate::restart_storage::backups(&directory)? {
+        identity(&id)?;
+        reconcile_backup(&directory, &directory.join(name(&id)), &id, plan.as_ref(), status.as_ref())?;
     }
     Ok(())
 }
@@ -294,8 +281,17 @@ fn reconcile_backup(directory: &Path, path: &Path, id: &str, plan: Option<&Value
     remove_backup(directory, id)
 }
 
+fn backup_metadata(path: &Path) -> Result<Option<fs::Metadata>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 fn removable_backup(path: &Path, id: &str) -> Result<Option<bool>, String> {
-    if !fs::symlink_metadata(path).map_err(|error| error.to_string())?.is_file() { return Ok(None); }
+    let Some(metadata) = backup_metadata(path)? else { return Ok(Some(true)); };
+    if !metadata.is_file() { return Ok(None); }
     let record = record_matches(path, id)?;
     if record == Some(false) { return Ok(None); }
     if !unused_executable(path, record.is_some())? { return Ok(None); }
@@ -317,7 +313,7 @@ fn referenced_by_active_plan(directory: &Path, path: &Path, id: &str, plan: Opti
 }
 
 fn record_matches(path: &Path, id: &str) -> Result<Option<bool>, String> {
-    let Some(record) = read_value(&record_path(path.parent().ok_or("Restart artifact has no directory")?, id))? else { return Ok(None); };
+    let Some(record) = crate::restart_storage::read_backup(path.parent().ok_or("Restart artifact has no directory")?, id)? else { return Ok(None); };
     let record: Record = serde_json::from_value(record).map_err(|error| error.to_string())?;
     Ok(Some(record.id == id && record.digest.is_none_or(|expected| hash(path).ok().as_deref() == Some(expected.as_str()))))
 }

@@ -23,9 +23,82 @@ fn open(directory: &Path) -> Result<Connection, String> {
     db.busy_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
     db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
         CREATE TABLE IF NOT EXISTS daemon_restart_records (directory TEXT NOT NULL, name TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(directory, name));
-        CREATE TABLE IF NOT EXISTS daemon_restart_imports (directory TEXT PRIMARY KEY);").map_err(|error| error.to_string())?;
+        CREATE TABLE IF NOT EXISTS daemon_restart_imports (directory TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS daemon_restart_backups (directory TEXT NOT NULL, id TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, id));
+        CREATE TABLE IF NOT EXISTS daemon_restart_backup_imports (directory TEXT PRIMARY KEY);").map_err(|error| error.to_string())?;
     import(&mut db, directory)?;
+    import_backups(&mut db, directory)?;
     Ok(db)
+}
+
+fn import_backups(db: &mut Connection, directory: &Path) -> Result<(), String> {
+    let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+    let imported: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM daemon_restart_backup_imports WHERE directory=?)", [directory.to_string_lossy()], |row| row.get(0)).map_err(|error| error.to_string())?;
+    if !imported {
+        import_backup_directory(&transaction, directory)?;
+        transaction.execute("INSERT INTO daemon_restart_backup_imports VALUES (?)", [directory.to_string_lossy()]).map_err(|error| error.to_string())?;
+    }
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+fn import_backup_directory(db: &Connection, directory: &Path) -> Result<(), String> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let filename = entry.file_name();
+        let Some(id) = backup_id(&filename.to_string_lossy()) else { continue; };
+        import_backup(db, directory, &id)?;
+    }
+    Ok(())
+}
+
+fn backup_id(name: &str) -> Option<String> {
+    let name = name.strip_prefix("restart-")?;
+    let id = name.strip_suffix(".artifact.json").or_else(|| name.strip_suffix(std::env::consts::EXE_SUFFIX))?;
+    let parsed = uuid::Uuid::parse_str(id).ok()?.to_string();
+    (parsed == id).then_some(parsed)
+}
+
+fn import_backup(db: &Connection, directory: &Path, id: &str) -> Result<(), String> {
+    let body = match fs::read_to_string(directory.join(format!("restart-{id}.artifact.json"))) {
+        Ok(body) => Some(body),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.to_string()),
+    };
+    db.execute("INSERT OR IGNORE INTO daemon_restart_backups VALUES (?, ?, ?)", rusqlite::params![directory.to_string_lossy(), id, body]).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn save_backup(directory: &Path, id: &str, record: &impl Serialize) -> Result<(), String> {
+    let db = open(directory)?;
+    let body = serde_json::to_string(record).map_err(|error| error.to_string())?;
+    db.execute("INSERT INTO daemon_restart_backups VALUES (?, ?, ?) ON CONFLICT(directory, id) DO UPDATE SET record_json=excluded.record_json",
+        rusqlite::params![directory.to_string_lossy(), id, body]).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn read_backup(directory: &Path, id: &str) -> Result<Option<Value>, String> {
+    let db = open(directory)?;
+    let body: Option<Option<String>> = db.query_row("SELECT record_json FROM daemon_restart_backups WHERE directory=? AND id=?",
+        rusqlite::params![directory.to_string_lossy(), id], |row| row.get(0)).optional().map_err(|error| error.to_string())?;
+    body.flatten().map(|body| serde_json::from_str(&body).map_err(|error| error.to_string())).transpose()
+}
+
+pub(crate) fn remove_backup(directory: &Path, id: &str) -> Result<(), String> {
+    let db = open(directory)?;
+    db.execute("DELETE FROM daemon_restart_backups WHERE directory=? AND id=?", rusqlite::params![directory.to_string_lossy(), id]).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn backups(directory: &Path) -> Result<Vec<String>, String> {
+    let db = open(directory)?;
+    let mut statement = db.prepare("SELECT id FROM daemon_restart_backups WHERE directory=? ORDER BY id").map_err(|error| error.to_string())?;
+    let rows = statement.query_map([directory.to_string_lossy()], |row| row.get(0)).map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
 }
 
 fn import(db: &mut Connection, directory: &Path) -> Result<(), String> {
