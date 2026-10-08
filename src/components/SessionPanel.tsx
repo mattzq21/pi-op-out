@@ -468,7 +468,7 @@ export function SessionPanel(props: Props) {
 
     const menuItems = groupMenu() ? [
       ...(customGroup ? [{ label: "Rename group", Icon: Pencil, disabled: false, run: () => { closeMenu(); editGroup(customGroup); } }] : []),
-      { label: "Open directory", Icon: FolderOpen, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) { setGroupActionError(undefined); void openGroupDirectory(groupDirectory.cwd, groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } } },
+      ...(groupDirectory?.cwd ? [{ label: "Open directory", Icon: FolderOpen, disabled: false, run: () => { setGroupActionError(undefined); void openGroupDirectory(groupDirectory.cwd, groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } }] : []),
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: required((groupMenu())).projectKey, name: required((groupMenu())).label }) },
     ] : menu() ? actions.flatMap(([action, Icon, label]) => (!isMobile || action !== "new-window") && (!["copy-id", "open-rollout"].includes(action) || panel().debug) ? [{ label, Icon, disabled: props.isArchiving(required(menu()).session) || (required(menu()).session.isDraft === true && action !== "open-directory") || (action === "open-rollout" && !required(menu()).session.path), run: () => panel().onAction(required((menu())).session, action) }] : []) : [];
 
