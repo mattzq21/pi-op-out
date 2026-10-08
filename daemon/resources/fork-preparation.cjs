@@ -75,14 +75,12 @@ function removeRefs(record) {
 }
 
 function removeCheckpoints(directory, published) {
-  const owners = path.join(directory, 'checkpoint-owners');
   let complete = true;
 
-  for (const entry of children(owners)) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    const record = JSON.parse(fs.readFileSync(path.join(owners, entry.name), 'utf8'));
+  for (const row of require('./fork-preparation-records.cjs').read(directory)) {
+    const record = JSON.parse(row.record_json);
 
-    if (!Check(ownerSchema, record) || entry.name !== `${record.sessionId}.json`) throw new Error('Invalid preparatory checkpoint owner');
+    if (!Check(ownerSchema, record) || row.session_id !== record.sessionId) throw new Error('Invalid preparatory checkpoint owner');
 
     if (!published.has(record.sessionId) && !publishedDestination(record) && !removeRefs(record)) complete = false;
   }
@@ -111,6 +109,7 @@ function removeDirectory(directory) {
 
   fs.rmSync(removing, { recursive: true });
   sync(parent);
+  require('./fork-preparation-records.cjs').remove(path.join(parent, path.basename(directory).replace(/^\.cleanup-/, '')));
 }
 
 function recoverDirectory(directory, owners) {

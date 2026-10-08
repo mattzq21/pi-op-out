@@ -1,18 +1,12 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { mkdir, open, realpath, rename, rm } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import { basename, join } from "node:path";
+import { mkdir, realpath } from "node:fs/promises";
+import { open } from "../session-database.cjs";
+import { basename, dirname, join } from "node:path";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { GitError, runGit } from "./git.ts";
 
 const repositorySchema = Type.Object({ repositoryRoot: Type.String() });
-
-async function sync(directory: string) {
-  const file = await open(directory, "r");
-
-  try { await file.sync(); } finally { await file.close(); }
-}
 
 async function commonRepositories(roots: string[]) {
   const repositories = new Set<string>();
@@ -38,18 +32,11 @@ export async function registerPreparedCheckpoints(sessionId: string, cwd: string
   const repositories = await commonRepositories(roots);
   const destinationDirectory = process.env.PIOP_FORK_DESTINATION_DIRECTORY;
   const destination = sessionPath && destinationDirectory ? join(destinationDirectory, basename(sessionPath)) : undefined;
-  const directory = join(preparation, "checkpoint-owners");
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await sync(preparation);
-  const temporary = join(directory, `.${sessionId}.${randomUUID()}.tmp`);
+  await mkdir(preparation, { recursive: true, mode: 0o700 });
+  const database = open(dirname(dirname(preparation)));
 
   try {
-    const file = await open(temporary, "wx", 0o600);
-
-    try { await file.writeFile(JSON.stringify({ sessionId, roots, repositories, destination })); await file.sync(); }
-    finally { await file.close(); }
-
-    await rename(temporary, join(directory, `${sessionId}.json`));
-    await sync(directory);
-  } finally { await rm(temporary, { force: true }); }
+    database.prepare("INSERT INTO fork_preparation_checkpoints VALUES (?, ?, ?) ON CONFLICT(preparation, session_id) DO UPDATE SET record_json=excluded.record_json")
+      .run(preparation, sessionId, JSON.stringify({ sessionId, roots, repositories, destination }));
+  } finally { database.close(); }
 }
