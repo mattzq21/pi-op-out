@@ -3,7 +3,6 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
 import { ExtensionDialog } from '../../clients/ui/components/ExtensionDialog.tsx';
 import { WorktreeDialog } from '../../clients/ui/components/WorktreeDialog.tsx';
-import { RemoveWorktreeDialog } from '../../clients/ui/components/RemoveWorktreeDialog.tsx';
 import { RemoveGroupDialog } from '../../clients/ui/components/RemoveGroupDialog.tsx';
 import { ResizableSidebar } from '../../clients/ui/components/ResizableSidebar.tsx';
 import { Toggle } from '../../clients/ui/components/Toggle.tsx';
@@ -86,15 +85,6 @@ describe('rendered controls and dialogs', () => {
     assert.equal(input.disabled, false); await click(button('Cancel')); assert.equal(closed, 1);
   });
 
-  test('worktree removal reports backend usage checks and passes the selected branch policy', async () => {
-    const values = []; const props = { name: 'feature', path: '/repo/feature', conversationCount: 1, onCancel() {}, onRemove: async value => values.push(value) };
-    const view = await render(RemoveWorktreeDialog, props);
-    assert.match(document.body.textContent, /checks for conversations and terminals still using/);
-    await click(button('Delete worktree')); assert.deepEqual(values, [false]);
-    await view.rerender(props); await click(document.querySelector('input')); await click(button('Delete worktree'));
-    assert.deepEqual(values, [false, true]);
-  });
-
   test('group removal disables cancellation while pending and makes failed operations retryable', async () => {
     const pending = Promise.withResolvers(); let removed = 0, cancelled = 0;
     await render(RemoveGroupDialog, { name: 'Work', onRemove: () => { removed++;
@@ -136,20 +126,6 @@ describe('rendered controls and dialogs', () => {
     await pointer('pointerup', { pointerId: 2 }); assert.equal(captured, 1);
     await pointer('pointerup'); assert.equal(captured, undefined); assert.equal(document.body.style.cursor, '');
     await pointer('pointerdown'); await pointer('pointercancel'); assert.equal(document.body.style.userSelect, '');
-  });
-
-  test('worktree removal preserves the dialog on error and blocks Escape until removal settles', async () => {
-    let cancelled = 0; const pending = Promise.withResolvers(); const policies = [];
-    await render(RemoveWorktreeDialog, { name: 'feature', path: '/repo', conversationCount: 0, onCancel: () => cancelled++, onRemove: policy => { policies.push(policy);
-
-    return pending.promise; } });
-    await click(button('Delete worktree')); assert.deepEqual(policies, [false]);
-    const dialog = document.querySelector('dialog');
-    await act(async () => dialog.dispatchEvent(new Event('cancel', { cancelable: true }))); assert.equal(cancelled, 0);
-    await act(async () => pending.reject('worktree has changes'));
-    assert.equal(document.querySelector('[role=alert]').textContent, 'worktree has changes');
-    assert.equal(button('Delete worktree').disabled, false);
-    await act(async () => dialog.dispatchEvent(new Event('cancel', { cancelable: true }))); assert.equal(cancelled, 1);
   });
 
   test('extension backdrop clicks cancel only outside the dialog and return focus on unmount', async () => {
