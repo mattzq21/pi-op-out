@@ -48,7 +48,8 @@ function initialize(db) {
         host_id TEXT, host_name TEXT, project_kind TEXT, branch TEXT);
       CREATE TABLE IF NOT EXISTS session_group_assignments (session_key TEXT PRIMARY KEY, group_id TEXT);
       CREATE TABLE IF NOT EXISTS session_group_removed_projects (project_id TEXT PRIMARY KEY);
-      CREATE TABLE IF NOT EXISTS session_group_deletions (session_key TEXT PRIMARY KEY);`);
+      CREATE TABLE IF NOT EXISTS session_group_deletions (session_key TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS session_publications (publication_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -159,8 +160,68 @@ function importSessions(db, root) {
       db.prepare('INSERT INTO storage_migrations VALUES (?)').run('session-catalog-v1');
     }
 
+    importPublications(db, root);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importPublications(db, root) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('session-publications-v1')) return;
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const directory = path.join(root, 'session-publications');
+  let names;
+
+  try { names = fs.readdirSync(directory); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; names = []; }
+
+  for (const name of names.filter(name => /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.json$/.test(name))) {
+    const file = path.join(directory, name);
+    const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    let body;
+
+    try {
+      if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid session publication record');
+      body = fs.readFileSync(descriptor, 'utf8');
+    } finally { fs.closeSync(descriptor); }
+
+    db.prepare('INSERT INTO session_publications VALUES (?, ?)').run(name.slice(0, -5), body);
+  }
+
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('session-publications-v1');
+}
+
+function publication(root, id) {
+  const db = open(root);
+
+  try {
+    const row = db.prepare('SELECT record_json FROM session_publications WHERE publication_id=?').get(id);
+
+    return row ? JSON.parse(row.record_json) : undefined;
+  } finally { db.close(); }
+}
+
+function savePublication(root, id, record) {
+  const db = open(root);
+
+  try {
+    db.prepare(`INSERT INTO session_publications VALUES (?, ?) ON CONFLICT(publication_id) DO UPDATE SET record_json=excluded.record_json`)
+      .run(id, JSON.stringify(record));
+  } finally { db.close(); }
+}
+
+function removePublication(root, id) {
+  const db = open(root);
+
+  try { db.prepare('DELETE FROM session_publications WHERE publication_id=?').run(id); }
+  finally { db.close(); }
+}
+
+function publications(root) {
+  const db = open(root);
+
+  try { return db.prepare('SELECT publication_id FROM session_publications ORDER BY publication_id').all().map(row => row.publication_id); }
+  finally { db.close(); }
 }
 
 function open(root) {
@@ -207,4 +268,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot };
+module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot,
+  publication, savePublication, removePublication, publications };

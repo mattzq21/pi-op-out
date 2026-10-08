@@ -73,7 +73,7 @@ function missingEntries(saved, record) {
   return result;
 }
 
-function savedJournal(journal) { io.write(io.journalPath(journal.root, journal.id), journal); }
+function savedJournal(journal) { require('../session-database.cjs').savePublication(journal.root, journal.id, journal); }
 
 function finishAppend(journal, file) {
   const plan = journal.parentRepair;

@@ -3,7 +3,7 @@ const path = require('node:path');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { retainedDependencies } = require('./session-broker/session-publication.cjs');
-const { read, proof } = require('./session-broker/session-publication-io.cjs');
+const { proof } = require('./session-broker/session-publication-io.cjs');
 const { addRoot } = require('./storage-inventory-roots.cjs');
 const { createObservation, observeEntry, recordGoals } = require('./storage-inventory-owners.cjs');
 
@@ -28,7 +28,7 @@ function contractGoals(diagnostic, discovery) {
 }
 
 function journalProof(profile, diagnostic) {
-  const journal = JSON.parse(read(diagnostic.journalPath).body);
+  const journal = require('./session-database.cjs').publication(profile, path.basename(diagnostic.journalPath, '.json'));
 
   if (!Check(journalSchema, journal) || journal.root !== profile || journal.sessionId !== diagnostic.sessionId || diagnostic.journalPath !== path.join(profile, 'session-publications', journal.id + '.json')) throw new Error('Publication journal changed after verified enumeration');
 
@@ -91,7 +91,7 @@ async function discoverPublicationDiagnostics(profile, discovery, transcript) {
 
   for (const diagnostic of diagnostics) {
     contractGoals(diagnostic, discovery);
-    artifact(discovery, diagnostic.journalPath, diagnostic, 'other-storage', 'Verified retained publication journal');
+
     sidecars(diagnostic, discovery);
 
     try { await transcripts(diagnostic, journalProof(profile, diagnostic), discovery, transcript); }

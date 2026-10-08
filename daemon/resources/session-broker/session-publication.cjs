@@ -7,6 +7,7 @@ const io = require('./session-publication-io.cjs');
 const reviews = require('./review-publication.cjs');
 const dependencies = require('./session-publication-dependencies.cjs');
 const children = require('./session-child-index.cjs');
+const database = require('../session-database.cjs');
 
 const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
 
@@ -36,7 +37,7 @@ class SessionPublicationError extends Error {
   }
 }
 
-function save(journal) { io.write(io.journalPath(journal.root, journal.id), journal); }
+function save(journal) { database.savePublication(journal.root, journal.id, journal); }
 
 function validate(root, journal, file) {
   if (!Check(journalSchema, journal) || journal.root !== root || file !== io.journalPath(root, journal.id)) throw new Error(`Unowned publication journal retained: ${file}`);
@@ -65,20 +66,14 @@ function validatePaths(journal) {
 }
 
 function load(root, file) {
-  const journal = JSON.parse(io.read(file).body);
+  const journal = database.publication(root, path.basename(file, '.json'));
   validate(root, journal, file);
 
   return journal;
 }
 
 function journalFiles(root) {
-  const directory = path.join(root, 'session-publications');
-
-  if (!io.exists(directory)) return [];
-
-  if (!io.exists(directory).isDirectory() || !io.canonical(directory)) throw new Error('Publication journal directory has ambiguous ownership');
-
-  return fs.readdirSync(directory).flatMap(name => /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.json$/.test(name) ? [path.join(directory, name)] : []);
+  return database.publications(root).map(id => io.journalPath(root, id));
 }
 
 function prepareBody(body, id) {
@@ -102,7 +97,6 @@ function prepare(root, target, body, options) {
   if (!path.basename(target).endsWith(`_${prepared.header.id}.jsonl`) || io.exists(target)) throw new Error('Session publication target is occupied or does not bind its session identity');
   const lock = io.lockPath(root, target);
   io.mkdir(path.dirname(lock));
-  io.mkdir(path.join(root, 'session-publications'));
   const lease = io.claim(lock);
 
   if (lease === null) throw new Error('Another writer owns this session publication');
@@ -131,12 +125,12 @@ function prepareJournal(root, target, prepared, id, lock, lease, options) {
 
   if (options.review) journal.review = reviews.prepare(root, { ...options.review, target }, prepared.header, id, prepared.body);
 
-  if (io.exists(io.journalPath(root, id))) throw new Error('Session publication operation identity is already in use');
+  if (database.publication(root, id)) throw new Error('Session publication operation identity is already in use');
   io.sync(lock);
   io.sync(path.dirname(lock));
 
   try { save(journal); }
-  catch (error) { if (io.exists(io.journalPath(root, id))) throw failedPublication(journal, error); throw error; }
+  catch (error) { if (database.publication(root, id)) throw failedPublication(journal, error); throw error; }
 
   return { journal, body: prepared.body, lease };
 }
@@ -203,8 +197,7 @@ function removeTemporary(journal) {
 }
 
 function retire(journal) {
-  fs.unlinkSync(io.journalPath(journal.root, journal.id));
-  io.sync(path.join(journal.root, 'session-publications'));
+  database.removePublication(journal.root, journal.id);
 }
 
 function complete(journal, location) {
@@ -516,7 +509,7 @@ function visibleReview(root, file, parentId) {
   if (!child.piopPublicationId) return 'legacy';
   const journalFile = io.journalPath(root, child.piopPublicationId);
 
-  if (!io.exists(journalFile)) return 'pending';
+  if (!database.publication(root, child.piopPublicationId)) return 'pending';
   const journal = load(root, journalFile);
 
   const lease = io.claim(journal.lock, journal.lockIdentity);
