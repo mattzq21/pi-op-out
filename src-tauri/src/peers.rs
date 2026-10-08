@@ -479,7 +479,7 @@ fn peer_handshake(child: &mut Child, stdout: std::process::ChildStdout, host: &R
         let result = reader.by_ref().take(1024 * 1024).read_line(&mut line).map_err(|error| error.to_string()).and_then(|_| serde_json::from_str::<Value>(&line).map_err(|_| "The remote Piop daemon did not return a peer handshake".to_string()));
         let _ = sender.send((result, reader));
     });
-    let handshake = receiver.recv_timeout(Duration::from_secs(30));
+    let handshake = receiver.recv_timeout(daemon_endpoint::STARTUP_TIMEOUT + Duration::from_secs(30));
     let (ready, reader) = match handshake {
         Ok((Ok(ready), reader)) if ready["peerProtocol"] == 1 && ready["daemonId"].as_str().is_some() => (ready, reader),
         _ => {
