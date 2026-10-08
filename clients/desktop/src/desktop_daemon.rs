@@ -171,7 +171,7 @@ type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStre
 fn configured_endpoint() -> Result<Option<daemon_endpoint::Endpoint>, String> {
     let Ok(url) = std::env::var("PIOP_DAEMON_URL") else { return Ok(None); };
     let token = std::env::var("PIOP_DAEMON_TOKEN").map_err(|_| "PIOP_DAEMON_TOKEN is required with PIOP_DAEMON_URL")?;
-    let parsed = reqwest::Url::parse(&url).map_err(|_| "Invalid daemon URL")?;
+    let parsed = tauri::Url::parse(&url).map_err(|_| "Invalid daemon URL")?;
     let loopback = parsed.host_str().is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1"));
     if parsed.scheme() != "wss" && !(parsed.scheme() == "ws" && loopback) { return Err("Remote daemons require wss://; ws:// is allowed only on loopback".into()); }
     if !parsed.username().is_empty() || parsed.password().is_some() || parsed.query().is_some() || parsed.fragment().is_some() { return Err("Daemon URL must not contain credentials, a query, or a fragment".into()); }

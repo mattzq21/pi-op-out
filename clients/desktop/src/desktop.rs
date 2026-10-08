@@ -49,7 +49,7 @@ fn configure_dictation_microphone(window: &tauri::WebviewWindow) -> Result<(), S
         let view = webview.inner();
         if let Some(settings) = WebViewExt::settings(&view) { settings.set_enable_media_stream(true); }
         view.connect_permission_request(move |view, request| {
-            let trusted = view.uri().and_then(|uri| reqwest::Url::parse(&uri).ok()).is_some_and(|url| {
+            let trusted = view.uri().and_then(|uri| tauri::Url::parse(&uri).ok()).is_some_and(|url| {
                 url.scheme() == "tauri" && url.host_str() == Some("localhost")
                     || matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost")
                     || DEVELOPMENT && dev_url.as_ref().is_some_and(|configured| url.origin() == configured.origin())
@@ -67,7 +67,7 @@ fn configure_dictation_microphone(window: &tauri::WebviewWindow) -> Result<(), S
 fn conversation_window_target(target: &Value) -> Result<(String, String), String> {
     if !target["sessionId"].as_str().is_some_and(|id| !id.trim().is_empty()) { return Err("Select a conversation to open in another window".into()); }
     let label = format!("chat-{}", Uuid::new_v4());
-    let mut url = reqwest::Url::parse("https://piop.invalid/").map_err(|error| error.to_string())?;
+    let mut url = tauri::Url::parse("https://piop.invalid/").map_err(|error| error.to_string())?;
     url.query_pairs_mut().append_pair("target", &target.to_string());
     let path = format!("index.html{}", url.query().map(|query| format!("?{query}")).unwrap_or_default());
     Ok((label, path))
@@ -99,7 +99,7 @@ fn open_external_url(url: String) -> Result<(), String> {
 }
 
 fn open_external_url_with(url: &str, open: impl FnOnce(&std::ffi::OsStr) -> Result<(), String>) -> Result<(), String> {
-    let parsed = reqwest::Url::parse(url).map_err(|_| "Enter a valid HTTP or HTTPS URL")?;
+    let parsed = tauri::Url::parse(url).map_err(|_| "Enter a valid HTTP or HTTPS URL")?;
     if !matches!(parsed.scheme(), "http" | "https") || !parsed.has_host() { return Err("Only HTTP and HTTPS links can be opened in the browser".into()); }
     open(std::ffi::OsStr::new(parsed.as_str()))
 }
