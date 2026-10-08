@@ -63,7 +63,7 @@ function installQueueProtocol(session, output) {
       session[name] = function (...args) {
         const scope = name === "prompt" ? args[1]?.[queuePromptScope] : undefined;
 
-        return queuePromptContext.run(scope?.session === this ? scope : undefined, () => submit.apply(this, args));
+        return releasedPromptContext.run(undefined, () => queuePromptContext.run(scope?.session === this ? scope : undefined, () => submit.apply(this, args)));
       };
     }
 
@@ -334,6 +334,13 @@ function hasGoal(session) {
 }
 
 function bindReleasedPromptPreparation(session) {
+  const streaming = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(session), "isStreaming").get;
+  Object.defineProperty(session, "isStreaming", { get() {
+    const scope = releasedPromptContext.getStore();
+
+    return scope?.session === this && scope.preparing ? false : streaming.call(this);
+  } });
+
   const input = session._runInputHandlers;
   session._runInputHandlers = function (text, images, ...args) {
     const scope = releasedPromptContext.getStore();
@@ -351,8 +358,10 @@ function bindReleasedPromptPreparation(session) {
   session._runAgentPrompt = function (messages) {
     const scope = releasedPromptContext.getStore();
 
-    if (scope?.session === this && !scope.started) {
-      scope.started = true;
+    if (scope?.session === this && !scope.runRequested) {
+      if (this._agentRunAbortRequested) throw new Error("Released follow-up preparation was cancelled.");
+      scope.preparing = false;
+      scope.runRequested = true;
       messages = messages.flatMap(message => {
         if (message.role !== "user") return [message];
         const first = scope.messages[0];
@@ -368,7 +377,9 @@ function bindReleasedPromptPreparation(session) {
 
 function trackReleasedPrompt(session, scope) {
   return session.subscribe(event => {
+    if (event.type === "agent_start" && scope.runRequested) scope.started = true;
     if (event.type !== "message_start" || event.message !== scope.preparedMessage) return;
+    scope.started = true;
     const original = reviewText(scope.messages[0]);
 
     if (original === reviewText(event.message)) return;
@@ -393,15 +404,26 @@ async function releaseGoalQueue(session, prompt) {
 
   if (isReview(reviewText(first))) return releaseQueuedReviews(session, messages, prompt);
   const images = first.role === "user" ? first.content.filter(part => part.type === "image") : [];
-  const scope = { session, messages, inputPending: true, started: false };
+  const scope = { session, messages, inputPending: true, preparing: true, runRequested: false, started: false };
   const stopTracking = trackReleasedPrompt(session, scope);
+  session._agentRunAbortRequested = false;
+  session._isAgentRunActive = true;
 
   try {
     await releasedPromptContext.run(scope, () => prompt.call(session, reviewText(first), { images, source: "rpc", expandPromptTemplates: false }));
   } catch (error) {
     if (!scope.started) session.agent.followUpQueue.messages.unshift(...messages);
     session.extensionRunner.createContext().ui.notify(String(error), "error");
-  } finally { stopTracking(); }
+  } finally {
+    stopTracking();
+
+    if (!scope.started && session._isAgentRunActive && !session.agent.activeRun) {
+      session._runSystemPromptOptions = undefined;
+      session._flushPendingBashMessages();
+      session._flushPendingCustomMessages();
+      await session._emitAgentSettled();
+    }
+  }
 }
 
 function scheduleGoalQueueRelease(session, prompt) {
@@ -415,7 +437,7 @@ function scheduleGoalQueueRelease(session, prompt) {
       return;
     }
 
-    if (!session.isIdle) return;
+    if (!session.isIdle || session._isEmittingAgentSettled) return;
     pendingSessionId = undefined;
     void releaseGoalQueue(session, prompt);
   });
