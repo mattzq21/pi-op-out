@@ -62,6 +62,24 @@ async function dispatch(command, session, output) {
 
 const isReview = text => /^\/review(?:\s|$)/.test(text);
 
+const reviewText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
+
+function bindFollowUpDrain(agent) {
+  const queue = agent.followUpQueue;
+  const drain = queue.drain;
+
+  queue.drain = function () {
+    const messages = drain.call(this);
+    const review = messages.findIndex(message => isReview(reviewText(message)));
+
+    if (review === -1) return messages;
+    const count = review === 0 ? 1 : review;
+    this.messages.unshift(...messages.slice(count));
+
+    return messages.slice(0, count);
+  };
+}
+
 async function executeQueuedReview(session, text, images) {
   const ctx = session.extensionRunner.createCommandContext();
   const request = { command: "start_review", payload: { args: text.slice(7).trim(), images }, ctx };
@@ -78,15 +96,10 @@ async function executeQueuedReview(session, text, images) {
 async function consumeReviews(session, messages) {
   const prompts = [];
 
-  for (const [position, message] of messages.entries()) {
-    const text = message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
+  for (const message of messages) {
+    const text = reviewText(message);
 
     if (!isReview(text)) { prompts.push(message); continue; }
-    if (prompts.length) {
-      session.agent.followUpQueue.messages.unshift(...messages.slice(position));
-
-      return prompts;
-    }
     const pending = session.getFollowUpMessages();
     const index = pending.indexOf(text);
 
@@ -100,6 +113,7 @@ async function consumeReviews(session, messages) {
 
 async function drainReviews(session, drain) {
   while (true) {
+    if (session.agent.signal?.aborted) return [];
     const messages = await drain();
 
     if (!messages.length) return messages;
@@ -111,6 +125,7 @@ async function drainReviews(session, drain) {
 
 function bindReviewQueue(session) {
   const agent = session.agent;
+  bindFollowUpDrain(agent);
   const createLoopConfig = agent.createLoopConfig;
   const runPromptMessages = agent.runPromptMessages;
 
