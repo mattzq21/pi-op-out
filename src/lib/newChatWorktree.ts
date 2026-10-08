@@ -94,6 +94,7 @@ export async function prepareChatWorktree(owner: NativeTransport, select: (path:
 
   if (!path) return owner;
 
+  updateChatPreparation(owner, "Preparing conversation…");
   let selected: NativeTransport | undefined;
   await select(path, owner.currentHostId(), async (destination) => {
     const current = chatSubmission(owner);
@@ -113,6 +114,7 @@ export async function prepareChatWorktree(owner: NativeTransport, select: (path:
   if (!destination || active() !== destination) throw new Error("Conversation changed");
   await waitForConnection(destination, active, ready, error);
   owner.promptControls.copyTo(destination.promptControls);
+  updateChatPreparation(destination, "Sending message…");
 
   return destination;
 }

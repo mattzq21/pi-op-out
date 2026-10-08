@@ -50,7 +50,6 @@ interface Props {
   toolFailures?: import("../lib/toolFailureStats").ToolFailureStats;
   contextUsage?: ContextUsage;
   controlsDisabled?: boolean;
-  preparing?: boolean;
   draft?: string;
   onDraftChange?: (value: StateUpdate<string>) => void;
   uploads?: ComposerUpload[];
@@ -624,7 +623,6 @@ export function Composer(props: Props) {
   return <div class="composer-wrap">
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
-    {props.preparing && <div class="stream-banner" role="status">Preparing conversation…</div>}
     {renderStreamBanner()}
     {composer().pendingMessages.length > 0 && <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={(message) => message.id}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
