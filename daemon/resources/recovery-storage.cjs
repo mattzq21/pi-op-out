@@ -14,19 +14,7 @@ function syncDirectory(directory) {
 }
 
 function writeRecord(container, record) {
-  const temporary = path.join(container, `ownership.${randomUUID()}.tmp`);
-
-  const descriptor = fs.openSync(temporary, 'wx', 0o600);
-
-  try {
-    fs.writeFileSync(descriptor, JSON.stringify(record));
-
-    fs.fsyncSync(descriptor);
-  } finally { fs.closeSync(descriptor); }
-
-  fs.renameSync(temporary, path.join(container, 'ownership.json'));
-
-  syncDirectory(container);
+  require('./session-database.cjs').saveRecoveryRecord(path.dirname(path.dirname(container)), record);
 }
 
 function readSession(sessionPath) {
@@ -224,22 +212,14 @@ function createRecoveryStorage(profileRoot) {
 
     const result = [];
 
-    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-
+    for (const row of require('./session-database.cjs').recoveryRecords(profile)) {
       try {
-        const ownership = path.join(root, entry.name, 'ownership.json');
+        const record = JSON.parse(row.record_json);
 
-        if (!fs.lstatSync(ownership).isFile()) continue;
-
-        const record = JSON.parse(fs.readFileSync(ownership, 'utf8'));
-
-        if (!validRecord(record, entry.name)) continue;
-
+        if (!validRecord(record, row.record_id)) continue;
         containerFor(record);
-
         result.push(record);
-      } catch (error) { console.error(`Recovery ownership ${entry.name}: ${error.message}`); }
+      } catch (error) { console.error(`Recovery ownership ${row.record_id}: ${error.message}`); }
     }
 
     return result;

@@ -55,7 +55,8 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS retention_candidates (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, retry_at REAL NOT NULL);
       CREATE INDEX IF NOT EXISTS retention_retry_order ON retention_candidates(retry_at, record_id);
       CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS worktree_allocations (container TEXT PRIMARY KEY, metadata_json TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS worktree_allocations (container TEXT PRIMARY KEY, metadata_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS recovery_directories (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -172,8 +173,50 @@ function importSessions(db, root) {
     importRetention(db, root);
     importCleanupRequests(db, root);
     importWorktrees(db, root);
+    importRecoveryDirectories(db, root);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importRecoveryDirectories(db, root) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('recovery-directories-v1')) return;
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const directory = path.join(root, 'recovery');
+  let entries;
+
+  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const file = path.join(directory, entry.name, 'ownership.json');
+    let body;
+
+    try { body = fs.readFileSync(file, 'utf8'); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+
+    JSON.parse(body);
+    db.prepare('INSERT INTO recovery_directories VALUES (?, ?)').run(entry.name, body);
+  }
+
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('recovery-directories-v1');
+}
+
+function recoveryRecords(root) {
+  const db = open(root);
+
+  try { return db.prepare('SELECT record_id, record_json FROM recovery_directories ORDER BY record_id').all(); }
+  finally { db.close(); }
+}
+
+function saveRecoveryRecord(root, record) {
+  const db = open(root);
+
+  try {
+    db.prepare('INSERT INTO recovery_directories VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json')
+      .run(record.id, JSON.stringify(record));
+  } finally { db.close(); }
 }
 
 function importWorktrees(db, root) {
@@ -432,4 +475,4 @@ function storageRoot(file) {
 
 module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot,
   publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
-  recordWorktree, worktreeMetadata, worktreeContainers };
+  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord };

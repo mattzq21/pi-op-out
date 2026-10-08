@@ -66,35 +66,24 @@ function validRecovery(record, container) {
 
 async function recoveryRoots(profile, discovery) {
   const root = path.join(profile, 'recovery');
-  let entries;
 
   try {
-    if (!(await fs.lstat(root)).isDirectory()) throw new Error('Recovery root is not a regular directory');
-    entries = await fs.readdir(root, { withFileTypes: true });
-  }
-  catch (error) {
-    if (error.code !== 'ENOENT') discovery.warnings.push(`${root}: recovery ownership unavailable: ${error.message}`);
-
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    await readRecoveryContainer(path.join(root, entry.name), discovery);
-  }
+    for (const row of require('./session-database.cjs').recoveryRecords(profile)) {
+      await readRecoveryContainer(path.join(root, row.record_id), row.record_json, discovery);
+    }
+  } catch (error) { discovery.warnings.push(`${root}: recovery ownership unavailable: ${error.message}`); }
 }
 
-async function readRecoveryContainer(container, discovery) {
+async function readRecoveryContainer(container, body, discovery) {
   const recordRoot = addRoot(discovery.recovery, container, 'Recovery container without verified ownership', 'unattributed');
   recordRoot.state = 'unmarked';
 
   try {
-    const file = path.join(container, 'ownership.json');
-
-    if (!(await fs.lstat(file)).isFile()) throw new Error('Ownership record is not a regular file');
-    const record = await readJson(file);
+    const record = JSON.parse(body);
 
     if (!validRecovery(record, container)) throw new Error('Invalid recovery ownership record');
+
+    if (!(await fs.lstat(container)).isDirectory()) throw new Error('Recovery container is not a regular directory');
     recordRoot.ownership = 'owned';
     recordRoot.state = record.state;
     recordRoot.provenance = [`Recovery ownership v1: ${record.mode}; original directory: ${record.originalCwd}`];
@@ -104,7 +93,6 @@ async function readRecoveryContainer(container, discovery) {
     addRoot(discovery.cwds, record.directory, `Recovery ${record.id}: ${record.state}`, 'owned', recordRoot.owners);
 
     for (const owner of record.owners) discovery.sessionPaths.add(owner.sessionPath);
-
     recordRecoverySource(record, discovery, recordRoot.owners);
 
     if (record.state !== 'published') discovery.warnings.push(`${container}: retained ${record.state} recovery; publication is incomplete and reclaimable space is unknown`);
