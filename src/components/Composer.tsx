@@ -308,7 +308,7 @@ export function Composer(props: Props) {
 
     return; }
 
-    if (composer().controlsDisabled || handledFocusRequest === request) return;
+    if (handledFocusRequest === request) return;
 
     const frame = requestAnimationFrame(() => {
       const editor = ref.current;
@@ -320,7 +320,7 @@ export function Composer(props: Props) {
     });
 
     return () => cancelAnimationFrame(frame);
-  }, () => [composer().focusRequest, composer().controlsDisabled, props.ownershipRequired]);
+  }, () => [composer().focusRequest, props.ownershipRequired]);
   createDependencyEffect(() => {
     if (props.ownershipRequired) ref.current?.blur();
   }, () => [props.ownershipRequired]);
@@ -519,7 +519,7 @@ export function Composer(props: Props) {
     const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div></Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
-        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} disabled={composer().controlsDisabled && !props.ownershipRequired} placeholder={props.ownershipRequired ? "" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
+        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
 
     const ComposerBar = () => {
