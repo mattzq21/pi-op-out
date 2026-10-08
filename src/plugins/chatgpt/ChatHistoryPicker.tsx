@@ -37,7 +37,7 @@ export function ChatHistoryPicker(props: { chats: RegularChat[]; selected?: Regu
   });
   createEffect(() => { if (props.disabled) setOpen(false); });
 
-  return <div class="quick-chat-history" ref={container} onFocusOut={event => { if (!(event.relatedTarget instanceof Node && container?.contains(event.relatedTarget))) setOpen(false); }}>
+  return <div class="quick-chat-history" ref={container} onFocusOut={event => { if (event.relatedTarget instanceof Node && !container?.contains(event.relatedTarget)) setOpen(false); }}>
     <button ref={trigger} type="button" class="quick-chat-history-trigger" aria-label="ChatGPT chat" aria-haspopup="menu" aria-expanded={open()} disabled={props.disabled}
       onClick={() => { if (open()) setOpen(false); else expand(); }} onKeyDown={event => { if (event.key === "ArrowDown") { event.preventDefault(); expand(); } }}>
       <span>{props.selected?.title ?? "New chat"}</span><ChevronDown size={14} />
