@@ -21,10 +21,10 @@ async function e2e() {
 
   await parallelBuilds([
     runBuild(process.execPath, ["scripts/build-frontend.mjs", "--mode", "e2e"]),
-    runBuild("cargo", [...cargo, "--no-default-features", "--features", "daemon,test-home", "--bin", "piopd"]),
+    runBuild("cargo", [...cargo, "-p", "piop-daemon", "--features", "test-home", "--bin", "piopd"]),
   ]);
 
-  await runBuild("cargo", [...cargo, "--features", "webdriver", "--bin", "piop"], {
+  await runBuild("cargo", [...cargo, "-p", "piop-desktop", "--features", "webdriver", "--bin", "piop"], {
     env: {
       ...process.env,
       TAURI_CONFIG: JSON.stringify({

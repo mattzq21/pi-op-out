@@ -30,7 +30,6 @@ fn conversation_window_targets_round_trip_special_characters_without_extra_query
     assert_eq!(serde_json::from_str::<Value>(&parameters[0].1).unwrap(), target);
 }
 
-
 include!("test_directory.rs");
 
 #[test]

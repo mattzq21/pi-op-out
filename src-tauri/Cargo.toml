@@ -1,5 +1,5 @@
 [package]
-name = "piop"
+name = "piop-desktop"
 version = "0.1.0"
 description = "piop: a native interface for the Pi coding agent"
 authors = ["piop contributors"]
@@ -7,50 +7,43 @@ edition = "2021"
 default-run = "piop"
 
 [lib]
-name = "piop_lib"
+name = "piop_desktop"
 crate-type = ["rlib"]
 
 [features]
-default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:gtk", "dep:webkit2gtk"]
-daemon = []
-test-home = []
-webdriver = ["desktop", "test-home", "dep:tauri-plugin-wdio-webdriver"]
+webdriver = ["dep:tauri-plugin-wdio-webdriver"]
 
 [[bin]]
 name = "piop"
 path = "src/main.rs"
-required-features = ["desktop"]
-
-[[bin]]
-name = "piopd"
-path = "src/daemon_main.rs"
-required-features = ["daemon"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [], optional = true }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
+piop-protocol = { path = "crates/protocol" }
 libc = "0.2"
-tauri = { version = "2", features = [], optional = true }
-tauri-plugin-dialog = { version = "2", optional = true }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = { version = "2" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
 sha2 = "0.10"
-rusqlite = { version = "0.37", features = ["bundled"] }
-walkdir = "2"
+uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["io-util", "io-std", "macros", "process", "sync", "time", "net", "rt-multi-thread", "signal"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 futures-util = "0.3"
-base64 = "0.22"
-portable-pty = "0.9"
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gtk = { version = "0.18", optional = true }
-webkit2gtk = { version = "2", optional = true }
+gtk = { version = "0.18" }
+webkit2gtk = { version = "2" }
 
 [profile.dev]
 debug = "line-tables-only"
+
+[workspace]
+members = ["crates/daemon", "crates/protocol"]
+default-members = ["."]
+resolver = "2"

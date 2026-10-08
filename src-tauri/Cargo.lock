@@ -2600,16 +2600,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
-name = "piop"
+name = "piop-daemon"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures-util",
+ "libc",
+ "piop-protocol",
+ "portable-pty",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "piop-desktop"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
  "gtk",
  "libc",
- "portable-pty",
+ "piop-protocol",
  "reqwest 0.12.28",
- "rusqlite",
  "serde",
  "serde_json",
  "sha2",
@@ -2620,8 +2639,15 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "uuid",
- "walkdir",
  "webkit2gtk",
+]
+
+[[package]]
+name = "piop-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
