@@ -1,10 +1,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash, randomUUID } = require('node:crypto');
+const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { directoryInUse } = require('./directory-liveness.cjs');
 const { containerContents } = require('./worktree-container.cjs');
+const tables = require('./session-database.cjs');
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -58,8 +59,8 @@ function storage(root) {
   return directory;
 }
 
-function readRecord(root, file) {
-  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+function readRecord(root, file, body) {
+  const value = JSON.parse(body);
 
   if (!Check(recordSchema, value) || !uuid.test(value.id) || path.basename(file) !== value.id + '.json') throw new Error('Invalid deferred retention record');
   validateRetention(root, value.pending);
@@ -79,64 +80,42 @@ function recordRetention(root, id, pending) {
   const file = path.join(directory, id + '.json');
   const origin = createHash('sha256').update(JSON.stringify(pending)).digest('hex');
 
-  if (metadata(file)) {
-    if (readRecord(root, file).origin !== origin) throw new Error('Deferred retention identity was reused');
-    sync(file); sync(directory); sync(root);
-
-    return;
-  }
-
-  publishRecord(file, { version: 1, id, origin, pending });
-}
-
-function publishRecord(file, value) {
-  const temporary = file + '.' + randomUUID() + '.tmp';
-  const descriptor = fs.openSync(temporary, 'wx', 0o600);
+  const database = tables.open(root);
 
   try {
-    try { fs.writeFileSync(descriptor, JSON.stringify(value)); fs.fsyncSync(descriptor); }
-    finally { fs.closeSync(descriptor); }
+    database.exec('BEGIN IMMEDIATE');
+    const previous = database.prepare('SELECT record_json FROM retention_candidates WHERE record_id=?').get(id);
 
-    fs.renameSync(temporary, file);
-    sync(path.dirname(file));
-  } finally { fs.rmSync(temporary, { force: true }); }
-}
+    if (previous) {
+      if (readRecord(root, file, previous.record_json).origin !== origin) throw new Error('Deferred retention identity was reused');
+    } else {
+      database.prepare('INSERT INTO retention_candidates VALUES (?, ?, ?)')
+        .run(id, JSON.stringify({ version: 1, id, origin, pending }), Date.now());
+    }
 
-function retentionFiles(directory, errors) {
-  const files = [];
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.name.endsWith('.json')) continue;
-    const file = path.join(directory, entry.name);
-
-    try {
-      const info = fs.lstatSync(file);
-
-      if (!info.isFile()) throw new Error('Invalid deferred retention record');
-      files.push({ file, modified: info.mtimeMs });
-    } catch (error) { errors.push(`${entry.name}: ${error.message}`); }
-  }
-
-  return files;
+    database.exec('COMMIT');
+  } finally { database.close(); }
 }
 
 function pendingRetentions(root, limit = 8) {
-  const directory = path.join(root, 'retention-candidates');
-
-  if (!metadata(directory)) return { records: [], errors: [] };
-
-  if (!fs.lstatSync(directory).isDirectory()) throw new Error('Invalid deferred retention storage');
-
+  const directory = storage(root);
+  const database = tables.open(root);
   const records = [];
   const errors = [];
 
-  const selected = retentionFiles(directory, errors)
-    .sort((left, right) => left.modified - right.modified || left.file.localeCompare(right.file)).slice(0, limit);
+  try {
+    const selected = database.prepare('SELECT record_id, record_json FROM retention_candidates ORDER BY retry_at, record_id LIMIT ?').all(limit);
 
-  for (const { file } of selected) {
-    try { records.push(readRecord(root, file)); }
-    catch (error) { errors.push(`${path.basename(file)}: ${error.message}`); postponeRecord(file); }
-  }
+    for (const row of selected) {
+      const file = path.join(directory, row.record_id + '.json');
+
+      try { records.push(readRecord(root, file, row.record_json)); }
+      catch (error) {
+        errors.push(`${row.record_id}: ${error.message}`);
+        database.prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), row.record_id);
+      }
+    }
+  } finally { database.close(); }
 
   return { records, errors };
 }
@@ -215,16 +194,13 @@ function goalStorageProtected(record, candidate, file) {
 }
 
 function finishRecord(record, done) {
-  if (done) {
-    fs.unlinkSync(record.file);
-    sync(path.dirname(record.file));
-  } else postponeRecord(record.file);
-}
+  const root = path.dirname(path.dirname(record.file));
+  const database = tables.open(root);
 
-function postponeRecord(file) {
-  const now = new Date();
-  fs.utimesSync(file, now, now);
-  sync(file);
+  try {
+    if (done) database.prepare('DELETE FROM retention_candidates WHERE record_id=?').run(record.id);
+    else database.prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), record.id);
+  } finally { database.close(); }
 }
 
 module.exports = { validateRetention, describeCandidates, recordRetention, pendingRetentions, cleanupStages, matches, removeCandidate, finishRecord };

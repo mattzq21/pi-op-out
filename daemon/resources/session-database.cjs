@@ -51,7 +51,9 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS session_group_deletions (session_key TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS session_publications (publication_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_restorations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS session_restore_receipts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS session_restore_receipts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS retention_candidates (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, retry_at REAL NOT NULL);
+      CREATE INDEX IF NOT EXISTS retention_retry_order ON retention_candidates(retry_at, record_id);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -165,8 +167,33 @@ function importSessions(db, root) {
     importPublications(db, root);
     importRestorations(db, root);
     importRestorations(db, root, true);
+    importRetention(db, root);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importRetention(db, root) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('retention-candidates-v1')) return;
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const directory = path.join(root, 'retention-candidates');
+  let names;
+
+  try { names = fs.readdirSync(directory); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; names = []; }
+
+  for (const name of names.filter(name => name.endsWith('.json'))) {
+    const descriptor = fs.openSync(path.join(directory, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+
+    try {
+      const metadata = fs.fstatSync(descriptor);
+
+      if (!metadata.isFile()) throw new Error('Invalid deferred cleanup record');
+      db.prepare('INSERT INTO retention_candidates VALUES (?, ?, ?)').run(name.slice(0, -5), fs.readFileSync(descriptor, 'utf8'), metadata.mtimeMs);
+    } finally { fs.closeSync(descriptor); }
+  }
+
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('retention-candidates-v1');
 }
 
 function importRestorations(db, root, receipts = false) {

@@ -32,9 +32,8 @@ fn retention_pending(root: &Path) -> Result<bool> {
     if root.join("worktree-retention.pending").try_exists().map_err(|error| error.to_string())? { return Ok(true); }
     if root.join("goal-retention.pending").try_exists().map_err(|error| error.to_string())? { return Ok(true); }
     if pending_entry(&root.join("deleted-sessions"), committed_deletion)? { return Ok(true); }
-    pending_entry(&root.join("retention-candidates"), |entry| {
-        Ok(entry.path().extension().is_some_and(|extension| extension == "json"))
-    })
+    let database = crate::session_registry::open(root)?;
+    database.query_row("SELECT EXISTS(SELECT 1 FROM retention_candidates)", [], |row| row.get(0)).map_err(|error| error.to_string())
 }
 
 fn committed_deletion(entry: &std::fs::DirEntry) -> Result<bool> {
