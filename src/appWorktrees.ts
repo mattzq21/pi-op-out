@@ -84,9 +84,7 @@ export function createWorktreeActions(context: WorktreeContext) {
     const message = messages.find((message) => message.role === sourceMessage.role && (sourceMessage.entryId ? message.entryId === sourceMessage.entryId : message.timestamp === sourceMessage.timestamp && textOf(message.content) === textOf(sourceMessage.content)));
 
     if (!message?.entryId) throw new Error("Could not find the message in the saved conversation");
-    const sourcePath = owner.currentSessionPath();
     const { parent, parentId, projectRoot } = await sourceSession(target);
-    const sourceDiffs = await capturedRuntimePool.captureMemoryDiffs(owner);
     const result = await owner.command({ type: "branch_checkpoint", entryId: message.entryId, name, afterResponse: !beforePrompt }, z.object({ branch: z.string(), path: z.string(), sessionPath: z.string(), sessionId: z.string() }));
     await inheritSessionGroup(`${target.hostId}:${parentId}`, `${target.hostId}:${result.sessionId}`, parent);
     await setup(result.path);
@@ -95,10 +93,7 @@ export function createWorktreeActions(context: WorktreeContext) {
     setSessions((current) => [...current, session]);
     setComposerDraft(`${target.hostId}:${result.sessionId}`, beforePrompt ? textOf(sourceMessage.content) : "");
     const branchTransport = capturedRuntimePool.forSession(session);
-    const cutoff = messages.findIndex(entry => entry.entryId === message.entryId);
-
-    try { await capturedRuntimePool.copySavedDiffs(branchTransport, sourcePath, result.sessionPath, new Set(messages.slice(0, cutoff + (beforePrompt ? 0 : 1)).map(entry => entry.id)), sourceDiffs); }
-    catch (reason) { addNotice({ title: "Worktree created, but project changes could not be copied", message: String(reason) }); }
+    await capturedRuntimePool.refreshSavedDiffs(branchTransport, result.sessionPath);
 
     setComposerUploads(branchTransport, beforePrompt && Array.isArray(sourceMessage.content) ? sourceMessage.content.flatMap((part): ComposerUpload[] => part.type === "image" && part.data && part.mimeType ? [{ id: crypto.randomUUID(), name: "Attached image", kind: "image", byteSize: Math.ceil(part.data.length * 3 / 4), image: { type: "image", data: part.data, mimeType: part.mimeType } }] : []) : []);
     selectSession(session);

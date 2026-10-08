@@ -1,11 +1,13 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { validGoalPath } = require('./storage-inventory-owners.cjs');
+const { goalOwner } = require('./storage-inventory-goals.cjs');
+const { stageCategory, observeStage } = require('./storage-inventory-transfers.cjs');
 
-const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', 'git-snapshots': 'git-diff-snapshots', tmp: 'temporary-chats', worktrees: 'worktrees', 'archived-tmp': 'archived-worktrees', recovery: 'unattributed-recovery-storage', 'ephemeral-cleanup': 'ephemeral-cleanup' };
+const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', 'git-snapshots': 'git-diff-snapshots', 'git-diff-transfers': 'diff-transfer-staging', tmp: 'temporary-chats', worktrees: 'worktrees', 'archived-tmp': 'archived-worktrees', recovery: 'unattributed-recovery-storage', 'ephemeral-cleanup': 'ephemeral-cleanup' };
 
 function specialCategory(target, category, metadata, discovery) {
-  if (!metadata.isDirectory()) return category;
+  if (!metadata.isDirectory()) return stageCategory(target, category, metadata, discovery);
 
   if (discovery.pendingSnapshots.has(target)) return 'pending-diff-snapshots';
 
@@ -29,7 +31,7 @@ function snapshotCategory(target, category) {
 }
 
 function goalCategory(target, discovery) {
-  return discovery.goals.get(target)?.owners.some(owner => owner.kind !== 'unresolved') ? 'goal-attachments' : 'unattributed-goal-attachments';
+  return goalOwner(discovery.goals.get(target)) ? 'goal-attachments' : 'unattributed-goal-attachments';
 }
 
 async function diskStorage(profile, discovery, referencedWorktrees, git) {
@@ -48,6 +50,15 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   function register(category, record) {
     if (!roots.has(category)) roots.set(category, new Map());
     roots.get(category).set(record.path, record);
+  }
+
+  function countStage(target, category, metadata) {
+    const record = observeStage(target, category, metadata, discovery);
+
+    if (!record) return;
+    register(category, record);
+
+    if (metadata.isFile()) addCount(category);
   }
 
   function countDirectory(target, category, entries) {
@@ -95,6 +106,7 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
       seen.add(identity);
       const bytes = Number.isFinite(metadata.blocks) ? metadata.blocks * 512 : metadata.size;
       sizes.set(category, (sizes.get(category) || 0) + bytes);
+      countStage(target, category, metadata);
 
       if (!metadata.isDirectory()) return;
       directories.add(target);
@@ -120,11 +132,13 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     register(category, record);
 
     try {
-      const metadata = await fs.lstat(record.path);
+      const metadata = await fs.lstat(record.path, { bigint: true });
       record.available = !metadata.isSymbolicLink();
 
       if (!record.available) throw new Error('Root is a symbolic link; target ownership and bytes are unresolved');
       const canonical = await fs.realpath(record.path);
+
+      if (record.expectedIdentity && (canonical !== record.path || record.expectedIdentity !== metadata.dev + ':' + metadata.ino)) throw new Error('Retained artifact identity or ancestry differs from its durable provenance; bytes remain counted in the profile scan');
       await visit(canonical, category, true);
       record.available = !unavailable.has(canonical);
       record.directory = metadata.isDirectory();
@@ -169,6 +183,34 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     for (const record of records.values()) await visitRecord(category, record);
   }
 
+  async function visitTransfers() {
+    for (const record of discovery.transfers.values()) await visitRecord(record.ownership === 'owned' ? 'diff-transfer-staging' : 'unattributed-diff-transfer-staging', record);
+  }
+
+  async function inspectResourcePins(record) {
+    for (const pin of record.pins || []) {
+      record.provenance.push('Shared resource Git pin: ' + pin.root + ' ' + pin.ref + ' -> ' + pin.commit);
+
+      try {
+        const metadata = await fs.lstat(pin.root, { bigint: true });
+
+        if (!metadata.isDirectory() || await fs.realpath(pin.root) !== pin.root || pin.identity !== metadata.dev + ':' + metadata.ino) throw new Error('Pinned repository directory identity changed');
+
+        if ((await git(pin.root, ['rev-parse', '--verify', pin.ref])).trim() !== pin.commit) throw new Error('Shared resource pin no longer matches its recorded commit');
+
+        if (directories.has(pin.root)) record.provenance.push('Shared resource pin object files already included in the allocated-block directory scan');
+        else warnings.push(`${pin.root}: retained shared resource pin ${pin.ref}; object bytes are outside measured directories and the session checkpoint estimate; shared archive Git coverage is incomplete`);
+      } catch (error) { warnings.push(`${pin.root}: shared resource pin unavailable: ${error.message}; retained`); }
+    }
+  }
+
+  async function visitRetainedArtifacts() {
+    for (const record of discovery.retainedArtifacts.values()) {
+      await visitRecord(record.category, record);
+      await inspectResourcePins(record);
+    }
+  }
+
   await visit(root, 'other-storage');
 
   for (const [name, category] of Object.entries(localCategories)) {
@@ -189,12 +231,16 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
 
   await visitKnownRecords(discovery.pendingSnapshots, 'pending-diff-snapshots');
 
-  for (const record of discovery.goals.values()) await visitRecord(record.owners.some(owner => owner.kind !== 'unresolved') ? 'goal-attachments' : 'unattributed-goal-attachments', record);
+  await visitTransfers();
+
+  for (const record of discovery.goals.values()) await visitRecord(goalOwner(record) ? 'goal-attachments' : 'unattributed-goal-attachments', record);
 
   for (const worktree of worktrees) await visitManagedWorktree(worktree);
   counts.set('worktrees', worktrees.size);
 
   for (const record of referencedWorktrees.values()) await visitReferencedWorktree(record);
+
+  await visitRetainedArtifacts();
 
   return { sizes, counts, directories, roots, warnings };
 }

@@ -340,6 +340,9 @@ impl SessionQueue {
         let id = text(item, "id");
         self.state().sending.insert(id.clone());
         let mut command = json!({"type":"queue_prompt","queueId":id,"message":item["message"],"streamingBehavior":item["behavior"],"discardOnRejection":discard_on_rejection});
+        for field in ["goalSubmissionId", "goalPrepared"] {
+            if let Some(value) = item.get(field) { command[field] = value.clone(); }
+        }
         if let Some(response) = item.get("questionResponse") { command["questionResponse"] = response.clone(); }
         if item["images"].as_array().is_some_and(|images| !images.is_empty()) {
             command["images"] = item["images"].clone();

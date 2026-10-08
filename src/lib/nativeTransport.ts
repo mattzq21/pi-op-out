@@ -1,4 +1,4 @@
-import { sessionGroupsSchema, voidResultSchema, projectBranchesSchema, storageReportSchema, gitWorktreeSchema, gitWorktreeRemovalSchema, rpcEventSchema, sessionSummarySchema, gitDiffSnapshotSchema, gitDiffSnapshotsSchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
+import { sessionGroupsSchema, voidResultSchema, projectBranchesSchema, storageReportSchema, gitWorktreeSchema, gitWorktreeRemovalSchema, rpcEventSchema, sessionSummarySchema, gitDiffSnapshotSchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
 import { z } from "zod";
 import { jsonResultSchema } from "./transportSchemas";
 import { commandSessionSchema, runtimeEventSchema, runtimeStderrSchema, type CommandSession } from "./rpcSchemas";
@@ -7,6 +7,7 @@ import { PromptControls } from "./promptControls";
 import { nativeCall as call } from "./nativeCall";
 import { NativeSettings } from "./nativeSettings";
 import { locateConversation } from "./conversationLookup";
+import { appendGitDiffs, readGitDiffs } from "./gitDiffPersistence";
 import { nativeTerminals } from "./nativeTerminals";
 import { ConversationCommands } from "./conversationCommands";
 import { commandListingSchema } from "./fastModeCommands";
@@ -281,6 +282,8 @@ export class NativeTransport {
     return true;
   }
   private retainCommandSession(command: RpcCommand, result: CommandSession) {
+    this.retainResultClassification(result);
+
     if (command.type === "get_state" || command.type === "get_snapshot") { const state = command.type === "get_snapshot" ? result.state ?? {} : result;
 
     if (this.sessionId && this.sessionId !== state.sessionId) forgetSession(this); this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
@@ -290,6 +293,8 @@ export class NativeTransport {
     }
   }
   private emit(event: RpcEvent) {
+    if (event.type === "session_switched") this.retainClassification(event.ephemeral);
+
     if (event.type === "ownership_lost") this.promptControls.reset();
     this.settings.receive(event);
     this.trackSessionActivity(event);
@@ -314,10 +319,20 @@ export class NativeTransport {
 
     this.settings.afterEvent(event);
   }
+  private retainClassification(ephemeral?: boolean) {
+    if (ephemeral !== undefined) this.ephemeral = ephemeral;
+  }
+  private retainResultClassification(result: CommandSession) {
+    this.retainClassification(result.state?.ephemeral ?? result.ephemeral);
+  }
   private connectionLost() {
     ++this.connectionVersion; this.connectPromise = undefined; this.running = false; this.owns = false;
     this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
     this.presenceCleanup?.(); this.presenceCleanup = undefined;
+  }
+  private selectSessionPath(sessionPath: string) {
+    if (sessionPath !== this.sessionPath) this.sessionId = undefined;
+    this.sessionPath = sessionPath;
   }
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false, forkLeafId?: string) {
     if (this.disposed) throw new Error("This conversation view has been closed");
@@ -325,7 +340,7 @@ export class NativeTransport {
 
     if (cwd !== undefined) this.cwd = cwd;
 
-    if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; }
+    if (sessionPath !== undefined) this.selectSessionPath(sessionPath);
 
     if (hostId !== undefined) this.hostId = hostId;
 
@@ -486,8 +501,14 @@ export class NativeTransport {
   captureGitTree(cwd: string, hostId = "local") { return call("capture_git_tree", { cwd, hostId }, z.union([z.string(), z.null()])); }
   discardGitTree(snapshot: string, hostId = "local") { return call("discard_git_tree", { snapshot, hostId }, voidResultSchema); }
   loadGitDiff(cwd: string, baseTree: string, hostId = "local") { return call("load_git_diff", { cwd, baseTree, hostId }, z.union([gitDiffSnapshotSchema, z.null()])); }
-  loadGitDiffs(sessionPath: string, hostId = "local") { return call("load_git_diffs", { sessionPath, hostId }, gitDiffSnapshotsSchema); }
-  saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId = "local") { return call("save_git_diffs", { sessionPath, snapshots, hostId }, voidResultSchema); }
+  loadGitDiffs(sessionPath: string, hostId = "local") {
+    const ephemeral = this.ephemeral && sessionPath === this.sessionPath && hostId === this.hostId;
+
+    if (ephemeral && !this.sessionId) return Promise.reject(new Error("Temporary project changes have no stable conversation identity; saved data is preserved"));
+
+    return readGitDiffs(sessionPath, hostId, ephemeral ? this.sessionId : undefined);
+  }
+  saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId = "local") { return appendGitDiffs(sessionPath, snapshots, hostId); }
   archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionPath, hostId, terminalIds }, voidResultSchema); }
   deleteSession(sessionPath: string, hostId = "local") { return call("delete_session", { sessionPath, hostId }, z.array(z.string())); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call("relocate_session", { sessionPath, cwd, hostId }, voidResultSchema); }

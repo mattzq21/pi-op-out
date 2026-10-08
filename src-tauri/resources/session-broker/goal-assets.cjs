@@ -7,7 +7,7 @@ const { Check } = require('typebox/value');
 
 const ownerSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.Optional(Type.String()) });
 
-const ownershipSchema = Type.Object({ version: Type.Literal(1), kind: Type.Literal('goal-assets'), owners: Type.Array(ownerSchema) });
+const ownershipSchema = Type.Object({ version: Type.Literal(1), kind: Type.Literal('goal-assets'), owners: Type.Array(ownerSchema), retiredOwners: Type.Optional(Type.Array(Type.String())) });
 
 const dependencySchema = Type.Object({ path: Type.String(), identity: Type.String() });
 
@@ -31,10 +31,13 @@ function write(file, value) {
   const temporary = `${file}.${randomUUID()}.tmp`;
   const descriptor = fs.openSync(temporary, 'wx', 0o600);
 
-  try { fs.writeFileSync(descriptor, JSON.stringify(value)); fs.fsyncSync(descriptor); }
-  finally { fs.closeSync(descriptor); }
+  try {
+    try { fs.writeFileSync(descriptor, JSON.stringify(value)); fs.fsyncSync(descriptor); }
+    finally { fs.closeSync(descriptor); }
 
-  try { fs.renameSync(temporary, file); sync(path.dirname(file)); }
+    fs.renameSync(temporary, file);
+    sync(path.dirname(file));
+  }
   finally { if (exists(temporary)) fs.unlinkSync(temporary); }
 }
 
@@ -107,13 +110,13 @@ function visitStrings(value, visit) {
   else if (value && Check(Type.Object({}, { additionalProperties: true }), value)) Object.values(value).forEach(item => visitStrings(item, visit));
 }
 
-function references(entries, root) {
+function directReferences(entries, root) {
   const directories = new Set();
   visitStrings(entries, text => {
     for (const match of text.matchAll(/\/attachments\/goal-[a-zA-Z0-9_-]+(?=\/)/g)) {
       const start = text.lastIndexOf(root + path.sep, match.index);
 
-      if (start < 0) throw new Error('Goal assets reference another storage profile; preserve their original files before transferring this conversation');
+      if (start < 0) continue;
       directories.add(text.slice(start, match.index + match[0].length));
     }
   });
@@ -121,37 +124,182 @@ function references(entries, root) {
   for (const entry of entries) {
     if (entry.goalAssets === undefined) continue;
 
-    if (!Check(contractSchema, entry.goalAssets)) throw new Error('Damaged goal asset dependency contract retained');
+    verifyContract(root, entry.goalAssets);
     entry.goalAssets.directories.forEach(directory => directories.add(directory.path));
   }
 
   return directories;
 }
 
-function claimDirectory(root, directory, sessionId, sessionPath) {
-  if (!validPath(root, directory)) throw new Error(`Goal assets are outside their shared storage: ${directory}`);
+function assetText(file) {
+  if (!fs.lstatSync(file).isFile() || fs.realpathSync(file) !== file) throw new Error(`Goal asset text has ambiguous ownership: ${file}`);
 
-  if (exists(reclamationPath(root, directory))) throw new Error(`Goal asset deletion is pending; cannot publish a new owner: ${directory}`);
-  const expected = identity(directory);
+  return new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(file));
+}
+
+function savedDependencies(root, directory) {
+  const file = path.join(directory, 'dependencies.json');
+
+  if (!exists(file)) return [];
+  const contract = JSON.parse(assetText(file));
+  verifyContract(root, contract);
+
+  return contract.directories;
+}
+
+function textDependencies(root, directory) {
+  const texts = [];
+
+  for (const entry of fs.readdirSync(directory)) {
+    if (entry === 'goal-objective.md' || /^attachment-\d+\.txt$/.test(entry)) texts.push(assetText(path.join(directory, entry)));
+  }
+
+  return directReferences(texts, root);
+}
+
+function dependencyClosure(root, seeds) {
+  const directories = new Set(seeds);
+
+  for (const directory of directories) {
+    if (!validPath(root, directory)) throw new Error(`Goal dependency is outside shared storage: ${directory}`);
+
+    if (!exists(directory)) continue;
+    identity(directory);
+    savedDependencies(root, directory).forEach(dependency => directories.add(dependency.path));
+    textDependencies(root, directory).forEach(dependency => directories.add(dependency));
+  }
+
+  return directories;
+}
+
+function references(entries, root) {
+  return dependencyClosure(root, directReferences(entries, root));
+}
+
+function claimSnapshots(root, directories) {
+  return [...directories].map(directory => ({ directory, identity: claimableDirectory(root, directory), record: readOwners(directory), existed: Boolean(exists(path.join(directory, 'owners.json'))) }));
+}
+
+function claimDirectory(root, directory, sessionId, sessionPath, expectedIdentity) {
+  const expected = claimableDirectory(root, directory);
+
+  if (expectedIdentity !== undefined && expected !== expectedIdentity) throw new Error(`Goal dependency changed before publication: ${directory}`);
   const record = readOwners(directory);
-  const owners = record.owners.filter(owner => owner.sessionId !== sessionId);
-  owners.push({ sessionId, sessionPath });
-  write(path.join(directory, 'owners.json'), { ...record, owners });
+  write(path.join(directory, 'owners.json'), claimedRecord(record, sessionId, sessionPath));
 
   return { path: directory, identity: expected };
 }
 
-function claim(root, directory, sessionId, sessionPath) {
-  return locked(root, () => claimDirectory(root, directory, sessionId, sessionPath));
+function claimableDirectory(root, directory) {
+  if (!validPath(root, directory)) throw new Error(`Goal assets are outside their shared storage: ${directory}`);
+
+  if (exists(reclamationPath(root, directory))) throw new Error(`Goal asset deletion is pending; cannot publish a new owner: ${directory}`);
+
+  return identity(directory);
+}
+
+function claimedRecord(record, sessionId, sessionPath) {
+  const owners = record.owners.filter(owner => owner.sessionId !== sessionId);
+  owners.push({ sessionId, sessionPath });
+
+  return { ...record, owners };
+}
+
+function claim(root, directory, sessionId, sessionPath, objective) {
+  return locked(root, () => {
+    const directories = dependencyClosure(root, [directory, ...directReferences([objective], root)]);
+    const snapshots = claimSnapshots(root, directories);
+    const dependencies = snapshots.flatMap(snapshot => snapshot.directory === directory ? [] : [{ path: snapshot.directory, identity: snapshot.identity }]);
+    write(path.join(directory, 'dependencies.json'), { version: 1, policy: 'shared-profile', directories: dependencies });
+    publishClaims(root, snapshots, sessionId, sessionPath);
+
+    return { path: directory, identity: identity(directory) };
+  });
 }
 
 function retainHistory(root, entries, sessionId, sessionPath) {
   return locked(root, () => {
     verifyContract(root, entries[0]?.goalAssets);
-    const directories = [...references(entries, root)].map(directory => claimDirectory(root, directory, sessionId, sessionPath));
+    const referencesToKeep = references(entries, root);
+    ownedDirectories(root, sessionId).forEach(directory => referencesToKeep.add(directory));
+    const snapshots = claimSnapshots(root, dependencyClosure(root, referencesToKeep));
+
+    return publishClaims(root, snapshots, sessionId, sessionPath);
+  });
+}
+
+function publishClaims(root, snapshots, sessionId, sessionPath) {
+  const attempted = [];
+  const directories = [];
+
+  try {
+    for (const snapshot of snapshots) {
+      attempted.push(snapshot);
+      directories.push(claimDirectory(root, snapshot.directory, sessionId, sessionPath, snapshot.identity));
+    }
 
     return { version: 1, policy: 'shared-profile', directories };
-  });
+  } catch (error) {
+    const failures = [];
+
+    for (const snapshot of attempted.reverse()) {
+      try { undoClaim(snapshot, sessionId, sessionPath); }
+      catch (failure) { failures.push(String(failure)); }
+    }
+
+    if (failures.length) throw new Error(`${String(error)}\nGoal ownership rollback is pending; claims retained: ${failures.join('; ')}`);
+    throw error;
+  }
+}
+
+function undoClaim(snapshot, sessionId, sessionPath) {
+  if (identity(snapshot.directory) !== snapshot.identity) throw new Error(`Goal claim directory changed: ${snapshot.directory}`);
+  const file = path.join(snapshot.directory, 'owners.json');
+
+  if (!exists(file) && !snapshot.existed) return;
+  const current = JSON.stringify(readOwners(snapshot.directory));
+
+  if (current === JSON.stringify(snapshot.record)) return;
+
+  if (current !== JSON.stringify(claimedRecord(snapshot.record, sessionId, sessionPath))) throw new Error(`Goal claim ownership changed: ${snapshot.directory}`);
+
+  if (snapshot.existed) write(file, snapshot.record);
+  else { fs.unlinkSync(file); sync(snapshot.directory); }
+}
+
+function walkDirectories(directory, visit) {
+  if (!exists(directory)) return;
+
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.endsWith('.snapshots')) continue;
+    const file = path.join(directory, entry.name);
+
+    if (entry.name !== 'attachments') walkDirectories(file, visit);
+    else for (const goal of fs.readdirSync(file, { withFileTypes: true })) {
+      if (goal.isDirectory()) visit(path.join(file, goal.name));
+    }
+  }
+}
+
+function ownedDirectories(root, sessionId) {
+  const directories = [];
+
+  const visit = directory => {
+    if (!validPath(root, directory)) return;
+
+    try { if (readOwners(directory).owners.some(owner => owner.sessionId === sessionId)) directories.push(directory); }
+    catch (error) { console.error(`${directory}: damaged goal ownership retained: ${error.message}`); }
+  };
+
+  walkDirectories(path.join(root, 'sessions'), visit);
+
+  if (path.basename(root) !== 'sessions' && exists(path.join(root, 'attachments'))) {
+    for (const entry of fs.readdirSync(path.join(root, 'attachments'), { withFileTypes: true })) {
+      if (entry.isDirectory()) visit(path.join(root, 'attachments', entry.name));
+    }
+  }
+
+  return directories;
 }
 
 function verifyContract(root, contract) {
@@ -205,6 +353,7 @@ function beginReclamation(root, directory, expected) {
   }
 
   if (!exists(path.dirname(file))) { fs.mkdirSync(path.dirname(file), { mode: 0o700 }); sync(root); }
+
   write(file, { path: directory, identity: expected });
 }
 
@@ -219,4 +368,4 @@ function endReclamation(root, directory, expected) {
   sync(path.dirname(file));
 }
 
-module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, write, references, claim, retainHistory, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };
+module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, write, references, claim, retainHistory, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };

@@ -73,28 +73,97 @@ function hashFile(file) {
   } finally { fs.closeSync(descriptor); }
 }
 
-function hashEntry(file, relative, hash) {
+function nodeDigest(mode, content) { return createHash('sha256').update(JSON.stringify([mode, content])).digest('hex'); }
+
+function hashEntry(file, relative, hash, entries) {
   const before = fingerprint(file);
   const metadata = fs.lstatSync(file);
 
   if (metadata.isSymbolicLink() || !metadata.isDirectory() && !metadata.isFile()) throw new Error(`Unsafe cleanup entry retained: ${file}`);
-  hash.update(JSON.stringify([relative, metadata.mode, metadata.isFile() ? hashFile(file) : null]));
+  const content = metadata.isFile() ? hashFile(file) : null;
 
-  if (metadata.isDirectory()) for (const name of fs.readdirSync(file).sort()) hashEntry(path.join(file, name), path.join(relative, name), hash);
+  hash.update(JSON.stringify([relative, metadata.mode, content]));
+  entries.push({ relative, identity: identity(file), directory: metadata.isDirectory(), digest: nodeDigest(metadata.mode, content) });
+
+  if (metadata.isDirectory()) for (const name of fs.readdirSync(file).sort()) hashEntry(path.join(file, name), path.join(relative, name), hash, entries);
 
   if (fingerprint(file) !== before) throw new Error(`Cleanup contents changed while being recorded: ${file}`);
 }
 
 function describe(file) {
   const hash = createHash('sha256');
+  const entries = [];
 
-  hashEntry(file, '', hash);
+  hashEntry(file, '', hash, entries);
 
-  return { path: file, identity: identity(file), directory: fs.lstatSync(file).isDirectory(), digest: hash.digest('hex') };
+  return { path: file, identity: identity(file), directory: fs.lstatSync(file).isDirectory(), digest: hash.digest('hex'), entries };
+}
+
+function treePath(root, relative) {
+  const file = path.resolve(root, relative);
+
+  if (path.relative(root, file) !== relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) throw new Error('Cleanup manifest contains an unowned snapshot entry; retained');
+
+  return file;
+}
+
+function treePaths(item) {
+  const root = item.entries[0];
+
+  if (!root || root.relative !== '' || root.identity !== item.identity || !root.directory) throw new Error('Cleanup snapshot root identity is unavailable; retained');
+
+  return new Set(item.entries.map(entry => treePath(item.path, entry.relative)));
+}
+
+function verifyNodeIdentity(file, entry, metadata) {
+  if (metadata.isSymbolicLink() || (!metadata.isDirectory() && !metadata.isFile()) || metadata.isDirectory() !== entry.directory || identity(file) !== entry.identity) throw new Error(`Cleanup snapshot identity changed; retained: ${file}`);
+}
+
+function verifyNode(file, entry, known) {
+  const metadata = exists(file);
+
+  if (!metadata) return;
+
+  verifyNodeIdentity(file, entry, metadata);
+  const content = metadata.isFile() ? hashFile(file) : null;
+
+  if (nodeDigest(metadata.mode, content) !== entry.digest) throw new Error(`Cleanup snapshot contents changed; retained: ${file}`);
+
+  if (metadata.isDirectory()) for (const name of fs.readdirSync(file)) {
+    if (!known.has(path.join(file, name))) throw new Error(`New cleanup snapshot entry appeared; retained: ${path.join(file, name)}`);
+  }
+}
+
+function verifyTree(item) {
+  const known = treePaths(item);
+
+  for (const entry of item.entries) verifyNode(treePath(item.path, entry.relative), entry, known);
+}
+
+function removeTree(item) {
+  const known = treePaths(item);
+
+  for (const entry of [...item.entries].reverse()) {
+    const file = treePath(item.path, entry.relative);
+
+    if (!exists(file)) continue;
+    verifyNode(file, entry, known);
+
+    if (entry.directory) fs.rmdirSync(file);
+    else fs.unlinkSync(file);
+    sync(path.dirname(file));
+  }
 }
 
 function verify(item) {
   if (!exists(item.path)) return;
+
+  if (item.directory && item.entries !== undefined) {
+    verifyTree(item);
+
+    return;
+  }
+
   const actual = describe(item.path);
 
   if (actual.identity !== item.identity || actual.directory !== item.directory || actual.digest !== item.digest) throw new Error(`Cleanup artifact identity changed; retained: ${item.path}`);
@@ -103,6 +172,13 @@ function verify(item) {
 function remove(item) {
   if (!exists(item.path)) return;
   verify(item);
+
+  if (item.directory && item.entries !== undefined) {
+    removeTree(item);
+
+    return;
+  }
+
   fs.rmSync(item.path, { recursive: item.directory, force: false });
   sync(path.dirname(item.path));
 }

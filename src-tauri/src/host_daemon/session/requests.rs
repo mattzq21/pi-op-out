@@ -24,6 +24,7 @@ impl Session {
         let mut state = self.raw(command).await?;
         merge(&mut state, self.raw(json!({"type":"get_pause_state"})).await?);
         state["pendingMessages"] = self.queue.view()["pendingMessages"].clone();
+        state["ephemeral"] = json!(self.ephemeral);
         state["pendingMessageCount"] = json!(state["pendingMessageCount"].as_u64().unwrap_or(0) + self.queue.held_count() as u64);
         Ok(state)
     }
@@ -127,6 +128,7 @@ impl Session {
         loop {
             let revision = self.state().state_revision;
             let mut state = self.raw(json!({"type":"get_state"})).await?;
+            state["ephemeral"] = json!(self.ephemeral);
             merge(&mut state, self.raw(json!({"type":"get_pause_state"})).await?);
             let mut snapshot = self.raw_as(json!({"type":"get_entries"}), "get_snapshot_entries", state).await?;
             let current = snapshot["stateRevision"].as_u64();

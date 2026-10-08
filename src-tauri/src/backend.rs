@@ -432,7 +432,7 @@ use terminals::{TerminalLaunch, decode_terminal_bytes, resize_terminal_pty, star
 use archives::{archive_session, archived_session_file, delete_archived_session, delete_session, desktop_session_file, failed_storage, inspect_storage, relocate_session, restore_archived_worktree, restore_archived_session, storage_report};
 #[cfg(test)]
 use archives::{archive_local_session, archive_remote_session, collect_storage_report, delete_session_files, local_archived_session_file_at, local_desktop_session_file_at, parse_storage_inventory, query_storage_inventory, relocate_local_session, relocate_remote_session, remote_session_file, run_session_deletion};
-use git_diffs::{capture_git_tree, discard_git_tree, discard_git_tree_at_host, load_git_diff, load_git_diff_between_at_host, load_git_diffs, save_git_diffs};
+use git_diffs::{capture_git_tree, discard_git_tree, discard_git_tree_at_host, load_git_diff, load_git_diffs, save_git_diffs};
 #[cfg(test)]
 use git_diffs::{discard_remote_git_tree, load_git_diff_at_host, load_git_diffs_at_host, load_local_git_diffs, load_remote_git_diff_between, load_remote_git_diff_with, query_remote_git_diffs, query_remote_git_tree, remote_save_git_diffs_script, remote_session_sidecar_script, save_git_diffs_at_host, save_local_git_diffs, valid_remote_snapshot, write_remote_git_diffs};
 use worktrees::{create_git_worktree, create_project_worktree, git_branch, git_project_kind, git_worktree_roots, is_git_repository, remove_git_worktree, sessions_on_host};

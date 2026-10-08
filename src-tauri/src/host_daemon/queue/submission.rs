@@ -42,6 +42,8 @@ impl SessionQueue {
         if prepared == false { return Ok(None); }
         if !prepared["message"].is_string() { return Err("Goal prompt preparation did not produce an objective".into()); }
         command["message"] = prepared["message"].clone();
+        command["goalSubmissionId"] = prepared["goalSubmissionId"].clone();
+        command["goalPrepared"] = json!(true);
         command.as_object_mut().map(|command| command.remove("images"));
         Ok(Some(command))
     }
@@ -66,7 +68,7 @@ impl SessionQueue {
 
 fn submission_payload(command: &Value, id: &str, name: &str) -> Value {
     let mut pending = json!({"id":id,"message":command["message"],"behavior":if name == "steer" { "steer" } else { "followUp" }});
-    for field in ["images", "questionResponse"] {
+    for field in ["images", "questionResponse", "goalSubmissionId", "goalPrepared"] {
         if let Some(value) = command.get(field) { pending[field] = value.clone(); }
     }
     pending

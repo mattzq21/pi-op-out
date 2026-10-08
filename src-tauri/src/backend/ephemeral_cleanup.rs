@@ -45,7 +45,7 @@ struct Completion { complete: bool }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Inactivity { inactive: bool, transcript_present: bool }
+struct Inactivity { inactive: bool, transcript_present: bool, recover_pending: bool }
 
 pub(super) struct CleanupOutcome {
     pub(super) transferred: bool,
@@ -259,7 +259,7 @@ fn perform(record: &Record, authorized: impl FnOnce(bool) -> Result<(), String>)
         output.by_ref().take(4096).read_line(&mut line).map_err(|error| error.to_string())?;
         let inactive: Inactivity = serde_json::from_str(&line).map_err(|error| format!("Cleanup inactivity was not confirmed: {error}"))?;
         if !inactive.inactive { return Err("Cleanup inactivity was not confirmed".into()); }
-        authorized(inactive.transcript_present)?;
+        authorized(inactive.transcript_present && inactive.recover_pending)?;
         let mut input = child.stdin.take().ok_or("Cleanup helper authorization input unavailable")?;
         input.write_all(b"cleanup-authorized\n").and_then(|_| input.flush()).map_err(|error| error.to_string())?;
         drop(input);
@@ -276,7 +276,7 @@ fn perform(record: &Record, authorized: impl FnOnce(bool) -> Result<(), String>)
 }
 
 fn attempt(path: &Path, record: &Record) -> Result<(), String> {
-    perform(record, |_present| Ok(()))?;
+    perform(record, |recover| recover_pending(record, recover))?;
     fs::remove_file(path).map_err(|error| error.to_string())?;
     sync_parent(path)
 }
@@ -286,12 +286,12 @@ pub(super) fn release(session: &EphemeralSession, drain: impl FnOnce() -> Result
         Ok((path, mut record, _lock)) => {
             let mut transferred = record.queued;
             let request = record.clone();
-            let result = perform(&request, |_present| {
+            let result = perform(&request, |recover| {
                 drain()?;
                 record.queued = true;
                 save(&path, &record)?;
                 transferred = true;
-                Ok(())
+                recover_pending(&request, recover)
             }).and_then(|_| { fs::remove_file(&path).map_err(|error| error.to_string())?; sync_parent(&path) });
             if let Err(error) = &result {
                 let mut failed = record;
@@ -302,6 +302,14 @@ pub(super) fn release(session: &EphemeralSession, drain: impl FnOnce() -> Result
         }
         Err(error) => CleanupOutcome { transferred: false, error: Some(format!("{error}; runtime ownership retained because durable transfer failed")) },
     }
+}
+
+fn recover_pending(record: &Record, required: bool) -> Result<(), String> {
+    if !required { return Ok(()); }
+    let session = record.location.session();
+    let host = match &record.location { Location::Local { .. } => None, Location::Remote { host, .. } => Some(host) };
+    crate::git_diffs::recover_ephemeral_git_diffs_at_host(&session.path(), &record.session_id, host)
+        .map_err(|error| format!("Ephemeral comparison recovery retained its transcript and global snapshots: {error}"))
 }
 
 fn queue(session: &EphemeralSession) -> Result<(PathBuf, Record, File), String> {

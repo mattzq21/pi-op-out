@@ -3,6 +3,9 @@ const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
 const goalAssets = require('./goal-asset-cleanup.cjs');
+const shared = require('./archive-resource-transactions.cjs');
+const ownerLocks = require('./transaction-owner-locks.cjs');
+const diffStore = require('./session-broker/git-diff-store.cjs');
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
@@ -49,6 +52,7 @@ function create(root, files, repositories, sources) {
     })),
   };
 
+  shared.deletePlans(transaction);
   validate(transaction, root, container);
   save(transaction);
 
@@ -70,7 +74,7 @@ function plannedFile(saved, index, container) {
 }
 
 function validSource(root, source) {
-  return ['sessions', 'archived', path.join('notes', 'chats'), 'archived-tmp'].some(name => io.inside(path.join(root, name), source) && source !== path.join(root, name));
+  return ['sessions', 'archived', path.join('notes', 'chats'), 'archived-tmp', 'git-diff-transfers'].some(name => io.inside(path.join(root, name), source) && source !== path.join(root, name));
 }
 
 function validRef(transaction, ref) {
@@ -111,6 +115,7 @@ function validate(transaction, root, directory) {
   transaction.files.forEach(file => validateFile(transaction, file));
   transaction.repositories.forEach(repository => validateRepository(transaction, repository));
   goalAssets.validate(root, transaction.goalAssets ?? []);
+  shared.validateDelete(transaction);
 
   for (const owner of transaction.ownership) {
     const key = createHash('sha256').update(owner.sessionId.toLowerCase()).digest('hex').slice(0, 40);
@@ -137,6 +142,10 @@ function stageFile(transaction, file) {
 
     return;
   }
+
+  if (file.source.endsWith('.diffs.json')) ownerLocks.withFile(file.source + '.lock', () => {
+    if (Object.values(diffStore.readStore(file.source, false).transfers).some(transfer => transfer.committed !== true)) throw new Error('Unfinished diff transfer ownership prevents deletion; log and staged contents retained');
+  });
 
   io.syncTree(file.source);
   io.move({ source: file.source, destination: file.staged, identity: file.identity });
@@ -259,6 +268,7 @@ function finish(transaction) {
   save(transaction);
   finishOwnership(transaction);
   require('./registry-deletion.cjs').forget(transaction.root, transaction.targets);
+  shared.finishDelete(transaction);
   goalAssets.finish(transaction, save);
 
   for (const file of transaction.files.filter(file => !file.skipped)) {
@@ -277,6 +287,9 @@ function finish(transaction) {
 
   releaseReservations(transaction);
   retire(transaction);
+
+  try { require('./restore-receipts.cjs').prune(transaction.root); }
+  catch (error) { console.error(`Deletion committed; restore receipt pruning will retry: ${error.message}`); }
 }
 
 function legacyLocks(directory) {

@@ -1,8 +1,11 @@
 const fs = require('node:fs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
+const { reviewVisibility } = require('./session-broker/session-publication.cjs');
 
-const parentSchema = Type.Object({ parentSessionId: Type.String() });
+const parentSchema = Type.Object({ parentSessionId: Type.String(), sessionId: Type.Optional(Type.String()) });
+
+const entrySchema = Type.Object({ type: Type.String() });
 
 const resumeSchema = Type.Object({ message: Type.String() });
 
@@ -29,7 +32,9 @@ class SessionIndex {
   header;
   name;
   subagentParentId;
+  ownSubagentParentId;
   review = false;
+  reviewParentId;
   first = '';
   hasUserMessage = false;
   preview = '';
@@ -43,12 +48,26 @@ class SessionIndex {
     if (entry.type === 'custom') {
       const data = entry.data ?? {};
 
-      if (entry.customType === 'piop-subagent-parent' && Check(parentSchema, data)) this.subagentParentId = data.parentSessionId;
+      if (Check(parentSchema, data)) this.parent(entry.customType, data);
 
       if (entry.customType === 'pi-desktop-resume' && Check(resumeSchema, data)) this.resumes.add(data.message);
     }
 
     if (entry.type === 'session_info' && entry.name?.trim()) this.name = entry.name.trim().slice(0, 2000);
+  }
+
+  parent(kind, data) {
+    const own = data.sessionId === this.header.id;
+    const legacy = data.sessionId === undefined && !this.header.parentSession;
+
+    if (!own && !legacy) return;
+
+    if (kind === 'piop-review-parent') { this.review = true; this.reviewParentId = data.parentSessionId; }
+
+    if (kind !== 'piop-subagent-parent') return;
+
+    if (own) this.ownSubagentParentId = data.parentSessionId;
+    else this.subagentParentId = data.parentSessionId;
   }
 
   message(entry) {
@@ -89,6 +108,10 @@ class SessionIndex {
 
     try { entry = JSON.parse(line.toString('utf8')); } catch { return; }
 
+    if (!Check(entrySchema, entry)) { console.error('Skipped a malformed conversation record while indexing');
+
+    return; }
+
     if (!this.header) {
       if (entry.type !== 'session') throw Error('Invalid session header');
       this.header = entry;
@@ -98,15 +121,22 @@ class SessionIndex {
 
     this.metadata(entry);
 
-    if (entry.type === 'custom' && entry.customType === 'piop-review-parent') this.review = true;
-
     if (entry.type === 'usage') this.recordCost(entry);
     this.message(entry);
   }
 
+  visible(path) {
+    if (!this.review) return true;
+
+    if (!reviewVisibility(path, this.reviewParentId)) return false;
+    this.name = 'Review awaiting parent publication';
+
+    return true;
+  }
+
   print(path) {
-    if (!this.header || this.review) return;
-    console.log(JSON.stringify({ path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, subagentParentId: this.subagentParentId }));
+    if (!this.header || !this.visible(path)) return;
+    console.log(JSON.stringify({ path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, subagentParentId: this.ownSubagentParentId ?? this.subagentParentId }));
   }
 }
 

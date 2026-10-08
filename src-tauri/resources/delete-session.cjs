@@ -6,6 +6,9 @@ const path = require("node:path");
 const os = require("node:os");
 const transactions = require('./session-transactions.cjs');
 const deletionTransaction = require('./delete-transaction.cjs');
+const diffStore = require('./session-broker/git-diff-store.cjs');
+const ownerLocks = require('./transaction-owner-locks.cjs');
+const { createHash } = require('node:crypto');
 
 async function git(cwd, args, input = "") {
   try { return transactions.git(cwd, args, input); }
@@ -95,20 +98,24 @@ function mergeRepositories(repositoriesByPath, repositories) {
   }
 }
 
-async function collectDeletionFiles(targets, sources, request, files) {
+async function collectDeletionFiles(root, targets, sources, request, files) {
   const repositoriesByPath = new Map();
     const selected = new Set(sources);
 
     for (const [index, source] of sources.entries()) {
       const target = targets[index];
-      const [trace, sidecar, loopCheckpoint, diffLock] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true), readFile(`${source}.loop-detection.json`, true), readFile(source.replace(/\.jsonl$/, ".diffs.json.lock"), true)]);
-      files.push(...[trace, sidecar, loopCheckpoint, diffLock].filter(Boolean));
+      const [trace, sidecar, loopCheckpoint] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true), readFile(`${source}.loop-detection.json`, true)]);
+      files.push(...[trace, sidecar, loopCheckpoint].filter(Boolean));
       const snapshots = await readSnapshotDirectory(source.replace(/\.jsonl$/, ".snapshots"));
 
       if (snapshots) files.push(snapshots);
       const entries = trace.body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
       const header = entries[0];
       validateHeader(header, request);
+      await collectCompletedTransfers(root, source, header, files);
+      const diffLock = await readFile(source.replace(/\.jsonl$/, '.diffs.json.lock'), true);
+
+      if (diffLock) files.push(diffLock);
       await appendConversationNote(files, header, target);
       const directory = await archivedDirectory(source, header, target, selected);
 
@@ -119,6 +126,28 @@ async function collectDeletionFiles(targets, sources, request, files) {
 
     return [...repositoriesByPath.values()];
 
+}
+
+async function collectCompletedTransfers(root, source, header, files) {
+  const file = source.replace(/\.jsonl$/, '.diffs.json');
+
+  if (!transactions.exists(file)) return;
+  const state = ownerLocks.withFile(file + '.lock', () => diffStore.readStore(file, false));
+
+  if (Object.values(state.transfers).some(transfer => transfer.committed !== true)) throw new Error('Unfinished project diff transfers still own their log and staged contents; recover them before deleting this conversation');
+
+  for (const transfer of Object.values(state.transfers)) await collectCompletedTransfer(root, header, transfer, files);
+}
+
+async function collectCompletedTransfer(root, header, transfer, files) {
+  if (transfer.owner.toLowerCase() !== header.id.toLowerCase() || !/^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$/.test(transfer.owner) || !/^[a-f0-9]{64}$/.test(transfer.transferId)) throw new Error('Diff transfer ownership is ambiguous; staged contents retained');
+  const message = createHash('sha256').update(transfer.messageId).digest('hex');
+  const part = await readFile(path.join(root, 'git-diff-transfers', transfer.owner, message + '-' + transfer.transferId + '.part'), true);
+
+  if (!part) return;
+
+  if (part.metadata.nlink !== 1 || part.body.length !== transfer.offset || createHash('sha256').update(part.body).digest('hex') !== transfer.digest) throw new Error('Committed diff transfer contents changed; staged contents retained');
+  files.push(part);
 }
 
 
@@ -140,7 +169,7 @@ async function main() {
 
   if (!sources.length || new Set(sources).size !== sources.length) throw new Error("Invalid conversation deletion targets");
   const files = [];
-  const repositories = await collectDeletionFiles(targets, sources, request, files);
+  const repositories = await collectDeletionFiles(root, targets, sources, request, files);
   const transaction = deletionTransaction.create(root, files, repositories, sources);
 
   try {
@@ -185,7 +214,7 @@ async function archivedDirectoryMetadata(directory) {
 async function archivedDirectory(source, header, target, selected = new Set([source])) {
   const saved = header.worktreeRestore;
 
-  if (target.area !== "archived" || saved?.kind !== "directory") return undefined;
+  if (header.archiveResourceId || target.area !== "archived" || saved?.kind !== "directory") return undefined;
   const archive = await archiveRoot(target);
   const root = await fs.realpath(path.join(archive, '..', 'archived-tmp'));
   let directory;

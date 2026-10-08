@@ -7,6 +7,8 @@ const { validSessionHeader } = require('./checkpoint-schemas.cjs');
 const transactions = require('./session-transactions.cjs');
 const archiveTransaction = require('./archive-transaction.cjs');
 const goalAssets = require('./session-broker/goal-assets.cjs');
+const shared = require('./archive-resource-transactions.cjs');
+const checkpoints = require('./archive-checkpoints.cjs');
 
 const request = JSON.parse(process.argv[1]);
 
@@ -121,23 +123,6 @@ function snapshot(group, transaction) {
   transactions.syncTree(group.common);
 }
 
-function rewriteCheckpoints(record, group) {
-  const belongs = (cwd) => {
-    try { return fs.realpathSync(git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])) === group.common; }
-    catch { return false; }
-  };
-
-  function rewrite(entry) {
-    if (entry.type !== 'custom' || !entry.data || entry.data.unavailable) return;
-
-    if (entry.customType === 'pi-project-files-watch-snapshot' && belongs(entry.data.repositoryRoot)) entry.data.repositoryRoot = group.common;
-
-    if (entry.customType === 'pi-project-prompt-checkpoint' && belongs(entry.data.repositoryRoot ?? record.header.checkpointRepositoryRoot ?? record.header.cwd)) entry.data.repositoryRoot = group.common;
-  }
-
-  record.entries.forEach(rewrite);
-}
-
 function preserveSharedDirectories(groups, selected) {
   walkSessions(sessions, (file) => {
     if (selected.has(fs.realpathSync(file))) return;
@@ -151,7 +136,7 @@ function preserveSharedDirectories(groups, selected) {
     }
 
     for (const group of groups) {
-      if ((group.kind === 'git' || group.kind === 'directory') && inside(group.path, canonical)) group.kind = 'shared';
+      if ((group.kind === 'git' || group.kind === 'directory') && inside(group.path, canonical)) { group.resourceKind = group.kind; group.kind = 'shared'; }
     }
   });
 }
@@ -169,7 +154,7 @@ function backupRecord(record, transaction) {
 function prepareRecord(record, group, index, transaction) {
   backupRecord(record, transaction);
 
-  if (group.kind === 'git') rewriteCheckpoints(record, group);
+  if (group.kind === 'git') checkpoints.remapSelected(record, group);
 
   if (group.kind === 'main' || group.kind === 'shared') delete record.header.worktreeRestore;
   else if (group.kind !== 'missing') record.header.worktreeRestore = {
@@ -178,6 +163,7 @@ function prepareRecord(record, group, index, transaction) {
   };
 
   if (group.kind === 'git') record.entries.push({ id: randomUUID(), parentId: record.entries.at(-1)?.id, type: 'custom', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: group.common, commit: group.commit, ref: group.refs[index] } });
+  shared.archiveHeader(transaction, group, record);
   record.header.goalAssets = goalAssets.retainHistory(root, record.entries, record.header.id, record.destination);
   fs.writeFileSync(record.prepared, record.entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n', { flag: 'wx', mode: record.mode });
   transactions.syncTree(record.prepared);
@@ -232,6 +218,8 @@ function prepareArchive() {
 function prepareGroups(groups, transaction) {
   for (const group of groups) {
     if (group.kind === 'git') snapshot(group, transaction);
+    shared.sealArchive(transaction, group);
+    archiveTransaction.save(transaction);
 
     for (const [index, record] of group.records.entries()) {
       prepareRecord(record, group, index, transaction);
@@ -255,7 +243,7 @@ function main() {
   transactions.recover(root);
 
   if (request.transaction) return executeArchive(archiveTransaction.load(root, request.transaction));
-  const { records, groups, removable } = prepareArchive();
+  const { records, groups } = prepareArchive();
 
   if (request.inspect) {
     process.stdout.write(JSON.stringify(groups.flatMap((group) => group.kind === 'git' ? [{ path: group.path, source: group.source }] : [])));
@@ -266,7 +254,7 @@ function main() {
   const transaction = archiveTransaction.plan(root, groups, records);
 
   if (request.action === 'plan') {
-    process.stdout.write(JSON.stringify({ transaction: transaction.id, worktrees: removable.filter(group => group.kind === 'git').map(group => ({ path: group.path, source: group.source })) }));
+    process.stdout.write(JSON.stringify({ transaction: transaction.id, worktrees: transaction.groups.filter(group => group.kind === 'git').map(group => ({ path: group.path, source: group.source })) }));
 
     return;
   }
@@ -275,15 +263,25 @@ function main() {
 }
 
 function executeArchive(transaction) {
+  Object.defineProperty(transaction, 'borrowedOwnerIds', { value: transaction.records.map(record => record.sessionId) });
+
+  return checkpoints.preserve(transaction, transaction.borrowedOwnerIds, () => executeArchiveLocked(transaction));
+}
+
+function executeArchiveLocked(transaction) {
   attachRecords(transaction);
   archiveTransaction.begin(transaction);
 
   try {
     prepareGroups(transaction.groups, transaction);
+    shared.planPeers(transaction, archiveTransaction.save);
+    shared.preparePeers(transaction, archiveTransaction.save);
+    shared.assertArchiveOwners(transaction);
 
     for (const group of transaction.groups.filter(group => group.identity)) archiveTransaction.moveGroup(transaction, group);
 
     for (const record of transaction.records) archiveTransaction.publishRecord(transaction, record);
+    shared.publishPeers(transaction);
 
     archiveTransaction.commit(transaction);
   } catch (error) {

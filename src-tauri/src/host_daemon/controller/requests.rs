@@ -103,9 +103,7 @@ impl Host {
             }
             return self.orchestration_cancel(&id).await;
         }
-        if self.ownership().locate(&id, packet["sessionPath"].as_str(), false, true)?.is_none() {
-            return Err("This conversation has been deleted or archived".into());
-        }
+        self.require_orchestration_target(&id, &packet)?;
         let session = self.find_session(&id);
         match text(&packet, "action").as_str() {
             "read" => match session {
@@ -115,6 +113,14 @@ impl Host {
             "send" => self.orchestration_send(packet, session).await,
             _ => Err("Unknown orchestration action".into()),
         }
+    }
+
+    fn require_orchestration_target(&self, id: &str, packet: &Value) -> Result<()> {
+        let location = self.ownership().lookup(id)?;
+        if location["archived"] == true && text(packet, "action") == "send" {
+            return Err("This conversation has been deleted or archived".into());
+        }
+        Ok(())
     }
 
     fn cancel_deliveries(&self, id: &str, delivery: Option<&str>) -> bool {

@@ -8,6 +8,8 @@ const { Check } = require('typebox/value');
 const { exists, restore, restoredResult } = require('./restore-transaction.cjs');
 const transactions = require('./session-transactions.cjs');
 const { canonicalTranscriptBasename } = require('./transcript-identity.cjs');
+const shared = require('./archive-resource-restore.cjs');
+const migration = require('./archive-resource-migration.cjs');
 
 const checkpointSchema = Type.Object({ path: Type.String(), repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-f0-9]{40,64}$' }) });
 
@@ -117,14 +119,49 @@ function restoreArchive(file) {
   const destination = path.join(fs.realpathSync(sessions), basename);
 
   for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json.lock'), `${destination}.loop-detection.json`]) absent(target);
+
+  if (header.archiveResourceId) return restoreShared(header, file, destination);
   const saved = header.worktreeRestore;
 
-  if (!saved) return restore(root, header, file, destination, { path: header.cwd, branch: null, sessionPath: destination });
+  if (!saved) {
+    if (!exists(header.cwd)?.isDirectory()) throw new Error('Legacy archive has no verified directory recovery descriptor; missing contents remain unavailable and require explicit recovery');
 
-  if (saved.kind === 'directory') return restore(root, header, file, destination, { path: saved.path, branch: null, sessionPath: destination }, directoryPlan(saved));
+    return restore(root, header, file, destination, { path: header.cwd, branch: null, sessionPath: destination });
+  }
+
+  const legacy = migration.plan(root, file, destination, header, randomUUID());
+
+  if (saved.kind === 'directory') {
+    const planned = directoryPlan(saved);
+
+    const resource = { migration: legacy, directoryCopy: { ...planned, sourceProof: { identity: legacy.recovery.storedIdentity, directory: true, digest: legacy.recovery.digest, excluded: [] },
+      staging: path.join(root, 'restore-staging', legacy.operationId), recovery: path.join(root, 'restore-recovery', legacy.operationId) } };
+
+    return restore(root, header, file, destination, { path: saved.path, branch: null, sessionPath: destination }, undefined, undefined, resource);
+  }
+
   const worktree = worktreePlan(entries, header);
 
-  return restore(root, header, file, destination, { path: saved.path, branch: worktree.branch, sessionPath: destination }, undefined, worktree);
+  return restore(root, header, file, destination, { path: saved.path, branch: worktree.branch, sessionPath: destination }, undefined, worktree, { migration: legacy });
+}
+
+function restoreShared(header, file, destination) {
+  const resource = shared.plan(root, file, destination, randomUUID());
+  const saved = resource.recovery;
+  let worktree;
+  let branch = null;
+
+  if (resource.action === 'create-git') {
+    const git = args => transactions.git(saved.repositoryRoot, args);
+    branch = restoredBranch(saved, git);
+    worktree = { repositoryRoot: saved.repositoryRoot, path: saved.path, commit: saved.commit, branch,
+      staging: path.join(path.dirname(saved.path), `.piop-restore-${randomUUID()}`), reservation: `refs/piop-restore-transactions/${randomUUID()}` };
+  } else if (resource.binding.git) {
+    try { branch = transactions.git(resource.binding.path, ['symbolic-ref', '--short', '--quiet', 'HEAD']); }
+    catch (error) { if (error.status !== 1) throw error; }
+  }
+
+  return restore(root, header, file, destination, { path: resource.binding.path, branch, sessionPath: destination }, undefined, worktree, resource);
 }
 
 function main() {

@@ -402,7 +402,7 @@ fn broker_orchestration(app: &AppHandle, broker: &BrokerRuntime, value: Value) -
         return broker_interruption_status(broker, &value, result);
     }
     let (id, action) = orchestration_target(&value)?;
-    if matches!(action, "interrupt" | "locate") {
+    if matches!(action, "interrupt" | "locate" | "read") {
         let settings = load_app_settings(app.clone())?;
         let runtime = app.state::<PiRuntime>();
         let daemon = crate::daemon::connect(app, &runtime, broker, &settings, host)?;
@@ -413,17 +413,19 @@ fn broker_orchestration(app: &AppHandle, broker: &BrokerRuntime, value: Value) -
 }
 
 fn broker_conversation_operation(app: &AppHandle, broker: &BrokerRuntime, value: &Value, host: &str, id: &str, action: &str) -> Result<Value, String> {
-    let sessions = broker_message_sessions(app, &app.state::<SessionIndexRuntime>(), host)?;
-    let session = resolve_agent(&sessions, host, id)?;
     let settings = load_app_settings(app.clone())?;
     let runtime = app.state::<PiRuntime>();
     let daemon = crate::daemon::connect(app, &runtime, broker, &settings, host)?;
-    let mut packet = json!({"type":"orchestration","action":action,"sessionKey":id,"sessionPath":session.path,
+    let location = daemon.request(json!({"type":"orchestration","action":"locate","sessionKey":id}))?;
+    if location["archived"] == true { return Err("This conversation is archived. Restore it before sending another task".into()); }
+    let path = location["sessionPath"].as_str().ok_or("Conversation lookup returned no saved path")?;
+    let cwd = location["cwd"].as_str().ok_or("Conversation lookup returned no working directory")?;
+    let mut packet = json!({"type":"orchestration","action":action,"sessionKey":id,"sessionPath":path,
         "sourceSessionId":value["sourceSessionId"],"sourceHostId":value["sourceHostId"],"message":value["message"],"wake":value["wake"],"clientId":value["clientId"],"deliveryId":value["deliveryId"]});
     if action == "send" {
-        let command = build_pi_command(broker, &settings, host, PiLaunch::Rpc { cwd: Some(&session.cwd), session_path: Some(&session.path), session_id: None, fork_path: None, no_session: false }, daemon.remote_port)?;
+        let command = build_pi_command(broker, &settings, host, PiLaunch::Rpc { cwd: Some(cwd), session_path: Some(path), session_id: None, fork_path: None, no_session: false }, daemon.remote_port)?;
         packet["spec"] = crate::daemon::spec(&command);
-        packet["cwd"] = json!(session.cwd);
+        packet["cwd"] = json!(cwd);
     }
     daemon.request(packet)
 }

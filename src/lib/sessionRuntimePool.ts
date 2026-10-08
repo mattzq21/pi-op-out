@@ -2,7 +2,6 @@ import { agentStateSchema } from "./responseSchemas";
 import { required } from "./required";
 import { extensionUiSchema } from "./extensionUiSchema";
 import { wireMessageSchema } from "./messageSchemas";
-import { gitDiffSnapshotSchema } from "./diffSchemas";
 import { z } from "zod";
 import { type Accessor } from "solid-js";
 import { createSubscription } from "../lib/solid";
@@ -18,7 +17,7 @@ const EMPTY_DIFFS: GitDiffSnapshots = {};
 
 const startsUserMessage = (event: RpcEvent) => event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success;
 
-type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: string; promise: Promise<GitDiffSnapshots> }; pendingCopy?: { key: string; snapshots: GitDiffSnapshots }; persistence: "session" | "memory" };
+type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: string; promise: Promise<GitDiffSnapshots> } };
 
 function retainedName(state: AgentState, prompt: string | undefined, previous: SessionSummary | undefined) {
   return state.sessionName || prompt?.slice(0, 60) || previous?.name || "New session";
@@ -75,14 +74,13 @@ export class SessionRuntimePool {
 
   private retainDiffs(transport: NativeTransport, state: DiffState) {
     retainSessionResource(transport, "diffs", state.snapshots, () => {
-      if (state.pendingCopy) return;
       state.snapshots = EMPTY_DIFFS; state.path = undefined; state.load = undefined; this.notify();
     });
   }
 
   private diffState(transport: NativeTransport) { let state = this.diffStates.get(transport);
 
-  if (!state) { state = { snapshots: EMPTY_DIFFS, persistence: "session" }; this.diffStates.set(transport, state); }
+  if (!state) { state = { snapshots: EMPTY_DIFFS }; this.diffStates.set(transport, state); }
 
   return state; }
 
@@ -95,7 +93,7 @@ export class SessionRuntimePool {
     if (state.path !== key) state.snapshots = EMPTY_DIFFS;
     state.path = key;
 
-    const promise = this.retryDiffCopy(transport, state, key, sessionPath).then(() => transport.loadGitDiffs(sessionPath, transport.currentHostId())).then((snapshots) => {
+    const promise = transport.loadGitDiffs(sessionPath, transport.currentHostId()).then((snapshots) => {
       if (state.path === key && state.load?.promise === promise) { state.snapshots = snapshots; this.retainDiffs(transport, state); this.notify(); }
 
       return snapshots;
@@ -111,15 +109,6 @@ export class SessionRuntimePool {
     state.load = { key, promise };
 
     return promise;
-  }
-
-  private async retryDiffCopy(transport: NativeTransport, state: DiffState, key: string, sessionPath: string) {
-    const pending = state.pendingCopy;
-
-    if (!pending || pending.key !== key) return;
-    await transport.saveGitDiffs(sessionPath, pending.snapshots, transport.currentHostId());
-
-    if (state.pendingCopy === pending) state.pendingCopy = undefined;
   }
 
   private publishSessionStates() {
@@ -183,20 +172,7 @@ export class SessionRuntimePool {
   }
 
   private captureDiffEvent(transport: NativeTransport, event: RpcEvent) {
-    const state = this.diffState(transport);
-
     if (event.hostId !== transport.currentHostId() || event.sessionPath !== transport.currentSessionPath()) return;
-
-    const diff = z.object({ messageId: z.string(), snapshot: gitDiffSnapshotSchema }).safeParse(event);
-
-    if (state.persistence === "memory" && event.type === "turn_diff" && diff.success) {
-      const { messageId, snapshot } = diff.data;
-      void (state.load?.promise ?? Promise.resolve()).then(() => {
-        if (!this.transports.has(transport) || event.sessionPath !== transport.currentSessionPath()) return;
-        state.snapshots = { ...state.snapshots, [messageId]: snapshot };
-        this.retainDiffs(transport, state); this.notify();
-      });
-    }
 
     if (event.type === "diffs_changed") {
       this.diffState(transport).load = undefined;
@@ -268,9 +244,9 @@ export class SessionRuntimePool {
 
     this.sessions.set(sessionKey(transport.currentDaemonId() ?? hostId, sessionId), transport);
     this.sessions.set(sessionKey(hostId, sessionId), transport);
-    const state = this.diffState(transport); const sessionPath = transport.currentSessionPath();
+    const sessionPath = transport.currentSessionPath();
 
-    if (state.persistence === "session" && sessionPath) void this.loadSavedDiffs(transport, sessionPath);
+    if (sessionPath) void this.loadSavedDiffs(transport, sessionPath);
     this.publishSessionStates();
   }
 
@@ -304,50 +280,11 @@ export class SessionRuntimePool {
   }
   pendingSettingsCount() { return [...this.transports].filter((transport) => transport.hasPendingSettings()).length; }
 
-  async captureMemoryDiffs(transport: NativeTransport) {
+  async refreshSavedDiffs(transport: NativeTransport, destinationPath: string | undefined) {
+    if (!destinationPath) return;
     const state = this.diffState(transport);
-
-    if (state.persistence !== "memory") return undefined;
-    const saved = await state.load?.promise;
-
-    return { ...saved, ...state.snapshots };
-  }
-
-  async copySavedDiffs(transport: NativeTransport, sourcePath: string | undefined, destinationPath: string | undefined, retainedMessageIds?: ReadonlySet<string>, sourceSnapshots?: GitDiffSnapshots) {
-    if (!sourcePath || !destinationPath || sourcePath === destinationPath) return;
-    const state = this.diffState(transport); const hostId = transport.currentHostId(); const key = `${hostId}:${destinationPath}`;
-    const source = sourceSnapshots ? Promise.resolve(sourceSnapshots) : state.persistence === "memory" ? this.captureMemoryDiffs(transport).then((snapshots) => snapshots ?? EMPTY_DIFFS) : transport.loadGitDiffs(sourcePath, hostId);
-
-    const operation = source.then(async (source) => {
-      const snapshots = retainedMessageIds ? Object.fromEntries(Object.entries(source).filter(([id]) => retainedMessageIds.has(id))) : source;
-
-      if (state.persistence === "session") {
-        const pending = { key, snapshots }; state.pendingCopy = pending;
-
-        if (state.path === key) { state.snapshots = snapshots; this.retainDiffs(transport, state); this.notify(); }
-
-        await transport.saveGitDiffs(destinationPath, snapshots, hostId);
-
-        if (state.pendingCopy === pending) state.pendingCopy = undefined;
-      }
-
-      return snapshots;
-    });
-
-    const promise = operation.then((snapshots) => {
-      if (state.path === key && state.load?.promise === promise) { state.snapshots = snapshots; this.retainDiffs(transport, state); this.notify(); }
-
-      return snapshots;
-    }).catch((reason) => {
-      if (state.load?.promise === promise) { state.load = undefined; this.notify(); }
-
-      this.errorHandler?.(`Could not save copied project changes; retained for retry: ${reason instanceof Error ? reason.message : String(reason)}`);
-
-      return state.path === key ? state.snapshots : EMPTY_DIFFS;
-    });
-
-    state.path = key; state.snapshots = EMPTY_DIFFS; state.load = { key, promise }; this.notify();
-    await operation; await promise;
+    state.load = undefined;
+    await this.loadSavedDiffs(transport, destinationPath);
   }
 
   async remove(session: SessionSummary) {

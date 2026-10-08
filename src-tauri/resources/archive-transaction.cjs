@@ -3,6 +3,8 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
 const { canonicalTranscriptBasename } = require('./transcript-identity.cjs');
+const shared = require('./archive-resource-transactions.cjs');
+const checkpoints = require('./archive-checkpoints.cjs');
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
@@ -64,6 +66,7 @@ function plan(root, groups, records) {
   });
 
   const transaction = { version: 2, kind: 'archive', id, root, container, containerIdentity: io.identity(container), state: 'planned', groups: plannedGroups, records: plannedRecords };
+  shared.archivePlans(transaction);
   save(transaction);
 
   return transaction;
@@ -114,6 +117,8 @@ function validateRefs(transaction, group) {
   const owners = transaction.records.filter(record => transaction.groups[record.group] === group);
 
   for (const ref of group.refs) {
+    if (group.resource?.ref === ref) continue;
+
     if (!owners.some(record => {
       const id = record.sessionId.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
       const prefix = `refs/pi-session-snapshots/chats/${id}/archive/`;
@@ -135,6 +140,9 @@ function load(root, id) {
   validateIdentity(transaction, root, id, container, file);
   transaction.records.forEach(record => validateRecord(transaction, record));
   transaction.groups.forEach(group => validateGroup(transaction, group));
+  shared.validateChanges(transaction, transaction.groups.flatMap(group => group.resource ? [group.resource.change] : []));
+  shared.validateArchive(transaction);
+  checkpoints.validate(transaction);
 
   return transaction;
 }
@@ -240,6 +248,8 @@ function publishRecord(transaction, record) {
 }
 
 function commit(transaction) {
+  shared.verifyPeers(transaction);
+
   for (const record of transaction.records) {
     if (!io.matches(record.destination, record.preparedIdentity) || io.exists(record.file)) throw new Error(`Archive commit could not be verified: ${record.file}`);
 
@@ -327,6 +337,8 @@ function verifyRollback(transaction) {
 }
 
 function rollbackData(transaction) {
+  shared.rollbackPeers(transaction, save);
+
   for (const group of [...transaction.groups].reverse()) restoreGroup(group);
 
   for (const record of [...transaction.records].reverse()) restoreRecord(transaction, record);
@@ -339,6 +351,8 @@ function cleanupRollback(transaction) {
   if (!transaction.cleanup) {
     const files = transaction.records.flatMap(record => [record.backup, record.prepared, record.rollbackCopy]);
     files.push(...transaction.groups.flatMap(group => [group.metadata, group.dataBackup, group.index]));
+    files.push(...(transaction.resourcePeers ?? []).flatMap(peer => [peer.backup, peer.prepared, peer.rollback]));
+    files.push(...(transaction.checkpointMappings ?? []).map(mapping => mapping.prepared));
     transaction.cleanup = files.flatMap(file => io.exists(file) ? [{ file, entries: io.removalPlan(file) }] : []);
     save(transaction);
   }
@@ -401,8 +415,16 @@ function finishGroup(transaction, group) {
 }
 
 function finish(transaction) {
+  return checkpoints.preserve(transaction, transaction.borrowedOwnerIds ?? [], () => finishLocked(transaction));
+}
+
+function finishLocked(transaction) {
   for (const group of transaction.groups.filter(group => group.kind === 'git' && !group.removed)) finishGroup(transaction, group);
+  shared.finishArchive(transaction);
   complete(transaction);
+
+  try { require('./restore-receipts.cjs').prune(transaction.root); }
+  catch (error) { console.error(`Archive committed; restore receipt pruning will retry: ${error.message}`); }
 }
 
 function replay(transaction) {

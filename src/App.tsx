@@ -95,6 +95,14 @@ export default function App() {
         const pane = required(splitPane());
         const currentPane = () => splitPane()?.key === pane.key ? splitPane() : undefined;
 
+        const inheritedParent = () => {
+          const review = pane.review;
+
+          return review?.inherited || review?.readOnly && !review.archived ? review.parentSessionId : undefined;
+        };
+
+        const archivedReview = () => pane.review?.archived;
+
         const changeSession = (next: SessionSummary, owner: NativeTransport) => {
           const current = currentPane();
 
@@ -117,7 +125,7 @@ export default function App() {
 
             if (current) toggleComposerTerminal("split", { sessionKey: splitConversationKey(current), cwd: current.session.cwd, hostId: current.session.hostId ?? "local" }); }}
           onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs}
-          onReleaseTransport={releaseSplitTransport} onArchiveOriginal={archiveReplacedSession} onSessionChange={changeSession} freshReview={Boolean(pane.review)} inheritedReviewParent={pane.review?.readOnly ? pane.review.parentSessionId : undefined} initialPrompt={pane.review?.task} initialImages={pane.review?.images}
+          onReleaseTransport={releaseSplitTransport} onArchiveOriginal={archiveReplacedSession} onSessionChange={changeSession} freshReview={Boolean(pane.review)} inheritedReviewParent={inheritedParent()} archivedReview={archivedReview()} onShowArchive={() => { setArchivesOpen(true); setPanelOpen(true); }} initialPrompt={pane.review?.task} initialImages={pane.review?.images}
           onReady={pane.review ? () => respondToReview(required(pane.review).requestId, { value: "opened" }) : undefined}
           onMessageMain={pane.review?.messageMain}
           onFailed={pane.review ? () => respondToReview(required(pane.review).requestId, { cancelled: true }) : undefined}
@@ -129,7 +137,7 @@ export default function App() {
           {renderChatView()}
         </div>
         {renderSplitChatPane()}
-        <Show when={subagentPane()} keyed>{(target) => <SubagentPane target={target} onClose={closeSplitPane} onActivate={() => setActivePane("split")} />}</Show>
+        <Show when={subagentPane()} keyed>{(target) => <SubagentPane target={target} onClose={closeSplitPane} onActivate={() => setActivePane("split")} onShowArchive={() => { setArchivesOpen(true); setPanelOpen(true); }} />}</Show>
         {pluginPane.panel()}
       </div>);
     };

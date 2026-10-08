@@ -42,7 +42,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 29] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 36] = [
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
     ("conversation-location.ts", include_str!("../../resources/session-broker/conversation-location.ts")),
@@ -50,8 +50,15 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 29] = [
     ("fast-mode.ts", include_str!("../../resources/session-broker/fast-mode.ts")),
     ("turn-capture.ts", include_str!("../../resources/session-broker/turn-capture.ts")),
     ("session-file.ts", include_str!("../../resources/session-broker/session-file.ts")),
+    ("session-publication.cjs", include_str!("../../resources/session-broker/session-publication.cjs")),
+    ("session-publication-io.cjs", include_str!("../../resources/session-broker/session-publication-io.cjs")),
+    ("session-publication-dependencies.cjs", include_str!("../../resources/session-broker/session-publication-dependencies.cjs")),
+    ("review-publication.cjs", include_str!("../../resources/session-broker/review-publication.cjs")),
+    ("session-publication.d.cts", include_str!("../../resources/session-broker/session-publication.d.cts")),
     ("fork.ts", include_str!("../../resources/session-broker/fork.ts")),
     ("git-diff-store.cjs", include_str!("../../resources/session-broker/git-diff-store.cjs")),
+    ("git-diff-pages.cjs", include_str!("../../resources/session-broker/git-diff-pages.cjs")),
+    ("git-diff-transfer.cjs", include_str!("../../resources/session-broker/git-diff-transfer.cjs")),
     ("subagents.ts", include_str!("../../resources/session-broker/subagents.ts")),
     ("subagent-state.ts", include_str!("../../resources/session-broker/subagent-state.ts")),
     ("subagent-reconciliation.ts", include_str!("../../resources/session-broker/subagent-reconciliation.ts")),

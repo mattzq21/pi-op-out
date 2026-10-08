@@ -15,6 +15,7 @@ pub(super) const MAX_RECORD_BYTES: usize = MAX_GIT_PATCH_BYTES * 6 + 64 * 1024;
 pub(super) struct State {
     pub(super) snapshots: HashMap<String, Value>,
     pub(super) pending: HashMap<String, Value>,
+    transfers: HashMap<String, Value>,
     digests: HashMap<String, String>,
     positions: HashMap<String, u64>,
     materialize: bool,
@@ -53,17 +54,27 @@ pub(super) fn lock(path: &Path) -> Result<File, String> {
 fn apply(state: &mut State, record: Value) -> Result<(), String> {
     let id = record["id"].as_str().ok_or("Diff record has no message ID")?.to_owned();
     match record["op"].as_str() {
-        Some("set") => apply_snapshot(state, id, &record["snapshot"] )?,
+        Some("set") => return apply_snapshot(state, id, &record["snapshot"]),
         Some("remove") => { state.snapshots.remove(&id); state.digests.remove(&id); state.removed.insert(id); }
-        Some("pending") => {
-            state.done.remove(&id);
-            let mut capture = record["capture"].clone();
-            if state.focus.as_deref() != Some(&id) { capture.as_object_mut().ok_or("Invalid pending comparison")?.remove("snapshot"); }
-            state.pending.insert(id, capture);
-        }
+        Some("pending") => return apply_pending(state, id, record["capture"].clone()),
         Some("done") => { state.pending.remove(&id); state.done.insert(id); }
+        Some("transfer") => return apply_transfer(state, &record),
         _ => return Err("Unknown diff log operation; file preserved".into()),
     }
+    Ok(())
+}
+
+fn apply_pending(state: &mut State, id: String, mut capture: Value) -> Result<(), String> {
+    state.done.remove(&id);
+    if state.focus.as_deref() != Some(&id) { capture.as_object_mut().ok_or("Invalid pending comparison")?.remove("snapshot"); }
+    state.pending.insert(id, capture);
+    Ok(())
+}
+
+fn apply_transfer(state: &mut State, record: &Value) -> Result<(), String> {
+    let key = record["key"].as_str().ok_or("Invalid diff transfer identity")?.to_owned();
+    if !record["transfer"].is_object() { return Err("Invalid diff transfer metadata; file preserved".into()); }
+    state.transfers.insert(key, record["transfer"].clone());
     Ok(())
 }
 
@@ -117,10 +128,15 @@ fn merge(state: &mut State, transaction: State) {
     state.snapshots.extend(transaction.snapshots);
     state.digests.extend(transaction.digests);
     state.positions.extend(transaction.positions);
-    state.pending.extend(transaction.pending);
+    for (id, capture) in transaction.pending {
+        if !state.done.contains(&id) || capture["source"] == "copy" { state.pending.insert(id, capture); }
+    }
+    state.transfers.extend(transaction.transfers);
     for id in transaction.removed { state.snapshots.remove(&id); state.digests.remove(&id); state.positions.remove(&id); }
-    for id in transaction.done { state.pending.remove(&id); }
+    for id in transaction.done { state.pending.remove(&id); state.done.insert(id); }
 }
+
+fn completed(state: &State, id: &str) -> bool { state.done.contains(id) || state.digests.contains_key(id) }
 
 pub(super) fn read(reader: impl Read) -> Result<State, String> {
     read_state(reader, true, None)
@@ -198,7 +214,7 @@ fn pending_operation(state: &State, request: &Value) -> Result<Vec<Value>, Strin
         if previous["ready"] == true && request["capture"]["ready"] != true { return Ok(Vec::new()); }
         if request["capture"]["ready"] != true && request["capture"]["failure"].is_null() { return Ok(Vec::new()); }
     }
-    else if state.digests.contains_key(id) { return Ok(Vec::new()); }
+    else if completed(state, id) { return Ok(Vec::new()); }
     Ok(vec![json!({"op":"pending","id":id,"capture":request["capture"]})])
 }
 
@@ -233,11 +249,11 @@ pub(super) fn request(path: &Path, request: &Value) -> Result<Value, String> {
 
 fn read_action(state: &State, request: &Value) -> Option<Value> {
     match request["action"].as_str() {
-        Some("load") => Some(json!({"snapshots":state.snapshots,"pending":state.pending})),
+        Some("load") => Some(json!({"snapshots":state.snapshots,"pending":state.pending,"transfers":state.transfers})),
         Some("pending_ids") => Some(json!({"ids":state.pending.keys().collect::<Vec<_>>()})),
         Some("pending_status") => {
             let id = request["id"].as_str()?;
-            Some(json!({"capture":state.pending.get(id),"completed":state.digests.contains_key(id)}))
+            Some(json!({"capture":state.pending.get(id),"completed":completed(state, id)}))
         }
         _ => None,
     }
@@ -247,7 +263,7 @@ fn save_request(path: &Path, request: &Value, file: File, state: &State) -> Resu
     let mut records = operations(state, request)?;
     validate_records(&records)?;
     let mut file = prepare(path, file, state)?;
-    append_records(path, request, state, &mut file, &mut records)?;
+    append_records(request, state, &mut file, &mut records)?;
     file.sync_all().map_err(error)?;
     sync_parent(path)?;
     Ok(Value::Null)
@@ -255,18 +271,14 @@ fn save_request(path: &Path, request: &Value, file: File, state: &State) -> Resu
 
 fn finish_request(path: &Path, request: &Value, file: File, state: &State) -> Result<Value, String> {
     let id = request["id"].as_str().ok_or("Missing diff message ID")?;
-    if state.pending.get(id) != Some(&request["capture"]) { return Ok(json!({"finished":!state.pending.contains_key(id)})); }
+    if state.pending.get(id) != Some(&request["capture"]) { return Ok(json!({"finished":!state.pending.contains_key(id) && completed(state, id)})); }
     save_request(path, request, file, state)?;
     Ok(json!({"finished":true}))
 }
 
-fn append_records(path: &Path, request: &Value, state: &State, file: &mut File, records: &mut Vec<Value>) -> Result<(), String> {
+fn append_records(request: &Value, state: &State, file: &mut File, records: &mut Vec<Value>) -> Result<(), String> {
     if matches!(request["action"].as_str(), Some("replace" | "merge")) && !records.is_empty() {
-        let pending = copy_pending(state, records)?;
-        validate_records(&pending)?;
-        write_transaction(file, &pending)?;
-        sync_parent(path)?;
-        records.extend(pending.into_iter().map(|record| json!({"op":"done","id":record["id"]})));
+        records.extend(copy_pending(state, records)?);
     }
     if !records.is_empty() { write_transaction(file, records)?; }
     Ok(())
@@ -287,6 +299,6 @@ fn copy_pending(state: &State, records: &[Value]) -> Result<Vec<Value>, String> 
     records.iter().map(|record| {
         let id = record["id"].as_str().ok_or("Copied diff has no message ID")?;
         if state.pending.get(id).is_some_and(|capture| capture["source"] != "copy") { return Err("An unfinished comparison owns this message; copy retained for retry".into()); }
-        Ok(json!({"op":"pending","id":id,"capture":{"source":"copy","ready":true,"snapshot":record["snapshot"],"remove":record["op"] == "remove"}}))
+        Ok(json!({"op":"done","id":id}))
     }).collect()
 }

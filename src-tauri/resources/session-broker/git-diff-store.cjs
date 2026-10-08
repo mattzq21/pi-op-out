@@ -3,6 +3,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
+const pages = require('./git-diff-pages.cjs');
+const transfers = require('./git-diff-transfer.cjs');
 
 const header = 'PIOP-DIFFS-1\n';
 
@@ -56,8 +58,16 @@ function apply(state, record) {
     }
 
     case 'done': delete state.pending[record.id]; state.done?.add(record.id); break;
+    case 'transfer':
+      applyTransfer(state, record);
+      break;
     default: throw new Error('Unknown diff log operation; file preserved');
   }
+}
+
+function applyTransfer(state, record) {
+  if (!stringValue(record.key) || !objectValue(record.transfer)) throw new Error('Invalid diff transfer metadata; file preserved');
+  state.transfers[record.key] = record.transfer;
 }
 
 function applySnapshot(state, record) {
@@ -137,12 +147,16 @@ function merge(state, transaction) {
 
   for (const [id, position] of Object.entries(transaction.positions)) state.positions[id] = position;
 
-  for (const [id, capture] of Object.entries(transaction.pending)) state.pending[id] = capture;
+  for (const [id, capture] of Object.entries(transaction.pending)) if (!state.done.has(id) || capture.source === 'copy') state.pending[id] = capture;
+
+  Object.assign(state.transfers, transaction.transfers);
 
   for (const id of transaction.removed) { delete state.snapshots[id]; delete state.digests[id]; delete state.positions[id]; }
 
-  for (const id of transaction.done) delete state.pending[id];
+  for (const id of transaction.done) { delete state.pending[id]; state.done.add(id); }
 }
+
+function completed(state, id) { return state.done.has(id) || Object.hasOwn(state.digests, id); }
 
 function readStore(filename, materialize = true, focus) {
   let fd;
@@ -168,13 +182,13 @@ function readStore(filename, materialize = true, focus) {
 
     const digests = Object.fromEntries(Object.entries(snapshots).map(([id, snapshot]) => [id, digest(snapshot)]));
 
-    return { snapshots, digests, pending: Object.create(null), end: 0, legacy: true };
+    return { ...emptyState(), snapshots, digests, legacy: true };
   } finally { fs.closeSync(fd); }
 }
 
-function emptyState() { return { snapshots: Object.create(null), digests: Object.create(null), positions: Object.create(null), pending: Object.create(null), end: 0, legacy: false }; }
+function emptyState() { return { snapshots: Object.create(null), digests: Object.create(null), positions: Object.create(null), pending: Object.create(null), transfers: Object.create(null), done: new Set(), end: 0, legacy: false }; }
 
-function readStoreLocked(filename) {
+function withStoreLock(filename, operation) {
   const fd = fs.openSync(`${filename}.lock`, fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW, 0o600);
 
   try {
@@ -184,8 +198,100 @@ function readStoreLocked(filename) {
 
     if (result.status !== 0) throw new Error(`Could not lock source diffs: ${result.stderr.toString('utf8').trim()}`);
 
-    return readStore(filename);
+    return operation();
   } finally { fs.closeSync(fd); }
+}
+
+function readStoreLocked(filename) { return withStoreLock(filename, () => recoverStore(filename, true)); }
+
+function recoverStore(filename, materialize, focus) {
+  prepareLegacy(filename);
+  transfers.recoverTransfers(filename, readStore(filename, false), transferHooks(filename));
+
+  return readStore(filename, materialize, focus);
+}
+
+function copyRetainedStoreLocked(filename, destination, retainedIds, sessionId) {
+  validateRetainedSource(filename, sessionId);
+
+  return withStoreLock(filename, () => {
+    validateRetainedSource(filename, sessionId);
+    const state = recoverStore(filename, false);
+    const pending = [...Object.keys(state.pending), ...discoverComparisons(filename, true).filter(record => !completed(state, record.id)).map(record => record.id)];
+    const partial = Object.values(state.transfers).flatMap(transfer => transfer.committed ? [] : [transfer.messageId]);
+
+    if ([...pending, ...partial].some(id => retainedIds.has(id))) throw new Error('Selected source diffs are still pending; recover project changes before forking. Original comparisons were retained.');
+
+    publishRetained(filename, destination, state, retainedIds);
+  });
+}
+
+function publishRetained(filename, destination, state, retainedIds) {
+  const positions = Object.entries(state.positions).filter(([id]) => retainedIds.has(id));
+  const source = positions.length ? fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW) : undefined;
+
+  try {
+    const fd = fs.openSync(destination, 'wx', 0o600);
+
+    try {
+      writeAll(fd, Buffer.from(header));
+
+      for (const [id, position] of positions) transaction(fd, [{ op: 'set', id, snapshot: pages.indexedSnapshot(source, position, id, maxRecordBytes) }]);
+
+      for (const id of state.done) if (retainedIds.has(id)) transaction(fd, [{ op: 'done', id }]);
+
+      fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
+
+    syncParent(destination);
+  } finally { if (source !== undefined) fs.closeSync(source); }
+}
+
+function validateRetainedSource(filename, sessionId) {
+  if (path.basename(filename).startsWith('pi-desktop-btw-')) validateEphemeralTranscript(filename, { ephemeralSessionId: sessionId });
+}
+
+function requestStoreLocked(filename, request) { return withStoreLock(filename, () => requestStore(filename, request)); }
+
+const ephemeralUuid = /^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$/;
+
+function ephemeralTranscriptPath(filename) {
+  const session = filename.replace(/\.diffs\.json$/, '.jsonl');
+  const id = path.basename(session).slice('pi-desktop-btw-'.length, -'.jsonl'.length);
+
+  if (!filename.endsWith('.diffs.json') || !path.isAbsolute(session) || path.normalize(session) !== session || !path.basename(session).startsWith('pi-desktop-btw-') || !ephemeralUuid.test(id)) throw new Error('Invalid temporary transcript namespace');
+
+  return session;
+}
+
+function validateEphemeralTranscript(filename, request) {
+  const session = ephemeralTranscriptPath(filename);
+  const temporary = process.env.PIOP_DIFF_EPHEMERAL_TMP || os.tmpdir();
+
+  if (!stringValue(request.ephemeralSessionId) || !ephemeralUuid.test(request.ephemeralSessionId)) throw new Error('Invalid temporary transcript stable identity');
+  const parent = path.dirname(session);
+  const canonical = fs.realpathSync(temporary);
+
+  if (parent !== temporary && parent !== canonical) throw new Error('Temporary transcript is outside the temporary conversation namespace');
+
+  if (fs.realpathSync(parent) !== canonical || !fs.lstatSync(session).isFile()) throw new Error('Temporary transcript must be a regular file in the temporary namespace');
+
+  if (transcriptId(filename) !== request.ephemeralSessionId) throw new Error('Temporary transcript stable identity changed; recovery retained');
+}
+
+function requestEphemeralStore(filename, request) {
+  const permitted = ['ephemeral_validate', 'retain', 'discover', 'pending_ids', 'pending_status', 'pending', 'finish', 'page'];
+
+  if (!permitted.includes(request.action)) throw new Error('Temporary transcript diff access permits pending recovery only');
+  validateEphemeralTranscript(filename, request);
+
+  if (request.action === 'ephemeral_validate') return null;
+
+  return withStoreLock(filename, () => {
+    validateEphemeralTranscript(filename, request);
+
+    return requestStore(filename, request);
+  });
 }
 
 function writeAll(fd, body) {
@@ -411,7 +517,7 @@ function pendingOperation(state, request) {
 
     if (request.capture.ready !== true && !request.capture.failure) return [];
   }
-  else if (Object.hasOwn(state.digests, request.id)) return [];
+  else if (completed(state, request.id)) return [];
 
   return [{ op: 'pending', id: request.id, capture: request.capture }];
 }
@@ -420,7 +526,7 @@ function copyPending(state, records) {
   return records.map(record => {
     if (state.pending[record.id] && state.pending[record.id].source !== 'copy') throw new Error('An unfinished comparison owns this message; copy retained for retry');
 
-    return { op: 'pending', id: record.id, capture: { source: 'copy', ready: true, snapshot: record.snapshot ?? null, remove: record.op === 'remove' } };
+    return { op: 'done', id: record.id };
   });
 }
 
@@ -432,7 +538,7 @@ function transcriptId(filename) {
   const fd = fs.openSync(filename.replace(/\.diffs\.json$/, '.jsonl'), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
 
   try {
-    const buffer = Buffer.alloc(16 * 1024);
+    const buffer = Buffer.alloc(64 * 1024);
     const count = fs.readSync(fd, buffer, 0, buffer.length, 0);
     const newline = buffer.subarray(0, count).indexOf(10);
 
@@ -474,7 +580,7 @@ function retainComparison(filename, request) {
   return null;
 }
 
-function readPointer(filename, sessionId, directory) {
+function readPointer(filename, sessionId, directory, strict) {
   const root = path.join(directory, filename);
   const pointer = path.join(root, 'pending-diff.json');
   let fd;
@@ -493,13 +599,21 @@ function readPointer(filename, sessionId, directory) {
 
     return record;
   } catch (error) {
-    if (error.code !== 'ENOENT') process.stderr.write(`Pending diff pointer preserved at ${pointer}: ${error.message}\n`);
+    reportPointerError(error, pointer, strict);
 
     return undefined;
   } finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
-function discoverComparisons(filename) {
+function reportPointerError(error, pointer, strict) {
+  if (error.code === 'ENOENT') return;
+  const message = `Pending diff pointer preserved at ${pointer}: ${error.message}`;
+
+  if (strict) throw new Error(message);
+  process.stderr.write(`${message}\n`);
+}
+
+function discoverComparisons(filename, strict) {
   const sessionId = transcriptId(filename); const directory = snapshotParent();
   let entries;
 
@@ -510,7 +624,7 @@ function discoverComparisons(filename) {
 
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith('pi-desktop-diff-')) continue;
-    const record = readPointer(entry.name, sessionId, directory);
+    const record = readPointer(entry.name, sessionId, directory, strict);
 
     if (record) records.push(record);
   }
@@ -521,24 +635,38 @@ function discoverComparisons(filename) {
 function requestStore(filename, request) {
   if (request.action === 'retain') return retainComparison(filename, request);
 
-  if (request.action === 'discover') return discoverComparisons(filename);
+  const state = recoverStore(filename, request.action === 'load', request.id);
+  const hooks = transferHooks(filename);
 
-  prepareLegacy(filename);
-  const state = readStore(filename, request.action === 'load', request.id);
+  if (request.action === 'discover') return discoverComparisons(filename, request.ephemeralSessionId !== undefined);
 
-  if (request.action === 'load') return { snapshots: state.snapshots, pending: state.pending };
+  if (request.action === 'part') return transfers.appendPart(filename, request.part, state, hooks);
+
+  if (request.action === 'load') return { snapshots: state.snapshots, pending: state.pending, transfers: state.transfers };
 
   if (request.action === 'pending_ids') return { ids: Object.keys(state.pending) };
 
-  if (request.action === 'pending_status') return { capture: state.pending[request.id] ?? null, completed: Object.hasOwn(state.digests, request.id) };
+  if (request.action === 'pending_status') return { capture: state.pending[request.id] ?? null, completed: completed(state, request.id) };
 
-  if (request.action === 'page') return pageStore(filename, state, request.cursor);
+  if (request.action === 'page') return pages.pageStore(filename, state, request.cursor, { string: stringValue, ordered, maxBytes: maxRecordBytes });
 
   if (request.action === 'finish') return finishStore(filename, request, state);
 
   const records = validatedOperations(state, request);
 
   return saveStore(filename, request, state, records);
+}
+
+function transferHooks(filename) {
+  return {
+    string: stringValue, digest, snapshotValid, owner: transcriptId, maxBytes: maxRecordBytes,
+    profile: () => path.dirname(snapshotParent()),
+    load: () => readStore(filename, false),
+    save: records => {
+      for (const record of records) recordBytes(record);
+      saveStore(filename, { action: 'part' }, readStore(filename, false), records);
+    },
+  };
 }
 
 function validatedOperations(state, request) {
@@ -550,7 +678,7 @@ function validatedOperations(state, request) {
 }
 
 function finishStore(filename, request, state) {
-  if (!equal(state.pending[request.id], request.capture)) return { finished: !Object.hasOwn(state.pending, request.id) };
+  if (!equal(state.pending[request.id], request.capture)) return { finished: !Object.hasOwn(state.pending, request.id) && completed(state, request.id) };
   saveStore(filename, request, state, validatedOperations(state, request));
 
   return { finished: true };
@@ -566,7 +694,7 @@ function saveStore(filename, request, state, records) {
 
     const append = fs.openSync(filename, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW);
 
-    try { appendChanges(filename, request, state, records, append); }
+    try { appendChanges(request, state, records, append); }
     finally { fs.closeSync(append); }
 
     syncParent(filename);
@@ -575,81 +703,13 @@ function saveStore(filename, request, state, records) {
   return null;
 }
 
-function appendChanges(filename, request, state, records, append) {
+function appendChanges(request, state, records, append) {
   if (['replace', 'merge'].includes(request.action) && records.length) {
-    const pending = copyPending(state, records);
-
-    for (const record of pending) recordBytes(record);
-    transaction(append, pending); syncParent(filename);
-
-    for (const record of pending) records.push({ op: 'done', id: record.id });
+    records.push(...copyPending(state, records));
   }
 
   if (records.length) transaction(append, records);
   fs.fsyncSync(append);
 }
 
-function pageStore(filename, state, cursor) {
-  const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-
-  try {
-    const metadata = fs.fstatSync(fd, { bigint: true });
-    const revision = `${state.end}:${metadata.size}:${metadata.mtimeNs}:${metadata.ino}`;
-    const after = pageCursor(cursor, revision);
-
-    return collectPage(fd, state, after, revision);
-  } finally { fs.closeSync(fd); }
-}
-
-function pageCursor(cursor, revision) {
-  if (!stringValue(cursor)) throw new Error('Invalid diff page cursor');
-
-  if (!cursor) return undefined;
-  const value = JSON.parse(cursor);
-
-  if (value.revision !== revision) throw new Error('Diff history changed while paging; retry from the first page');
-
-  if (!stringValue(value.after)) throw new Error('Invalid diff page message ID');
-
-  return value.after;
-}
-
-function collectPage(fd, state, after, revision) {
-  const ids = Object.keys(state.positions).filter(id => after === undefined || id > after).sort();
-  const snapshots = Object.create(null); let bytes = 0; let last;
-
-  for (const id of ids) {
-    const snapshot = indexedSnapshot(fd, state.positions[id], id);
-    const size = Buffer.byteLength(JSON.stringify({ [id]: snapshot }));
-
-    if (last !== undefined && bytes + size > 8 * 1024 * 1024) return { snapshots, next: JSON.stringify({ after: last, revision }) };
-    snapshots[id] = snapshot; bytes += size; last = id;
-  }
-
-  return { snapshots, next: null };
-}
-
-function indexedSnapshot(fd, position, id) {
-  const buffer = Buffer.alloc(64 * 1024); const pieces = []; let size = 0;
-
-  while (size <= maxRecordBytes) {
-    const count = fs.readSync(fd, buffer, 0, buffer.length, position + size);
-
-    if (!count) throw new Error('Diff index ended before its saved record; file preserved');
-    const end = buffer.subarray(0, count).indexOf(10);
-    const piece = buffer.subarray(0, end >= 0 ? end + 1 : count);
-    pieces.push(Buffer.from(piece)); size += piece.length;
-
-    if (end >= 0) {
-      const record = JSON.parse(Buffer.concat(pieces, size).toString('utf8'));
-
-      if (record.op !== 'set' || record.id !== id) throw new Error('Diff index did not match the saved record; file preserved');
-
-      return record.snapshot;
-    }
-  }
-
-  throw new Error('Permanent diff limit: individual page record is too large');
-}
-
-module.exports = { readStore, readStoreLocked, requestStore };
+module.exports = { readStore, readStoreLocked, copyRetainedStoreLocked, requestStore, requestStoreLocked, requestEphemeralStore };

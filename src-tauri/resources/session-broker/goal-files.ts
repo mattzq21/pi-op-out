@@ -16,7 +16,7 @@ const draftSchema = Type.Object({ objective: Type.String(), attachments: Type.Ar
 
 export const goalImagesSchema = Type.Array(Type.Object({ data: Type.String(), mimeType: Type.String(), name: Type.Optional(Type.String()) }));
 
-const preparationSchema = Type.Object({ version: Type.Literal(1), submissionId: Type.String(), digest: Type.String(), objective: Type.String(), sessionId: Type.String(), sessionPath: Type.Optional(Type.String()), cwd: Type.String(), goalId: Type.Optional(Type.String()) });
+const preparationSchema = Type.Object({ version: Type.Literal(1), submissionId: Type.String(), digest: Type.String(), objective: Type.String(), sessionId: Type.String(), sessionPath: Type.Optional(Type.String()), cwd: Type.String(), goalId: Type.Optional(Type.String()), expectedState: Type.Optional(Type.String()) });
 
 const fileErrorSchema = Type.Object({ code: Type.String() });
 
@@ -69,14 +69,14 @@ function materializedGoal(preparation: GoalPreparation, directory: string, creat
   let bound = Boolean(preparation.goalId);
 
   return {
-    objective: preparation.objective, goalId: preparation.goalId,
+    objective: preparation.objective, goalId: preparation.goalId, submissionId: preparation.submissionId,
     cleanup: async () => { if (created && !bound) discardPreparation(rootForDirectory(dirname(dirname(directory))), directory, preparation.sessionId); },
-    bind: async (goalId: string, ctx: ExtensionContext) => {
+    bind: async (goalId: string, ctx: ExtensionContext, expectedState: string) => {
       const temporary = join(directory, `prepared-${randomUUID()}.tmp`);
-      const next: GoalPreparation = { ...preparation, goalId, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
+      const next: GoalPreparation = { ...preparation, goalId, expectedState, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
 
       try {
-        claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, next.sessionId, next.sessionPath);
+        claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, next.sessionId, next.sessionPath, next.objective);
         await writeContent(temporary, JSON.stringify(next));
         await rename(temporary, join(directory, "prepared.json"));
         bound = true;
@@ -84,6 +84,17 @@ function materializedGoal(preparation: GoalPreparation, directory: string, creat
       } finally { await rm(temporary, { force: true }); }
     },
   };
+}
+
+export async function loadMaterializedGoal(ctx: ExtensionContext, id: string) {
+  const preparation = await readGoalPreparation(ctx, id);
+
+  if (!preparation) throw new Error("The queued goal preparation is unavailable. Restore the original submission from saved input recovery.");
+  const directory = preparationDirectory(ctx, id);
+  claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile(), preparation.objective);
+  await syncPreparation(ctx, directory);
+
+  return materializedGoal(preparation, directory, false);
 }
 
 export async function materializeGoal(value: string, ctx: ExtensionContext, submissionId?: string, images: Static<typeof goalImagesSchema> = []) {
@@ -100,7 +111,7 @@ export async function materializeGoal(value: string, ctx: ExtensionContext, subm
 
   if (previous) {
     if (previous.digest !== digest) throw new Error("The saved goal submission has different input. Edit the draft before sending a new goal.");
-    claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile());
+    claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile(), previous.objective);
     await syncPreparation(ctx, directory);
 
     return materializedGoal(previous, directory, false);
@@ -116,7 +127,7 @@ export async function materializeGoal(value: string, ctx: ExtensionContext, subm
     await writeContent(join(staging, "prepared.json"), JSON.stringify(preparation));
     await syncDirectory(staging);
     await rename(staging, directory);
-    claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, preparation.sessionId, preparation.sessionPath);
+    claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, preparation.sessionId, preparation.sessionPath, preparation.objective);
     await syncPreparation(ctx, directory);
 
     return materializedGoal(preparation, directory, true);

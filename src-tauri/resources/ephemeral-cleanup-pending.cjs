@@ -4,6 +4,7 @@ const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { readStore } = require('./session-broker/git-diff-store.cjs');
 const files = require('./ephemeral-cleanup-files.cjs');
+const { inspectTransfer } = require('./diff-transfer-provenance.cjs');
 
 const captureSchema = Type.Union([
   Type.Object({ cwd: Type.String(), baseline: Type.String(), current: Type.String(), ready: Type.Boolean() }),
@@ -62,8 +63,20 @@ function inspect(file, sessionId, profile) {
   const state = readStore(diffFile, false);
 
   for (const [id, capture] of Object.entries(state.pending)) records.push(retained(diffFile, id, capture, parent));
+  retainedTransfers(state, diffFile, sessionId, profile, records);
 
   return records;
+}
+
+function retainedTransfers(state, source, sessionId, profile, records) {
+  for (const [key, value] of Object.entries(state.transfers)) {
+    const { transfer, file, metadata } = inspectTransfer(profile, key, value);
+
+    if (transfer.committed && !metadata) continue;
+
+    if (transfer.owner !== sessionId) throw new Error('Pending diff transfer belongs to another conversation; source log and staging retained');
+    records.push({ source, id: transfer.messageId, transferId: transfer.transferId, path: file, offset: transfer.offset, committed: transfer.committed, available: Boolean(metadata), identity: metadata?.identity ?? null });
+  }
 }
 
 module.exports = { inspect };

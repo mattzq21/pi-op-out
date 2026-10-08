@@ -69,7 +69,7 @@ impl PreparedPiSession {
 fn prepare_pi_session(runtime: &PiRuntime, settings: &AppSettings, host_id: String, options: &StartPiOptions) -> Result<PreparedPiSession, String> {
     let session_id = options.session_id.clone().or_else(|| (options.session_path.is_none() && options.fork_path.is_none()).then(|| Uuid::new_v4().to_string()));
     let ephemeral_key = format!("{}:{}:{}", host_id, options.client_id, options.runtime_id.rsplit(':').next().unwrap_or(&options.runtime_id));
-    let saved_ephemeral = runtime.ephemeral.get(&ephemeral_key)?;
+    let saved_ephemeral = reusable_ephemeral(runtime, options, &ephemeral_key)?;
     let ephemeral = options.no_session.unwrap_or(false) || saved_ephemeral.is_some();
     let session_path = if ephemeral { None } else { saved_pi_path(settings, &host_id, options)? };
     let fork_path = options.fork_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()?;
@@ -78,6 +78,11 @@ fn prepare_pi_session(runtime: &PiRuntime, settings: &AppSettings, host_id: Stri
     let created_ephemeral = !reused_ephemeral && ephemeral_path.is_some();
     if ephemeral_path.is_some() { runtime.ephemeral.attach(&options.runtime_id, ephemeral_key)?; }
     Ok(PreparedPiSession { host_id, session_id, session_path, fork_path, ephemeral_path, ephemeral, created_ephemeral })
+}
+
+fn reusable_ephemeral(runtime: &PiRuntime, options: &StartPiOptions, key: &str) -> Result<Option<crate::pi_launch::EphemeralSession>, String> {
+    let persistent_target = !options.no_session.unwrap_or(false) && (options.session_path.is_some() || options.session_id.is_some());
+    if persistent_target { Ok(None) } else { runtime.ephemeral.get(key) }
 }
 
 fn saved_pi_path(settings: &AppSettings, host_id: &str, options: &StartPiOptions) -> Result<Option<String>, String> {
@@ -194,7 +199,7 @@ pub(super) fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: Stat
 }
 
 fn command_snapshot<'a>(command_type: &str, result: &'a Value) -> Option<&'a Value> {
-    match command_type { "get_snapshot" | "fork" | "fork_after" => result.get("state"), "get_state" => Some(result), _ => None }
+    match command_type { "get_snapshot" | "fork" | "fork_after" | "clone" => result.get("state"), "get_state" => Some(result), _ => None }
 }
 
 #[cfg(feature = "desktop")]

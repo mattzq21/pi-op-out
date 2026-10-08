@@ -6,6 +6,7 @@ const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { addRoot, absolute } = require('./storage-inventory-roots.cjs');
 const { readStore } = require('./session-broker/git-diff-store.cjs');
+const { discoverTransfers } = require('./storage-inventory-transfers.cjs');
 
 const uuid = Type.String({ pattern: '^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$' });
 
@@ -183,9 +184,10 @@ function discoverPendingLogs(profile, discovery) {
     try {
       const state = readStore(sidecar, false);
       const owner = { sessionId: header.id, sessionPath: file, kind: 'pending-comparison-log-provenance' };
+      discoverTransfers(profile, state, owner, sidecar, discovery);
 
       for (const [id, capture] of Object.entries(state.pending)) pendingCapture(capture, owner, `${sidecar}, message ${id}`, profile, discovery);
-    } catch (error) { discovery.warnings.push(`${sidecar}: pending comparison discovery unavailable: ${error.message}; coverage is incomplete`); }
+    } catch (error) { discovery.warnings.push(`${sidecar}: pending comparison/transfer discovery unavailable: ${error.message}; coverage is incomplete`); }
   }
 }
 

@@ -12,8 +12,8 @@ pub(crate) fn recover_remote(host: &crate::RemoteHost) -> Result<(), String> {
     Ok(())
 }
 
-fn restoration_pending(root: &Path) -> Result<bool, String> {
-    let directory = root.join("restore-transactions");
+fn json_records(root: &Path, name: &str) -> Result<bool, String> {
+    let directory = root.join(name);
     let entries = match std::fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -45,7 +45,7 @@ fn legacy_pending(root: &Path) -> Result<bool, String> {
     }
     for area in ["sessions", "archived"] {
         for entry in walkdir::WalkDir::new(root.join(area)).follow_links(false).into_iter().filter_map(Result::ok) {
-            if legacy_deletion_lock(&entry) { return Ok(true); }
+            if legacy_deletion_lock(&entry) || legacy_publication_temporary(&entry) { return Ok(true); }
         }
     }
     Ok(false)
@@ -56,8 +56,17 @@ fn legacy_deletion_lock(entry: &walkdir::DirEntry) -> bool {
     entry.file_type().is_dir() && name.starts_with(".delete-") && name.ends_with(".lock")
 }
 
+fn legacy_publication_temporary(entry: &walkdir::DirEntry) -> bool {
+    if !entry.file_type().is_file() { return false; }
+    let name = entry.file_name().to_string_lossy();
+    let Some((_, suffix)) = name.rsplit_once(".jsonl.") else { return false; };
+    suffix.strip_suffix(".tmp").is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+}
+
 fn recovery_pending(root: &Path) -> Result<bool, String> {
-    if restoration_pending(root)? { return Ok(true); }
+    for directory in ["restore-transactions", "restore-receipts", "session-publications"] {
+        if json_records(root, directory)? { return Ok(true); }
+    }
     for (directory, marker) in [("archive-transactions", "pending.json"), ("delete-transactions", "recovery.json"), ("deleted-sessions", "recovery.json")] {
         if operation_pending(root, directory, marker)? { return Ok(true); }
     }

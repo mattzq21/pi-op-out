@@ -530,7 +530,7 @@ pub(super) fn validate_worktree_unused(settings: &AppSettings, host_id: &str, ta
 }
 
 fn remove_worktree_with_checkpoints(settings: &AppSettings, host_id: &str, target: &WorktreeRemovalTarget, cancelled: &AtomicBool) -> Result<(), String> {
-    let script = format!("{}\ntry {{ preserveAndRemoveWorktree(process.argv[1], authorizeWorktreeRemoval); }} catch (error) {{ process.stderr.write(error.message + '\\n'); process.exitCode = 1; }}", include_str!("../../resources/worktree-checkpoint-preservation.cjs"));
+    let script = format!("{}\n(() => {{ {}\ntry {{ preserveAndRemoveWorktree(process.argv[1], authorizeWorktreeRemoval, diffStore.readStore); }} catch (error) {{ process.stderr.write(error.message + '\\n'); process.exitCode = 1; }} }})();", crate::git_diffs::embedded_diff_store(), include_str!("../../resources/worktree-checkpoint-preservation.cjs"));
     let mut preserve = if host_id == "local" {
         let mut command = node_command(); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", &script, &target.path]); command
     } else {
@@ -541,10 +541,9 @@ fn remove_worktree_with_checkpoints(settings: &AppSettings, host_id: &str, targe
 }
 
 fn complete_checkpoint_removal(command: &mut Command, cancelled: &AtomicBool) -> Result<(), String> {
-    use std::io::{Read, Write};
+    use std::io::Read;
     use std::process::Stdio;
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| error.to_string())?;
-    let mut stdout = child.stdout.take().ok_or("Checkpoint helper output missing")?;
     let stderr = child.stderr.take().ok_or("Checkpoint helper diagnostics missing")?;
     let diagnostics = std::thread::spawn(move || {
         let mut reader = stderr;
@@ -553,18 +552,24 @@ fn complete_checkpoint_removal(command: &mut Command, cancelled: &AtomicBool) ->
         let _ = std::io::copy(&mut reader, &mut std::io::sink());
         bytes
     });
+    let approval = approve_checkpoint_removal(&mut child, cancelled);
+    let status = child.wait().map_err(|error| error.to_string());
+    let bytes = diagnostics.join().map_err(|_| "Checkpoint helper diagnostics failed")?;
+    let approved = approval?;
+    if cancelled.load(Ordering::SeqCst) && !approved { return Err("Worktree removal cancelled".into()); }
+    if !status?.success() || !approved { return Err(format!("Could not preserve checkpoints and remove worktree: {}", String::from_utf8_lossy(&bytes).trim())); }
+    Ok(())
+}
+
+fn approve_checkpoint_removal(child: &mut std::process::Child, cancelled: &AtomicBool) -> Result<bool, String> {
+    use std::io::{Read, Write};
+    let mut stdout = child.stdout.take().ok_or("Checkpoint helper output missing")?;
     let mut acknowledgement = [0u8; 6];
     let ready = stdout.read_exact(&mut acknowledgement).is_ok() && acknowledgement == *b"ready\n";
     let mut input = child.stdin.take().ok_or("Checkpoint helper input missing")?;
     let approved = ready && !cancelled.load(Ordering::SeqCst);
-    let sent = if approved { input.write_all(b"1").map_err(|error| error.to_string()) } else { Ok(()) };
-    drop(input);
-    let status = child.wait().map_err(|error| error.to_string());
-    let bytes = diagnostics.join().map_err(|_| "Checkpoint helper diagnostics failed")?;
-    sent?;
-    if cancelled.load(Ordering::SeqCst) && !approved { return Err("Worktree removal cancelled".into()); }
-    if !status?.success() || !ready { return Err(format!("Could not preserve checkpoints and remove worktree: {}", String::from_utf8_lossy(&bytes).trim())); }
-    Ok(())
+    if approved { input.write_all(b"1").map_err(|error| error.to_string())?; }
+    Ok(approved)
 }
 
 fn cleanup_worktree_storage(settings: &AppSettings, host_id: &str, path: &str) {

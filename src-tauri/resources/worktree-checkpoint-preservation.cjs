@@ -156,7 +156,53 @@ function readTranscript(file, archived) {
   return { file, archived, entries, header, identity: metadataIdentity(before), digest: digest(body), mode: Number(before.mode) & 0o777 };
 }
 
-function visit(directory, archived, target, common, records) {
+function comparisonUsesWorktree(capture, target, common) {
+  if (capture.ready === true) return false;
+
+  if (lostRoot(capture.cwd, target, common)) return true;
+
+  return [capture.baseline, capture.current].some(token => token && lostRoot(JSON.parse(token).repository_root, target, common));
+}
+
+function checkPendingDiffs(record, target, common, readDiffStore) {
+  const file = record.file.replace(/\.jsonl$/, '.diffs.json');
+
+  if (!fs.existsSync(file)) return;
+  const locks = [];
+
+  try {
+    lock(`${file}.lock`, locks);
+    const pending = readDiffStore(file, false).pending;
+
+    if (Object.values(pending).some(capture => comparisonUsesWorktree(capture, target, common))) throw new Error(`Pending diff comparisons require this worktree; recover project changes before removal: ${file}`);
+  } finally { for (const fd of locks) fs.closeSync(fd); }
+}
+
+function checkPendingPointers(storage, target, common) {
+  const directory = path.join(storage, 'git-snapshots');
+  let entries;
+
+  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('pi-desktop-diff-')) continue;
+    const pointer = path.join(directory, entry.name, 'pending-diff.json');
+
+    if (!fs.existsSync(pointer)) continue;
+    const fd = fs.openSync(pointer, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+
+    try {
+      if (fs.fstatSync(fd).size > 4 * 1024 * 1024 * 6 + 64 * 1024) throw new Error(`Oversized pending diff pointer preserved: ${pointer}`);
+      const record = JSON.parse(fs.readFileSync(fd, 'utf8'));
+
+      if (comparisonUsesWorktree(record.capture, target, common)) throw new Error(`Pending diff recovery still requires this worktree: ${pointer}`);
+    } catch (error) { throw new Error(`Pending diff pointer preserved at ${pointer}: ${error.message}`); }
+    finally { fs.closeSync(fd); }
+  }
+}
+
+function visit(directory, archived, target, common, records, readDiffStore) {
   let children;
 
   try { children = fs.readdirSync(directory, { withFileTypes: true }); }
@@ -165,25 +211,28 @@ function visit(directory, archived, target, common, records) {
   for (const child of children) {
     const file = path.join(directory, child.name);
 
-    if (child.isDirectory()) visit(file, archived, target, common, records);
-    else if (child.isFile() && child.name.endsWith('.jsonl')) inspectTranscript(file, archived, target, common, records);
+    if (child.isDirectory()) visit(file, archived, target, common, records, readDiffStore);
+    else if (child.isFile() && child.name.endsWith('.jsonl')) inspectTranscript(file, archived, target, common, records, readDiffStore);
   }
 }
 
-function inspectTranscript(file, archived, target, common, records) {
+function inspectTranscript(file, archived, target, common, records, readDiffStore) {
   try {
     const record = readTranscript(file, archived);
+
+    checkPendingDiffs(record, target, common, readDiffStore);
     const mapping = remapCheckpointRoots(record.header, record.entries, archived, target, common);
 
     if (mapping.changed) records.push({ ...record, refs: mapping.refs });
   } catch (error) { throw new Error(`Cannot preserve checkpoints in ${file}; file retained: ${error.message}`); }
 }
 
-function scan(storage, target, common) {
+function scan(storage, target, common, readDiffStore) {
   const records = [];
 
-  visit(path.join(storage, 'sessions'), false, target, common, records);
-  visit(path.join(storage, 'archived'), true, target, common, records);
+  visit(path.join(storage, 'sessions'), false, target, common, records, readDiffStore);
+  visit(path.join(storage, 'archived'), true, target, common, records, readDiffStore);
+  checkPendingPointers(storage, target, common);
 
   return records.sort((left, right) => left.file.localeCompare(right.file));
 }
@@ -261,7 +310,7 @@ function authorizeWorktreeRemoval() {
   if (fs.readSync(0, acknowledgement, 0, 1) !== 1 || acknowledgement[0] !== 49) throw new Error('Worktree removal cancelled after checkpoint preservation');
 }
 
-function preserveAndRemoveWorktree(targetPath, authorizeRemoval) {
+function preserveAndRemoveWorktree(targetPath, authorizeRemoval, readDiffStore) {
   const target = fs.realpathSync(targetPath);
   const common = canonicalRepository(target);
   const own = fs.realpathSync(git(target, ['rev-parse', '--absolute-git-dir']));
@@ -275,15 +324,15 @@ function preserveAndRemoveWorktree(targetPath, authorizeRemoval) {
 
   try {
     lock(path.join(storage, 'session-transactions.lock'), locks);
-    const records = scan(storage, target, common);
+    const records = scan(storage, target, common, readDiffStore);
 
     lockOwners(storage, records, locks);
 
-    if (!samePlan(records, scan(storage, target, common))) throw new Error('Checkpoint owners changed; retry worktree removal');
+    if (!samePlan(records, scan(storage, target, common, readDiffStore))) throw new Error('Checkpoint owners changed; retry worktree removal');
 
     for (const record of records) publish(record, common);
 
-    if (scan(storage, target, common).length) throw new Error('New checkpoint owners still use the worktree; retry removal');
+    if (scan(storage, target, common, readDiffStore).length) throw new Error('New checkpoint owners still use the worktree; retry removal');
     authorizeRemoval();
     git(common, ['worktree', 'remove', '--', target]);
   } finally { for (const fd of locks.reverse()) fs.closeSync(fd); }

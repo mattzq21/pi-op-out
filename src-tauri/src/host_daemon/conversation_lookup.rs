@@ -17,14 +17,17 @@ impl ConversationOwnership {
             for entry in WalkDir::new(&root).follow_links(false) {
                 let entry = entry.map_err(|error| error.to_string())?;
                 if !transcript_entry(&entry) { continue; }
-                let Some(saved) = read_candidate(id, entry.path(), &root, metadata_only)? else { continue; };
-                if saved.header["type"] != "session" || saved.header["cwd"].as_str().is_none() { continue; }
+                let Some(saved) = conversation_candidate(id, entry.path(), &root, metadata_only)? else { continue; };
                 if found.is_some() { return Err("Conversation identity is duplicated; resolve its storage copies before opening it".into()); }
                 found = Some((saved, archived));
             }
         }
         Ok(found)
     }
+}
+
+fn conversation_candidate(id: &str, path: &std::path::Path, root: &std::path::Path, metadata_only: bool) -> Result<Option<SavedConversation>> {
+    Ok(read_candidate(id, path, root, metadata_only)?.filter(|saved| saved.header["type"] == "session" && saved.header["cwd"].as_str().is_some()))
 }
 
 fn transcript_entry(entry: &walkdir::DirEntry) -> bool {

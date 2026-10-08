@@ -1,14 +1,13 @@
-import { randomUUID } from "node:crypto";
-import { link, open, rm } from "node:fs/promises";
+import { publish, SessionPublicationError, type PublicationOptions } from "./session-publication.cjs";
 
-export async function writeSessionFile(path: string, entries: unknown[]) {
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  const file = await open(temporary, "wx", 0o600);
+export type { PublicationOptions, SessionPublication } from "./session-publication.cjs";
 
-  try {
-    try { await file.writeFile(entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n"); }
-    finally { await file.close(); }
+export function publicationRetainsDependencies(error: Error): boolean {
+  if (error instanceof SessionPublicationError) return error.dependenciesRetained || error.publicationPending;
 
-    await link(temporary, path);
-  } finally { await rm(temporary, { force: true }); }
+  return error.cause instanceof Error && publicationRetainsDependencies(error.cause);
+}
+
+export async function writeSessionFile(path: string, entries: unknown[], options?: PublicationOptions) {
+  return publish(path, entries.map(entry => JSON.stringify(entry)).join("\n") + "\n", options);
 }

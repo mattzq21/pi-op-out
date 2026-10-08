@@ -75,8 +75,8 @@ export async function buildArtifact({ output, inputs, key }, generate) {
   console.log(`Built: ${output}`);
 }
 
-export async function buildBundle(options, output, { script, transform = content => content }) {
-  await buildArtifact({ output, inputs: [fileURLToPath(script)], key: options }, async () => {
+export async function buildBundle(options, output, { script, inputs = [], transform = content => content }) {
+  await buildArtifact({ output, inputs: [fileURLToPath(script), ...inputs], key: options }, async () => {
     const result = await build({ ...options, write: false, metafile: true });
 
     return { content: transform(result.outputFiles[0].contents), dependencies: Object.keys(result.metafile.inputs) };

@@ -8,6 +8,8 @@ const { createRequire } = require("node:module");
 
 const queuePromptContext = new AsyncLocalStorage();
 
+const goalPromptContext = new AsyncLocalStorage();
+
 const queuePromptScope = Symbol("piop.queue-prompt");
 
 const wrappedSessions = new WeakSet();
@@ -46,7 +48,7 @@ async function queueContracts(root) {
   ]);
 
   const response = Type.Object({ type: Type.Literal("answer_question"), requestId: Type.String(), value: Type.Optional(Type.String()), cancelled: Type.Optional(Type.Boolean()) });
-  const prompt = Type.Object({ queueId: Type.String({ minLength: 1 }), message: Type.String(), streamingBehavior: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]), images: Type.Optional(Type.Array(Type.Unknown())), questionResponse: Type.Optional(response) });
+  const prompt = Type.Object({ queueId: Type.String({ minLength: 1 }), message: Type.String(), streamingBehavior: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]), images: Type.Optional(Type.Array(Type.Unknown())), questionResponse: Type.Optional(response), goalSubmissionId: Type.Optional(Type.String()), goalPrepared: Type.Optional(Type.Boolean()) });
   const user = Type.Object({ role: Type.Literal("user"), piopQueueId: Type.String({ minLength: 1 }) });
 
   return { parse: payload => Parse(prompt, payload), check: message => Check(user, message) };
@@ -196,7 +198,8 @@ async function dispatchQueuedPrompt(command, session, output) {
     images: payload.images,
     streamingBehavior: payload.streamingBehavior,
     source: "rpc",
-    goalSubmissionId: payload.queueId,
+    goalSubmissionId: payload.goalSubmissionId,
+    goalPrepared: payload.goalPrepared,
     [queuePromptScope]: { session, queueId: payload.queueId, tagged: false },
     preflightResult: (disposition, submittedText) => {
       preflightSucceeded = true;
@@ -226,23 +229,60 @@ function goalObjective(text, images) {
   return Boolean(value && !["edit", "clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget ")) || Boolean(images?.length && text.trim() === "/goal");
 }
 
-async function prepareGoalPrompt(text, session, goalSubmissionId, images) {
-  if (!goalObjective(text, images)) return text;
+async function prepareGoalPrompt(text, session, goalSubmissionId, images, prepared) {
+  if (!goalObjective(text, images) && !prepared) return { message: text };
 
   try {
     const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.app-rpc"))?.value;
 
     if (!emit) throw new Error("Goal prompt preparation is unavailable");
-    const request = { command: "prepare_goal_prompt", payload: { message: text, goalSubmissionId, images }, ctx: session.extensionRunner.createCommandContext() };
+    const request = { command: "prepare_goal_prompt", payload: { message: text, goalSubmissionId, images, prepared }, ctx: session.extensionRunner.createCommandContext() };
     emit(request);
 
     if (!request.ready) throw new Error("Goal prompt preparation is unavailable");
-    const prepared = await request.ready;
+    const result = await request.ready;
 
-    if (!prepared?.message) throw new Error("Goal prompt preparation did not produce an objective");
+    if (!result?.message) throw new Error("Goal prompt preparation did not produce an objective");
 
-    return prepared.message;
+    return result;
   } catch (error) { throw new GoalPreparationError(error instanceof Error ? error.message : String(error)); }
+}
+
+function acceptGoalPrompt(prepared) {
+  try { prepared.accept(); }
+  catch (error) { throw new GoalPreparationError(error instanceof Error ? error.message : String(error)); }
+}
+
+function installGoalAcceptance(AgentSession) {
+  for (const name of ["_queueSteer", "_queueFollowUp"]) {
+    const queue = AgentSession.prototype[name];
+    AgentSession.prototype[name] = function (...args) {
+      const scope = goalPromptContext.getStore();
+
+      if (scope?.session === this) acceptGoalPrompt(scope.prepared);
+
+      return queue.apply(this, args);
+    };
+  }
+
+  const prompt = AgentSession.prototype.prompt;
+  AgentSession.prototype.prompt = async function (text, options) {
+    const prepared = await prepareGoalPrompt(text, this, options?.goalSubmissionId, options?.images, options?.goalPrepared);
+    const goal = Boolean(prepared.goalSubmissionId);
+
+    const preflightResult = disposition => {
+      if (goal) {
+        if (disposition === "handled") throw new GoalPreparationError("The prepared goal prompt was handled before submission. Restore the objective from saved input recovery.");
+        acceptGoalPrompt(prepared);
+      }
+
+      options?.preflightResult?.(disposition, goal ? prepared.message : undefined);
+    };
+
+    const preparedOptions = goal ? { ...options, preflightResult, goalSubmissionId: prepared.goalSubmissionId, goalPrepared: true, images: undefined, expandPromptTemplates: false } : { ...options, preflightResult };
+
+    return goalPromptContext.run(goal ? { session: this, prepared } : undefined, () => prompt.call(this, prepared.message, preparedOptions));
+  };
 }
 
 async function dispatch(command, session, output) {
@@ -282,15 +322,7 @@ async function main() {
   const { AgentSession } = await import(pathToFileURL(join(root, "dist/index.js")).href);
   const { writeRawStdout } = await import(pathToFileURL(join(root, "dist/core/output-guard.js")).href);
   const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);
-  const prompt = AgentSession.prototype.prompt;
-
-  AgentSession.prototype.prompt = async function (text, options) {
-    const objective = goalObjective(text, options?.images);
-    const prepared = await prepareGoalPrompt(text, this, options?.goalSubmissionId, options?.images);
-    const preflightResult = disposition => options?.preflightResult?.(disposition, objective ? prepared : undefined);
-
-    return prompt.call(this, prepared, objective ? { ...options, preflightResult, images: undefined, expandPromptTemplates: false } : { ...options, preflightResult });
-  };
+  installGoalAcceptance(AgentSession);
 
   let session;
   const bind = AgentSession.prototype.bindExtensions;

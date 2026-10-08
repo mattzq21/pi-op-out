@@ -135,7 +135,8 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
     entry({ type: "session_info", name: `Subagent: ${task.name}` }),
     entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
-  ]); } catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; any created worktree is retained: ${String(error)}`); }
+  ], { dependencies: { workspace: { path: workspace.cwd, kind: workspace.worktree === "new" ? "created-worktree" : "existing", branch: workspace.branch } } }); }
+  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; publication dependencies and any created worktree are retained: ${String(error)}`, { cause: error }); }
 
   return run;
 }

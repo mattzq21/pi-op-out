@@ -22,6 +22,9 @@ use uuid::Uuid;
 
 pub(super) trait SessionHost: Send + Sync {
     fn output(&self, packet: Value);
+    fn drain_capture<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { Err("Capture drain unavailable".into()) })
+    }
     fn record_tool_failure(&self, _record: Value) {}
     fn configuration(&self) -> Option<Value>;
     fn readonly_views(&self, identity: &str) -> Vec<String>;

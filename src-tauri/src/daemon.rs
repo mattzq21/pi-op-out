@@ -188,16 +188,13 @@ fn save_capture_packet(app: &AppHandle, host_id: &str, packet: &Value, host: Opt
         return Ok(());
     };
     if packet["ephemeral"] == true {
-        if let Some(diff) = load_git_diff_between_at_host(cwd, baseline, current, host)? {
-            let _ = app.emit("pi://event", json!({"type":"turn_diff","hostId":host_id,"sessionPath":path,"messageId":id,"snapshot":diff}));
-        }
-        let _ = discard_git_tree_at_host(baseline, host);
-        let _ = discard_git_tree_at_host(current, host);
+        let session_id = packet["sessionId"].as_str().ok_or("Temporary capture has no stable session ID; snapshots preserved")?;
+        crate::git_diffs::persist_ephemeral_capture_diff(path, session_id, id, cwd, baseline, current, host)?;
     }
     else {
         crate::git_diffs::persist_capture_diff(path, id, cwd, baseline, current, host)?;
-        let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path}));
     }
+    let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path}));
     Ok(())
 }
 

@@ -1,4 +1,3 @@
-import { entrySchema } from "../lib/responseSchemas";
 import { required } from "../lib/required";
 import { extensionUiSchema } from "../lib/extensionUiSchema";
 import { inheritSessionGroup } from "../lib/sessionGroups";
@@ -17,7 +16,6 @@ import { SessionRuntimePool, useTurnDiffs } from "../lib/sessionRuntimePool";
 import { useChatSession } from "../lib/useChatSession";
 import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgentsCapability, ExtensionUiRequest, ImageAttachment, RpcEvent, SessionSummary } from "../types";
 
-import { branchMessages } from "../lib/messages";
 import { textOf } from "../lib/content";
 import { createRepositoryStatus } from "../lib/repositoryStatus";
 import { ChatView } from "./ChatView";
@@ -25,13 +23,13 @@ import type { createConversationDrafts } from "../appDrafts";
 import { draftUploadsFromImages, stageDraftSubmission, submitDurablePrompt } from "../lib/draftSubmission";
 import { trackChatSubmission } from "../lib/newChatWorktree";
 
-interface Props { drafts: ReturnType<typeof createConversationDrafts>; onArchiveOriginal: (session: SessionSummary) => Promise<void>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; freshReview?: boolean; inheritedReviewParent?: string; initialPrompt?: string; initialImages?: ImageAttachment[]; onMessageMain?: (message: string) => Promise<void>; onReady?: () => void; onFailed?: (cause: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
+interface Props { drafts: ReturnType<typeof createConversationDrafts>; onArchiveOriginal: (session: SessionSummary) => Promise<void>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; freshReview?: boolean; inheritedReviewParent?: string; archivedReview?: boolean; onShowArchive: () => void; initialPrompt?: string; initialImages?: ImageAttachment[]; onMessageMain?: (message: string) => Promise<void>; onReady?: () => void; onFailed?: (cause: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
 export function SplitChatPane(componentProps: Props) {
   const [transport] = createSignal((() => {
-    if (componentProps.inheritedReviewParent) return componentProps.runtimePool.forReadOnly(componentProps.session);
+    if (componentProps.inheritedReviewParent || componentProps.archivedReview) return componentProps.runtimePool.forReadOnly(componentProps.session);
 
     return componentProps.freshReview ? componentProps.runtimePool.forReview(componentProps.session) : componentProps.runtimePool.forSession(componentProps.session);
   })());
@@ -295,9 +293,9 @@ export function SplitChatPane(componentProps: Props) {
     const finishBranching = beginBranching();
     const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSession1 = componentProps.session; const capturedOnSessionChange2 = componentProps.onSessionChange;
 
- try { if (!message.entryId) throw new Error("Could not find the response to branch from"); const sourcePath = capturedTransport.currentSessionPath(); const sourceDiffs = await capturedRuntimePool0.captureMemoryDiffs(capturedTransport); const result = await capturedTransport.command({ type: "fork_after", entryId: message.entryId }, z.object({ cancelled: z.boolean().optional() }));
+ try { if (!message.entryId) throw new Error("Could not find the response to branch from"); const result = await capturedTransport.command({ type: "fork_after", entryId: message.entryId }, z.object({ cancelled: z.boolean().optional() }));
 
- if (result.cancelled) return false; const nextState = await capturedSession.refresh(); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport); const history = await capturedTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) })); await capturedRuntimePool0.copySavedDiffs(capturedTransport, sourcePath, capturedTransport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)), sourceDiffs);
+ if (result.cancelled) return false; const nextState = await capturedSession.refresh(); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport); await capturedRuntimePool0.refreshSavedDiffs(capturedTransport, nextState.sessionFile);
 
  return true; } catch (reason) { reportControlError(reason);
 
@@ -327,12 +325,9 @@ export function SplitChatPane(componentProps: Props) {
         const result = await owner.command({ type: "branch_checkpoint", entryId: message.entryId, name: crypto.randomUUID().slice(0, 8), afterResponse: true }, z.object({ branch: z.string(), path: z.string(), sessionPath: z.string(), sessionId: z.string() }));
         await inheritSessionGroup(`${hostId}:${source.id}`, `${hostId}:${result.sessionId}`, source);
         await owner.runWorktreeSetup(source.cwd, result.path, hostId);
-        const history = await owner.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
-        const messages = branchMessages(history.entries, history.leafId);
-        const cutoff = messages.findIndex(entry => entry.entryId === message.entryId);
-        await pool.copySavedDiffs(owner, source.path, result.sessionPath, new Set(messages.slice(0, cutoff + 1).map(entry => entry.id)), await pool.captureMemoryDiffs(owner));
         await owner.disconnect();
         await owner.connect(result.path, result.sessionPath, hostId);
+        await pool.refreshSavedDiffs(owner, result.sessionPath);
         await session().refresh();
         pool.bind(hostId, result.sessionId, owner);
         changeSession({ ...source, id: result.sessionId, path: result.sessionPath, cwd: result.path, worktreeRoot: result.path, branch: result.branch, name: result.branch }, owner);
@@ -366,7 +361,7 @@ export function SplitChatPane(componentProps: Props) {
 
   const agentDefinitionHost = () => componentProps.session.hostName || ((componentProps.session.hostId ?? "local") === "local" ? "Local" : componentProps.session.hostId);
 
-  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} gitDiffs={gitDiffs()} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), definedAgents()?.config.fastModeModels)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected() || !componentProps.drafts.loaded()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={branch} canRollback={componentProps.session.projectKind === "worktree"} onForkAndForget={forkAndForget} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
+  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView readOnly={Boolean(componentProps.inheritedReviewParent || componentProps.archivedReview)} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} gitDiffs={gitDiffs()} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), definedAgents()?.config.fastModeModels)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected() || !componentProps.drafts.loaded()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={branch} canRollback={componentProps.session.projectKind === "worktree"} onForkAndForget={forkAndForget} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
 
   return session().refresh(); }).catch(reportControlError)} onModel={(model) => transport().promptControls.model(model, transport().promptControls.state(session().state).thinkingLevel)} onToggleFastMode={() => transport().promptControls.toggle(statuses())} onThinking={(level) => transport().promptControls.thinking(level)} />);
 
@@ -380,6 +375,7 @@ export function SplitChatPane(componentProps: Props) {
     <header class="split-pane-header"><span><strong data-tooltip={componentProps.session.name}>{componentProps.session.name}</strong><small data-tooltip={componentProps.session.cwd}>{componentProps.session.project}</small></span><div class="split-pane-actions">{renderReviewFeedback()}<button class="split-pane-close" aria-label="Close split pane" data-tooltip="Close split pane" onClick={componentProps.onClose}><X size={15} /></button></div></header>
     {renderSplitPaneStatus()}
     {componentProps.inheritedReviewParent && <div class="split-pane-status" role="status">Inherited review, opened read-only. Feedback belongs to the original conversation ({componentProps.inheritedReviewParent}). Open that conversation to send feedback.</div>}
+    {componentProps.archivedReview && <div class="split-pane-status" role="status">This review is archived and read-only. <button type="button" onClick={componentProps.onShowArchive}>Open archived sessions to restore it</button></div>}
     {renderSplitControlError()}
     {notices().length > 0 && <div class="split-notices">{<Key each={notices()} by={(notice) => notice.id}>{(notice, _index) => <div class="error-toast" role="alert" ><strong>{notice().title}</strong><span>{notice().message}</span><button aria-label={`Dismiss ${notice().title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice().id))}>×</button></div>}</Key>}</div>}
   </section>;

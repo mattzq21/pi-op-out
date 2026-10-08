@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { gzipSync } from "node:zlib";
+import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import { parseArgs } from "node:util";
 import { buildArtifact, buildBundle, buildInParallel } from "./incremental-build.mjs";
 import { agentCommandInputs, agentCommandInventory } from "./agent-command-inventory.mjs";
+import { storageSchemaImports } from "./storage-schema-plugin.mjs";
 
 async function fastMode() {
   const license = await readFile("extensions/piop-openai-fast-mode/LICENSE", "utf8").catch(error => {
@@ -72,9 +73,10 @@ async function backendScripts() {
         format: "iife",
         target: "node22",
         minify: true,
-      }, `src-tauri/resources/${name}.bundle.mjs`, { script: import.meta.url, transform(content) {
-        const payload = gzipSync(content, { level: 9 }).toString("base64");
-        const script = `eval(require("node:zlib").gunzipSync(Buffer.from("${payload}", "base64")).toString("utf8"));\n`;
+        plugins: [storageSchemaImports()],
+      }, `src-tauri/resources/${name}.bundle.mjs`, { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))], transform(content) {
+        const payload = brotliCompressSync(content, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).toString("base64");
+        const script = `eval(require("node:zlib").brotliDecompressSync(Buffer.from("${payload}", "base64")).toString("utf8"));\n`;
 
         if (Buffer.byteLength(script) > 96 * 1024) throw new Error(`${name} exceeds the embedded script argument budget`);
 

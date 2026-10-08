@@ -23,6 +23,7 @@ export const runSchema = Schema.Object({
   agent: Schema.Optional(Schema.String()), taskPath: Schema.Optional(Schema.String()),
   cwd: Schema.Optional(Schema.String()), worktree: Schema.Optional(Schema.Union([Schema.Literal("same"), Schema.Literal("new")])), branch: Schema.Optional(Schema.String()),
   runId: Schema.Optional(Schema.String()), generation: Schema.Optional(counter), offset: Schema.Optional(counter), accountedTokens: Schema.Optional(counter), forwardedTokens: Schema.Optional(counter),
+  offsetHeader: Schema.Optional(Schema.String()), usageBoundaryId: Schema.Optional(Schema.String()), usageNotificationId: Schema.Optional(Schema.String()),
   goalId: Schema.Optional(Schema.String()), goalTokens: Schema.Optional(counter),
   sourceTotals: Schema.Optional(Schema.Record(Schema.String(), counter)), legacyCredits: Schema.Optional(counter),
   observation: Schema.Optional(Schema.Union([Schema.Literal("watching"), Schema.Literal("interrupted")])),
@@ -73,6 +74,15 @@ export function latestRuns(ctx: ExtensionContext) {
   }
 
   return [...runs.values()];
+}
+
+export function originalRunTask(ctx: ExtensionContext, run: SubagentRun) {
+  const key = run.runId ?? `${run.toolCallId}:${run.startedAt}`;
+
+  const entry = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === SUBAGENT_RUN && Check(runSchema, entry.data)
+    && entry.data.parentSessionId === run.parentSessionId && entry.data.sessionId === run.sessionId && (entry.data.runId ?? `${entry.data.toolCallId}:${entry.data.startedAt}`) === key);
+
+  return entry?.type === "custom" && Check(runSchema, entry.data) ? entry.data.task : run.task;
 }
 
 function precedes(run: SubagentRun, previous: SubagentRun) {

@@ -13,6 +13,9 @@ const { diskStorage } = require('./storage-inventory-disk.cjs');
 const { checkpointStorage } = require('./storage-inventory-checkpoints.cjs');
 const { inventoryCategories, archiveCoverage } = require('./storage-inventory-report.cjs');
 const { discoverEphemeral, discoverPendingLogs } = require('./storage-inventory-ephemeral.cjs');
+const { reconcileGoalAssets } = require('./storage-inventory-goals.cjs');
+const { discoverGoalDiagnostics } = require('./storage-inventory-diagnostics.cjs');
+const { sharedArchiveRestore, discoverArchiveResources } = require('./storage-inventory-resources.cjs');
 
 const configuredRoot = process.env.PIOP_STORAGE_DIRECTORY || '.piop';
 
@@ -175,7 +178,7 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
     byteSize: metadata.size + diffBytes,
     byteSizeCoverage: archiveCoverage,
     deletable,
-    ...await archivedWorktree(header),
+    ...await archivedWorktree(header, file),
   };
 
   if (!deletable) archive.deleteError = deleteError;
@@ -199,8 +202,14 @@ function currentWorktree(cwd) {
   return worktreeChecks.get(cwd);
 }
 
-async function archivedWorktree(header) {
+async function archivedWorktree(header, file) {
   if (!validSessionHeader(header)) return {};
+
+  if (header.archiveResourceId !== undefined) {
+    try { return sharedArchiveRestore(await fs.realpath(piopRoot), file, header); }
+    catch (error) { return { restorable: false, restoreError: 'Shared archive profile unavailable: ' + error.message }; }
+  }
+
   const current = await currentWorktree(header.cwd);
 
   if (current === undefined) return restorableWorktree(header.worktreeRestore);
@@ -435,6 +444,9 @@ async function main() {
   for (const candidate of candidates.values()) await collectSession(candidate, discovery, archives, referencedWorktrees);
   resolveOwners(discovery);
   discoverPendingLogs(profile, discovery);
+  await discoverGoalDiagnostics(profile, discovery);
+  await discoverArchiveResources(profile, discovery);
+  await reconcileGoalAssets(profile, discovery);
 
   for (const record of discovery.cwds.values()) {
     const worktree = await currentWorktree(record.path);

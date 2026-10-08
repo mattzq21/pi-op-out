@@ -239,12 +239,20 @@ function lock(root) {
 function recover(root) {
   const failures = [];
 
-  for (const replay of [require('./archive-transaction.cjs').recover, require('./delete-transaction.cjs').recover, require('./restore-transaction.cjs').recover]) {
+  for (const replay of [recoverPublications, require('./archive-transaction.cjs').recover, require('./delete-transaction.cjs').recover, require('./restore-transaction.cjs').recover, require('./restore-receipts.cjs').prune]) {
     try { replay(root); }
     catch (error) { failures.push(error.message); }
   }
 
   if (failures.length) throw new Error(`Session transaction recovery is pending:\n${failures.join('\n')}`);
+}
+
+function recoverPublications(root) {
+  const result = require('./session-broker/session-publication.cjs').recover(root);
+
+  for (const warning of result.warnings) console.error(`Session publication recovery retained: ${warning}`);
+
+  for (const retained of result.quarantined) console.error(`Session publication retained: ${retained.path}: ${retained.reason}`);
 }
 
 module.exports = { inside, exists, sync, syncTree, mkdir, write, identity, describe, matches, sameContents, move, undo, removalPlan, removeOwned, git, refValue, removeRef, lock, recover };

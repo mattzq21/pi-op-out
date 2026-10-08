@@ -70,6 +70,11 @@ pub(super) struct Host {
 struct Callbacks(Weak<Host>);
 
 impl SessionHost for Callbacks {
+    fn drain_capture<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            self.0.upgrade().ok_or("Host daemon disconnected")?.drain_capture(key).await
+        })
+    }
     fn record_tool_failure(&self, record: Value) {
         if let Some(host) = self.0.upgrade() {
             if let Err(error) = host.tool_failures.record(record) {
@@ -273,6 +278,7 @@ impl Host {
         packet["spec"] = json!(spec);
         packet["sessionKey"] = json!(session.identity);
         packet["cwd"] = json!(session.cwd);
+        packet["ephemeral"] = json!(session.ephemeral);
         registry.attachments.insert(runtime.into(), Arc::new(packet));
     }
 
@@ -381,6 +387,20 @@ impl Host {
         }
         self.registry().captures.entry(id.into()).or_default().insert(session.key());
         Ok(())
+    }
+
+    pub(super) async fn drain_capture(&self, key: &str) -> Result<()> {
+        let request = Uuid::new_v4().to_string();
+        let (sender, receiver) = oneshot::channel();
+        self.registry().drains.insert(request.clone(), sender);
+        self.output(json!({"type":"ownership_drain","id":request,"sessionKey":key}));
+        let result = match tokio::time::timeout(Duration::from_secs(120), receiver).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err("Host daemon disconnected while saving project changes".into()),
+            Err(_) => Err("Project capture drain timed out; source retained".into()),
+        };
+        self.registry().drains.remove(&request);
+        result
     }
 
     async fn drain_captures(&self, id: &str) -> Result<()> {

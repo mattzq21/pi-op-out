@@ -3,6 +3,7 @@ const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { absolute, addRoot, legacyRecovery } = require('./storage-inventory-roots.cjs');
 const { snapshotCheckpoint, promptCheckpoint } = require('./checkpoint-schemas.cjs');
+const { validGoalPath, observeGoalContract } = require('./storage-inventory-goals.cjs');
 
 const safeId = value => value.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
 
@@ -17,6 +18,7 @@ function observeEntry(observation, entry) {
 
   observePrompt(observation, entry);
   observeGoals(observation, entry);
+  observeGoalContract(observation, entry);
 }
 
 function observePrompt(observation, entry) {
@@ -34,7 +36,7 @@ function observeGoals(observation, entry) {
   for (const match of text.matchAll(/(\/[^"\n]*?\/attachments\/goal-[a-zA-Z0-9_-]+)(?=\/)/g)) observation.goals.add(match[1]);
 }
 
-function createObservation() { return { repositories: new Set(), refs: new Map(), goals: new Set() }; }
+function createObservation() { return { repositories: new Set(), refs: new Map(), goals: new Set(), goalContracts: new Map(), goalWarnings: [] }; }
 
 function recordSession(discovery, details, candidate) {
   const id = details.sessionId;
@@ -95,9 +97,19 @@ function recordGoals(discovery, details, owner, candidate) {
   let kind = 'unresolved';
 
   if (details.readable) kind = details.fork ? 'fork-history' : `${candidate.kind}-goal-history`;
-  const goalOwner = { ...owner, kind };
 
-  for (const directory of details.observation.goals) addRoot(discovery.goals, directory, `Goal reference in surviving history: ${candidate.file}`, 'shared', [goalOwner]);
+  if (candidate.kind.startsWith('diagnostic-')) kind = candidate.kind;
+  const goalOwner = { ...owner, kind };
+  const source = candidate.kind.startsWith('diagnostic-') ? 'Retained diagnostic reference; not a live owner: ' : 'Goal reference in surviving history: ';
+
+  for (const warning of details.observation.goalWarnings) discovery.warnings.push(candidate.file + ': ' + warning);
+
+  for (const directory of details.observation.goals) {
+    const record = addRoot(discovery.goals, directory, source + candidate.file, 'shared', [goalOwner]);
+    const identities = details.observation.goalContracts.get(directory);
+
+    if (identities) { record.contracts ??= []; record.contracts.push({ owner: goalOwner, identities }); }
+  }
 }
 
 function resolveOwners(discovery) {
@@ -163,6 +175,4 @@ function sessionKind(file, profile) {
   return 'referenced';
 }
 
-function validGoalPath(directory) { return absolute(directory) && /^goal-[a-zA-Z0-9_-]+$/.test(path.basename(directory)) && path.basename(path.dirname(directory)) === 'attachments'; }
-
-module.exports = { createObservation, observeEntry, recordSession, resolveOwners, checkpointOwners, ownerCategory, sessionKind, validGoalPath };
+module.exports = { createObservation, observeEntry, recordSession, recordGoals, resolveOwners, checkpointOwners, ownerCategory, sessionKind, validGoalPath };

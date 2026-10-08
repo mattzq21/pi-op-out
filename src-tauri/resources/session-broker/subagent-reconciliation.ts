@@ -1,15 +1,15 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
-import { stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { GoalScope, GoalUsage } from "./goals.ts";
 import { goalTokens } from "./goal-state.ts";
 import { listenSubagentUsage, type UsageCheckpoint } from "./subagent-usage.ts";
 import { branchEntries, interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
-import { saveRun, type SubagentRun } from "./subagent-state.ts";
-import { transcriptLines } from "./subagent-transcript.ts";
+import { originalRunTask, saveRun, type SubagentRun } from "./subagent-state.ts";
+import { transcriptLines, transcriptMetadata } from "./subagent-transcript.ts";
+import { activeConversation } from "./conversation-location.ts";
 
 const usageSchema = Schema.Object({ input: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.Number()), cacheWrite: Schema.Optional(Schema.Number()), cost: Schema.Optional(Schema.Object({ total: Schema.Optional(Schema.Number()) })) });
 
@@ -64,7 +64,7 @@ async function transcriptUsage(run: SubagentRun) {
   let apiCost = 0;
   const self = new Map<string, { tokens: number; apiCost: number }>();
 
-  for await (const { line, offset } of transcriptLines(run.sessionPath, run.offset ?? 0)) {
+  for await (const { line, offset } of transcriptLines(run.sessionPath, run.offset ?? 0, run.sessionId, run.offsetHeader)) {
     let entry;
 
     try { entry = JSON.parse(line); } catch { continue; }
@@ -98,11 +98,11 @@ async function legacyOffset(run: SubagentRun, snapshot: Awaited<ReturnType<typeo
   const branch = branchEntries(snapshot);
   const index = taskObserved(run, branch);
 
-  if (index < 0) throw new Error("Cannot identify this legacy run's submitted task on the child's selected branch");
-  const id = branch[index].id;
+  if (!run.usageBoundaryId && index < 0) throw new Error("Cannot identify this run's submitted task on the child's selected branch");
+  const id = run.usageBoundaryId ?? branch[index].id;
   let offset: number | undefined;
 
-  for await (const { line, next } of transcriptLines(run.sessionPath)) {
+  for await (const { line, next } of transcriptLines(run.sessionPath, 0, run.sessionId)) {
     let entry;
 
     try { entry = JSON.parse(line); } catch { continue; }
@@ -113,6 +113,27 @@ async function legacyOffset(run: SubagentRun, snapshot: Awaited<ReturnType<typeo
   if (offset === undefined) throw new Error("The child transcript no longer contains the observed task boundary");
 
   return offset;
+}
+
+async function prepareOffset(run: SubagentRun, observation: Observation, snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {
+  const metadata = await transcriptMetadata(run.sessionPath, run.sessionId);
+  const initial = { ...run, task: originalRunTask(observation.ctx, run), taskNotificationId: run.usageNotificationId, taskStartedAt: run.startedAt };
+  const branch = branchEntries(snapshot);
+  const boundary = taskObserved(initial, branch, true);
+  const previous = run.usageBoundaryId;
+
+  if (boundary >= 0) run.usageBoundaryId ??= branch[boundary].id;
+
+  if (run.offset === undefined) {
+    run.offsetHeader = metadata.header;
+    await initializeLegacy(run, observation, snapshot, initial);
+  }
+  else if (run.offsetHeader !== metadata.header || run.offset > metadata.size) run.offset = await legacyOffset({ ...initial, usageBoundaryId: run.usageBoundaryId }, snapshot);
+
+  if (run.offsetHeader !== metadata.header || previous !== run.usageBoundaryId) {
+    run.offsetHeader = metadata.header;
+    saveRun(observation.pi, observation.ctx, run);
+  }
 }
 
 function legacyCredits(run: SubagentRun, ctx: ExtensionContext) {
@@ -127,8 +148,8 @@ function legacyCredits(run: SubagentRun, ctx: ExtensionContext) {
   return Math.min(Number.MAX_SAFE_INTEGER, credits);
 }
 
-async function initializeLegacy(run: SubagentRun, observation: Observation, snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {
-  run.offset = await legacyOffset(run, snapshot);
+async function initializeLegacy(run: SubagentRun, observation: Observation, snapshot: Awaited<ReturnType<typeof sessionSnapshot>>, initial: SubagentRun) {
+  run.offset = await legacyOffset({ ...initial, usageBoundaryId: run.usageBoundaryId }, snapshot);
   const usage = await transcriptUsage(run);
   const credits = Math.min(usage.tokens, legacyCredits(run, observation.ctx));
   run.legacyCredits = credits;
@@ -233,8 +254,8 @@ function contentText(content: Static<typeof contentSchema>) {
   return Array.isArray(content) ? content.flatMap(part => Check(textSchema, part) ? [part.text] : []).join("\n") : "";
 }
 
-function taskObserved(run: SubagentRun, branch: ReturnType<typeof branchEntries>) {
-  return branch.findLastIndex(entry => {
+function taskObserved(run: SubagentRun, branch: ReturnType<typeof branchEntries>, first = false) {
+  const matches = (entry: ReturnType<typeof branchEntries>[number]) => {
     const message = entry.type === "message" ? entry.message : entry;
 
     if (message?.customType !== "piop-agent-message") return false;
@@ -245,7 +266,9 @@ function taskObserved(run: SubagentRun, branch: ReturnType<typeof branchEntries>
     const content = taskContent(message.content);
 
     return Check(taskMessageSchema, content) && content.sourceSessionId === run.parentSessionId && content.message === run.task && Date.parse(String(entry.timestamp)) >= (run.taskStartedAt ?? run.startedAt);
-  });
+  };
+
+  return first ? branch.findIndex(matches) : branch.findLastIndex(matches);
 }
 
 function taskContent(content: Static<typeof contentSchema>) {
@@ -333,7 +356,11 @@ class SubagentObserver {
 
   async submit() {
     const { pi, ctx, signal } = this.observation;
-    this.run.offset = (await stat(this.run.sessionPath)).size;
+    const location = await activeConversation(this.run.sessionId, this.run.hostId, signal);
+    this.run.sessionPath = location.sessionPath;
+    const metadata = await transcriptMetadata(this.run.sessionPath, this.run.sessionId);
+    this.run.offset = metadata.size;
+    this.run.offsetHeader = metadata.header;
     const scope: GoalScope = { ctx };
     pi.events.emit("piop:goal-scope", scope);
     await scope.ready;
@@ -350,6 +377,7 @@ class SubagentObserver {
     try {
       const receipt = await sendSessionMessage(ctx, this.run.sessionId, this.run.hostId, this.run.task, true, undefined, deliveryId);
       acceptedSubmission(this.run, Parse(subagentReceiptSchema, receipt));
+      this.run.usageNotificationId = this.run.taskNotificationId;
       this.save();
     } catch (error) { this.interrupted(String(error)); }
   }
@@ -365,7 +393,7 @@ class SubagentObserver {
 
     if (snapshot.state.sessionFile) this.run.sessionPath = snapshot.state.sessionFile;
 
-    if (this.run.offset === undefined) await initializeLegacy(this.run, this.observation, snapshot);
+    await prepareOffset(this.run, this.observation, snapshot);
 
     await this.channel();
     await this.account();
@@ -421,7 +449,12 @@ class SubagentObserver {
   async close() {
     await this.closeUsage?.();
 
-    if (this.run.status !== "running" && this.run.offset !== undefined) await this.account(true);
+    if (this.run.status === "running" || this.run.offset === undefined) return;
+    const snapshot = await sessionSnapshot(this.run.sessionId, this.run.hostId);
+
+    if (snapshot.state.sessionFile) this.run.sessionPath = snapshot.state.sessionFile;
+    await prepareOffset(this.run, this.observation, snapshot);
+    await this.account(true);
   }
 }
 

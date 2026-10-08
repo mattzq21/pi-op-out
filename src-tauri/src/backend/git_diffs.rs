@@ -20,6 +20,27 @@ mod store;
 mod pending;
 
 pub(crate) use pending::capture as persist_capture_diff;
+pub(crate) use pending::capture_ephemeral as persist_ephemeral_capture_diff;
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct GitDiffPart {
+    pub(crate) message_id: String,
+    pub(crate) transfer_id: String,
+    pub(crate) index: u32,
+    pub(crate) content: String,
+    #[serde(rename = "final")]
+    pub(crate) final_part: bool,
+    pub(crate) digest: String,
+}
+
+pub(crate) fn append_git_diff_part(app: AppHandle, session_path: String, part: GitDiffPart, host_id: Option<String>, client_id: String) -> Result<serde_json::Value, String> {
+    let mutation = conversation_ownership::MutationGuard::acquire(&app, host_id.as_deref().unwrap_or("local"), &session_path, &client_id, false, "save_diffs")?;
+    let host = saved_remote_host(app, host_id)?;
+    let result = storage_request(&session_path, &serde_json::json!({"action":"part","part":part}), host.as_ref())?;
+    mutation.finish()?;
+    Ok(result)
+}
 
 pub(super) fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
     let path = Path::new(&snapshot.root);
@@ -121,13 +142,34 @@ pub(super) fn remote_session_sidecar_script(session_path: &str, action: &str) ->
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<GitDiffSnapshots, String> {
     let mut snapshots = GitDiffSnapshots::new(); let mut page = String::new();
+    let mut fragment = None;
     loop {
         let result = load_git_diff_page(app.clone(), session_path.clone(), host_id.clone(), page)?;
-        snapshots.extend(serde_json::from_value::<GitDiffSnapshots>(result["snapshots"].clone()).map_err(|error| error.to_string())?);
+        merge_diff_page(&mut snapshots, &mut fragment, &result)?;
         let Some(next) = result["next"].as_str() else { break; };
         page = next.to_owned();
     }
+    if fragment.is_some() { return Err("Diff history ended with an incomplete snapshot; preserved".into()); }
     Ok(snapshots)
+}
+
+fn merge_diff_page(snapshots: &mut GitDiffSnapshots, fragment: &mut Option<(String, String)>, result: &serde_json::Value) -> Result<(), String> {
+    snapshots.extend(serde_json::from_value::<GitDiffSnapshots>(result["snapshots"].clone()).map_err(|error| error.to_string())?);
+    let Some(part) = result.get("fragment") else { return Ok(()); };
+    let id = part["messageId"].as_str().ok_or("Diff fragment has no message ID")?;
+    let content = part["content"].as_str().ok_or("Diff fragment has no contents")?;
+    let current = fragment.get_or_insert_with(|| (id.to_owned(), String::new()));
+    if current.0 != id || current.1.len() + content.len() > store::MAX_RECORD_BYTES { return Err("Invalid or oversized fragmented snapshot; preserved".into()); }
+    current.1.push_str(content);
+    if part["complete"] == true { let (id, content) = fragment.take().ok_or("Diff fragment disappeared")?; snapshots.insert(id, serde_json::from_str(&content).map_err(|error| error.to_string())?); }
+    Ok(())
+}
+
+pub(crate) fn load_ephemeral_git_diff_page(app: AppHandle, session_path: String, session_id: String, host_id: Option<String>, page: String) -> Result<serde_json::Value, String> {
+    let host = saved_remote_host(app, host_id)?;
+    storage_request(&session_path, &serde_json::json!({"action":"ephemeral_validate","ephemeralSessionId":session_id}), host.as_ref())?;
+    if page.is_empty() { pending::recover(&session_path, host.as_ref(), Some(&session_id))?; }
+    storage_request(&session_path, &serde_json::json!({"action":"page","cursor":page,"ephemeralSessionId":session_id}), host.as_ref())
 }
 
 pub(crate) fn load_git_diff_page(app: AppHandle, session_path: String, host_id: Option<String>, page: String) -> Result<serde_json::Value, String> {
@@ -207,12 +249,13 @@ pub(super) fn write_remote_git_diffs(command: &mut Command, body: &str) -> Resul
 }
 
 fn storage_request(session_path: &str, request: &serde_json::Value, host: Option<&RemoteHost>) -> Result<serde_json::Value, String> {
+    if let Some(id) = request["ephemeralSessionId"].as_str() { return ephemeral_storage_request(session_path, id, request, host); }
     let Some(host) = host else {
         let home = home_dir()?;
         let path = local_desktop_session_file_at(&home, session_path)?.with_extension("diffs.json");
-        if request["action"] == "retain" || request["action"] == "discover" {
+        if matches!(request["action"].as_str(), Some("retain" | "discover" | "part")) {
             let mut command = crate::node_command();
-            command.args(["-e", &storage_helper()]).arg(&path).env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).env("PIOP_DIFF_HOME", home);
+            command.args(["-e", &storage_helper()]).arg(&path).env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).env("PIOP_DIFF_HOME", home).env("PIOP_DIFF_LOCK", "1");
             return read_command(&mut command, Some(request));
         }
         return store::request(&path, request);
@@ -221,8 +264,54 @@ fn storage_request(session_path: &str, request: &serde_json::Value, host: Option
     read_command(&mut command, Some(request))
 }
 
+pub(crate) fn recover_ephemeral_git_diffs_at_host(session_path: &str, session_id: &str, host: Option<&RemoteHost>) -> Result<(), String> {
+    storage_request(session_path, &serde_json::json!({"action":"ephemeral_validate","ephemeralSessionId":session_id}), host)?;
+    pending::recover(session_path, host, Some(session_id))
+}
+
+fn validate_ephemeral_diff_name(session_path: &str, session_id: &str) -> Result<(), String> {
+    let path = Path::new(session_path);
+    let name = path.file_name().and_then(|value| value.to_str()).ok_or("Invalid temporary transcript filename")?;
+    let suffix = name.strip_prefix("pi-desktop-btw-").and_then(|value| value.strip_suffix(".jsonl")).ok_or("Only temporary side-conversation transcripts can be recovered")?;
+    if !path.is_absolute() || !path.components().all(|component| matches!(component, std::path::Component::RootDir | std::path::Component::Normal(_))) { return Err("Temporary transcript path must be absolute and normalized".into()); }
+    if suffix.len() != 36 || session_id.len() != 36 { return Err("Invalid temporary transcript identity".into()); }
+    uuid::Uuid::parse_str(suffix).map_err(|error| error.to_string())?;
+    uuid::Uuid::parse_str(session_id).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn ephemeral_storage_request(session_path: &str, session_id: &str, request: &serde_json::Value, host: Option<&RemoteHost>) -> Result<serde_json::Value, String> {
+    validate_ephemeral_diff_name(session_path, session_id)?;
+    let sidecar = Path::new(session_path).with_extension("diffs.json");
+    let helper = storage_helper();
+    let mut command = if let Some(host) = host {
+        let mut command = ssh(host);
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} PIOP_DIFF_EPHEMERAL_TMP=/tmp node -e {} {}", shell_quote(&helper), shell_quote(sidecar.to_str().ok_or("Invalid temporary transcript path")?))));
+        command
+    } else {
+        let mut command = crate::node_command();
+        command.args(["-e", &helper]).arg(sidecar).env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).env("PIOP_DIFF_HOME", home_dir()?).env("PIOP_DIFF_EPHEMERAL_TMP", std::env::temp_dir());
+        command
+    };
+    read_command(&mut command, Some(request))
+}
+
 fn storage_helper() -> String {
-    format!("{}\ntry {{ process.stdout.write(JSON.stringify(requestStore(process.argv[1], JSON.parse(fs.readFileSync(0, 'utf8'))))); }} catch (error) {{ process.stderr.write(error.message + '\\n'); process.exitCode = 1; }}", include_str!("../../resources/session-broker/git-diff-store.cjs"))
+    format!("{}\ntry {{ const request = JSON.parse(require('node:fs').readFileSync(0, 'utf8')); const result = request.ephemeralSessionId !== undefined ? diffStore.requestEphemeralStore(process.argv[1], request) : process.env.PIOP_DIFF_LOCK === '1' ? diffStore.requestStoreLocked(process.argv[1], request) : diffStore.requestStore(process.argv[1], request); process.stdout.write(JSON.stringify(result)); }} catch (error) {{ process.stderr.write(error.message + '\\n'); process.exitCode = 1; }}", embedded_diff_store())
+}
+
+pub(crate) fn embedded_diff_store() -> String {
+    format!(r#"const diffStore = ((builtinRequire) => {{
+const modules = {{}};
+modules['./git-diff-pages.cjs'] = ((require) => {{ const module = {{exports: {{}}}}; {}
+return module.exports; }})(builtinRequire);
+modules['./git-diff-transfer.cjs'] = ((require) => {{ const module = {{exports: {{}}}}; {}
+return module.exports; }})(builtinRequire);
+const require = name => modules[name] ?? builtinRequire(name);
+const module = {{exports: {{}}}};
+{}
+return module.exports;
+}})(require);"#, include_str!("../../resources/session-broker/git-diff-pages.cjs"), include_str!("../../resources/session-broker/git-diff-transfer.cjs"), include_str!("../../resources/session-broker/git-diff-store.cjs"))
 }
 
 fn read_command(command: &mut Command, request: Option<&serde_json::Value>) -> Result<serde_json::Value, String> {

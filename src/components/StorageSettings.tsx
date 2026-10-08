@@ -16,6 +16,8 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
   "archived-project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects retained only by archived session checkpoints", icon: GitBranch, item: "ref" },
   "git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
   "pending-diff-snapshots": { name: "Pending diff snapshots", description: "Comparison inputs retained until durable recovery succeeds", icon: Camera, item: "snapshot" },
+  "diff-transfer-staging": { name: "Diff transfer staging", description: "Staged diff packets with source-log ownership · reclaimability unknown", icon: Camera, item: "stage file" },
+  "unattributed-diff-transfer-staging": { name: "Unresolved diff transfer staging", description: "Unmatched or unavailable stages · contents retained", icon: ShieldAlert, item: "stage file" },
   "ephemeral-cleanup": { name: "Ephemeral cleanup records", description: "Active ownership, durable retry jobs and replay manifests", icon: FolderClock, item: "record" },
   "archived-git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
   "temporary-chats": { name: "No-project workdirs", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
@@ -38,7 +40,7 @@ const storageSections: { title: string; categories: StorageCategory["id"][] }[] 
   { title: "Active sessions", categories: ["active-conversations", "git-diff-snapshots", "project-checkpoints"] },
   { title: "Archived sessions", categories: ["archived-conversations", "archived-git-diff-snapshots", "archived-project-checkpoints", "archived-worktrees"] },
   { title: "Managed directories", categories: ["worktrees", "temporary-chats", "recovery-storage"] },
-  { title: "Unresolved and temporary storage", categories: ["unattributed-project-checkpoints", "unattributed-recovery-storage", "legacy-recovery-storage", "ephemeral-storage", "ephemeral-cleanup", "pending-diff-snapshots", "unattributed-goal-attachments"] },
+  { title: "Unresolved and temporary storage", categories: ["unattributed-project-checkpoints", "unattributed-recovery-storage", "legacy-recovery-storage", "ephemeral-storage", "ephemeral-cleanup", "pending-diff-snapshots", "diff-transfer-staging", "unattributed-diff-transfer-staging", "unattributed-goal-attachments"] },
   { title: "Referenced user storage", categories: ["referenced-worktrees"] },
 ];
 

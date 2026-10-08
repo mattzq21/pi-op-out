@@ -1,17 +1,18 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import { realpath, mkdir, rmdir, open, rm } from "node:fs/promises";
+import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "./client.ts";
-import { writeSessionFile } from "./session-file.ts";
+import { writeSessionFile, publicationRetainsDependencies, type SessionPublication } from "./session-file.ts";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from "../piop-diff-watch/pin-checkpoints.ts";
-import { readStoreLocked } from "./git-diff-store.cjs";
+import { copyRetainedStoreLocked } from "./git-diff-store.cjs";
 import { existsSync } from "node:fs";
 import { releaseHistory, retainHistory, rootForDirectory } from "./goal-assets.cjs";
+import { drainForkCaptures } from "./turn-capture.ts";
 
-export type ForkOptions = { cwd?: string; worktree?: string; entryId?: string };
+export type ForkOptions = { events: ExtensionAPI["events"]; cwd?: string; worktree?: string; entryId?: string; position?: "before" | "at" };
 
 export const createdWorktreeSchema = Type.Object({ path: Type.String(), branch: Type.String(), setupError: Type.Optional(Type.Union([Type.String(), Type.Null()])) });
 
@@ -21,6 +22,16 @@ const fileErrorSchema = Type.Object({ code: Type.String() });
 
 const responseIdsSchema = Type.Object({ responseEntryIds: Type.Array(Type.String()) });
 
+function publicationWorkspace(cwd: string, options: ForkOptions, worktree?: CreatedWorktree) {
+  const kind = worktree ? "created-worktree" : options.cwd !== undefined ? "created-directory" : "existing";
+
+  return { path: cwd, kind, branch: worktree?.branch } satisfies NonNullable<import("./session-file.ts").PublicationOptions["dependencies"]>["workspace"];
+}
+
+function retainedFork(error: Error | undefined, publication?: SessionPublication) {
+  return Boolean(publication) || error !== undefined && publicationRetainsDependencies(error);
+}
+
 function inheritGoal(ctx: ExtensionContext, retained: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, timestamp: string) {
   const goal = [...ctx.sessionManager.getEntries()].reverse().find(entry => entry.type === "custom" && entry.customType === "piop-goal");
 
@@ -28,11 +39,12 @@ function inheritGoal(ctx: ExtensionContext, retained: ReturnType<ExtensionContex
 }
 
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions, createWorktree: (name: string) => Promise<CreatedWorktree>) {
-  const retained = structuredClone(forkHistory(ctx, options.entryId));
+  const retained = structuredClone(options.position ? positionedHistory(ctx, options.entryId, options.position) : forkHistory(ctx, options.entryId));
   const header = ctx.sessionManager.getHeader();
   const source = ctx.sessionManager.getSessionFile();
 
   if (!header || !source) throw new Error("Save this conversation before forking it");
+  await drainForkCaptures(options.events, ctx, new Set(retained.map(entry => entry.id)));
   let cwd = await forkDirectory(ctx.cwd, options);
   const worktree = options.worktree ? await createWorktree(options.worktree) : undefined;
 
@@ -41,24 +53,25 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   const timestamp = new Date().toISOString();
   inheritGoal(ctx, retained, timestamp);
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
-  let created = false;
+  let publication: SessionPublication | undefined;
   let checkpoints: PinnedCheckpoint[] = [];
   let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
   try {
     checkpoints = await pinPromptHistory(header.cwd, sessionId, retained);
     goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), retained, sessionId, sessionPath);
-    await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...retained]);
-    created = true;
-
-    await copyRetainedDiffs(source, sessionPath, new Set(retained.map(entry => entry.id)));
+    publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...retained], {
+      dependencies: { checkpoints, workspace: publicationWorkspace(cwd, options, worktree) },
+      sidecars: [sessionPath.replace(/\.jsonl$/, ".diffs.json")],
+      beforeWrite: () => copyRetainedDiffs(source, sessionPath, new Set(retained.map(entry => entry.id)), header.id),
+    });
   } catch (error) {
-    if (created) {
-      await rm(sessionPath, { force: true });
-      await rm(sessionPath.replace(/\.jsonl$/, ".diffs.json"), { force: true });
+    if (retainedFork(error instanceof Error ? error : undefined, publication)) {
+      ctx.ui.notify(`Fork publication and its checkpoint, goal, diff, and workspace dependencies are retained for recovery: ${sessionPath}`, "warning");
+      throw new Error(`Fork recovery is pending at ${sessionPath}: ${String(error)}`, { cause: error });
     }
 
-    if (goalAssets && !existsSync(sessionPath)) releaseHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), goalAssets, sessionId);
+    releaseForkAssets(ctx, goalAssets, sessionId, sessionPath);
     await removePinnedCheckpoints(checkpoints);
     await cleanupForkDirectory(cwd, options);
 
@@ -69,18 +82,15 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   return { hostId: currentHost(), sessionId, sessionPath, cwd, ...worktree };
 }
 
-async function copyRetainedDiffs(source: string, destination: string, ids: ReadonlySet<string>) {
-  try {
-    const diffs = readStoreLocked(source.replace(/\.jsonl$/, ".diffs.json")).snapshots;
-    const file = await open(destination.replace(/\.jsonl$/, ".diffs.json"), "wx", 0o600);
+function releaseForkAssets(ctx: ExtensionContext, goalAssets: ReturnType<typeof retainHistory> | undefined, sessionId: string, sessionPath: string) {
+  if (!goalAssets || existsSync(sessionPath)) return;
 
-    try { await file.writeFile(JSON.stringify(Object.fromEntries(Object.entries(diffs).filter(([id]) => ids.has(id))))); await file.sync(); }
-    finally { await file.close(); }
+  try { releaseHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), goalAssets, sessionId); }
+  catch (error) { ctx.ui.notify(`Fork goal asset ownership was retained for recovery: ${String(error)}`, "warning"); }
+}
 
-    const directory = await open(dirname(destination), "r");
-
-    try { await directory.sync(); } finally { await directory.close(); }
-  } catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error; }
+async function copyRetainedDiffs(source: string, destination: string, ids: ReadonlySet<string>, sessionId: string) {
+  copyRetainedStoreLocked(source.replace(/\.jsonl$/, ".diffs.json"), destination.replace(/\.jsonl$/, ".diffs.json"), ids, sessionId);
 }
 
 async function cleanupForkDirectory(cwd: string, options: ForkOptions) {
@@ -122,6 +132,19 @@ function responseBoundary(branch: ReturnType<ExtensionContext["sessionManager"][
   if (pending.size) throw new Error("The selected response still has unfinished tool calls. Wait for those tools to finish before branching.");
 
   return end;
+}
+
+function positionedHistory(ctx: ExtensionContext, entryId: string | undefined, position: "before" | "at") {
+  if (!entryId) throw new Error("Select an entry to branch from");
+  const entry = ctx.sessionManager.getEntry(entryId);
+
+  if (!entry) throw new Error("The selected entry is no longer in this conversation");
+
+  if (position === "at") return ctx.sessionManager.getBranch(entry.id);
+
+  if (entry.type !== "message" || entry.message.role !== "user") throw new Error("Select a user message to branch before");
+
+  return entry.parentId ? ctx.sessionManager.getBranch(entry.parentId) : [];
 }
 
 function forkHistory(ctx: ExtensionContext, entryId?: string) {

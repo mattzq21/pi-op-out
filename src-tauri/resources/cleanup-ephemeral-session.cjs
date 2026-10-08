@@ -16,7 +16,9 @@ const inspectSchema = Type.Object({ action: Type.Literal('inspect'), path: Type.
 
 const cleanupSchema = Type.Object({ action: Type.Literal('cleanup'), path: Type.String(), sessionId: uuidSchema, identity: Type.String({ pattern: '^\\d+:\\d+$' }), token: uuidSchema, owner: Type.String({ minLength: 1 }), claims: Type.Array(Type.String({ minLength: 1 })) });
 
-const itemSchema = Type.Object({ path: Type.String(), identity: Type.String(), directory: Type.Boolean(), digest: Type.String({ pattern: '^[a-f0-9]{64}$' }) });
+const entrySchema = Type.Object({ relative: Type.String(), identity: Type.String(), directory: Type.Boolean(), digest: Type.String({ pattern: '^[a-f0-9]{64}$' }) });
+
+const itemSchema = Type.Object({ path: Type.String(), identity: Type.String(), directory: Type.Boolean(), digest: Type.String({ pattern: '^[a-f0-9]{64}$' }), entries: Type.Optional(Type.Array(entrySchema)) });
 
 const repositorySchema = Type.Object({ root: Type.String(), identity: Type.String() });
 
@@ -99,7 +101,9 @@ function transcriptPresent(request, profile) {
 
 async function permit(request, profile) {
   if (process.argv.includes('--permitted')) return;
-  process.stdout.write(`${JSON.stringify({ inactive: true, transcriptPresent: transcriptPresent(request, profile) })}\n`);
+  const present = transcriptPresent(request, profile);
+
+  process.stdout.write(`${JSON.stringify({ inactive: true, transcriptPresent: present, recoverPending: recoveryRequired(request, profile, present) })}\n`);
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
 
   try {
@@ -111,6 +115,20 @@ async function permit(request, profile) {
 
     throw new Error('Cleanup owner disconnected before confirming eligibility; retained');
   } finally { lines.close(); process.stdin.pause(); }
+}
+
+function recoveryRequired(request, profile, present) {
+  if (!present) return false;
+  const destination = path.join(profile, 'ephemeral-cleanup', 'manifests', `${request.token}.json`);
+
+  if (!files.exists(destination)) return true;
+  const manifest = files.read(destination);
+
+  validateManifest(manifest, request);
+
+  if (manifest.phase === 'complete') throw new Error('Ephemeral transcript reappeared after cleanup; retained');
+
+  return manifest.phase === 'waiting' || pending.inspect(request.path, request.sessionId, profile).length > 0;
 }
 
 function artifacts(file) { return [file.replace(/\.jsonl$/, '.snapshots'), file.replace(/\.jsonl$/, '.diffs.json'), `${file}.loop-detection.json`, file]; }
@@ -144,7 +162,7 @@ async function prepare(request, destination, profile) {
 
   files.write(destination, manifest);
 
-  if (comparisons.length) throw new Error(`Ephemeral cleanup deferred: ${comparisons.length} pending comparisons retain the diff log and global snapshots`);
+  if (comparisons.length) throw new Error(`Ephemeral cleanup deferred: ${comparisons.length} pending comparisons/transfers retain source logs and comparison/transfer staging`);
   const captured = await checkpoints.capture(request.path, inspected.header);
   manifest.repositories = captured.repositories;
   manifest.references = captured.references;
@@ -166,7 +184,7 @@ function verify(manifest, request, profile) {
     if (inspected.identity !== request.identity) throw new Error('Ephemeral transcript identity changed; retained');
   }
 
-  if (pending.inspect(request.path, request.sessionId, profile).length) throw new Error('Pending comparisons appeared; cleanup retained');
+  if (pending.inspect(request.path, request.sessionId, profile).length) throw new Error('Pending comparisons or transfers appeared; cleanup retained');
 
   for (const file of artifacts(request.path)) {
     if (files.exists(file) && !manifest.files.some(item => item.path === file)) throw new Error(`New ephemeral artifact appeared; retained: ${file}`);
@@ -187,7 +205,7 @@ async function cleanup(request, profile) {
     if (manifest.phase === 'complete') {
       if (artifacts(request.path).some(file => files.exists(file))) throw new Error('Ephemeral artifacts reappeared after cleanup; retained');
 
-      if (pending.inspect(request.path, request.sessionId, profile).length) throw new Error('Pending comparisons appeared after cleanup; retained');
+      if (pending.inspect(request.path, request.sessionId, profile).length) throw new Error('Pending comparisons or transfers appeared after cleanup; retained');
 
       return { complete: true };
     }
