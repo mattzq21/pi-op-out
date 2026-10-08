@@ -9,6 +9,7 @@ use super::{
     tool_payload::{ToolPayload, ToolPayloadCache},
     protocol::{expand_home, flag, kind, text, LaunchSpec, Result, SessionLaunch},
     session::{Session, SessionHost},
+    services::HostServices,
 };
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
@@ -20,14 +21,6 @@ use std::{
 };
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 use uuid::Uuid;
-
-pub(super) trait Services: Send + Sync {
-    fn bind(&self, host: Weak<Host>);
-    fn initialize(&self) -> BoxFuture<'_, ()>;
-    fn handle(&self, packet: Value) -> BoxFuture<'_, Result<Value>>;
-    fn refresh_providers(&self) -> BoxFuture<'_, Result<u64>>;
-    fn shutdown(&self) -> BoxFuture<'_, ()>;
-}
 
 #[derive(Clone)]
 pub(super) struct ReadonlyView {
@@ -63,7 +56,7 @@ pub(super) struct Host {
     configuration_gate: AsyncMutex<()>,
     state: Mutex<Registry>,
     ownership: OnceLock<Arc<ConversationOwnership>>,
-    pub services: Arc<dyn Services>,
+    pub services: Arc<HostServices>,
     output: std::sync::mpsc::Sender<Value>,
     weak: Weak<Self>,
     tool_payloads: Arc<ToolPayloadCache>,
@@ -167,7 +160,7 @@ impl Host {
     pub async fn new(
         home: PathBuf,
         storage: &str,
-        services: Arc<dyn Services>,
+        services: Arc<HostServices>,
         output: std::sync::mpsc::Sender<Value>,
     ) -> Result<Arc<Self>> {
         let settings = crate::settings::read_settings_at(&home.join(storage).join("settings.json"))?;
