@@ -211,8 +211,8 @@ fn remote_broker_command(host: &RemoteHost, local_port: u16, remote_port: u16) -
 }
 
 fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<(), String> {
-    let rtk_extension = shell_quote(include_str!("../../../../extensions/piop-rtk/rtk.ts"));
-    let runtime_settings_extension = shell_quote(include_str!("../../../../extensions/piop-runtime-settings/index.ts"));
+    let rtk_extension = shell_quote(include_str!("../../../extensions/piop-rtk/rtk.ts"));
+    let runtime_settings_extension = shell_quote(include_str!("../../../extensions/piop-runtime-settings/index.ts"));
     let provider_accounts = shell_quote(include_str!("../../resources/provider-accounts.bundle.mjs"));
     let app_rpc = shell_quote(include_str!("../../resources/runtime-bridge.cjs"));
     let sdk_storage = shell_quote(include_str!("../../resources/sdk-storage.mjs"));
@@ -221,17 +221,17 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let session_diff_store = shell_quote(include_str!("../../resources/session-diff-store.cjs"));
     let ask_user = shell_quote(include_str!("../../resources/ask-user.ts"));
     let trace_reader = shell_quote(include_str!("../../resources/trace-reader.ts"));
-    let agent_extension_loader = shell_quote(include_str!("../../../../extensions/piop-define-agents/extension-loader.ts"));
-    let diagrams_extension = shell_quote(include_str!("../../../../extensions/piop-diagrams/index.ts"));
-    let mcp_types = shell_quote(include_str!("../../../../extensions/piop-define-agents/mcp-config.ts"));
-    let defined_agents = shell_quote(include_str!("../../../../extensions/piop-define-agents/index.ts"));
-    let context_bar = shell_quote(include_str!("../../../../extensions/piop-context-bar/index.ts"));
-    let context_window_cap = shell_quote(include_str!("../../../../extensions/piop-context-window-cap/index.ts"));
-    let session_cost_limit = shell_quote(include_str!("../../../../extensions/piop-session-cost-limit/index.ts"));
-    let codex_web_search = shell_quote(include_str!("../../../../extensions/piop-codex-web-search/index.ts"));
-    let openai_cache_fork = shell_quote(include_str!("../../../../extensions/piop-openai-cache-fork/index.ts"));
+    let agent_extension_loader = shell_quote(include_str!("../../../extensions/piop-define-agents/extension-loader.ts"));
+    let diagrams_extension = shell_quote(include_str!("../../../extensions/piop-diagrams/index.ts"));
+    let mcp_types = shell_quote(include_str!("../../../extensions/piop-define-agents/mcp-config.ts"));
+    let defined_agents = shell_quote(include_str!("../../../extensions/piop-define-agents/index.ts"));
+    let context_bar = shell_quote(include_str!("../../../extensions/piop-context-bar/index.ts"));
+    let context_window_cap = shell_quote(include_str!("../../../extensions/piop-context-window-cap/index.ts"));
+    let session_cost_limit = shell_quote(include_str!("../../../extensions/piop-session-cost-limit/index.ts"));
+    let codex_web_search = shell_quote(include_str!("../../../extensions/piop-codex-web-search/index.ts"));
+    let openai_cache_fork = shell_quote(include_str!("../../../extensions/piop-openai-cache-fork/index.ts"));
     let fast_mode = shell_quote(include_str!("../../resources/fast-mode.bundle.mjs"));
-    let diff_watch = shell_quote(include_str!("../../../../extensions/piop-diff-watch/index.ts"));
+    let diff_watch = shell_quote(include_str!("../../../extensions/piop-diff-watch/index.ts"));
     let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap, "enabled": settings.context_window_cap_enabled })).map_err(|error| error.to_string())?);
     let mcp_bridge = shell_quote(include_str!("../../resources/mcp-bridge.bundle.mjs"));
      let migration = [("pi-define-agents", "piop-define-agents"), ("pi-openai-fast-mode-piop", "piop-openai-fast-mode"), ("pi-context-window-cap", "piop-context-window-cap"), ("pi-session-cost-limit", "piop-session-cost-limit"), ("pi-diff-watch", "piop-diff-watch")].iter().map(|(old, new)| format!(r#"if [ -d "$HOME/{STORAGE_DIRECTORY}/{old}" ] && [ ! -e "$HOME/{STORAGE_DIRECTORY}/{new}" ]; then mv "$HOME/{STORAGE_DIRECTORY}/{old}" "$HOME/{STORAGE_DIRECTORY}/{new}"; fi"#)).collect::<Vec<_>>().join(" && ");
@@ -256,24 +256,24 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     }
     let mcp_schema = shell_quote(include_str!("../../resources/mcp-schema.bundle.mjs"));
     remote.push_str(&format!(r#" && printf %s {mcp_schema} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/mcp-schema.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/mcp-schema.ts""#));
-    let agent_state = shell_quote(include_str!("../../../../extensions/piop-define-agents/state.ts"));
-    let agent_profiles = shell_quote(include_str!("../../../../extensions/piop-define-agents/profiles.ts"));
-    let agent_prompts = shell_quote(include_str!("../../../../extensions/piop-define-agents/prompts.ts"));
+    let agent_state = shell_quote(include_str!("../../../extensions/piop-define-agents/state.ts"));
+    let agent_profiles = shell_quote(include_str!("../../../extensions/piop-define-agents/profiles.ts"));
+    let agent_prompts = shell_quote(include_str!("../../../extensions/piop-define-agents/prompts.ts"));
     remote.push_str(&format!(r#" && printf %s {agent_prompts} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/prompts.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/prompts.ts""#));
-    let excalidraw_profile = shell_quote(include_str!("../../../../extensions/piop-define-agents/excalidraw.ts"));
+    let excalidraw_profile = shell_quote(include_str!("../../../extensions/piop-define-agents/excalidraw.ts"));
     remote.push_str(&format!(r#" && printf %s {excalidraw_profile} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/excalidraw.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/excalidraw.ts""#));
     remote.push_str(&format!(r#" && printf %s {agent_profiles} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/profiles.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/profiles.ts""#));
     remote.push_str(&format!(r#" && printf %s {agent_state} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/state.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/state.ts""#));
-    let daemon_definitions = shell_quote(include_str!("../../../../extensions/piop-define-agents/daemon-definitions.ts"));
+    let daemon_definitions = shell_quote(include_str!("../../../extensions/piop-define-agents/daemon-definitions.ts"));
     remote.push_str(&format!(r#" && printf %s {daemon_definitions} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/daemon-definitions.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/daemon-definitions.ts""#));
     for (name, content) in [
-        ("git.ts", include_str!("../../../../extensions/piop-diff-watch/git.ts")),
-        ("schemas.ts", include_str!("../../../../extensions/piop-diff-watch/schemas.ts")),
-        ("prompt-history.ts", include_str!("../../../../extensions/piop-diff-watch/prompt-history.ts")),
-        ("pin-checkpoints.ts", include_str!("../../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
-        ("snapshot-baseline.ts", include_str!("../../../../extensions/piop-diff-watch/snapshot-baseline.ts")),
-        ("fork-publication.ts", include_str!("../../../../extensions/piop-diff-watch/fork-publication.ts")),
-        ("fork-preparation.ts", include_str!("../../../../extensions/piop-diff-watch/fork-preparation.ts")),
+        ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
+        ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
+        ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
+        ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
+        ("snapshot-baseline.ts", include_str!("../../../extensions/piop-diff-watch/snapshot-baseline.ts")),
+        ("fork-publication.ts", include_str!("../../../extensions/piop-diff-watch/fork-publication.ts")),
+        ("fork-preparation.ts", include_str!("../../../extensions/piop-diff-watch/fork-preparation.ts")),
         ("publish-fork.bundle.mjs", include_str!("../../resources/publish-fork.bundle.mjs")),
     ] {
         remote.push_str(&format!(r#" && printf %s {} > "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}""#, shell_quote(content)));

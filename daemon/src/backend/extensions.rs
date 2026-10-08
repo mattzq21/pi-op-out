@@ -28,7 +28,7 @@ pub(super) fn prepare_rtk_extension() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
     let path = dir.join("rtk.ts");
-    atomic_write_private(&path, include_str!("../../../../extensions/piop-rtk/rtk.ts").as_bytes())?;
+    atomic_write_private(&path, include_str!("../../../extensions/piop-rtk/rtk.ts").as_bytes())?;
     Ok(path)
 }
 pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf, String> {
@@ -38,7 +38,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     atomic_write_private(&dir.join("runtime-bridge.cjs"), include_str!("../../resources/runtime-bridge.cjs").as_bytes())?;
     atomic_write_private(&dir.join("sdk-storage.mjs"), include_str!("../../resources/sdk-storage.mjs").as_bytes())?;
     atomic_write_private(&dir.join("provider-accounts.mjs"), include_str!("../../resources/provider-accounts.bundle.mjs").as_bytes())?;
-    atomic_write_private(&path, include_str!("../../../../extensions/piop-runtime-settings/index.ts").as_bytes())?;
+    atomic_write_private(&path, include_str!("../../../extensions/piop-runtime-settings/index.ts").as_bytes())?;
     atomic_write_private(&dir.join("runtime-settings.json"), &serde_json::to_vec(&runtime_settings(settings)).map_err(|error| error.to_string())?)?;
     Ok(path)
 }
@@ -132,7 +132,7 @@ pub(super) fn prepare_openai_cache_fork_extension() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
     let path = dir.join("piop-openai-cache-fork.ts");
-    atomic_write_private(&path, include_str!("../../../../extensions/piop-openai-cache-fork/index.ts").as_bytes())?;
+    atomic_write_private(&path, include_str!("../../../extensions/piop-openai-cache-fork/index.ts").as_bytes())?;
     Ok(path)
 }
 
@@ -159,7 +159,7 @@ pub(super) fn prepare_codex_web_search_extension() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
     let path = dir.join("piop-codex-web-search.ts");
-    atomic_write_private(&path, include_str!("../../../../extensions/piop-codex-web-search/index.ts").as_bytes())?;
+    atomic_write_private(&path, include_str!("../../../extensions/piop-codex-web-search/index.ts").as_bytes())?;
     Ok(path)
 }
 
@@ -167,7 +167,7 @@ pub(super) fn prepare_context_bar_extension() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
     let path = dir.join("piop-context-bar.ts");
-    atomic_write_private(&path, include_str!("../../../../extensions/piop-context-bar/index.ts").as_bytes())?;
+    atomic_write_private(&path, include_str!("../../../extensions/piop-context-bar/index.ts").as_bytes())?;
     Ok(path)
 }
 
@@ -177,7 +177,7 @@ pub(super) fn prepare_context_window_cap_extension(settings: &AppSettings) -> Re
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
     let config_path = dir.join("config.json");
-    atomic_write_private(&extension_path, include_str!("../../../../extensions/piop-context-window-cap/index.ts").as_bytes())?;
+    atomic_write_private(&extension_path, include_str!("../../../extensions/piop-context-window-cap/index.ts").as_bytes())?;
     atomic_write_private(&config_path, &serde_json::to_vec_pretty(&json!({ "contextWindowCap": settings.context_window_cap, "enabled": settings.context_window_cap_enabled })).map_err(|error| error.to_string())?)?;
     Ok(extension_path)
 }
@@ -187,15 +187,15 @@ pub(super) fn prepare_session_cost_limit_extension(_settings: &AppSettings) -> R
     let dir = generated_extension_root()?.join("piop-session-cost-limit");
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
-    atomic_write_private(&extension_path, include_str!("../../../../extensions/piop-session-cost-limit/index.ts").as_bytes())?;
+    atomic_write_private(&extension_path, include_str!("../../../extensions/piop-session-cost-limit/index.ts").as_bytes())?;
     Ok(extension_path)
 }
 
 pub(super) const LOOP_DETECTION_ASSETS: [(&str, &str); 4] = [
-    ("index.ts", include_str!("../../../../extensions/piop-loop-detection/index.ts")),
-    ("detector.ts", include_str!("../../../../extensions/piop-loop-detection/detector.ts")),
-    ("observations.ts", include_str!("../../../../extensions/piop-loop-detection/observations.ts")),
-    ("persistence.ts", include_str!("../../../../extensions/piop-loop-detection/persistence.ts")),
+    ("index.ts", include_str!("../../../extensions/piop-loop-detection/index.ts")),
+    ("detector.ts", include_str!("../../../extensions/piop-loop-detection/detector.ts")),
+    ("observations.ts", include_str!("../../../extensions/piop-loop-detection/observations.ts")),
+    ("persistence.ts", include_str!("../../../extensions/piop-loop-detection/persistence.ts")),
 ];
 
 pub(super) fn prepare_loop_detection_extension() -> Result<PathBuf, String> {
@@ -225,15 +225,15 @@ pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
     for (name, content) in [
-        ("index.ts", include_str!("../../../../extensions/piop-diff-watch/index.ts")),
-        ("git.ts", include_str!("../../../../extensions/piop-diff-watch/git.ts")),
-        ("schemas.ts", include_str!("../../../../extensions/piop-diff-watch/schemas.ts")),
-        ("prompt-history.ts", include_str!("../../../../extensions/piop-diff-watch/prompt-history.ts")),
-        ("pin-checkpoints.ts", include_str!("../../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
-        ("fork-publication.ts", include_str!("../../../../extensions/piop-diff-watch/fork-publication.ts")),
-        ("fork-preparation.ts", include_str!("../../../../extensions/piop-diff-watch/fork-preparation.ts")),
+        ("index.ts", include_str!("../../../extensions/piop-diff-watch/index.ts")),
+        ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
+        ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
+        ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
+        ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
+        ("fork-publication.ts", include_str!("../../../extensions/piop-diff-watch/fork-publication.ts")),
+        ("fork-preparation.ts", include_str!("../../../extensions/piop-diff-watch/fork-preparation.ts")),
         ("publish-fork.bundle.mjs", include_str!("../../resources/publish-fork.bundle.mjs")),
-        ("snapshot-baseline.ts", include_str!("../../../../extensions/piop-diff-watch/snapshot-baseline.ts")),
+        ("snapshot-baseline.ts", include_str!("../../../extensions/piop-diff-watch/snapshot-baseline.ts")),
     ] {
         atomic_write_private(&dir.join(name), content.as_bytes())?;
     }
@@ -268,8 +268,8 @@ fn prepare_agent_configuration(legacy_dir: &Path) -> Result<(), String> {
 }
 
 pub(super) const EXCALIDRAW_ASSETS: [(&str, &str); 2] = [
-    ("SKILL.md", include_str!("../../../../extensions/piop-excalidraw/SKILL.md")),
-    ("references/cheatsheet.md", include_str!("../../../../extensions/piop-excalidraw/references/cheatsheet.md")),
+    ("SKILL.md", include_str!("../../../extensions/piop-excalidraw/SKILL.md")),
+    ("references/cheatsheet.md", include_str!("../../../extensions/piop-excalidraw/references/cheatsheet.md")),
 ];
 
 fn prepare_agent_directories(dir: &Path) -> Result<(), String> {
@@ -290,15 +290,15 @@ pub(super) fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
     let path = dir.join("index.ts");
     for (name, source) in [
         ("mcp-schema.ts", include_str!("../../resources/mcp-schema.bundle.mjs")),
-        ("mcp-config.ts", include_str!("../../../../extensions/piop-define-agents/mcp-config.ts")),
-        ("extension-loader.ts", include_str!("../../../../extensions/piop-define-agents/extension-loader.ts")),
-        ("state.ts", include_str!("../../../../extensions/piop-define-agents/state.ts")),
-        ("daemon-definitions.ts", include_str!("../../../../extensions/piop-define-agents/daemon-definitions.ts")),
-        ("prompts.ts", include_str!("../../../../extensions/piop-define-agents/prompts.ts")),
-        ("profiles.ts", include_str!("../../../../extensions/piop-define-agents/profiles.ts")),
-        ("excalidraw.ts", include_str!("../../../../extensions/piop-define-agents/excalidraw.ts")),
-        ("../piop-diagrams.ts", include_str!("../../../../extensions/piop-diagrams/index.ts")),
-        ("index.ts", include_str!("../../../../extensions/piop-define-agents/index.ts")),
+        ("mcp-config.ts", include_str!("../../../extensions/piop-define-agents/mcp-config.ts")),
+        ("extension-loader.ts", include_str!("../../../extensions/piop-define-agents/extension-loader.ts")),
+        ("state.ts", include_str!("../../../extensions/piop-define-agents/state.ts")),
+        ("daemon-definitions.ts", include_str!("../../../extensions/piop-define-agents/daemon-definitions.ts")),
+        ("prompts.ts", include_str!("../../../extensions/piop-define-agents/prompts.ts")),
+        ("profiles.ts", include_str!("../../../extensions/piop-define-agents/profiles.ts")),
+        ("excalidraw.ts", include_str!("../../../extensions/piop-define-agents/excalidraw.ts")),
+        ("../piop-diagrams.ts", include_str!("../../../extensions/piop-diagrams/index.ts")),
+        ("index.ts", include_str!("../../../extensions/piop-define-agents/index.ts")),
     ] { atomic_write_private(&dir.join(name), source.as_bytes())?; }
     remove_legacy_agent_extension(&legacy_dir)?;
     Ok(path)

@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
-import type { AgentProfilesRequest, SubagentProfileRequest } from "../../../../extensions/piop-define-agents/contracts.ts";
+import type { AgentProfilesRequest, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { writeSessionFile } from "./session-file.ts";

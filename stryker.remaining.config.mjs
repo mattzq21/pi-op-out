@@ -1,6 +1,6 @@
 export default {
   mutate: [
-    'clients/ui/**/*.{ts,tsx}', 'extensions/**/*.ts', 'crates/daemon/resources/*.ts',
+    'clients/ui/**/*.{ts,tsx}', 'extensions/**/*.ts', 'daemon/resources/*.ts',
     '!extensions/piop-define-agents/index.ts', '!**/*.d.ts',
   ],
   testRunner: 'piop-node',

@@ -13,7 +13,7 @@ const hooks = registerHooks({
   },
 });
 
-const { default: mcpBridge } = await import('../../crates/daemon/resources/mcp-bridge.ts');
+const { default: mcpBridge } = await import('../../daemon/resources/mcp-bridge.ts');
 
 hooks.deregister();
 

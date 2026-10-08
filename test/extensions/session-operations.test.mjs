@@ -15,7 +15,7 @@ async function fixture(t) {
   t.after(() => rm(dir, { recursive: true, force: true }));
 
   const bundle = await build({
-    stdin: { contents: 'export { forkConversation } from "./crates/daemon/resources/session-broker/fork.ts"; export { registerForkAndForget } from "./crates/daemon/resources/session-broker/operations.ts";', resolveDir: process.cwd() },
+    stdin: { contents: 'export { forkConversation } from "./daemon/resources/session-broker/fork.ts"; export { registerForkAndForget } from "./daemon/resources/session-broker/operations.ts";', resolveDir: process.cwd() },
     bundle: true, write: false, platform: 'node', format: 'esm',
     plugins: [{ name: 'broker-fixture', setup(builder) {
       builder.onLoad({ filter: /\.ts$/ }, async ({ path }) => ({
@@ -81,7 +81,7 @@ test('archived child-owned checkpoints recover missing refs from retained commit
     { type: 'message', id: 'response', parentId: 'old', message: { role: 'assistant' } },
     { type: 'custom', id: 'last', parentId: 'response', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: f.dir, ref: current, commit, responseEntryIds: ['response'] } },
   ].map(JSON.stringify).join('\n') + '\n');
-  const script = await readFile(new URL('../../crates/daemon/resources/preserve-archive-checkpoints.bundle.mjs', import.meta.url), 'utf8');
+  const script = await readFile(new URL('../../daemon/resources/preserve-archive-checkpoints.bundle.mjs', import.meta.url), 'utf8');
   await exec(process.execPath, ['-e', `require('node:os').homedir = () => ${JSON.stringify(f.dir)};\n${script}`, f.dir], { env: { ...process.env, PIOP_STORAGE_DIRECTORY: '.piop' } });
   const entries = await readEntries(file);
   assert.match(entries[1].data.ref, /^refs\/pi-session-snapshots\/chats\/child\//);
@@ -99,7 +99,7 @@ test('fork copies only retained response diffs without changing its parent', asy
 
 test('temporary fork stops at the leaf captured when BTW was requested', async t => {
   const f = await fixture(t);
-  const script = await readFile(new URL('../../crates/daemon/resources/fork-session.cjs', import.meta.url), 'utf8');
+  const script = await readFile(new URL('../../daemon/resources/fork-session.cjs', import.meta.url), 'utf8');
   const destination = join(f.dir, 'btw.jsonl');
   await exec(process.execPath, ['-e', script, f.sourcePath, destination, 'btw', 'a1']);
   assert.deepEqual((await readEntries(destination)).slice(1), f.entries.slice(0, 2));

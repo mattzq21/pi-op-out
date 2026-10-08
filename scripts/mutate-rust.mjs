@@ -16,19 +16,19 @@ if (available.error || available.status !== 0) {
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'piop-rust-mutants-'));
 
 try {
-  for (const directory of ['Cargo.toml', 'Cargo.lock', 'crates', 'clients/desktop', 'clients/ui', 'extensions', 'dist']) {
+  for (const directory of ['Cargo.toml', 'Cargo.lock', 'daemon', 'protocol', 'clients/desktop', 'clients/ui', 'extensions', 'dist']) {
     await cp(join(root, directory), join(temporaryRoot, directory), {
       recursive: true,
       filter: source => !['target', 'node_modules', '.git', 'mutants.out', 'mutants.out.old'].includes(basename(source)),
     });
   }
 
-  const manifest = join(temporaryRoot, 'crates', 'daemon', 'Cargo.toml');
+  const manifest = join(temporaryRoot, 'daemon', 'Cargo.toml');
   const manifestSource = await readFile(manifest, 'utf8');
 
   if (!manifestSource.includes('[lib]\n')) throw new Error('Rust mutation runner requires a library target');
-  const backend = join(temporaryRoot, 'crates', 'daemon', 'src', 'backend.rs');
-  const library = await readFile(join(temporaryRoot, 'crates', 'daemon', 'src', 'lib.rs'), 'utf8');
+  const backend = join(temporaryRoot, 'daemon', 'src', 'backend.rs');
+  const library = await readFile(join(temporaryRoot, 'daemon', 'src', 'lib.rs'), 'utf8');
   const backendInclude = 'include!("backend.rs");';
 
   if (!library.includes(backendInclude)) throw new Error('Rust mutation runner requires the backend library include');
@@ -44,7 +44,7 @@ try {
     '--output', join(root, 'reports', 'mutation', 'rust'),
     ...process.argv.slice(2),
   ], {
-    cwd: join(temporaryRoot, 'crates', 'daemon'),
+    cwd: join(temporaryRoot, 'daemon'),
     env: {
       ...process.env,
       CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR || join(root, 'target'),

@@ -7,7 +7,7 @@ pub(crate) use piop_protocol::Endpoint;
 pub(crate) fn directory() -> Result<PathBuf, String> {
     let root = home_dir()?.join(STORAGE_DIRECTORY);
     if !DEVELOPMENT { return Ok(root); }
-    let project = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).ok_or("Cannot locate project directory")?;
+    let project = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(1).ok_or("Cannot locate project directory")?;
     Ok(root.join("daemons").join(piop_protocol::development_endpoint_key(project)))
 }
 
@@ -22,7 +22,7 @@ pub(crate) fn debug_runtime() -> Result<Value, String> {
         let extension_root = crate::extensions::generated_extension_root()?;
         Ok(json!({
             "processId":std::process::id(),
-            "project":Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2),
+            "project":Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(1),
             "executable":executable,
             "buildIdentity":debug_binary_identity(&binary)?,
             "profileHome":home_dir()?,

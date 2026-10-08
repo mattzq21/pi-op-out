@@ -290,8 +290,8 @@ fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
     let installers: [(Installer, &str, &str); 4] = [
         (prepare_session_broker, "session-broker.ts", include_str!("../../resources/session-broker.ts")),
         (prepare_trace_reader, "piop-trace-reader.ts", include_str!("../../resources/trace-reader.ts")),
-        (prepare_openai_cache_fork_extension, "piop-openai-cache-fork.ts", include_str!("../../../../extensions/piop-openai-cache-fork/index.ts")),
-        (prepare_codex_web_search_extension, "piop-codex-web-search.ts", include_str!("../../../../extensions/piop-codex-web-search/index.ts")),
+        (prepare_openai_cache_fork_extension, "piop-openai-cache-fork.ts", include_str!("../../../extensions/piop-openai-cache-fork/index.ts")),
+        (prepare_codex_web_search_extension, "piop-codex-web-search.ts", include_str!("../../../extensions/piop-codex-web-search/index.ts")),
     ];
     for (install, relative, expected) in installers {
         let home = TestDirectory::new();
@@ -344,12 +344,12 @@ fn diff_watch_preparation_replaces_legacy_assets_and_refreshes_all_bundled_files
     assert!(!legacy.exists());
     assert_eq!(entry, generated_extension_root().unwrap().join("piop-diff-watch/index.ts"));
     for _ in 0..2 {
-        assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../../../extensions/piop-diff-watch/index.ts"));
+        assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../../extensions/piop-diff-watch/index.ts"));
         for (name, source) in [
-            ("git.ts", include_str!("../../../../extensions/piop-diff-watch/git.ts")),
-            ("schemas.ts", include_str!("../../../../extensions/piop-diff-watch/schemas.ts")),
-            ("prompt-history.ts", include_str!("../../../../extensions/piop-diff-watch/prompt-history.ts")),
-            ("pin-checkpoints.ts", include_str!("../../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
+            ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
+            ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
+            ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
+            ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
         ] {
             assert_eq!(fs::read_to_string(entry.parent().unwrap().join(name)).unwrap(), source);
         }
@@ -395,14 +395,14 @@ fn defined_agent_preparation_migrates_configuration_once_and_preserves_user_chan
     fs::write(legacy.join("notes.txt"), "keep").unwrap();
     let entry = prepare_defined_agents_extension().unwrap();
     assert_eq!(entry, generated_extension_root().unwrap().join("piop-define-agents/index.ts"));
-    assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../../../extensions/piop-define-agents/index.ts"));
+    assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../../extensions/piop-define-agents/index.ts"));
     let config = entry.with_file_name("config.json");
     assert!(!config.exists(), "legacy configuration migration is disabled in development builds");
     assert_eq!(fs::read(legacy.join("config.json")).unwrap(), original);
     assert_eq!(fs::read_to_string(legacy.join("notes.txt")).unwrap(), "keep");
     fs::write(&entry, "outdated extension").unwrap();
     prepare_defined_agents_extension().unwrap();
-    assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../../../extensions/piop-define-agents/index.ts"));
+    assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../../extensions/piop-define-agents/index.ts"));
     assert!(!config.exists(), "second install must not import legacy configuration in development builds");
     #[cfg(unix)] {
         use std::os::unix::fs::PermissionsExt;
@@ -500,8 +500,8 @@ fn prepared_runtime_configuration_tracks_settings_and_removes_stale_values() {
         let context = prepare_context_window_cap_extension(&settings).unwrap();
         assert_eq!(fs::read_to_string(&bridge).unwrap(), include_str!("../../resources/mcp-bridge.bundle.mjs"));
         assert!(!bridge.with_file_name("mcp-servers.json").exists());
-        assert_eq!(fs::read_to_string(&runtime).unwrap(), include_str!("../../../../extensions/piop-runtime-settings/index.ts"));
-        assert_eq!(fs::read_to_string(&context).unwrap(), include_str!("../../../../extensions/piop-context-window-cap/index.ts"));
+        assert_eq!(fs::read_to_string(&runtime).unwrap(), include_str!("../../../extensions/piop-runtime-settings/index.ts"));
+        assert_eq!(fs::read_to_string(&context).unwrap(), include_str!("../../../extensions/piop-context-window-cap/index.ts"));
         let runtime_config = runtime.with_file_name("runtime-settings.json");
         let runtime_value: Value = serde_json::from_slice(&fs::read(&runtime_config).unwrap()).unwrap();
         assert!(runtime_value.get("mcpServers").is_none());

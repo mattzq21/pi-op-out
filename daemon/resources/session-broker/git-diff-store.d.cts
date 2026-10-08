@@ -1,4 +1,4 @@
-import type { GitDiffSnapshots } from "../../../../clients/ui/types";
+import type { GitDiffSnapshots } from "../../../clients/ui/types";
 
 export function readStoreLocked(filename: string): { snapshots: GitDiffSnapshots };
 

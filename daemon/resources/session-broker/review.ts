@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { writeSessionFile } from "./session-file.ts";
-import type { SessionAgentState, SubagentProfileRequest } from "../../../../extensions/piop-define-agents/contracts.ts";
+import type { SessionAgentState, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { currentHost } from "./client.ts";

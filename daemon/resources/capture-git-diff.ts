@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { GitDiffFilter } from '../../../clients/ui/lib/diffPolicy';
+import { GitDiffFilter } from '../../clients/ui/lib/diffPolicy';
 
 const [base, current] = process.argv.slice(1);
 

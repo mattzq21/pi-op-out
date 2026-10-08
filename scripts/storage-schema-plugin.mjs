@@ -30,7 +30,7 @@ const canonicalModules = new Set([
 ]);
 
 function canonicalImports(source, path) {
-  if (!path.includes("/crates/daemon/resources/")) return source;
+  if (!path.includes("/daemon/resources/")) return source;
 
   const modules = /^const (\{ [\w,: ]+ \}|\w+) = require\((["'])([^"']+\.cjs)\2\);/gm;
 
@@ -54,7 +54,7 @@ function canonicalImports(source, path) {
 }
 
 function lazyImports(source, path) {
-  if (!path.includes("/crates/daemon/resources/")) return source;
+  if (!path.includes("/daemon/resources/")) return source;
 
   const destructured = /const \{ ([\w, ]+) \} = require\((["'])([^"']+\.cjs)\2\);/g;
 

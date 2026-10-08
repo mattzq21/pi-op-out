@@ -14,7 +14,7 @@ const baseline = process.argv.includes('--baseline');
 const root = new URL('../', import.meta.url);
 const source = path => readFileSync(new URL(path, root), 'utf8');
 const backend = await import(`data:text/javascript;base64,${Buffer.from(
-  source('crates/daemon/resources/chatgpt-stream.mjs') + '\n' + source('crates/daemon/resources/chatgpt-service.mjs') +
+  source('daemon/resources/chatgpt-stream.mjs') + '\n' + source('daemon/resources/chatgpt-service.mjs') +
   '\nexport { chatGptSave, chatGptLoad, chatGptSend, chatGptReadChat, chatGptStop, chatGptTickets, chatGptActive, chatGptKey };'
 ).toString('base64')}`);
 const directory = await mkdtemp(join(tmpdir(), 'piop-recovery-proof-'));

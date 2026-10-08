@@ -5,7 +5,7 @@ import ts from "typescript";
 export async function agentCommandInputs() {
   const files = [];
 
-  for (const root of ["extensions", "crates/daemon/resources"]) {
+  for (const root of ["extensions", "daemon/resources"]) {
     for (const path of await readdir(root, { recursive: true })) {
       if (path.endsWith(".ts") && !path.includes("node_modules")) files.push(join(root, path));
     }
