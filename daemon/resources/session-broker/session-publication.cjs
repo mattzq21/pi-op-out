@@ -422,18 +422,6 @@ function release(publication) {
   fs.closeSync(lease);
 }
 
-function abandon(publication) {
-  return io.locked(publication.root, () => {
-    const file = io.journalPath(publication.root, publication.id);
-
-    if (!io.exists(file)) return;
-    const journal = load(publication.root, file);
-
-    if (journal.review || JSON.stringify(journal.writer) !== JSON.stringify(io.writer())) throw new Error(`Publication rollback lacks its original writer ownership: ${file}`);
-    quarantine(journal, 'The original producer rolled back this publication; retained without replay');
-  });
-}
-
 async function acknowledge(publication) {
   try {
     return await io.lockedAsync(publication.root, () => {
@@ -539,4 +527,4 @@ function visibleReview(root, file, parentId) {
   return 'pending';
 }
 
-module.exports = { SessionPublicationError, publish, recover, retainedDependencies, pendingReviews, acknowledge, release, abandon, reviewVisibility };
+module.exports = { SessionPublicationError, publish, recover, retainedDependencies, pendingReviews, acknowledge, release, reviewVisibility };

@@ -60,5 +60,4 @@ export function retainedDependencies(root: string): DiagnosticPublication[];
 export function pendingReviews(parentPath: string, parentId: string): Promise<{ publication: SessionPublication; record: ReviewPublicationRecord }[]>;
 export function acknowledge(publication: SessionPublication): Promise<boolean>;
 export function release(publication: SessionPublication): void;
-export function abandon(publication: SessionPublication): void;
 export function reviewVisibility(file: string, parentId: string): "pending" | "legacy" | null;
