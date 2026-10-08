@@ -47,55 +47,147 @@ function alive(processOwner) {
   catch (error) { if (error.code === 'ENOENT') return false; throw error; }
 }
 
-function active(record, boot) {
+function active(record, boot, released = false) {
   if (record.version !== 1 || !Array.isArray(record.processes) || !record.processes.length) throw new Error('Invalid temporary snapshot ownership');
 
   if (record.boot && boot && record.boot !== boot) return false;
 
-  return record.processes.some(alive);
+  return record.processes.some((reader) => (!released || reader.pid !== record.readerPid) && alive(reader));
 }
 
-function protectedSources(directories) {
-  const sources = new Set();
+function warn(warnings, file, error) {
+  if (warnings.length < 16) warnings.push(`Snapshot recovery preserved ${file}: ${error.message}`);
+  else if (warnings.length === 16) warnings.push('Additional snapshot recovery records require inspection. Their files remain preserved.');
+}
 
-  for (const directory of directories) {
-    const fallback = read(path.join(directory, 'comparison-retry.json'));
+function protectReference(value, sources) {
+  const source = JSON.parse(value).root;
 
-    if (!fallback) continue;
+  if (!path.isAbsolute(source)) throw new Error('Invalid snapshot recovery source');
+  sources.paths.add(source);
+  sources.paths.add(path.dirname(source));
+}
 
-    for (const value of [fallback.baseline, fallback.current, fallback.originalBaseline].filter(Boolean)) {
-      const source = JSON.parse(value).root;
+function protectDirectory(directory, sources, warnings) {
+  const records = [];
+  let uncertain = false;
 
-      if (!path.isAbsolute(source)) throw new Error('Invalid snapshot recovery source');
-      sources.add(source);
-      sources.add(path.dirname(source));
-    }
+  for (const name of ['comparison-retry.json', 'temporary-owner.json', 'snapshot.json']) {
+    try {
+      const record = read(path.join(directory, name));
+      records.push(record);
+
+      if (name !== 'snapshot.json' && record) {
+        for (const value of [record.baseline, record.current, record.originalBaseline].filter(Boolean)) protectReference(value, sources);
+      }
+    } catch (error) { uncertain = true; warn(warnings, path.join(directory, name), error); }
   }
+
+  if (uncertain) {
+    sources.paths.add(directory);
+    const identities = new Set(records.flatMap((record) => record?.sessionId && record.sessionId === String(record.sessionId) ? [record.sessionId] : []));
+
+    if (identities.size !== 1) sources.unknown = true;
+    else for (const identity of identities) sources.sessions.add(identity);
+  }
+}
+
+function protectedSources(directories, warnings) {
+  const sources = { paths: new Set(), sessions: new Set(), unknown: false };
+
+  for (const directory of directories) protectDirectory(directory, sources, warnings);
 
   return sources;
 }
 
-function savedSnapshots(directory, snapshots) {
+function savedSnapshots(directory, snapshots, warnings) {
   for (const entry of entries(directory)) {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     const child = path.join(directory, entry.name);
 
-    if (entry.name.endsWith('.snapshots')) {
-      for (const name of ['latest', 'previous']) addSavedSnapshot(path.join(child, name), snapshots);
-
-      for (const pending of entries(path.join(child, 'pending'))) {
-        if (!pending.isDirectory() || pending.name.startsWith('.')) continue;
-
-        for (const phase of ['before', 'after']) addSavedSnapshot(path.join(child, 'pending', pending.name, phase), snapshots);
-      }
-    } else savedSnapshots(child, snapshots);
+    try {
+      if (entry.name.endsWith('.snapshots')) savedSnapshotDirectory(child, snapshots, warnings);
+      else savedSnapshots(child, snapshots, warnings);
+    } catch (error) { warn(warnings, child, error); }
   }
 }
 
-function addSavedSnapshot(directory, snapshots) {
-  const saved = read(path.join(directory, 'snapshot.json'));
+function savedSnapshotDirectory(directory, snapshots, warnings) {
+  for (const name of ['latest', 'previous']) addSavedSnapshot(path.join(directory, name), snapshots, warnings);
 
-  if (saved?.selfContained && saved.sessionId && /^[a-f0-9]{40,64}$/.test(saved.tree)) snapshots.push({ directory, saved });
+  for (const pending of entries(path.join(directory, 'pending'))) {
+    if (!pending.isDirectory() || pending.name.startsWith('.')) continue;
+
+    for (const phase of ['before', 'after']) addSavedSnapshot(path.join(directory, 'pending', pending.name, phase), snapshots, warnings);
+  }
+}
+
+function addSavedSnapshot(directory, snapshots, warnings) {
+  try {
+    const saved = read(path.join(directory, 'snapshot.json'));
+
+    if (saved?.selfContained && saved.sessionId && /^[a-f0-9]{40,64}$/.test(saved.tree)) snapshots.push({ directory, saved });
+  } catch (error) { warn(warnings, directory, error); }
+}
+
+function releasedReader(owner, state) {
+  if (!/^[a-f0-9-]{36}$/.test(owner?.scope)) return false;
+  const receipt = read(path.join(state.parent, '.released-readers', `${owner.scope}.json`));
+
+  return receipt?.version === 1;
+}
+
+function readerEnded(owner, state, released) {
+  if (!['building', 'reader'].includes(owner.state)) return false;
+
+  return released || Boolean(owner.boot && state.boot && owner.boot !== state.boot);
+}
+
+function blockedSources(directory, owner, state) {
+  if (state.protected.unknown) return true;
+  const identity = owner?.sessionId || read(path.join(directory, 'snapshot.json'))?.sessionId;
+
+  return state.protected.sessions.has(identity);
+}
+
+function usedScopes(directories, warnings) {
+  const used = new Set();
+
+  for (const directory of directories) {
+    try {
+      const owner = read(path.join(directory, 'temporary-owner.json'));
+
+      if (owner?.scope) used.add(owner.scope);
+    } catch (error) {
+      warn(warnings, directory, error);
+
+      return undefined;
+    }
+  }
+
+  return used;
+}
+
+function pruneReceipt(file, boot, warnings) {
+  try {
+    const record = read(file);
+
+    if (record?.boot && record.boot !== boot) fs.rmSync(file);
+  } catch (error) { warn(warnings, file, error); }
+}
+
+function pruneReleasedReaders(parent, directories, boot, warnings) {
+  if (!boot) return;
+  const used = usedScopes(directories, warnings);
+
+  if (!used) return;
+  const receipts = path.join(parent, '.released-readers');
+
+  for (const entry of entries(receipts)) {
+    if (!entry.isFile() || !/^[a-f0-9-]{36}\.json$/.test(entry.name) || used.has(entry.name.slice(0, -5))) continue;
+
+    pruneReceipt(path.join(receipts, entry.name), boot, warnings);
+  }
 }
 
 function objectFiles(directory, visit) {
@@ -220,22 +312,24 @@ function clearRecoveryWrites(directory) {
 function recoverDirectory(directory, state) {
   clearRecoveryWrites(directory);
 
-  if (state.protected.has(directory)) return 0;
+  if (state.protected.paths.has(directory)) return 0;
   const owner = read(path.join(directory, 'temporary-owner.json'));
+  const released = releasedReader(owner, state);
 
-  if (owner && active(owner, state.boot)) return 0;
+  if (owner && active(owner, state.boot, released)) return 0;
+  const blocked = blockedSources(directory, owner, state);
 
-  if (owner && ['building', 'reader'].includes(owner.state)) {
+  if (!blocked && owner && readerEnded(owner, state, released)) {
     if (fs.existsSync(path.join(directory, 'comparison-retry.json'))) return 0;
     discard(directory);
 
     return 0;
   }
 
-  return preserveLegacy(directory, state, owner);
+  return preserveLegacy(directory, state, owner, blocked);
 }
 
-function preserveLegacy(directory, state, owner) {
+function preserveLegacy(directory, state, owner, blocked) {
   const saved = read(path.join(directory, 'snapshot.json'));
   const recovery = legacySnapshot(directory, state.boot, saved);
 
@@ -246,7 +340,7 @@ function preserveLegacy(directory, state, owner) {
     write(path.join(directory, 'recovery.json'), { ...recovery, deduplicated: true });
   }
 
-  if (!owner && expiredDuplicate(recovery, saved, state) && fullyShared(directory, state.objects())) {
+  if (!blocked && !owner && expiredDuplicate(recovery, saved, state) && fullyShared(directory, state.objects())) {
     discard(directory);
 
     return 0;
@@ -263,6 +357,7 @@ function expiredDuplicate(recovery, saved, state) {
 
 function recoverLocked(root, parent) {
   const children = entries(parent);
+  const warnings = [];
 
   for (const child of children) {
     if (child.isDirectory() && child.name.startsWith('.cleanup-pi-desktop-diff-')) discard(path.join(parent, child.name));
@@ -271,15 +366,18 @@ function recoverLocked(root, parent) {
   const directories = children.filter((entry) => entry.isDirectory() && entry.name.startsWith('pi-desktop-diff-')).map((entry) => path.join(parent, entry.name));
   const snapshots = [];
 
-  for (const area of ['sessions', 'archived']) savedSnapshots(path.join(root, area), snapshots);
+  for (const area of ['sessions', 'archived']) savedSnapshots(path.join(root, area), snapshots, warnings);
 
   let objects;
 
-  const state = { boot: bootIdentity(), protected: protectedSources(directories), snapshots, objects: () => {
+  const state = { parent, boot: bootIdentity(), protected: protectedSources(directories, warnings), snapshots, objects: () => {
     if (objects) return objects;
     objects = new Map();
 
-    for (const snapshot of snapshots) objectFiles(snapshot.directory, (file, key, stat) => objects.set(key, { file, stat }));
+    for (const snapshot of snapshots) {
+      try { objectFiles(snapshot.directory, (file, key, stat) => objects.set(key, { file, stat })); }
+      catch (error) { warn(warnings, snapshot.directory, error); }
+    }
 
     return objects;
   } };
@@ -288,10 +386,14 @@ function recoverLocked(root, parent) {
 
   for (const directory of directories) {
     try { preserved += recoverDirectory(directory, state); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    catch (error) { if (error.code !== 'ENOENT') warn(warnings, directory, error); }
   }
 
-  return preserved ? [`${preserved} temporary diff snapshot(s) have uncertain reader ownership or incomplete recovery. Their files and recovery records are preserved in ${parent}.`] : [];
+  pruneReleasedReaders(parent, directories, state.boot, warnings);
+
+  if (preserved) warnings.push(`${preserved} temporary diff snapshot(s) have uncertain reader ownership or incomplete recovery. Their files and recovery records are preserved in ${parent}.`);
+
+  return warnings;
 }
 
 function recoverSnapshotTemps(root) {

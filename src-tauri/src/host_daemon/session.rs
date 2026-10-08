@@ -174,6 +174,8 @@ impl Session {
         } = launch;
         spec.prepare(&key, &client_id, home);
         spec.env.insert("PIOP_EPHEMERAL_SESSION".into(), u8::from(ephemeral).to_string());
+        let epoch = Uuid::new_v4().to_string();
+        spec.env.insert("PIOP_GIT_CAPTURE_READER_SCOPE".into(), epoch.clone());
         let storage = queue_storage(host.as_ref(), &spec, cwd.as_deref(), home, &key, ephemeral)?;
         let pending = match &storage { Some(storage) => storage.recover(pending)?, None => pending };
         let identity = if spec.argument("--session").is_some() {
@@ -192,7 +194,7 @@ impl Session {
             cwd,
             ephemeral,
             timeout,
-            epoch: Uuid::new_v4().to_string(),
+            epoch,
             queue: match storage {
                 Some(storage) => SessionQueue::with_storage(Arc::new(SessionCallbacks(weak.clone())), pending, storage),
                 None => SessionQueue::new(Arc::new(SessionCallbacks(weak.clone())), pending),
@@ -552,7 +554,7 @@ impl Session {
         self.host.finished(&key, &self.epoch, pending, transient);
         if !transient {
             self.host
-                .output(json!({"type":"session_closed","sessionKey":key,"state":self.saved_state(),"submitted":self.submitted()}));
+                .output(json!({"type":"session_closed","sessionKey":key,"readerScope":self.epoch,"state":self.saved_state(),"submitted":self.submitted()}));
         }
     }
 

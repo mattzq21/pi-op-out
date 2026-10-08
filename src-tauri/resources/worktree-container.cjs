@@ -7,7 +7,7 @@ function containerContents(directory, info = fs.lstatSync(directory, { bigint: t
 
   if (!entries.every(entry => entry.isFile() && (entry.name === 'parent.json' || entry.name === temporary))) return;
 
-  return { pending: entries.some(entry => entry.name === temporary) };
+  return { pending: entries.some(entry => entry.name === temporary), files: entries.map(entry => entry.name) };
 }
 
 module.exports = { containerContents };

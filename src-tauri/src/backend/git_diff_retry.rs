@@ -40,6 +40,11 @@ pub(super) fn retain_pending_git_diff(packet: &Value, baseline: &str, host: Opti
     Ok(())
 }
 
+pub(super) fn release_snapshot_reader(scope: &str, host: Option<&RemoteHost>) -> Result<(), String> {
+    pending_command(json!({"action":"release","scope":scope}), host)?;
+    Ok(())
+}
+
 fn save_pending(session_path: &str, pending: &PendingDiff, host: Option<&RemoteHost>) -> Result<(), String> {
     let patch = pending_command(json!({"action":"diff","sessionPath":session_path,"turnId":pending.turn_id,
         "diffScript":include_str!("../../resources/capture-git-diff.bundle.mjs")}), host)?;

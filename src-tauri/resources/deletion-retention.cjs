@@ -132,6 +132,7 @@ function worktreeContainers(root) {
   return entries(path.join(root, 'worktrees')).flatMap(entry => {
     if (!entry.isDirectory() || !/^[a-f0-9]{4}$/.test(entry.name)) return [];
     const directory = path.join(root, 'worktrees', entry.name);
+
     return containerContents(directory) ? [directory] : [];
   });
 }

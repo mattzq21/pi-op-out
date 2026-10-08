@@ -76,11 +76,15 @@ fn snapshot_cleanup_pending(root: &Path) -> Result<bool, String> {
     };
     for entry in entries {
         let entry = entry.map_err(|error| error.to_string())?;
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with("pi-desktop-diff-") || name.starts_with(".cleanup-pi-desktop-diff-") { return Ok(true); }
+        if snapshot_entry_pending(root, &entry.file_name())? { return Ok(true); }
     }
     Ok(false)
+}
+
+fn snapshot_entry_pending(root: &Path, name: &std::ffi::OsStr) -> Result<bool, String> {
+    let name = name.to_string_lossy();
+    if name.starts_with("pi-desktop-diff-") || name.starts_with(".cleanup-pi-desktop-diff-") { return Ok(true); }
+    Ok(name == ".released-readers" && fork_publication_pending(&root.join("git-snapshots"), ".released-readers")?)
 }
 
 pub(crate) fn recover(root: &Path) -> Result<(), String> {

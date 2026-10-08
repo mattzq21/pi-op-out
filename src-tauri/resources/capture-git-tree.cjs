@@ -105,6 +105,7 @@ function ensureStorage(retained) {
 }
 
 function lockedCapture() {
+  if (owner?.action === 'release') return releaseReader();
   const retained = snapshotStorage();
 
   if (!retained) return main(retained);
@@ -120,6 +121,16 @@ function lockedCapture() {
     clearPreparations(retained);
     main(retained);
   } finally { fs.closeSync(descriptor); }
+}
+
+function releaseReader() {
+  if (!/^[a-f0-9-]{36}$/.test(owner.scope)) throw new Error('Invalid comparison reader scope');
+  const directory = path.join(storageRoot(), 'git-snapshots', '.released-readers');
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const boot = fs.existsSync('/proc/sys/kernel/random/boot_id') ? fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() : null;
+  writeJson(path.join(directory, `${owner.scope}.json`), { version: 1, boot, releasedAt: Date.now() });
+  syncPath(path.dirname(directory));
+  console.log('null');
 }
 
 function clearPreparations(retained) {
@@ -196,7 +207,7 @@ function ownTemporary(directory, state) {
   const pids = [process.pid, process.ppid, Number(process.env.PIOP_GIT_CAPTURE_READER_PID)].filter((pid) => Number.isSafeInteger(pid) && pid > 1);
   const processes = [...new Set(pids)].map((pid) => ({ pid, identity: processIdentity(pid) }));
   const boot = fs.existsSync('/proc/sys/kernel/random/boot_id') ? fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() : null;
-  writeJson(path.join(directory, 'temporary-owner.json'), { version: 1, state, boot, processes, sessionId: owner?.sessionId, turnId: owner?.turnId, sessionPath: owner?.sessionPath, messageId: owner?.messageId, baseline: owner?.baseline });
+  writeJson(path.join(directory, 'temporary-owner.json'), { version: 1, state, boot, processes, readerPid: Number(process.env.PIOP_GIT_CAPTURE_READER_PID) || null, scope: process.env.PIOP_GIT_CAPTURE_READER_SCOPE, sessionId: owner?.sessionId, turnId: owner?.turnId, sessionPath: owner?.sessionPath, messageId: owner?.messageId, baseline: owner?.baseline });
   syncPath(path.dirname(directory));
 }
 

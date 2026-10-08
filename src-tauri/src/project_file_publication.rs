@@ -60,7 +60,9 @@ mod protected {
         target: PathBuf,
         recovery: PathBuf,
         candidate: PathBuf,
+        proposed: PathBuf,
         recovery_path: String,
+        proposed_path: String,
         recovery_prefix: String,
     }
 
@@ -74,26 +76,30 @@ mod protected {
             let recovery_name = format!("{recovery_prefix}{timestamp:020}-{}", uuid::Uuid::new_v4());
             let anchored = platform::directory_path(&directory, &parent);
             let recovery_path = super::super::relative(root, &parent.join(&recovery_name));
+            let proposed_name = format!("{recovery_name}-submitted");
+            let proposed_path = super::super::relative(root, &parent.join(&proposed_name));
             let recovery = anchored.join(recovery_name);
             let candidate = platform::candidate_path(&recovery);
-            Ok(Self { directory, parent, target: anchored.join(name), recovery, candidate, recovery_path, recovery_prefix })
+            Ok(Self { directory, parent, target: anchored.join(name), recovery, candidate, proposed: anchored.join(proposed_name), recovery_path, proposed_path, recovery_prefix })
         }
 
         fn prepare(&self, content: &str, expected: &str) -> Result<(), String> {
             let original = open_regular(&self.target).map_err(|error| error.to_string())?;
             check_revision(&original, expected)?;
+            let permissions = original.metadata().map_err(|error| error.to_string())?.permissions();
             let mut file = platform::create_candidate(&self.candidate).map_err(|error| error.to_string())?;
+            let mut proposed_created = false;
             let result = (|| {
-                file.set_permissions(original.metadata()?.permissions())?;
-                file.write_all(content.as_bytes())?;
-                file.sync_all()?;
+                write_synced(&mut file, permissions.clone(), content)?;
+                let mut proposed = platform::create_candidate(&self.proposed)?;
+                proposed_created = true;
+                write_synced(&mut proposed, permissions, content)?;
                 platform::prepare_directory(&self.directory)?;
                 check_revision(&open_regular(&self.target)?, expected).map_err(std::io::Error::other)
             })();
             drop(file);
             if let Err(error) = result {
-                let cleanup = fs::remove_file(&self.candidate).err().map(|error| format!(" The unfinished save remains in {}: {error}.", self.parent.display())).unwrap_or_default();
-                return Err(format!("Could not save file: {error}.{cleanup}"));
+                return Err(format!("Could not save file: {error}.{}", self.remove_unpublished(proposed_created)));
             }
             Ok(())
         }
@@ -108,7 +114,13 @@ mod protected {
             let sync = self.sync(retained.as_ref());
             if let Err(error) = &sync { warnings.push(format!("The save completed, but durability could not be confirmed: {error}. Keep the recovery version and retry after resolving the synchronization error.")); }
             let changed_again = self.inspect_target(content, &mut warnings);
-            json!({ "committed": true, "durable": sync.is_ok(), "conflict": conflict || changed_again, "recoveryPath": self.recovery_path, "warning": warning(warnings) })
+            json!({ "committed": true, "durable": sync.is_ok(), "conflict": conflict || changed_again, "recoveryPath": self.recovery_path, "proposedPath": self.proposed_path, "warning": warning(warnings) })
+        }
+
+        fn remove_unpublished(&self, proposed_created: bool) -> String {
+            let paths = std::iter::once(&self.candidate).chain(proposed_created.then_some(&self.proposed));
+            let errors: Vec<_> = paths.filter_map(|path| fs::remove_file(path).err().map(|error| error.to_string())).collect();
+            if errors.is_empty() { String::new() } else { format!(" Unfinished save files remain in {}: {}.", self.parent.display(), errors.join("; ")) }
         }
 
         fn inspect_recovery(&self, expected: &str, warnings: &mut Vec<String>) -> (bool, Option<File>) {
@@ -144,7 +156,7 @@ mod protected {
             let retained = if self.recovery.exists() { &self.recovery } else { &self.candidate };
             let recovery_path = super::super::relative(root, &self.parent.join(retained.file_name().unwrap_or_default()));
             let sync_error = self.directory.sync_all().err().map(|error| format!(" Directory synchronization also failed: {error}.")).unwrap_or_default();
-            json!({ "committed": committed, "durable": false, "conflict": true, "recoveryPath": recovery_path, "warning": format!("{outcome}: {error}. Reload the file and inspect {recovery_path} before retrying. The recovery entry has been retained.{sync_error}") })
+            json!({ "committed": committed, "durable": false, "conflict": true, "recoveryPath": recovery_path, "proposedPath": self.proposed_path, "warning": format!("{outcome}: {error}. Reload the file and inspect {recovery_path} before retrying. Your submitted contents are preserved at {}.{sync_error}", self.proposed_path) })
         }
 
         fn sync_recoveries(&self) -> std::io::Result<()> {
@@ -160,7 +172,7 @@ mod protected {
             match current_revision(&self.target) {
                 Ok(current) if current == super::super::revision(content) => false,
                 Ok(_) => {
-                    warnings.push("The file changed again after your save. Reload it before continuing.".into());
+                    warnings.push(format!("The file changed again after your save. Your submitted contents are preserved at {}. Reload it before continuing.", self.proposed_path));
                     true
                 }
                 Err(error) => {
@@ -175,7 +187,7 @@ mod protected {
             match observed {
                 Ok(content) => {
                     if publication["committed"] == true && content != proposed {
-                        add_warning(&mut publication, "The file changed again after your save. The returned contents reflect the latest observation; reload it before continuing.");
+                        add_warning(&mut publication, &format!("The file changed again after your save. Your submitted contents are preserved at {}. The returned contents reflect the latest observation; reload it before continuing.", self.proposed_path));
                     }
                     json!({ "revision": super::super::revision(&content), "content": content, "publication": publication })
                 }
@@ -195,6 +207,12 @@ mod protected {
 
     fn warning(warnings: Vec<String>) -> Option<String> {
         if warnings.is_empty() { None } else { Some(warnings.join(" ")) }
+    }
+
+    fn write_synced(file: &mut File, permissions: fs::Permissions, content: &str) -> std::io::Result<()> {
+        file.set_permissions(permissions)?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()
     }
 
     fn check_revision(file: &File, expected: &str) -> Result<(), String> {

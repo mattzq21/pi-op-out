@@ -8,6 +8,7 @@ const labels = { active: "Pursuing goal", paused: "Goal paused", blocked: "Goal 
 const goalSchema = z.object({
   objective: z.string(), status: z.enum(["active", "paused", "blocked", "usage_limited", "budget_limited", "complete"]),
   tokensUsed: z.number(), tokenBudget: z.number().nullable().optional(), elapsedMs: z.number(),
+  legacyUsageUncertainTokens: z.number().optional(),
 });
 
 type Goal = z.infer<typeof goalSchema>;
@@ -54,6 +55,7 @@ export function GoalBar<T>(props: { value?: string; disabled: boolean; onCommand
       <span class="goal-bar-status" data-tooltip={labels[current().status]}>/goal</span>
       <span class="goal-bar-objective" data-tooltip={current().objective}>{current().objective}</span>
       <span class="goal-bar-time" data-tooltip="Active time">{duration(current().elapsedMs)}</span>
+      <Show when={current().legacyUsageUncertainTokens}><span class="goal-bar-time" data-tooltip={`${current().legacyUsageUncertainTokens} older subagent tokens may already be included in the saved goal total.`}>Usage uncertain</span></Show>
       <button type="button" data-tooltip="Clear goal" aria-label="Clear goal" disabled={props.disabled || busy()} onClick={() => void run("clear")}><Trash2 size={14} /></button>
       <Show when={current().status !== "complete"}>
         <button type="button" data-tooltip={current().status === "active" ? "Pause goal" : "Resume goal"} aria-label={current().status === "active" ? "Pause goal" : "Resume goal"} disabled={props.disabled || busy()} onClick={() => void run(current().status === "active" ? "pause" : "resume")}>

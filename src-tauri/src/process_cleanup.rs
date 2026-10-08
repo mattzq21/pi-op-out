@@ -1,11 +1,11 @@
 use std::{process::Child, thread, time::{Duration, Instant}};
 
 #[cfg(target_os = "linux")]
-pub(crate) fn directory_in_use(directory: &std::path::Path, ignored: Option<&std::path::Path>) -> std::io::Result<bool> {
+pub(crate) fn directory_in_use(directory: &std::path::Path) -> std::io::Result<bool> {
     for entry in std::fs::read_dir("/proc")? {
         let entry = entry?;
         if !owned_process(&entry)? { continue; }
-        if process_uses_directory(&entry.path(), directory, ignored)? { return Ok(true); }
+        if process_uses_directory(&entry.path(), directory)? { return Ok(true); }
     }
     Ok(false)
 }
@@ -22,12 +22,12 @@ fn owned_process(entry: &std::fs::DirEntry) -> std::io::Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
-fn process_uses_directory(process: &std::path::Path, directory: &std::path::Path, ignored: Option<&std::path::Path>) -> std::io::Result<bool> {
-    if link_uses_directory(&process.join("cwd"), directory, ignored)? { return Ok(true); }
+fn process_uses_directory(process: &std::path::Path, directory: &std::path::Path) -> std::io::Result<bool> {
+    if link_uses_directory(&process.join("cwd"), directory)? { return Ok(true); }
     let Some(handles) = process_handles(process)? else { return Ok(false); };
     for handle in handles {
         let handle = handle?;
-        if link_uses_directory(&handle.path(), directory, ignored)? { return Ok(true); }
+        if link_uses_directory(&handle.path(), directory)? { return Ok(true); }
     }
     Ok(false)
 }
@@ -41,9 +41,9 @@ fn process_handles(process: &std::path::Path) -> std::io::Result<Option<std::fs:
 }
 
 #[cfg(target_os = "linux")]
-fn link_uses_directory(link: &std::path::Path, directory: &std::path::Path, ignored: Option<&std::path::Path>) -> std::io::Result<bool> {
+fn link_uses_directory(link: &std::path::Path, directory: &std::path::Path) -> std::io::Result<bool> {
     match std::fs::read_link(link) {
-        Ok(path) => Ok(path.starts_with(directory) && ignored != Some(path.as_path())),
+        Ok(path) => Ok(path.starts_with(directory)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
     }

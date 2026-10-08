@@ -307,12 +307,19 @@ fn handle_session_state(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str
                     let _ = app.emit("pi://sessions-changed", ());
 }
 
+fn close_session_captures(connection: &Daemon, key: &str, scope: Option<&str>) -> Result<(), String> {
+    connection.drain_captures(Some(key))?;
+    if let Some(scope) = scope { crate::git_diff_retry::release_snapshot_reader(scope, connection.host.as_ref())?; }
+    let mut captures = connection.captures.lock().map_err(|_| "Capture queue lock was poisoned")?;
+    if let Some(sender) = captures.remove(key) { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); }
+    Ok(())
+}
+
 fn handle_session_closed(app: &AppHandle, connection: &Arc<Daemon>, packet: &Value) {
                     let runtime = app.state::<PiRuntime>();
                     if let Some(key) = packet["sessionKey"].as_str() {
-                        match connection.drain_captures(Some(key)) {
-                            Ok(()) => { if let Ok(mut captures) = connection.captures.lock() { if let Some(sender) = captures.remove(key) { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); } } }
-                            Err(error) => { let _ = app.emit("pi://daemon-error", json!({"line":error})); }
+                        if let Err(error) = close_session_captures(connection, key, packet["readerScope"].as_str()) {
+                            let _ = app.emit("pi://daemon-error", json!({"line":error}));
                         }
                     }
                     if let Ok(mut agents) = runtime.active_agents.lock() { agents.remove(&format!("{}{}", connection.agent_prefix, packet["sessionKey"].as_str().unwrap_or_default())); };

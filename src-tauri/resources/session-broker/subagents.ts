@@ -12,7 +12,7 @@ import { createdWorktreeSchema } from "./fork.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { listenSubagentUsage, registerSubagentUsage } from "./subagent-usage.ts";
 import { registerSubagentMailbox } from "./subagent-mailbox.ts";
-import { boundedRecovery, recoverDescendantAccounting, registerSubagentRecovery, type RecoveryScope } from "./subagent-recovery.ts";
+import { boundedRecovery, recoverDescendantAccounting, registerSubagentRecovery, waitForAccounting, type RecoveryScope } from "./subagent-recovery.ts";
 import { interruptSession, sendAgentMailbox, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { completedSubagentOutput, forgetSubagentRun, hasSubagentResult, ownedSubagentRuns, persistSubagentRun, persistSubagentUsage, reportedSubagentUsage, resultNotificationId, savedSubagentRuns, subagentCompletion, unresolvedSubagentRuns, type SubagentResponse, type SubagentRun } from "./subagent-results.ts";
@@ -289,7 +289,27 @@ async function reconcileSubagentTranscript(run: SubagentRun, reportUsage: (total
   return last;
 }
 
+const accountingRecoveries = new Map<string, { run: SubagentRun; done: Promise<void> }>();
+
 async function recoverSubagentAccounting(run: SubagentRun, execution: UsageExecution) {
+  const key = resultNotificationId(run);
+  let recovery = accountingRecoveries.get(key);
+
+  if (!recovery) {
+    recovery = { run, done: performAccountingRecovery(run, execution).finally(() => { accountingRecoveries.delete(key); }) };
+    accountingRecoveries.set(key, recovery);
+  }
+
+  await waitForAccounting(recovery.done, boundedRecovery(execution));
+  Object.assign(run, recovery.run);
+}
+
+async function performAccountingRecovery(run: SubagentRun, execution: UsageExecution) {
+  const latest = (await savedSubagentRuns(execution.ctx)).find(saved => resultNotificationId(saved) === resultNotificationId(run));
+
+  if (latest && !latest.accountingPending && latest.status !== "running") { Object.assign(run, latest);
+
+  return; }
   const scope = boundedRecovery(execution);
   await restoreSubagentPath(run, scope.signal);
   const reportUsage = await usageReporter(run, { ...execution, ...scope }, true);
@@ -469,7 +489,9 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   const active = new Map<string, ActiveSubagent>();
   const pending = new Set<Promise<void>>();
   let controller = new AbortController();
-  registerSubagentRecovery(pi, active, () => controller.signal, (run, ctx, scope) => recoverSubagentAccounting(run, { pi, ctx, reportDescendants, ...scope }));
+  registerSubagentRecovery(pi, { active, stopped: () => controller.signal,
+    recover: (run, ctx, scope) => recoverSubagentAccounting(run, { pi, ctx, reportDescendants, ...scope }),
+    activate: ctx => restoreSubagents(ctx), publish: (run, ctx) => publishSubagentResult(pi, ctx, run) });
   const latestRuns = (ctx: ExtensionContext) => [...new Map(ownedSubagentRuns(ctx).map(run => [run.sessionId, run])).values()];
   const taskPath = (ctx: ExtensionContext, run: SubagentRun) => run.taskPath ?? `${delegationScope(ctx).taskPath}/${run.name}`;
 
@@ -618,7 +640,8 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   });
   pi.on("session_before_switch", stop);
   pi.on("session_shutdown", async () => { detachAbort(); unsubscribeCancellation(); await stop(); });
-  pi.on("session_start", async (_event, ctx) => {
+
+  const restoreSubagents = async (ctx: ExtensionContext) => {
     if (process.env.PIOP_USAGE_RECOVERY === "1") return;
     await stopping;
     const signal = controller.signal;
@@ -627,6 +650,8 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     const tracked = new Set(ownedSubagentRuns(ctx).map(run => JSON.stringify(run)));
 
     for (const run of runs) {
+      if (active.has(run.sessionId)) continue;
+
       if (run.status === "running" && latest.get(run.sessionId) !== run) {
         run.status = "cancelled";
         run.endedAt = Date.now();
@@ -648,7 +673,9 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
         }, pending, run);
       } catch (error) { ctx.ui.notify(`Subagent recovery is pending for ${run.name}: ${String(error)}`, "error"); }
     }
-  });
+  };
+
+  pi.on("session_start", (_event, ctx) => restoreSubagents(ctx));
   pi.registerTool({
     name: "await_subagents", label: "Await all subagents", exposure: "model-only",
     description: "Wait until every pending subagent has finished, successfully or with an error. No parameters, timeout, or early return on input or cancellation. Returns immediately if no subagents are pending. Subagent results are delivered separately in the conversation.",

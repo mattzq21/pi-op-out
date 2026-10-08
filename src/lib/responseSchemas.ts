@@ -81,7 +81,7 @@ export const projectDirectorySchema = z.object({ path: z.string(), parent: z.uni
 
 const projectFilePublicationSchema = z.object({
   committed: z.boolean().nullable(), durable: z.boolean(), conflict: z.boolean(),
-  recoveryPath: z.string(), warning: z.string().nullable(),
+  recoveryPath: z.string(), proposedPath: z.string(), warning: z.string().nullable(),
 });
 
 export const projectFileSchema = z.object({

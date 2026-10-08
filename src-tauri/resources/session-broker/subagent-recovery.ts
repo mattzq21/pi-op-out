@@ -36,7 +36,7 @@ export async function recoverDescendantAccounting(run: SubagentRun, scope: Recov
   if (!Check(Type.Object({ complete: Type.Literal(true) }), result)) throw new Error(`Descendant accounting is still active for ${run.name}; recovery remains saved`);
 }
 
-async function waitForObserver(done: Promise<void>, scope: RecoveryScope & { signal: AbortSignal; recoveryDeadline: number }) {
+export async function waitForAccounting(done: Promise<void>, scope: RecoveryScope & { signal: AbortSignal; recoveryDeadline: number }) {
   const cancellation = new AbortController();
 
   try {
@@ -62,10 +62,82 @@ function authorizeRecovery(ctx: ExtensionContext, source: string) {
   if (ctx.mode !== "rpc" || entry?.type !== "custom" || !Check(parentSchema, entry.data) || entry.data.parentSessionId !== source) throw new Error("Only the parent conversation can recover delegated usage");
 }
 
-export function registerSubagentRecovery(pi: ExtensionAPI, active: Map<string, { done: Promise<void> }>, stopped: () => AbortSignal, recover: (run: SubagentRun, ctx: ExtensionContext, scope: RecoveryScope) => Promise<void>) {
+interface RecoveryRuntime {
+  active: Map<string, { done: Promise<void> }>;
+  stopped: () => AbortSignal;
+  recover: (run: SubagentRun, ctx: ExtensionContext, scope: RecoveryScope) => Promise<void>;
+  activate: (ctx: ExtensionContext) => Promise<void>;
+  publish: (run: SubagentRun, ctx: ExtensionContext) => Promise<void>;
+}
+
+async function retryAccountingPass(pi: ExtensionAPI, ctx: ExtensionContext, runtime: RecoveryRuntime, signal: AbortSignal, reported: Set<string>) {
+  for (const run of await savedSubagentRuns(ctx)) {
+    if (!(run.accountingPending || run.status === "running") || runtime.active.has(run.sessionId)) continue;
+    signal.throwIfAborted();
+
+    try {
+      const scope = boundedRecovery({ signal });
+      await recoverStoppedRun(pi, ctx, run, scope);
+      await runtime.recover(run, ctx, scope);
+      await runtime.publish(run, ctx);
+      reported.delete(resultNotificationId(run));
+    } catch (error) {
+      signal.throwIfAborted();
+
+      if (!reported.has(resultNotificationId(run))) ctx.ui.notify(`Token usage recovery will retry for ${run.name}: ${String(error)}`, "error");
+      reported.add(resultNotificationId(run));
+    }
+  }
+}
+
+async function retryPendingAccounting(pi: ExtensionAPI, ctx: ExtensionContext, runtime: RecoveryRuntime, signal: AbortSignal) {
+  const reported = new Set<string>();
+  let pause = 1000;
+
+  while (!signal.aborted) {
+    await delay(pause, undefined, { signal });
+    pause = Math.min(30_000, pause * 2);
+
+    try { await retryAccountingPass(pi, ctx, runtime, signal, reported); reported.delete("inventory"); }
+    catch (error) {
+      signal.throwIfAborted();
+
+      if (!reported.has("inventory")) ctx.ui.notify(`Token usage recovery will retry reading saved runs: ${String(error)}`, "error");
+      reported.add("inventory");
+    }
+  }
+}
+
+export function registerSubagentRecovery(pi: ExtensionAPI, runtime: RecoveryRuntime) {
+  const { active, stopped, recover } = runtime;
   let pending = Promise.resolve();
+  let retryController = new AbortController();
+  let retrying = Promise.resolve();
+
+  const stopRetries = async () => { retryController.abort(); await retrying; };
+  const startRetries = async (ctx: ExtensionContext) => {
+    await stopRetries();
+
+    if (process.env.PIOP_USAGE_RECOVERY === "1") return;
+    retryController = new AbortController();
+    const signal = AbortSignal.any([retryController.signal, stopped()]);
+    retrying = retryPendingAccounting(pi, ctx, runtime, signal).catch(error => { if (!signal.aborted) ctx.ui.notify(`Token usage recovery remains pending: ${String(error)}`, "error"); });
+  };
 
   const unsubscribe = pi.events.on("piop:rpc", event => {
+    if (event.command === "activate_usage_recovery") {
+      event.ready = pending.then(async () => {
+        if (process.env.PIOP_USAGE_RECOVERY !== "1") return;
+        delete process.env.PIOP_USAGE_RECOVERY;
+        await runtime.activate(event.ctx);
+        await startRetries(event.ctx);
+        pi.events.emit("piop:agents:ready", { ctx: event.ctx });
+      });
+      pending = event.ready.then(() => {}, () => {});
+
+      return;
+    }
+
     if (event.command !== "recover_subagent_usage") return;
     const payload = Parse(recoverySchema, event.payload);
     authorizeRecovery(event.ctx, payload.sourceSessionId);
@@ -76,7 +148,7 @@ export function registerSubagentRecovery(pi: ExtensionAPI, active: Map<string, {
         const observer = active.get(run.sessionId);
 
         if (observer) {
-          await waitForObserver(observer.done, scope);
+          await waitForAccounting(observer.done, scope);
           run = (await savedSubagentRuns(event.ctx)).find(saved => resultNotificationId(saved) === resultNotificationId(run)) ?? run;
         }
 
@@ -92,5 +164,8 @@ export function registerSubagentRecovery(pi: ExtensionAPI, active: Map<string, {
     pending = event.ready.then(() => {}, () => {});
   });
 
-  pi.on("session_shutdown", unsubscribe);
+  pi.on("session_start", (_event, ctx) => startRetries(ctx));
+  pi.on("agent_start", (_event, ctx) => startRetries(ctx));
+  pi.on("session_before_switch", stopRetries);
+  pi.on("session_shutdown", async () => { unsubscribe(); await stopRetries(); });
 }

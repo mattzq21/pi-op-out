@@ -156,10 +156,24 @@ function cleanupStages(record) {
     if (!metadata(staged)) continue;
 
     if (!matches(candidate, staged)) throw new Error('Deferred retention staging identity changed');
+
     if (!worktreeRemovalReady(candidate, staged)) throw new Error('Deferred worktree storage remains in use or contains files');
-    fs.rmSync(staged, { recursive: true });
+    removeStage(candidate, staged);
     sync(path.dirname(staged));
   }
+}
+
+function removeStage(candidate, file) {
+  if (path.basename(path.dirname(candidate.path)) !== 'worktrees') { fs.rmSync(file, { recursive: true });
+
+    return; }
+
+  const contents = containerContents(file);
+
+  if (!contents) throw new Error('Deferred worktree storage contains files');
+
+  for (const name of contents.files) fs.unlinkSync(path.join(file, name));
+  fs.rmdirSync(file);
 }
 
 function worktreeRemovalReady(candidate, file) {
@@ -172,6 +186,7 @@ function removeCandidate(record, index) {
   const candidate = record.pending.directories[index];
 
   if (!matches(candidate)) return;
+
   if (!worktreeRemovalReady(candidate, candidate.path)) return;
   const parent = path.dirname(candidate.path);
 

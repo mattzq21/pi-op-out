@@ -12,7 +12,7 @@ export interface ProjectFile {
   revision: string;
   recoveries?: Array<{ path: string; name: string }>;
   recoveryWarning?: string;
-  publication?: { committed: boolean | null; durable: boolean; conflict: boolean; recoveryPath: string; warning: string | null };
+  publication?: { committed: boolean | null; durable: boolean; conflict: boolean; recoveryPath: string; proposedPath: string; warning: string | null };
 }
 
 export interface ProjectDirectory { path: string; parent: string | null; entries: Array<{ name: string; path: string; directory: boolean }>; }

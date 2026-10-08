@@ -35,6 +35,11 @@ function ownsAllocation(value, container, info) {
     && path.dirname(value.allocation.target) === container;
 }
 
+function readParent(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) { if (error instanceof SyntaxError) return; throw error; }
+}
+
 function ownership(container, info, boot) {
   if (containerContents(container, info)?.pending) return true;
   const parent = path.join(container, 'parent.json');
@@ -44,8 +49,7 @@ function ownership(container, info, boot) {
   if (parentInfo) {
     if (!parentInfo.isFile()) return false;
 
-    try { value = JSON.parse(fs.readFileSync(parent, 'utf8')); }
-    catch (error) { if (error instanceof SyntaxError) return false; throw error; }
+    value = readParent(parent);
 
     if (Object.hasOwn(value ?? {}, 'allocation')) return ownsAllocation(value, container, info);
 

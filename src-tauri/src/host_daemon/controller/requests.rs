@@ -220,10 +220,25 @@ impl Host {
             None => Err("Conversation is no longer running".into()),
         };
         if attached {
-            let detached = self.orchestration_detach(&runtime).await;
+            let detached = self.orchestration_recovery_detach(&runtime, &id).await;
             if result.is_ok() { detached?; }
         }
         result
+    }
+
+    async fn orchestration_recovery_detach(&self, runtime: &str, id: &str) -> Result<Value> {
+        let gate = self.registry().session_gates.entry(id.into()).or_insert_with(|| Arc::new(AsyncMutex::new(()))).clone();
+        let _creation = gate.lock().await;
+        self.registry().attachments.remove(runtime);
+        let session = self.registry().subscriptions.remove(runtime);
+        if let Some(session) = session {
+            session.detach_view(runtime);
+            if session.retire().await.is_err() {
+                session.execute(json!({"type":"activate_usage_recovery"})).await?;
+            }
+            self.release_unused(&session).await?;
+        }
+        Ok(Value::Null)
     }
 
     async fn orchestration_detach(&self, runtime: &str) -> Result<Value> {

@@ -43,7 +43,7 @@ impl MessageOutput {
         create_directory(&root).map_err(|error| error.to_string())?;
         let mut owner = private_file(&root.join("owner.lock"), true).map_err(|error| error.to_string())?;
         owner.lock_shared().map_err(|error| error.to_string())?;
-        writeln!(owner, "{{\"version\":1,\"processId\":{}}}", std::process::id()).and_then(|()| owner.sync_all()).map_err(|error| error.to_string())?;
+        writeln!(owner, "{{\"version\":2,\"processId\":{}}}", std::process::id()).and_then(|()| owner.sync_all()).map_err(|error| error.to_string())?;
         inherit_owner(command, &owner);
         let output = Self { stdout: root.join("stdout"), stderr: root.join("stderr"), root, owner: Mutex::new(Some(owner)) };
         output.capture(command)?;
@@ -53,6 +53,8 @@ impl MessageOutput {
     fn capture(&self, command: &mut Command) -> Result<(), String> {
         let stdout = private_file(&self.stdout, true).map_err(|error| error.to_string())?;
         let stderr = private_file(&self.stderr, true).map_err(|error| error.to_string())?;
+        stdout.lock_shared().map_err(|error| error.to_string())?;
+        stderr.lock_shared().map_err(|error| error.to_string())?;
         command.stdin(Stdio::piped()).stdout(stdout).stderr(stderr);
         Ok(())
     }
@@ -116,21 +118,30 @@ fn output_files(path: &Path, managed: bool) -> io::Result<Option<Vec<PathBuf>>> 
 fn collect_owned(path: &Path, _worker_stopped: bool) -> io::Result<()> {
     let Some(files) = output_files(path, true)? else { return Ok(()); };
     if files.is_empty() { return remove_output(path, files); }
-    let Some(_owner) = claim_owner(path)? else { return Ok(()); };
-    #[cfg(target_os = "linux")]
-    if crate::process_cleanup::directory_in_use(path, Some(&path.join("owner.lock")))? { return Ok(()); }
-    #[cfg(not(target_os = "linux"))]
+    let Some(_owner) = claim_file(&path.join("owner.lock"))? else { return Ok(()); };
+    let Some(_outputs) = claim_outputs(&files)? else { return Ok(()); };
+    #[cfg(not(unix))]
     if !_worker_stopped { return Ok(()); }
     remove_output(path, files)
 }
 
-fn claim_owner(path: &Path) -> io::Result<Option<File>> {
-    let owner = private_file(&path.join("owner.lock"), false)?;
+fn claim_file(path: &Path) -> io::Result<Option<File>> {
+    let owner = private_file(path, false)?;
     match owner.try_lock() {
         Ok(()) => Ok(Some(owner)),
         Err(fs::TryLockError::WouldBlock) => Ok(None),
         Err(fs::TryLockError::Error(error)) => Err(error),
     }
+}
+
+fn claim_outputs(paths: &[PathBuf]) -> io::Result<Option<Vec<File>>> {
+    let mut files = Vec::new();
+    for path in paths {
+        if path.file_name().is_some_and(|name| name == "owner.lock") { continue; }
+        let Some(file) = claim_file(path)? else { return Ok(None); };
+        files.push(file);
+    }
+    Ok(Some(files))
 }
 
 fn remove_output(path: &Path, mut files: Vec<PathBuf>) -> io::Result<()> {
@@ -186,6 +197,6 @@ fn collect_legacy(path: &Path, boot: i64) -> io::Result<()> {
     use std::os::unix::fs::MetadataExt;
     let Some(files) = output_files(path, false)? else { return Ok(()); };
     for file in &files { if fs::metadata(file)?.ctime() >= boot { return Ok(()); } }
-    if crate::process_cleanup::directory_in_use(path, None)? { return Ok(()); }
+    if crate::process_cleanup::directory_in_use(path)? { return Ok(()); }
     remove_output(path, files)
 }

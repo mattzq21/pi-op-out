@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { legacyReceiptSchema, recoverLegacyUsage, saveLegacyRecovery, type LegacyUsageRecovery } from "./goal-legacy-usage.ts";
+import { legacyReceiptSchema, legacyRecoveryReport, recoverLegacyUsage, saveLegacyRecovery, type LegacyUsageRecovery } from "./goal-legacy-usage.ts";
 
 export const GOAL_ENTRY = "piop-goal";
 
@@ -219,7 +219,7 @@ export class GoalState {
     const completionBudgetReport = completed && goal?.status === "complete" && (goal.tokenBudget !== null || goal.timeUsedSeconds > 0) ? "Goal achieved. Report final usage from this tool result's structured goal fields. If goal.tokenBudget is present, include goal.tokensUsed and goal.tokenBudget. If goal.timeUsedSeconds is greater than 0, summarize elapsed time in a concise, human-friendly form appropriate to the response language." : null;
 
     return { goal, remainingTokens: goal?.tokenBudget == null ? null : Math.max(0, goal.tokenBudget - goal.tokensUsed), completionBudgetReport,
-      legacyUsageRecovery: this.legacyUsageRecovery.length ? { records: this.legacyUsageRecovery, explanation: "Recovered tokens were missing from this goal's saved total. Uncertain records may already be counted; existing totals are preserved. Missing records for cleared or completed goals remain recorded without reopening those goals. Unattributed records have no unambiguous saved goal owner." } : undefined };
+      legacyUsageRecovery: legacyRecoveryReport(this.legacyUsageRecovery) };
   }
 
   save(ctx: ExtensionContext) {
