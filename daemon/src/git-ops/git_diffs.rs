@@ -8,13 +8,13 @@ use std::process::Command;
 use std::process::Stdio;
 use crate::platform::AppHandle;
 use crate::{RemoteHost, STORAGE_DIRECTORY, conversation_ownership};
-use crate::git::{GitDiffSnapshot, GitDiffSnapshots, MAX_GIT_PATCH_BYTES};
+use crate::git_ops::{GitDiffSnapshot, GitDiffSnapshots, MAX_GIT_PATCH_BYTES};
 use crate::archives::{local_desktop_session_file_at};
 use super::GitSnapshotToken;
-use crate::git::worktree_setup::{ensure_desktop_sessions_dir, run_limited, shell_quote};
+use crate::git_ops::worktree_setup::{ensure_desktop_sessions_dir, run_limited, shell_quote};
 use crate::pi_launch::{remote_login_command, saved_remote_host, ssh};
 use crate::environment::home_dir;
-use crate::git::snapshot_capture::{local_git_diff, local_git_diff_between, local_git_tree, parse_local_snapshot};
+use crate::git_ops::snapshot_capture::{local_git_diff, local_git_diff_between, local_git_tree, parse_local_snapshot};
 
 #[path = "git_diff_store.rs"]
 mod store;
@@ -195,7 +195,7 @@ pub(crate) fn load_git_diff_page(app: AppHandle, session_path: String, host_id: 
         return Ok(serde_json::json!({"snapshots":{},"next":null}));
     }
     if page.is_empty() {
-        if let Err(error) = crate::git::git_diff_retry::retry_pending_git_diffs(&session_path, host.as_ref()) { eprintln!("Pending project changes retained for retry: {error}"); }
+        if let Err(error) = crate::git_ops::git_diff_retry::retry_pending_git_diffs(&session_path, host.as_ref()) { eprintln!("Pending project changes retained for retry: {error}"); }
     }
     pending::page(&session_path, &page, host.as_ref())
 }

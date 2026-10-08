@@ -7,7 +7,7 @@ fn project_kind_from_flag(flag: &[u8]) -> Option<ProjectKind> {
     match flag { b"no-repo" => Some(ProjectKind::NoRepo), b"main" => Some(ProjectKind::Main), b"worktree" => Some(ProjectKind::Worktree), _ => None }
 }
 
-fn inspect_project_batches(directories: &[String], script: &str, command: &mut impl FnMut(&str, &[String]) -> Command) -> Result<Vec<(Vec<String>, crate::git::worktree_setup::LimitedOutput)>, String> {
+fn inspect_project_batches(directories: &[String], script: &str, command: &mut impl FnMut(&str, &[String]) -> Command) -> Result<Vec<(Vec<String>, crate::git_ops::worktree_setup::LimitedOutput)>, String> {
     let mut outputs = Vec::new();
     for group in directories.chunks(64) {
         let commands = group.chunks(16).map(|batch| (batch.to_vec(), command(script, batch))).collect::<Vec<_>>();
@@ -58,4 +58,3 @@ pub(crate) fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut
     }
     Ok(())
 }
-

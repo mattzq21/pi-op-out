@@ -2,7 +2,7 @@ use crate::platform::AppHandle;
 use std::sync::atomic::AtomicBool;
 use crate::{AppSettings, PiRuntime, STORAGE_DIRECTORY, SessionIndexRuntime, TerminalRuntime, node_command};
 
-use crate::git::worktree_setup::{LimitedOutput, WorktreeScriptPhase, run_limited, run_worktree_scripts, shell_quote};
+use crate::git_ops::worktree_setup::{LimitedOutput, WorktreeScriptPhase, run_limited, run_worktree_scripts, shell_quote};
 use crate::pi_launch::{remote_host, remote_login_command, ssh};
 use crate::settings::{load_app_settings};
 

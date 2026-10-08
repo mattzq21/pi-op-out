@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use uuid::Uuid;
 use crate::{STORAGE_DIRECTORY, node_command};
-use crate::git::{GitDiffSnapshot, MAX_GIT_CHANGED_PATHS, MAX_GIT_FILE_BYTES, MAX_GIT_PATCH_BYTES, MAX_GIT_PATH_LIST_BYTES, MAX_GIT_SNAPSHOT_BYTES};
+use crate::git_ops::{GitDiffSnapshot, MAX_GIT_CHANGED_PATHS, MAX_GIT_FILE_BYTES, MAX_GIT_PATCH_BYTES, MAX_GIT_PATH_LIST_BYTES, MAX_GIT_SNAPSHOT_BYTES};
 use super::GitSnapshotToken;
-use crate::git::worktree_setup::run_limited;
+use crate::git_ops::worktree_setup::run_limited;
 use crate::environment::home_dir;
 
 pub(crate) fn git_root_and_objects(cwd: &str) -> Result<Option<(PathBuf, PathBuf)>, String> {

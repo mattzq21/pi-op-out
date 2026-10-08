@@ -331,9 +331,9 @@ struct HostStorage {
 #[serde(rename_all = "camelCase")]
 struct StorageReport { hosts: Vec<HostStorage> }
 
-use git::{ProjectKind, MAX_GIT_PATH_LIST_BYTES};
+use git_ops::{ProjectKind, MAX_GIT_PATH_LIST_BYTES};
 #[cfg(test)]
-use git::{GitDiffSnapshot, GitDiffSnapshots, MAX_GIT_SNAPSHOT_BYTES, MAX_GIT_FILE_BYTES, MAX_GIT_PATCH_BYTES, MAX_GIT_DIFFS_BYTES};
+use git_ops::{GitDiffSnapshot, GitDiffSnapshots, MAX_GIT_SNAPSHOT_BYTES, MAX_GIT_FILE_BYTES, MAX_GIT_PATCH_BYTES, MAX_GIT_DIFFS_BYTES};
 
 #[cfg(test)]
 mod tests;
@@ -373,17 +373,17 @@ use terminals::{TerminalLaunch, decode_terminal_bytes, resize_terminal_pty, star
 use archives::{archive_session, archived_session_file, delete_archived_session, delete_session, desktop_session_file, failed_storage, inspect_storage, relocate_session, restore_archived_worktree, restore_archived_session, storage_report};
 #[cfg(test)]
 use archives::{archive_local_session, archive_remote_session, collect_storage_report, delete_session_files, local_archived_session_file_at, local_desktop_session_file_at, parse_storage_inventory, query_storage_inventory, relocate_local_session, relocate_remote_session, remote_session_file, run_session_deletion};
-use git::git_diffs::{capture_git_tree, discard_git_tree, discard_git_tree_at_host, load_git_diff, load_git_diffs, save_git_diffs};
+use git_ops::git_diffs::{capture_git_tree, discard_git_tree, discard_git_tree_at_host, load_git_diff, load_git_diffs, save_git_diffs};
 #[cfg(test)]
-use git::git_diffs::{discard_remote_git_tree, load_git_diff_at_host, load_git_diff_between_at_host, load_local_git_diffs, load_remote_git_diff_between, load_remote_git_diff_with, query_remote_git_diffs, query_remote_git_tree, remote_save_git_diffs_script, remote_session_sidecar_script, save_git_diffs_at_host, save_local_git_diffs, valid_remote_snapshot, write_remote_git_diffs};
-use git::worktrees::{create_git_worktree, create_project_worktree, git_branch, git_project_kind, git_worktree_roots, is_git_repository, remove_git_worktree, sessions_on_host};
+use git_ops::git_diffs::{discard_remote_git_tree, load_git_diff_at_host, load_git_diff_between_at_host, load_local_git_diffs, load_remote_git_diff_between, load_remote_git_diff_with, query_remote_git_diffs, query_remote_git_tree, remote_save_git_diffs_script, remote_session_sidecar_script, save_git_diffs_at_host, save_local_git_diffs, valid_remote_snapshot, write_remote_git_diffs};
+use git_ops::worktrees::{create_git_worktree, create_project_worktree, git_branch, git_project_kind, git_worktree_roots, is_git_repository, remove_git_worktree, sessions_on_host};
 #[cfg(test)]
-use git::worktrees::{canonical_worktree_roots, copy_untracked_file, create_local_git_worktree, create_project_worktree_at, git_branch_at, git_relative_path, inspect_git_project_kind, inspect_worktree_removal, local_branch_exists, local_worktree_is_registered, parse_worktree_output, remove_created_worktree, remove_worktree_target, validate_worktree_unused, worktree_branch_name, worktree_suffix, write_worktree_patch};
-use git::worktree_setup::{cancel_worktree_setup, ensure_desktop_sessions_dir, run_limited, run_worktree_setup, shell_quote, verify_setup_owner};
+use git_ops::worktrees::{canonical_worktree_roots, copy_untracked_file, create_local_git_worktree, create_project_worktree_at, git_branch_at, git_relative_path, inspect_git_project_kind, inspect_worktree_removal, local_branch_exists, local_worktree_is_registered, parse_worktree_output, remove_created_worktree, remove_worktree_target, validate_worktree_unused, worktree_branch_name, worktree_suffix, write_worktree_patch};
+use git_ops::worktree_setup::{cancel_worktree_setup, ensure_desktop_sessions_dir, run_limited, run_worktree_setup, shell_quote, verify_setup_owner};
 #[cfg(test)]
-use git::GitSnapshotToken;
+use git_ops::GitSnapshotToken;
 #[cfg(test)]
-use git::worktree_setup::{LimitedOutput, WorktreeScriptPhase, execute_worktree_setup, register_worktree_setup, run_setup_process, run_worktree_scripts, signal_worktree_setup_cancellation};
+use git_ops::worktree_setup::{LimitedOutput, WorktreeScriptPhase, execute_worktree_setup, register_worktree_setup, run_setup_process, run_worktree_scripts, signal_worktree_setup_cancellation};
 use pi_launch::{ remote_host, remote_login_command, session_identity, ssh, ssh_base};
 #[cfg(test)]
 use pi_launch::{ create_local_ephemeral_fork, create_remote_ephemeral_fork, prepare_ephemeral_path, read_remote_session_header, remote_directory_path, remote_pi_path, remove_ephemeral_session, stage_extension_script, validate_remote_host};
@@ -415,9 +415,9 @@ use extensions::{generated_extension_root, prepare_codex_web_search_extension, p
 use settings_storage::{atomic_write_private, ensure_private_dir, set_private_file_permissions};
 #[cfg(test)]
 use settings_storage::{canonical_shortcut, migrate_keybindings, settings_path_at, validate_keybindings};
-use git::project_branches::{project_branches};
+use git_ops::project_branches::{project_branches};
 #[cfg(test)]
-use git::snapshot_capture::{capture_local_git_tree, git_root_and_objects, local_git_diff_between, local_git_diff_with, local_git_input_is_bounded, local_git_tree_with, parse_local_snapshot, parse_local_snapshot_with, validate_snapshot_location};
+use git_ops::snapshot_capture::{capture_local_git_tree, git_root_and_objects, local_git_diff_between, local_git_diff_with, local_git_input_is_bounded, local_git_tree_with, parse_local_snapshot, parse_local_snapshot_with, validate_snapshot_location};
 
 use broker::{BrokerRuntime, BusyAgent, broker_environment};
 #[cfg(test)]

@@ -3,10 +3,10 @@ use std::sync::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use crate::{RemoteHost, STORAGE_DIRECTORY, node_command};
-use crate::git::{GitDiffSnapshot, MAX_GIT_DIFFS_BYTES};
-use crate::git::git_diffs::save_git_diffs_at_host;
+use crate::git_ops::{GitDiffSnapshot, MAX_GIT_DIFFS_BYTES};
+use crate::git_ops::git_diffs::save_git_diffs_at_host;
 use crate::pi_launch::{remote_login_command, ssh};
-use crate::git::worktree_setup::{run_limited, shell_quote};
+use crate::git_ops::worktree_setup::{run_limited, shell_quote};
 
 static RETRIES: Mutex<()> = Mutex::new(());
 

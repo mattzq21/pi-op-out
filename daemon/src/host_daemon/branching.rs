@@ -24,7 +24,7 @@ async fn checkpoint(host: &Host, session: &Session, command: Value) -> Result<Va
     let state = session.execute(json!({"type":"get_state"})).await?;
     let path = state["sessionFile"].as_str().filter(|path| !path.is_empty()).ok_or("The conversation has no session file")?;
     host.flush_capture(&session.key()).await?;
-    if !session.ephemeral { crate::git::git_diff_retry::retry_pending_git_diffs(path, None)?; }
+    if !session.ephemeral { crate::git_ops::git_diff_retry::retry_pending_git_diffs(path, None)?; }
     session.raw(command).await
 }
 

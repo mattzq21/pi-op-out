@@ -1,7 +1,7 @@
 use crate::platform::AppHandle;
 use crate::{BrokerRuntime, PiRuntime, TerminalRuntime, daemon_clients, daemon_endpoint, daemon_stdio, dictation, mobile, peers, provider_auth};
 use crate::{pi_runtime, terminals};
-use crate::git::worktree_setup;
+use crate::git_ops::worktree_setup;
 use crate::broker::start_session_broker;
 
 pub fn run_daemon() -> Result<(), String> {

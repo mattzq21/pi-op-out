@@ -6,7 +6,7 @@ use crate::{MAX_TERMINALS, PiRuntime};
 use crate::platform::{AppHandle, State};
 use crate::settings::load_app_settings;
 use crate::pi_launch::{remote_host, user_ssh_config};
-use crate::git::worktree_setup::shell_quote;
+use crate::git_ops::worktree_setup::shell_quote;
 
 pub(super) struct TerminalProcess {
     pub(super) generation: Uuid,

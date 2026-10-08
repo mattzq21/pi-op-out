@@ -150,7 +150,7 @@ fn group_has_sessions(state: &SessionGroups, group: &SessionGroup, sessions: &[s
 
 fn branch_is_missing(settings: &super::AppSettings, group: &SessionGroup, branch: &str) -> bool {
     let Some(cwd) = group.cwd.as_deref() else { return false; };
-    crate::git::project_branches::branch_is_missing(settings, cwd, group.host_id.as_deref().unwrap_or("local"), branch)
+    crate::git_ops::project_branches::branch_is_missing(settings, cwd, group.host_id.as_deref().unwrap_or("local"), branch)
 }
 
 fn migrate_group_names(state: &mut SessionGroups) -> bool {

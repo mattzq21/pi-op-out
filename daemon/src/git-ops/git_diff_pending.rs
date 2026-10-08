@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use crate::RemoteHost;
 #[cfg(test)]
-use crate::git::GitDiffSnapshots;
+use crate::git_ops::GitDiffSnapshots;
 use super::{discard_git_tree_at_host, load_git_diff_between_at_host, storage_request};
 
 struct Storage<'a> { path: &'a str, host: Option<&'a RemoteHost>, ephemeral_id: Option<&'a str> }

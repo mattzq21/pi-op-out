@@ -9,9 +9,9 @@ use std::sync::atomic::Ordering;
 use crate::platform::AppHandle;
 use uuid::Uuid;
 use crate::{AppSettings, PiRuntime, RemoteHost, STORAGE_DIRECTORY, SessionIndexRuntime, SessionSummary, TerminalRuntime, node_command};
-use crate::git::{MAX_GIT_PATCH_BYTES, MAX_GIT_PATH_LIST_BYTES, ProjectKind};
+use crate::git_ops::{MAX_GIT_PATCH_BYTES, MAX_GIT_PATH_LIST_BYTES, ProjectKind};
 use super::{GitWorktree, GitWorktreeRemoval};
-use crate::git::worktree_setup::{LimitedOutput, WorktreeScriptPhase, ensure_desktop_sessions_dir, run_limited, run_worktree_scripts, shell_quote};
+use crate::git_ops::worktree_setup::{LimitedOutput, WorktreeScriptPhase, ensure_desktop_sessions_dir, run_limited, run_worktree_scripts, shell_quote};
 use crate::pi_launch::{remote_host, remote_login_command, ssh};
 use crate::session_index::{list_local_sessions, list_remote_sessions};
 use crate::environment::home_dir;
@@ -484,7 +484,7 @@ pub(crate) fn validate_worktree_unused(settings: &AppSettings, host_id: &str, ta
 }
 
 fn remove_worktree_with_checkpoints(settings: &AppSettings, host_id: &str, target: &WorktreeRemovalTarget, cancelled: &AtomicBool) -> Result<(), String> {
-    let script = format!("{}\n(() => {{ {}\ntry {{ preserveAndRemoveWorktree(process.argv[1], authorizeWorktreeRemoval, diffStore.readStore); }} catch (error) {{ process.stderr.write(error.message + '\\n'); process.exitCode = 1; }} }})();", crate::git::git_diffs::embedded_diff_store(), include_str!("../../resources/worktree-checkpoint-preservation.cjs"));
+    let script = format!("{}\n(() => {{ {}\ntry {{ preserveAndRemoveWorktree(process.argv[1], authorizeWorktreeRemoval, diffStore.readStore); }} catch (error) {{ process.stderr.write(error.message + '\\n'); process.exitCode = 1; }} }})();", crate::git_ops::git_diffs::embedded_diff_store(), include_str!("../../resources/worktree-checkpoint-preservation.cjs"));
     let mut preserve = if host_id == "local" {
         let mut command = node_command(); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", &script, &target.path]); command
     } else {

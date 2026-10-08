@@ -2,7 +2,7 @@ use serde_json::Value;
 use crate::platform::AppHandle;
 use crate::{STORAGE_DIRECTORY, node_command};
 
-use crate::git::worktree_setup::{run_limited, shell_quote};
+use crate::git_ops::worktree_setup::{run_limited, shell_quote};
 use crate::pi_launch::{remote_host, remote_login_command, ssh};
 use crate::settings::{load_app_settings};
 
