@@ -12,20 +12,6 @@ pub(crate) fn recover_remote(host: &crate::RemoteHost) -> Result<(), String> {
     Ok(())
 }
 
-fn json_records(root: &Path, name: &str) -> Result<bool, String> {
-    let directory = root.join(name);
-    let entries = match std::fs::read_dir(&directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error.to_string()),
-    };
-    let mut pending = false;
-    for entry in entries {
-        if entry.map_err(|error| error.to_string())?.path().extension().is_some_and(|extension| extension == "json") { pending = true; break; }
-    }
-    Ok(pending)
-}
-
 fn operation_pending(root: &Path, name: &str, marker: &str) -> Result<bool, String> {
     let entries = match std::fs::read_dir(root.join(name)) {
         Ok(entries) => entries,
@@ -65,12 +51,9 @@ fn legacy_publication_temporary(entry: &walkdir::DirEntry) -> bool {
 
 fn recovery_pending(root: &Path) -> Result<bool, String> {
     let database = crate::session_registry::open(root)?;
-    let publications: bool = database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations)", [], |row| row.get(0))
+    let publications: bool = database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM session_restore_receipts)", [], |row| row.get(0))
         .map_err(|error| error.to_string())?;
     if publications { return Ok(true); }
-    for directory in ["restore-receipts"] {
-        if json_records(root, directory)? { return Ok(true); }
-    }
     for (directory, marker) in [("archive-transactions", "pending.json"), ("delete-transactions", "recovery.json"), ("deleted-sessions", "recovery.json")] {
         if operation_pending(root, directory, marker)? { return Ok(true); }
     }

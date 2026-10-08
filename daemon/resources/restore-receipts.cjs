@@ -67,7 +67,7 @@ function parse(body) {
 }
 
 function readRecord(file) {
-  if (path.basename(path.dirname(file)) === 'restore-transactions') return require('./restore-records.cjs').read(file);
+  if (['restore-transactions', 'restore-receipts'].includes(path.basename(path.dirname(file)))) return require('./restore-records.cjs').read(file);
   const metadata = io.exists(file);
 
   if (!metadata) return null;
@@ -280,8 +280,7 @@ function unchanged(snapshot) {
 
 function removeReceipt(snapshot) {
   if (!unchanged(snapshot)) return false;
-  fs.unlinkSync(snapshot.file);
-  io.sync(path.dirname(snapshot.file));
+  require('./restore-records.cjs').remove(snapshot.file);
 
   return true;
 }
@@ -362,10 +361,7 @@ function publish(root, transaction) {
   previousReceipt(root, file, receipt, active);
 
   if (!unchanged(active) || !sameEntry(receipt.trace.source, source.proof) || io.exists(receipt.trace.destination)) throw new Error('Restore operation changed before receipt publication');
-  io.mkdir(path.dirname(file));
-
-  if (fs.realpathSync(path.dirname(file)) !== path.dirname(file)) throw new Error('Restore receipt directory has ambiguous ownership');
-  io.write(file, JSON.stringify(receipt));
+  require('./restore-records.cjs').write(file, JSON.stringify(receipt));
 }
 
 function pruneReceipt(root, file) {
@@ -384,17 +380,12 @@ function pruneReceipt(root, file) {
 
 function prune(root) {
   assertLocked(root);
-  const directory = path.join(root, 'restore-receipts');
-
-  if (!io.exists(directory)) return { removed: 0, retained: 0, deferred: false };
-
-  if (!io.exists(directory).isDirectory() || fs.realpathSync(directory) !== directory) throw new Error('Restore receipt directory has ambiguous ownership');
-  const files = fs.readdirSync(directory).filter(name => /^[a-f0-9]{64}\.json$/.test(name));
+  const files = require('./restore-records.cjs').list(root, true);
 
   if (pending(root)) return { removed: 0, retained: files.length, deferred: true };
   let removed = 0;
 
-  for (const name of files) if (pruneReceipt(root, path.join(directory, name))) removed += 1;
+  for (const file of files) if (pruneReceipt(root, file)) removed += 1;
 
   return { removed, retained: files.length - removed, deferred: false };
 }

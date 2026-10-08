@@ -50,7 +50,8 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS session_group_removed_projects (project_id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS session_group_deletions (session_key TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS session_publications (publication_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS session_restorations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS session_restorations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_restore_receipts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -163,31 +164,38 @@ function importSessions(db, root) {
 
     importPublications(db, root);
     importRestorations(db, root);
+    importRestorations(db, root, true);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-function importRestorations(db, root) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('session-restorations-v1')) return;
+function importRestorations(db, root, receipts = false) {
+  const configuration = receipts
+    ? { migration: 'session-restore-receipts-v1', table: 'session_restore_receipts', directory: 'restore-receipts', name: /^[a-f0-9]{64}\.json$/ }
+    : { migration: 'session-restorations-v1', table: 'session_restorations', directory: 'restore-transactions', name: /^[a-f0-9]{40}\.json$/ };
+
+  const { migration, table } = configuration;
+
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get(migration)) return;
   const fs = require('node:fs');
   const path = require('node:path');
-  const directory = path.join(root, 'restore-transactions');
+  const directory = path.join(root, configuration.directory);
   let names;
 
   try { names = fs.readdirSync(directory); }
   catch (error) { if (error.code !== 'ENOENT') throw error; names = []; }
 
   for (const name of names.filter(name => name.endsWith('.json'))) {
-    if (!/^[a-f0-9]{40}\.json$/.test(name)) throw new Error('Invalid restore record name');
+    if (!configuration.name.test(name)) throw new Error('Invalid restore record name');
     const descriptor = fs.openSync(path.join(directory, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
 
     try {
       if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid restore record');
-      db.prepare('INSERT INTO session_restorations VALUES (?, ?)').run(name.slice(0, -5), fs.readFileSync(descriptor, 'utf8'));
+      db.prepare(`INSERT INTO ${table} VALUES (?, ?)`).run(name.slice(0, -5), fs.readFileSync(descriptor, 'utf8'));
     } finally { fs.closeSync(descriptor); }
   }
 
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('session-restorations-v1');
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run(migration);
 }
 
 function importPublications(db, root) {

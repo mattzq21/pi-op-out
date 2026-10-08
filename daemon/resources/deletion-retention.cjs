@@ -253,7 +253,7 @@ function survivingSession(file, id, excluded) {
 function validReceipt(file, excluded) {
   let receipt;
 
-  try { receipt = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  try { receipt = require('./restore-records.cjs').read(file)?.value; }
   catch (error) { if (error instanceof SyntaxError) return false; throw error; }
 
   if (!Check(receiptSchema, receipt)) return false;
@@ -270,15 +270,12 @@ function validReceipt(file, excluded) {
 }
 
 function invalidReceipts(root, excluded) {
-  return entries(path.join(root, 'restore-receipts')).flatMap(entry => {
-    if (!entry.isFile() || !/^[a-f0-9]{64}\.json$/.test(entry.name)) return [];
-    const file = path.join(root, 'restore-receipts', entry.name);
-
-    return validReceipt(file, excluded) ? [] : [file];
-  });
+  return require('./restore-records.cjs').list(root, true).filter(file => !validReceipt(file, excluded));
 }
 
 function discardReceipt(file) {
+  if (path.basename(path.dirname(file)) === 'restore-receipts') return require('./restore-records.cjs').remove(file);
+
   fs.unlinkSync(file);
   const directory = fs.openSync(path.dirname(file), 'r');
 

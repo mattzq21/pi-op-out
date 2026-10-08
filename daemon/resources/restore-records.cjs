@@ -3,26 +3,30 @@ const { createHash } = require('node:crypto');
 const tables = require('./session-database.cjs');
 
 function location(file) {
-  if (path.basename(path.dirname(file)) !== 'restore-transactions' || !/^[a-f0-9]{40}\.json$/.test(path.basename(file))) throw new Error('Invalid restore record location');
+  const receipt = path.basename(path.dirname(file)) === 'restore-receipts';
 
-  return { root: path.dirname(path.dirname(file)), id: path.basename(file, '.json') };
+  if (!receipt && path.basename(path.dirname(file)) !== 'restore-transactions') throw new Error('Invalid restore record location');
+
+  if (!(receipt ? /^[a-f0-9]{64}\.json$/ : /^[a-f0-9]{40}\.json$/).test(path.basename(file))) throw new Error('Invalid restore record name');
+
+  return { root: path.dirname(path.dirname(file)), id: path.basename(file, '.json'), table: receipt ? 'session_restore_receipts' : 'session_restorations' };
 }
 
 function write(file, body) {
-  const { root, id } = location(file);
+  const { root, id, table } = location(file);
   const db = tables.open(root);
 
   try {
-    db.prepare('INSERT INTO session_restorations VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json').run(id, body);
+    db.prepare(`INSERT INTO ${table} VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json`).run(id, body);
   } finally { db.close(); }
 }
 
 function read(file) {
-  const { root, id } = location(file);
+  const { root, id, table } = location(file);
   const db = tables.open(root);
 
   try {
-    const row = db.prepare('SELECT record_json FROM session_restorations WHERE record_id=?').get(id);
+    const row = db.prepare(`SELECT record_json FROM ${table} WHERE record_id=?`).get(id);
 
     if (!row) return null;
     const body = row.record_json;
@@ -35,17 +39,19 @@ function read(file) {
 }
 
 function remove(file) {
-  const { root, id } = location(file);
+  const { root, id, table } = location(file);
   const db = tables.open(root);
 
-  try { db.prepare('DELETE FROM session_restorations WHERE record_id=?').run(id); }
+  try { db.prepare(`DELETE FROM ${table} WHERE record_id=?`).run(id); }
   finally { db.close(); }
 }
 
-function list(root) {
+function list(root, receipts = false) {
+  const table = receipts ? 'session_restore_receipts' : 'session_restorations';
+  const directory = receipts ? 'restore-receipts' : 'restore-transactions';
   const db = tables.open(root);
 
-  try { return db.prepare('SELECT record_id FROM session_restorations ORDER BY record_id').all().map(row => path.join(root, 'restore-transactions', `${row.record_id}.json`)); }
+  try { return db.prepare(`SELECT record_id FROM ${table} ORDER BY record_id`).all().map(row => path.join(root, directory, `${row.record_id}.json`)); }
   finally { db.close(); }
 }
 
