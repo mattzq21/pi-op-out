@@ -113,7 +113,11 @@ function protectedSources(root, directories, warnings) {
 
   for (const directory of directories) protectDirectory(directory, sources, warnings);
 
-  for (const area of ['sessions', 'archived', 'deleted-sessions', 'archive-transactions', 'restore-transactions', 'fork-transactions', 'fork-preparations']) {
+  try {
+    for (const session of require('./session-database.cjs').paths(root)) sources.stores.add(session.replace(/\.jsonl$/, '.diffs.json'));
+  } catch (error) { sources.unknown = true; warn(warnings, root, error); }
+
+  for (const area of ['deleted-sessions', 'archive-transactions', 'restore-transactions', 'fork-transactions', 'fork-preparations']) {
     try { comparisonStores(path.join(root, area), sources.stores); }
     catch (error) { sources.unknown = true; warn(warnings, path.join(root, area), error); }
   }
@@ -140,15 +144,12 @@ function protectStore(file, sources, warnings) {
   } catch (error) { sources.unknown = true; warn(warnings, file, error); }
 }
 
-function savedSnapshots(directory, snapshots, warnings) {
-  for (const entry of entries(directory)) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-    const child = path.join(directory, entry.name);
+function savedSnapshots(root, snapshots, warnings) {
+  for (const session of require('./session-database.cjs').paths(root)) {
+    const directory = session.replace(/\.jsonl$/, '.snapshots');
 
-    try {
-      if (entry.name.endsWith('.snapshots')) savedSnapshotDirectory(child, snapshots, warnings);
-      else savedSnapshots(child, snapshots, warnings);
-    } catch (error) { warn(warnings, child, error); }
+    try { savedSnapshotDirectory(directory, snapshots, warnings); }
+    catch (error) { warn(warnings, directory, error); }
   }
 }
 
@@ -406,7 +407,7 @@ function recoverLocked(root, parent) {
   const directories = children.filter((entry) => entry.isDirectory() && entry.name.startsWith('pi-desktop-diff-')).map((entry) => path.join(parent, entry.name));
   const snapshots = [];
 
-  for (const area of ['sessions', 'archived']) savedSnapshots(path.join(root, area), snapshots, warnings);
+  savedSnapshots(root, snapshots, warnings);
 
   let objects;
 
