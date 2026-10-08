@@ -6,7 +6,7 @@ mod tests;
 
 enum CaptureWork {
     Packet(Value),
-    Drain(mpsc::Sender<()>),
+    Drain(mpsc::Sender<Result<(), String>>),
 }
 
 pub(crate) struct Daemon {
@@ -93,7 +93,7 @@ impl Daemon {
             completions.push(receiver);
         }
         for completion in completions {
-            completion.recv_timeout(deadline.saturating_duration_since(Instant::now())).map_err(|_| "Could not finish saving project changes before moving the conversation")?;
+            completion.recv_timeout(deadline.saturating_duration_since(Instant::now())).map_err(|_| "Could not finish saving project changes before moving the conversation")??;
         }
         Ok(())
     }
@@ -149,29 +149,11 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, _broker: &BrokerRunt
     Ok(daemon)
 }
 
-fn retry_capture(app: &AppHandle, daemon: &std::sync::Weak<Daemon>, host_id: &str, path: &str, host: Option<&RemoteHost>) {
-    let result = crate::git_diff_retry::retry_pending_git_diffs(path, host);
-    if !daemon.upgrade().is_some_and(|daemon| daemon.alive.load(Ordering::SeqCst)) { return; }
-    match result {
-        Ok(true) => { let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path})); }
-        Ok(false) => {}
-        Err(error) => { let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":format!("Project changes retained for retry: {error}")})); }
+fn retry_capture(app: &AppHandle, host_id: &str, path: &str, host: Option<&RemoteHost>) -> Result<(), String> {
+    if crate::git_diff_retry::retry_pending_git_diffs(path, host)? {
+        let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path}));
     }
-}
-
-fn retain_failed_captures(pending: &mut Vec<(String, Value)>, app: &AppHandle, host_id: &str, host: Option<&RemoteHost>) {
-    for (baseline, packet) in std::mem::take(pending) {
-        match crate::git_diff_retry::retain_pending_git_diff(&packet, &baseline, host) {
-            Ok(()) => {
-                let _ = discard_git_tree_at_host(&baseline, host);
-                if let Some(current) = packet["current"].as_str() { let _ = discard_git_tree_at_host(current, host); }
-            }
-            Err(error) => {
-                let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":format!("Comparison inputs retained; could not queue project changes: {error}")}));
-                pending.push((baseline, packet));
-            }
-        }
-    }
+    Ok(())
 }
 
 fn retain_capture_packet(packet: &Value, baseline: Option<&str>, host: Option<&RemoteHost>) -> Result<(), String> {
@@ -186,71 +168,40 @@ struct CaptureWriter {
     host: Option<RemoteHost>,
     baselines: HashMap<String, String>,
     session_path: Option<String>,
-    pending: Vec<(String, Value)>,
+    pending: Vec<Value>,
 }
 
 impl CaptureWriter {
-    fn retry(&self) {
-        if let Some(path) = &self.session_path { retry_capture(&self.app, &self.daemon, &self.host_id, path, self.host.as_ref()); }
+    fn retry(&mut self) -> Result<(), String> {
+        retry_captures(&mut self.pending, &self.app, &self.host_id, self.host.as_ref())?;
+        if let Some(path) = &self.session_path { retry_capture(&self.app, &self.host_id, path, self.host.as_ref())?; }
+        Ok(())
     }
 
     fn run(mut self, receiver: mpsc::Receiver<CaptureWork>) {
         while let Ok(work) = receiver.recv() {
-            retain_failed_captures(&mut self.pending, &self.app, &self.host_id, self.host.as_ref());
             match work {
                 CaptureWork::Packet(packet) => self.packet(packet),
-                CaptureWork::Drain(completion) => {
-                    self.retry();
-                    if self.pending.is_empty() { let _ = completion.send(()); }
-                }
+                CaptureWork::Drain(completion) => { let _ = completion.send(self.retry()); }
             }
         }
         for baseline in self.baselines.into_values() { let _ = discard_git_tree_at_host(&baseline, self.host.as_ref()); }
     }
 
-    fn remember(&mut self, packet: &Value) {
-        if packet["ephemeral"] == true { return; }
-        if let Some(path) = packet["sessionPath"].as_str() { self.session_path = Some(path.to_owned()); }
-        if packet["phase"] == "closed" || packet["phase"] == "start" { self.retry(); }
-    }
-
-    fn packet(&mut self, packet: Value) {
-        self.remember(&packet);
+    fn packet(&mut self, mut packet: Value) {
+        if packet["ephemeral"] != true {
+            if let Some(path) = packet["sessionPath"].as_str() { self.session_path = Some(path.to_owned()); }
+        }
+        let _ = self.retry();
         if update_capture_baseline(&mut self.baselines, &packet, self.host.as_ref()) { return; }
         let Some(turn_id) = packet["turnId"].as_str() else { return; };
-        let baseline = self.baselines.remove(turn_id);
-        if packet["ephemeral"] != true && packet["current"].is_string() && packet["sessionPath"].is_string() && packet["messageId"].is_string() {
-            self.persist(packet, baseline);
-            return;
+        if let Some(baseline) = self.baselines.remove(turn_id) { packet["baseline"] = Value::String(baseline); }
+        if let Err(error) = save_capture_packet(&self.app, &self.host_id, &packet, self.host.as_ref()) {
+            self.pending.push(packet);
+            if self.daemon.upgrade().is_some_and(|daemon| daemon.alive.load(Ordering::SeqCst)) {
+                let _ = self.app.emit("pi://daemon-error", json!({"hostId":self.host_id,"line":format!("Could not save project changes; comparison retained for retry: {error}")}));
+            }
         }
-        if let Err(error) = self.emit_diff(&packet, baseline.as_deref()) {
-            let _ = self.app.emit("pi://daemon-error", json!({"hostId":self.host_id,"line":format!("Could not capture project changes: {error}")}));
-        }
-        self.discard(&packet, baseline.as_deref());
-    }
-
-    fn persist(&mut self, packet: Value, baseline: Option<String>) {
-        if let Err(error) = retain_capture_packet(&packet, baseline.as_deref(), self.host.as_ref()) {
-            let _ = self.app.emit("pi://daemon-error", json!({"hostId":self.host_id,"line":format!("Comparison inputs retained; could not queue project changes: {error}")}));
-            if let Some(baseline) = baseline { self.pending.push((baseline, packet)); }
-            return;
-        }
-        self.retry();
-        self.discard(&packet, baseline.as_deref());
-    }
-
-    fn discard(&self, packet: &Value, baseline: Option<&str>) {
-        if let Some(baseline) = baseline { let _ = discard_git_tree_at_host(baseline, self.host.as_ref()); }
-        if let Some(current) = packet["current"].as_str() { let _ = discard_git_tree_at_host(current, self.host.as_ref()); }
-    }
-
-    fn emit_diff(&self, packet: &Value, baseline: Option<&str>) -> Result<(), String> {
-        if packet["ephemeral"] != true { return Ok(()); }
-        let (Some(baseline), Some(current), Some(cwd), Some(path), Some(id)) = (baseline, packet["current"].as_str(), packet["cwd"].as_str(), packet["sessionPath"].as_str(), packet["messageId"].as_str()) else { return Ok(()); };
-        if let Some(diff) = load_git_diff_between_at_host(cwd, baseline, current, self.host.as_ref())? {
-            let _ = self.app.emit("pi://event", json!({"type":"turn_diff","hostId":self.host_id,"sessionPath":path,"messageId":id,"snapshot":diff}));
-        }
-        Ok(())
     }
 }
 
@@ -267,6 +218,37 @@ fn persist_capture(app: &AppHandle, daemon: &Arc<Daemon>, host_id: &str, packet:
         sender
     });
     let _ = sender.send(CaptureWork::Packet(packet));
+}
+
+fn save_capture_packet(app: &AppHandle, host_id: &str, packet: &Value, host: Option<&RemoteHost>) -> Result<(), String> {
+    let baseline = packet["baseline"].as_str(); let current = packet["current"].as_str();
+    let (Some(baseline), Some(current), Some(cwd), Some(path), Some(id)) = (baseline, current, packet["cwd"].as_str(), packet["sessionPath"].as_str(), packet["messageId"].as_str()) else {
+        if let Some(baseline) = baseline { let _ = discard_git_tree_at_host(baseline, host); }
+        if let Some(current) = current { let _ = discard_git_tree_at_host(current, host); }
+        return Ok(());
+    };
+    if packet["ephemeral"] == true {
+        let session_id = packet["sessionId"].as_str().ok_or("Temporary capture has no stable session ID; snapshots preserved")?;
+        crate::git_diffs::persist_ephemeral_capture_diff(path, session_id, id, cwd, baseline, current, host)?;
+    }
+    else if packet["durable"].is_boolean() {
+        retain_capture_packet(packet, Some(baseline), host)?;
+        crate::git_diff_retry::retry_pending_git_diffs(path, host)?;
+        let _ = discard_git_tree_at_host(baseline, host);
+        let _ = discard_git_tree_at_host(current, host);
+    }
+    else { crate::git_diffs::persist_capture_diff(path, id, cwd, baseline, current, host)?; }
+    let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path}));
+    Ok(())
+}
+
+fn retry_captures(failures: &mut Vec<Value>, app: &AppHandle, host_id: &str, host: Option<&RemoteHost>) -> Result<(), String> {
+    let mut retained = Vec::new(); let mut errors = Vec::new();
+    for packet in failures.drain(..) {
+        if let Err(error) = save_capture_packet(app, host_id, &packet, host) { retained.push(packet); errors.push(error); }
+    }
+    *failures = retained;
+    if errors.is_empty() { Ok(()) } else { Err(format!("Project changes are pending; snapshots preserved: {}", errors.join("; "))) }
 }
 
 pub(crate) fn spec(command: &Command) -> Value {

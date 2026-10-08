@@ -4,21 +4,21 @@ const { unavailableCheckpoint, promptCheckpoint, snapshotCheckpoint, validSessio
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const os = require("node:os");
-const { createHash } = require("node:crypto");
-const { execFileSync } = require("node:child_process");
-const { recover, createJournal, removeCheckpointRefs, cleanupCommitted, sync, syncTree } = require("./delete-recovery.cjs");
-const { runWithStorageLock, withReferencePublicationLock } = require("./storage-lock.cjs");
-const { recoverStorage } = require("./storage-recovery.cjs");
-const { collectRetention } = require("./deletion-retention.cjs");
-const { collectDeferredRetention } = require("./retention-collection.cjs");
+const transactions = require('./session-transactions.cjs');
+const deletionTransaction = require('./delete-transaction.cjs');
+const diffStore = require('./session-broker/git-diff-store.cjs');
+const ownerLocks = require('./transaction-owner-locks.cjs');
+const { createHash } = require('node:crypto');
+const { lockStorage } = require('./restore-transaction.cjs');
+const { withReferencePublicationLock } = require('./storage-lock.cjs');
+const { recoverStorage } = require('./storage-recovery.cjs');
+const { collectRetention } = require('./deletion-retention.cjs');
+const { collectDeferredRetention } = require('./retention-collection.cjs');
+const { recordRetention } = require('./retention-candidates.cjs');
 
-function git(cwd, args, input = "") {
-  try {
-    return execFileSync("git", ["-C", cwd, ...args], {
-      env: { ...process.env, LC_ALL: "C" }, encoding: "utf8", input, timeout: 120000,
-      maxBuffer: 4 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe", 3, 4],
-    });
-  } catch (error) { throw new Error(error.stderr?.toString().trim() || error.message); }
+async function git(cwd, args, input = "") {
+  try { return transactions.git(cwd, args, input); }
+  catch (error) { throw new Error(String(error.stderr ?? '').trim() || error.message); }
 }
 
 async function readFile(file, optional = false) {
@@ -43,24 +43,9 @@ async function readSnapshotDirectory(file) {
   return { file, metadata, directory: true, stagedPath: "", staged: false };
 }
 
-async function stageFile(saved) {
-  const current = await fs.lstat(saved.file);
 
-  if (current.ino !== saved.metadata.ino || current.dev !== saved.metadata.dev || current.size !== saved.metadata.size || current.mtimeMs !== saved.metadata.mtimeMs || current.ctimeMs !== saved.metadata.ctimeMs) {
-    throw new Error(`Session file changed during deletion: ${saved.file}`);
-  }
 
-  syncTree(saved.file);
-  await fs.rename(saved.file, saved.stagedPath);
-  saved.staged = true;
-  sync(path.dirname(saved.stagedPath));
-  sync(path.dirname(saved.file));
-  const staged = await fs.lstat(saved.stagedPath);
 
-  if (staged.ino !== saved.metadata.ino || staged.dev !== saved.metadata.dev || staged.size !== saved.metadata.size || staged.mtimeMs !== saved.metadata.mtimeMs) {
-    throw new Error(`Session file changed while it was staged for deletion: ${saved.file}`);
-  }
-}
 
 function checkpointRepository(roots, cwd) {
   if (!roots.has(cwd)) roots.set(cwd, { required: false, commits: new Set(), expectedRefs: new Map() });
@@ -119,7 +104,7 @@ function mergeRepositories(repositoriesByPath, repositories) {
   }
 }
 
-async function collectDeletionFiles(targets, sources, request, files) {
+async function collectDeletionFiles(root, targets, sources, request, files) {
   const repositoriesByPath = new Map();
     const selected = new Set(sources);
 
@@ -134,8 +119,12 @@ async function collectDeletionFiles(targets, sources, request, files) {
       const header = entries[0];
       validateHeader(header, request);
       trace.sessionId = header.id;
-      await appendConversationNote(files, header, target);
       await appendQueuedInput(files, header, target);
+      await collectCompletedTransfers(root, source, header, files);
+      const diffLock = await readFile(source.replace(/\.jsonl$/, '.diffs.json.lock'), true);
+
+      if (diffLock) files.push(diffLock);
+      await appendConversationNote(files, header, target);
       const directory = await archivedDirectory(source, header, target, selected);
 
       if (directory && !files.some(saved => saved.file === directory.file)) files.push(directory);
@@ -147,86 +136,65 @@ async function collectDeletionFiles(targets, sources, request, files) {
 
 }
 
-function deletionError(error, recoveryErrors, lock) {
-  return new Error([
-      `Deletion failed: ${error.message}`,
-      recoveryErrors.length ? `Rollback failed: ${recoveryErrors.map(result => result.reason.message).join("; ")}. Recovery files retained in ${lock}` : "Deletion was rolled back.",
-    ].join("\n"));
+async function collectCompletedTransfers(root, source, header, files) {
+  const file = source.replace(/\.jsonl$/, '.diffs.json');
+
+  if (!transactions.exists(file)) return;
+  const state = ownerLocks.withFile(file + '.lock', () => diffStore.readStore(file, false));
+
+  if (Object.values(state.transfers).some(transfer => transfer.committed !== true)) throw new Error('Unfinished project diff transfers still own their log and staged contents; recover them before deleting this conversation');
+
+  for (const transfer of Object.values(state.transfers)) await collectCompletedTransfer(root, header, transfer, files);
 }
+
+async function collectCompletedTransfer(root, header, transfer, files) {
+  if (transfer.owner.toLowerCase() !== header.id.toLowerCase() || !/^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$/.test(transfer.owner) || !/^[a-f0-9]{64}$/.test(transfer.transferId)) throw new Error('Diff transfer ownership is ambiguous; staged contents retained');
+  const message = createHash('sha256').update(transfer.messageId).digest('hex');
+  const part = await readFile(path.join(root, 'git-diff-transfers', transfer.owner, message + '-' + transfer.transferId + '.part'), true);
+
+  if (!part) return;
+
+  if (part.metadata.nlink !== 1 || part.body.length !== transfer.offset || createHash('sha256').update(part.body).digest('hex') !== transfer.digest) throw new Error('Committed diff transfer contents changed; staged contents retained');
+  files.push(part);
+}
+
 
 function deletionStorageRoot(target) {
   return fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", target.area === "archived" ? "archived" : "sessions"));
 }
 
-async function stageDeletion(files, repositories) {
-    const staged = await Promise.allSettled(files.map(stageFile));
-    const stageFailures = staged.filter((result) => result.status === "rejected");
 
-    if (stageFailures.length) throw new Error(`Could not stage session files for deletion: ${stageFailures.map((result) => result.reason.message).join("; ")}`);
-
-    for (const repository of repositories) removeCheckpointRefs(repository);
-
-}
-
-async function appendRetentionFiles(files, retention) {
-  for (const directory of retention.directories) {
-    const saved = await readSnapshotDirectory(directory);
-
-    if (saved) files.push(saved);
-  }
-
-  for (const file of retention.files) files.push(await readFile(file));
-}
 
 async function main(root) {
   const request = JSON.parse(process.argv[1]);
   const targets = request.targets || [request];
+  transactions.recover(root);
   recoverStorage(root);
   const sources = await Promise.all(targets.map(sessionSource));
 
   if (!sources.length || new Set(sources).size !== sources.length) throw new Error("Invalid conversation deletion targets");
-  const source = sources[0];
-  const lock = await acquireDeletionLock(source);
-  const childLocks = [];
-  let committed = false;
   const files = [];
+  const repositories = await collectDeletionFiles(root, targets, sources, request, files);
+  const retention = collectRetention(root, sources, files);
+  const transaction = deletionTransaction.create(root, files, repositories, sources);
+  recordRetention(root, transaction.id, retention.deferred);
 
   try {
-    for (const child of sources.slice(1)) childLocks.push(await acquireDeletionLock(child));
-    const repositories = await collectDeletionFiles(targets, sources, request, files);
-    const sessionIds = files.flatMap(saved => saved.sessionId ? [saved.sessionId] : []);
-    const retention = collectRetention(root, sources, files);
-
-    await appendRetentionFiles(files, retention);
-    const journal = createJournal(root, lock, childLocks, files, repositories, sessionIds, retention.registryIds, retention.deferred);
-    await stageDeletion(files, journal.repositories);
-    await fs.rename(lock, journal.garbagePath);
-    committed = true;
-    sync(path.dirname(journal.garbagePath));
-    sync(path.dirname(lock));
+    deletionTransaction.stage(transaction);
+    deletionTransaction.commit(transaction);
   } catch (error) {
-    if (committed) console.error(`Deletion committed; recovery cleanup is pending: ${error.message}`);
-    else {
-      const recoveryErrors = [];
+    if (deletionTransaction.committed(transaction)) throw new Error(`${error.message}\nDeletion commit evidence was retained at ${transaction.garbagePath}; recovery will finish it.`);
 
-      try { recover(root); } catch (reason) { recoveryErrors.push({ reason }); }
+    try { deletionTransaction.rollback(transaction); }
+    catch (failure) { throw new Error(`${error.message}\nDeletion recovery is pending: ${failure.message}\nRecovery data: ${transaction.container}`); }
 
-      throw deletionError(error, recoveryErrors, lock);
-    }
+    throw new Error(`${error.message}\nDeletion was rolled back.`);
   }
 
-  try { cleanupCommitted(root); }
-  catch (error) { console.error(`Deletion committed; recovery cleanup is pending: ${error.message}`); }
+  try { deletionTransaction.finish(transaction); collectDeferredRetention(root); }
+  catch (error) { console.error(`Deletion committed; cleanup will retry. Recovery data: ${transaction.garbagePath}: ${error.message}`); }
 }
 
-async function appendConversationNote(files, header, target) {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)) return undefined;
-  const storage = target.root ? path.dirname(await fs.realpath(target.root)) : path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
-
-  const note = await readFile(path.join(storage, "notes", "chats", `${header.id.toLowerCase()}.md`), true);
-
-  if (note && !files.some(saved => saved.file === note.file)) files.push(note);
-}
 
 async function appendQueuedInput(files, header, target) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)) return;
@@ -248,6 +216,16 @@ async function appendQueuedInput(files, header, target) {
     if (queued && !files.some(saved => saved.file === queued.file)) files.push(queued);
   }
 }
+
+async function appendConversationNote(files, header, target) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)) return undefined;
+  const storage = target.root ? path.dirname(await fs.realpath(target.root)) : path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
+
+  const note = await readFile(path.join(storage, "notes", "chats", `${header.id.toLowerCase()}.md`), true);
+
+  if (note && !files.some(saved => saved.file === note.file)) files.push({ ...note, note: true });
+}
+
 
 async function archivedDirectoryMetadata(directory) {
   const metadata = await fs.lstat(directory);
@@ -286,7 +264,7 @@ async function directoryReferenced(location, storedPath, selected) {
 async function archivedDirectory(source, header, target, selected = new Set([source])) {
   const saved = header.worktreeRestore;
 
-  if (saved?.kind !== "directory") return undefined;
+  if (header.archiveResourceId || saved?.kind !== "directory") return undefined;
   const area = await deletionStorageRoot(target);
   const storage = path.dirname(area);
   let directory;
@@ -410,14 +388,6 @@ async function sessionSource(target) {
   return source;
 }
 
-async function acquireDeletionLock(source) {
-  const lock = path.join(path.dirname(source), `.delete-${createHash("sha256").update(source).digest("hex")}.lock`);
-
-  try { await fs.mkdir(lock, { mode: 0o700 }); }
-  catch (error) { if (error.code === "EEXIST") throw new Error("Deletion is already in progress for this session"); throw error; }
-
-  return lock;
-}
 
 function validateHeader(header, target) {
   if (!validSessionHeader(header)) {
@@ -433,12 +403,14 @@ async function start() {
 
   if (request.retentionOnly === true) {
     const root = await fs.realpath(request.root);
-    await runWithStorageLock(root, () => withReferencePublicationLock(root, () => {
+
+    if (!lockStorage(root, true)) return;
+
+    return withReferencePublicationLock(root, () => {
+      transactions.recover(root);
       recoverStorage(root);
       collectDeferredRetention(root);
-    }, true), true);
-
-    return;
+    }, true);
   }
 
   const targets = request.targets || [request];
@@ -447,7 +419,10 @@ async function start() {
   const roots = await Promise.all(targets.map(async target => path.dirname(await deletionStorageRoot(target))));
 
   if (new Set(roots).size !== 1) throw new Error("Conversation deletion targets must share storage");
-  await runWithStorageLock(roots[0], () => withReferencePublicationLock(roots[0], () => main(roots[0])));
+
+  if (!lockStorage(roots[0])) return;
+
+  return withReferencePublicationLock(roots[0], () => main(roots[0]));
 }
 
 start().catch((error) => { console.error(error.message); process.exitCode = 1; });

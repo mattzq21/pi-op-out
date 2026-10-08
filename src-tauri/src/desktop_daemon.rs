@@ -239,9 +239,9 @@ async fn wait_local_socket(log_path: &Path, executable: &Path, child: &mut std::
     Err(format!("Piop daemon did not start. See {}", log_path.display()))
 }
 fn spawn_local_daemon(executable: &Path) -> Result<(PathBuf, std::process::Child), String> {
-    let log_path = daemon_endpoint::directory()?.join("daemon.log");
     let mut command = Command::new(executable);
     command.arg("--exit-on-disconnect").stdin(Stdio::null()).stdout(Stdio::null());
+    let log_path = crate::daemon_log::configure(&mut command, executable)?;
     let child = crate::daemon_log::spawn(command)?;
     Ok((log_path, child))
 }

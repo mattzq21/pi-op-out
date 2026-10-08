@@ -1,27 +1,19 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
-import { lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
+import { constants, createReadStream, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { open, readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { Type as Schema, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { goalTokens } from "./goal-state.ts";
-import { resultNotificationId } from "./subagent-identity.ts";
+import { resultNotificationId, runSchema, type SubagentRun } from "./subagent-identity.ts";
 
 export { resultNotificationId } from "./subagent-identity.ts";
 
-export const SUBAGENT_RUN = "piop-subagent-run";
+export { runSchema, type SubagentRun } from "./subagent-identity.ts";
 
-export const runSchema = Schema.Object({
-  version: Schema.Literal(1), toolCallId: Schema.String(), parentSessionId: Schema.String(), sessionId: Schema.String(), sessionPath: Schema.String(),
-  hostId: Schema.String(), name: Schema.String(), task: Schema.String(), status: Schema.Union([Schema.Literal("running"), Schema.Literal("completed"), Schema.Literal("failed"), Schema.Literal("cancelled")]),
-  startedAt: Schema.Number(), endedAt: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.String()), apiCost: Schema.Optional(Schema.Number()),
-  agent: Schema.Optional(Schema.String()), taskPath: Schema.Optional(Schema.String()),
-  cwd: Schema.Optional(Schema.String()), worktree: Schema.Optional(Schema.Union([Schema.Literal("same"), Schema.Literal("new")])), branch: Schema.Optional(Schema.String()),
-  offset: Schema.Optional(Schema.Integer({ minimum: 0 })), deliveryIds: Schema.Optional(Schema.Array(Schema.String())), goalId: Schema.Optional(Schema.String()),
-  accountingPending: Schema.Optional(Schema.Boolean()),
-});
+export const SUBAGENT_RUN = "piop-subagent-run";
 
 const usageSchema = Schema.Object({ input: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.Number()), cacheWrite: Schema.Optional(Schema.Number()), cost: Schema.Optional(Schema.Object({ total: Schema.Optional(Schema.Number()) })) });
 
@@ -36,8 +28,6 @@ const responseUsageSchema = Schema.Object({ type: Schema.Literal("custom"), cust
 const textSchema = Schema.Object({ type: Schema.Literal("text"), text: Schema.String() });
 
 export type SubagentResponse = Static<typeof assistantSchema>;
-
-export type SubagentRun = Static<typeof runSchema>;
 
 let runWrites = Promise.resolve();
 
@@ -54,6 +44,13 @@ async function syncPath(path: string) {
   try { await file.sync(); } finally { await file.close(); }
 }
 
+export async function syncSubagentTranscript(ctx: ExtensionContext) {
+  const path = ctx.sessionManager.getSessionFile();
+
+  if (!path) throw new Error("Subagent usage requires a saved conversation");
+  await syncPath(path);
+}
+
 function journalDirectory(ctx: ExtensionContext) {
   const path = ctx.sessionManager.getSessionFile();
 
@@ -68,16 +65,16 @@ function runJournalDirectory(path: string) {
   return join(path.replace(/\.jsonl$/, ".snapshots"), "subagent-runs");
 }
 
-async function privateDirectory(path: string) {
-  await mkdir(path, { recursive: true, mode: 0o700 });
-  const info = await lstat(path);
+function privateDirectory(path: string) {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  const info = lstatSync(path);
 
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Subagent recovery storage must be a directory");
 }
 
-async function readPendingRun(ctx: ExtensionContext, run: SubagentRun) {
+function readPendingRun(ctx: ExtensionContext, run: SubagentRun) {
   try {
-    const saved = JSON.parse(await readFile(join(journalDirectory(ctx), `${resultNotificationId(run)}.json`), "utf8"));
+    const saved = JSON.parse(readFileSync(join(journalDirectory(ctx), `${resultNotificationId(run)}.json`), "utf8"));
 
     if (!Check(runSchema, saved) || resultNotificationId(saved) !== resultNotificationId(run)) throw new Error("Invalid saved subagent identity");
 
@@ -85,40 +82,54 @@ async function readPendingRun(ctx: ExtensionContext, run: SubagentRun) {
   } catch (error) { if (!Check(Schema.Object({ code: Schema.Literal("ENOENT") }), error)) throw error; }
 }
 
-async function mergePendingRun(ctx: ExtensionContext, run: SubagentRun) {
+function previousRun(ctx: ExtensionContext, run: SubagentRun) {
   let previous = ownedSubagentRuns(ctx).find(item => resultNotificationId(item) === resultNotificationId(run));
-  const saved = await readPendingRun(ctx, run);
+  const saved = readPendingRun(ctx, run);
 
   if (saved && (!previous || previous.status === "running")) previous = saved;
 
+  return previous;
+}
+
+function mergePendingRun(ctx: ExtensionContext, run: SubagentRun) {
+  const previous = previousRun(ctx, run);
+
   if (previous && previous.status !== "running" && run.status === "running") return false;
+
+  if (previous?.accountingPending === false && run.accountingPending) return false;
   run.deliveryIds = [...new Set([...(previous?.deliveryIds ?? []), ...(run.deliveryIds ?? [])])];
 
   return true;
 }
 
-async function writeSubagentRun(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun) {
+function syncRunPath(path: string) {
+  const file = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+
+  try { fsyncSync(file); } finally { closeSync(file); }
+}
+
+function writeSubagentRun(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun) {
   if (run.parentSessionId !== ctx.sessionManager.getSessionId()) throw new Error("Subagent run belongs to another parent conversation");
 
-  if (!await mergePendingRun(ctx, run)) return;
+  if (!mergePendingRun(ctx, run)) return;
   const directory = journalDirectory(ctx);
-  await privateDirectory(dirname(directory)); await privateDirectory(directory);
+  privateDirectory(dirname(directory)); privateDirectory(directory);
   const destination = join(directory, `${resultNotificationId(run)}.json`);
   const temporary = `${destination}.${randomUUID()}.tmp`;
-  const file = await open(temporary, "wx", 0o600);
+  const file = openSync(temporary, "wx", 0o600);
 
   try {
-    try { await file.writeFile(JSON.stringify(run)); await file.sync(); } finally { await file.close(); }
+    try { writeFileSync(file, JSON.stringify(run)); fsyncSync(file); } finally { closeSync(file); }
 
-    await rename(temporary, destination);
-    await syncPath(directory); await syncPath(dirname(directory)); await syncPath(dirname(dirname(directory)));
-  } finally { await rm(temporary, { force: true }); }
+    renameSync(temporary, destination);
+    syncRunPath(directory); syncRunPath(dirname(directory)); syncRunPath(dirname(dirname(directory)));
+  } finally { rmSync(temporary, { force: true }); }
 
   pi.appendEntry(SUBAGENT_RUN, structuredClone(run));
 }
 
 export function persistSubagentRun(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun) {
-  return serializeRun(() => writeSubagentRun(pi, ctx, run));
+  writeSubagentRun(pi, ctx, run);
 }
 
 export async function savedSubagentRuns(ctx: ExtensionContext) {
@@ -169,7 +180,14 @@ export async function unresolvedSubagentRuns(path: string, sessionId: string) {
   if (!header) throw new Error("Subagent recovery transcript is empty");
   await mergeRunJournals(path, sessionId, runs);
 
-  return [...runs.values()].filter(run => run.status === "running" || run.accountingPending);
+  return [...runs.values()].filter(accountingUnresolved);
+}
+
+export function accountingUnresolved(run: SubagentRun) {
+  if (run.status === "running" || run.accountingPending) return true;
+  const total = run.accountedTokens ?? 0;
+
+  return total > (run.forwardedTokens ?? 0) || Boolean(run.goalId && total > (run.goalTokens ?? 0));
 }
 
 function collectSubagentRun(line: string, sessionId: string, runs: Map<string, SubagentRun>) {
@@ -187,6 +205,8 @@ function mergeSavedRun(runs: Map<string, SubagentRun>, run: SubagentRun) {
   const previous = runs.get(resultNotificationId(run));
 
   if (run.status === "running" && previous && previous.status !== "running") return;
+
+  if (previous?.accountingPending === false && run.accountingPending) return;
   runs.set(resultNotificationId(run), run);
 }
 
@@ -215,7 +235,10 @@ async function removeSubagentRun(ctx: ExtensionContext, run: SubagentRun) {
 
   await syncPath(path);
   const directory = journalDirectory(ctx);
-  await rm(join(directory, `${resultNotificationId(run)}.json`), { force: true });
+  const pending = readPendingRun(ctx, run);
+
+  if (pending && JSON.stringify(pending) !== JSON.stringify(run)) return;
+  rmSync(join(directory, `${resultNotificationId(run)}.json`), { force: true });
 
   try { await syncPath(directory); }
   catch (error) { if (!Check(Schema.Object({ code: Schema.Literal("ENOENT") }), error)) throw error; }

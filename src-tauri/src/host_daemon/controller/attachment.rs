@@ -31,6 +31,9 @@ impl Attachment {
         host.registry().attachments.insert(runtime.clone(), packet.clone());
         let spec: LaunchSpec = serde_json::from_value(packet["spec"].clone()).map_err(|error| error.to_string())?;
         let identity = spec.identity(&text(&packet, "sessionKey"))?;
+        if Uuid::parse_str(&text(&packet, "sessionKey")).is_ok() && identity != text(&packet, "sessionKey") {
+            return Err("The saved path belongs to another conversation; resolve its identity again".into());
+        }
         let path = spec.argument("--session").map(str::to_owned);
         let attachment = Self {
             runtime,
@@ -57,14 +60,7 @@ impl Attachment {
     }
 
     fn readonly(&self, host: &Host) -> Result<Value> {
-        if self.path.is_none()
-            || host
-                .ownership()
-                .locate(&self.identity, self.path.as_deref(), false, true)?
-                .is_none()
-        {
-            return Err("This conversation has been deleted or archived".into());
-        }
+        host.ownership().lookup(&self.identity)?;
         self.assert_current(host)?;
         Ok(self.attach_readonly(host))
     }

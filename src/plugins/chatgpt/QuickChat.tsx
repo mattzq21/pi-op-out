@@ -1,7 +1,7 @@
-import { For, Show, createEffect } from "solid-js";
-import { Plus, Send, Square } from "lucide-solid";
-import { IconButton } from "../../components/IconButton";
+import { For, Show, createEffect, onCleanup, onMount } from "solid-js";
+import { Square } from "lucide-solid";
 import { Markdown } from "../../components/Markdown";
+import { ChatHistoryPicker } from "./ChatHistoryPicker";
 import { useChatGpt, type QuickChatRequest } from "./useChatGpt";
 import "./quick-chat.css";
 
@@ -10,6 +10,27 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
   let messages: HTMLDivElement | undefined;
   let composer: HTMLTextAreaElement | undefined;
   let follow = true;
+
+  const resizeComposer = () => {
+    if (!composer?.clientWidth) return;
+    composer.style.height = "0px";
+    composer.style.height = `${composer.scrollHeight}px`;
+  };
+
+  createEffect(() => { state.prompt(); props.open; queueMicrotask(resizeComposer); });
+  onMount(() => {
+    if (!composer) return;
+    let width = 0;
+
+    const observer = new ResizeObserver(() => {
+      if (!composer || composer.clientWidth === width) return;
+      width = composer.clientWidth; resizeComposer();
+    });
+
+    observer.observe(composer);
+    onCleanup(() => observer.disconnect());
+  });
+
   const active = () => state.busy() || state.responding();
   const status = () => state.chat()?.status === "stopping" ? "Stopping…" : state.busy() ? "Preparing…" : state.recovering() ? "Checking whether your message was received. Stop recovery to continue chatting." : "Responding…";
   createEffect(() => {
@@ -18,11 +39,11 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
   });
   createEffect(() => { if (props.open) queueMicrotask(() => composer?.focus()); });
 
-  const renderChatPicker = () => <select class="quick-chat-history" aria-label="ChatGPT chat" disabled={state.busy() || state.loading()} onChange={event => { follow = true;
+  const renderChatPicker = () => <ChatHistoryPicker chats={state.chats()} selected={state.chat()} disabled={state.busy() || state.loading()} onSelect={id => {
+    follow = true;
 
-      if (event.currentTarget.value) void state.select(event.currentTarget.value); else { props.onNew(); state.fresh(); } }}>
-        <option value="" selected={!state.chat()}>New chat</option><For each={state.chats()}>{chat => <option value={chat.id} selected={state.chat()?.id === chat.id}>{chat.title}</option>}</For>
-      </select>;
+    if (id) void state.select(id); else { props.onNew(); state.fresh(); }
+  }} />;
 
   const renderSelection = () => <Show when={!state.chat() && state.source()?.selected}><blockquote class="quick-chat-selection">{state.source()?.selected?.text.slice(0, 300)}</blockquote></Show>;
 
@@ -36,18 +57,21 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
     </div>;
 
   const renderComposer = () => <form class="quick-chat-composer" onSubmit={event => { event.preventDefault(); follow = true; void state.send(); }}>
-      <label class="quick-chat-context-toggle">
-        <input type="checkbox" checked={state.includeContext()} disabled={active() || state.loading()} onChange={event => state.setIncludeContext(event.currentTarget.checked)} />
-        Include Piop session context
-      </label>
-      <textarea ref={composer} aria-label="Message ChatGPT" placeholder="Message ChatGPT" value={state.prompt()} maxLength={100000} disabled={state.busy()} readOnly={!state.editable()} onInput={event => state.setPrompt(event.currentTarget.value)} onKeyDown={event => {
+    <div class="quick-chat-input">
+      <textarea ref={composer} rows={1} aria-label="Message ChatGPT" placeholder="Message ChatGPT" value={state.prompt()} maxLength={100000} disabled={state.busy()} readOnly={!state.editable()} onInput={event => state.setPrompt(event.currentTarget.value)} onKeyDown={event => {
         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); follow = true; void state.send(); }
       }} />
-      <div class="quick-chat-controls">{renderModelControls()}
-        <Show when={active()} fallback={<button type="submit" aria-label="Send to ChatGPT" disabled={!state.editable() || !state.prompt().trim() || state.loading() || !state.models().length}><Send size={17} /></button>}>
+      <div class="quick-chat-controls">
+        <div class="quick-chat-context-mode" role="group" aria-label="Chat context">
+          <button type="button" aria-pressed={!state.includeContext()} disabled={!state.canChooseContext()} onClick={() => state.setIncludeContext(false)}>Chat</button>
+          <button type="button" aria-pressed={state.includeContext()} disabled={!state.canChooseContext()} onClick={() => state.setIncludeContext(true)}>Piop context</button>
+        </div>
+        <Show when={active()}>
           <button type="button" aria-label={state.recovering() ? "Stop recovery" : "Stop ChatGPT"} disabled={!state.editable() || state.chat()?.status === "stopping"} onClick={() => void state.stop()}><Square size={16} /><Show when={state.recovering()}>Stop recovery</Show></button>
         </Show>
+        {renderModelControls()}
       </div>
+    </div>
     </form>;
 
   const renderModelControls = () => <Show when={state.models().length}>
@@ -63,7 +87,6 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
 
   return <section class="quick-chat" aria-label="ChatGPT quick chat">
     <header class="quick-chat-header">{renderChatPicker()}
-      <IconButton label="New ChatGPT chat" disabled={state.busy()} onClick={() => { props.onNew(); state.fresh(); follow = true; }}><Plus size={17} /></IconButton>
     </header>
     {renderSelection()}{renderMessages()}
     <Show when={!state.editable()}><p class="quick-chat-error" role="status">Read-only · waiting for editing access.</p></Show>

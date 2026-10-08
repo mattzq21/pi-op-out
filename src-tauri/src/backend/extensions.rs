@@ -29,7 +29,6 @@ pub(super) fn prepare_rtk_extension() -> Result<PathBuf, String> {
     ensure_private_dir(&dir)?;
     let path = dir.join("rtk.ts");
     atomic_write_private(&path, include_str!("../../../extensions/piop-rtk/rtk.ts").as_bytes())?;
-    atomic_write_private(&dir.join("rtk.LICENSE"), include_str!("../../../extensions/piop-rtk/LICENSE").as_bytes())?;
     Ok(path)
 }
 pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf, String> {
@@ -44,19 +43,33 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 27] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 42] = [
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
+    ("conversation-location.ts", include_str!("../../resources/session-broker/conversation-location.ts")),
     ("pause.ts", include_str!("../../resources/session-broker/pause.ts")),
     ("fast-mode.ts", include_str!("../../resources/session-broker/fast-mode.ts")),
     ("turn-capture.ts", include_str!("../../resources/session-broker/turn-capture.ts")),
     ("session-file.ts", include_str!("../../resources/session-broker/session-file.ts")),
+    ("session-publication.cjs", include_str!("../../resources/session-broker/session-publication.cjs")),
+    ("session-publication-io.cjs", include_str!("../../resources/session-broker/session-publication-io.cjs")),
+    ("session-publication-dependencies.cjs", include_str!("../../resources/session-broker/session-publication-dependencies.cjs")),
+    ("review-publication.cjs", include_str!("../../resources/session-broker/review-publication.cjs")),
+    ("session-publication.d.cts", include_str!("../../resources/session-broker/session-publication.d.cts")),
     ("fork.ts", include_str!("../../resources/session-broker/fork.ts")),
+    ("git-diff-store.cjs", include_str!("../../resources/session-broker/git-diff-store.cjs")),
+    ("git-diff-migration.cjs", include_str!("../../resources/session-broker/git-diff-migration.cjs")),
+    ("git-diff-pages.cjs", include_str!("../../resources/session-broker/git-diff-pages.cjs")),
+    ("git-diff-transfer.cjs", include_str!("../../resources/session-broker/git-diff-transfer.cjs")),
     ("subagents.ts", include_str!("../../resources/session-broker/subagents.ts")),
+    ("subagent-state.ts", include_str!("../../resources/session-broker/subagent-state.ts")),
+    ("subagent-reconciliation.ts", include_str!("../../resources/session-broker/subagent-reconciliation.ts")),
+    ("subagent-transcript.ts", include_str!("../../resources/session-broker/subagent-transcript.ts")),
     ("orchestration.ts", include_str!("../../resources/session-broker/orchestration.ts")),
     ("durable-mailbox.ts", include_str!("../../resources/session-broker/durable-mailbox.ts")),
     ("agent-profiles.ts", include_str!("../../resources/session-broker/agent-profiles.ts")),
     ("subagent-usage.ts", include_str!("../../resources/session-broker/subagent-usage.ts")),
+    ("subagent-usage-channel.ts", include_str!("../../resources/session-broker/subagent-usage-channel.ts")),
     ("subagent-mailbox.ts", include_str!("../../resources/session-broker/subagent-mailbox.ts")),
     ("subagent-results.ts", include_str!("../../resources/session-broker/subagent-results.ts")),
     ("subagent-recovery.ts", include_str!("../../resources/session-broker/subagent-recovery.ts")),
@@ -71,6 +84,7 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 27] = [
     ("goal-controls.ts", include_str!("../../resources/session-broker/goal-controls.ts")),
     ("goal-coordination.ts", include_str!("../../resources/session-broker/goal-coordination.ts")),
     ("goal-files.ts", include_str!("../../resources/session-broker/goal-files.ts")),
+    ("goal-assets.cjs", include_str!("../../resources/session-broker/goal-assets.cjs")),
     ("goal-prompts.ts", include_str!("../../resources/session-broker/goal-prompts.ts")),
 ];
 
@@ -219,6 +233,7 @@ pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
         ("fork-publication.ts", include_str!("../../../extensions/piop-diff-watch/fork-publication.ts")),
         ("fork-preparation.ts", include_str!("../../../extensions/piop-diff-watch/fork-preparation.ts")),
         ("publish-fork.bundle.mjs", include_str!("../../resources/publish-fork.bundle.mjs")),
+        ("snapshot-baseline.ts", include_str!("../../../extensions/piop-diff-watch/snapshot-baseline.ts")),
     ] {
         atomic_write_private(&dir.join(name), content.as_bytes())?;
     }
@@ -252,10 +267,9 @@ fn prepare_agent_configuration(legacy_dir: &Path) -> Result<(), String> {
     migrate_agent_config(&config_dir.join("config.json"), legacy_dir)
 }
 
-pub(super) const EXCALIDRAW_ASSETS: [(&str, &str); 3] = [
+pub(super) const EXCALIDRAW_ASSETS: [(&str, &str); 2] = [
     ("SKILL.md", include_str!("../../../extensions/piop-excalidraw/SKILL.md")),
     ("references/cheatsheet.md", include_str!("../../../extensions/piop-excalidraw/references/cheatsheet.md")),
-    ("LICENSE", include_str!("../../../extensions/piop-excalidraw/LICENSE")),
 ];
 
 fn prepare_agent_directories(dir: &Path) -> Result<(), String> {

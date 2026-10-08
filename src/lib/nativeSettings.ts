@@ -1,8 +1,10 @@
 import { appSettingsSchema, settingsChangeSchema } from "./responseSchemas";
 import type { AppSettings, RpcEvent, SettingsChange } from "../types";
-import { preferences, preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
+import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import { keybindingsError } from "./keybindings";
 import type { NativeCall } from "./nativeCall";
+import { clientPreferences, ClientPreferenceConflictError, SettingsSaveError } from "./clientPreferenceMerge";
+
 import { settingsSnapshot } from "./settingsSnapshots";
 
 type SettingsTarget = { cwd?: string; sessionPath?: string; sessionId?: string; hostId: string };
@@ -21,14 +23,14 @@ function needsDaemonSave(settings: AppSettings, previous: AppSettings, agentHost
   return scope !== "client" && (Boolean(settings.settingsDurabilityError) || settingsSnapshot(settings) !== settingsSnapshot(previous) || Boolean(agentHostId));
 }
 
-function needsClientSave(settings: AppSettings, previous: AppSettings, scope: string) {
-  return scope !== "daemon" && (Boolean(settings.clientSettingsDurabilityError ?? previous.clientSettingsDurabilityError) || JSON.stringify(preferences(settings)) !== JSON.stringify(preferences(previous)));
+function needsClientSave(settings: AppSettings, baseline: AppSettings, previous: AppSettings) {
+  return Boolean(settings.clientSettingsDurabilityError ?? previous.clientSettingsDurabilityError) || JSON.stringify(clientPreferences(settings)) !== JSON.stringify(clientPreferences(baseline));
 }
 
-function mergeSavedClient(change: SettingsChange, saved: AppSettings) {
-  change.settings = { ...change.settings, ...preferences(saved), clientSettingsRevision: saved.clientSettingsRevision, clientSettingsDurabilityError: saved.clientSettingsDurabilityError };
+function mergeSavedPreferences(change: SettingsChange, committed: AppSettings) {
+  change.settings = preserveDaemonPreferences(change.settings, committed);
 
-  if (saved.clientSettingsDurabilityError) change.warnings = [...change.warnings ?? [], `Client preferences were published, but disk durability is unconfirmed: ${saved.clientSettingsDurabilityError}. Retry saving to confirm them.`];
+  if (committed.clientSettingsDurabilityError) change.warnings = [...change.warnings ?? [], `Client preferences were published, but disk durability is unconfirmed: ${committed.clientSettingsDurabilityError}. Retry saving to confirm them.`];
 }
 
 export class NativeSettings {
@@ -41,7 +43,36 @@ export class NativeSettings {
 
   constructor(private call: NativeCall, private connection: SettingsConnection) {}
 
-  load() { return withClientSettings(this.call("load_app_settings", undefined, appSettingsSchema), true); }
+  private async daemonChange() {
+    let change: SettingsChange;
+
+    try { change = await this.call("load_settings_change", undefined, settingsChangeSchema); }
+    catch (reason) {
+      if (!String(reason).includes("Command is not available on the daemon: load_settings_change")) throw reason;
+      change = { settings: await this.call("load_app_settings", undefined, appSettingsSchema) };
+    }
+
+    return change;
+  }
+
+  async loadChange() {
+    const change = await this.daemonChange();
+
+    return { ...change, settings: await withClientSettings(change.settings, true) };
+  }
+
+  async load() { return (await this.loadChange()).settings; }
+
+  async loadHostChange() {
+    const hostId = this.connection.target().hostId;
+
+    try { return await this.call(hostId === "local" ? "load_settings_change" : "load_host_settings_change", { hostId }, settingsChangeSchema); }
+    catch (reason) {
+      if (!String(reason).includes("Command is not available on the daemon: load_")) throw reason;
+
+      return { settings: await this.loadHost() };
+    }
+  }
 
   async loadHost() {
     const hostId = this.connection.target().hostId;
@@ -65,66 +96,73 @@ export class NativeSettings {
     }
   }
 
-  save(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" | "daemon" = "all") {
-    const save = () => this.saveNow(settings, reconnect, agentHostId, scope);
+  save(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" | "daemon" = "all", baseline?: AppSettings) {
+    if (!baseline && scope !== "daemon") return Promise.reject(new Error("An editing baseline is required to save client preferences"));
+    const intended = structuredClone(settings);
+    const before = structuredClone(baseline ?? settings);
+    const save = () => this.saveNow(intended, reconnect, agentHostId, scope, before);
     const result = this.lifecycle.then(save, save);
     this.lifecycle = result.then(() => undefined, () => undefined);
 
     return result;
   }
 
-  private async saveNow(settings: AppSettings, reconnect: boolean, agentHostId: string | undefined, scope: "all" | "client" | "daemon") {
+  private async saveNow(settings: AppSettings, reconnect: boolean, agentHostId: string | undefined, scope: "all" | "client" | "daemon", baseline: AppSettings) {
     const shortcutError = keybindingsError(settings.keybindings);
 
     if (shortcutError) throw new Error(shortcutError);
-    const previous = await this.call("load_app_settings", undefined, appSettingsSchema);
-    const previousClient = await withClientSettings(previous);
+    const previousChange = await this.daemonChange();
+    const previous = previousChange.settings;
     const daemonSettings = scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
     const daemonChanged = needsDaemonSave(daemonSettings, previous, agentHostId, scope);
-    const clientChanged = needsClientSave(settings, previousClient, scope);
+    const change: SettingsChange = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { ...previousChange };
+    await this.savePreferences(settings, baseline, change, daemonChanged, scope);
 
-    const savedClient = clientChanged ? await saveClientSettings(settings) : previousClient;
-    let change: SettingsChange;
+    if (daemonChanged) await this.reloadCommitted(change);
 
-    try { change = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { settings: previous }; }
-    catch (reason) {
-      await this.restoreClientSettings(previousClient, clientChanged, savedClient.clientSettingsRevision, String(reason));
-      throw reason;
+    if (reconnect && daemonChanged) {
+      try { await this.reconnect(change.settings); }
+      catch (reason) { throw new SettingsSaveError(`Settings were saved, but this session could not reconnect: ${reason instanceof Error ? reason.message : String(reason)}`, change, "reconnect"); }
     }
-
-    mergeSavedClient(change, savedClient);
-
-    if (reconnect && daemonChanged) await this.reconnectAfterSave(settings);
 
     return change;
   }
 
-  private async restoreClientSettings(settings: AppSettings, changed: boolean, expectedRevision: string | undefined, reason: string) {
+  private async reloadCommitted(change: SettingsChange) {
     try {
-      if (changed && expectedRevision) {
-        const restored = await saveClientSettings(settings, expectedRevision);
+      const current = await this.loadChange();
 
-        if (restored.clientSettingsDurabilityError) throw new Error(`The previous preferences were published, but disk durability is unconfirmed: ${restored.clientSettingsDurabilityError}`);
-      }
+      if (current.revision === undefined) return;
+      const newer = current.revision > (change.revision ?? -1);
+      const phaseChanged = current.revision === change.revision && (current.phaseRevision ?? 0) > (change.phaseRevision ?? 0);
+
+      if (!newer && !phaseChanged) return;
+      const committedRevision = change.committedRevision;
+      Object.assign(change, current);
+      change.committedRevision = committedRevision;
+    } catch (reason) { throw new SettingsSaveError(`Settings were saved, but their current state could not be reloaded: ${String(reason)}`, change, "reconnect"); }
+  }
+
+  private async savePreferences(settings: AppSettings, baseline: AppSettings, change: SettingsChange, daemonChanged: boolean, scope: string) {
+    try {
+      const previous = await withClientSettings(change.settings);
+      const changed = scope !== "daemon" && needsClientSave(settings, baseline, previous);
+      const committed = changed ? await saveClientSettings(settings, baseline) : previous;
+      mergeSavedPreferences(change, committed);
+    } catch (reason) {
+      if (!daemonChanged) throw reason;
+      change.settings = preserveDaemonPreferences(change.settings, baseline);
+
+      try { change.settings = await withClientSettings(change.settings); } catch { }
+
+      throw new SettingsSaveError(`Daemon settings were saved, but client preferences could not be saved: ${reason instanceof Error ? reason.message : String(reason)}`, change, "client", reason instanceof ClientPreferenceConflictError ? reason : undefined);
     }
-    catch (rollback) { throw new Error(`Settings save failed: ${String(reason)}. Client preferences could not be restored: ${String(rollback)}. Reload settings before retrying.`); }
   }
 
   private selectAvailableHost(settings: AppSettings, fresh: boolean) {
     const { hostId } = this.connection.target();
 
     if (hostId !== "local" && !settings.hosts.some(host => host.enabled !== false && host.id === hostId)) this.connection.resetToLocal(fresh);
-  }
-
-  private async reconnectAfterSave(settings: AppSettings) {
-    try {
-      this.selectAvailableHost(settings, false);
-      await this.connection.disconnect();
-      await this.connection.connect();
-    } catch (reason) {
-      this.queue(settings, { reconnect: true });
-      this.connection.emit({ type: "extension_error", error: `Settings saved, but this session could not reconnect: ${String(reason)}. Reconnect to apply them.` });
-    }
   }
 
   async reconnect(settings: AppSettings) {

@@ -1,5 +1,13 @@
 #[cfg(not(feature = "desktop"))]
 fn main() {
+    if let Err(error) = piop_lib::initialize_daemon_process() {
+        if std::env::args().nth(1).as_deref() == Some("--daemon-log-sink") { println!("piopd: {error}"); }
+        eprintln!("piopd: {error}"); std::process::exit(1);
+    }
+    if let Some(result) = piop_lib::run_daemon_log_sink() {
+        if let Err(error) = result { eprintln!("piopd logging: {error}"); std::process::exit(1); }
+        return;
+    }
     piop_lib::run_session_worker();
     match std::env::args().nth(1).as_deref() {
         None | Some("--help" | "-h") => {

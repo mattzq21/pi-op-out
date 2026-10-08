@@ -333,7 +333,7 @@ fn select_route(app: &AppHandle, owner: &str, command: &str, args: &Value, exist
     if existing.as_ref().is_some_and(|route| route.owner != owner) { return Err("Resource belongs to another connection".into()); }
     let explicit = args["hostId"].as_str().filter(|id| *id != "local");
     let route = if let Some(host_id) = explicit {
-        if matches!(command, "save_app_settings" | "load_app_settings" | "change_session_groups" | "load_session_groups") { return Err("Settings belong to the local daemon".into()); }
+        if matches!(command, "save_app_settings" | "load_app_settings" | "load_settings_change" | "change_session_groups" | "load_session_groups") { return Err("Settings belong to the local daemon".into()); }
         Route { owner: owner.into(), host_id: host_id.into(), connection: connect(app, host_id)? }
     } else if let Some(route) = existing { route } else { return Ok(None); };
     Ok(Some(route))

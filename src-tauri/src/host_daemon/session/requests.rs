@@ -24,6 +24,7 @@ impl Session {
         let mut state = self.raw(command).await?;
         merge(&mut state, self.raw(json!({"type":"get_pause_state"})).await?);
         state["pendingMessages"] = self.queue.view()["pendingMessages"].clone();
+        state["ephemeral"] = json!(self.ephemeral);
         state["pendingMessageCount"] = json!(state["pendingMessageCount"].as_u64().unwrap_or(0) + self.queue.held_count() as u64);
         Ok(state)
     }
@@ -60,7 +61,7 @@ impl Session {
 
     fn prepare_worker_command(&self, command: &Value) -> (Option<Value>, Option<Value>) {
         let mut state = self.state();
-        if kind(command) == "prompt" && !text(command, "message").starts_with('/') {
+        if matches!(kind(command), "prompt" | "queue_prompt") && !text(command, "message").starts_with('/') {
             state.submitted = true;
         }
         let key = (kind(command) == "runtime_settings").then(
@@ -127,6 +128,7 @@ impl Session {
         loop {
             let revision = self.state().state_revision;
             let mut state = self.raw(json!({"type":"get_state"})).await?;
+            state["ephemeral"] = json!(self.ephemeral);
             merge(&mut state, self.raw(json!({"type":"get_pause_state"})).await?);
             let mut snapshot = self.raw_as(json!({"type":"get_entries"}), "get_snapshot_entries", state).await?;
             let current = snapshot["stateRevision"].as_u64();
@@ -143,11 +145,10 @@ impl Session {
     }
 
     pub(super) fn response(&self, mut event: Value, request: &Request) -> Result<Value> {
-        if request.request_type == "prompt" {
-            self.check_prompt_error(&request.command)?;
-        }
-        if !flag(&event, "success") {
-            return Err(event["error"].as_str().unwrap_or("Pi command failed").into());
+        if let Some(result) = self.reject_goal_preparation(&event, request) { return result; }
+        if let Err(error) = self.response_error(&event, request) {
+            if flag(&request.command, "discardOnRejection") { self.queue.rejected(&text(&request.command, "queueId")); }
+            return Err(error);
         }
         let mut data = event.get_mut("data").map(std::mem::take).unwrap_or(Value::Null);
         if matches!(request.request_type.as_str(), "get_entries" | "get_snapshot_entries") {
@@ -162,7 +163,22 @@ impl Session {
         Ok(data)
     }
 
-    fn check_prompt_error(&self, command: &Value) -> Result<()> {
+    fn response_error(&self, event: &Value, request: &Request) -> Result<()> {
+        if matches!(request.request_type.as_str(), "prompt" | "queue_prompt") { self.check_prompt_error(&request.command, &event["data"]["submittedText"])?; }
+        if !flag(event, "success") { return Err(event["error"].as_str().unwrap_or("Pi command failed").into()); }
+        Ok(())
+    }
+
+    fn reject_goal_preparation(&self, event: &Value, request: &Request) -> Option<Result<Value>> {
+        if flag(event, "success") || event["rejection"] != "goal_preparation" { return None; }
+        if request.request_type == "queue_prompt" && !flag(&request.command, "discardOnRejection") {
+            return Some(Err(event["error"].as_str().unwrap_or("Goal prompt preparation failed").into()));
+        }
+        if flag(&request.command, "discardOnRejection") { self.queue.rejected(&text(&request.command, "queueId")); }
+        Some(Ok(json!(false)))
+    }
+
+    fn check_prompt_error(&self, command: &Value, submitted_text: &Value) -> Result<()> {
         let state = self.state();
         let message = text(command, "message");
         let command_name = message
@@ -172,7 +188,7 @@ impl Session {
         if let Some(error) = state.command_errors.get(command_name).or_else(|| state.command_errors.get("")) {
             return Err(error.clone());
         }
-        if state.input_rejection["text"] == message {
+        if state.input_rejection["text"] == message || submitted_text.is_string() && state.input_rejection["text"] == *submitted_text {
             if let Some(error) = state.input_rejection["error"].as_str() {
                 return Err(error.into());
             }

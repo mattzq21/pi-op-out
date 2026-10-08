@@ -1,3 +1,11 @@
+mod persistence;
+mod ordering;
+mod submission;
+mod questions;
+
+pub(super) use persistence::clear_saved;
+use ordering::{cleared_messages, move_item, queue_neighbor};
+
 use super::protocol::{array, flag, kind, message_text, text, Result};
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
@@ -32,12 +40,34 @@ struct QueueState {
     changing: bool,
     clearing: bool,
     sending: HashSet<String>,
+    rejected: HashSet<String>,
     awaiting_steering: Vec<Value>,
     steering_timestamps: HashSet<String>,
     inference_revision: u64,
 }
 
 impl QueueState {
+    fn durable_messages(&mut self) -> &[Value] {
+        self.retained = durability::durable_messages(self);
+        &self.retained
+    }
+
+    fn remove(&mut self, id: &str) {
+        self.pending.retain(|item| item["id"] != id);
+        self.retained.retain(|item| item["id"] != id);
+        if let Some(held) = &mut self.held { held.retain(|item| item["id"] != id); }
+    }
+
+    fn failed_submission(&mut self, id: &str) -> bool {
+        if self.rejected.remove(id) { return true; }
+        if let Some(mut item) = self.retained.iter().find(|item| item["id"] == id).cloned() {
+            item["retry"] = json!(true);
+            self.pending.retain(|item| item["id"] != id);
+            self.pending.push(item);
+        }
+        false
+    }
+
     fn texts(&self, behavior: &str) -> &[Value] {
         if behavior == "steer" {
             &self.steering
@@ -230,7 +260,7 @@ impl SessionQueue {
         state.view(&state.pending)
     }
     pub fn pending(&self) -> Vec<Value> {
-        self.state().pending.clone()
+        self.state().durable_messages().to_vec()
     }
     pub fn held(&self) -> bool {
         self.state().held.is_some()
@@ -251,6 +281,7 @@ impl SessionQueue {
         self.executor.publish(event);
         Ok(())
     }
+
     pub fn tag_entries(&self, entries: &mut Value) {
         let state = self.state();
         for entry in entries["entries"].as_array_mut().into_iter().flatten() {
@@ -269,25 +300,30 @@ impl SessionQueue {
                 state.inference_revision += 1;
             }
             if kind(&event) == "disconnected" {
+                state.pending = state.durable_messages().to_vec();
                 for item in &mut state.pending {
                     item["retry"] = json!(true);
                 }
                 state.held = None;
                 state.steering.clear();
                 state.follow_up.clear();
-                Some(state.publish())
+                let event = state.publish();
+                Some(event)
             } else if kind(&event) == "queue_update" {
                 state.receive_queue(&event);
                 if let Err(error) = self.persist_state(&mut state) { self.journal_error(error); }
                 if state.changing {
                     return;
                 }
-                Some(state.publish())
+                let event = state.publish();
+                Some(event)
             } else {
                 None
             }
         };
         if let Some(queue_event) = queue_event {
+            let saved = self.persist(&mut self.state());
+            self.report_storage_error(saved);
             self.executor.publish(queue_event);
         }
         if kind(&event) == "queue_update" {
@@ -308,18 +344,23 @@ impl SessionQueue {
         self.executor.execute(command).await
     }
 
-    async fn deliver(&self, item: &Value) -> Result<Value> {
+    async fn deliver(&self, item: &Value, discard_on_rejection: bool) -> Result<Value> {
         let mut retained = item.clone();
         retained["deliveryStarted"] = json!(true);
         self.retain_item(&retained)?;
         let id = text(item, "id");
         self.state().sending.insert(id.clone());
-        let mut command = json!({"type":"prompt","message":item["message"],"streamingBehavior":item["behavior"],"queueInputId":id});
+        let mut command = json!({"type":"queue_prompt","queueId":id,"message":item["message"],"streamingBehavior":item["behavior"],"discardOnRejection":discard_on_rejection});
+        for field in ["goalSubmissionId", "goalPrepared"] {
+            if let Some(value) = item.get(field) { command[field] = value.clone(); }
+        }
+        if let Some(response) = item.get("questionResponse") { command["questionResponse"] = response.clone(); }
         if item["images"].as_array().is_some_and(|images| !images.is_empty()) {
             command["images"] = item["images"].clone();
         }
         let result = self.execute(command).await;
         self.state().sending.remove(&id);
+        if result.as_ref().is_ok_and(|value| value["disposition"] == "handled") { self.consumed(&id); }
         result
     }
 
@@ -353,7 +394,7 @@ impl SessionQueue {
             if flag(&item, "retry") {
                 continue;
             }
-            if let Err(error) = self.deliver(&item).await {
+            if let Err(error) = self.deliver(&item, false).await {
                 self.state().held.get_or_insert_with(Vec::new).insert(0, item);
                 self.held_failed()?;
                 return Err(error);
@@ -391,6 +432,7 @@ impl SessionQueue {
     fn waking_orchestration(&self, command: &Value, name: &str) -> bool { name == "orchestration_message" && command["wake"] != false && self.held() }
     fn resuming_prompt(&self, command: &Value, name: &str) -> bool { name == "resume" || name == "prompt" && self.held() && command["message"].is_string() }
     async fn serial_command(&self, command: Value, name: &str) -> Result<Value> {
+        if name == "clear_queue" { return self.clear(command).await; }
         if self.waking_orchestration(&command, name) {
             return self.resume_command(command, name).await;
         }
@@ -410,6 +452,27 @@ impl SessionQueue {
         }
         self.enqueue(command, name).await
     }
+
+    async fn clear(&self, command: Value) -> Result<Value> {
+        let originals = self.state().pending.clone();
+        let result = self.execute(command).await?;
+        let removed: Vec<_> = {
+            let state = self.state();
+            originals.iter().filter(|item| !flag(item, "retry")
+                && array(&result, if item["behavior"] == "steer" { "steering" } else { "followUp" }).contains(&item["message"]))
+                .chain(state.held.iter().flatten()).cloned().collect()
+        };
+        for item in &removed { self.acknowledge_question_removal(item, "remove").await?; }
+        {
+            let mut state = self.state();
+            for item in removed { state.remove(&text(&item, "id")); }
+            state.held = None;
+            state.steering.clear(); state.follow_up.clear(); state.awaiting_steering.clear();
+            self.persist(&mut state)?;
+        }
+        self.publish()?;
+        Ok(result)
+    }
     async fn resume_command(&self, command: Value, name: &str) -> Result<Value> {
         let revision = self.state().inference_revision;
         let slash = text(&command, "message").starts_with('/');
@@ -422,40 +485,6 @@ impl SessionQueue {
         Ok(result)
     }
 
-    async fn enqueue(&self, command: Value, name: &str) -> Result<Value> {
-        let id = Uuid::new_v4().to_string();
-        let mut pending = json!({"id":id,"message":command["message"],"behavior":if name == "steer" { "steer" } else { "followUp" }});
-        if let Some(images) = command.get("images") {
-            pending["images"] = images.clone();
-        }
-        self.retain_item(&pending)?;
-        let held = {
-            let mut state = self.state();
-            state.pending.push(pending.clone());
-            if let Some(held) = &mut state.held {
-                held.push(pending.clone());
-                held.sort_by_key(|item| item["behavior"] == "followUp");
-                true
-            } else {
-                state.sending.insert(id.clone());
-                false
-            }
-        };
-        if held {
-            self.publish()?;
-            return Ok(Value::Null);
-        }
-        let result = self.deliver(&pending).await;
-        {
-            let mut state = self.state();
-            if result.is_err() {
-                if let Some(item) = state.pending.iter_mut().find(|item| item["id"] == id) { item["retry"] = json!(true); }
-            }
-            state.sending.remove(&id);
-        }
-        self.publish()?;
-        result
-    }
     async fn stop(&self, result: Result<Value>) -> Result<Value> {
         match result {
             Err(error) if error == "Pi command timed out" => {
@@ -469,6 +498,7 @@ impl SessionQueue {
         self.execute(json!({"type":"force_stop"})).await?;
         {
             let mut state = self.state();
+            state.pending = state.durable_messages().to_vec();
             for item in &mut state.pending {
                 item["retry"] = json!(true);
             }
@@ -492,14 +522,15 @@ impl SessionQueue {
         } else {
             self.gate.lock().await
         };
-        let Some((target, behavior, neighbor)) = self.pending_change(id, &action) else { return Ok(Value::Null); };
+        let Some((target, behavior, neighbor)) = self.pending_change(id, &action) else {
+            return Ok(Value::Null);
+        };
+        self.acknowledge_question_removal(&target, &behavior).await?;
         if cancelling {
             return self.change_live(id, "remove", None, &action).await;
         }
         if self.change_held(id, &behavior, neighbor.as_deref(), &action) {
-            if behavior == "remove" { self.forget_item(id)?; }
-            self.publish()?;
-            return Ok(Value::Null);
+            return self.publish_saved();
         }
         if flag(&target, "retry") {
             return self.retry(id, target, &behavior).await;
@@ -531,6 +562,7 @@ impl SessionQueue {
                 move_item(held, id, neighbor, action);
             }
             held.sort_by_key(|item| item["behavior"] == "followUp");
+            if behavior == "remove" { state.remove(id); }
             true
         } else {
             false
@@ -539,7 +571,10 @@ impl SessionQueue {
 
     async fn retry(&self, id: &str, mut target: Value, behavior: &str) -> Result<Value> {
         if behavior == "remove" {
-            self.forget_item(id)?;
+            let mut state = self.state();
+            state.remove(id);
+            self.persist(&mut state)?;
+            drop(state);
             self.publish()?;
             return Ok(Value::Null);
         }
@@ -551,7 +586,9 @@ impl SessionQueue {
         if let Some(item) = self.state().pending.iter_mut().find(|item| item["id"] == id) {
             *item = target.clone();
         }
-        let result = self.deliver(&target).await;
+        let saved = self.persist(&mut self.state());
+        if let Err(error) = saved { self.mark_retry(&[target]); return Err(error); }
+        let result = self.deliver(&target, false).await;
         if result.is_err() {
             if let Some(item) = self.state().pending.iter_mut().find(|item| item["id"] == id) {
                 item["retry"] = json!(true);
@@ -599,14 +636,19 @@ impl SessionQueue {
             let mut state = self.state();
             state.pending = originals.into_iter().filter(|item| flag(item, "retry")).collect();
             state.pending.extend(remaining.clone());
-            self.persist_state(&mut state)?;
+            if behavior == "remove" { state.remove(id); }
+            if let Err(error) = self.persist(&mut state) {
+                drop(state);
+                self.mark_retry(&remaining);
+                return Err(error);
+            }
         }
         if remaining.iter().any(|item| flag(item, "retry")) {
             self.mark_retry(&remaining);
             return Err("Another source changed the queue while switching. Pending text has been kept for retry; reattach any images from messages sent outside this window.".into());
         }
         for (index, item) in remaining.iter().enumerate() {
-            if let Err(error) = self.deliver(item).await {
+            if let Err(error) = self.deliver(item, false).await {
                 self.mark_retry(&remaining[index..]);
                 return Err(error);
             }
@@ -620,65 +662,6 @@ impl SessionQueue {
                 pending["retry"] = json!(true);
             }
         }
-    }
-}
-
-fn cleared_messages(cleared: &Value, originals: &[Value], id: &str, behavior: &str) -> Vec<Value> {
-    let mut remaining = Vec::new();
-    for (field, mode) in [("steering", "steer"), ("followUp", "followUp")] {
-        for message in array(cleared, field) {
-            let mut item = originals
-                .iter()
-                .find(|item| !flag(item, "retry") && item["behavior"] == mode && item["message"] == message)
-                .cloned()
-                .unwrap_or_else(|| json!({"id":Uuid::new_v4().to_string(),"message":message,"behavior":mode,"retry":true}));
-            if item["id"] == id && matches!(behavior, "steer" | "followUp") {
-                item["behavior"] = json!(behavior);
-            }
-            remaining.push(item);
-        }
-    }
-    remaining
-}
-
-fn queue_neighbor(pending: &[Value], target: &Value, action: &Value, behavior: &str) -> Option<String> {
-    let id = &target["id"];
-    let peers: Vec<_> = pending
-        .iter()
-        .filter(|item| !flag(item, "retry") && item["behavior"] == target["behavior"])
-        .collect();
-    if action.is_object() {
-        return peers
-            .iter()
-            .find(|item| item["id"] == action["targetId"] && item["id"] != *id)
-            .map(|item| text(item, "id"));
-    }
-    if !matches!(behavior, "moveUp" | "moveDown" | "reorder") {
-        return None;
-    }
-    let index = peers.iter().position(|item| item["id"] == *id)?;
-    let neighbor = if behavior == "moveUp" {
-        index.checked_sub(1)
-    } else {
-        index.checked_add(1)
-    }?;
-    peers.get(neighbor).map(|item| text(item, "id"))
-}
-
-fn move_item(items: &mut Vec<Value>, id: &str, neighbor: &str, action: &Value) {
-    let Some(from) = items.iter().position(|item| item["id"] == id) else {
-        return;
-    };
-    let Some(to) = items.iter().position(|item| item["id"] == neighbor) else {
-        return;
-    };
-    if action.is_object() {
-        let item = items.remove(from);
-        if let Some(destination) = items.iter().position(|item| item["id"] == neighbor) {
-            items.insert(destination + usize::from(action["edge"] == "after"), item);
-        }
-    } else {
-        items.swap(from, to);
     }
 }
 

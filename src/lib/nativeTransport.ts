@@ -1,4 +1,4 @@
-import { sessionGroupsSchema, voidResultSchema, projectBranchesSchema, storageReportSchema, gitWorktreeSchema, gitWorktreeRemovalSchema, rpcEventSchema, sessionSummarySchema, gitDiffSnapshotSchema, gitDiffSnapshotsSchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
+import { sessionGroupsSchema, voidResultSchema, projectBranchesSchema, storageReportSchema, gitWorktreeSchema, gitWorktreeRemovalSchema, rpcEventSchema, sessionSummarySchema, gitDiffSnapshotSchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
 import { z } from "zod";
 import { jsonResultSchema } from "./transportSchemas";
 import { commandSessionSchema, runtimeEventSchema, runtimeStderrSchema, type CommandSession } from "./rpcSchemas";
@@ -6,21 +6,24 @@ import { forgetSession, retainSessionResource } from "./sessionMemory";
 import { PromptControls } from "./promptControls";
 import { nativeCall as call } from "./nativeCall";
 import { NativeSettings } from "./nativeSettings";
+import { locateConversation } from "./conversationLookup";
+import { appendGitDiffs, readGitDiffs } from "./gitDiffPersistence";
 import { nativeTerminals } from "./nativeTerminals";
 import { ConversationCommands } from "./conversationCommands";
 import { commandListingSchema } from "./fastModeCommands";
 import { htmlPreviewSize, listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
-import { nativeConnectionTargetSchema, restoredSessionTarget } from "./sessionResume";
+import { restoredSessionTarget, targetedWindowSession } from "./sessionResume";
+import { inspectRecoveryDirectory, isTemporaryRecoveryDirectory, recoverSessionDirectory } from "./sessionRecovery";
 import type { GroupChange, SessionGroup, SessionGroups, SessionGroupSeed } from "./sessionGroups";
 import type { AppSettings, GitDiffSnapshots, RpcCommand, RpcEvent, StorageReport } from "../types";
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call("new_window", { target }, z.string());
 
 export function initialWindowTarget(): NativeConnectionTarget {
-  try { const target = new URLSearchParams(window.location.search).get("target"); const value = target ? JSON.parse(target) : restoredSessionTarget();
+  try { const target = new URLSearchParams(window.location.search).get("target");
 
-  return nativeConnectionTargetSchema.parse(value); }
+  return target ? targetedWindowSession(target) : restoredSessionTarget(); }
   catch { return {}; }
 }
 
@@ -93,6 +96,8 @@ export class NativeTransport {
     return this.command(command);
   }
   private owns = true;
+  private archived = false;
+  isArchived() { return this.archived; }
   ownsConversation() { return this.owns; }
   hasConfirmedOwnership() { return this.running && this.owns; }
   async takeOwnership() {
@@ -116,6 +121,10 @@ export class NativeTransport {
     return target;
   }
   async restoreConnection(target: NativeConnectionTarget) { await this.disconnect(); this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId || "local"; this.daemonId = undefined; await this.connect(); }
+  async restoreRecoveryConnection(cwd: string, sessionPath: string, hostId = "local") {
+    await this.restoreConnection({ cwd, sessionPath, hostId });
+    this.emit({ type: "connection_restored" });
+  }
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [], pendingMessages: [] };
   private visible = false;
@@ -124,7 +133,7 @@ export class NativeTransport {
   private presence() {
     const presence = { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus(), htmlPreviewSize: htmlPreviewSize() };
 
-    return this.readOnly ? { ...presence, readOnly: true } : presence;
+    return this.readOnly ? { ...presence, readOnly: true, archived: this.archived } : presence;
   }
   private publishPresence = () => { if (this.running) void call("pi_presence", { runtimeId: this.runtimeId, presence: this.presence() }).catch(() => undefined); };
   private listeners = new Set<(event: RpcEvent) => void>();
@@ -255,6 +264,13 @@ export class NativeTransport {
     if (event.type === "extension_ui_request" && ["input", "editor", "select", "confirm"].includes(String(event.method)) && event.id !== undefined) this.retainedRequests.set(event.id, event);
   }
   private async ensureConnectionDirectory(version: number) {
+    if (!this.readOnly && this.sessionPath && this.cwd && isTemporaryRecoveryDirectory(this.cwd)) {
+      const inspected = await inspectRecoveryDirectory(this.sessionPath, this.hostId);
+
+      if (version !== this.connectionVersion) return false;
+      this.cwd = inspected.cwd;
+    }
+
     if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" }, z.object({ cwd: z.string(), sessionId: z.string() }));
 
     if (version !== this.connectionVersion) { await call("remove_temporary_chat", { path: chat.cwd, hostId: this.hostId }, voidResultSchema);
@@ -266,6 +282,8 @@ export class NativeTransport {
     return true;
   }
   private retainCommandSession(command: RpcCommand, result: CommandSession) {
+    this.retainResultClassification(result);
+
     if (command.type === "get_state" || command.type === "get_snapshot") { const state = command.type === "get_snapshot" ? result.state ?? {} : result;
 
     if (this.sessionId && this.sessionId !== state.sessionId) forgetSession(this); this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
@@ -275,6 +293,8 @@ export class NativeTransport {
     }
   }
   private emit(event: RpcEvent) {
+    if (event.type === "session_switched") this.retainClassification(event.ephemeral);
+
     if (event.type === "ownership_lost") this.promptControls.reset();
     this.settings.receive(event);
     this.trackSessionActivity(event);
@@ -299,10 +319,20 @@ export class NativeTransport {
 
     this.settings.afterEvent(event);
   }
+  private retainClassification(ephemeral?: boolean) {
+    if (ephemeral !== undefined) this.ephemeral = ephemeral;
+  }
+  private retainResultClassification(result: CommandSession) {
+    this.retainClassification(result.state?.ephemeral ?? result.ephemeral);
+  }
   private connectionLost() {
     ++this.connectionVersion; this.connectPromise = undefined; this.running = false; this.owns = false;
     this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
     this.presenceCleanup?.(); this.presenceCleanup = undefined;
+  }
+  private selectSessionPath(sessionPath: string) {
+    if (sessionPath !== this.sessionPath) this.sessionId = undefined;
+    this.sessionPath = sessionPath;
   }
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false, forkLeafId?: string) {
     if (this.disposed) throw new Error("This conversation view has been closed");
@@ -310,7 +340,7 @@ export class NativeTransport {
 
     if (cwd !== undefined) this.cwd = cwd;
 
-    if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; }
+    if (sessionPath !== undefined) this.selectSessionPath(sessionPath);
 
     if (hostId !== undefined) this.hostId = hostId;
 
@@ -330,11 +360,27 @@ export class NativeTransport {
       this.cwd = this.cwd === "~" ? home : home.replace(/\/$/, "") + "/" + this.cwd.slice(2);
     }
   }
+  private async resolveSavedTarget(version: number, forkPath?: string) {
+    if (!this.sessionId || this.ephemeral || forkPath) return;
+
+    if (!this.sessionPath && !this.readOnly) return;
+    const location = await locateConversation(this.sessionId, this.hostId);
+
+    if (version !== this.connectionVersion) return;
+
+    if (location.archived && !this.readOnly) throw new Error("This conversation is archived. Restore it before continuing work");
+    this.sessionPath = location.sessionPath;
+    this.cwd = location.cwd;
+    this.archived = location.archived;
+  }
   private clearConnectionListeners() {
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
   }
   private async establishConnection(forkPath?: string, _ephemeral = false, forkLeafId?: string) {
     const version = ++this.connectionVersion;
+    await this.resolveSavedTarget(version, forkPath);
+
+    if (version !== this.connectionVersion) return;
     await this.resolveHomeDirectory(version);
 
     if (version !== this.connectionVersion) return;
@@ -455,43 +501,19 @@ export class NativeTransport {
   captureGitTree(cwd: string, hostId = "local") { return call("capture_git_tree", { cwd, hostId }, z.union([z.string(), z.null()])); }
   discardGitTree(snapshot: string, hostId = "local") { return call("discard_git_tree", { snapshot, hostId }, voidResultSchema); }
   loadGitDiff(cwd: string, baseTree: string, hostId = "local") { return call("load_git_diff", { cwd, baseTree, hostId }, z.union([gitDiffSnapshotSchema, z.null()])); }
-  async loadGitDiffs(sessionPath: string, hostId = "local") {
-    const snapshots: GitDiffSnapshots = {};
-    let cursor = "";
+  loadGitDiffs(sessionPath: string, hostId = "local") {
+    const ephemeral = this.ephemeral && sessionPath === this.sessionPath && hostId === this.hostId;
 
-    for (;;) {
-      const page = await call("load_git_diffs", { sessionPath, hostId, cursor }, z.object({ snapshots: gitDiffSnapshotsSchema, nextCursor: z.string().nullable() }));
-      Object.assign(snapshots, page.snapshots);
+    if (ephemeral && !this.sessionId) return Promise.reject(new Error("Temporary project changes have no stable conversation identity; saved data is preserved"));
 
-      if (page.nextCursor === null) return snapshots;
-
-      if (page.nextCursor <= cursor) throw new Error("Diff history pagination did not advance");
-      cursor = page.nextCursor;
-    }
+    return readGitDiffs(sessionPath, hostId, ephemeral ? this.sessionId : undefined);
   }
-  async saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId = "local") {
-    let batch: GitDiffSnapshots = {};
-    let bytes = 0;
-
-    for (const [id, snapshot] of Object.entries(snapshots)) {
-      const size = new TextEncoder().encode(JSON.stringify([id, snapshot])).byteLength;
-
-      if (bytes && bytes + size > 8 * 1024 * 1024) {
-        await call("save_git_diffs", { sessionPath, snapshots: batch, hostId }, voidResultSchema);
-        batch = {}; bytes = 0;
-      }
-
-      batch[id] = snapshot;
-      bytes += size;
-    }
-
-    if (bytes) await call("save_git_diffs", { sessionPath, snapshots: batch, hostId }, voidResultSchema);
-  }
+  saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId = "local") { return appendGitDiffs(sessionPath, snapshots, hostId); }
   archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionPath, hostId, terminalIds }, voidResultSchema); }
   deleteSession(sessionPath: string, hostId = "local") { return call("delete_session", { sessionPath, hostId }, z.array(z.string())); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call("relocate_session", { sessionPath, cwd, hostId }, voidResultSchema); }
-  inspectMissingSession(sessionPath: string, hostId = "local") { return call("recover_missing_session", { sessionPath, hostId, action: "inspect" }, z.object({ canRecoverRemote: z.boolean() })); }
-  recoverMissingSession(sessionPath: string, action: "remote" | "empty", repository: string, branch: string, hostId = "local") { return call("recover_missing_session", { sessionPath, hostId, action, repository, branch }, z.union([z.object({ cwd: z.string() }), z.object({ missingFields: z.array(z.string()) })])); }
+  inspectMissingSession(sessionPath: string, hostId = "local") { return inspectRecoveryDirectory(sessionPath, hostId); }
+  recoverMissingSession(sessionPath: string, action: "remote" | "empty", repository: string, branch: string, hostId = "local") { return recoverSessionDirectory(sessionPath, action, repository, branch, hostId); }
   async relocateDirlessSession(sessionPath: string, hostId = "local") {
     const chat = await call("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" }, z.object({ cwd: z.string() }));
     await this.relocateSession(sessionPath, chat.cwd, hostId);
@@ -514,12 +536,14 @@ export class NativeTransport {
 
   return z.string().nullable().catch(null).parse(branch); }
   loadSettings() { return this.settings.load(); }
+  loadSettingsChange() { return this.settings.loadChange(); }
   loadHostSettings() { return this.settings.loadHost(); }
+  loadHostSettingsChange() { return this.settings.loadHostChange(); }
   saveHostSettings(settings: AppSettings, agentsChanged = false) { return this.settings.saveHost(settings, agentsChanged); }
   loadCodexUsage() { return call("codex_usage", undefined, codexUsageSchema); }
   loadOpencodeGoUsage() { return call("opencode_go_usage", undefined, opencodeGoUsageSchema); }
-  saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" | "daemon" = "all") {
-    return this.settings.save(settings, reconnect, agentHostId, scope);
+  saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" | "daemon" = "all", baseline?: AppSettings) {
+    return this.settings.save(settings, reconnect, agentHostId, scope, baseline);
   }
   async selectProjectDirectory(defaultPath?: string) { const selected = await open({ directory: true, multiple: false, title: "Open project", defaultPath });
 

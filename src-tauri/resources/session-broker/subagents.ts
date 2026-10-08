@@ -1,38 +1,23 @@
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
-import { Type as Schema } from "typebox";
-import { Check, Parse } from "typebox/value";
+import { Parse } from "typebox/value";
 import { resolveAgentProfile } from "./agent-profiles.ts";
-import type { GoalScope, GoalUsage } from "./goals.ts";
 import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { BrokerRequestError, currentHost, request } from "./client.ts";
+import { currentHost, request } from "./client.ts";
 import { createdWorktreeSchema } from "./fork.ts";
 import { writeSessionFile } from "./session-file.ts";
-import { listenSubagentUsage, registerSubagentUsage } from "./subagent-usage.ts";
+import { activeConversation } from "./conversation-location.ts";
+import { registerSubagentUsage } from "./subagent-usage.ts";
+import type { UsageCheckpoint } from "./subagent-usage.ts";
 import { registerSubagentMailbox } from "./subagent-mailbox.ts";
-import { boundedRecovery, recoverDescendantAccounting, recoverStoppedRun, registerSubagentRecovery, waitForAccounting, type RecoveryScope } from "./subagent-recovery.ts";
-import { interruptSession, sendAgentMailbox, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
-import { setTimeout as delay } from "node:timers/promises";
-import { completedSubagentOutput, forgetSubagentRun, hasSubagentResult, ownedSubagentRuns, persistSubagentRun, persistSubagentUsage, reportedSubagentUsage, resultNotificationId, savedSubagentRuns, subagentCompletion, unresolvedSubagentRuns, type SubagentResponse, type SubagentRun } from "./subagent-results.ts";
-
-const SUBAGENT_PARENT = "piop-subagent-parent";
-
-const SUBAGENT_TIMEOUT_MS = 600_000;
+import { interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
+import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
+import { acceptedSubmission, cancelSubagent, drainAccountingRecovery, finishRun, observeSubagent, recoverSubagentAccounting, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
+import { accountingUnresolved, resultNotificationId, savedSubagentRuns } from "./subagent-results.ts";
+import { boundedRecovery, registerSubagentRecovery } from "./subagent-recovery.ts";
 
 const MAX_DELEGATION_DEPTH = 2;
-
-const parentSchema = Schema.Object({
-  parentSessionId: Schema.String(), depth: Schema.Optional(Schema.Integer({ minimum: 1 })),
-  taskPath: Schema.Optional(Schema.String()), parentTaskPath: Schema.Optional(Schema.String()),
-});
-
-function subagentParent(ctx: ExtensionContext) {
-  const entry = ctx.sessionManager.getEntries().find(item => item.type === "custom" && item.customType === SUBAGENT_PARENT);
-
-  return entry?.type === "custom" ? Parse(parentSchema, entry.data) : undefined;
-}
 
 function delegationScope(ctx: ExtensionContext) {
   const parent = subagentParent(ctx);
@@ -90,34 +75,6 @@ function inheritedHistory(ctx: ExtensionContext, task: SubagentTask) {
   return retained;
 }
 
-async function waitForSubagent(run: SubagentRun, signal: AbortSignal, lifecycle: ActiveSubagent) {
-  const deadline = Date.now() + SUBAGENT_TIMEOUT_MS;
-  let failures = 0;
-
-  while (true) {
-    signal.throwIfAborted();
-
-    if (Date.now() >= deadline) throw new Error("Subagent timed out after ten minutes");
-
-    try {
-      const revision = lifecycle.revision;
-      const snapshot = await sessionSnapshot(run.sessionId, run.hostId, AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, deadline - Date.now()))]));
-      failures = 0;
-
-      if (finishObservedRun(snapshotStatus(snapshot), revision, lifecycle)) return;
-    } catch (error) {
-      signal.throwIfAborted();
-
-      if (Date.now() >= deadline) throw new Error("Subagent timed out after ten minutes");
-
-      if (!(error instanceof BrokerRequestError) || !error.transient) throw error;
-      failures++;
-    }
-
-    await delay(Math.min(500 * 2 ** Math.min(failures, 4) + Math.random() * 250, Math.max(0, deadline - Date.now())), undefined, { signal });
-  }
-}
-
 async function subagentWorkspace(ctx: ExtensionContext, task: SubagentTask, sessionId: string, signal?: AbortSignal) {
   if (task.worktree === "same") return { cwd: ctx.cwd, worktree: task.worktree };
 
@@ -132,23 +89,28 @@ async function subagentWorkspace(ctx: ExtensionContext, task: SubagentTask, sess
 
 function resumeSubagent(runs: SubagentRun[], parentSessionId: string, task: SubagentTask, toolCallId: string): SubagentRun {
   if (task.agent) throw new Error("A resumed subagent keeps its original agent profile");
-
-  if (runs.some(run => run.parentSessionId === parentSessionId && run.sessionId === task.sessionId && run.accountingPending)) throw new Error("Recover the child's previous usage accounting before giving it another task");
   const previous = runs.find(run => run.parentSessionId === parentSessionId && run.sessionId === task.sessionId && run.hostId === currentHost() && run.sessionPath);
 
   if (!previous) throw new Error("Only a child created by this conversation can be resumed");
 
   if (task.worktree && task.worktree !== (previous.worktree ?? "same")) throw new Error("A resumed subagent keeps its original worktree choice; use followup_task or spawn a new child");
 
-  return { ...previous, toolCallId, name: task.name, task: task.task, status: "running", startedAt: Date.now(), endedAt: undefined, output: undefined, apiCost: undefined, offset: undefined, deliveryIds: undefined, goalId: undefined };
+  return { version: 1, toolCallId, parentSessionId, sessionId: previous.sessionId, sessionPath: previous.sessionPath, hostId: previous.hostId,
+    name: task.name, task: task.task, status: "running", startedAt: Date.now(), runId: randomUUID(), generation: (previous.generation ?? 0) + 1, submission: "prepared",
+    agent: previous.agent, taskPath: previous.taskPath, cwd: previous.cwd, worktree: previous.worktree, branch: previous.branch };
 }
 
 async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: SubagentTask, toolCallId: string, signal?: AbortSignal): Promise<SubagentRun> {
   const scope = requireDelegation(ctx);
   const parentSessionId = ctx.sessionManager.getSessionId();
-  const runs = ownedSubagentRuns(ctx);
+  const runs = latestRuns(ctx);
 
-  if (task.sessionId) return resumeSubagent(runs, parentSessionId, task, toolCallId);
+  if (task.sessionId) {
+    const resumed = resumeSubagent(runs, parentSessionId, task, toolCallId);
+    const location = await activeConversation(resumed.sessionId, resumed.hostId, signal);
+
+    return { ...resumed, sessionPath: location.sessionPath, cwd: location.cwd };
+  }
 
   const header = ctx.sessionManager.getHeader();
 
@@ -159,7 +121,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let retained = inheritedHistory(ctx, task);
   const workspace = await subagentWorkspace(ctx, task, sessionId, signal);
-  const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, taskPath: `${scope.taskPath}/${task.name}`, agent: profile.active, status: "running", startedAt: Date.now(), ...workspace };
+  const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, taskPath: `${scope.taskPath}/${task.name}`, agent: profile.active, status: "running", startedAt: Date.now(), runId: randomUUID(), submission: "prepared", ...workspace };
   let parentId: string | null = null;
   retained = retained.map(item => { const next = { ...item, parentId }; parentId = next.id;
 
@@ -173,218 +135,43 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: workspace.cwd },
     ...retained,
     entry({ type: "session_info", name: `Subagent: ${task.name}` }),
-    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, parentSessionId, parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath } }),
+    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
-  ]); } catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; any created worktree is retained: ${String(error)}`); }
+  ], { dependencies: { workspace: { path: workspace.cwd, kind: workspace.worktree === "new" ? "created-worktree" : "existing", branch: workspace.branch } } }); }
+  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; publication dependencies and any created worktree are retained: ${String(error)}`, { cause: error }); }
 
   return run;
-}
-
-type ActiveSubagent = { controller: AbortController; done: Promise<void>; ready: Promise<void>; started: () => void; closing: boolean; revision: number; pendingDeliveries: number; deliveryIds: Set<string> };
-
-function finishObservedRun(status: string, revision: number, lifecycle: ActiveSubagent) {
-  if (status !== "idle" || revision !== lifecycle.revision || lifecycle.pendingDeliveries) return false;
-  lifecycle.closing = true;
-
-  return true;
 }
 
 async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun, lifecycle: ActiveSubagent, message: string, signal?: AbortSignal): Promise<AgentToolResult<unknown>> {
   lifecycle.controller.signal.throwIfAborted();
   signal?.throwIfAborted();
+
+  if (lifecycle.pendingDeliveries) throw new Error("Wait for this child's outstanding message delivery before sending another task");
   lifecycle.revision++;
   lifecycle.pendingDeliveries++;
   const deliveryId = randomUUID();
   lifecycle.deliveryIds.add(deliveryId);
+  const observed = lifecycle.run ?? run;
+  observed.deliveryIds = [...lifecycle.deliveryIds];
+  observed.task = message;
+  observed.taskStartedAt = Date.now();
+  observed.submission = "submitted";
+  observed.taskNotificationId = undefined;
+  saveRun(pi, ctx, observed);
 
   try {
-    run.deliveryIds = [...lifecycle.deliveryIds];
-    await persistSubagentRun(pi, ctx, run);
     const data = await sendSessionMessage(ctx, run.sessionId, run.hostId, message, true, signal, deliveryId);
+    acceptedSubmission(observed, Parse(subagentReceiptSchema, data));
+    saveRun(pi, ctx, observed);
 
     return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
-  } catch (error) { lifecycle.controller.abort(error); throw error; }
-  finally { lifecycle.revision++; lifecycle.pendingDeliveries--; }
+  } finally { lifecycle.revision++; lifecycle.pendingDeliveries--; }
 }
 
-class SubagentRetiredError extends Error {}
+type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Map<string, ActiveSubagent>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => void; reportDescendants: (tokens: number, ctx: ExtensionContext, checkpoint?: UsageCheckpoint) => Promise<void> };
 
-type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Map<string, ActiveSubagent>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => Promise<void>; reportDescendants: (tokens: number, ctx: ExtensionContext) => Promise<void> };
-
-type UsageExecution = Pick<SubagentExecution, "signal" | "pi" | "ctx" | "reportDescendants"> & RecoveryScope;
-
-async function confirmSubagentStopped(run: SubagentRun, ctx: ExtensionContext, deliveryId?: string) {
-  let notified = false;
-
-  while (true) {
-    try { const receipt = await interruptSession(run.sessionId, run.hostId, undefined, deliveryId);
-
-    return Check(Schema.Object({ retired: Schema.Literal(true) }), receipt); } catch (error) {
-      if (!notified) ctx.ui.notify(`Cancellation is not confirmed for ${run.name}; continuing to retry: ${String(error)}`, "error");
-      notified = true;
-      await delay(2000);
-    }
-  }
-}
-
-async function usageReporter(run: SubagentRun, execution: UsageExecution, restored: boolean) {
-  const { signal, pi, ctx } = execution;
-  signal?.throwIfAborted();
-
-  if (!restored) {
-    run.offset = (await stat(run.sessionPath)).size;
-    const scope: GoalScope = { ctx };
-    pi.events.emit("piop:goal-scope", scope);
-    await scope.ready;
-    run.goalId = scope.goalId;
-  }
-
-  let reported = reportedSubagentUsage(ctx, run);
-
-  if (restored && run.offset === undefined) await subagentCompletion(run, async total => { reported = Math.max(reported, total); });
-
-  let pending = Promise.resolve();
-
-  return (total: number) => {
-    const next = pending.then(async () => {
-      signal?.throwIfAborted();
-      const tokens = Math.max(0, total - reported);
-      const saved = Math.max(reported, reportedSubagentUsage(ctx, run));
-
-      if (total > saved) await persistSubagentUsage(pi, ctx, run, total, total - saved);
-      signal?.throwIfAborted();
-      const usage: GoalUsage = { ctx };
-      pi.events.emit("piop:goal-usage", usage);
-      await usage.ready;
-
-      if (tokens) await execution.reportDescendants(tokens, ctx);
-      reported = Math.max(reported, total);
-    });
-
-    pending = next.catch(() => undefined);
-
-    return next;
-  };
-}
-
-async function stopDispatchedSubagent(run: SubagentRun, ctx: ExtensionContext, lifecycle: ActiveSubagent) {
-  const retired: boolean[] = [];
-
-  for (const id of lifecycle.deliveryIds.size ? lifecycle.deliveryIds : [undefined]) retired.push(await confirmSubagentStopped(run, ctx, id));
-
-  if (retired.some(Boolean)) throw new SubagentRetiredError("Subagent was archived or deleted; its worker has stopped");
-}
-
-async function requireDescendantAccounting(run: SubagentRun, scope: RecoveryScope) {
-  await recoverDescendantAccounting(run, scope);
-  const unresolved = await unresolvedSubagentRuns(run.sessionPath, run.sessionId);
-
-  if (unresolved.length) throw new Error(`Usage accounting is pending for descendants of ${run.name}: ${unresolved.map(child => child.name).join(", ")}. Automatic recovery remains saved for retry.`);
-}
-
-async function reconcileSubagentTranscript(run: SubagentRun, reportUsage: (total: number) => Promise<void>, scope: RecoveryScope) {
-  await requireDescendantAccounting(run, scope);
-  const last = await subagentCompletion(run, reportUsage);
-  await requireDescendantAccounting(run, scope);
-  run.accountingPending = false;
-
-  return last;
-}
-
-const accountingRecoveries = new Map<string, { run: SubagentRun; done: Promise<void> }>();
-
-async function recoverSubagentAccounting(run: SubagentRun, execution: UsageExecution) {
-  execution.signal?.throwIfAborted();
-  const key = resultNotificationId(run);
-  let recovery = accountingRecoveries.get(key);
-
-  if (!recovery) {
-    recovery = { run, done: performAccountingRecovery(run, execution).finally(() => { accountingRecoveries.delete(key); }) };
-    accountingRecoveries.set(key, recovery);
-  }
-
-  await waitForAccounting(recovery.done, boundedRecovery(execution));
-  Object.assign(run, recovery.run);
-}
-
-async function performAccountingRecovery(run: SubagentRun, execution: UsageExecution) {
-  const latest = (await savedSubagentRuns(execution.ctx)).find(saved => resultNotificationId(saved) === resultNotificationId(run));
-
-  if (latest) Object.assign(run, latest);
-
-  if (!run.accountingPending && run.status !== "running") return;
-
-  const scope = boundedRecovery(execution);
-  await recoverStoppedRun(execution.pi, execution.ctx, run, scope);
-  await restoreSubagentPath(run, scope.signal);
-  const reportUsage = await usageReporter(run, { ...execution, ...scope }, true);
-  await reconcileSubagentTranscript(run, reportUsage, scope);
-  scope.signal.throwIfAborted();
-  await persistSubagentRun(execution.pi, execution.ctx, run);
-}
-
-async function finishSubagentUsage(run: SubagentRun, closeUsage: () => Promise<void>, dispatched: boolean, execution: UsageExecution) {
-  let cleanupFailure;
-
-  try { await closeUsage(); } catch (error) { cleanupFailure = error; }
-
-  const scope = boundedRecovery({ ...execution, signal: undefined });
-  const reportUsage = await usageReporter(run, { ...execution, ...scope }, true);
-  const last = await reconcileSubagentTranscript(run, reportUsage, scope);
-
-  if (dispatched && cleanupFailure) throw cleanupFailure;
-
-  return last;
-}
-
-async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution, lifecycle: ActiveSubagent, restored = false) {
-  const { signal, pi, ctx } = execution;
-
-  if (restored) await restoreSubagentPath(run, signal);
-  const reportUsage = await usageReporter(run, execution, restored);
-  const usageFailure = new AbortController();
-  const requestSignal = signal ? AbortSignal.any([signal, usageFailure.signal]) : usageFailure.signal;
-  const closeUsage = await listenSubagentUsage(run.sessionPath, reportUsage, error => { usageFailure.abort(error); }, run);
-
-  let dispatched = false;
-  let submitted = restored;
-  let last: SubagentResponse | undefined;
-
-  try {
-    requestSignal.throwIfAborted();
-
-    if (restored) await subagentCompletion(run, reportUsage);
-
-    if (!restored) {
-      const deliveryId = randomUUID();
-      lifecycle.deliveryIds.add(deliveryId);
-      run.deliveryIds = [...lifecycle.deliveryIds];
-      await persistSubagentRun(pi, ctx, run);
-      submitted = true;
-      await sendSessionMessage(ctx, run.sessionId, run.hostId, run.task, true, undefined, deliveryId);
-    }
-
-    lifecycle.started();
-
-    await waitForSubagent(run, requestSignal, lifecycle);
-    dispatched = true;
-  } catch (error) {
-    lifecycle.closing = true;
-
-    if (submitted) await stopDispatchedSubagent(run, ctx, lifecycle);
-
-    throw error;
-  }
-
-  finally {
-    last = await finishSubagentUsage(run, closeUsage, dispatched, execution);
-  }
-
-  run.output = completedSubagentOutput(last);
-  run.status = "completed";
-}
-
-async function executeSubagent(task: SubagentTask, execution: SubagentExecution, restored?: SubagentRun) {
+async function executeSubagent(task: SubagentTask, execution: SubagentExecution) {
   const { pi, ctx, toolCallId, active, results, publish } = execution;
   const controller = new AbortController();
   const signal = execution.signal ? AbortSignal.any([execution.signal, controller.signal]) : controller.signal;
@@ -400,57 +187,54 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution,
   let claimed = false;
 
   try {
-    signal.throwIfAborted();
-    const child = restored ?? await createSubagent(pi, ctx, task, toolCallId, signal);
+    signal?.throwIfAborted();
+    const child = await createSubagent(pi, ctx, task, toolCallId, signal);
 
     if (active.has(child.sessionId)) throw new Error("This subagent is already running");
     Object.assign(run, child);
     run.accountingPending = true;
-    lifecycle.deliveryIds = new Set(run.deliveryIds);
+
+    creationIntent(run, signal);
+    lifecycle.run = run;
     active.set(run.sessionId, lifecycle); claimed = true;
-    await persistSubagentRun(pi, ctx, run); await publish(run);
+    saveRun(pi, ctx, run); publish(run);
     execution.ready();
-    await dispatchSubagent(run, { ...execution, signal }, lifecycle, Boolean(restored));
+    await observeSubagent(run, { ...execution, signal }, lifecycle, true);
   } catch (error) {
-    run.status = signal.aborted || error instanceof SubagentRetiredError ? "cancelled" : "failed";
-    run.output = error instanceof Error ? error.message : String(error);
+    if (!claimed) { failedCreation(run, signal.aborted, String(error)); }
+    else { run.observation = "interrupted"; ctx.ui.notify(`Subagent supervision interrupted: ${String(error)}`, "error"); }
   }
 
   lifecycle.closing = true;
   started();
 
-  if (claimed) active.delete(run.sessionId);
-  run.deliveryIds = [...lifecycle.deliveryIds];
-  run.endedAt = Date.now();
+  if (claimed && active.get(run.sessionId) === lifecycle) active.delete(run.sessionId);
 
-  try { await persistSubagentRun(pi, ctx, run); await publish(run); }
+  try {
+    if (claimed) publishObservedRun(execution, run);
+  }
   finally { finished(); }
 }
 
-function subagentPayload(runs: SubagentRun[]): AgentToolResult<{ version: 1; runs: SubagentRun[] }> {
-  return { content: [{ type: "text", text: runs.map((run) => `${run.name}: ${run.status}\nAgent profile: ${run.agent ?? "original profile"}\nSession: ${run.hostId}/${run.sessionId}\nWorkspace: ${run.cwd ?? "original working directory"} (${run.worktree ?? "same"})${run.branch ? `\nBranch: ${run.branch}` : ""}\nTranscript: ${run.sessionPath}${run.output ? `\n${run.output}` : ""}`).join("\n\n") }], details: { version: 1, runs: structuredClone(runs) } };
+function failedCreation(run: SubagentRun, aborted: boolean, error: string) {
+  run.status = aborted ? "cancelled" : "failed";
+  run.output = error;
 }
 
-async function recoverPreviousSubagentRuns(sessionId: string, execution: Omit<SubagentExecution, "ready">) {
-  if (execution.active.has(sessionId)) throw new Error("This subagent is already running");
-  const runs = await savedSubagentRuns(execution.ctx);
-
-  for (const run of runs) {
-    if (run.sessionId !== sessionId) continue;
-
-    if (run.status === "running") throw new Error("The child's previous task is still running or awaiting recovery");
-
-    if (!run.accountingPending) continue;
-    await recoverSubagentAccounting(run, execution);
-    await publishSubagentResult(execution.pi, execution.ctx, run);
-  }
+function creationIntent(run: SubagentRun, signal: AbortSignal) {
+  if (signal.aborted && signal.reason instanceof SubagentCancellation) { run.cancelRequested = true; run.cancelReason = signal.reason.message; }
 }
 
-async function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "ready">, pending: Set<Promise<void>>, restored?: SubagentRun) {
-  if (task.sessionId && !restored) await recoverPreviousSubagentRuns(task.sessionId, execution);
+function publishObservedRun(execution: SubagentExecution, run: SubagentRun) {
+  if (run.status !== "running") { finishRun(execution.pi, execution.ctx, run); execution.publish(run); }
+  else saveRun(execution.pi, execution.ctx, run);
+}
+
+async function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "ready">, pending: Set<Promise<void>>) {
+  if (task.sessionId) await recoverPreviousRuns(task.sessionId, execution);
 
   return new Promise<void>((ready) => {
-    const completion = executeSubagent(task, { ...execution, ready }, restored)
+    const completion = executeSubagent(task, { ...execution, ready })
       .catch(error => execution.ctx.ui.notify(`Subagent failed: ${String(error)}`, "error"))
       .finally(() => { ready(); pending.delete(completion); });
 
@@ -458,47 +242,30 @@ async function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecut
   });
 }
 
-async function publishSubagentResult(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun) {
-  if (run.status === "running") return;
+async function recoverPreviousRuns(sessionId: string, execution: Omit<SubagentExecution, "ready">) {
+  if (execution.active.has(sessionId)) throw new Error("This subagent is already running");
 
-  if (!hasSubagentResult(ctx, run)) {
-    const notificationId = resultNotificationId(run);
-    const payload = subagentPayload([run]);
-    await sendAgentMailbox(pi, ctx, { customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId }, display: true }, notificationId);
-  }
+  for (const run of await savedSubagentRuns(execution.ctx)) {
+    if (run.sessionId !== sessionId) continue;
 
-  if (!run.accountingPending) await forgetSubagentRun(ctx, run);
-}
+    if (run.status === "running") throw new Error("This child's previous task remains unresolved");
 
-async function restoreSubagentPath(run: SubagentRun, signal?: AbortSignal) {
-  const deadline = Date.now() + SUBAGENT_TIMEOUT_MS;
-
-  while (true) {
-    try {
-      const snapshot = await sessionSnapshot(run.sessionId, run.hostId, signal);
-      const state = snapshot.state;
-
-      if (Check(Schema.Object({ sessionFile: Schema.String() }), state)) run.sessionPath = state.sessionFile;
-
-      return;
-    } catch (error) {
-      signal?.throwIfAborted();
-
-      if (!(error instanceof BrokerRequestError) || !error.transient || Date.now() >= deadline) throw error;
-      await delay(1000, undefined, { signal });
-    }
+    if (accountingUnresolved(run)) await recoverSubagentAccounting(run, { ...execution, ...boundedRecovery(execution) });
   }
 }
 
 export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMailbox(pi)) {
   const reportDescendants = registerSubagentUsage(pi);
+  const resultsDelivery = registerSubagentResults(pi);
   const active = new Map<string, ActiveSubagent>();
   const pending = new Set<Promise<void>>();
+  const accountingJobs = new Map<string, Promise<void>>();
   let controller = new AbortController();
-  registerSubagentRecovery(pi, { active, stopped: () => controller.signal,
-    recover: (run, ctx, scope) => recoverSubagentAccounting(run, { pi, ctx, reportDescendants, ...scope }),
-    activate: ctx => restoreSubagents(ctx), publish: (run, ctx) => publishSubagentResult(pi, ctx, run) });
-  const latestRuns = (ctx: ExtensionContext) => [...new Map(ownedSubagentRuns(ctx).map(run => [run.sessionId, run])).values()];
+  let context: ExtensionContext | undefined;
+  let restoring = Promise.resolve();
+  registerSubagentRecovery(pi, { active, ready: () => restoring, stopped: () => controller.signal,
+    recover: (run, ctx, scope) => recoverSubagentAccounting(run, { pi, ctx, reportDescendants, ...boundedRecovery(scope) }),
+    activate: ctx => restoreSubagents(ctx), publish: async (run, ctx) => { resultsDelivery.publish(ctx, run); } });
   const taskPath = (ctx: ExtensionContext, run: SubagentRun) => run.taskPath ?? `${delegationScope(ctx).taskPath}/${run.name}`;
 
   const targetRun = (ctx: ExtensionContext, target: string) => {
@@ -513,15 +280,18 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     signal?.throwIfAborted();
 
     requireDelegation(ctx);
+    reconcile(ctx);
 
-    if (pending.size >= 8) throw new Error("All eight subagent slots are occupied; wait for a child to finish");
+    if (task.sessionId && latestRuns(ctx).some(run => run.sessionId === task.sessionId && run.status === "running")) throw new Error("This child's previous task is unresolved; observe or interrupt it before starting another run");
+
+    if (pending.size - accountingJobs.size >= 8) throw new Error("All eight subagent slots are occupied; wait for a child to finish");
 
     if (!task.sessionId && latestRuns(ctx).some(run => run.name === task.name)) throw new Error("Task name already exists; use followup_task to reuse the child");
     const results: SubagentRun[] = [];
     const backgroundSignal = controller.signal;
-    await launchSubagent(task, { pi, ctx, toolCallId, active, results, reportDescendants, signal: backgroundSignal, async publish(run) {
+    await launchSubagent(task, { pi, ctx, toolCallId, active, results, reportDescendants, signal: backgroundSignal, publish(run) {
       if (backgroundSignal.aborted || run.status === "running") return;
-      await publishSubagentResult(pi, ctx, run);
+      resultsDelivery.publish(ctx, run);
     } }, pending);
 
     return { ...subagentPayload(results), isError: results.some(run => run.status === "failed" || run.status === "cancelled") };
@@ -529,7 +299,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
   const unsubscribeTools = pi.events.on("piop:required-tools", ({ ctx, tools, availableTools }) => {
     const allowed = availableTools ?? pi.getActiveTools();
-    const child = ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === SUBAGENT_PARENT);
+    const child = subagentParent(ctx);
 
     if (allowed.includes("subagent") || latestRuns(ctx).length) tools.push("spawn_agent", "followup_task", "interrupt_agent", "list_agents", "list_agent_profiles", "send_message", "wait_agent", "await_subagents");
 
@@ -551,8 +321,10 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     async execute(_id, _params, signal, _update, ctx) {
       const agents = await Promise.all(latestRuns(ctx).map(async run => {
         try { const snapshot = await sessionSnapshot(run.sessionId, run.hostId, signal);
+        const latest = latestRuns(ctx).find(item => item.sessionId === run.sessionId) ?? run;
+        const status = snapshotStatus(snapshot);
 
-        return { sessionId: run.sessionId, task_name: taskPath(ctx, run), agent: run.agent, cwd: run.cwd, worktree: run.worktree, branch: run.branch, status: snapshotStatus(snapshot), lastRunStatus: run.status }; }
+        return { sessionId: run.sessionId, task_name: taskPath(ctx, run), agent: run.agent, cwd: run.cwd, worktree: run.worktree, branch: run.branch, status: latest.status === "running" && status === "idle" ? "observing" : status, lastRunStatus: latest.status }; }
         catch (error) { return { sessionId: run.sessionId, task_name: taskPath(ctx, run), cwd: run.cwd, worktree: run.worktree, branch: run.branch, status: "unavailable", error: String(error) }; }
       }));
 
@@ -566,7 +338,8 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
       const parent = subagentParent(ctx);
       const parentTargets = parent ? ["parent", parent.parentTaskPath ?? "/root", parent.parentSessionId] : [];
       const id = parent && parentTargets.includes(params.target) ? parent.parentSessionId : targetRun(ctx, params.target).sessionId;
-      const data = await sendSessionMessage(ctx, id, currentHost(), params.message, false, signal);
+      const host = parent && parentTargets.includes(params.target) ? parent.parentHostId ?? currentHost() : targetRun(ctx, params.target).hostId;
+      const data = await sendSessionMessage(ctx, id, host, params.message, false, signal);
 
       return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
     },
@@ -576,6 +349,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     parameters: Type.Object({ target: Type.String(), message: Type.String({ minLength: 1, maxLength: 100_000 }) }),
     async execute(id, params, signal, _update, ctx) {
       const run = targetRun(ctx, params.target);
+      reconcile(ctx);
 
       const running = active.get(run.sessionId);
 
@@ -586,6 +360,8 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
         await running.done;
       }
 
+      if (latestRuns(ctx).some(item => item.sessionId === run.sessionId && item.status === "running")) throw new Error("This child's previous task remains unresolved; interrupt it before starting another run");
+
       return start({ name: run.name, task: params.message, sessionId: run.sessionId }, id, ctx, signal);
     },
   });
@@ -593,17 +369,25 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     name: "interrupt_agent", label: "Interrupt agent", exposure: "model-only", description: "Stop a child's current turn without deleting its conversation. The child remains available for followup_task.",
     parameters: Type.Object({ target: Type.String() }),
     async execute(_id, params, signal, _update, ctx) {
+      reconcile(ctx);
       const run = targetRun(ctx, params.target);
       const running = active.get(run.sessionId);
 
       if (running) {
-        running.controller.abort();
+        cancelSubagent(pi, ctx, running, "Subagent stopped by interrupt_agent");
         await running.done;
+
+        if (latestRuns(ctx).find(item => item.sessionId === run.sessionId)?.status === "running") throw new Error("Subagent cancellation is not yet confirmed");
 
         return { content: [{ type: "text", text: "Child launch and delegated work stopped." }], details: { sessionId: run.sessionId, completed: true } };
       }
 
+      run.cancelRequested = true;
+      run.cancelReason = "Subagent stopped by interrupt_agent";
+      saveRun(pi, ctx, run);
       const data = await interruptSession(run.sessionId, run.hostId, signal);
+
+      if (run.status === "running") { run.status = "cancelled"; finishRun(pi, ctx, run); resultsDelivery.publish(ctx, run); }
 
       return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
     },
@@ -612,11 +396,18 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   let stopping: Promise<void> | undefined;
   let detachAbort = () => {};
 
-  const stop = () => {
+  const stop = (intentional = true) => {
     if (stopping) return stopping;
-    controller.abort();
+
+    if (intentional && context) {
+      reconcile(context);
+
+      for (const lifecycle of active.values()) cancelSubagent(pi, context, lifecycle, "Subagent cancelled with its parent");
+    }
+
+    controller.abort(intentional ? new SubagentCancellation("Subagent cancelled with its parent") : new Error("Subagent observation interrupted"));
     mailbox.reset();
-    stopping = Promise.allSettled([...pending, ...[...accountingRecoveries.values()].map(recovery => recovery.done)]).then(() => {
+    stopping = Promise.allSettled([...pending, drainAccountingRecovery()]).then(() => {
       controller = new AbortController();
       stopping = undefined;
     });
@@ -628,8 +419,86 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
   const unsubscribeCancellation = pi.events.on("piop:cancel-preparation", cancel);
 
+  const reconcile = (ctx: ExtensionContext) => {
+    context = ctx;
+
+    if (process.env.PIOP_USAGE_RECOVERY === "1") return;
+    resultsDelivery.flush(ctx);
+    reconcileAccounting(ctx);
+
+    for (const saved of latestRuns(ctx)) {
+      if (saved.status !== "running") {
+        if (saved.resultDelivery === "pending") resultsDelivery.publish(ctx, structuredClone(saved));
+        continue;
+      }
+
+      if (active.has(saved.sessionId)) continue;
+      const run = structuredClone(saved);
+      run.runId ??= `${run.toolCallId}:${run.startedAt}`;
+      run.accountingPending = true;
+
+      if (run.submission === "prepared") {
+        run.status = run.cancelRequested ? "cancelled" : "failed"; run.output = "The task was not submitted before supervision was interrupted";
+        run.accountingPending = false;
+        finishRun(pi, ctx, run); resultsDelivery.publish(ctx, run); continue;
+      }
+
+      const childController = new AbortController();
+      let started = () => {};
+
+      let finished = () => {};
+
+      const ready = new Promise<void>(resolve => { started = resolve; });
+      const done = new Promise<void>(resolve => { finished = resolve; });
+      const lifecycle: ActiveSubagent = { controller: childController, ready, done, started, closing: false, revision: 0, pendingDeliveries: 0, deliveryIds: new Set(run.deliveryIds), run };
+      active.set(run.sessionId, lifecycle);
+
+      const signal = AbortSignal.any([controller.signal, childController.signal]);
+
+      const completion = observeSubagent(run, { pi, ctx, reportDescendants, signal }, lifecycle, false)
+        .then(() => {
+          lifecycle.closing = true; started();
+
+          if (run.status !== "running") { finishRun(pi, ctx, run); resultsDelivery.publish(ctx, run); }
+          else { run.observation = "interrupted"; saveRun(pi, ctx, run); }
+        })
+        .catch(error => ctx.ui.notify(`Subagent supervision interrupted: ${String(error)}`, "error"))
+        .finally(() => { lifecycle.closing = true; started(); active.delete(run.sessionId); pending.delete(completion); finished(); });
+
+      pending.add(completion);
+    }
+  };
+
+  const reconcileAccounting = (ctx: ExtensionContext) => {
+    for (const saved of ownedRuns(ctx)) {
+      if (saved.status === "running" || !accountingUnresolved(saved)) continue;
+
+      const key = resultNotificationId(saved);
+
+      if (accountingJobs.has(key)) continue;
+
+      const job = recoverSubagentAccounting(structuredClone(saved), { pi, ctx, reportDescendants, ...boundedRecovery({ signal: controller.signal }) })
+        .catch(error => ctx.ui.notify(`Saved subagent usage is awaiting reconciliation: ${String(error)}`, "error"))
+        .finally(() => { accountingJobs.delete(key); pending.delete(job); });
+
+      accountingJobs.set(key, job); pending.add(job);
+    }
+  };
+
+  const restoreSubagents = async (ctx: ExtensionContext) => {
+    await stopping;
+    resultsDelivery.reset();
+    const tracked = new Set(ownedRuns(ctx).map(run => JSON.stringify(run)));
+
+    for (const run of await savedSubagentRuns(ctx)) if (!tracked.has(JSON.stringify(run))) saveRun(pi, ctx, run);
+    reconcile(ctx);
+  };
+
+  pi.on("session_start", (_event, ctx) => restoring = restoreSubagents(ctx).catch(error => ctx.ui.notify(`Subagent restoration remains pending: ${String(error)}`, "error")));
+
   pi.on("agent_start", async (_event, ctx) => {
     await stopping;
+    reconcile(ctx);
     detachAbort();
     const signal = ctx.signal;
     signal?.addEventListener("abort", cancel, { once: true });
@@ -637,6 +506,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
     if (signal?.aborted) await stop();
   });
+
   pi.on("agent_before_settle", async (event, ctx) => {
     if (event.outcome === "aborted" || ctx.signal?.aborted) { await stop();
 
@@ -644,50 +514,18 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
     if (subagentParent(ctx)) while (pending.size) await Promise.allSettled([...pending]);
   });
-  pi.on("session_before_switch", stop);
-  pi.on("session_shutdown", async () => { detachAbort(); unsubscribeCancellation(); await stop(); });
-
-  const restoreSubagents = async (ctx: ExtensionContext) => {
-    if (process.env.PIOP_USAGE_RECOVERY === "1") return;
-    await stopping;
-    const signal = controller.signal;
-    const runs = await savedSubagentRuns(ctx);
-    const latest = new Map(runs.map(run => [run.sessionId, run]));
-    const tracked = new Set(ownedSubagentRuns(ctx).map(run => JSON.stringify(run)));
-
-    for (const run of runs) {
-      if (active.has(run.sessionId)) continue;
-
-      if (run.status === "running" && latest.get(run.sessionId) !== run) {
-        run.status = "cancelled";
-        run.endedAt = Date.now();
-        run.output = "The saved observer was interrupted before this child started another task. Inspect the child transcript for the earlier outcome.";
-      }
-
-      try {
-        if (run.status !== "running") {
-          if (run.accountingPending) await recoverSubagentAccounting(run, { pi, ctx, signal, reportDescendants });
-
-          if (!tracked.has(JSON.stringify(run))) await persistSubagentRun(pi, ctx, run);
-          await publishSubagentResult(pi, ctx, run);
-          continue;
-        }
-
-        await launchSubagent({ name: run.name, task: run.task, sessionId: run.sessionId }, {
-          pi, ctx, toolCallId: run.toolCallId, active, results: [], reportDescendants, signal,
-          async publish(result) { if (!signal.aborted) await publishSubagentResult(pi, ctx, result); },
-        }, pending, run);
-      } catch (error) { ctx.ui.notify(`Subagent recovery is pending for ${run.name}: ${String(error)}`, "error"); }
-    }
-  };
-
-  pi.on("session_start", (_event, ctx) => restoreSubagents(ctx));
+  pi.on("session_before_switch", () => stop());
+  pi.on("session_shutdown", async (event) => { detachAbort(); unsubscribeCancellation(); await stop(event.reason !== "reload"); });
   pi.registerTool({
     name: "await_subagents", label: "Await all subagents", exposure: "model-only",
     description: "Wait until every pending subagent has finished, successfully or with an error. No parameters, timeout, or early return on input or cancellation. Returns immediately if no subagents are pending. Subagent results are delivered separately in the conversation.",
     parameters: Type.Object({}),
-    async execute() {
-      while (pending.size) await Promise.allSettled([...pending]);
+    async execute(_id, _params, _signal, _update, ctx) {
+      reconcile(ctx);
+
+      while (pending.size) { await Promise.allSettled([...pending]); reconcile(ctx); }
+
+      if (latestRuns(ctx).some(run => run.status === "running")) throw new Error("Subagent work remains unresolved; completion has not been confirmed");
 
       return { content: [{ type: "text", text: "All subagents have finished. Results are delivered separately in the conversation." }], details: {} };
     },
@@ -704,21 +542,23 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
       if (!params.tasks.length || params.tasks.length > 8 || params.tasks.some((task) => !task.task.trim() || !task.name.trim())) throw new Error("Provide 1–8 named, nonempty tasks");
 
-      if (pending.size + params.tasks.length > 8) throw new Error("At most eight children may run concurrently");
+      reconcile(ctx);
+
+      if (pending.size - accountingJobs.size + params.tasks.length > 8) throw new Error("At most eight children may run concurrently");
       const resumed = params.tasks.flatMap((task) => task.sessionId ? [task.sessionId] : []);
 
       if (new Set(resumed).size !== resumed.length) throw new Error("A child can only receive one task at a time");
       const results: SubagentRun[] = [];
       const backgroundSignal = controller.signal;
 
-      const publish = async (run: SubagentRun) => {
+      const publish = (run: SubagentRun) => {
         if (backgroundSignal.aborted) return;
 
         if (run.status === "running") { onUpdate?.(subagentPayload(results));
 
         return; }
 
-        await publishSubagentResult(pi, ctx, run);
+        resultsDelivery.publish(ctx, run);
       };
 
       await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, reportDescendants, signal: backgroundSignal, publish }, pending)));

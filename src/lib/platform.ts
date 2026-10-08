@@ -7,6 +7,7 @@ import { remoteClient } from "./remoteClient";
 import { z, type JSONType } from "zod";
 import { jsonResultSchema, nativeArgumentsSchema, type NativeArguments } from "./transportSchemas";
 import { invokeWithBackpressure } from "./backpressure";
+import type { SettingsPublication } from "../types";
 
 export type { UnlistenFn };
 
@@ -15,10 +16,13 @@ export const isMobile = import.meta.env.MODE === "mobile";
 export function htmlPreviewSize() {
   const width = typeof window === "undefined" ? undefined : window.screen?.width;
 
-  return Number.isFinite(width) && (width ?? 0) >= 2560 ? 750 : 600;
+  return z.number().finite().min(2560).safeParse(width).success ? 750 : 600;
 }
 
-const clientPreferences = registerPlugin<{ load(): Promise<{ settings: unknown; revision: string }>; save(options: { settings: unknown; expectedRevision: unknown }): Promise<{ revision: string }> }>("ClientPreferences");
+const clientPreferences = registerPlugin<{
+  load(): Promise<{ settings: unknown; revision: string }>;
+  save(options: { settings: unknown; baseline: unknown; initialize: boolean }): Promise<{ settings: unknown; revision: string; publication: SettingsPublication }>;
+}>("ClientPreferences");
 
 const conversationClientId = (() => {
   const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}-${Math.random()}`;
@@ -65,7 +69,7 @@ export async function invoke(command: string, args?: NativeArguments, schema: z.
 
   if (command === "load_client_settings") return clientPreferences.load().then(result => schema.parse(result));
 
-  if (command === "save_client_settings") return clientPreferences.save({ settings: args.settings, expectedRevision: args.expectedRevision }).then(result => schema.parse(result));
+  if (command === "save_client_settings") return clientPreferences.save({ settings: args.settings, baseline: args.baseline, initialize: z.boolean().default(false).parse(args.initialize) }).then(result => schema.parse(result));
 
   if (command === "open_external_url") {
     const url = String(args?.url);

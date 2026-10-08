@@ -6,11 +6,13 @@ import { createSignal } from "solid-js";
 import { saveClientSettings,withClientSettings } from "./lib/clientSettings";
 import { agentConfigChangeSchema } from "./lib/agentSchemas";
 import { restoreAgentConfiguration, saveAgentConfiguration } from "./lib/agentConfiguration";
+import { applyClientPreferences, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "./lib/clientPreferenceMerge";
 import { ConversationChangedError } from "./lib/conversationChanged";
 import { recordSeenModels } from "./lib/modelVisibility";
 import { NativeTransport } from "./lib/nativeTransport";
 import { listen } from "./lib/platform";
 import { SessionRuntimePool } from "./lib/sessionRuntimePool";
+import { SettingsPublication } from "./lib/settingsPublication";
 import { createDependencyEffect,createRef } from "./lib/solid";
 import { useChatSession } from "./lib/useChatSession";
 import type { AgentConfig,AppSettings,SettingsChange } from "./types";
@@ -19,6 +21,18 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
 
   const [settings, setSettings] = createSignal<AppSettings>();
   const runtimeSettings = createRef<AppSettings | undefined>(undefined);
+  const publications = new SettingsPublication();
+  let latestChange: SettingsChange | undefined;
+  let warningKey = "";
+
+  const reportWarnings = (change: SettingsChange) => {
+    const key = JSON.stringify([change.source, change.revision, change.warnings, change.synchronizationPending]);
+
+    if (key === warningKey) return;
+    warningKey = key;
+
+    if (change.warnings?.length) addNotice({ title: "Settings synchronization pending", message: change.warnings.join("\n") });
+  };
 
   const applyRuntimeSettings = (next: AppSettings) => {
     const previous = runtimeSettings.current;
@@ -33,8 +47,27 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
   const debugModePending = createRef(false);
   const [settingsDirty, setSettingsDirty] = createSignal(false);
 
-  const reportClientDurability = (saved: AppSettings) => {
-    if (saved.clientSettingsDurabilityError) addNotice({ title: "Client preferences need a save retry", message: `Preferences were published, but disk durability is unconfirmed: ${saved.clientSettingsDurabilityError}. Open client settings and retry saving.` });
+  const publishSettingsChange = (change: SettingsChange) => {
+    if (!publications.accept(change)) return;
+    latestChange = change;
+    setSettings(change.settings);
+    applyRuntimeSettings(change.settings);
+    reportWarnings(change);
+  };
+
+  const publishPreferences = (baseline: AppSettings, committed: AppSettings) => setSettings(current => {
+    if (!current) return current;
+    const merged = mergeClientPreferences(clientPreferences(current), clientPreferences(baseline), clientPreferences(committed));
+
+    if (committed.clientSettingsDurabilityError) addNotice({ title: "Client preferences need a save retry", message: `Preferences were published, but disk durability is unconfirmed: ${committed.clientSettingsDurabilityError}. Open client settings and retry saving.` });
+
+    return merged.conflicts.length ? current : { ...applyClientPreferences(current, merged.preferences), clientSettingsRevision: committed.clientSettingsRevision, clientSettingsDurabilityError: committed.clientSettingsDurabilityError };
+  });
+
+  const publishConflict = (reason: ClientPreferenceConflictError) => {
+    const latest = reason.latest;
+
+    if (latest) setSettings(current => current ? applyClientPreferences(current, clientPreferences(latest)) : current);
   };
 
   createDependencyEffect(() => { const capturedSettings = settings(); const capturedSession = { ...chatSession() };
@@ -43,50 +76,64 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     const next = recordSeenModels((capturedSettings), capturedSession.models.map((model) => `${model.provider}/${model.id}`));
 
     if (!next) return;
-    void saveClientSettings(next).then(saved => {
-      setSettings(current => current && (current.clientSettingsRevision === capturedSettings.clientSettingsRevision || current.clientSettingsRevision === saved.clientSettingsRevision) ? { ...current, knownModels: saved.knownModels, hiddenModels: saved.hiddenModels, clientSettingsRevision: saved.clientSettingsRevision, clientSettingsDurabilityError: saved.clientSettingsDurabilityError } : current);
-      reportClientDurability(saved);
-    }).catch(() => undefined);
+    void saveClientSettings(next, capturedSettings).then(committed => publishPreferences(capturedSettings, committed)).catch(reason => addNotice({ title: "Could not save model preferences", message: reason instanceof Error ? reason.message : String(reason) }));
   }, () => [chatSession().models, settings(), transport()]);
   createDependencyEffect(() => {
     let revision = 0; let pendingSettings: AppSettings | undefined;
 
-    const update = (value: AppSettings) => {
+    const update = (change: SettingsChange) => {
+      if (!publications.accept(change)) return;
+      latestChange = change;
+      const publication = publications.generation();
+      const value = change.settings;
       pendingSettings = value; const current = ++revision;
       void withClientSettings(value).then(next => {
-        if (current !== revision) return;
+        if (current !== revision || publication !== publications.generation()) return;
         pendingSettings = undefined; applyRuntimeSettings(next); setSettings(next);
+        reportWarnings(change);
       }).catch(reason => addNotice({ title: "Could not load client preferences", message: String(reason) }));
     };
 
     const pending = listen("pi://settings-changed", ({ payload }) => {
-      update(payload.settings);
+      update(payload);
     }, settingsChangeSchema);
 
     const clientPending = listen("pi://client-settings-changed", () => { const current = pendingSettings ?? settings();
 
-    if (current) update(current); }, z.unknown());
+    if (current) update({ ...latestChange, settings: current }); }, z.unknown());
 
     return () => { revision++; void pending.then((unlisten) => unlisten()); void clientPending.then((unlisten) => unlisten()); };
   }, () => [applyRuntimeSettings]);
 
-  const loadSettings = async () => { const owner = transport(); const request = owner.loadSettings(); preloadChat(); const nextSettings = await request;
+  const loadSettings = async () => { const owner = transport(); const request = owner.loadSettingsChange(); preloadChat(); const change = await request;
 
     if (transport() !== owner) throw new ConversationChangedError();
-    applyRuntimeSettings(nextSettings); setSettings(nextSettings);
 
-    return nextSettings; };
+    if (!publications.accept(change)) {
+      const publication = required(latestChange);
+      const latest = await withClientSettings(publication.settings);
 
-  const saveSettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig, scope: "all" | "client" | "daemon" = "all") => {
+      if (latestChange === publication) { applyRuntimeSettings(latest); setSettings(latest); reportWarnings(publication); }
+
+      return latest;
+    }
+
+    latestChange = change;
+    applyRuntimeSettings(change.settings); setSettings(change.settings);
+    reportWarnings(change);
+
+    return change.settings; };
+
+  const saveSettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig, baseline?: AppSettings, scope: "all" | "client" | "daemon" = "all") => {
     if (settingsSavePending.current || debugModePending.current) throw new Error("Wait for the current settings save to finish");
     settingsSavePending.current = true; setSettingsSaving(true);
 
-    try { await applySettings(value, nextConfig, previousConfig, scope); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
+    try { await applySettings(value, nextConfig, previousConfig, baseline, scope); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
   };
 
-  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig, scope?: "all" | "client" | "daemon") => { const capturedSettings = settings(); const capturedTransport = transport();
-
-    if (!capturedSettings) throw new Error("Settings are still loading");
+  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig, baseline?: AppSettings, scope: "all" | "client" | "daemon" = "all") => { const capturedTransport = transport();
+    required(settings());
+    const editingBaseline = required(baseline);
     const next = value; const agentHostId = nextConfig ? "local" : undefined;
 
     const writeAgents = async (configuration: AgentConfig) => {
@@ -107,24 +154,29 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     try {
       if (nextConfig) restoreAgents = await saveAgentConfiguration(nextConfig, previousConfig, writeAgents);
 
-      savedChange = await capturedTransport.saveSettings(next, false, agentHostId, scope);
+      savedChange = await capturedTransport.saveSettings(next, false, agentHostId, scope, editingBaseline);
     } catch (reason) {
+      if (reason instanceof ClientPreferenceConflictError) publishConflict(reason);
+
+      if (reason instanceof SettingsSaveError) {
+        publishSettingsChange(reason.committedChange);
+        addNotice({ title: "Settings partially saved", message: reason.message });
+        throw reason;
+      }
+
       await restoreAgentConfiguration(restoreAgents, String(reason));
+
       throw reason;
     }
 
-    setSettings(savedChange.settings);
-    applyRuntimeSettings(savedChange.settings);
-    savedChange.warnings?.forEach(warning => addNotice({ title: "Settings save warning", message: warning }));
+    publishSettingsChange(savedChange);
   };
 
   const toggleDebugMode = () => {
     if (!settings() || debugModePending.current || settingsSavePending.current) return; debugModePending.current = true; setDebugModeSaving(true);
-    const next = { ...required((settings())), debugMode: !required((settings())).debugMode };
-    void saveClientSettings(next).then(saved => {
-      setSettings(current => current && (current.clientSettingsRevision === next.clientSettingsRevision || current.clientSettingsRevision === saved.clientSettingsRevision) ? { ...current, debugMode: saved.debugMode, clientSettingsRevision: saved.clientSettingsRevision, clientSettingsDurabilityError: saved.clientSettingsDurabilityError } : current);
-      reportClientDurability(saved);
-    }).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
+    const baseline = required(settings());
+    const next = { ...baseline, debugMode: !baseline.debugMode };
+    void saveClientSettings(next, baseline).then(committed => publishPreferences(baseline, committed)).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
   };
 
  return { settings, setSettings, runtimeSettings, applyRuntimeSettings, settingsSavePending, settingsSaving, setSettingsSaving, debugModeSaving, setDebugModeSaving, debugModePending, settingsDirty, setSettingsDirty, loadSettings, saveSettings, applySettings, toggleDebugMode };

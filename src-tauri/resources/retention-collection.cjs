@@ -6,6 +6,10 @@ const { collectWorktreeAllocations } = require('./worktree-retention.cjs');
 const { pendingRetentions, cleanupStages, matches, removeCandidate, finishRecord, describeCandidates, recordRetention } = require('./retention-candidates.cjs');
 
 function collectDeferredRetention(root) {
+  return require('./session-broker/goal-assets.cjs').locked(root, () => collectDeferredLocked(root));
+}
+
+function collectDeferredLocked(root) {
   collectWorktreeAllocations(root);
   collectGoalAllocations(root);
   const { records, errors } = pendingRetentions(root);

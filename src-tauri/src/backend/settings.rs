@@ -25,8 +25,7 @@ use std::sync::atomic::Ordering;
 use crate::platform::AppHandle;
 use crate::{AppSettings, MAX_REMOTE_HOSTS, PiRuntime, daemon, peers};
 use crate::pi_launch::{validate_remote_host};
-use crate::settings_storage::{lock_settings, migrate_keybindings, settings_path, settings_revision, validate_keybindings};
-use crate::private_fs::publish_private;
+use crate::settings_storage::{lock_settings, migrate_keybindings, settings_path, settings_revision, synchronization, validate_keybindings};
 
 
 
@@ -50,9 +49,14 @@ fn migrate_question_tool(settings: &mut AppSettings) {
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
+    synchronization::start(app);
     let mut settings = read_settings_at(&path)?;
     merge_discovered_skills(&mut settings);
     Ok(settings)
+}
+
+pub(super) fn load_settings_change(app: AppHandle) -> Result<Value, String> {
+    synchronization::snapshot(&app)
 }
 
 fn migrate_goal_tools(settings: &mut AppSettings) {
@@ -126,7 +130,11 @@ pub(super) fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent
         |settings| daemon::update_settings(&app, &runtime, settings))?;
     #[cfg(not(feature = "desktop"))]
     peers::invalidate(&app);
-    let _ = app.emit("pi://settings-changed", &change);
+    let mut change = change;
+    if let Err(error) = synchronization::publish_current(&app, &mut change) {
+        append_synchronization_warning(&mut change, format!("Settings were saved; their notification will retry automatically: {error}"));
+    }
+    if let Some(error) = change["publication"]["error"].as_str().map(str::to_owned) { change["settings"]["settingsDurabilityError"] = json!(error); }
     if reload_dictation { crate::dictation::start(app.clone()); }
     Ok(change)
 }
@@ -166,22 +174,22 @@ pub(super) fn save_settings_with(
     validate_settings_for_save(&settings)?;
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let path = path()?;
-    let file_lock = lock_settings_revision(&path, &settings.settings_revision)?;
-    let mut revisions = agent_host_id.as_ref().map(|_| runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")).transpose()?;
+    let _storage = synchronization::storage_lock(&path)?;
+    let _revision = lock_settings_revision(&path, &settings.settings_revision)?;
     settings.settings_revision = None;
     let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
-    let publication = publish_private(&path, &body)?;
+    let mut save = synchronization::Save::prepare(path, &body, agent_host_id)?;
+    let mut warnings = Vec::new();
+    let publication = save.publish(&body, &mut warnings)?;
     settings.settings_revision = Some(settings_revision(Some(&body)));
-    drop(file_lock);
-    let mut change = json!({"settings":settings,"publication":publication});
+    drop(_revision);
+    let mut change = save.change(&settings);
+    change["publication"] = json!(publication);
     if let Some(error) = &publication.error { change["settings"]["settingsDurabilityError"] = json!(error); }
-    if let (Some(host_id), Some(revisions)) = (agent_host_id, revisions.as_mut()) {
-        let revision = runtime.agent_config_revision.fetch_add(1, Ordering::SeqCst) + 1;
-        revisions.insert(host_id.clone(), revision);
-        change["agentConfigChange"] = json!({"hostId":host_id,"revision":revision});
-    }
-    drop(revisions);
-    change["warnings"] = json!(apply_saved_settings(&settings, invalidate, synchronize, publication.error.as_deref()));
+    save.restore_agents(runtime, &mut change, &mut warnings);
+    apply_saved_settings(&settings, invalidate, synchronize, &mut warnings);
+    save.finish(&mut change, &mut warnings);
+    change["warnings"] = json!(warnings);
     Ok(change)
 }
 
@@ -189,11 +197,25 @@ fn apply_saved_settings(
     settings: &AppSettings,
     invalidate: impl FnOnce(&AppSettings) -> Result<(), String>,
     synchronize: impl FnOnce(&AppSettings) -> Result<(), String>,
-    publication_error: Option<&str>,
-) -> Vec<String> {
-    let mut warnings = Vec::new();
-    if let Err(error) = invalidate(settings) { warnings.push(format!("Settings were saved, but applying connection changes failed: {error}")); }
-    if let Err(error) = synchronize(settings) { warnings.push(format!("Settings were saved, but updating running sessions failed: {error}")); }
-    if let Some(error) = publication_error { warnings.push(format!("Settings were published, but disk durability is unconfirmed: {error}. Retry saving to confirm them.")); }
-    warnings
+    warnings: &mut Vec<String>,
+) {
+    if let Err(error) = invalidate(settings) { warnings.push(format!("Settings were saved, but runtime invalidation failed: {error}")); }
+    if let Err(error) = synchronize(settings) { warnings.push(format!("Settings were saved, but runtime synchronization failed: {error}")); }
+}
+
+pub(crate) fn publish_saved_agent_revision(runtime: &PiRuntime, host_id: Option<String>, revision: u64, change: &mut Value, warnings: &mut Vec<String>) {
+    let Some(host_id) = host_id else { return; };
+    runtime.agent_config_revision.fetch_max(revision, Ordering::SeqCst);
+    match runtime.agent_config_revisions.lock() {
+        Ok(mut revisions) => {
+            revisions.insert(host_id.clone(), revision);
+            change["agentConfigChange"] = json!({"hostId":host_id,"revision":revision});
+        }
+        Err(_) => warnings.push("Settings were saved, but the agent configuration revision could not be published".into()),
+    }
+}
+
+fn append_synchronization_warning(change: &mut Value, warning: String) {
+    change["synchronizationPending"] = json!(true);
+    if let Some(warnings) = change["warnings"].as_array_mut() { warnings.push(json!(warning)); }
 }

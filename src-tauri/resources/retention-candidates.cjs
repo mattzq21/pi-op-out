@@ -157,6 +157,8 @@ function cleanupStages(record) {
 
     if (!matches(candidate, staged)) throw new Error('Deferred retention staging identity changed');
 
+    if (goalStorageProtected(record, candidate, staged)) throw new Error('Deferred goal assets have retained ownership or publication dependencies');
+
     if (!worktreeRemovalReady(candidate, staged)) throw new Error('Deferred worktree storage remains in use or contains files');
     removeStage(candidate, staged);
     sync(path.dirname(staged));
@@ -187,6 +189,8 @@ function removeCandidate(record, index) {
 
   if (!matches(candidate)) return;
 
+  if (goalStorageProtected(record, candidate, candidate.path)) return;
+
   if (!worktreeRemovalReady(candidate, candidate.path)) return;
   const parent = path.dirname(candidate.path);
 
@@ -197,6 +201,17 @@ function removeCandidate(record, index) {
   fs.renameSync(candidate.path, staged);
   sync(parent); sync(path.dirname(staged));
   cleanupStages(record);
+}
+
+function goalStorageProtected(record, candidate, file) {
+  if (path.basename(path.dirname(candidate.path)) !== 'attachments') return false;
+
+  if (['owners.json', 'prepared.json', 'dependencies.json'].some(name => metadata(path.join(file, name)))) return true;
+  const root = path.dirname(path.dirname(record.file));
+  const publications = require('./session-broker/session-publication.cjs').retainedDependencies(root);
+
+  return publications.some(publication => JSON.stringify(publication.dependencies ?? null).includes(candidate.path)
+    || publication.transcriptPaths.some(transcript => fs.readFileSync(transcript, 'utf8').includes(candidate.path)));
 }
 
 function finishRecord(record, done) {

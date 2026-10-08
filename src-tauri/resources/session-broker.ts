@@ -21,6 +21,8 @@ export { registerFastModeStatus } from "./session-broker/fast-mode.ts";
 
 export { forkConversation } from "./session-broker/fork.ts";
 
+export { writeSessionFile, publicationRetainsDependencies, type PublicationOptions, type SessionPublication } from "./session-broker/session-file.ts";
+
 export { registerSubagents } from "./session-broker/subagents.ts";
 
 export default function sessionBroker(pi: ExtensionAPI) {

@@ -6,7 +6,9 @@ impl SessionQueue {
         let mut item = json!({"id":id,"message":command["message"],"behavior":"followUp","deliveryStarted":true});
         if let Some(images) = command.get("images") { item["images"] = images.clone(); }
         self.retain_item(&item)?;
-        command["queueInputId"] = json!(id);
+        command["type"] = json!("queue_prompt");
+        command["queueId"] = json!(id);
+        command["streamingBehavior"] = json!("followUp");
         {
             let mut state = self.state();
             state.pending.push(item);
@@ -30,7 +32,6 @@ impl SessionQueue {
     }
 
     pub(super) fn retain_item(&self, item: &Value) -> Result<()> {
-        if self.storage.is_none() { return Ok(()); }
         let mut state = self.state();
         let mut retained = state.retained.clone();
         update_item(&mut retained, item);
@@ -50,16 +51,7 @@ impl SessionQueue {
     }
 
     pub(super) fn persist_state(&self, state: &mut QueueState) -> Result<()> {
-        if self.storage.is_none() { return Ok(()); }
-        let mut retained = Vec::new();
-        for item in state.pending.iter().chain(state.held.iter().flatten()) { update_item(&mut retained, item); }
-        for item in &state.retained {
-            if let Some(current) = retained.iter_mut().find(|current| current["id"] == item["id"]) {
-                preserve_delivery(current, item);
-            } else {
-                retained.push(item.clone());
-            }
-        }
+        let retained = durable_messages(state);
         self.save_retained(&retained)?;
         state.retained = retained;
         Ok(())
@@ -88,7 +80,7 @@ impl SessionQueue {
             let item = &mut retained[*index];
             item["consumedTimestamp"] = message["timestamp"].clone();
             item["consumedContent"] = message["content"].clone();
-            item["consumedInputId"] = message["piopQueueInputId"].clone();
+            item["consumedInputId"] = queue_message_id(message).map_or(Value::Null, |id| json!(id));
             self.save_retained(&retained)?;
             state.retained = retained;
         }
@@ -96,13 +88,12 @@ impl SessionQueue {
     }
 
     pub fn confirm_consumed(&self) -> Result<()> {
-        if !self.state().retained.iter().any(|item| item["consumedTimestamp"].is_number()) { return Ok(()); }
+        if self.state().retained.is_empty() { return Ok(()); }
         let messages = self.executor.saved_user_messages()?;
         let mut state = self.state();
         let consumed: HashSet<_> = state.retained.iter().filter(|item| {
-            item["consumedTimestamp"].is_number() && messages.iter().any(|message| {
-                matches_recorded_consumption(item, message)
-            })
+            messages.iter().any(|message| queue_message_id(message).is_some_and(|id| item["id"] == id)
+                || item["consumedTimestamp"].is_number() && matches_recorded_consumption(item, message))
         }).map(|item| text(item, "id")).collect();
         if consumed.is_empty() { return Ok(()); }
         let retained: Vec<_> = state.retained.iter().filter(|item| !consumed.contains(&text(item, "id"))).cloned().collect();
@@ -112,6 +103,23 @@ impl SessionQueue {
         if let Some(held) = &mut state.held { held.retain(|item| !consumed.contains(&text(item, "id"))); }
         Ok(())
     }
+}
+
+pub(super) fn durable_messages(state: &QueueState) -> Vec<Value> {
+    let mut retained = Vec::new();
+    for item in state.pending.iter().chain(state.held.iter().flatten()) { update_item(&mut retained, item); }
+    for item in &state.retained {
+        if let Some(current) = retained.iter_mut().find(|current| current["id"] == item["id"]) {
+            preserve_delivery(current, item);
+        } else {
+            retained.push(item.clone());
+        }
+    }
+    retained
+}
+
+fn queue_message_id(message: &Value) -> Option<&str> {
+    message["piopQueueId"].as_str().or_else(|| message["piopQueueInputId"].as_str())
 }
 
 fn update_item(items: &mut Vec<Value>, item: &Value) {
@@ -133,7 +141,7 @@ fn preserve_delivery(item: &mut Value, saved: &Value) {
 }
 
 fn consumption_candidates(state: &QueueState, retained: &[Value], message: &Value) -> Vec<usize> {
-    if let Some(id) = message["piopQueueInputId"].as_str() {
+    if let Some(id) = queue_message_id(message) {
         return retained.iter().enumerate().filter(|(_, item)| {
             item["id"] == id && flag(item, "deliveryStarted") && item["consumedTimestamp"].is_null()
         }).map(|(index, _)| index).collect();
@@ -146,7 +154,7 @@ fn consumption_candidates(state: &QueueState, retained: &[Value], message: &Valu
 }
 
 fn matches_recorded_consumption(item: &Value, message: &Value) -> bool {
-    let identified = item["consumedInputId"].as_str().is_none_or(|id| message["piopQueueInputId"] == id);
+    let identified = item["consumedInputId"].as_str().is_none_or(|id| queue_message_id(message) == Some(id));
     identified && message["timestamp"] == item["consumedTimestamp"] && message["content"] == item["consumedContent"]
 }
 

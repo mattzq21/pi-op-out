@@ -1,12 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { gzipSync } from "node:zlib";
+import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import { parseArgs } from "node:util";
 import { buildArtifact, buildBundle, buildInParallel } from "./incremental-build.mjs";
 import { agentCommandInputs, agentCommandInventory } from "./agent-command-inventory.mjs";
+import { storageSchemaImports } from "./storage-schema-plugin.mjs";
 
 async function fastMode() {
-  const license = await readFile("extensions/piop-openai-fast-mode/LICENSE", "utf8");
+  const license = await readFile("extensions/piop-openai-fast-mode/LICENSE", "utf8").catch(error => {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  });
 
   await buildBundle({
     entryPoints: ["extensions/piop-openai-fast-mode/src/index.ts"],
@@ -16,7 +20,7 @@ async function fastMode() {
     format: "esm",
     target: "node22",
     minify: true,
-    banner: { js: `/*! piop-openai-fast-mode 0.3.0-piop.1.\n${license}*/` },
+    banner: { js: `/*! piop-openai-fast-mode 0.3.0-piop.1.${license ? `\n${license}` : ""}*/` },
     external: ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"],
   }, "src-tauri/resources/fast-mode.bundle.mjs", { script: import.meta.url });
 }
@@ -69,11 +73,12 @@ async function backendScripts() {
         format: "iife",
         target: "node22",
         minify: true,
-      }, `src-tauri/resources/${name}.bundle.mjs`, { script: import.meta.url, transform(content) {
-        const payload = gzipSync(content, { level: 9 }).toString("base64");
-        const script = `eval(require("node:zlib").gunzipSync(Buffer.from("${payload}", "base64")).toString("utf8"));\n`;
+        plugins: [storageSchemaImports()],
+      }, `src-tauri/resources/${name}.bundle.mjs`, { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))], transform(content) {
+        const payload = brotliCompressSync(content, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).toString("base64");
+        const script = `eval(require("node:zlib").brotliDecompressSync(Buffer.from("${payload}", "base64")).toString("utf8"));\n`;
 
-        if (Buffer.byteLength(script) > 96 * 1024) throw new Error(`${name} exceeds the embedded script argument budget`);
+        if (Buffer.byteLength(script) > 97 * 1024) throw new Error(`${name} exceeds the embedded script argument budget`);
 
         return script;
       } });

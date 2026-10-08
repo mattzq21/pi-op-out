@@ -21,7 +21,6 @@ mod mobile;
 #[cfg(not(feature = "desktop"))]
 mod mobile_commands;
 mod daemon_clients;
-mod daemon_log;
 mod daemon_restart;
 #[cfg(not(feature = "desktop"))]
 mod peers;
@@ -266,6 +265,29 @@ struct TemporaryChat {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct StorageOwner {
+    session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_path: Option<String>,
+    kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageRoot {
+    path: String,
+    ownership: String,
+    provenance: Vec<String>,
+    available: bool,
+    owners: Vec<StorageOwner>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refs: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StorageCategory {
     id: String,
     #[serde(default)]
@@ -274,6 +296,20 @@ struct StorageCategory {
     item_count: usize,
     #[serde(default)]
     estimated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    count_unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    coverage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ownership: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reclaimability: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    measurement: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    included_in_total: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    roots: Option<Vec<StorageRoot>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,6 +330,8 @@ struct ArchivedConversation {
     restorable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     restore_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    byte_size_coverage: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,6 +406,8 @@ mod archive_worktrees;
 mod git_diffs;
 #[path = "backend/pi_launch.rs"]
 mod pi_launch;
+#[path = "backend/ephemeral_cleanup.rs"]
+mod ephemeral_cleanup;
 #[path = "backend/pi_runtime.rs"]
 mod pi_runtime;
 #[path = "backend/session_index.rs"]
@@ -394,9 +434,9 @@ use terminals::{TerminalLaunch, decode_terminal_bytes, resize_terminal_pty, star
 use archives::{archive_session, archived_session_file, delete_archived_session, delete_session, desktop_session_file, failed_storage, inspect_storage, relocate_session, restore_archived_worktree, restore_archived_session, storage_report};
 #[cfg(test)]
 use archives::{archive_local_session, archive_remote_session, collect_storage_report, delete_session_files, local_archived_session_file_at, local_desktop_session_file_at, parse_storage_inventory, query_storage_inventory, relocate_local_session, relocate_remote_session, remote_session_file, run_session_deletion};
-use git_diffs::{capture_git_tree, discard_git_tree, discard_git_tree_at_host, load_git_diff, load_git_diff_between_at_host, load_git_diffs, save_git_diffs};
+use git_diffs::{capture_git_tree, discard_git_tree, discard_git_tree_at_host, load_git_diff, load_git_diffs, save_git_diffs};
 #[cfg(test)]
-use git_diffs::{discard_remote_git_tree, load_git_diff_at_host, load_local_git_diffs, load_remote_git_diff_between, load_remote_git_diff_with, query_remote_git_diffs, query_remote_git_tree, remote_save_git_diffs_script, remote_session_sidecar_script, save_local_git_diffs, valid_remote_snapshot, write_remote_git_diffs};
+use git_diffs::{discard_remote_git_tree, load_git_diff_at_host, load_git_diffs_at_host, load_local_git_diffs, load_remote_git_diff_between, load_remote_git_diff_with, query_remote_git_diffs, query_remote_git_tree, remote_save_git_diffs_script, remote_session_sidecar_script, save_git_diffs_at_host, save_local_git_diffs, valid_remote_snapshot, write_remote_git_diffs};
 use worktrees::{create_git_worktree, create_project_worktree, git_branch, git_project_kind, git_worktree_roots, is_git_repository, remove_git_worktree, sessions_on_host};
 #[cfg(test)]
 use worktrees::{canonical_worktree_roots, copy_untracked_file, create_local_git_worktree, create_project_worktree_at, git_branch_at, git_relative_path, inspect_git_project_kind, inspect_worktree_removal, local_branch_exists, local_worktree_is_registered, parse_worktree_output, remove_created_worktree, remove_worktree_target, validate_worktree_unused, worktree_branch_name, worktree_suffix, write_worktree_patch};
@@ -425,7 +465,7 @@ use crate::provider_codex::codex_usage_values;
 use crate::environment::pi_executable_in;
 #[cfg(test)]
 use crate::provider_codex::query_codex_usage;
-use settings::{load_app_settings, save_app_settings};
+use settings::{load_app_settings, load_settings_change, save_app_settings};
 #[cfg(test)]
 use settings::{codex_disables_implicit_invocation, default_settings, discover_skills_in, expand_skill_path, frontmatter_value, merge_discovered_skills_at, read_settings_at, save_settings_with, skill_path_is_within, validate_settings_for_save};
 use extensions::{runtime_settings};

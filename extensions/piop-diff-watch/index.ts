@@ -1,10 +1,15 @@
 import { GitError, runGit, acquireWorktreePublicationLock, markWorktreeAllocation, recordWorktreeAllocation } from "./git.ts";
-import { pinPromptHistory } from "./pin-checkpoints.ts";
-import { publishFork, ForkPublicationPending } from "./fork-publication.ts";
+import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from "./pin-checkpoints.ts";
+import { currentSnapshot } from "./snapshot-baseline.ts";
 import { registerPreparedCheckpoints } from "./fork-preparation.ts";
 import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
 import { resolvePromptHistory, recordRecoveredCheckpoints } from "./prompt-history.ts";
+import { writeSessionFile, publicationRetainsDependencies } from "../session-broker.ts";
+import { copyRetainedStoreLocked } from "../session-broker/git-diff-store.cjs";
+import { retainHistory, releaseHistory, rootForDirectory } from "../session-broker/goal-assets.cjs";
+import { drainForkCaptures } from "../session-broker/turn-capture.ts";
 import { Check } from "typebox/value";
+import { existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, realpath, rm, rmdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
@@ -49,34 +54,9 @@ function sessionRefPrefix(sessionId: string) {
   return `${REF_ROOT}/chats/${safeSessionId(sessionId)}/`;
 }
 
-function legacySessionRef(sessionId: string) {
-  return `${REF_ROOT}/${safeSessionId(sessionId)}`;
-}
-
 async function resolveRef(root: string, ref: string) {
   try { return (await runGit(root, ["rev-parse", "--verify", ref])).trim(); }
   catch (error) { if (error instanceof GitError && error.exitCode === 128) return undefined; throw error; }
-}
-
-async function sessionSnapshots(root: string, sessionId: string) {
-  const output = await runGit(root, ["for-each-ref", "--sort=-refname", "--format=%(refname)%09%(objectname)", sessionRefPrefix(sessionId)]);
-
-  return output.split("\n").flatMap((line) => {
-    const [ref, commit] = line.split("\t");
-
-    return ref && commit && !ref.includes("/prompts/") ? [{ ref, commit }] : [];
-  });
-}
-
-async function currentSnapshot(root: string, sessionId: string) {
-  const archivePrefix = `${sessionRefPrefix(sessionId)}archive/`;
-  const snapshot = (await sessionSnapshots(root, sessionId)).find(({ ref }) => !ref.startsWith(archivePrefix));
-
-  if (snapshot) return snapshot;
-  const ref = legacySessionRef(sessionId);
-  const commit = await resolveRef(root, ref);
-
-  return commit ? { ref, commit } : undefined;
 }
 
 async function sessionIdFromFile(sessionFile: string) {
@@ -256,16 +236,6 @@ function promptRef(sessionId: string, key: string) {
   return `${sessionRefPrefix(sessionId)}prompts/${key}`;
 }
 
-async function promptRefs(root: string, sessionId: string) {
-  const output = await runGit(root, ["for-each-ref", "--sort=-refname", "--format=%(refname)%09%(objectname)", `${sessionRefPrefix(sessionId)}prompts/`]);
-
-  return output.trim().split("\n").filter(Boolean).map((line) => {
-    const [ref, commit] = line.split("\t");
-
-    return { ref, commit };
-  });
-}
-
 async function capturePrompt(root: string, sessionId: string, key: string, capturedAt: string): Promise<PromptCheckpoint> {
   const base = await resolveRef(root, "HEAD") ?? null;
   const captured = await worktreeTree(root);
@@ -330,14 +300,15 @@ async function createCheckpointWorktree(root: string, branch: string, commit: st
   finally { await lock.close(); }
 }
 
-async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: string, afterResponse = false) {
+async function branchCheckpoint(pi: ExtensionAPI, ctx: ExtensionContext, entryId: string, name: string, afterResponse = false) {
   const root = await repositoryRoot(ctx.cwd);
 
   if (!root) throw new Error("Project is not a Git repository");
-  const history = await resolvePromptHistory(ctx.sessionManager.getBranch(entryId), ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId(), resolvePromptCommit);
+  const owner = ctx.sessionManager.getSessionId();
+  const source = await checkpointSource(ctx, owner);
+  const history = await resolvePromptHistory(ctx.sessionManager.getBranch(entryId), ctx.sessionManager.getEntries(), owner, resolvePromptCommit);
   validateBranchMessage(history, entryId, afterResponse);
   let checkpoint = precedingCheckpoint(history, afterResponse);
-  const owner = ctx.sessionManager.getSessionId();
 
   if (afterResponse) checkpoint = await responseCheckpoint(ctx, root, entryId, owner);
 
@@ -345,34 +316,64 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
     throw new Error("Project snapshot unavailable. This prompt's checkpoint is missing or was removed.");
   }
 
+  const assetRoot = rootForDirectory(ctx.sessionManager.getSessionDir());
   const branch = await checkpointBranchName(root, name);
   const target = await createCheckpointWorktree(root, branch, checkpoint.commit);
   const id = randomUUID();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
+  let goalAssets: ReturnType<typeof retainHistory> | undefined;
+  const createdRefs: PinnedCheckpoint[] = [];
 
   try {
-    const entries = await branchSessionEntries(ctx, root, id, history, owner, checkpoint, timestamp, target, afterResponse, entryId);
-    await publishCheckpointSession(ctx, entries, sessionPath, id);
+    const entries = await branchSessionEntries(ctx, root, id, history, owner, checkpoint, timestamp, target, afterResponse, entryId, createdRefs);
+    goalAssets = retainHistory(assetRoot, entries, id, sessionPath);
+    const [header, ...retained] = entries;
+    const ids = new Set(retained.slice(0, -1).map(entry => entry.id));
+
+    await writeSessionFile(sessionPath, [{ ...header, goalAssets }, ...retained], {
+      dependencies: { workspace: { path: target, kind: "created-worktree", branch }, checkpoints: createdRefs },
+      sidecars: [sessionPath.replace(/\.jsonl$/, ".diffs.json")],
+      beforeWrite: () => copyCheckpointDiffs(pi, ctx, source, sessionPath, ids, owner),
+    });
 
     return { branch, path: target, sessionPath, sessionId: id };
   } catch (error) {
-    if (error instanceof ForkPublicationPending) throw error;
-
-    for (const { ref, commit } of [...await promptRefs(root, id), ...await sessionSnapshots(root, id)]) await runGit(root, ["update-ref", "-d", ref, commit]);
-
-    await runGit(root, ["worktree", "remove", "--force", target])
-      .then(() => runGit(root, ["branch", "-D", branch])).catch(() => undefined);
+    if (error instanceof Error && publicationRetainsDependencies(error) || existsSync(sessionPath)) throw error;
+    releaseCheckpointAssets(ctx, assetRoot, goalAssets, id);
+    await removePinnedCheckpoints(createdRefs);
+    await removeCheckpointWorktree(root, target, branch, true);
 
     throw error;
   } finally { await cleanupCheckpointContainer(target); }
 }
 
-async function publishCheckpointSession(ctx: ExtensionContext, entries: Awaited<ReturnType<typeof branchSessionEntries>>, destination: string, sessionId: string) {
+async function checkpointSource(ctx: ExtensionContext, owner: string) {
   const source = ctx.sessionManager.getSessionFile();
 
-  if (!source) throw new Error("The original conversation has no session file");
-  await publishFork({ source, destination, sessionId, content: entries.map(entry => JSON.stringify(entry)).join("\n") + "\n" });
+  if (!source || await sessionIdFromFile(source) !== owner) throw new Error("Save this conversation before branching it; its source must match the current session");
+
+  return source;
+}
+
+async function copyCheckpointDiffs(pi: ExtensionAPI, ctx: ExtensionContext, source: string, destination: string, ids: ReadonlySet<string>, owner: string) {
+  await drainForkCaptures(pi.events, ctx, ids);
+
+  if (ctx.sessionManager.getSessionId() !== owner || await checkpointSource(ctx, owner) !== source) throw new Error("Conversation changed while its checkpoint branch was being prepared");
+  copyRetainedStoreLocked(source.replace(/\.jsonl$/, ".diffs.json"), destination.replace(/\.jsonl$/, ".diffs.json"), ids, owner);
+}
+
+function releaseCheckpointAssets(ctx: ExtensionContext, root: string, goalAssets: ReturnType<typeof retainHistory> | undefined, id: string) {
+  if (!goalAssets) return;
+
+  try { releaseHistory(root, goalAssets, id); }
+  catch (error) { ctx.ui.notify(`Branch goal asset ownership was retained for recovery: ${String(error)}`, "warning"); }
+}
+
+async function removeCheckpointWorktree(root: string, target: string, branch: string, created: boolean) {
+  if (!created) return;
+  await runGit(root, ["worktree", "remove", "--force", target])
+    .then(() => runGit(root, ["branch", "-D", branch])).catch(() => undefined);
 }
 
 async function cleanupCheckpointContainer(target: string) {
@@ -453,11 +454,12 @@ async function assertWorktreeAvailable(root: string, branch: string, target: str
 
 }
 
-async function branchSessionEntries(ctx: ExtensionContext, root: string, id: string, history: CheckpointHistory, owner: string, checkpoint: PromptCheckpoint, timestamp: string, target: string, afterResponse: boolean, entryId: string) {
+async function branchSessionEntries(ctx: ExtensionContext, root: string, id: string, history: CheckpointHistory, owner: string, checkpoint: PromptCheckpoint, timestamp: string, target: string, afterResponse: boolean, entryId: string, createdRefs: PinnedCheckpoint[]) {
   const retained = afterResponse ? history : history.slice(0, -1);
-  await pinPromptHistory(root, id, retained, owner);
+  createdRefs.push(...await pinPromptHistory(root, id, retained, owner));
   const baselineRef = `${sessionRefPrefix(id)}${snapshotName(timestamp, checkpoint.commit)}`;
-  await runGit(root, ["update-ref", baselineRef, checkpoint.commit]);
+  await runGit(root, ["update-ref", "--stdin"], {}, ["start", `create ${baselineRef} ${checkpoint.commit}`, "prepare", "commit", ""].join("\n"));
+  createdRefs.push({ root, ref: baselineRef, commit: checkpoint.commit });
 
   const baseline = {
     type: "custom", id: randomUUID(), parentId: retained.at(-1)?.id ?? null, timestamp, customType: SNAPSHOT_ENTRY,
@@ -510,7 +512,7 @@ export default function diffWatch(pi: ExtensionAPI) {
 
     if (!root) return undefined;
     const sessionId = ctx.sessionManager.getSessionId();
-    const current = await currentSnapshot(root, sessionId);
+    const current = await currentSnapshot(root, sessionId, ctx.sessionManager.getBranch());
 
     if (current) return current;
     const copied = await recoverCopiedSnapshot(ctx, root, sessionId);
@@ -583,6 +585,7 @@ export default function diffWatch(pi: ExtensionAPI) {
   pi.on("tool_call", async () => { await snapshotQueue; });
   pi.on("session_before_switch", async () => { await snapshotQueue; });
   pi.on("session_before_fork", async () => { await snapshotQueue; });
+  pi.events.on("piop:before-fork", (request: { ready?: Promise<void> }) => { request.ready = snapshotQueue; });
   pi.on("session_before_tree", async () => { await snapshotQueue; });
 
   pi.events.on("piop:rpc", request => {
@@ -591,7 +594,7 @@ export default function diffWatch(pi: ExtensionAPI) {
     request.ready = (async () => {
       if (!Check(branchRequestSchema, request.payload)) throw new Error("Invalid checkpoint branch request");
       const branch = request.payload;
-      const operation = snapshotQueue.then(() => branchCheckpoint(ctx, branch.entryId, branch.name, branch.afterResponse === true));
+      const operation = snapshotQueue.then(() => branchCheckpoint(pi, ctx, branch.entryId, branch.name, branch.afterResponse === true));
       snapshotQueue = operation.then(() => undefined, () => undefined);
 
       return operation;
@@ -636,7 +639,7 @@ export default function diffWatch(pi: ExtensionAPI) {
   const clearIdleSnapshot = async (ctx: ExtensionContext) => { if (pendingSnapshotCleanup && ctx.isIdle()) { await pendingSnapshotCleanup(); pendingSnapshotCleanup = undefined; } };
 
   const inputSnapshot = async (ctx: ExtensionContext, root: string) => {
-    const snapshot = await currentSnapshot(root, ctx.sessionManager.getSessionId());
+    const snapshot = await currentSnapshot(root, ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch());
 
     return snapshot ?? await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession);
   };

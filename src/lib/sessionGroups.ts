@@ -4,7 +4,7 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 
 import type { SessionSummary } from "../types";
 import { changeSessionGroups, loadSessionGroups } from "./nativeTransport";
-import { listen } from "./platform";
+import { isMobile, listen } from "./platform";
 import { cacheSessionGroups, restoreSessionGroups } from "./sessionGroupsCache";
 import { z } from "zod";
 import { stringsSchema, validItems } from "./messageSchemas";
@@ -67,6 +67,7 @@ function enqueue<T>(work: () => Promise<T>): Promise<T> {
 }
 
 function legacyGroups(seeds: SessionGroupSeed[]): SessionGroups {
+  if (isMobile) return { groups: seeds.map(seed => seed.project), assignments: {}, removedProjects: [] };
   const removedProjects = readStoredJson("pi-desktop-removed-project-groups", stringsSchema, []);
   const groups = new Map<string, SessionGroup>();
 

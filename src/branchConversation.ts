@@ -33,7 +33,7 @@ type Context = {
   syncSessionIndex: () => Promise<void>;
 };
 
-export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setTerminalOpen, setTerminalTarget, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, addNotice, syncSessionIndex }: Context) {
+export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setTerminalOpen, setTerminalTarget, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, syncSessionIndex }: Context) {
   return async (message: ChatMessage, destinationCwd?: string) => {
     const entryId = message.entryId;
 
@@ -48,6 +48,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     branchPending.current.add(pendingKey);
     const sourceCwd = ownerTransport.currentCwd();
     const sourceHostId = ownerTransport.currentHostId();
+    const sourceEphemeral = ownerTransport.isEphemeral();
     const parentSession = [...sessions, ...runtimePool.liveSessionSummaries()].find((session) => session.path === sourcePath && (session.hostId ?? "local") === sourceHostId);
 
     const forkSource = async () => {
@@ -77,7 +78,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     const restoreBranchSource = async () => {
       if (activeTransportRef.current === ownerTransport) updateConnected(false);
       await ownerTransport.disconnect();
-      await ownerTransport.connect(sourceCwd, sourcePath, sourceHostId);
+      await ownerTransport.connect(sourceCwd, sourcePath, sourceHostId, undefined, sourceEphemeral);
 
       if (activeTransportRef.current === ownerTransport) setActiveCwd(sourceCwd);
       const restoredSettings = await ownerTransport.loadSettings();
@@ -100,16 +101,6 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       return { nextState, history };
     };
 
-    let sourceDiffs: import("./types").GitDiffSnapshots | undefined;
-
-    const copyBranchDiffs = async (nextState: AgentState, history: { entries: PiEntry[]; leafId: string | null }) => {
-      if (sourceDiffs === undefined) return;
-
-      try { await runtimePool.copySavedDiffs(ownerTransport, sourcePath, nextState.sessionFile, new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)), sourceDiffs); }
-      catch (reason) { addNotice({ title: "Conversation branched, but project changes could not be copied", message: reason instanceof Error ? reason.message : String(reason) }); }
-
-    };
-
     const rollbackBranch = async (cause: unknown) => {
       try {
         await restoreBranchSource();
@@ -125,13 +116,11 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     const finishBranching = beginBranching();
 
     try {
-      sourceDiffs = await runtimePool.captureMemoryDiffs(ownerTransport);
-
       if (!await forkSource()) return false;
       forked = true;
       let nextState = await ownerTransport.command({ type: "get_state" }, agentStateSchema);
       let history = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
-      await copyBranchDiffs(nextState, history);
+      await runtimePool.refreshSavedDiffs(ownerTransport, nextState.sessionFile);
 
       if (destinationCwd) {
         ({ nextState, history } = await relocateBranch(nextState, destinationCwd));

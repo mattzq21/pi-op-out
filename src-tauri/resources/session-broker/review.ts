@@ -10,8 +10,11 @@ import { writeSessionFile } from "./session-file.ts";
 import type { SessionAgentState, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
+import { currentHost } from "./client.ts";
+import { locateConversation } from "./conversation-location.ts";
+import { acknowledge, pendingReviews, release, type SessionPublication } from "./session-publication.cjs";
 
-const reviewSchema = Schema.Object({ sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String() });
+const reviewSchema = Schema.Object({ sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String(), hostId: Schema.Optional(Schema.String()), publicationId: Schema.Optional(Schema.String()) });
 
 const settingsSchema = Schema.Object({ reviewAgent: Schema.Optional(Schema.String()), reviewPrompt: Schema.Optional(Schema.String()) });
 
@@ -59,28 +62,68 @@ async function requireReviewRepository(cwd: string) {
   throw new Error("/review is only available in Git repository projects");
 }
 
-async function createReview(ctx: ExtensionContext, agentState: SessionAgentState): Promise<ReviewRecord> {
+async function createReview(ctx: ExtensionContext, agentState: SessionAgentState) {
   const header = ctx.sessionManager.getHeader();
 
-  if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save the main conversation before starting a review");
+  const parentSessionPath = ctx.sessionManager.getSessionFile();
+
+  if (!header || !parentSessionPath) throw new Error("Save the main conversation before starting a review");
   await requireSavedReviewParent(ctx);
   const timestamp = new Date().toISOString();
   const sessionId = randomUUID();
-  const record = { sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId() };
+  const record = { sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(), publicationId: randomUUID() };
   const metadataId = randomUUID().slice(0, 8);
-  await writeSessionFile(record.sessionPath, [
+
+  const publication = await writeSessionFile(record.sessionPath, [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: ctx.cwd },
-    { type: "custom", id: metadataId, parentId: null, timestamp, customType: "piop-review-parent", data: { parentSessionId: record.parentSessionId } },
+    { type: "custom", id: metadataId, parentId: null, timestamp, customType: "piop-review-parent", data: { parentSessionId: record.parentSessionId, sessionId, hostId: record.hostId, parentHostId: record.hostId, publicationId: record.publicationId } },
     { type: "custom", id: `${metadataId}-agent`, parentId: metadataId, timestamp, customType: "pi-define-agents-state", data: agentState },
     { type: "session_info", id: randomUUID().slice(0, 8), parentId: `${metadataId}-agent`, timestamp, name: "Code review" },
-  ]);
+  ], { review: { record, parentSessionPath } });
 
-  return record;
+  return { record, publication };
 }
 
-function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string) {
+function matchesPublication(value: ReviewRecord, record: ReviewRecord) {
+  return value.sessionId === record.sessionId && value.parentSessionId === record.parentSessionId && value.publicationId === record.publicationId && value.hostId === record.hostId;
+}
+
+async function publishReview(pi: ExtensionAPI, ctx: ExtensionContext, record: ReviewRecord, publication: SessionPublication) {
+  try {
+    if (ctx.sessionManager.getSessionId() !== record.parentSessionId) throw new Error("Review publication requires its actual original parent");
+    const saved = ctx.sessionManager.getEntries();
+
+    if (!saved.some(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && matchesPublication(entry.data, record))) pi.appendEntry("piop-review", record);
+
+    if (!saved.some(entry => entry.type === "custom_message" && entry.customType === "piop-review-link" && Check(reviewSchema, entry.details) && matchesPublication(entry.details, record))) pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
+
+    if (!acknowledge(publication)) ctx.ui.notify(`Review parent publication is pending; the transcript is retained at ${record.sessionPath}`, "warning");
+  } finally { release(publication); }
+}
+
+async function reconcileReviews(pi: ExtensionAPI, ctx: ExtensionContext) {
+  const parent = ctx.sessionManager.getSessionFile();
+
+  if (!parent) return;
+
+  try {
+    const pending = pendingReviews(parent, ctx.sessionManager.getSessionId());
+
+    try { for (const item of pending) await publishReview(pi, ctx, item.record, item.publication); }
+    finally { for (const item of pending) release(item.publication); }
+  } catch (error) { ctx.ui.notify(`Review publication recovery is pending: ${String(error)}`, "warning"); }
+}
+
+async function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string, inherited = false) {
+  const hostId = record.hostId ?? currentHost();
+  const location = await locateConversation(record.sessionId, hostId);
   ctx.ui.setStatus("review", "Opening code review…");
-  void ctx.ui.input("__pi_desktop_review__", JSON.stringify(task ? { ...record, task } : record)).catch(error => {
+  const readOnly = inherited || location.archived;
+  const payload: ReviewRecord & { task?: string; readOnly: boolean; archived: boolean; inherited: boolean } = { ...record, ...location, hostId, readOnly, inherited };
+
+  if (task && !readOnly) payload.task = task;
+
+  void ctx.ui.input("__pi_desktop_review__", JSON.stringify(payload)).catch(error => {
     ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
   }).finally(() => ctx.ui.setStatus("review", undefined));
 }
@@ -100,6 +143,8 @@ async function reviewSettings() {
 }
 
 export function registerReview(pi: ExtensionAPI) {
+  pi.on("session_start", (_event, ctx) => reconcileReviews(pi, ctx));
+  pi.on("agent_settled", (_event, ctx) => reconcileReviews(pi, ctx));
   pi.events.on("piop:rpc", request => {
     if (request.command !== "review_feedback") return;
     const ctx = request.ctx;
@@ -134,10 +179,9 @@ export function registerReview(pi: ExtensionAPI) {
       await profile.ready;
 
       if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${settings.agent}`);
-      const record = await createReview(ctx, profile.state);
-      pi.appendEntry("piop-review", record);
-      pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
-      openReview(ctx, record, settings.prompt);
+      const { record, publication } = await createReview(ctx, profile.state);
+      await publishReview(pi, ctx, record, publication);
+      await openReview(ctx, record, settings.prompt);
     },
   });
   pi.events.on("piop:rpc", request => {
@@ -150,8 +194,7 @@ export function registerReview(pi: ExtensionAPI) {
       if (!entry || entry.type !== "custom") throw new Error("Review not found in this conversation");
       const record = Parse(reviewSchema, entry.data);
 
-      if (record.parentSessionId !== ctx.sessionManager.getSessionId()) throw new Error("This review belongs to another conversation");
-      openReview(ctx, record);
+      await openReview(ctx, record, undefined, record.parentSessionId !== ctx.sessionManager.getSessionId());
     })();
   });
 }

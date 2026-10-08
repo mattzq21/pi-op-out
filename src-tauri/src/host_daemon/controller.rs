@@ -73,6 +73,11 @@ struct Callbacks(Weak<Host>);
 
 impl SessionHost for Callbacks {
     fn queue_root(&self) -> Option<PathBuf> { self.0.upgrade().map(|host| host.home.join(&host.storage).join("queued-input")) }
+    fn drain_capture<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            self.0.upgrade().ok_or("Host daemon disconnected")?.drain_capture(key).await
+        })
+    }
     fn record_tool_failure(&self, record: Value) {
         if let Some(host) = self.0.upgrade() {
             if let Err(error) = host.tool_failures.record(record) {
@@ -273,6 +278,7 @@ impl Host {
         packet["spec"] = json!(spec);
         packet["sessionKey"] = json!(session.identity);
         packet["cwd"] = json!(session.cwd);
+        packet["ephemeral"] = json!(session.ephemeral);
         registry.attachments.insert(runtime.into(), Arc::new(packet));
     }
 
@@ -381,6 +387,20 @@ impl Host {
         }
         self.registry().captures.entry(id.into()).or_default().insert(session.key());
         Ok(())
+    }
+
+    pub(super) async fn drain_capture(&self, key: &str) -> Result<()> {
+        let request = Uuid::new_v4().to_string();
+        let (sender, receiver) = oneshot::channel();
+        self.registry().drains.insert(request.clone(), sender);
+        self.output(json!({"type":"ownership_drain","id":request,"sessionKey":key}));
+        let result = match tokio::time::timeout(Duration::from_secs(120), receiver).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err("Host daemon disconnected while saving project changes".into()),
+            Err(_) => Err("Project capture drain timed out; source retained".into()),
+        };
+        self.registry().drains.remove(&request);
+        result
     }
 
     async fn drain_captures(&self, id: &str) -> Result<()> {
@@ -501,7 +521,7 @@ impl Host {
         if let Some(session) = self.find_session(&target.id).filter(|session| !session.transient()) {
             return session.execute(command.clone()).await;
         }
-        if self.ownership().locate(&target.id, target.path.as_deref(), false, true)?.is_none() {
+        if self.ownership().lookup_saved(&target.id, true)?.is_none() {
             if self.ownership().removed(&target.id)? {
                 self.output(json!({"type":"session_removed","sessionId":target.id,"sessionPath":target.path}));
                 return Err("This conversation has been deleted or archived".into());
@@ -584,7 +604,7 @@ impl Host {
             session.send(&command).await?;
             return Ok(Value::Null);
         }
-        let response=dialog.queued_response.unwrap_or_else(||json!({"type":"answer_question","requestId":dialog.event["asyncQuestion"],"value":command["value"],"cancelled":flag(&command,"cancelled")}));
+        let response=dialog.queued_response.or_else(||session.queue.question_response(&text(&dialog.event,"asyncQuestion"))).unwrap_or_else(||json!({"type":"answer_question","requestId":dialog.event["asyncQuestion"],"value":command["value"],"cancelled":flag(&command,"cancelled")}));
         session.change_dialog(&id, |dialog| dialog.answering = true);
         let result = async {
             let mut prepare = response.clone();
@@ -593,7 +613,7 @@ impl Host {
             if prepared["message"].as_str().is_some_and(|message| !message.is_empty()) && !dialog.answer_queued {
                 session
                     .queue
-                    .command(json!({"type":if session.working(){"steer"}else{"follow_up"},"message":prepared["message"]}))
+                    .command(json!({"type":if session.working(){"steer"}else{"follow_up"},"message":prepared["message"],"questionResponse":response}))
                     .await?;
                 session.change_dialog(&id, |dialog| {
                     dialog.answer_queued = true;
@@ -602,6 +622,7 @@ impl Host {
             }
             let mut resolve = response;
             resolve["action"] = json!("resolve");
+            resolve["queueId"] = prepared["queueId"].clone();
             session.raw(resolve).await?;
             Ok(Value::Null)
         }

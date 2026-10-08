@@ -1,20 +1,20 @@
-import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { lstat, mkdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { goalTokens } from "./goal-state.ts";
-import { persistSubagentResponseUsage, subagentUsageTotal } from "./subagent-results.ts";
+import { claimUsageChannel } from "./subagent-usage-channel.ts";
+import { subagentParent } from "./subagent-state.ts";
+import { syncSubagentTranscript } from "./subagent-results.ts";
+import { transcriptUsage } from "./subagent-transcript.ts";
 
-const channelSchema = Type.Object({
-  port: Type.Integer({ minimum: 1, maximum: 65535 }), token: Type.String(),
-  startedAt: Type.Optional(Type.Number()), offset: Type.Optional(Type.Integer({ minimum: 0 })),
-});
+const channelSchema = Type.Object({ port: Type.Integer({ minimum: 1, maximum: 65535 }), token: Type.String(), usageProtocol: Type.Optional(Type.Integer()), startedAt: Type.Optional(Type.Number()), offset: Type.Optional(Type.Integer({ minimum: 0 })) });
 
-const usageSchema = Type.Object({ total: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) });
+const usageSchema = Type.Object({ total: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }), sourceId: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })) });
+
+export type UsageCheckpoint = { sourceId: string; total: number };
 
 const fileErrorSchema = Type.Object({ code: Type.String() });
 
@@ -22,115 +22,16 @@ const addressSchema = Type.Object({ port: Type.Number() });
 
 type Channel = Static<typeof channelSchema>;
 
+const usageReceipt = (checkpoint: UsageCheckpoint) => createHash("sha256").update(JSON.stringify([checkpoint.sourceId, checkpoint.total])).digest("hex");
+
 const channelPath = (path: string) => `${path}.goal-usage.json`;
 
-const channelUpdateScript = `
-  const fs = require("node:fs");
-  const http = require("node:http");
-  const [path, temporary, action] = process.argv.slice(1);
-  const next = JSON.parse(fs.readFileSync(0, "utf8"));
-  function readOwner() {
-    let content;
-    try { content = fs.readFileSync(path, "utf8"); }
-    catch (error) { if (error.code === "ENOENT") return; throw error; }
-    try { return JSON.parse(content); }
-    catch (error) { if (error instanceof SyntaxError) return; throw error; }
-  }
-  function identity(pid) {
-    if (process.platform !== "linux") return;
-    const stat = fs.readFileSync("/proc/" + pid + "/stat", "utf8");
-    const started = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
-    return fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() + ":" + started;
-  }
-  function listening(owner) {
-    if (!Number.isInteger(owner.port) || owner.port < 1 || owner.port > 65535 || typeof owner.token !== "string") return false;
-    return new Promise((resolve, reject) => {
-      const authenticated = owner.protocol === 1;
-      const request = http.request({ host: "127.0.0.1", port: owner.port, path: authenticated ? "/owner" : "/usage", method: authenticated ? "GET" : "POST", headers: { Authorization: "Bearer " + owner.token, "Content-Type": "application/json" } }, response => {
-        response.resume();
-        resolve(authenticated ? response.statusCode === 204 && response.headers["x-piop-usage-token"] === owner.token : response.statusCode === 204 || response.statusCode === 500);
-      });
-      request.setTimeout(2000, () => request.destroy(new Error("Existing subagent usage listener did not respond")));
-      request.on("error", error => { if (error.code === "ECONNREFUSED" || error.code === "ECONNRESET") resolve(false); else reject(error); });
-      request.end(authenticated ? undefined : '{"total":0}');
-    });
-  }
-  async function claim() {
-    const owner = readOwner();
-    if (Number.isSafeInteger(owner?.pid) && owner.pid > 0 && owner.pid <= 2147483647) {
-      try { process.kill(owner.pid, 0); }
-      catch (error) { if (error.code === "ESRCH") return publish(); if (error.code !== "EPERM") throw error; }
-      let current;
-      try { current = identity(owner.pid); }
-      catch (error) { if (error.code === "ENOENT") return publish(); throw error; }
-      if (owner.identity && current && owner.identity !== current) return publish();
-      if (await listening(owner)) throw new Error("Subagent usage channel is already owned by a running process");
-    }
-    publish();
-  }
-  function publish() {
-    process.kill(next.pid, 0);
-    next.identity = identity(next.pid);
-    next.protocol = 1;
-    fs.rmSync(temporary, { force: true });
-    try {
-      const file = fs.openSync(temporary, "wx", 0o600);
-      try { fs.writeFileSync(file, JSON.stringify(next)); fs.fsyncSync(file); }
-      finally { fs.closeSync(file); }
-      fs.renameSync(temporary, path);
-    } finally { fs.rmSync(temporary, { force: true }); }
-  }
-  async function update() {
-    if (action === "claim") await claim();
-    else if (readOwner()?.token === next.token) fs.rmSync(path, { force: true });
-  }
-  update().catch(error => { process.stderr.write(error.message); process.exitCode = 1; });
-`;
-
-async function prepareChannelDirectory(path: string, directory: string) {
-  const transcript = await lstat(path);
-
-  if (!transcript.isFile() || transcript.isSymbolicLink()) throw new Error("Subagent usage requires a saved session file");
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+function ownsChannel(request: IncomingMessage, token: string) {
+  return request.method === "GET" && request.url === "/owner" && request.headers.authorization === `Bearer ${token}`;
 }
 
-async function channelDirectory(path: string, action: "claim" | "close") {
-  if (!path.endsWith(".jsonl")) throw new Error("Subagent usage requires a saved session");
-
-  const directory = path.replace(/\.jsonl$/, ".snapshots");
-
-  if (action === "claim") await prepareChannelDirectory(path, directory);
-
-  const info = await lstat(directory).catch(error => {
-    if (action === "close" && Check(fileErrorSchema, error) && error.code === "ENOENT") return;
-    throw error;
-  });
-
-  if (!info) return;
-
-  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Subagent usage storage must be a directory");
-
-  return directory;
-}
-
-async function updateChannel(path: string, action: "claim" | "close", channel: Channel & { pid: number }) {
-  const directory = await channelDirectory(path, action);
-
-  if (!directory) return;
-
-  return new Promise<void>((resolve, reject) => {
-    const child = execFile("flock", ["--exclusive", "--wait", "10", "--no-fork", join(directory, "subagent-usage.lock"), process.execPath, "-e", channelUpdateScript, channelPath(path), join(directory, "subagent-usage.pending"), action], { timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 16_384, encoding: "utf8" }, (error, _output, stderr) => {
-      if (error) reject(new Error(`Could not ${action} subagent usage channel: ${stderr.trim() || error.message}`));
-      else resolve();
-    });
-
-    child.stdin?.on("error", () => {});
-    child.stdin?.end(JSON.stringify(channel));
-  });
-}
-
-async function receiveUsage(request: IncomingMessage, response: ServerResponse, token: string, report: (total: number) => void | Promise<void>) {
-  if (request.method === "GET" && request.url === "/owner" && request.headers.authorization === `Bearer ${token}`) {
+async function receiveUsage(request: IncomingMessage, response: ServerResponse, token: string, report: (total: number, sourceId?: string) => void | Promise<void>) {
+  if (ownsChannel(request, token)) {
     response.writeHead(204, { "X-Piop-Usage-Token": token }).end();
 
     return;
@@ -158,11 +59,13 @@ async function receiveUsage(request: IncomingMessage, response: ServerResponse, 
 
   return; }
 
-  await report(usage.total);
+  await report(usage.total, usage.sourceId);
+
+  if (usage.sourceId) response.setHeader("X-Piop-Usage-Receipt", usageReceipt({ sourceId: usage.sourceId, total: usage.total }));
   response.writeHead(204).end();
 }
 
-export async function listenSubagentUsage(path: string, report: (total: number) => void | Promise<void>, failed: (cause: unknown) => void, scope: { startedAt: number; offset?: number }) {
+export async function listenSubagentUsage(path: string, report: (total: number, sourceId?: string) => void | Promise<void>, failed: (cause: unknown) => void, scope?: { startedAt: number; offset?: number }) {
   const token = randomUUID();
 
   const server = createServer((request, response) => {
@@ -171,13 +74,13 @@ export async function listenSubagentUsage(path: string, report: (total: number) 
 
   server.requestTimeout = 5000;
   server.headersTimeout = 5000;
-  let channel: (Channel & { pid: number }) | undefined;
+  let releaseChannel: (() => Promise<void>) | undefined;
+  let closing: Promise<void> | undefined;
 
-  const close = async () => {
+  const close = () => closing ??= (async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
-
-    if (channel) await updateChannel(path, "close", channel);
-  };
+    await releaseChannel?.();
+  })();
 
   try {
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => { server.removeListener("error", reject); resolve(); }); });
@@ -185,8 +88,8 @@ export async function listenSubagentUsage(path: string, report: (total: number) 
     const address = server.address();
 
     if (!Check(addressSchema, address)) throw new Error("Subagent usage server did not bind a TCP port");
-    channel = { port: address.port, token, pid: process.pid, startedAt: scope.startedAt, offset: scope.offset };
-    await updateChannel(path, "claim", channel);
+    const port = address.port;
+    releaseChannel = await claimUsageChannel(path, port, token, scope);
 
     return close;
   } catch (error) { await close(); throw error; }
@@ -195,70 +98,96 @@ export async function listenSubagentUsage(path: string, report: (total: number) 
 async function loadChannel(ctx: ExtensionContext): Promise<Channel | undefined> {
   const path = ctx.sessionManager.getSessionFile();
 
-  if (!path || !ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-parent")) return;
+  if (!path || !subagentParent(ctx)) return;
 
   try {
-    const content = await readFile(channelPath(path), "utf8");
-    let channel: unknown;
-
-    try { channel = JSON.parse(content); }
-    catch (error) { if (error instanceof SyntaxError) return; throw error; }
+    const channel = JSON.parse(await readFile(channelPath(path), "utf8"));
 
     if (Check(channelSchema, channel)) return channel;
-  } catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error; }
+  } catch (error) { if (!(error instanceof SyntaxError) && (!Check(fileErrorSchema, error) || error.code !== "ENOENT")) throw error; }
 }
 
-function childSession(ctx: ExtensionContext) {
-  return ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-parent");
+async function usableChannel(ctx: ExtensionContext, checkpoint?: UsageCheckpoint) {
+  const target = await loadChannel(ctx);
+
+  if (!target && checkpoint && subagentParent(ctx)) throw new Error("Subagent usage observation is unavailable; usage remains in the saved transcript");
+
+  if (target && checkpoint && target.usageProtocol !== 2) throw new Error("The parent usage observer must be upgraded before cumulative reports can be delivered");
+
+  return target;
 }
 
-async function durableUsage(ctx: ExtensionContext, target: Channel) {
-  const sessionPath = ctx.sessionManager.getSessionFile();
+function confirmUsageReceipt(response: Response, checkpoint?: UsageCheckpoint) {
+  if (!response.ok) throw new Error(`Subagent usage delivery failed: HTTP ${response.status}`);
 
-  if (!sessionPath) throw new Error("Subagent usage requires a saved conversation");
-
-  return subagentUsageTotal({ sessionPath, offset: target.offset, startedAt: target.startedAt ?? 0 });
+  if (checkpoint && response.headers.get("X-Piop-Usage-Receipt") !== usageReceipt(checkpoint)) throw new Error("The parent usage observer did not acknowledge the cumulative report");
 }
+
+const apiCost = (amount: number) => Number.isFinite(amount) ? Math.max(0, amount) : 0;
 
 export function registerSubagentUsage(pi: ExtensionAPI) {
   let channel: Channel | undefined;
-  let legacyBaseline: number | undefined;
+  let baseline: number | undefined;
   let pending = Promise.resolve();
+  let lastFailure = "";
+  pi.on("session_start", async () => { await pending.catch(() => undefined); channel = undefined; baseline = undefined; });
 
-  const report = (tokens: number, ctx: ExtensionContext, abortOnFailure = true) => {
+  const report = (tokens: number, ctx: ExtensionContext, checkpoint?: UsageCheckpoint) => {
+    if (!tokens && !checkpoint) return pending;
     pending = pending.catch(() => undefined).then(async () => {
-      const target = await loadChannel(ctx);
+      const target = await usableChannel(ctx, checkpoint);
 
-      if (target?.token !== channel?.token) legacyBaseline = undefined;
+      if (target?.token !== channel?.token) baseline = undefined;
       channel = target;
 
       if (!target) return;
-      const durable = await durableUsage(ctx, target);
 
-      if (target.startedAt === undefined) legacyBaseline ??= Math.max(0, durable - tokens);
-      const total = Math.max(0, durable - (legacyBaseline ?? 0));
-      const body = JSON.stringify({ total });
+      let payload = checkpoint;
+
+      if (!payload) {
+        const sessionPath = ctx.sessionManager.getSessionFile();
+
+        if (!sessionPath) throw new Error("Subagent usage requires a saved conversation");
+        const usage = await transcriptUsage({ sessionPath, sessionId: ctx.sessionManager.getSessionId(), offset: target.offset });
+
+        if (target.startedAt === undefined) baseline ??= Math.max(0, usage.tokens - tokens);
+        payload = { sourceId: ctx.sessionManager.getSessionId(), total: Math.max(0, usage.tokens - (baseline ?? 0)) };
+      }
+
+      const body = JSON.stringify(payload);
       const response = await fetch(`http://127.0.0.1:${target.port}/usage`, { method: "POST", headers: { Authorization: `Bearer ${target.token}`, "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(5000) });
 
-      if (!response.ok) throw new Error(`Subagent usage delivery failed: HTTP ${response.status}`);
-    }).catch(error => { if (abortOnFailure) ctx.abort(); throw error; });
+      confirmUsageReceipt(response, checkpoint);
+    }).catch(error => { if (!checkpoint) ctx.abort(); throw error; });
 
     return pending;
   };
 
-  pi.on("session_start", async (_event, ctx) => {
-    await pending.catch(() => undefined); channel = undefined; legacyBaseline = undefined;
-    await report(0, ctx, false).catch(() => undefined);
-  });
-  pi.on("message_end", async (event, ctx) => {
-    if (event.message.role !== "assistant" || !childSession(ctx)) return;
-    const tokens = goalTokens(event.message.usage);
+  const record = async (tokens: number, apiCost: number, eventId: string, ctx: ExtensionContext) => {
+    pi.appendEntry("piop-subagent-self-usage", { eventId, tokens, apiCost });
+    await syncSubagentTranscript(ctx);
 
-    if (!tokens) return;
-    await persistSubagentResponseUsage(pi, ctx, event.message.timestamp, tokens);
-    await report(tokens, ctx);
+    try { await report(tokens, ctx, { sourceId: JSON.stringify([ctx.sessionManager.getSessionId(), eventId]), total: tokens }); lastFailure = ""; }
+    catch (error) {
+      const message = String(error);
+
+      if (message !== lastFailure) ctx.ui.notify(`Subagent usage is saved; parent accounting will reconcile it: ${message}`, "error");
+      lastFailure = message;
+    }
+  };
+
+  pi.on("message_end", async (event, ctx) => {
+    if (event.message.role !== "assistant" || !subagentParent(ctx)) return;
+    const id = randomUUID();
+    await record(goalTokens(event.message.usage), apiCost(event.message.usage.cost.total), `assistant:${id}`, ctx);
+
+    return { message: { ...event.message, piopSubagentUsageId: id } };
   });
-  pi.on("session_compact", (event, ctx) => report(goalTokens(event.compactionEntry.usage), ctx));
+  pi.on("session_compact", (event, ctx) => {
+    if (!subagentParent(ctx)) return;
+
+    return record(goalTokens(event.compactionEntry.usage), apiCost(event.compactionEntry.usage?.cost.total ?? 0), `entry:${event.compactionEntry.id}`, ctx);
+  });
   pi.on("session_shutdown", () => pending);
 
   return report;

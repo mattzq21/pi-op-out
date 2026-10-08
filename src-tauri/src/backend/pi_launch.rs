@@ -64,21 +64,62 @@ pub(super) fn remote_directory_path(path: Option<&str>) -> String {
     }
 }
 
-pub(super) fn remove_ephemeral_session(session: EphemeralSession) {
-    let script = include_str!("../../resources/cleanup-ephemeral-session.bundle.mjs");
-    let result = match session {
-        EphemeralSession::Local(path) => node_command().args(["-e", script]).arg(path).output(),
-        EphemeralSession::Remote { host, path } => ssh(&host).arg(remote_login_command(&format!("node -e {} {}", shell_quote(script), shell_quote(&path)))).output(),
-    };
-    match result { Ok(output) if output.status.success() => {}, Ok(output) => eprintln!("Could not clean up side conversation: {}", String::from_utf8_lossy(&output.stderr)), Err(error) => eprintln!("Could not clean up side conversation: {error}") }
+pub(super) fn remove_ephemeral_session(session: EphemeralSession) -> crate::ephemeral_cleanup::CleanupOutcome {
+    crate::ephemeral_cleanup::release(&session, || Ok(()))
 }
 
 pub(super) fn cleanup_runtime_ephemeral(runtime: &PiRuntime, runtime_id: &str) -> Result<(), String> {
-    let key = runtime.ephemeral.keys.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(runtime_id).unwrap_or_else(|| runtime_id.to_string());
-    let current = runtime.ephemeral.sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(&key);
-    let previous = runtime.ephemeral.previous.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(&key).unwrap_or_default();
-    for session in previous.into_iter().chain(current) { remove_ephemeral_session(session); }
+    drain_ephemeral_captures(runtime, Some(runtime_id))?;
+    cleanup_ephemeral_owner(runtime, runtime_id, true)
+}
+
+fn drain_ephemeral_captures(runtime: &PiRuntime, runtime_id: Option<&str>) -> Result<(), String> {
+    for daemon in runtime.connections.snapshot() {
+        daemon.drain_captures(runtime_id).map_err(|error| format!("Side conversation capture drain failed; runtime and durable ownership retained: {error}"))?;
+    }
     Ok(())
+}
+
+fn cleanup_ephemeral_owner(runtime: &PiRuntime, runtime_id: &str, preserve_reusable: bool) -> Result<(), String> {
+    let mut keys = runtime.ephemeral.keys.lock().map_err(|_| "Side conversation lock was poisoned")?;
+    let key = keys.get(runtime_id).cloned().unwrap_or_else(|| runtime_id.to_string());
+    if preserve_reusable && keep_live_ephemeral(runtime, &mut keys, &key, runtime_id)? { return Ok(()); }
+    let mut sessions = runtime.ephemeral.sessions.lock().map_err(|_| "Side conversation lock was poisoned")?;
+    let mut previous = runtime.ephemeral.previous.lock().map_err(|_| "Side conversation lock was poisoned")?;
+    let mut errors = Vec::new();
+    if let Some(session) = sessions.get(&key) {
+        if transfer_ephemeral(runtime, session, &mut errors) { sessions.remove(&key); }
+    }
+    transfer_previous_ephemeral(runtime, &mut previous, &key, &mut errors);
+    forget_transferred_ephemeral(&mut keys, &sessions, &previous, &key);
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
+}
+
+fn keep_live_ephemeral(runtime: &PiRuntime, keys: &mut HashMap<String, String>, key: &str, releasing: &str) -> Result<bool, String> {
+    for (owner, value) in keys.iter() {
+        if owner != releasing && value == key && runtime.contains_process(owner)? {
+            keys.remove(releasing);
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn transfer_previous_ephemeral(runtime: &PiRuntime, previous: &mut HashMap<String, Vec<EphemeralSession>>, key: &str, errors: &mut Vec<String>) {
+    if let Some(retained) = previous.get_mut(key) {
+        retained.retain(|session| !transfer_ephemeral(runtime, session, errors));
+        if retained.is_empty() { previous.remove(key); }
+    }
+}
+
+fn forget_transferred_ephemeral(keys: &mut HashMap<String, String>, sessions: &HashMap<String, EphemeralSession>, previous: &HashMap<String, Vec<EphemeralSession>>, key: &str) {
+    if !sessions.contains_key(key) && !previous.contains_key(key) { keys.retain(|_, value| value != key); }
+}
+
+fn transfer_ephemeral(runtime: &PiRuntime, session: &EphemeralSession, errors: &mut Vec<String>) -> bool {
+    let outcome = if runtime.connections.snapshot().is_empty() { remove_ephemeral_session(session.clone()) } else { crate::ephemeral_cleanup::release(session, || drain_ephemeral_captures(runtime, None)) };
+    if let Some(error) = outcome.error { errors.push(error); }
+    outcome.transferred
 }
 
 pub(super) fn create_ephemeral_fork(settings: &AppSettings, host_id: &str, source_path: &str, leaf_id: Option<&str>) -> Result<(String, EphemeralSession), String> {
@@ -88,7 +129,9 @@ pub(super) fn create_ephemeral_fork(settings: &AppSettings, host_id: &str, sourc
     let host = remote_host(settings, host_id)?.clone();
     let destination = format!("/tmp/pi-desktop-btw-{}.jsonl", Uuid::new_v4());
     let path = create_remote_ephemeral_fork(source_path, &destination, &host.name, leaf_id, |script| { let mut command = ssh(&host); command.arg(remote_login_command(&script)); command })?;
-    Ok((path.clone(), EphemeralSession::Remote { host, path }))
+    let session = EphemeralSession::Remote { host, path: path.clone() };
+    crate::ephemeral_cleanup::register_at(&home_dir()?, &session, "created-ephemeral-fork", None)?;
+    Ok((path, session))
 }
 
 pub(super) fn create_remote_ephemeral_fork(source_path: &str, destination: &str, host_name: &str, leaf_id: Option<&str>, command: impl FnOnce(String) -> Command) -> Result<String, String> {
@@ -103,9 +146,12 @@ pub(super) fn create_remote_ephemeral_fork(source_path: &str, destination: &str,
 pub(super) fn create_local_ephemeral_fork(home: &Path, temporary_dir: &Path, source_path: &str, leaf_id: Option<&str>) -> Result<(String, EphemeralSession), String> {
     let source = local_desktop_session_file_at(home, source_path)?;
     let path = temporary_dir.join(format!("pi-desktop-btw-{}.jsonl", Uuid::new_v4()));
-    let output = node_command().args(["-e", include_str!("../../resources/fork-session.cjs")]).arg(source).arg(&path).arg(Uuid::new_v4().to_string()).args(leaf_id).output().map_err(|e| e.to_string())?;
+    let id = Uuid::new_v4().to_string();
+    let output = node_command().args(["-e", include_str!("../../resources/fork-session.cjs")]).arg(source).arg(&path).arg(&id).args(leaf_id).output().map_err(|e| e.to_string())?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
-    Ok((path.to_string_lossy().into_owned(), EphemeralSession::Local(path)))
+    let session = EphemeralSession::Local(path.clone());
+    crate::ephemeral_cleanup::register_at(home, &session, "created-ephemeral-fork", Some(&id))?;
+    Ok((path.to_string_lossy().into_owned(), session))
 }
 
 impl EphemeralSession {
@@ -122,7 +168,12 @@ pub(super) fn prepare_ephemeral_path(runtime: &PiRuntime, runtime_id: &str, ephe
         match source { Some(source_path) => Some(fork(source_path)?), None => None }
     } else { None };
     match resolved {
-        Some((path, session)) => { runtime.ephemeral.sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(runtime_id.to_string(), session); Ok(Some(path)) }
+        Some((path, session)) => {
+            let mut sessions = runtime.ephemeral.sessions.lock().map_err(|_| "Side conversation lock was poisoned")?;
+            crate::ephemeral_cleanup::adopt(&session, runtime_id)?;
+            sessions.insert(runtime_id.to_string(), session);
+            Ok(Some(path))
+        }
         None => Ok(None),
     }
 }
@@ -162,7 +213,6 @@ fn remote_broker_command(host: &RemoteHost, local_port: u16, remote_port: u16) -
 
 fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<(), String> {
     let rtk_extension = shell_quote(include_str!("../../../extensions/piop-rtk/rtk.ts"));
-    let rtk_license = shell_quote(include_str!("../../../extensions/piop-rtk/LICENSE"));
     let runtime_settings_extension = shell_quote(include_str!("../../../extensions/piop-runtime-settings/index.ts"));
     let provider_accounts = shell_quote(include_str!("../../resources/provider-accounts.bundle.mjs"));
     let app_rpc = shell_quote(include_str!("../../resources/app-rpc.cjs"));
@@ -198,7 +248,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {provider_accounts} > "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs""#);
     let remote = format!(r#"{remote} && printf %s {app_rpc} > "$HOME/{STORAGE_DIRECTORY}/app-rpc.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/app-rpc.cjs""#);
     let remote = format!(r#"{remote} && printf %s {sdk_storage} > "$HOME/{STORAGE_DIRECTORY}/sdk-storage.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/sdk-storage.mjs""#);
-    let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && printf %s {rtk_license} > "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts" "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE""#);
+    let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts""#);
     let mut remote = remote;
     remote.push_str(&format!(r#" && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw/references" && chmod 700 "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw" "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw/references""#));
     for (name, content) in EXCALIDRAW_ASSETS {
@@ -222,6 +272,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
         ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
         ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
         ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
+        ("snapshot-baseline.ts", include_str!("../../../extensions/piop-diff-watch/snapshot-baseline.ts")),
         ("fork-publication.ts", include_str!("../../../extensions/piop-diff-watch/fork-publication.ts")),
         ("fork-preparation.ts", include_str!("../../../extensions/piop-diff-watch/fork-preparation.ts")),
         ("publish-fork.bundle.mjs", include_str!("../../resources/publish-fork.bundle.mjs")),
@@ -388,11 +439,19 @@ pub(super) fn local_launch_directory(cwd: Option<&str>) -> Result<PathBuf, Strin
     match cwd { Some("~") => home_dir(), Some(path) => Ok(PathBuf::from(path)), None => std::env::current_dir().map_err(|error| error.to_string()) }
 }
 
-pub(super) fn cleanup_all_ephemeral(runtime: &PiRuntime) {
-    let ephemeral = runtime.ephemeral.sessions.lock().map(|mut sessions| sessions.drain().map(|(_, session)| session).collect::<Vec<_>>()).unwrap_or_default();
-    for session in ephemeral { remove_ephemeral_session(session); }
-    let previous = runtime.ephemeral.previous.lock().map(|mut sessions| sessions.drain().flat_map(|(_, sessions)| sessions).collect::<Vec<_>>()).unwrap_or_default();
-    for session in previous { remove_ephemeral_session(session); }
+pub(super) fn cleanup_all_ephemeral(runtime: &PiRuntime) -> crate::ephemeral_cleanup::CleanupOutcome {
+    let result = cleanup_ephemeral_keys(runtime);
+    if let Err(error) = &result { eprintln!("Ephemeral shutdown cleanup is pending: {error}"); }
+    crate::ephemeral_cleanup::CleanupOutcome { transferred: result.is_ok(), error: result.err() }
+}
+
+fn cleanup_ephemeral_keys(runtime: &PiRuntime) -> Result<(), String> {
+    drain_ephemeral_captures(runtime, None)?;
+    let mut keys = runtime.ephemeral.sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.keys().cloned().collect::<Vec<_>>();
+    keys.extend(runtime.ephemeral.previous.lock().map_err(|_| "Side conversation lock was poisoned")?.keys().cloned());
+    keys.sort(); keys.dedup();
+    let errors = keys.iter().filter_map(|key| cleanup_ephemeral_owner(runtime, key, false).err()).collect::<Vec<_>>();
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
 }
 
 #[derive(Clone)]
@@ -401,33 +460,53 @@ pub(super) enum EphemeralSession {
     Remote { host: RemoteHost, path: String },
 }
 pub(super) fn update_ephemeral_snapshot(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
-        let key = runtime.ephemeral.keys.lock().map_err(|_| "Side conversation lock was poisoned")?.get(runtime_id).cloned();
-        if let (Some(key), Some(path)) = (key, state["sessionFile"].as_str()) {
-            let mut sessions = runtime.ephemeral.sessions.lock().map_err(|_| "Side conversation lock was poisoned")?;
-            if let Some(session) = sessions.get_mut(&key) {
-                if session.path() != path && Path::new(&session.path()).parent() == Path::new(path).parent() {
-                    let previous = session.clone();
-                    match session { EphemeralSession::Local(current) => *current = path.into(), EphemeralSession::Remote { path: current, .. } => *current = path.into() }
-                    runtime.ephemeral.previous.lock().map_err(|_| "Side conversation lock was poisoned")?.entry(key).or_default().push(previous);
-                }
-            }
-        }
+    let keys = runtime.ephemeral.keys.lock().map_err(|_| "Side conversation lock was poisoned")?;
+    let Some(key) = keys.get(runtime_id) else { return Ok(()); };
+    let Some(path) = state["sessionFile"].as_str() else { return Ok(()); };
+    let mut sessions = runtime.ephemeral.sessions.lock().map_err(|_| "Side conversation lock was poisoned")?;
+    let Some(session) = sessions.get_mut(key) else { return Ok(()); };
+    if !ephemeral_snapshot_changed(session, path) { return Ok(()); }
+    let id = state["sessionId"].as_str().ok_or("Side conversation snapshot has no session identity")?;
+    let replacement = ephemeral_snapshot(session, path);
+    let mut previous = runtime.ephemeral.previous.lock().map_err(|_| "Side conversation lock was poisoned")?;
+    crate::ephemeral_cleanup::register_at(&home_dir()?, &replacement, key, Some(id))?;
+    crate::ephemeral_cleanup::inherit_claims(session, &replacement, runtime_id)?;
+    previous.entry(key.clone()).or_default().push(session.clone());
+    *session = replacement;
     Ok(())
 }
 
+fn ephemeral_snapshot_changed(session: &EphemeralSession, path: &str) -> bool {
+    session.path() != path && Path::new(&session.path()).parent() == Path::new(path).parent()
+}
 
-#[derive(Default)]
+fn ephemeral_snapshot(session: &EphemeralSession, path: &str) -> EphemeralSession {
+    match session { EphemeralSession::Local(_) => EphemeralSession::Local(path.into()), EphemeralSession::Remote { host, .. } => EphemeralSession::Remote { host: host.clone(), path: path.into() } }
+}
+
+
 pub(super) struct EphemeralSessions {
     sessions: Mutex<HashMap<String, EphemeralSession>>,
     previous: Mutex<HashMap<String, Vec<EphemeralSession>>>,
     keys: Mutex<HashMap<String, String>>,
 }
+impl Default for EphemeralSessions {
+    fn default() -> Self {
+        crate::ephemeral_cleanup::start_retries();
+        Self { sessions: Mutex::new(HashMap::new()), previous: Mutex::new(HashMap::new()), keys: Mutex::new(HashMap::new()) }
+    }
+}
+
 impl EphemeralSessions {
     pub(super) fn get(&self, key: &str) -> Result<Option<EphemeralSession>, String> {
         Ok(self.sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.get(key).cloned())
     }
     pub(super) fn attach(&self, runtime_id: &str, key: String) -> Result<(), String> {
-        self.keys.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(runtime_id.into(), key);
+        let mut keys = self.keys.lock().map_err(|_| "Side conversation lock was poisoned")?;
+        let sessions = self.sessions.lock().map_err(|_| "Side conversation lock was poisoned")?;
+        let session = sessions.get(&key).ok_or("Side conversation ownership is unavailable")?;
+        crate::ephemeral_cleanup::bind_claim(session, runtime_id)?;
+        keys.insert(runtime_id.into(), key);
         Ok(())
     }
     #[cfg(test)]

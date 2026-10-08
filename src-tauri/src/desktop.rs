@@ -1,6 +1,5 @@
 mod platform;
 mod daemon_endpoint;
-mod daemon_log;
 mod desktop_daemon;
 mod client_settings;
 mod settings_concurrency;

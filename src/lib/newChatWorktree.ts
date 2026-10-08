@@ -1,43 +1,46 @@
 import { createEffect, createRoot, createSignal, onCleanup, type Accessor } from "solid-js";
 import type { NativeTransport, ProjectBranches } from "./nativeTransport";
 import type { ChatMessage, ImageAttachment } from "../types";
-import { textOf } from "./content";
+import { ownDraftSubmission, releaseDraftSubmission, type DraftSubmissionHandle } from "./draftSubmission";
 
-type Submission = { owner: NativeTransport; message: ChatMessage; previousUserIds: Set<string>; status: string; selection?: { listing: ProjectBranches; createNew: boolean } };
+type Submission = { owner: NativeTransport; message: ChatMessage; status: string; durable: DraftSubmissionHandle; selection?: { listing: ProjectBranches; createNew: boolean } };
 
-const [submission, setSubmission] = createSignal<Submission>();
+const [submissions, setSubmissions] = createSignal<Submission[]>([]);
 
-export const chatSubmission = (owner?: NativeTransport) => submission()?.owner === owner ? submission() : undefined;
+export const chatSubmission = (owner?: NativeTransport) => submissions().find(submission => submission.owner === owner);
+
+export const isChatSubmissionActive = (id: string) => submissions().some(submission => submission.durable.id === id);
 
 export function preserveChatSelection(owner: NativeTransport, listing: ProjectBranches, createNew: boolean) {
-  setSubmission((current) => current?.owner === owner ? { ...current, selection: { listing, createNew } } : current);
-}
-
-export function acknowledgeChatSubmission(owner: NativeTransport | undefined, messages: ChatMessage[]) {
-  const current = chatSubmission(owner);
-
-  if (!current) return;
-  const received = messages.some(message => message.role === "user" && !current.previousUserIds.has(message.id) && textOf(message.content) === textOf(current.message.content));
-
-  if (received) setSubmission(value => value === current ? undefined : value);
+  setSubmissions(current => current.map(item => item.owner === owner ? { ...item, selection: { listing, createNew } } : item));
 }
 
 export function updateChatPreparation(owner: NativeTransport, status: string) {
-  setSubmission((current) => current?.owner === owner ? { ...current, status } : current);
+  setSubmissions(current => current.map(item => item.owner === owner ? { ...item, status } : item));
 }
 
-export async function trackChatSubmission<T>(owner: NativeTransport, text: string, images: ImageAttachment[], previousMessages: ChatMessage[], queued: boolean, work: () => Promise<T>) {
+export async function trackChatSubmission<T>(owner: NativeTransport, text: string, images: ImageAttachment[], durable: DraftSubmissionHandle, work: () => Promise<T>) {
   const message: ChatMessage = { id: crypto.randomUUID(), role: "user", content: [{ type: "text", text }, ...images] };
-  setSubmission({ owner, message, previousUserIds: new Set(previousMessages.flatMap(item => item.role === "user" ? [item.id] : [])), status: "Sending message…" });
-  let awaitingMessage = false;
+  setSubmissions(current => [...current, { owner, message, durable, status: "Sending message…" }]);
+  ownDraftSubmission(durable);
 
   try {
     const result = await work();
-    awaitingMessage = result !== false && !queued && !text.trimStart().startsWith("/");
+
+    if (result === false) await durable.reject("Message was not submitted");
+    else await durable.accept();
 
     return result;
+  } catch (reason) {
+    const error = reason instanceof Error ? reason.message : String(reason);
+
+    if (durable.wasDispatched()) await durable.uncertain(error);
+    else await durable.reject(error);
+    throw reason;
   } finally {
-    if (!awaitingMessage) setSubmission((current) => current?.message === message ? undefined : current);
+    releaseDraftSubmission(durable, owner);
+    releaseDraftSubmission(durable);
+    setSubmissions(current => current.filter(item => item.message !== message));
   }
 }
 
@@ -71,7 +74,7 @@ function waitForConnection(owner: NativeTransport, active: Accessor<NativeTransp
   }));
 }
 
-export async function prepareChatWorktree(owner: NativeTransport, select: (path: string, host: string, onActivate: (destination: NativeTransport) => void) => Promise<void>, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
+export async function prepareChatWorktree(owner: NativeTransport, select: (path: string, host: string, onActivate: (destination: NativeTransport) => Promise<void>) => Promise<void>, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
   const path = await registeredWorktreePreparation(owner);
 
   if (active() !== owner) throw new Error("Conversation changed");
@@ -80,10 +83,22 @@ export async function prepareChatWorktree(owner: NativeTransport, select: (path:
 
   return owner; }
 
-  await select(path, owner.currentHostId(), (destination) => {
-    setSubmission((current) => current?.owner === owner ? { ...current, owner: destination } : current);
+  let selected: NativeTransport | undefined;
+  await select(path, owner.currentHostId(), async (destination) => {
+    const current = chatSubmission(owner);
+
+    if (current) {
+      try { await current.durable.move(destination); }
+      finally { ownDraftSubmission(current.durable, owner); }
+
+      setSubmissions(submissions => submissions.map(item => item.durable.id === current.durable.id ? { ...item, owner: destination } : item));
+    }
+
+    selected = destination;
   });
-  const destination = active();
+  const destination = selected;
+
+  if (!destination || active() !== destination) throw new Error("Conversation changed");
   await waitForConnection(destination, active, ready, error);
   owner.promptControls.copyTo(destination.promptControls);
 

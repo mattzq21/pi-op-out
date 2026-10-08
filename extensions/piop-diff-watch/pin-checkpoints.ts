@@ -34,7 +34,10 @@ async function pinCheckpoint(roots: Set<string>, sessionId: string, checkpoint: 
 }
 
 export async function removePinnedCheckpoints(checkpoints: PinnedCheckpoint[]) {
-  for (const checkpoint of checkpoints) await runGit(checkpoint.root, ["update-ref", "-d", checkpoint.ref, checkpoint.commit]);
+  const results = await Promise.allSettled(checkpoints.map(checkpoint => runGit(checkpoint.root, ["update-ref", "-d", checkpoint.ref, checkpoint.commit])));
+  const errors = results.flatMap((result, index) => result.status === "rejected" ? [new Error(`Could not remove created checkpoint ${JSON.stringify(checkpoints[index])}: ${String(result.reason)}`)] : []);
+
+  if (errors.length) throw new AggregateError(errors, "Some created checkpoints could not be removed; recovery references were retained");
 }
 
 export async function pinPromptHistory(root: string | undefined, sessionId: string, entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, sourceOwner?: string) {

@@ -14,7 +14,7 @@ import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiReque
 
 const optionalString = z.string().optional().catch(undefined);
 
-const reviewPayloadSchema = z.object({ task: optionalString, cwd: optionalString, parentSessionId: optionalString, sessionId: optionalString, sessionPath: optionalString });
+const reviewPayloadSchema = z.object({ task: optionalString, cwd: optionalString, parentSessionId: optionalString, sessionId: optionalString, sessionPath: optionalString, hostId: optionalString, readOnly: z.boolean().optional(), archived: z.boolean().optional(), inherited: z.boolean().optional() });
 
 type AppEventsContext = {
   transport: NativeTransport;
@@ -122,21 +122,24 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
           if (payload.sessionId === undefined || !payload.sessionPath) throw new Error("Missing saved review session");
 
-          return { task: payload.task, cwd: payload.cwd, parentSessionId: payload.parentSessionId, sessionId: payload.sessionId, sessionPath: payload.sessionPath };
+          return { ...payload, task: payload.readOnly ? undefined : payload.task, parentSessionId: payload.parentSessionId, sessionId: payload.sessionId, sessionPath: payload.sessionPath };
         };
+
+        const reviewHost = (hostId?: string) => hostId ?? capturedOptions.activeHostIdRef.current;
 
         const openReview = () => {
           try {
             const payload = reviewPayload();
             const cwd = payload.cwd || ".";
+            const hostId = reviewHost(payload.hostId);
             const previous = capturedOptions.pendingReviewRequest.current;
 
             if (previous && previous.id !== request.id) void previous.transport.command({ type: "extension_ui_response", id: previous.id, cancelled: true }).catch(() => undefined);
             capturedOptions.pendingReviewRequest.current = { id: request.id, transport: capturedOptions.transport };
             capturedOptions.setSplitPane({
               key: crypto.randomUUID(),
-              session: { id: payload.sessionId, path: payload.sessionPath, name: "Code review", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task ?? "Code review", messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
-              review: { task: payload.task, requestId: request.id, images: capturedOptions.reviewImages.get(capturedOptions.transport), messageMain: async message => {
+              session: { id: payload.sessionId, path: payload.sessionPath, name: "Code review", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task ?? "Code review", messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId },
+              review: { task: payload.task, requestId: request.id, readOnly: payload.readOnly, archived: payload.archived, inherited: payload.inherited, parentSessionId: payload.parentSessionId, images: payload.readOnly ? undefined : capturedOptions.reviewImages.get(capturedOptions.transport), messageMain: payload.readOnly ? undefined : async message => {
                   const parent = capturedOptions.transport;
 
                   if (parent.connectionTarget().sessionId !== payload.parentSessionId) throw new Error("The original main conversation is no longer connected");

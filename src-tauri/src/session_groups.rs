@@ -7,6 +7,9 @@ use tauri::{Emitter, Manager};
 static STORAGE_LOCK: Mutex<()> = Mutex::new(());
 const DIRLESS_KEY: &str = "__pi-desktop-dirless__";
 
+#[path = "session_group_deletions.rs"]
+mod deletions;
+
 #[cfg(test)]
 #[path = "session_groups_tests.rs"]
 mod tests;
@@ -93,6 +96,7 @@ fn attach_assignments_at(sessions: &mut [super::SessionSummary], path: &Path) ->
 pub fn load_session_groups(app: AppHandle, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
     let _lock = STORAGE_LOCK.lock().map_err(|_| "Session groups lock was poisoned")?;
     let path = storage_path()?;
+    deletions::refresh(&path, &super::load_app_settings(app.clone())?, &seeds, None)?;
     let mut state = load_at(&path, seeds, legacy)?;
     prune_missing_branch_groups(&app, &path, &mut state)?;
     Ok(state)
@@ -200,6 +204,9 @@ fn load_at(path: &Path, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Resul
     let stored = read(path)?;
     let mut dirty = stored.is_none();
     let mut state = stored.unwrap_or(legacy);
+    let deleted = deletions::known(path)?;
+    dirty |= deletions::prune(&mut state, &deleted);
+    let seeds: Vec<_> = seeds.into_iter().filter(|seed| !deletions::contains(&deleted, &seed.session_key)).collect();
     dirty |= restore_suppressed_projects(&mut state, &seeds);
     dirty |= migrate_group_names(&mut state);
     for seed in seeds {
@@ -252,7 +259,18 @@ fn restore_suppressed_projects(state: &mut SessionGroups, seeds: &[SessionSeed])
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub fn change_session_groups(app: AppHandle, change: GroupChange) -> Result<SessionGroups, String> {
+    let path = storage_path()?;
+    deletions::refresh(&path, &super::load_app_settings(app.clone())?, &[], deletions::change_key(&change))?;
     change_with(change, storage_path, |state| { let _ = app.emit("pi://groups-changed", state); })
+}
+
+pub(crate) fn refresh_deletions(app: &AppHandle, host_id: &str) -> Result<(), String> {
+    let _lock = STORAGE_LOCK.lock().map_err(|_| "Session groups lock was poisoned")?;
+    let path = storage_path()?;
+    let key = format!("{host_id}:");
+    deletions::refresh(&path, &super::load_app_settings(app.clone())?, &[], Some(&key))?;
+    if let Some(state) = read(&path)? { let _ = app.emit("pi://groups-changed", state); }
+    Ok(())
 }
 
 fn change_with(change: GroupChange, path: impl FnOnce() -> Result<PathBuf, String>, emit: impl FnOnce(&SessionGroups)) -> Result<SessionGroups, String> {
@@ -266,6 +284,9 @@ fn change_with(change: GroupChange, path: impl FnOnce() -> Result<PathBuf, Strin
 fn change_at(path: &Path, change: GroupChange) -> Result<SessionGroups, String> {
     let _file_lock = lock_storage(path)?;
     let mut state = read(path)?.ok_or("Session groups have not loaded yet")?;
+    let deleted = deletions::known(path)?;
+    deletions::prune(&mut state, &deleted);
+    if deletions::change_key(&change).is_some_and(|key| deletions::contains(&deleted, key)) { return Err("Conversation was permanently deleted".into()); }
     apply_group_change(&mut state, change)?;
     write(path, &state)?;
     Ok(state)

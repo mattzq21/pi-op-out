@@ -1,6 +1,3 @@
-mod publication;
-mod preparation;
-
 use super::{
     controller::{Host, ReadonlyView},
     ownership::{ownership_error, Guard},
@@ -8,12 +5,7 @@ use super::{
     session::Session,
 };
 use serde_json::{json, Value};
-use std::{
-    fs::OpenOptions,
-    io::{BufRead, BufReader, Read, Write},
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{io::{BufRead, BufReader, Read}, path::{Path, PathBuf}, sync::Arc};
 use uuid::Uuid;
 
 struct Destination {
@@ -47,7 +39,7 @@ async fn switch_destination(host: &Arc<Host>, session: &Arc<Session>, runtime: &
     }
     let state = session.execute(json!({"type":"get_state"})).await?;
     assert_current(host, session, runtime)?;
-    if matches!(kind(&command), "fork" | "fork_after") {
+    if matches!(kind(&command), "fork" | "fork_after" | "clone") {
         let path = state["sessionFile"]
             .as_str()
             .filter(|path| !path.is_empty())
@@ -219,10 +211,11 @@ async fn transfer(host: &Arc<Host>, session: &Arc<Session>, next: &Arc<Session>,
         host.attach_view(runtime, next.clone(), presence);
         finish_transfer(host, session).await?;
     }
+    next.activate_usage_recovery().await?;
     host.reconcile(next.clone());
     host.remember(runtime, next);
     if host.current(runtime, next) {
-        next.publish(json!({"type":"session_switched"}), Some(runtime));
+        next.publish(json!({"type":"session_switched","ephemeral":next.ephemeral}), Some(runtime));
     }
     Ok(json!({}))
 }
@@ -235,24 +228,13 @@ async fn finish_transfer(host: &Host, session: &Session) -> Result<()> {
 }
 
 async fn fork(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: Value, state: &Value, path: &str) -> Result<Value> {
-    let (directory, preparation_lock) = preparation::create(host)?;
-    let mut branch = Branch {
-        host,
-        session,
-        runtime,
-        state,
-        path,
-        directory,
-        preparation_lock: Some(preparation_lock),
-        worker: None,
-        next: None,
-        destination: None,
-        guard: None,
-        committed: false,
-    };
+    let mut branch = Branch { host, session, runtime, state, path, next: None, guard: None, committed: false };
     let result = branch.create(command).await;
-    branch.cleanup().await?;
-    result
+    let cleanup = branch.cleanup().await;
+    match (result, cleanup) {
+        (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        (Ok(value), Ok(())) => Ok(value),
+    }
 }
 
 struct Branch<'a> {
@@ -261,94 +243,35 @@ struct Branch<'a> {
     runtime: &'a str,
     state: &'a Value,
     path: &'a str,
-    directory: PathBuf,
-    preparation_lock: Option<std::fs::File>,
-    worker: Option<Arc<Session>>,
     next: Option<Arc<Session>>,
-    destination: Option<PathBuf>,
     guard: Option<Guard>,
     committed: bool,
 }
 
 impl Branch<'_> {
     async fn create(&mut self, command: Value) -> Result<Value> {
-        let preparing = self.spawn_preparing()?;
-        self.worker = Some(preparing.clone());
-        let initial = preparing.execute(json!({"type":"get_state"})).await?;
-        let mut result = preparing.raw(command).await?;
-        if result["cancelled"] == true {
-            return Ok(result);
-        }
-        let branch = preparing.execute(json!({"type":"get_state"})).await?;
-        preparing.stop().await;
-        self.host.flush_capture(&self.session.key()).await?;
-        let destination = self.persist(&branch, &initial)?;
-        let opened = self.open(&branch, &destination).await?;
-        self.commit(&opened).await?;
-        result["state"] = branch;
-        result["state"]["sessionFile"] = json!(destination);
-        Ok(result)
-    }
-
-    fn spawn_preparing(&self) -> Result<Arc<Session>> {
-        let source = self.snapshot_source()?;
-        let mut spec = self.session.spec.session("--fork", &source.to_string_lossy());
-        spec.env.insert("PIOP_FORK_PREPARATION_DIRECTORY".into(), self.directory.to_string_lossy().into_owned());
-        spec.env.insert("PIOP_FORK_DESTINATION_DIRECTORY".into(), Path::new(self.path).parent().ok_or("Invalid fork source path")?.to_string_lossy().into_owned());
-        spec.args
-            .extend(["--session-dir".into(), self.directory.to_string_lossy().into_owned()]);
-        self.spawn(Uuid::new_v4().to_string(), spec)
-    }
-
-    fn snapshot_source(&self) -> Result<PathBuf> {
-        let _publication = super::reference_publication::lock(&self.host.storage_root())?;
-        let source = std::fs::File::open(self.path).map_err(|error| error.to_string())?;
-        let length = source.metadata().map_err(|error| error.to_string())?.len();
-        let mut content = Vec::new();
-        source.take(length).read_to_end(&mut content).map_err(|error| error.to_string())?;
-        let end = content.iter().rposition(|byte| *byte == b'\n').ok_or("The conversation has no complete session header")?;
-        let snapshot = self.directory.join("source.jsonl");
-        private_file(&snapshot)?
-            .write_all(&content[..=end])
-            .map_err(|error| error.to_string())?;
-        Ok(snapshot)
+        let mut request = json!({"type":"prepare_fork", "mode":kind(&command)});
+        if let Some(entry_id) = command.get("entryId") { request["entryId"] = entry_id.clone(); }
+        let branch = self.session.raw(request).await?;
+        let destination = validate_prepared(self.host, &branch, self.state, self.path)?;
+        let opened = self.open(&branch, &destination).await.map_err(|error| retained_branch(&destination, error))?;
+        self.commit(&opened).await.map_err(|error| retained_branch(&destination, error))?;
+        Ok(json!({"cancelled":false, "text":branch["text"], "state":{"sessionId":branch["sessionId"], "sessionFile":destination, "cwd":branch["cwd"], "ephemeral":false}}))
     }
 
     fn spawn(&self, key: String, spec: LaunchSpec) -> Result<Arc<Session>> {
         self.host.spawn_session(SessionLaunch {
-            key,
-            spec,
-            timeout: self.session.timeout,
-            ephemeral: self.session.ephemeral,
-            transient: true,
-            client_id: self.session.client_id(),
-            cwd: self.session.cwd.clone(),
+            key, spec, timeout: self.session.timeout, ephemeral: false, transient: true,
+            client_id: self.session.client_id(), cwd: self.session.cwd.clone(),
         })
-    }
-
-    fn persist(&mut self, branch: &Value, initial: &Value) -> Result<PathBuf> {
-        let branch_file = PathBuf::from(text(branch, "sessionFile"));
-        let branch_id = text(branch, "sessionId");
-        validate_branch(self.host, &branch_file, &branch_id, initial, self.state, &self.directory)?;
-        let destination = Path::new(self.path)
-            .parent()
-            .ok_or("Invalid conversation path")?
-            .join(branch_file.file_name().ok_or("Invalid branch path")?);
-        publication::publish(self.host, self.path, &branch_file, &branch_id, &destination, self.session.ephemeral)?;
-        self.destination = Some(destination.clone());
-        Ok(destination)
     }
 
     async fn open(&mut self, branch: &Value, destination: &Path) -> Result<Arc<Session>> {
         let branch_id = text(branch, "sessionId");
-        let ownership = if self.session.ephemeral {
-            Guard::ephemeral()
-        } else {
-            self.host
-                .ownership()
-                .begin(&branch_id, &self.session.client_id(), &json!({"path":destination}))
-                .await?
-        };
+        let ownership = self.host
+            .ownership()
+            .begin(&branch_id, &self.session.client_id(), &json!({"path":destination}))
+            .await?;
         let owned = ownership.owned;
         self.guard = Some(ownership);
         if !owned {
@@ -386,54 +309,52 @@ impl Branch<'_> {
         self.host.release_unused(self.session).await?;
         self.host.reconcile(opened.clone());
         if self.host.current(self.runtime, opened) {
-            opened.publish(json!({"type":"session_switched"}), Some(self.runtime));
+            opened.publish(json!({"type":"session_switched","ephemeral":opened.ephemeral}), Some(self.runtime));
         }
         Ok(())
     }
 
     async fn cleanup(&mut self) -> Result<()> {
-        let workers: Vec<_> = self.worker.iter().chain(self.next.iter().filter(|_| !self.committed)).collect();
-        for worker in &workers {
-            worker.stop().await;
-        }
-        let destination = if !self.committed {
-            self.destination.take().map(|path| publication::remove(self.host, &path, self.session.ephemeral)).transpose()
-        } else {
-            Ok(None)
-        };
-        self.preparation_lock.take();
-        let cleanup = publication::recover(self.host);
-        for worker in workers {
-            self.host.forget_worker(worker);
+        if !self.committed {
+            if let Some(next) = &self.next {
+                next.stop().await;
+                self.host.forget_worker(next);
+            }
         }
         if let Some(guard) = self.guard.take() {
-            guard.release(self.host.ownership(), !self.committed)?;
+            guard.release(self.host.ownership(), false)?;
         }
-        destination?;
-        cleanup
+        Ok(())
     }
 }
 
-fn private_file(path: &Path) -> Result<std::fs::File> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path).map_err(|error| error.to_string())
+fn retained_branch(destination: &Path, error: String) -> String {
+    format!("Conversation branch was saved at {}; its history and dependencies were retained: {error}", destination.display())
 }
 
-fn validate_branch(host: &Host, path: &Path, id: &str, initial: &Value, state: &Value, directory: &Path) -> Result<()> {
-    let parent = path.parent().and_then(|parent| parent.canonicalize().ok());
-    if parent != Some(directory.canonicalize().map_err(|error| error.to_string())?)
-        || path.to_str() == initial["sessionFile"].as_str()
-        || id.is_empty()
-        || state["sessionId"] == id
-        || host.registry().sessions.contains_key(id)
-    {
-        return Err("Pi did not create the requested branch".into());
+fn validate_prepared(host: &Host, branch: &Value, state: &Value, parent: &str) -> Result<PathBuf> {
+    let id = text(branch, "sessionId");
+    let path = PathBuf::from(text(branch, "sessionPath"));
+    Uuid::parse_str(&id).map_err(|_| "The prepared branch has no stable session identity")?;
+    if state["sessionId"] == id || host.registry().sessions.contains_key(&id) {
+        return Err("The prepared branch identity is already in use".into());
     }
+    if !path.is_absolute() || !path.file_name().is_some_and(|name| name.to_string_lossy().ends_with(&format!("_{id}.jsonl"))) {
+        return Err("The prepared branch path does not bind its session identity".into());
+    }
+    validate_prepared_header(&path, &id, parent)?;
+    Ok(path)
+}
+
+fn validate_prepared_header(path: &Path, id: &str, parent: &str) -> Result<()> {
+    use std::io::{BufRead, BufReader, Read};
+    let mut header = String::new();
+    BufReader::new(std::fs::File::open(path).map_err(|error| error.to_string())?)
+        .take(64 * 1024).read_line(&mut header).map_err(|error| error.to_string())?;
+    let header: Value = serde_json::from_str(&header).map_err(|error| error.to_string())?;
+    if header["type"] != "session" || header["id"] != id || header["parentSession"] != parent {
+        return Err("The prepared branch does not belong to its original conversation".into());
+    }
+    Uuid::parse_str(&text(&header, "piopPublicationId")).map_err(|_| "The prepared branch has no durable publication identity")?;
     Ok(())
 }

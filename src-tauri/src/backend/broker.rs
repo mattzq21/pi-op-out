@@ -390,7 +390,7 @@ fn broker_orchestration(app: &AppHandle, broker: &BrokerRuntime, value: Value) -
         return broker_interruption_status(broker, &value, result);
     }
     let (id, action) = orchestration_target(&value)?;
-    if action == "interrupt" {
+    if matches!(action, "interrupt" | "locate" | "read") {
         let settings = load_app_settings(app.clone())?;
         let runtime = app.state::<PiRuntime>();
         let daemon = crate::daemon::connect(app, &runtime, broker, &settings, host)?;
@@ -401,18 +401,20 @@ fn broker_orchestration(app: &AppHandle, broker: &BrokerRuntime, value: Value) -
 }
 
 fn broker_conversation_operation(app: &AppHandle, broker: &BrokerRuntime, value: &Value, host: &str, id: &str, action: &str) -> Result<Value, String> {
-    let sessions = broker_message_sessions(app, &app.state::<SessionIndexRuntime>(), host)?;
-    let session = resolve_agent(&sessions, host, id)?;
     let settings = load_app_settings(app.clone())?;
     let runtime = app.state::<PiRuntime>();
     let daemon = crate::daemon::connect(app, &runtime, broker, &settings, host)?;
-    let mut packet = json!({"type":"orchestration","action":action,"sessionKey":id,"sessionPath":session.path,
+    let location = daemon.request(json!({"type":"orchestration","action":"locate","sessionKey":id}))?;
+    if location["archived"] == true { return Err("This conversation is archived. Restore it before sending another task".into()); }
+    let path = location["sessionPath"].as_str().ok_or("Conversation lookup returned no saved path")?;
+    let cwd = location["cwd"].as_str().ok_or("Conversation lookup returned no working directory")?;
+    let mut packet = json!({"type":"orchestration","action":action,"sessionKey":id,"sessionPath":path,
         "sourceSessionId":value["sourceSessionId"],"sourceHostId":value["sourceHostId"],"message":value["message"],"wake":value["wake"],"clientId":value["clientId"],"deliveryId":value["deliveryId"],"deadline":value["deadline"],"recoveryDepth":value["recoveryDepth"]});
     if matches!(action, "send" | "recover_usage") {
-        let mut command = build_pi_command(broker, &settings, host, PiLaunch::Rpc { cwd: Some(&session.cwd), session_path: Some(&session.path), session_id: None, fork_path: None, no_session: false }, daemon.remote_port)?;
+        let mut command = build_pi_command(broker, &settings, host, PiLaunch::Rpc { cwd: Some(cwd), session_path: Some(path), session_id: None, fork_path: None, no_session: false }, daemon.remote_port)?;
         if action == "recover_usage" { command.env("PIOP_USAGE_RECOVERY", "1"); }
         packet["spec"] = crate::daemon::spec(&command);
-        packet["cwd"] = json!(session.cwd);
+        packet["cwd"] = json!(cwd);
     }
     daemon.request(packet)
 }
@@ -430,7 +432,7 @@ fn broker_interruption_status(broker: &BrokerRuntime, request: &Value, mut resul
 fn orchestration_target(value: &Value) -> Result<(&str, &str), String> {
     let id = value["sessionId"].as_str().ok_or("sessionId is required")?;
     let action = value["action"].as_str().ok_or("action is required")?;
-    if !matches!(action, "read" | "send" | "interrupt" | "recover_usage") { return Err("Unknown orchestration action".into()); }
+    if !matches!(action, "read" | "send" | "interrupt" | "recover_usage" | "locate") { return Err("Unknown orchestration action".into()); }
     Ok((id, action))
 }
 

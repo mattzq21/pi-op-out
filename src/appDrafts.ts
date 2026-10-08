@@ -1,268 +1,447 @@
-import { batch, createMemo, createSignal, onCleanup, untrack } from "solid-js";
-import type { NativeConnectionTarget } from "./lib/nativeTransport";
+import { createMemo, createSignal, onCleanup } from "solid-js";
+import { NativeTransport, type NativeConnectionTarget } from "./lib/nativeTransport";
+import type { ConversationDraft } from "./lib/conversationDraftStorage";
 import type { StateUpdate } from "./lib/solid";
-import type { ComposerUpload } from "./types";
-import { createDraftStorage, type ConversationDraft, type DraftChanges, type DraftConflict } from "./lib/conversationDraftStorage";
+import type { ComposerUpload, SessionSummary } from "./types";
+import { z } from "zod";
+import { DraftStorage, draftEndpoint, durableDraftId, type DraftDestination, type DraftStorageIssue, type DurableDraft, type DurableSubmission } from "./lib/draftStorage";
+import { bindDraftStaging, goalPreparationSchema, submissionFingerprint, type DraftSubmissionHandle, type DraftSubmissionPayload } from "./lib/draftSubmission";
+import type { DraftConflictSnapshot } from "./lib/draftStorage";
 
 export type { ConversationDraft } from "./lib/conversationDraftStorage";
 
-type Drafts = Record<string, ConversationDraft>;
+const legacyEntriesSchema = z.record(z.string(), z.json());
 
-interface DraftOptions {
-  onError: (message: string) => void;
+const mergeText = (previous: string, newer: string) => !previous ? newer : newer && newer !== previous ? `${previous}\n\n${newer}` : previous;
+
+const mergeUploads = (previous: ComposerUpload[], newer: ComposerUpload[]) => [...previous.filter(item => !newer.some(other => other.id === item.id)), ...newer];
+
+function legacyEntries(key: string) {
+  return legacyEntriesSchema.parse(JSON.parse(localStorage.getItem(key) ?? "{}"));
 }
 
-const hasContent = (draft: ConversationDraft) => Boolean(draft.text || draft.uploads.length);
+function legacyDrafts(key: string) {
+  const drafts: Record<string, string> = {};
+  const issues: DraftStorageIssue[] = [];
 
-function matchesSessionDraft(key: string, draft: ConversationDraft, hostId: string, sessionPath?: string, sessionId?: string) {
-  const target = draft.target;
-  const host = target?.hostId ?? key.slice(0, key.lastIndexOf(":"));
+  try {
+    for (const [id, value] of Object.entries(legacyEntries(key))) {
+      const text = z.string().safeParse(value);
 
-  if (host !== hostId) return false;
-  const sameId = Boolean(sessionId && (key === `${hostId}:${sessionId}` || target?.sessionId === sessionId));
+      if (text.success) drafts[id] = text.data;
+      else issues.push({ kind: "storage", id, message: `Older draft ${id} has invalid saved text. Its original content has been retained.` });
+    }
+  } catch (reason) { issues.push({ kind: "storage", id: key, message: `Older drafts could not be read. Their original content has been retained. ${String(reason)}` }); }
 
-  return sameId || Boolean(sessionPath && target?.sessionPath === sessionPath);
+  return { drafts, issues };
 }
 
-function setDraft(current: Drafts, key: string, update: (draft: ConversationDraft) => ConversationDraft) {
-  const next = { ...current };
-  const draft = update(current[key] ?? { text: "", uploads: [], updatedAt: Date.now() });
+function restoredDraft(record: DurableDraft, current: DurableDraft, textChanged: boolean, uploadsChanged: boolean): DurableDraft {
+  const text = textChanged ? current.text : record.text;
+  const uploads = uploadsChanged ? current.uploads : record.uploads;
+  const destination = current.destination ? { ...current.destination, cwd: current.destination.cwd ?? record.destination?.cwd, sessionPath: current.destination.sessionPath ?? record.destination?.sessionPath } : record.destination;
 
-  if (hasContent(draft)) next[key] = draft;
-  else delete next[key];
-
-  return next;
+  return { ...record, text, uploads, destination };
 }
 
-function mergeDraft(source: ConversationDraft, destination?: ConversationDraft): ConversationDraft {
-  if (!destination) return source;
-  const text = source.text === destination.text ? source.text : [destination.text, source.text].filter(Boolean).join("\n\n");
-  const uploads = new Map(destination.uploads.map(upload => [upload.id, upload]));
-
-  for (const upload of source.uploads) uploads.set(upload.id, upload);
-
-  return { ...destination, text, uploads: [...uploads.values()], updatedAt: Math.max(source.updatedAt, destination.updatedAt) };
-}
-
-export function createConversationDrafts(options: DraftOptions) {
-  const storage = createDraftStorage(options.onError);
-  const [records, setRecords] = createSignal<Drafts>(storage.legacy);
-  const targets = new Map<string, NativeConnectionTarget>();
-  const pending: Array<(current: Drafts) => Drafts> = [];
-  const dirty: DraftChanges = new Map();
-  const conflicts = new Map<string, DraftConflict>();
-  const moves = new Map<string, string>();
-  const discarded = new Set<string>();
-  const removals = new Set<string>();
-  const [isSaving, setIsSaving] = createSignal(false);
-  const [isReady, setIsReady] = createSignal(false);
-  const [saveError, setSaveError] = createSignal<string>();
-  let hydrated = false;
+export function createConversationDrafts() {
+  const endpoint = draftEndpoint();
+  const legacyKey = `piop-conversation-drafts:v1:${endpoint}`;
+  const storage = new DraftStorage();
+  const legacyState = legacyDrafts(legacyKey);
+  const legacy = legacyState.drafts;
+  const [records, setRecords] = createSignal<Map<string, DurableDraft>>(new Map(Object.entries(legacy).map(([key, text]) => [key, { id: durableDraftId(endpoint, key), endpoint, key, text, uploads: [], updatedAt: Date.now() }])));
+  const [submissions, setSubmissions] = createSignal<DurableSubmission[]>([]);
+  const [uploadsByTransport, setUploadsByTransport] = createSignal<Map<NativeTransport, ComposerUpload[]>>(new Map());
+  const [persistenceError, setPersistenceError] = createSignal<string>();
+  const [storageIssues, setStorageIssues] = createSignal<DraftStorageIssue[]>(legacyState.issues);
+  const [loaded, setLoaded] = createSignal(false);
+  const [pendingWrites, setPendingWrites] = createSignal(0);
+  const [conflictCount, setConflictCount] = createSignal(0);
+  const owners = new Map<NativeTransport, string>();
+  const aliases = new Map<string, string>();
+  const redirected = new WeakMap<NativeTransport, NativeTransport>();
+  const textChanged = new Set<string>();
+  const uploadsChanged = new Set<string>();
+  const legacyCopies = new Map<string, DurableDraft>();
+  let queue: Promise<void> = Promise.resolve();
+  let revisionEpoch = 0;
   let loading: Promise<void> | undefined;
-  let saving: Promise<void> | undefined;
-  let changesVersion = 0;
-  let attemptedVersion = 0;
 
-  const failed = (reason: Error | string) => {
-    const message = `Could not save or restore drafts. Keep this window open and try editing again. ${String(reason)}`;
+  const report = (reason: Error | string) => { setConflictCount(storage.conflictCount()); setPersistenceError(`Could not save draft content: ${reason instanceof Error ? reason.message : reason}. Keep this window open and retry saving before reloading.`); };
 
-    if (untrack(saveError) !== message) options.onError(message);
-    setSaveError(message);
+  const keyFor = (key: string): string => aliases.has(key) ? keyFor(aliases.get(key) ?? key) : key;
+  const ownerFor = (owner: NativeTransport): NativeTransport => redirected.has(owner) ? ownerFor(redirected.get(owner) ?? owner) : owner;
+  const empty = (key: string): DurableDraft => ({ id: durableDraftId(endpoint, key), endpoint, key, text: "", uploads: [], updatedAt: Date.now() });
+  const recordFor = (key: string) => records().get(keyFor(key)) ?? empty(keyFor(key));
+
+  const publishUploads = () => setUploadsByTransport(new Map([...owners].map(([owner, key]) => [owner, recordFor(key).uploads])));
+  const publish = (record: DurableDraft) => { setRecords(current => new Map(current).set(record.key, record)); publishUploads(); };
+
+  const enqueue = (operation: () => Promise<void>) => {
+    setPendingWrites(current => current + 1);
+    const epoch = revisionEpoch;
+
+    const result = queue.then(() => ready).then(() => {
+      if (epoch !== revisionEpoch) throw new Error("Saved input was reloaded before this change could be saved. Retry saving the remaining input.");
+
+      return operation();
+    }).finally(() => setPendingWrites(current => current - 1));
+
+    queue = result.catch(reason => { report(reason); });
+
+    return result;
   };
 
-  const queueChanges = (previous: Drafts, next: Drafts) => {
-    for (const key of new Set([...Object.keys(previous), ...Object.keys(next)])) {
-      if (previous[key] !== next[key]) { dirty.set(key, next[key]); changesVersion += 1; }
-    }
+  const preserveText = (key: string, text: string) => {
+    try { const stored = legacyEntries(legacyKey); stored[key] = text; localStorage.setItem(legacyKey, JSON.stringify(stored)); }
+    catch (reason) { report(String(reason)); }
   };
 
-  const hydrate = () => {
-    if (hydrated) return Promise.resolve();
+  const retireLegacy = (record: DurableDraft) => {
+    try {
+      const stored = legacyEntries(legacyKey);
 
-    if (loading) return loading;
-    loading = storage.load().then(stored => {
-      let restored = stored;
-
-      for (const update of pending) restored = update(restored);
-      pending.length = 0;
-      hydrated = true;
-      queueChanges(stored, restored);
-      setRecords(restored);
-      setIsReady(true);
-    }).finally(() => { loading = undefined; });
-
-    return loading;
+      if (stored[record.key] !== record.text) return;
+      delete stored[record.key];
+      localStorage.setItem(legacyKey, JSON.stringify(stored));
+    } catch (reason) { report(String(reason)); }
   };
 
-  const discardConflict = (key: string) => {
-    const conflict = conflicts.get(key);
+  const save = (record: DurableDraft) => enqueue(async () => { const current = recordFor(record.key); await storage.commit([current]); retireLegacy(current); });
 
-    if (!conflict) return;
-    storage.acceptConflict(key, conflict);
-    conflicts.delete(key); dirty.delete(key); moves.delete(key); discarded.delete(key);
+  const update = (key: string, transform: (record: DurableDraft) => DurableDraft) => {
+    const next = transform(recordFor(key)); publish(next);
+    void save(next).catch(() => undefined);
 
-    if (conflict.draft?.target) targets.set(key, conflict.draft.target);
-    else targets.delete(key);
-    setRecords(current => {
-      const next = { ...current };
-
-      if (conflict.draft) next[key] = conflict.draft;
-      else delete next[key];
-
-      return next;
-    });
+    return next;
   };
 
-  const acknowledgeSaved = (changes: DraftChanges, saved: Set<string>) => {
-    for (const key of saved) {
-      if (!dirty.has(key) || dirty.get(key) !== changes.get(key)) continue;
-      dirty.delete(key); conflicts.delete(key); moves.delete(key); discarded.delete(key); removals.delete(key);
-    }
-  };
+  const preserveLegacyConflict = (record: DurableDraft, text: string) => {
+    let copy = legacyCopies.get(record.key);
 
-  const recordConflicts = (detected: Map<string, DraftConflict>) => {
-    for (const [key, conflict] of detected) {
-      if (!dirty.has(key)) continue;
-      conflicts.set(key, conflict);
-
-      if (dirty.get(key) === undefined && discarded.has(key)) discardConflict(key);
-    }
-  };
-
-  const persist = async () => {
-    await hydrate();
-    const attempted = new Set<string>();
-
-    while (dirty.size) {
-      const changes = new Map([...dirty].filter(([key]) => !attempted.has(key)));
-
-      if (!changes.size) break;
-      attemptedVersion = changesVersion;
-      const result = await storage.save(changes, moves, new Set(conflicts.keys()), removals);
-      acknowledgeSaved(changes, result.saved);
-      recordConflicts(result.conflicts);
-
-      for (const key of [...result.conflicts.keys(), ...result.blocked]) attempted.add(key);
+    if (!copy) {
+      const key = `recovered:draft-${crypto.randomUUID()}`;
+      copy = { ...empty(key), text, updatedAt: record.updatedAt };
+      legacyCopies.set(record.key, copy);
     }
 
-    if (conflicts.size) throw new Error("A draft changed in another Piop window. Unrelated drafts are saved normally. Your changes remain here; clear that draft's text and attachments to discard your version and restore the other window's saved version.");
-    setSaveError(undefined);
+    publish(copy);
+
+    return copy;
   };
 
-  const flush = (): Promise<void> => {
-    if (saving) return saving;
-    let succeeded = false;
-    setIsSaving(true);
-    saving = persist().then(() => { succeeded = true; }).catch(reason => { failed(reason); throw reason; }).finally(() => {
-      saving = undefined;
-      setIsSaving(false);
+  const restoreDrafts = (saved: DurableDraft[], issues: DraftStorageIssue[]) => {
+    const migrated: DurableDraft[] = [];
+    const retired: DurableDraft[] = [];
 
-      if ((succeeded || changesVersion > attemptedVersion) && dirty.size) return flush();
-    });
+    for (const record of saved) {
+      const previous = legacy[record.key];
 
-    return saving;
+      if (previous && previous !== record.text) migrated.push(preserveLegacyConflict(record, previous));
+
+      if (previous !== undefined) retired.push({ ...record, text: previous });
+      publish(restoredDraft(record, recordFor(record.key), textChanged.has(record.key), uploadsChanged.has(record.key)));
+    }
+
+    for (const key of Object.keys(legacy)) {
+      if (saved.some(record => record.key === key) || issues.some(issue => issue.kind === "draft" && issue.id === durableDraftId(endpoint, key))) continue;
+      const record = recordFor(key);
+      migrated.push(record); retired.push(record);
+    }
+
+    return { migrated, retired };
   };
 
-  const ready = flush();
+  const load = () => loading ??= storage.load(endpoint).then(async restored => {
+    setStorageIssues([...legacyState.issues, ...restored.issues]);
+    setConflictCount(storage.conflictCount());
+    const { migrated, retired } = restoreDrafts(restored.drafts, restored.issues);
+    setSubmissions(restored.submissions);
+
+    for (const submission of restored.submissions) {
+      const record = recordFor(submission.destination.key);
+
+      if (!record.text && !record.uploads.length) publish({ ...record, destination: submission.destination, updatedAt: submission.createdAt });
+    }
+
+    await storage.commit(migrated);
+
+    for (const record of retired) retireLegacy(record);
+    setLoaded(true);
+  }).catch(reason => { report(reason); throw reason; }).finally(() => { loading = undefined; });
+
+  let ready = load();
   void ready.catch(() => undefined);
 
-  const retry = () => {
-    if (!hydrated || untrack(saveError)) void flush().catch(() => undefined);
+  const composerDrafts = createMemo(() => Object.fromEntries([...records()].map(([key, record]) => [key, record.text])));
+
+  const setComposerDraft = (sessionKey: string, value: StateUpdate<string>) => {
+    const key = keyFor(sessionKey);
+    textChanged.add(key);
+    const text = value instanceof Function ? value(recordFor(key).text) : value;
+    preserveText(key, text);
+    update(key, record => ({ ...record, text, updatedAt: Date.now() }));
   };
 
-  window.addEventListener("focus", retry);
-  window.addEventListener("online", retry);
-  onCleanup(() => {
-    window.removeEventListener("focus", retry);
-    window.removeEventListener("online", retry);
-  });
+  const setComposerUploads = (transport: NativeTransport | string, value: StateUpdate<ComposerUpload[]>) => {
+    const key = transport instanceof NativeTransport ? keyForTransport(transport) : keyFor(transport);
 
-  const updateDrafts = (update: (current: Drafts) => Drafts) => {
-    const previous = untrack(records);
-    const next = update(previous);
+    uploadsChanged.add(key);
+    update(key, record => ({ ...record, uploads: value instanceof Function ? value(record.uploads) : value, updatedAt: Date.now() }));
+  };
 
-    if (hydrated && previous === next) return;
-    batch(() => {
-      if (hydrated) queueChanges(previous, next);
-      else pending.push(update);
-      setRecords(next);
+  const destinationFor = (owner: NativeTransport): DraftDestination => {
+    const key = owners.get(owner);
+
+    if (!key) throw new Error("The draft destination is unavailable");
+
+    const previous = recordFor(key).destination;
+
+    const sessionPath = owner.currentSessionPath() ?? previous?.sessionPath;
+    const temporary = owner.isTemporaryChat();
+
+    return { key: keyFor(key), endpoint, hostId: owner.currentHostId(), cwd: !sessionPath && temporary ? undefined : owner.currentCwd() ?? previous?.cwd, sessionPath, temporary };
+  };
+
+  const storeSubmission = async (submission: DurableSubmission) => {
+    await enqueue(() => storage.commit([], [submission]));
+    setSubmissions(current => [...current.filter(item => item.id !== submission.id), submission]);
+  };
+
+  const retireSubmission = async (id: string) => {
+    await enqueue(() => storage.commit([], [], [], [id]));
+    setSubmissions(current => current.filter(item => item.id !== id));
+  };
+
+  const restoreSubmission = async (submission: DurableSubmission) => {
+    const key = keyFor(submission.destination.key);
+    const fingerprint = await submissionFingerprint(submission.rawText, submission.uploads);
+    const record = { ...recordFor(key), destination: { ...submission.destination, key }, text: mergeText(submission.rawText, recordFor(key).text), uploads: mergeUploads(submission.uploads, recordFor(key).uploads), updatedAt: Date.now(), retrySubmission: { id: submission.id, fingerprint } };
+    preserveText(key, record.text); publish(record);
+    await enqueue(() => storage.commit([record], [], [], [submission.id]));
+    setSubmissions(current => current.filter(item => item.id !== submission.id));
+    retireLegacy(record);
+  };
+
+  const transferSubmission = async (submission: DurableSubmission, source: NativeTransport, destination: NativeTransport, committed: (next: DurableSubmission) => void) => {
+    const previousKey = keyFor(submission.destination.key);
+    const target = destinationFor(destination);
+    const next = { ...submission, destination: target };
+    let transferred = recordFor(target.key);
+    let previous = recordFor(previousKey);
+    await enqueue(async () => {
+      previous = recordFor(previousKey);
+      transferred = { ...recordFor(target.key), destination: target, text: mergeText(previous.text, recordFor(target.key).text), uploads: mergeUploads(previous.uploads, recordFor(target.key).uploads), updatedAt: Date.now() };
+      await storage.commit([transferred, { ...previous, text: "", uploads: [] }], [next]);
     });
-    void flush().catch(() => undefined);
+    committed(next);
+    const latest = recordFor(previousKey);
+    const additions = latest.uploads.filter(upload => !previous.uploads.some(item => item.id === upload.id));
+    const text = latest.text === previous.text ? transferred.text : mergeText(transferred.text, latest.text);
+    redirected.set(source, destination);
+    publish({ ...latest, text: "", uploads: [] });
+    publish({ ...transferred, text, uploads: mergeUploads(transferred.uploads, additions) });
+    setSubmissions(current => current.map(item => item.id === next.id ? next : item));
+    retireLegacy(previous);
+    await enqueue(() => storage.commit([recordFor(target.key), recordFor(previousKey)], [next]));
+
+    return next;
   };
 
-  const modify = (key: string, update: (draft: ConversationDraft) => ConversationDraft) => {
-    removals.delete(key);
-    updateDrafts(current => setDraft(current, key, draft => ({ ...update(draft), target: targets.get(key) ?? draft.target, updatedAt: Date.now() })));
+  const stage = async (initialOwner: NativeTransport, payload: DraftSubmissionPayload): Promise<DraftSubmissionHandle> => {
+    await ready;
+    let owner = ownerFor(initialOwner);
+    const destination = destinationFor(owner);
+    const fingerprint = await submissionFingerprint(payload.rawText, payload.uploads);
+    const retry = recordFor(destination.key).retrySubmission;
+    const id = retry?.fingerprint === fingerprint ? retry.id : crypto.randomUUID();
+    let submission: DurableSubmission = { id, destination, rawText: payload.rawText, uploads: payload.uploads, status: "preparing", createdAt: Date.now() };
+    await storeSubmission(submission);
+    update(destination.key, current => ({ ...current, retrySubmission: undefined }));
 
-    if (!untrack(records)[key]) { discarded.add(key); discardConflict(key); }
-    else discarded.delete(key);
+    if (payload.consume) {
+      setComposerDraft(submission.destination.key, current => current === payload.rawText ? "" : current);
+      const ids = new Set(payload.uploads.map(upload => upload.id));
+      setComposerUploads(owner, current => current.filter(upload => !ids.has(upload.id)));
+    }
+
+    let dispatched = false;
+
+    return {
+      id: submission.id, owner: () => owner, wasDispatched: () => dispatched,
+      move: async destination => { await transferSubmission(submission, owner, destination, next => { submission = next; owner = destination; }); },
+      dispatch: async () => { const next: DurableSubmission = { ...submission, destination: destinationFor(owner), status: "uncertain" }; await storeSubmission(next); submission = next; dispatched = true; },
+      accept: () => retireSubmission(submission.id),
+      reject: async reason => { submission = { ...submission, destination: destinationFor(owner), error: reason }; await restoreSubmission(submission); },
+      uncertain: async reason => { submission = { ...submission, destination: destinationFor(owner), status: "uncertain", error: reason }; await storeSubmission(submission); },
+    };
   };
 
-  const setComposerDraft = (key: string, update: StateUpdate<string>) => modify(key, draft => ({ ...draft, text: update instanceof Function ? update(draft.text) : update }));
-  const setComposerUploads = (key: string, update: StateUpdate<ComposerUpload[]>) => modify(key, draft => ({ ...draft, uploads: update instanceof Function ? update(draft.uploads) : update }));
+  const bindTransport = (owner: NativeTransport, key: string) => {
+    const target = owner.connectionTarget();
 
-  const setDraftTarget = (key: string, target: NativeConnectionTarget) => {
-    targets.set(key, target);
-    updateDrafts(current => {
-      const draft = current[key];
+    if (target.draftKey === key || target.sessionId && key === `${owner.currentHostId()}:${target.sessionId}`) aliases.delete(key);
+    const resolved = keyFor(key);
+    owners.set(owner, resolved);
+    const destination = destinationFor(owner); const previous = recordFor(resolved);
 
-      return draft && JSON.stringify(draft.target) !== JSON.stringify(target) ? { ...current, [key]: { ...draft, target } } : current;
-    });
+    if (JSON.stringify(previous.destination) !== JSON.stringify(destination)) update(resolved, record => ({ ...record, destination }));
+    publishUploads();
+    bindDraftStaging(owner, payload => stage(owner, payload));
+  };
+
+  const keyForTransport = (transport: NativeTransport) => {
+    const owner = ownerFor(transport);
+    const existing = owners.get(owner);
+
+    if (existing) return keyFor(existing);
+    const target = owner.connectionTarget();
+    const key = target.draftKey ?? `${owner.currentHostId()}:${target.sessionId ?? `draft-${crypto.randomUUID()}`}`;
+    bindTransport(owner, key);
+
+    return keyFor(key);
+  };
+
+  const transportHasDraft = (transport: NativeTransport, key?: string) => {
+    const owner = ownerFor(transport); const resolved = key ? keyFor(key) : owners.get(owner);
+
+    return Boolean(resolved && transportHasDraftForKey(resolved));
   };
 
   const rekeyDraft = (previousKey: string, nextKey: string, copy = false) => {
     if (previousKey === nextKey) return;
-    const target = targets.get(previousKey);
-
-    if (target && !targets.has(nextKey)) targets.set(nextKey, target);
+    const previous = recordFor(previousKey); const destination = previous.destination ? { ...previous.destination, key: nextKey } : undefined;
+    const next = { ...previous, id: durableDraftId(endpoint, nextKey), key: nextKey, destination, uploads: mergeUploads(previous.uploads, recordFor(nextKey).uploads), text: mergeText(previous.text, recordFor(nextKey).text) };
+    publish(next);
 
     if (!copy) {
-      targets.delete(previousKey);
+      aliases.set(previousKey, nextKey);
+      setRecords(current => { const next = new Map(current); next.delete(previousKey);
 
-      for (const [source, destination] of moves) if (destination === previousKey) moves.set(source, nextKey);
-      moves.set(previousKey, nextKey);
-      discarded.add(previousKey);
+      return next; });
     }
 
-    updateDrafts(current => {
-      if (!(previousKey in current)) return current;
-      const next = { ...current, [nextKey]: mergeDraft(current[previousKey], current[nextKey]) };
-
-      if (!copy) delete next[previousKey];
-
-      return next;
-    });
+    const moved = copy ? [] : submissions().flatMap(item => item.destination.key === previousKey ? [{ ...item, destination: { ...item.destination, key: nextKey } }] : []);
+    setSubmissions(current => current.map(item => moved.find(next => next.id === item.id) ?? item));
+    void enqueue(async () => { await storage.commit([next], moved, copy ? [] : [previous.id]); retireLegacy(previous); }).catch(() => undefined);
+    publishUploads();
   };
 
-  const deleteLocalDraft = (key: string) => {
-    updateDrafts(current => {
-      const next = { ...current };
-      delete next[key];
-      targets.delete(key);
-
-      return next;
-    });
+  const discard = (owner: NativeTransport, key = owners.get(owner)) => {
+    if (!key) return;
+    const resolved = keyFor(key); const discarded = submissions().filter(item => keyFor(item.destination.key) === resolved);
+    setComposerDraft(resolved, ""); update(resolved, record => ({ ...record, uploads: [] }));
+    void enqueue(async () => { await storage.commit([], [], [], discarded.map(item => item.id)); setSubmissions(current => current.filter(item => !discarded.includes(item))); }).catch(() => undefined);
   };
 
-  const removeDraft = (key: string) => { removals.add(key); discarded.delete(key); deleteLocalDraft(key); };
+  const transportHasDraftForKey = (key: string) => { const record = recordFor(key);
 
-  const discard = (key: string) => { discarded.add(key); removals.delete(key); deleteLocalDraft(key); discardConflict(key); };
+    return Boolean(record.text || record.uploads.length || submissions().some(item => keyFor(item.destination.key) === key)); };
 
-  const removeSessionDrafts = (hostId: string, sessionPath?: string, sessionId?: string) => updateDrafts(current => {
-    const next = { ...current };
+  const draftSummaries = createMemo<SessionSummary[]>(() => [...records().values()].flatMap(record => {
+    const destination = record.destination;
 
-    for (const [key, draft] of Object.entries(current)) {
-      if (!matchesSessionDraft(key, draft, hostId, sessionPath, sessionId)) continue;
-      removals.add(key); discarded.delete(key); targets.delete(key);
-      delete next[key];
-    }
+    if (!destination || !transportHasDraftForKey(record.key)) return [];
+    const pending = submissions().find(item => keyFor(item.destination.key) === record.key);
+    const preview = record.text || pending?.rawText || "Attachments";
 
-    return next;
+    return [{ id: record.key.slice(destination.hostId.length + 1), hostId: destination.hostId, hostName: endpoint, isDraft: !destination.sessionPath, cwd: destination.cwd ?? "", path: destination.sessionPath ?? "", project: destination.cwd?.split(/[\\/]/).filter(Boolean).at(-1) ?? "Temporary chat", name: preview.slice(0, 60), preview, messageCount: 0, lastMessageAt: record.updatedAt, apiCost: 0 }];
+  }));
+
+  const legacyRecoveries = createMemo(() => [...records().values()].filter(record => !record.destination && Boolean(record.text || record.uploads.length)));
+
+  const retryPersistence = async () => {
+    if (!loaded()) { ready = load(); await ready; }
+
+    await enqueue(() => storage.commit([...records().values()], submissions())); setPersistenceError(undefined);
+  };
+
+  const applyConflicts = (snapshot: DraftConflictSnapshot) => {
+    const changedDrafts = new Set(snapshot.changes.flatMap(change => change.store === "drafts" ? [change.id] : []));
+    const changedSubmissions = new Set(snapshot.changes.flatMap(change => change.store === "submissions" ? [change.id] : []));
+    const discarded = [...records().values()].filter(record => changedDrafts.has(record.id));
+    storage.acceptConflicts(snapshot); revisionEpoch += 1;
+
+    for (const key of aliases.keys()) if (changedDrafts.has(durableDraftId(endpoint, key))) aliases.delete(key);
+    setRecords(current => new Map([...current].filter(([, record]) => !changedDrafts.has(record.id))));
+
+    for (const record of snapshot.drafts) publish(record);
+    setSubmissions(current => [...current.filter(item => !changedSubmissions.has(item.id)), ...snapshot.submissions]);
+
+    for (const record of discarded) retireLegacy(record);
+    publishUploads(); setConflictCount(storage.conflictCount()); setPersistenceError(undefined);
+  };
+
+  const reloadConflicts = () => enqueue(async () => {
+    const previousRecords = records(); const previousSubmissions = submissions();
+    const snapshot = await storage.readConflicts();
+
+    if (records() !== previousRecords || submissions() !== previousSubmissions) throw new Error("Input changed while saved content was loading. Copy any input you want to keep and try reloading changed items again.");
+    applyConflicts(snapshot);
   });
 
-  const composerDrafts = createMemo(() => Object.fromEntries(Object.entries(records()).map(([key, draft]) => [key, draft.text])));
-  const uploadsFor = (key: string) => records()[key]?.uploads ?? [];
-  const hasDraft = (key: string) => Boolean(records()[key] && hasContent(records()[key]));
+  const copyLegacyDraft = (owner: NativeTransport, draft: DurableDraft) => {
+    const key = keyForTransport(owner);
+    setComposerDraft(key, current => mergeText(draft.text, current));
+    setComposerUploads(owner, current => mergeUploads(draft.uploads, current));
+  };
 
-  return { records, ready, flush, isReady, isSaving, saveError, composerDrafts, uploadsFor, setComposerDraft, setComposerUploads, setDraftTarget, hasDraft, rekeyDraft, removeDraft, removeSessionDrafts, discard };
+  const flush = async () => {
+    if (!loaded() || persistenceError()) await retryPersistence();
+
+    for (;;) {
+      const current = queue;
+      await current;
+
+      if (current === queue) break;
+    }
+
+    if (persistenceError()) throw new Error(persistenceError());
+  };
+
+  const retry = () => { if (!loaded() || persistenceError()) void retryPersistence().catch(() => undefined); };
+
+  window.addEventListener("focus", retry); window.addEventListener("online", retry);
+  onCleanup(() => { window.removeEventListener("focus", retry); window.removeEventListener("online", retry); });
+
+  const removeMatchingDrafts = (matches: (key: string, destination?: DraftDestination) => boolean) => {
+    void enqueue(async () => {
+      const removed = [...records().values()].filter(record => matches(record.key, record.destination));
+      const removedSubmissions = submissions().filter(item => matches(item.destination.key, item.destination));
+      await storage.commit([], [], removed.map(record => record.id), removedSubmissions.map(item => item.id));
+      setRecords(current => new Map([...current].filter(([key]) => !removed.some(record => record.key === key))));
+      setSubmissions(current => current.filter(item => !removedSubmissions.includes(item)));
+
+      for (const record of removed) retireLegacy(record);
+
+      publishUploads();
+    }).catch(() => undefined);
+  };
+
+  const removeDraft = (key: string) => removeMatchingDrafts(candidate => candidate === key);
+
+  const removeSessionDrafts = (hostId: string, sessionPath?: string, sessionId?: string) => removeMatchingDrafts((key, destination) =>
+    (destination?.hostId ?? key.slice(0, key.lastIndexOf(":"))) === hostId && Boolean(sessionId && key === `${hostId}:${sessionId}` || sessionPath && destination?.sessionPath === sessionPath));
+
+  const setDraftTarget = (key: string, target: NativeConnectionTarget) => update(key, record => ({ ...record, destination: { key, endpoint, hostId: target.hostId ?? "local", cwd: target.cwd, sessionPath: target.sessionPath, temporary: !target.cwd && !target.sessionPath } }));
+  const draftRecords = createMemo<Record<string, ConversationDraft>>(() => Object.fromEntries([...records()].map(([key, record]) => [key, { text: record.text, uploads: record.uploads, updatedAt: record.updatedAt, target: record.destination ? { hostId: record.destination.hostId, cwd: record.destination.cwd, sessionPath: record.destination.sessionPath, sessionId: record.destination.sessionPath ? key.slice(record.destination.hostId.length + 1) : undefined, draftKey: record.destination.sessionPath ? undefined : key } : undefined }])));
+
+  const setTransportDraft = (transport: NativeTransport, value: StateUpdate<string>) => {
+    const owner = ownerFor(transport); const key = owners.get(owner);
+
+    if (key) setComposerDraft(key, value);
+    else report("The text destination is unavailable");
+  };
+
+  const inspectGoalPreparation = (submission: DurableSubmission) => {
+    const key = keyFor(submission.destination.key);
+    const owner = [...owners.keys()].reverse().find(owner => owners.get(ownerFor(owner)) === key);
+
+    if (!owner) throw new Error("Open this conversation and wait for it to connect before inspecting the prepared goal.");
+
+    return ownerFor(owner).command({ type: "get_goal_preparation", goalSubmissionId: submission.id }, goalPreparationSchema.nullable());
+  };
+
+  return { endpoint, ready, loaded, isReady: loaded, isSaving: () => pendingWrites() > 0, saveError: persistenceError, flush, records: draftRecords, hasDraft: transportHasDraftForKey, uploadsFor: (key: string) => recordFor(key).uploads, setDraftTarget, keyForTransport, removeSessionDrafts, composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, setTransportDraft, transportHasDraft, inspectGoalPreparation, rekeyDraft, removeDraft, discard, bindTransport, draftSummaries, legacyRecoveries, submissions, persistenceError, storageIssues, retryPersistence, restoreSubmission, retireSubmission, conflictCount, reloadConflicts, copyLegacyDraft };
 }

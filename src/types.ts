@@ -18,9 +18,15 @@ export interface ChatMessage { deliveryBehavior?: "steer" | "followUp"; id: stri
 
 export interface SessionSummary { id: string; isDraft?: boolean; subagentParentId?: string; daemonId?: string; isRunning?: boolean; groupId?: string | null; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; projectRoot?: string | null; branch?: string | null; worktreeRoot?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; preview: string; messageCount: number; lastMessageAt: number; apiCost: number; hostId?: string; hostName?: string; }
 
-export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "archived-project-checkpoints" | "project-checkpoints" | "git-diff-snapshots" | "archived-git-diff-snapshots" | "temporary-chats" | "worktrees" | "archived-worktrees" | "other-storage"; byteSize: number; itemCount: number; estimated?: boolean; directories?: string[]; }
+export type StorageOwnership = "owned" | "referenced" | "shared" | "unattributed";
 
-export interface ArchivedConversation { id: string; path: string; name: string; cwd: string; modifiedAt: number; byteSize: number; deletable: boolean; deleteError?: string; worktreePath?: string; restorable?: boolean; restoreError?: string; }
+export interface StorageOwner { sessionId: string; sessionPath?: string; kind: string; }
+
+export interface StorageRoot { path: string; ownership: StorageOwnership; provenance: string[]; available: boolean; owners: StorageOwner[]; state?: string; refs?: string[]; }
+
+export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "archived-project-checkpoints" | "project-checkpoints" | "git-diff-snapshots" | "archived-git-diff-snapshots" | "temporary-chats" | "worktrees" | "archived-worktrees" | "other-storage" | "referenced-worktrees" | "recovery-storage" | "unattributed-recovery-storage" | "legacy-recovery-storage" | "ephemeral-storage" | "ephemeral-cleanup" | "pending-diff-snapshots" | "diff-transfer-staging" | "unattributed-diff-transfer-staging" | "chatgpt-storage" | "goal-attachments" | "unattributed-goal-attachments" | "unattributed-project-checkpoints"; byteSize: number; itemCount: number; estimated?: boolean; directories?: string[]; countUnit?: string; coverage?: string; ownership?: StorageOwnership; reclaimability?: "retained" | "requires-owner-check" | "unknown"; measurement?: "allocated-blocks" | "git-object-estimate"; includedInTotal?: boolean; roots?: StorageRoot[]; }
+
+export interface ArchivedConversation { id: string; path: string; name: string; cwd: string; modifiedAt: number; byteSize: number; deletable: boolean; deleteError?: string; worktreePath?: string; restorable?: boolean; restoreError?: string; byteSizeCoverage?: string; }
 
 export interface HostStorage { hostId: string; hostName: string; categories: StorageCategory[]; archives: ArchivedConversation[]; warnings: string[]; error?: string; }
 
@@ -42,7 +48,7 @@ export interface PromptContextInfo {
   tokens: { system: number; instructions: number; tools: number; skills: number };
 }
 
-export interface PendingMessage { id: string; message: string; behavior: "steer" | "followUp"; images?: Omit<ImageAttachment, "data">[]; retry?: boolean; }
+export interface PendingMessage { id: string; message: string; behavior: "steer" | "followUp"; images?: Omit<ImageAttachment, "data">[]; retry?: boolean; recovered?: boolean; }
 
 export interface AgentState { viewers?: number; pendingMessages?: PendingMessage[]; model: Model | null; thinkingLevel: string; isStreaming: boolean; isCompacting?: boolean; isPaused?: boolean; isPausing?: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
 
@@ -62,7 +68,7 @@ export interface AgentConfigChange { hostId: string; revision: number; }
 
 export interface SettingsPublication { committed: true; durable: boolean; error?: string; }
 
-export interface SettingsChange { settings: AppSettings; publication?: SettingsPublication; agentConfigChange?: AgentConfigChange; warnings?: string[]; }
+export interface SettingsChange { settings: AppSettings; publication?: SettingsPublication; agentConfigChange?: AgentConfigChange; committed?: boolean; warnings?: string[]; revision?: number; committedRevision?: number; synchronizationPending?: boolean; source?: string; phaseRevision?: number; }
 
 export type RpcCommand = z.infer<typeof rpcCommandSchema>;
 

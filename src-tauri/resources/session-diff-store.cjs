@@ -1,142 +1,55 @@
 const fs = require('node:fs');
-const path = require('node:path');
-const { createHash, randomUUID } = require('node:crypto');
+const { readStoreLocked, requestStoreLocked } = require('./session-broker/git-diff-store.cjs');
 
-const maximumRecordBytes = 16 * 1024 * 1024;
+function sidecar(session) {
+  if (!session.endsWith('.jsonl')) throw new Error('Invalid diff session filename');
 
-function sync(file) {
-  const descriptor = fs.openSync(file, 'r');
-
-  try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
+  return session.replace(/\.jsonl$/, '.diffs.json');
 }
 
-function publish(file, value) {
-  const temporary = `${file}.${randomUUID()}.tmp`;
+function loadDiffs(session) { return readStoreLocked(sidecar(session)).snapshots; }
 
-  try {
-    fs.writeFileSync(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
-    sync(temporary);
-    fs.renameSync(temporary, file);
-    sync(path.dirname(file));
-  } finally { fs.rmSync(temporary, { force: true }); }
+function saveDiffs(session, incoming) { requestStoreLocked(sidecar(session), { action: 'merge', snapshots: incoming }); }
+
+function pageCursor(cursor) {
+  if (!cursor) return { sequence: 1, page: '' };
+  const separator = cursor.indexOf(':');
+  const sequence = Number(cursor.slice(0, separator));
+
+  if (separator !== 20 || !Number.isSafeInteger(sequence) || sequence < 1 || sequence === Number.MAX_SAFE_INTEGER) throw new Error('Invalid diff page cursor; reload history');
+
+  return { sequence: sequence + 1, page: cursor.slice(separator + 1) };
 }
 
-function patchValue(value) {
-  if (value === String(value)) return value;
+function collectFragment(part, current, snapshots) {
+  const fragment = current || { id: part.messageId, body: '' };
 
-  if (value.patch !== String(value.patch)) throw new Error('Invalid saved diff');
+  if (fragment.id !== part.messageId) throw new Error('Diff fragments changed message identity; preserved');
+  fragment.body += part.content;
 
-  return value.toolPaths?.length ? { patch: value.patch, toolPaths: value.toolPaths } : { patch: value.patch };
-}
+  if (Buffer.byteLength(fragment.body) > 4 * 1024 * 1024 * 6 + 64 * 1024) throw new Error('Diff fragment exceeds the saved record limit; preserved');
 
-function diffDirectory(session) {
-  return path.join(session.replace(/\.jsonl$/, '.snapshots'), 'diffs');
-}
+  if (!part.complete) return fragment;
+  Object.defineProperty(snapshots, fragment.id, { value: JSON.parse(fragment.body), enumerable: true, configurable: true, writable: true });
 
-function recordFile(directory, messageId) {
-  return path.join(directory, `${createHash('sha256').update(messageId).digest('hex')}.json`);
-}
-
-function regularJson(file, bounded = false) {
-  const stat = fs.lstatSync(file);
-
-  if (!stat.isFile()) throw new Error('Diff storage must contain regular files');
-
-  if (bounded && stat.size > maximumRecordBytes * 2) throw new Error('Saved diff record exceeds its size limit');
-
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
-}
-
-function legacyDiffs(session) {
-  const sidecar = session.replace(/\.jsonl$/, '.diffs.json');
-
-  return fs.existsSync(sidecar) ? regularJson(sidecar) : {};
-}
-
-function storedDiffFiles(directory) {
-  if (!fs.existsSync(directory)) return [];
-
-  if (!fs.lstatSync(directory).isDirectory() || fs.realpathSync(directory) !== directory) throw new Error('Invalid diff storage directory');
-
-  return fs.readdirSync(directory).filter((file) => /^[a-f0-9]{64}\.json$/.test(file));
-}
-
-function readRecord(directory, key) {
-  const file = path.join(directory, key);
-  const record = regularJson(file, true);
-
-  if (record.messageId !== String(record.messageId) || recordFile(directory, record.messageId) !== file) throw new Error('Saved diff identity changed');
-
-  return record;
-}
-
-function loadDiffs(session) {
-  const saved = legacyDiffs(session);
-  const directory = diffDirectory(session);
-
-  for (const entry of storedDiffFiles(directory)) {
-    const record = readRecord(directory, entry);
-    Object.defineProperty(saved, record.messageId, { value: record.snapshot, enumerable: true, configurable: true, writable: true });
-  }
-
-  return Object.fromEntries(Object.entries(saved).map(([id, value]) => [id, patchValue(value)]));
-}
-
-function writeRecord(directory, messageId, value) {
-  const record = { messageId, snapshot: patchValue(value) };
-
-  if (Buffer.byteLength(JSON.stringify(record.snapshot)) > maximumRecordBytes) throw new Error('Diff record exceeds the 16 MiB limit');
-
-  if (Buffer.byteLength(JSON.stringify(record)) > maximumRecordBytes + 1024) throw new Error('Diff record identifier exceeds its size limit');
-  publish(recordFile(directory, messageId), record);
+  return undefined;
 }
 
 function loadDiffPage(session, cursor) {
-  if (cursor && !/^[a-f0-9]{64}\.json$/.test(cursor)) throw new Error('Invalid diff history cursor');
-  const directory = diffDirectory(session);
-  const legacy = new Map(Object.entries(legacyDiffs(session)).map(([messageId, snapshot]) => [path.basename(recordFile(directory, messageId)), { messageId, snapshot }]));
-  const files = storedDiffFiles(directory);
-  const keys = [...new Set([...legacy.keys(), ...files])].filter((key) => key > cursor).sort();
-  const snapshots = {};
-  let bytes = 0;
-  let last = cursor;
+  const position = pageCursor(cursor);
+  const snapshots = Object.create(null); let fragment;
 
-  for (const key of keys) {
-    const file = path.join(directory, key);
-    const record = fs.existsSync(file) ? readRecord(directory, key) : legacy.get(key);
-    const snapshot = patchValue(record.snapshot);
-    const size = Buffer.byteLength(JSON.stringify([record.messageId, snapshot]));
+  for (;;) {
+    const result = requestStoreLocked(sidecar(session), { action: 'page', cursor: position.page });
+    Object.assign(snapshots, result.snapshots);
 
-    if (bytes && bytes + size > 8 * 1024 * 1024) return { snapshots, nextCursor: last };
-    Object.defineProperty(snapshots, record.messageId, { value: snapshot, enumerable: true });
-    bytes += size;
-    last = key;
+    if (result.fragment) fragment = collectFragment(result.fragment, fragment, snapshots);
+
+    if (!fragment) return { snapshots, nextCursor: result.next === null ? null : `${String(position.sequence).padStart(20, '0')}:${result.next}` };
+
+    if (result.next === null) throw new Error('Diff history ended with an incomplete snapshot; preserved');
+    position.page = result.next;
   }
-
-  return { snapshots, nextCursor: null };
-}
-
-function saveDiffs(session, incoming) {
-  const directory = diffDirectory(session);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-
-  if (fs.realpathSync(directory) !== directory) throw new Error('Diff storage cannot be a symlink');
-  sync(path.dirname(directory));
-  sync(path.dirname(path.dirname(directory)));
-
-  for (const entry of fs.readdirSync(directory)) {
-    if (/^[a-f0-9]{64}\.json\.[a-f0-9-]+\.tmp$/.test(entry)) fs.rmSync(path.join(directory, entry));
-  }
-
-  const legacy = legacyDiffs(session);
-
-  for (const [messageId, value] of Object.entries(legacy)) {
-    if (!fs.existsSync(recordFile(directory, messageId))) writeRecord(directory, messageId, value);
-  }
-
-  if (Object.keys(legacy).length) publish(session.replace(/\.jsonl$/, '.diffs.json'), {});
-
-  for (const [messageId, value] of Object.entries(incoming)) writeRecord(directory, messageId, value);
 }
 
 function runDiffStore(action, session) {

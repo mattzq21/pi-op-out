@@ -2,26 +2,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-function lockedProcess(root, nonblocking) {
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const notes = path.join(root, 'notes');
-  fs.mkdirSync(notes, { recursive: true, mode: 0o700 });
-
-  if (!fs.lstatSync(notes).isDirectory()) throw new Error('Invalid notes storage directory');
-  const descriptors = [];
-
-  try {
-    for (const file of [path.join(notes, 'ownership.lock'), path.join(root, 'restore.lock')]) descriptors.push(fs.openSync(file, fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600));
-    const options = nonblocking ? '--nonblock --conflict-exit-code 75' : '';
-    const child = spawnSync('sh', ['-c', `flock --exclusive ${options} 3 || exit $?; flock --exclusive ${options} 4 || exit $?; exec "$@"`, 'piop-storage', process.execPath, ...process.execArgv, '--', ...process.argv.slice(1), '--locked'], { stdio: ['inherit', 'inherit', 'inherit', ...descriptors] });
-
-    if (child.error) throw child.error;
-    process.exitCode = child.status ?? 1;
-  } finally { descriptors.forEach(descriptor => fs.closeSync(descriptor)); }
-}
-
 function runWithStorageLock(root, operation, nonblocking = false) {
-  return Promise.resolve().then(() => process.argv.at(-1) === '--locked' ? operation() : lockedProcess(root, nonblocking))
+  return Promise.resolve().then(() => require('./storage-transaction-lock.cjs').lockStorage(root, nonblocking) ? operation() : undefined)
     .catch(error => { console.error(error.message); process.exitCode = 1; });
 }
 

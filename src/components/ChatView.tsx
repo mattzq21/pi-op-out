@@ -5,7 +5,8 @@ import { gitPatchSchema } from "../lib/diffSchemas";
 import { required } from "../lib/required";
 import { GoalBar } from "./GoalBar";
 import { ReviewNavigationContext } from "./ReviewLink";
-import { acknowledgeChatSubmission, chatSubmission, trackChatSubmission } from "../lib/newChatWorktree";
+import { chatSubmission, trackChatSubmission } from "../lib/newChatWorktree";
+import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandle, type DraftSubmissionPayload } from "../lib/draftSubmission";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
@@ -22,6 +23,7 @@ import { NewChatBranchPicker } from "./NewChatBranchPicker";
 import { Composer } from "./Composer";
 import { ConversationQuestions } from "./ConversationQuestions";
 import { DeferredTurn } from "./DeferredTurn";
+import { ResponseNavigator, type ResponseDestination } from "./ResponseNavigator";
 import { DiffViewer } from "./DiffViewer";
 import { Message } from "./Message";
 import { ConversationImageProject } from "./markdownImages";
@@ -30,7 +32,7 @@ import { toolFailureStats } from "../lib/toolFailureStats";
 import { PromptContextBar } from "./PromptContextBar";
 import { ConversationHostContext } from "../lib/subagentNavigation";
 
-interface Props { transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onProjectBranch?: (path: string) => Promise<void>; onBranch: (message: ChatMessage) => void; canRollback?: boolean; onForkAndForget?: (message: ChatMessage, restoreWorktree?: boolean) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
+interface Props { transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onProjectBranch?: (path: string) => Promise<void>; onBranch: (message: ChatMessage) => void; canRollback?: boolean; onForkAndForget?: (message: ChatMessage, restoreWorktree?: boolean) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
 function canRetry(props: Props, ownsConversation: boolean) {
   return ownsConversation && !props.readOnly && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
@@ -86,6 +88,15 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
   const composerStack = createRef<HTMLDivElement>(null);
   const messages = () => props.messages;
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), previous), []);
+
+  const responses = createMemo(() => turns().flatMap(turn => {
+    const message = turn.messages[finalResponseIndex(turn.messages)];
+
+    if (!message) return [];
+
+    return [{ turnId: turn.messages[0].id, messageId: message.id, preview: textOf(message.content).replace(/\s+/g, " ").trim().slice(0, 160) || "Response interrupted" } satisfies ResponseDestination];
+  }));
+
   const hasSentPrompt = createMemo(() => messages().some((message) => message.role === "user"));
 
   const sessionUsage = createMemo(() => {
@@ -103,44 +114,44 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
   const sessionCache = createMemo(() => hasSentPrompt() ? cacheHitStats(sessionUsage()) : undefined);
   const sessionToolFailures = createMemo(() => props.debug && hasSentPrompt() ? toolFailureStats(messages()) : undefined);
   const pendingSubmission = createMemo(() => chatSubmission(props.transport));
-  createComputed(() => acknowledgeChatSubmission(props.transport, messages()));
   const [submittedMessage, setSubmittedMessage] = createSignal<ChatMessage>();
   const mcpPendingMessage = () => pendingSubmission()?.message ?? submittedMessage();
 
-  const send: Props["onSend"] = async (text, behavior, images = []) => { const capturedOwnsConversation = ownsConversation(); const capturedControlsDisabled0 = props.controlsDisabled; const capturedOnSend1 = props.onSend;
-
-    if (!capturedOwnsConversation || capturedControlsDisabled0) return false;
-    const message: ChatMessage = { id: crypto.randomUUID(), role: "user", content: [{ type: "text", text }, ...images] };
-    setSubmittedMessage(message);
+  const stageSubmission = (payload: DraftSubmissionPayload) => {
     const owner = props.transport;
-    const submit = () => Promise.resolve(capturedOnSend1(text, behavior, images));
 
-    try { return await (owner ? trackChatSubmission(owner, text, images, messages(), Boolean(behavior), submit) : submit()); }
-    finally { setSubmittedMessage((current) => current?.id === message.id ? undefined : current); }
+    if (!owner) throw new Error("This conversation has no durable draft destination");
+
+    return stageDraftSubmission(owner, payload);
+  };
+
+  const send: Props["onSend"] = async (text, behavior, images = [], staged) => {
+    const capturedOnSend = props.onSend;
+
+    if (!ownsConversation() || props.controlsDisabled || chatSubmission(props.transport)) {
+      await staged?.reject("Message was not submitted");
+
+      return false;
+    }
+
+    const uploads = draftUploadsFromImages(images);
+    const durable = staged ?? await stageSubmission({ rawText: text, uploads, consume: props.draft === text && !props.uploads?.length });
+    const message: ChatMessage = { id: durable.id, role: "user", content: [{ type: "text", text }, ...images] };
+    setSubmittedMessage(message);
+
+    try { return await trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable))); }
+    finally { setSubmittedMessage(current => current?.id === message.id ? undefined : current); }
   };
 
   const actions = createRef({ onSend: send, onBranch: props.onBranch, onForkAndForget: props.onForkAndForget, onCreateWorktree: props.onCreateWorktree });
   createComputed(() => { actions.current = { onSend: send, onBranch: props.onBranch, onForkAndForget: props.onForkAndForget, onCreateWorktree: props.onCreateWorktree }; });
-  const retryDraft = createRef({ value: props.draft, change: props.onDraftChange, mounted: true });
-  createComputed(() => { retryDraft.current.value = props.draft; }); createComputed(() => { retryDraft.current.change = props.onDraftChange; });
-  createDependencyEffect(() => { retryDraft.current.mounted = true;
-
-  return () => { retryDraft.current.mounted = false; }; }, () => []);
 
   const onRetry: Props["onSend"] = async (...args) => {
-    const submittedDraft = retryDraft.current.value; const change = retryDraft.current.change;
-    const consumed = submittedDraft === args[0];
+    const result = await actions.current.onSend(...args);
 
-    if (consumed) { retryDraft.current.value = ""; change?.(""); }
+    if (result === false) throw new Error("Message was not submitted");
 
-    const restore = () => { if (consumed && retryDraft.current.mounted && !retryDraft.current.value) change?.(submittedDraft); };
-
-    try { const result = await actions.current.onSend(...args);
-
-    if (result === false) restore();
-
-    return result; }
-    catch (reason) { restore(); throw reason; }
+    return result;
   };
 
   const onBranch: Props["onBranch"] = (message) => actions.current.onBranch(message);
@@ -237,7 +248,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
         scrollToLatest();
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>πop</span></div>}
-        {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn  scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn messages={turn().messages} promptContexts={turn().promptContexts} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={onBranch} canRollback={props.canRollback} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} /></DeferredTurn>}</Key>}
+        {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn messages={turn().messages} promptContexts={turn().promptContexts} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={onBranch} canRollback={props.canRollback} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} /></DeferredTurn>}</Key>}
         {pendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><Message message={required(pendingSubmission()).message} showActions={false} /><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(pendingSubmission()).status}</span></div></section>}
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
           {mcpPendingMessage() && <div class="mcp-pending-message"><Message message={required(mcpPendingMessage())} showActions={false} /></div>}
@@ -250,13 +261,14 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
       const renderNewChatBranch = () => <Show when={Boolean(props.projectCwd && props.onProjectBranch)}><Rerun on={() => props.transport}>{(_owner) => <NewChatBranchPicker transport={props.transport} cwd={required(props.projectCwd)} hostId={props.transport?.currentHostId() ?? "local"} disabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} onSelect={required(props.onProjectBranch)} />}</Rerun></Show>;
       const renderNewChatProject = () => (<Show when={!messages().length && props.state.messageCount === 0}><div class="new-chat-project"><div class="project-picker"><button type="button" class={projectName() ? "selected" : undefined} aria-label={projectName() ? `Selected project: ${required((projectName()))}` : "Choose project"} data-tooltip={displayedProjectCwd()} disabled={selectionDisabled()} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName() ?? "Choose project"}</button>{projectName() && props.onClearProject && <button type="button" class="clear-project" aria-label="Clear project" data-tooltip="Clear project" disabled={selectionDisabled()} onClick={props.onClearProject}><X size={14} /></button>}</div>{renderNewChatBranch()}</div></Show>);
       const renderConversationOwnershipBanner = () => ((takingOwnership() || ownershipError()) && <div class="conversation-ownership-banner"><div>{takingOwnership() && <p role="status">Taking ownership…</p>}{ownershipError() && <p role="alert">{ownershipError()}</p>}</div></div>);
-      const ComposerInteraction = () => (<div class="composer-interaction"><Composer ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache() : undefined} toolFailures={sessionToolFailures()} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn() ? { id: `${required((abortedTurn())).assistant.timestamp ?? required((abortedTurn())).assistant.id}:${required((abortedTurn())).prompt}`, value: required((abortedTurn())).prompt } : undefined} onSend={send} onAbort={stopResponse} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} agentHostLabel={agentDefinitionHost()} agentReloadScope={agentReloadScope()} onReloadAgents={props.transport ? reloadAgentDefinitions : undefined} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
+      const ComposerInteraction = () => (<div class="composer-interaction"><Composer ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache() : undefined} toolFailures={sessionToolFailures()} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn() ? { id: `${required((abortedTurn())).assistant.timestamp ?? required((abortedTurn())).assistant.id}:${required((abortedTurn())).prompt}`, value: required((abortedTurn())).prompt } : undefined} onStageSubmission={stageSubmission} onSend={send} onAbort={stopResponse} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} agentHostLabel={agentDefinitionHost()} agentReloadScope={agentReloadScope()} onReloadAgents={props.transport ? reloadAgentDefinitions : undefined} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
 
       return (<Show when={!props.readOnly}><div ref={element => { composerStack.current = element; }} class="composer-stack"><GoalBar value={props.statuses["piop-goal"]} disabled={Boolean(props.controlsDisabled || !ownsConversation() || !props.transport)} onCommand={action => required(props.transport).command({ type: "prompt", message: `/goal ${action}` })} />{props.widgets.length > 0 && <div class="extension-widget">{<Index each={stringsSchema.parse(props.widgets)}>{(line, _index) => <div >{line()}</div>}</Index>}</div>} {activity() && <div class="runtime-activity" role="status">{(activity())}</div>}{renderConversationOwnershipBanner()}<Show when={ownsConversation()}><div class="composer-questions"><ConversationQuestions transport={props.transport} /></div></Show><ComposerInteraction /></div></Show>);
     };
 
     return (<div class="conversation-content">
       <ConversationImageProject.Provider value={imageProject}><MessagesSection /></ConversationImageProject.Provider>
+      <ResponseNavigator responses={responses()} scrollRoot={messagesRef} onNavigate={() => { followLatest.current = false; }} />
       <ComposerStack />
     </div>);
   };

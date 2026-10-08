@@ -1,0 +1,333 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const { createHash, randomUUID } = require('node:crypto');
+const { spawnSync } = require('node:child_process');
+const { Type } = require('typebox');
+const { Check } = require('typebox/value');
+
+const uuid = Type.String({ pattern: '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$' });
+
+const headerSchema = Type.Object({ type: Type.Literal('session'), id: uuid, cwd: Type.String(), version: Type.Integer({ minimum: 1 }), piopPublicationId: Type.Optional(uuid) });
+
+const writerSchema = Type.Object({ pid: Type.Integer({ minimum: 1 }), boot: Type.Optional(Type.String()), start: Type.Optional(Type.String()) });
+
+function exists(file) {
+  try { return fs.lstatSync(file); }
+  catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
+}
+
+function identity(file) {
+  const metadata = fs.lstatSync(file, { bigint: true });
+
+  return `${metadata.dev}:${metadata.ino}`;
+}
+
+function fingerprint(metadata) {
+  return `${metadata.dev}:${metadata.ino}:${metadata.mode}:${metadata.size}:${metadata.mtimeNs}:${metadata.ctimeNs}`;
+}
+
+function hash(body) { return createHash('sha256').update(body).digest('hex'); }
+
+function inside(root, file) { return path.isAbsolute(file) && path.resolve(file) === file && file.startsWith(root + path.sep); }
+
+function canonical(file) { return fs.realpathSync(file) === file; }
+
+function sync(file) {
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+
+  try { fs.fsyncSync(descriptor); }
+  finally { fs.closeSync(descriptor); }
+}
+
+function mkdir(directory) {
+  const metadata = exists(directory);
+
+  if (metadata) {
+    if (!metadata.isDirectory() || !canonical(directory)) throw new Error(`Publication directory has ambiguous ownership: ${directory}`);
+
+    return;
+  }
+
+  mkdir(path.dirname(directory));
+  fs.mkdirSync(directory, { mode: 0o700 });
+  sync(path.dirname(directory));
+}
+
+function write(file, value) {
+  const temporary = `${file}.${randomUUID()}.tmp`;
+
+  const descriptor = fs.openSync(temporary, 'wx', 0o600);
+
+  try { fs.writeFileSync(descriptor, JSON.stringify(value)); fs.fsyncSync(descriptor); }
+  finally { fs.closeSync(descriptor); }
+
+  fs.renameSync(temporary, file);
+  sync(path.dirname(file));
+}
+
+function read(file) {
+  if (!exists(file)?.isFile() || !canonical(file)) throw new Error(`Publication record is unavailable or ambiguous: ${file}`);
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+
+  try {
+    const before = fingerprint(fs.fstatSync(descriptor, { bigint: true }));
+
+    const bytes = fs.readFileSync(descriptor);
+
+    const body = bytes.toString('utf8');
+
+    if (fingerprint(fs.fstatSync(descriptor, { bigint: true })) !== before || fingerprint(fs.lstatSync(file, { bigint: true })) !== before) throw new Error(`Publication file changed during reading: ${file}`);
+
+    return { body, bytes, fingerprint: before };
+  } finally { fs.closeSync(descriptor); }
+}
+
+function proof(file) {
+  if (!exists(file)?.isFile() || !canonical(file)) throw new Error(`Publication dependency is unavailable or ambiguous: ${file}`);
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+
+  try {
+    const metadata = fs.fstatSync(descriptor, { bigint: true });
+
+    const before = fingerprint(metadata);
+
+    const digest = createHash('sha256');
+
+    const buffer = Buffer.alloc(65536);
+    let bytes = 0;
+
+    for (;;) {
+      const count = fs.readSync(descriptor, buffer);
+
+      if (!count) break;
+      digest.update(buffer.subarray(0, count));
+      bytes += count;
+    }
+
+    if (fingerprint(fs.fstatSync(descriptor, { bigint: true })) !== before || fingerprint(fs.lstatSync(file, { bigint: true })) !== before) throw new Error(`Publication dependency changed during verification: ${file}`);
+
+    return { identity: `${metadata.dev}:${metadata.ino}`, bytes, digest: digest.digest('hex'), fingerprint: before };
+  } finally { fs.closeSync(descriptor); }
+}
+
+function header(file) {
+  if (!exists(file)?.isFile() || !canonical(file)) return null;
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+
+  try {
+    const buffer = Buffer.alloc(65536);
+
+    const chunks = [];
+
+    for (;;) {
+      const count = fs.readSync(descriptor, buffer);
+
+      if (!count) return null;
+      const end = buffer.subarray(0, count).indexOf(10);
+
+      chunks.push(Buffer.from(buffer.subarray(0, end < 0 ? count : end)));
+
+      if (end >= 0) {
+        return parsedHeader(Buffer.concat(chunks).toString('utf8'));
+      }
+    }
+  } finally { fs.closeSync(descriptor); }
+}
+
+function parsedHeader(body) {
+  try {
+    const value = JSON.parse(body);
+
+    return Check(headerSchema, value) ? value : null;
+  } catch (error) { if (error instanceof SyntaxError) return null; throw error; }
+}
+
+function canonicalRoot(root) {
+  if (!path.isAbsolute(root) || path.resolve(root) !== root || !canonical(root) || !exists(root).isDirectory()) throw new Error('Publication storage root has ambiguous ownership');
+}
+
+function rootForTarget(target) {
+  if (!path.isAbsolute(target) || path.resolve(target) !== target || !canonical(path.dirname(target))) throw new Error('Session publication requires a canonical target directory');
+  let current = path.dirname(target);
+
+  while (path.dirname(current) !== current) {
+    if (path.basename(current) === 'sessions') {
+      const root = path.dirname(current);
+
+      const configured = fs.realpathSync(path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop'));
+
+      if (root !== configured) throw new Error('Session publication target is outside Piop-controlled storage');
+
+      return root;
+    }
+
+    current = path.dirname(current);
+  }
+
+  throw new Error('Session publication target is outside Piop-controlled session storage');
+}
+
+function lockDescriptor(descriptor) {
+  const result = spawnSync('flock', ['--exclusive', '--nonblock', '--conflict-exit-code', '75', '3'], { stdio: ['ignore', 'ignore', 'pipe', descriptor], timeout: 5000 });
+
+  if (result.error) throw result.error;
+
+  if (result.status === 75) return false;
+
+  if (result.status !== 0) throw new Error('Could not acquire the session publication OS lock');
+
+  return true;
+}
+
+function claim(file, expected) {
+  const flags = fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | (expected ? 0 : fs.constants.O_CREAT);
+
+  const descriptor = fs.openSync(file, flags, 0o600);
+
+  try {
+    const metadata = fs.fstatSync(descriptor, { bigint: true });
+
+    const opened = `${metadata.dev}:${metadata.ino}`;
+
+    if (!metadata.isFile() || !canonical(file) || identity(file) !== opened) throw new Error(`Invalid publication lock: ${file}`);
+
+    if (expected && opened !== expected) throw new Error(`Publication lock identity changed: ${file}`);
+
+    if (lockDescriptor(descriptor)) return descriptor;
+  } catch (error) { fs.closeSync(descriptor); throw error; }
+
+  fs.closeSync(descriptor);
+
+  return null;
+}
+
+function inheritedLock(file) {
+  try {
+    const metadata = fs.fstatSync(3, { bigint: true });
+
+    return exists(file)?.isFile() && `${metadata.dev}:${metadata.ino}` === identity(file);
+  } catch (_error) { return false; }
+}
+
+function transactionLock(root) {
+  canonicalRoot(root);
+  const file = path.join(root, 'session-transactions.lock');
+
+  const borrowed = inheritedLock(file);
+
+  const descriptor = borrowed ? 3 : claim(file);
+
+  if (descriptor === null) throw new Error('Session storage is busy; retry publication after the current transaction');
+
+  if (borrowed && !lockDescriptor(descriptor)) throw new Error('Inherited session storage lock is unavailable');
+
+  return { descriptor, borrowed };
+}
+
+function locked(root, operation) {
+  const { descriptor, borrowed } = transactionLock(root);
+
+  try {
+    return operation();
+  }
+  finally { if (!borrowed) fs.closeSync(descriptor); }
+}
+
+async function lockedAsync(root, operation) {
+  const { descriptor, borrowed } = transactionLock(root);
+
+  try { return await operation(); }
+  finally { if (!borrowed) fs.closeSync(descriptor); }
+}
+
+function processStart(pid) {
+  const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+
+  return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
+}
+
+function writer() {
+  if (process.platform !== 'linux') return { pid: process.pid };
+
+  return { pid: process.pid, boot: fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim(), start: processStart(process.pid) };
+}
+
+function writerDead(owner) {
+  if (!Check(writerSchema, owner)) return false;
+
+  try {
+    if (process.platform === 'linux' && owner.boot && owner.start) {
+      if (fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() !== owner.boot) return true;
+
+      return processStart(owner.pid) !== owner.start;
+    }
+
+    process.kill(owner.pid, 0);
+
+    return false;
+  } catch (error) { return ['ENOENT', 'ESRCH'].includes(error.code); }
+}
+
+function lockPath(root, target) { return path.join(root, 'session-publication-locks', `${hash(target)}.lock`); }
+
+function journalPath(root, id) { return path.join(root, 'session-publications', `${id}.json`); }
+
+function matches(file, expected) { return Boolean(exists(file)?.isFile()) && canonical(file) && identity(file) === expected; }
+
+function verified(file, journal) {
+  if (!exists(file)?.isFile() || !canonical(file)) return false;
+  const metadata = header(file);
+
+  if (!metadata || metadata.id !== journal.sessionId || metadata.piopPublicationId !== journal.id) return false;
+  const snapshot = proof(file);
+
+  return snapshot.bytes === journal.bytes && snapshot.digest === journal.digest;
+}
+
+function files(directory) {
+  if (!exists(directory)) return [];
+
+  if (!exists(directory).isDirectory() || !canonical(directory)) throw new Error(`Conversation storage has ambiguous ancestry: ${directory}`);
+  const result = [];
+
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const file = path.join(directory, entry.name);
+
+    if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) result.push(...files(file));
+    else if (entry.isFile() && entry.name.endsWith('.jsonl')) result.push(file);
+  }
+
+  return result;
+}
+
+function locate(root, id, nonce) {
+  const matches = [];
+
+  for (const file of [...files(path.join(root, 'sessions')), ...files(path.join(root, 'archived'))]) {
+    const value = header(file);
+
+    if (value?.id === id && (!nonce || value.piopPublicationId === nonce)) matches.push({ path: file, header: value });
+  }
+
+  if (matches.length > 1) throw new Error(`Conversation ${id} has ambiguous publication locations; retained`);
+
+  return matches[0];
+}
+
+function deleted(root, id) {
+  const file = path.join(root, 'sessions.sqlite');
+
+  if (!exists(file)) return false;
+  const { DatabaseSync } = require('node:sqlite');
+
+  const database = new DatabaseSync(file, { readOnly: true });
+
+  try {
+    const table = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_deletion_tombstones'").get();
+
+    return Boolean(table && database.prepare('SELECT session_id FROM session_deletion_tombstones WHERE session_id = ?').get(id.toLowerCase()));
+  } finally { database.close(); }
+}
+
+module.exports = { uuid, headerSchema, writerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, write, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, writer, writerDead, lockPath, journalPath, matches, verified, files, locate, deleted };

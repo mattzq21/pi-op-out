@@ -24,6 +24,9 @@ use uuid::Uuid;
 pub(super) trait SessionHost: Send + Sync {
     fn output(&self, packet: Value);
     fn queue_root(&self) -> Option<std::path::PathBuf> { None }
+    fn drain_capture<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { Err("Capture drain unavailable".into()) })
+    }
     fn record_tool_failure(&self, _record: Value) {}
     fn configuration(&self) -> Option<Value>;
     fn readonly_views(&self, identity: &str) -> Vec<String>;
@@ -574,7 +577,7 @@ impl Session {
         if self.closed() {
             return Err(self.state().startup_error.clone().unwrap_or_else(|| "Pi is not running".into()));
         }
-        if request_type == "prompt" {
+        if matches!(request_type, "prompt" | "queue_prompt") {
             let mut state = self.state();
             state.input_rejection = Value::Null;
             state.command_errors.clear();

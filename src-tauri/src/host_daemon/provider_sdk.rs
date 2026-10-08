@@ -1,4 +1,5 @@
 use super::protocol::Result;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -15,6 +16,15 @@ use tokio::{
     sync::{mpsc, oneshot, Mutex as AsyncMutex},
 };
 use uuid::Uuid;
+
+const SOURCE_ARGUMENT_BYTES: usize = 64 * 1024;
+const SOURCE_LOADER: &str = "await import('data:text/javascript;base64,' + process.argv.splice(2).join(''));";
+
+fn source_arguments(encoded: &str) -> impl Iterator<Item = &str> {
+    (0..encoded.len()).step_by(SOURCE_ARGUMENT_BYTES).map(|start| {
+        &encoded[start..encoded.len().min(start + SOURCE_ARGUMENT_BYTES)]
+    })
+}
 
 pub(super) trait Events: Send + Sync {
     fn event(&self, packet: Value);
@@ -105,8 +115,10 @@ impl Sdk {
             self.plugin.unwrap_or("const bundledPlugin = null;"),
             include_str!("../../resources/provider-sdk.mjs")
         );
+        let encoded = STANDARD.encode(source);
         let mut child = Command::new("node")
-            .args(["--input-type=module", "-e", &source, "--", &self.executable])
+            .args(["--input-type=module", "-e", SOURCE_LOADER, "--", &self.executable])
+            .args(source_arguments(&encoded))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -179,13 +191,14 @@ impl Sdk {
             if connection.closed.load(Ordering::SeqCst) {
                 return Err("Pi provider SDK disconnected".into());
             }
-            connection
-                .stdin
-                .lock()
-                .await
-                .write_all(data.as_bytes())
+            let mut stdin = connection.stdin.lock().await;
+            if self.plugin.is_some() && packet["method"] == "plugin_call" && crate::daemon_restart::blocking() {
+                return Err("The daemon is restarting. Reconnect before retrying.".into());
+            }
+            stdin.write_all(data.as_bytes())
                 .await
                 .map_err(|error| error.to_string())?;
+            drop(stdin);
             tokio::time::timeout(Duration::from_secs(630), incoming)
                 .await
                 .map_err(|_| "Pi provider SDK request timed out")?

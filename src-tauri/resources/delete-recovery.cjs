@@ -188,6 +188,8 @@ function validateRetentionMetadata(root, journal) {
 function readJournal(root, directory) {
   const journal = JSON.parse(fs.readFileSync(path.join(directory, "recovery.json"), "utf8"));
 
+  if (journal.kind === "delete") return null;
+
   if (journal.version !== undefined && journal.version !== 2) throw new Error("Unsupported deletion recovery journal");
 
   if (!Array.isArray(journal.files) || !journal.files.length || !Array.isArray(journal.repositories)) throw new Error("Invalid deletion recovery journal");
@@ -300,6 +302,8 @@ function cleanupCommitted(root) {
     }
 
     const journal = readJournal(root, directory);
+
+    if (!journal) continue;
     sync(garbageRoot);
 
     for (const lock of journal.locks ?? inferredLocks(journal)) sync(path.dirname(lock.path));

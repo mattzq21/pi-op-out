@@ -34,6 +34,7 @@ impl LaunchSpec {
 
     pub fn session(&self, flag: &str, value: &str) -> Self {
         let mut next = self.clone();
+        next.env.remove("PIOP_USAGE_RECOVERY");
         next.args.clear();
         let mut args = self.args.iter();
         while let Some(arg) = args.next() {
@@ -120,8 +121,8 @@ fn control_action(command: &str) -> Option<&'static str> {
 
 fn app_request_command(command: &str) -> Option<&str> {
     match command {
-        "orchestration_message" | "recover_subagent_usage" | "activate_usage_recovery" | "answer_question" | "provider_auth_refresh" | "runtime_settings" | "branch_checkpoint"
-        | "fork_and_forget" | "fork_after" | "select_agent" | "configure_agents" | "get_agent_configuration"
+        "queue_prompt" | "prepare_goal_prompt" | "get_goal_preparation" | "orchestration_message" | "recover_subagent_usage" | "activate_usage_recovery" | "answer_question" | "provider_auth_refresh" | "runtime_settings" | "branch_checkpoint"
+        | "fork_and_forget" | "fork_after" | "prepare_fork" | "fork_drained" | "select_agent" | "configure_agents" | "get_agent_configuration"
         | "review_feedback" | "open_review" | "fast_mode_status" | "html_preview_viewport" => Some(command),
         _ => None,
     }

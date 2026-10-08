@@ -13,6 +13,8 @@ const cancelled = new Set();
 
 const accounts = new Map();
 
+const providerModelCatalogs = new WeakMap();
+
 let initializing, syncing;
 
 async function resolveExecutable() {
@@ -85,6 +87,103 @@ function providerMetadata(runtime, provider) {
   const status = runtime.getProviderAuthStatus(provider.id);
 
   return { id: provider.id, name: provider.name, configured: status.configured, source: status.label ?? status.source, methods };
+}
+
+function providerModelObject(value) {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate SDK model metadata before publishing a catalog snapshot.
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function providerModelString(value) {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate SDK model identifiers and metadata at the inspection boundary.
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function providerModelValid(model) {
+  if (!providerModelObject(model) || !providerModelString(model.id) || !providerModelString(model.provider)) return false;
+
+  if (model.reasoning !== undefined && model.reasoning !== true && model.reasoning !== false) return false;
+
+  if (model.input !== undefined && (!Array.isArray(model.input) || !model.input.every(providerModelString))) return false;
+
+  return ['contextWindow', 'maxTokens'].every(field => model[field] === undefined || Number.isSafeInteger(model[field]) && model[field] > 0);
+}
+
+function providerModelCopy(model) {
+  try {
+    const copy = JSON.parse(JSON.stringify(model));
+
+    if (providerModelValid(copy)) return copy;
+  } catch { }
+}
+
+function providerModelGroups(entries, diagnostics) {
+  const groups = new Map(); const failed = new Set();
+
+  for (const [index, entry] of entries.entries()) {
+    const model = providerModelCopy(entry);
+
+    if (!model) {
+      const providerId = providerModelObject(entry) && providerModelString(entry.provider) ? entry.provider : undefined;
+
+      if (providerId) failed.add(providerId);
+      diagnostics.push({ providerId, message: `Invalid SDK model record at position ${index + 1}.` });
+      continue;
+    }
+
+    const group = groups.get(model.provider) ?? [];
+    group.push(model); groups.set(model.provider, group);
+  }
+
+  return { groups, failed };
+}
+
+function providerModelPrevious(runtime, providers) {
+  let previous = providerModelCatalogs.get(runtime);
+
+  if (!previous) { previous = new Map(); providerModelCatalogs.set(runtime, previous); }
+
+  const ids = new Set(providers.map(provider => provider.id));
+
+  for (const id of previous.keys()) if (!ids.has(id)) previous.delete(id);
+
+  return { previous, ids };
+}
+
+function providerModelMerge(previous, ids, entries) {
+  const diagnostics = [];
+  const { groups, failed } = providerModelGroups(entries, diagnostics);
+  const models = [];
+
+  for (const id of groups.keys()) if (!ids.has(id)) {
+    diagnostics.push({ providerId: id, message: 'SDK model records refer to an unavailable provider.' });
+  }
+
+  for (const id of ids) {
+    const current = groups.get(id) ?? [];
+
+    if (!failed.has(id)) previous.set(id, current);
+    models.push(...(previous.get(id) ?? current));
+  }
+
+  for (const diagnostic of diagnostics) diagnostic.usingLastUsableCatalog = Boolean(previous.get(diagnostic.providerId)?.length);
+
+  return { models, modelDiagnostics: diagnostics };
+}
+
+function providerModels(loaded, providers) {
+  const { previous, ids } = providerModelPrevious(loaded.runtime, providers);
+  let entries;
+
+  try { entries = loaded.runtime.getModels(); } catch { }
+
+  if (!Array.isArray(entries)) {
+    const models = [...previous.values()].flat();
+
+    return { models, modelDiagnostics: [{ message: 'The SDK model catalog is unavailable or is not an array.', usingLastUsableCatalog: models.length > 0 }] };
+  }
+
+  return providerModelMerge(previous, ids, entries);
 }
 
 function prompt(flowId, login, request) {
@@ -200,7 +299,9 @@ async function handleProviderRequest(loaded, packet) {
     await loaded.runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
     const credentials = await loaded.runtime.listCredentials().catch(() => { throw new Error('Could not read saved provider status on this host.'); });
 
-    return { providers: loaded.runtime.getProviders().map((provider) => providerMetadata(loaded.runtime, provider)), models: loaded.runtime.getModels(), credentials: credentials.map(({ providerId, type }) => ({ providerId, type })) };
+    const providers = loaded.runtime.getProviders();
+
+    return { providers: providers.map((provider) => providerMetadata(loaded.runtime, provider)), ...providerModels(loaded, providers), credentials: credentials.map(({ providerId, type }) => ({ providerId, type })) };
   }
 
   if (packet.method === 'logout') { await loaded.runtime.logout(packet.providerId);

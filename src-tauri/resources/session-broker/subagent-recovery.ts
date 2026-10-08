@@ -4,13 +4,12 @@ import { Check, Parse } from "typebox/value";
 import { setTimeout as delay } from "node:timers/promises";
 import { request } from "./client.ts";
 import { sessionSnapshot, snapshotStatus } from "./orchestration.ts";
-import { forgetSubagentRun, hasSubagentResult, persistSubagentRun, resultNotificationId, savedSubagentRuns, unresolvedSubagentRuns, type SubagentRun } from "./subagent-results.ts";
+import { accountingUnresolved, forgetSubagentRun, hasSubagentResult, persistSubagentRun, resultNotificationId, savedSubagentRuns, unresolvedSubagentRuns, type SubagentRun } from "./subagent-results.ts";
+import { subagentParent } from "./subagent-state.ts";
 
 export interface RecoveryScope { signal?: AbortSignal; recoveryDepth?: number; recoveryDeadline?: number }
 
 const recoverySchema = Type.Object({ sourceSessionId: Type.String(), recoveryDepth: Type.Integer({ minimum: 1, maximum: 2 }), deadline: Type.Integer({ minimum: 1 }) });
-
-const parentSchema = Type.Object({ parentSessionId: Type.String() });
 
 export function boundedRecovery(scope: RecoveryScope): RecoveryScope & { signal: AbortSignal; recoveryDeadline: number } {
   const recoveryDeadline = Math.min(scope.recoveryDeadline ?? Infinity, Date.now() + 30_000);
@@ -58,9 +57,7 @@ export async function recoverStoppedRun(pi: ExtensionAPI, ctx: ExtensionContext,
 }
 
 function authorizeRecovery(ctx: ExtensionContext, source: string) {
-  const entry = ctx.sessionManager.getEntries().find(item => item.type === "custom" && item.customType === "piop-subagent-parent");
-
-  if (ctx.mode !== "rpc" || entry?.type !== "custom" || !Check(parentSchema, entry.data) || entry.data.parentSessionId !== source) throw new Error("Only the parent conversation can recover delegated usage");
+  if (ctx.mode !== "rpc" || subagentParent(ctx)?.parentSessionId !== source) throw new Error("Only the parent conversation can recover delegated usage");
 }
 
 interface RecoveryRuntime {
@@ -69,11 +66,14 @@ interface RecoveryRuntime {
   recover: (run: SubagentRun, ctx: ExtensionContext, scope: RecoveryScope) => Promise<void>;
   activate: (ctx: ExtensionContext) => Promise<void>;
   publish: (run: SubagentRun, ctx: ExtensionContext) => Promise<void>;
+  ready?: () => Promise<void>;
 }
 
 async function retryAccountingPass(ctx: ExtensionContext, runtime: RecoveryRuntime, signal: AbortSignal, reported: Set<string>) {
+  await runtime.ready?.();
+
   for (const run of await savedSubagentRuns(ctx)) {
-    if (!(run.accountingPending || run.status === "running") || runtime.active.has(run.sessionId)) continue;
+    if (!accountingUnresolved(run) || runtime.active.has(run.sessionId)) continue;
     signal.throwIfAborted();
 
     try {
@@ -154,7 +154,7 @@ export function registerSubagentRecovery(pi: ExtensionAPI, runtime: RecoveryRunt
           run = (await savedSubagentRuns(event.ctx)).find(saved => resultNotificationId(saved) === resultNotificationId(run)) ?? run;
         }
 
-        if (run.accountingPending || run.status === "running") await recover(run, event.ctx, scope);
+        if (accountingUnresolved(run)) await recover(run, event.ctx, scope);
 
         if (hasSubagentResult(event.ctx, run)) await forgetSubagentRun(event.ctx, run);
       }

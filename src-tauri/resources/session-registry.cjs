@@ -18,6 +18,10 @@ fs.chmodSync(database, 0o600);
 
 db.exec(`PRAGMA busy_timeout=10000;
   PRAGMA journal_mode=WAL;
+  PRAGMA synchronous=FULL;
+  CREATE TABLE IF NOT EXISTS session_deletion_tombstones (
+    session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL, session_path TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS session_repositories (
     session_id TEXT PRIMARY KEY, session_path TEXT, cwd TEXT NOT NULL,
     repository_root TEXT, remote_name TEXT, remote_url TEXT, branch TEXT,
@@ -93,7 +97,8 @@ function savedSession(session) {
 function insertRecord(session, checked, exists, state) {
   const { repository, remote, url, branch, upstream, head } = state;
 
-  db.prepare(`INSERT INTO session_repositories VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  db.prepare(`INSERT INTO session_repositories SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id = lower(?))
     ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, cwd=excluded.cwd,
       repository_root=CASE WHEN excluded.directory_exists THEN excluded.repository_root ELSE repository_root END,
       remote_name=CASE WHEN excluded.directory_exists THEN excluded.remote_name ELSE remote_name END,
@@ -104,8 +109,9 @@ function insertRecord(session, checked, exists, state) {
       checked_at=excluded.checked_at,
       observed_at=CASE WHEN excluded.directory_exists THEN excluded.observed_at ELSE observed_at END,
       directory_exists=excluded.directory_exists
-    WHERE excluded.checked_at >= session_repositories.checked_at`).run(
-    session.sessionId, session.sessionPath || null, session.cwd, repository, remote, url, branch, upstream, head, checked, exists ? checked : null, Number(exists));
+    WHERE excluded.checked_at >= session_repositories.checked_at
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id = lower(excluded.session_id))`).run(
+    session.sessionId, session.sessionPath || null, session.cwd, repository, remote, url, branch, upstream, head, checked, exists ? checked : null, Number(exists), session.sessionId);
 }
 
 function record(session) {
@@ -145,6 +151,7 @@ function scan(directory) {
 
 try {
   if (request.action === 'get') process.stdout.write(JSON.stringify(db.prepare('SELECT * FROM session_repositories WHERE session_id = ?').get(request.sessionId) || null));
+  else if (request.action === 'deleted') process.stdout.write(JSON.stringify(db.prepare('SELECT session_id FROM session_deletion_tombstones').all().map(record => record.session_id)));
   else if (request.action === 'scan') { scan(path.join(root, 'sessions')); scan(path.join(root, 'archived')); }
   else if (request.action === 'record') record(request);
   else throw new Error('Unknown session registry action');

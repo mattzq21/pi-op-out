@@ -31,10 +31,17 @@ function observeTurn(root: Element, element: Element, reveal: () => void) {
   };
 }
 
-export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot: RefObject<HTMLDivElement | null>; eager: boolean }) {
+export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot: RefObject<HTMLDivElement | null>; eager: boolean; navigationId?: string }) {
   const element = createRef<HTMLDivElement>(null);
   const [revealed, setRevealed] = createSignal(componentProps.eager);
   const [searching, setSearching] = createSignal(false);
+  createDependencyEffect(() => {
+    const target = element.current;
+    const reveal = () => setRevealed(true);
+    target?.addEventListener("piop:reveal-turn", reveal);
+
+    return () => target?.removeEventListener("piop:reveal-turn", reveal);
+  }, () => []);
   createDependencyEffect(() => {
     const root = componentProps.scrollRoot.current?.closest(".chat-shell");
 
@@ -58,7 +65,7 @@ export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot:
     return observeTurn(root, target, () => setRevealed(true));
   }, () => [revealed(), componentProps.scrollRoot]);
 
-  return <div ref={node => { element.current = node; }} style={{ "content-visibility": searching() ? "visible" : "auto", "contain-intrinsic-size": "auto 180px", "min-height": cssPixels(revealed() || componentProps.eager || searching() ? undefined : 180) }}>
+  return <div ref={node => { element.current = node; }} data-response-turn={componentProps.navigationId} style={{ "content-visibility": searching() ? "visible" : "auto", "contain-intrinsic-size": "auto 180px", "min-height": cssPixels(revealed() || componentProps.eager || searching() ? undefined : 180) }}>
     {(revealed() || componentProps.eager || searching()) && componentProps.children}
   </div>;
 }

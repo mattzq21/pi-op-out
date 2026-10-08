@@ -21,6 +21,17 @@ use crate::pi_launch::{remote_host, remote_login_command, session_identity, ssh}
 use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
 
+fn recover_host_transactions(settings: &AppSettings, host_id: &str) -> Result<(), String> {
+    if host_id == "local" { crate::restore_recovery::recover(&home_dir()?.join(STORAGE_DIRECTORY)) }
+    else { crate::restore_recovery::recover_remote(remote_host(settings, host_id)?) }
+}
+
+fn transaction_settings(app: AppHandle, host_id: &str) -> Result<AppSettings, String> {
+    let settings = load_app_settings(app)?;
+    recover_host_transactions(&settings, host_id)?;
+    Ok(settings)
+}
+
 pub(super) fn inspect_storage(host: Option<&RemoteHost>) -> Result<HostStorage, String> {
     if host.is_none() { crate::restore_recovery::recover(&home_dir()?.join(STORAGE_DIRECTORY))?; }
     if let Some(host) = host { crate::restore_recovery::recover_remote(host)?; }
@@ -174,8 +185,8 @@ pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, s
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let client = app.state::<PiRuntime>();
     let _lifecycle = client.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+    let settings = transaction_settings(app.clone(), &host_id)?;
     let (paths, mutations) = archive_session_paths(&app, &client, &host_id, &session_path, &client_id)?;
-    let settings = load_app_settings(app.clone())?;
     let session_ids = paths.iter().map(|path| session_identity(&settings, &host_id, path)).collect::<Result<Vec<_>, _>>()?;
     terminal_ids.extend(terminal_lookup::session_terminals(&runtime, &host_id, &session_ids)?);
     stop_terminals(&runtime, &terminal_ids)?;
@@ -305,6 +316,9 @@ fn finish_deleted_sessions(app: &AppHandle, host_id: &str, paths: &[(String, boo
         }
         let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":path,"sessionId":session_id}));
     }
+    if let Err(error) = crate::session_groups::refresh_deletions(app, host_id) {
+        eprintln!("Committed deletion group cleanup will retry: {error}");
+    }
 }
 
 fn close_deleted_session_terminals(app: &AppHandle, host_id: &str, session_ids: &[String]) -> Result<(), String> {
@@ -325,7 +339,7 @@ fn delete_conversation_files(app: &AppHandle, runtime: &PiRuntime, settings: &Ap
 fn delete_stored_sessions(app: AppHandle, runtime: &PiRuntime, session_paths: Vec<String>, host_id: Option<String>, archived: bool, client_id: String) -> Result<Vec<String>, String> {
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
-    let settings = load_app_settings(app.clone())?;
+    let settings = transaction_settings(app.clone(), &host_id)?;
     if session_paths.is_empty() { return Err("Select at least one conversation to delete".into()); }
     let (mut paths, mut mutations) = initial_deletion_paths(&app, &settings, &host_id, session_paths, archived, &client_id)?;
     acquire_deletion_descendants(&app, &host_id, &client_id, &mut paths, &mut mutations)?;
@@ -458,7 +472,7 @@ pub(super) fn restore_archived_worktree(app: AppHandle, session_path: String, ho
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let runtime = app.state::<PiRuntime>();
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
-    let settings = load_app_settings(app.clone())?;
+    let settings = transaction_settings(app.clone(), &host_id)?;
     let result = perform_restore(&app, &settings, &host_id, &session_path, &client_id)?;
     for session in restored_conversations(&result) {
         let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":session["sessionId"],"sessionPath":session["sessionPath"]}));
@@ -489,12 +503,13 @@ pub(super) fn relocate_session(app: AppHandle, session_path: String, cwd: String
 }
 
 pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host_id: Option<String>, action: String, repository: Option<String>, branch: Option<String>, client_id: String) -> Result<serde_json::Value, String> {
+    validate_recovery_action(&action)?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let runtime = app.state::<PiRuntime>();
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
-    let mutation = if action == "inspect" { None } else { Some(conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "relocate")?) };
     let settings = load_app_settings(app.clone())?;
-    let path = desktop_session_file(&settings, &host_id, &session_path)?;
+    let (path, archived) = recovery_session_location(&settings, &host_id, &session_path, &action)?;
+    let mutation = recovery_mutation(&app, &host_id, &path, &client_id, archived, &action)?;
     let arguments = json!({"sessionPath":path,"action":action,"repository":repository,"branch":branch,"storage":STORAGE_DIRECTORY}).to_string();
     let script = include_str!("../../resources/recover-missing-session.cjs");
     let relocate = include_str!("../../resources/relocate-session.bundle.mjs");
@@ -508,12 +523,31 @@ pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host
     Ok(result)
 }
 
+fn validate_recovery_action(action: &str) -> Result<(), String> {
+    if matches!(action, "inspect" | "discover" | "remote" | "empty" | "migrate") { Ok(()) } else { Err("Unknown recovery action".into()) }
+}
+
+fn recovery_mutation(app: &AppHandle, host_id: &str, path: &str, client_id: &str, archived: bool, action: &str) -> Result<Option<conversation_ownership::MutationGuard>, String> {
+    if matches!(action, "inspect" | "discover") { return Ok(None); }
+    conversation_ownership::MutationGuard::acquire(app, host_id, path, client_id, archived, "relocate").map(Some)
+}
+
+fn recovery_session_location(settings: &AppSettings, host_id: &str, session_path: &str, action: &str) -> Result<(String, bool), String> {
+    if action == "discover" { return Ok((String::new(), false)); }
+    match desktop_session_file(settings, host_id, session_path) {
+        Ok(path) => Ok((path, false)),
+        Err(error) if matches!(action, "inspect" | "migrate") => archived_session_file(settings, host_id, session_path).map(|path| (path, true)).map_err(|_| error),
+        Err(error) => Err(error),
+    }
+}
+
 fn directory_recovery_command(settings: &AppSettings, host_id: &str, script: &str, arguments: &str, relocate: &str, registry: &str) -> Result<Command, String> {
+    let recovery = include_str!("../../resources/recovery-storage.cjs");
     let command = if host_id == "local" {
-        let mut command = node_command(); command.args(["-e", script, arguments, relocate, registry]); command
+        let mut command = node_command(); command.args(["-e", script, arguments, relocate, registry, recovery]); command
     } else {
         let mut command = ssh(remote_host(settings, host_id)?);
-        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {} {} {}", shell_quote(script), shell_quote(arguments), shell_quote(relocate), shell_quote(registry)))); command
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {} {} {} {}", shell_quote(script), shell_quote(arguments), shell_quote(relocate), shell_quote(registry), shell_quote(recovery)))); command
     };
     Ok(command)
 }

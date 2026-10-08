@@ -1,8 +1,10 @@
-use std::{fs::{self, File, OpenOptions}, io::{self, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, thread, time::Duration};
+use crate::daemon_endpoint;
+use std::{fs::{self, File, OpenOptions}, io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}, process::{Child, ChildStdin, Command, Stdio}, thread, time::Duration};
 
 const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 const BACKUP_COUNT: usize = 4;
 const READY: u8 = 1;
+const CAPTURED: &str = "PIOP_DAEMON_LOG_CAPTURED";
 
 fn private_file(path: &Path, append: bool) -> io::Result<File> {
     let mut options = OpenOptions::new();
@@ -14,10 +16,12 @@ fn private_file(path: &Path, append: bool) -> io::Result<File> {
     Ok(file)
 }
 
-fn lock(directory: &Path) -> io::Result<File> {
+fn lock(directory: &Path) -> io::Result<(File, File)> {
     let file = private_file(&directory.join("daemon-log.lock"), false)?;
     file.lock()?;
-    Ok(file)
+    let compatible = private_file(&directory.join("daemon.log.lock"), false)?;
+    compatible.lock()?;
+    Ok((file, compatible))
 }
 
 fn archive_path(directory: &Path, index: usize) -> PathBuf {
@@ -98,18 +102,23 @@ fn collect(directory: &Path) -> io::Result<()> {
     }
 }
 
-fn initialize() -> Result<PathBuf, String> {
+fn initialize_directory() -> Result<PathBuf, String> {
     let directory = crate::daemon_endpoint::directory()?;
-    crate::ensure_private_dir(&directory)?;
-    {
-        let _lock = lock(&directory).map_err(|error| error.to_string())?;
-        trim_legacy_log(&directory).map_err(|error| error.to_string())?;
-    }
+    initialize_at(&directory)?;
     Ok(directory)
 }
 
+fn initialize_at(directory: &Path) -> Result<(), String> {
+    crate::ensure_private_dir(directory)?;
+    {
+        let _lock = lock(directory).map_err(|error| error.to_string())?;
+        trim_legacy_log(directory).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 pub(crate) fn run() -> Result<(), String> {
-    let directory = match initialize() {
+    let directory = match initialize_directory() {
         Ok(directory) => directory,
         Err(error) => {
             let _ = io::stdout().write_all(error.as_bytes()).and_then(|()| io::stdout().flush());
@@ -157,6 +166,10 @@ fn wait_ready(writer: &mut Child) -> Result<(), String> {
 }
 
 pub(crate) fn spawn(mut command: Command) -> Result<Child, String> {
+    if command.get_envs().any(|(key, value)| key == CAPTURED && value.is_some()) {
+        detach(&mut command);
+        return command.spawn().map_err(|error| format!("Could not start daemon: {error}"));
+    }
     let mut logging = Command::new(writer_executable()?);
     logging.arg("--daemon-log-writer").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     detach(&mut logging);
@@ -167,10 +180,91 @@ pub(crate) fn spawn(mut command: Command) -> Result<Child, String> {
         return Err(error);
     }
     let input = writer.stdin.take().ok_or("Daemon log writer has no input pipe")?;
-    command.stderr(input);
+    command.stderr(input).env(CAPTURED, "1");
     detach(&mut command);
     let result = command.spawn().map_err(|error| format!("Could not start {}: {error}", command.get_program().to_string_lossy()));
     drop(command);
     thread::spawn(move || { let _ = writer.wait(); });
     result
+}
+
+fn start_consumer(executable: &Path, directory: &Path) -> Result<ChildStdin, String> {
+    initialize_at(directory)?;
+    let mut command = Command::new(executable);
+    command.arg("--daemon-log-sink").arg(directory).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    detach(&mut command);
+    let mut child = command.spawn().map_err(|error| format!("Could not start daemon logging: {error}"))?;
+    if let Err(error) = wait_sink_ready(&mut child) {
+        let _ = child.kill(); let _ = child.wait();
+        let message = format!("Could not start daemon logging: {error}\n");
+        let _ = append(directory, &mut message.as_bytes());
+        return Err(error);
+    }
+    let writer = child.stdin.take().ok_or("Daemon log input is unavailable")?;
+    thread::spawn(move || { let _ = child.wait(); });
+    Ok(writer)
+}
+
+fn wait_sink_ready(child: &mut Child) -> Result<(), String> {
+    let stdout = child.stdout.take().ok_or("Daemon log readiness is unavailable")?;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let mut line = String::new();
+        let result = BufReader::new(stdout).take(1024).read_line(&mut line).map(|_| line).map_err(|error| error.to_string());
+        let _ = sender.send(result);
+    });
+    let response = receiver.recv_timeout(Duration::from_secs(5)).map_err(|_| "Daemon logging did not initialize within five seconds")??;
+    if response.trim() != "ready" { return Err(format!("Daemon logging failed to initialize: {}", response.trim())); }
+    Ok(())
+}
+
+pub(crate) fn configure(command: &mut Command, executable: &Path) -> Result<PathBuf, String> {
+    let directory = daemon_endpoint::directory()?;
+    let writer = start_consumer(executable, &directory)?;
+    command.stderr(Stdio::from(writer)).env(CAPTURED, "1");
+    Ok(directory.join("daemon.log"))
+}
+
+#[cfg(not(feature = "desktop"))]
+pub(crate) fn run_sink() -> Result<(), String> {
+    let directory = PathBuf::from(std::env::args_os().nth(2).ok_or("Daemon log directory is missing")?);
+    initialize_at(&directory)?;
+    println!("ready");
+    std::io::stdout().flush().map_err(|error| error.to_string())?;
+    collect(&directory).map_err(|error| error.to_string())
+}
+
+#[cfg(not(feature = "desktop"))]
+pub(crate) fn initialize() -> Result<(), String> {
+    if !matches!(std::env::args().nth(1).as_deref(), Some("--serve" | "--exit-on-disconnect" | "--restart-candidate" | "--restart-coordinator" | "--validate-plugins")) { return Ok(()); }
+    if std::env::var_os(CAPTURED).is_some() { return Ok(()); }
+    let directory = daemon_endpoint::directory()?;
+    let writer = start_consumer(&running_executable()?, &directory)?;
+    redirect_stderr(&writer)
+}
+
+
+#[cfg(not(feature = "desktop"))]
+pub(crate) fn running_executable() -> Result<PathBuf, String> { writer_executable() }
+
+#[cfg(all(not(feature = "desktop"), unix))]
+fn redirect_stderr(writer: &ChildStdin) -> Result<(), String> {
+    use std::os::fd::AsRawFd;
+    if unsafe { libc::dup2(writer.as_raw_fd(), libc::STDERR_FILENO) } < 0 { return Err(std::io::Error::last_os_error().to_string()); }
+    Ok(())
+}
+
+#[cfg(all(not(feature = "desktop"), windows))]
+fn redirect_stderr(writer: &ChildStdin) -> Result<(), String> {
+    use std::os::windows::io::{AsHandle, FromRawHandle, IntoRawHandle};
+    #[link(name = "kernel32")]
+    extern "system" { fn SetStdHandle(kind: u32, handle: *mut std::ffi::c_void) -> i32; }
+    let handle = writer.as_handle().try_clone_to_owned().map_err(|error| error.to_string())?.into_raw_handle();
+    let fd = unsafe { libc::open_osfhandle(handle as isize, libc::O_WRONLY | libc::O_BINARY) };
+    if fd < 0 { unsafe { drop(std::os::windows::io::OwnedHandle::from_raw_handle(handle)); } return Err(std::io::Error::last_os_error().to_string()); }
+    let result = unsafe { libc::dup2(fd, 2) };
+    unsafe { libc::close(fd); }
+    if result < 0 { return Err(std::io::Error::last_os_error().to_string()); }
+    if unsafe { SetStdHandle((-12i32) as u32, libc::get_osfhandle(2) as *mut std::ffi::c_void) } == 0 { return Err(std::io::Error::last_os_error().to_string()); }
+    Ok(())
 }

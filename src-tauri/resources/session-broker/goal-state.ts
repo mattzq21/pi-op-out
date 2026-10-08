@@ -18,18 +18,32 @@ const accountingSchema = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INT
 
 export const subagentUsageSchema = Type.Object({
   version: Type.Literal(1), runId: Type.String(), total: accountingSchema, tokens: accountingSchema,
-  goalId: Type.Optional(Type.String()),
+  goalId: Type.Optional(Type.String()), sourceRunId: Type.Optional(Type.String()), accountedTotal: Type.Optional(accountingSchema),
 });
 
 const goalSchema = Type.Object({
   version: Type.Literal(1), id: Type.String({ minLength: 1 }), sessionId: Type.String({ minLength: 1 }),
   objective: Type.String(), status: statusSchema, tokenBudget: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })]),
   tokensUsed: accountingSchema, elapsedMs: accountingSchema, createdAt: accountingSchema, updatedAt: accountingSchema,
-  subagentUsage: Type.Optional(Type.Array(Type.Object({ runId: Type.String(), total: accountingSchema }))),
+  subagentUsage: Type.Optional(Type.Union([Type.Array(Type.Object({ runId: Type.String(), total: accountingSchema })), Type.Record(Type.String(), accountingSchema)])),
   legacySubagentUsage: Type.Optional(Type.Array(legacyReceiptSchema)), legacyUsageUncertainTokens: Type.Optional(accountingSchema),
 });
 
 export type Goal = Static<typeof goalSchema>;
+
+function subagentConsumed(goal: Goal, sourceId: string) {
+  const receipts = goal.subagentUsage;
+
+  if (Array.isArray(receipts)) return receipts.find(receipt => receipt.runId === sourceId)?.total;
+
+  return receipts && Object.hasOwn(receipts, sourceId) ? receipts[sourceId] : undefined;
+}
+
+function saveSubagentReceipt(goal: Goal, sourceId: string, total: number) {
+  const receipts = goal.subagentUsage;
+  const previous = Array.isArray(receipts) ? Object.fromEntries(receipts.map(receipt => [receipt.runId, receipt.total])) : receipts;
+  goal.subagentUsage = { ...previous, [sourceId]: total };
+}
 
 type Usage = { input?: number; output?: number; cacheWrite?: number };
 
@@ -60,15 +74,13 @@ function validateSaved(data: Goal | null): Goal | null {
 
 function applySubagentUsage(goal: Goal, usage: Static<typeof subagentUsageSchema>) {
   if (usage.goalId !== goal.id) return false;
-  const receipts = goal.subagentUsage ??= [];
-  const previous = receipts.find(receipt => receipt.runId === usage.runId);
-  const accounted = previous?.total ?? Math.max(0, usage.total - usage.tokens);
+  const baseline = usage.sourceRunId !== undefined && usage.accountedTotal !== undefined ? 0 : Math.max(0, usage.total - usage.tokens);
+  const accounted = subagentConsumed(goal, usage.runId) ?? baseline;
 
   if (usage.total <= accounted) return false;
   goal.tokensUsed = Math.min(Number.MAX_SAFE_INTEGER, goal.tokensUsed + usage.total - accounted);
 
-  if (previous) previous.total = usage.total;
-  else receipts.push({ runId: usage.runId, total: usage.total });
+  saveSubagentReceipt(goal, usage.runId, usage.total);
 
   return true;
 }
@@ -175,6 +187,31 @@ export class GoalState {
     if (changed) this.flushClock();
     const limited = changed && this.enforceBudget(true);
     this.save(ctx);
+
+    return limited;
+  }
+
+  accountSubagent(ctx: ExtensionContext, sourceId: string, total: number) {
+    if (!this.goal || this.goal.status === "complete") return false;
+
+    if (!sourceId || !Number.isSafeInteger(total) || total < 0) throw new Error("Invalid cumulative subagent usage");
+    const previous = structuredClone(this.goal);
+    const saved = this.saved;
+    const clock = this.clock;
+    const consumed = subagentConsumed(this.goal, sourceId) ?? 0;
+
+    if (total <= consumed) return false;
+    this.flushClock();
+    saveSubagentReceipt(this.goal, sourceId, total);
+    this.goal.tokensUsed = Math.min(Number.MAX_SAFE_INTEGER, this.goal.tokensUsed + total - consumed);
+    const limited = this.enforceBudget(true);
+
+    try { this.save(ctx); }
+    catch (error) {
+      if (this.saved === saved) { this.goal = previous; this.clock = clock; }
+
+      throw error;
+    }
 
     return limited;
   }

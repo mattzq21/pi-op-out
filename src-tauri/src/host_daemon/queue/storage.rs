@@ -33,12 +33,16 @@ impl QueueStorage {
     }
 
     pub fn recover(&self, pending: Vec<Value>) -> Result<Vec<Value>> {
+        let root = self.path.parent().and_then(Path::parent).ok_or("Queued-input storage has no root")?;
+        let id = self.path.file_stem().and_then(|name| name.to_str()).ok_or("Queued-input identity is missing")?;
         let mut recovered = self.load()?;
-        for mut item in pending {
+        for mut item in super::persistence::load_legacy(root, id)?.into_iter().chain(pending) {
+            validate_item(&item)?;
             item["retry"] = json!(true);
             if !recovered.iter().any(|saved| saved["id"] == item["id"]) { recovered.push(item); }
         }
         self.save(&recovered)?;
+        super::persistence::remove_legacy(root, id)?;
         Ok(recovered)
     }
 
@@ -95,8 +99,7 @@ fn recover_items(bytes: &[u8]) -> Result<Vec<Value>> {
 }
 
 fn validate_item(item: &Value) -> Result<()> {
-    let identity = item["id"].as_str().and_then(|id| Uuid::parse_str(id).ok());
-    if identity.is_none() || !item["message"].is_string() || !matches!(item["behavior"].as_str(), Some("steer" | "followUp")) {
+    if !item["id"].as_str().is_some_and(|id| !id.is_empty()) || !item["message"].is_string() || !matches!(item["behavior"].as_str(), Some("steer" | "followUp")) {
         return Err("Invalid queued-input journal item".into());
     }
     if let Some(images) = item.get("images") {

@@ -5,13 +5,18 @@ const { randomUUID } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { exists, restoreGroup, restoredResult } = require('./restore-transaction.cjs');
+const { exists, restore, restoreGroup, restoredResult, lockStorage } = require('./restore-transaction.cjs');
 const { recoverStorage } = require('./storage-recovery.cjs');
-const { runWithStorageLock } = require('./storage-lock.cjs');
+const transactions = require('./session-transactions.cjs');
+const { canonicalTranscriptBasename } = require('./transcript-identity.cjs');
+const shared = require('./archive-resource-restore.cjs');
+const migration = require('./archive-resource-migration.cjs');
 
 const checkpointSchema = Type.Object({ path: Type.String(), repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-f0-9]{40,64}$' }) });
 
-const root = process.env.PIOP_RESTORE_ROOT || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop');
+const configuredRoot = process.env.PIOP_RESTORE_ROOT || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop');
+
+const root = fs.existsSync(configuredRoot) ? fs.realpathSync(configuredRoot) : path.resolve(configuredRoot);
 
 function absent(file) {
   if (exists(file)) throw new Error(`Restoration destination already exists: ${file}`);
@@ -73,7 +78,7 @@ function existingWorktree(saved, git) {
   const directory = fs.lstatSync(saved.path, { bigint: true });
 
   if (!directory.isDirectory()) throw new Error('The archived worktree path is no longer a directory');
-  const current = args => execFileSync('git', ['-C', saved.path, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3, 4] }).trim();
+  const current = args => execFileSync('git', ['-C', saved.path, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3, 4, 5, 6] }).trim();
   const common = fs.realpathSync(git(['rev-parse', '--path-format=absolute', '--git-common-dir']));
 
   if (fs.realpathSync(current(['rev-parse', '--show-toplevel'])) !== fs.realpathSync(saved.path)
@@ -89,7 +94,7 @@ function existingWorktree(saved, git) {
 function worktreePlan(entries, header) {
   const saved = header.worktreeRestore;
   verifyLocation(header, saved);
-  const git = args => execFileSync('git', ['-C', saved.repositoryRoot, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3, 4] }).trim();
+  const git = args => execFileSync('git', ['-C', saved.repositoryRoot, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe', 3, 4, 5, 6] }).trim();
 
   if (git(['rev-parse', '--verify', saved.ref]) !== saved.commit) throw new Error('The recovery checkpoint is missing or has changed');
   git(['cat-file', '-e', `${saved.commit}^{commit}`]);
@@ -168,7 +173,7 @@ function prepareSessionDirectory(sessions, relative) {
 }
 
 function destinationPath(sessions, record, references) {
-  const destination = record.header.archiveSessionPath ?? references.get(record.header.id) ?? path.join(sessions, path.basename(record.file));
+  const destination = record.header.archiveSessionPath ?? references.get(record.header.id) ?? path.join(sessions, canonicalTranscriptBasename(record.header));
 
   if (!Check(Type.String(), destination) || !path.isAbsolute(destination) || !destination.endsWith('.jsonl')) throw new Error('Invalid saved conversation path');
   const relative = path.relative(sessions, destination);
@@ -289,21 +294,128 @@ function restoreArchives(files) {
     if (ids.has(record.header.id) || destinations.has(destination)) throw new Error('Duplicate conversation in restoration');
     ids.add(record.header.id); destinations.add(destination);
 
-    for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.diffs.json'), `${destination}.loop-detection.json`]) absent(target);
+    for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json.lock'), `${destination}.loop-detection.json`]) absent(target);
 
-    const shared = recoveryPlan(locations, record, archiveRecords);
+    const shared = record.header.archiveResourceId ? resourcePlan(locations, record, destination) : recoveryPlan(locations, record, archiveRecords);
     retainWorkingDirectory(record, shared);
     record.destination = destination;
     record.result = restorationResult(record, shared, destination);
   }
 
   const plans = [...locations.values()].filter(item => !item.plan.reused);
+  prepareLegacyResources(plans, records);
   const reusedWorktrees = [...locations.values()].flatMap(item => item.kind === 'git' && item.plan.reused ? [item.plan] : []);
 
-  return restoreGroup(root, records, plans.flatMap(item => item.kind === 'directory' ? [item.plan] : []), plans.flatMap(item => item.kind === 'git' ? [item.plan] : []), reusedWorktrees);
+  const resources = [...locations.values()].flatMap(item => item.resource ? [item.resource] : []);
+
+  return restoreGroup(root, records, plans.flatMap(item => item.kind === 'directory' && !item.resource ? [item.plan] : []), plans.flatMap(item => item.kind === 'git' ? [item.plan] : []), reusedWorktrees, resources);
+}
+
+function prepareLegacyResources(plans, records) {
+  for (const selected of plans) {
+    if (selected.resource) continue;
+    const location = selected.plan.path ?? selected.plan.destination;
+    const record = records.find(item => item.header.worktreeRestore?.path === location);
+
+    if (!record) continue;
+    const legacy = migration.plan(root, record.file, record.destination, record.header, randomUUID());
+    selected.resource = { migration: legacy, receiptId: legacy.operationId,
+      result: { sessionId: record.header.id }, trace: { source: record.file, destination: record.destination, identity: transactions.identity(record.file) },
+      worktree: selected.kind === 'git' ? selected.plan : undefined };
+
+    if (selected.kind === 'directory') selected.resource.directoryCopy = {
+      source: selected.plan.source, destination: selected.plan.destination,
+      sourceProof: { identity: legacy.recovery.storedIdentity, directory: true, digest: legacy.recovery.digest, excluded: [] },
+      staging: path.join(root, 'restore-staging', legacy.operationId), recovery: path.join(root, 'restore-recovery', legacy.operationId),
+    };
+  }
+}
+
+function restoreArchive(file) {
+  const record = readArchive(file);
+  const { entries, header } = record;
+
+  if (header.archiveResourceId || !header.worktreeRestore || exists(header.worktreeRestore.path)) return restoreArchives([file]);
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions, { recursive: true });
+  const destination = destinationPath(fs.realpathSync(sessions), record, referencedPaths([record]));
+
+  for (const suffix of ['', '.snapshots', '.diffs.json', '.diffs.json.lock']) absent(suffix ? destination.replace(/\.jsonl$/, suffix) : destination);
+  absent(`${destination}.loop-detection.json`);
+  const saved = header.worktreeRestore;
+  const legacy = migration.plan(root, file, destination, header, randomUUID());
+
+  if (saved.kind === 'directory') {
+    const planned = directoryPlan(saved);
+
+    const resource = { migration: legacy, directoryCopy: { ...planned, sourceProof: { identity: legacy.recovery.storedIdentity, directory: true, digest: legacy.recovery.digest, excluded: [] },
+      staging: path.join(root, 'restore-staging', legacy.operationId), recovery: path.join(root, 'restore-recovery', legacy.operationId) } };
+
+    return restore(root, header, file, destination, { path: saved.path, branch: null, sessionPath: destination }, undefined, undefined, resource);
+  }
+
+  const worktree = worktreePlan(entries, header);
+  retainWorkingDirectory(record, { kind: 'git', plan: worktree });
+
+  return restore(root, header, file, destination, { path: saved.path, branch: worktree.branch, sessionPath: destination }, undefined, worktree, { migration: legacy });
+}
+
+function resourceWorktree(resource) {
+  const saved = resource.recovery;
+  const location = resource.binding.path;
+
+  if (resource.action === 'create-git') return {
+    repositoryRoot: saved.repositoryRoot, path: location, commit: saved.commit,
+    branch: restoredBranch(saved, args => transactions.git(saved.repositoryRoot, args)),
+    staging: path.join(path.dirname(location), `.piop-restore-${randomUUID()}`), reservation: `refs/piop-restore-transactions/${randomUUID()}`,
+  };
+  let branch = null;
+
+  try { branch = transactions.git(location, ['symbolic-ref', '--short', '--quiet', 'HEAD']); }
+  catch (error) { if (error.status !== 1) throw error; }
+
+  return { path: location, repositoryRoot: resource.binding.git.root, branch, reused: true, directoryIdentity: resource.binding.identity, conversationDirectories: [] };
+}
+
+function combineResource(previous, planned, record, destination) {
+  if (previous.resource.resource.before !== planned.change.before) throw new Error('Shared archive ownership changed during group planning');
+  const after = JSON.parse(previous.resource.resource.after);
+  const selected = JSON.parse(planned.change.after).owners.find(owner => owner.sessionId === record.header.id && owner.sessionPath === destination);
+  const index = after.owners.findIndex(owner => owner.sessionId === record.header.id && owner.sessionPath === record.file);
+
+  if (!selected || index < 0) throw new Error('Shared archive group owner could not be verified');
+  after.owners[index] = selected;
+  previous.resource.resource.after = JSON.stringify(after);
+
+  return previous;
+}
+
+function resourcePlan(locations, record, destination) {
+  const planned = shared.plan(root, record.file, destination, randomUUID());
+  const location = planned.binding.path;
+  const previous = locations.get(location);
+
+  if (previous) {
+    if (!previous.resource || previous.resource.resource.resourceId !== planned.change.resourceId) throw new Error('Archived conversations disagree about shared working directory ownership');
+
+    return combineResource(previous, planned, record, destination);
+  }
+
+  const kind = planned.binding.git ? 'git' : 'directory';
+  const plan = kind === 'git' ? resourceWorktree(planned) : { destination: location, reused: planned.action === 'reuse' };
+
+  const resource = { resource: planned.change, receiptId: planned.change.operationId, directoryCopy: planned.directoryCopy,
+    worktree: kind === 'git' && !plan.reused ? plan : undefined,
+    result: { sessionId: record.header.id }, trace: { source: record.file, destination, identity: planned.sourceIdentity } };
+
+  const selected = { kind, plan, resource };
+  locations.set(location, selected);
+
+  return selected;
 }
 
 function main() {
+  transactions.recover(root);
   recoverStorage(root);
 
   if (process.argv[1] === '--result') return restoredResult(root, process.argv[2]);
@@ -314,7 +426,11 @@ function main() {
 
   if (!Check(Type.Array(Type.String(), { minItems: 1 }), files)) throw new Error('No archived conversations selected');
 
-  return restoreArchives([...new Set(files.map(file => fs.realpathSync(file)))]);
+  const selected = [...new Set(files.map(file => fs.realpathSync(file)))];
+
+  return selected.length === 1 ? restoreArchive(selected[0]) : restoreArchives(selected);
 }
 
-runWithStorageLock(root, () => process.stdout.write(JSON.stringify(main() ?? null)));
+try {
+  if (lockStorage(root)) process.stdout.write(JSON.stringify(main() ?? null));
+} catch (error) { console.error(error.message); process.exitCode = 1; }

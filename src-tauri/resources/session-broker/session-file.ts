@@ -1,26 +1,20 @@
-import { randomUUID } from "node:crypto";
-import { open, rm } from "node:fs/promises";
-import { closeSync, fsyncSync, linkSync, openSync } from "node:fs";
-import { dirname } from "node:path";
 import { acquireSessionReferencePublication, validateSessionReferencePublication } from "../sdk-storage.mjs";
+import { publish, SessionPublicationError, type PublicationOptions } from "./session-publication.cjs";
 
-export async function writeSessionFile(path: string, entries: unknown[]) {
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  const file = await open(temporary, "wx", 0o600);
+export type { PublicationOptions, SessionPublication } from "./session-publication.cjs";
+
+export function publicationRetainsDependencies(error: Error): boolean {
+  if (error instanceof SessionPublicationError) return error.dependenciesRetained || error.publicationPending;
+
+  return error.cause instanceof Error && publicationRetainsDependencies(error.cause);
+}
+
+export async function writeSessionFile(path: string, entries: unknown[], options?: PublicationOptions) {
+  const release = acquireSessionReferencePublication(path);
 
   try {
-    try { await file.writeFile(entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n"); await file.sync(); }
-    finally { await file.close(); }
+    validateSessionReferencePublication(entries);
 
-    const release = acquireSessionReferencePublication(path);
-
-    try {
-      validateSessionReferencePublication(entries);
-      linkSync(temporary, path);
-      const directory = openSync(dirname(path), "r");
-
-      try { fsyncSync(directory); }
-      finally { closeSync(directory); }
-    } finally { release(); }
-  } finally { await rm(temporary, { force: true }); }
+    return await publish(path, entries.map(entry => JSON.stringify(entry)).join("\n") + "\n", options);
+  } finally { release(); }
 }

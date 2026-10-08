@@ -29,7 +29,7 @@ function storageKey() {
   return `piop-last-session:${host}:main`;
 }
 
-export function restoredSessionTarget(): NativeConnectionTarget {
+export function restoredSessionTarget(fallback: NativeConnectionTarget = {}): NativeConnectionTarget {
   try {
     const key = storageKey();
 
@@ -37,7 +37,21 @@ export function restoredSessionTarget(): NativeConnectionTarget {
     const value = JSON.parse(localStorage.getItem(key) ?? "null");
 
     return restoredTargetSchema.parse(value);
-  } catch { return {}; }
+  } catch { return fallback; }
+}
+
+export function targetedWindowSession(target: string): NativeConnectionTarget {
+  const initial = nativeConnectionTargetSchema.parse(JSON.parse(target));
+
+  if (initial.readOnly) return initial;
+
+  try {
+    const key = `piop-target-initialized:${target}`;
+    const initialized = sessionStorage.getItem(key) === "1";
+    sessionStorage.setItem(key, "1");
+
+    return initialized ? restoredSessionTarget(initial) : initial;
+  } catch { return initial; }
 }
 
 export function useSessionResume(selection: Accessor<{ target: NativeConnectionTarget; ready: boolean; saved: boolean; ephemeral: boolean }>) {

@@ -62,7 +62,13 @@ function retainActiveGoals(goals, retained) {
   let pending = false;
 
   for (const directory of goals) {
-    if (retained.has(directory) || !activeGoalAllocation(directory)) continue;
+    const managed = ['owners.json', 'prepared.json', 'dependencies.json'].some(name => metadata(path.join(directory, name)));
+
+    if (retained.has(directory)) continue;
+
+    if (managed) { retained.add(directory); continue; }
+
+    if (!activeGoalAllocation(directory)) continue;
     retained.add(directory);
     pending = true;
   }
@@ -305,6 +311,7 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
   goalReferences(owned, inventory.goals, candidates, inventory);
   const excluded = new Set([...sources, ...savedFiles.map(saved => saved.file)]);
   const retained = survivingReferences(inventory, candidates, excluded);
+  retainPublications(root, candidates, retained, inventory);
   queuedReferences(root, excluded, candidates, retained, inventory);
   const pendingGoals = retainActiveGoals(inventory.goals, retained);
   goalReferences(retained, inventory.goals, candidates, inventory);
@@ -318,6 +325,16 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
     registryIds: inventory.uncertain ? [] : requestedIds.filter(id => !inventory.sessionIds.has(id.toLowerCase())),
     deferred: describeCandidates([...owned], requestedIds),
   };
+}
+
+function retainPublications(root, candidates, retained, inventory) {
+  const publications = require('./session-broker/session-publication.cjs').retainedDependencies(root);
+
+  for (const publication of publications) {
+    references(publication.dependencies, candidates, retained);
+
+    for (const file of publication.transcriptPaths) transcriptReferences(fs.readFileSync(file, 'utf8'), candidates, retained, inventory);
+  }
 }
 
 function cleanupRegistry(root, sessionIds) {

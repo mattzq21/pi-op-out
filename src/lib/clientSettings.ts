@@ -2,8 +2,7 @@ import type { AppSettings } from "../types";
 import { invoke } from "./platform";
 import { z } from "zod";
 import { settingsPublicationSchema } from "./responseSchemas";
-
-type ClientSettings = Pick<AppSettings, "keybindings" | "hiddenModels" | "knownModels" | "debugMode">;
+import { applyClientPreferences, clientPreferences, clientPreferencesSchema, ClientPreferenceConflictError } from "./clientPreferenceMerge";
 
 const storageKey = "piop-client-settings";
 
@@ -18,10 +17,6 @@ const clientSettingsSchema = z.object({
 
 type StoredPreferences = z.infer<typeof clientSettingsSchema>;
 
-export function preferences(settings: AppSettings): ClientSettings {
-  return { keybindings: settings.keybindings, hiddenModels: settings.hiddenModels, knownModels: settings.knownModels, debugMode: settings.debugMode };
-}
-
 async function storedPreferences(): Promise<{ settings: StoredPreferences; persisted: boolean; revision: string }> {
   const stored = await invoke("load_client_settings", undefined, z.object({ settings: clientSettingsSchema.nullable(), revision: z.string() }));
 
@@ -34,16 +29,7 @@ export async function withClientSettings(source: AppSettings | Promise<AppSettin
   const [settings, preferences] = await Promise.all([source, storedPreferences()]);
   const merged = { ...mergeClientSettings(settings, preferences.settings), ...clientRevision(preferences.revision) };
 
-  if (migrate && !preferences.persisted) {
-    try { return await saveClientSettings(merged); }
-    catch (reason) {
-      const latest = await storedPreferences();
-
-      if (!latest.persisted) throw reason;
-
-      return { ...mergeClientSettings(settings, latest.settings), ...clientRevision(latest.revision) };
-    }
-  }
+  if (migrate && !preferences.persisted) return saveClientSettings(merged, settings, true);
 
   return merged;
 }
@@ -57,21 +43,37 @@ function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): 
   };
 }
 
-export async function saveClientSettings(settings: AppSettings, expectedRevision = settings.clientSettingsRevision): Promise<AppSettings> {
-  if (!expectedRevision) throw new Error("Reload settings before saving client preferences.");
-  const saved = await invoke("save_client_settings", { settings: preferences(settings), expectedRevision }, z.object({ revision: z.string(), publication: settingsPublicationSchema.optional() }));
-  const error = saved.publication?.durable === false ? saved.publication.error ?? "Disk durability could not be confirmed." : undefined;
-  durabilityFailure = error ? { revision: saved.revision, error } : undefined;
+export async function saveClientSettings(settings: AppSettings, baseline: AppSettings, initialize = false): Promise<AppSettings> {
+  let stored;
+
+  try { stored = await invoke("save_client_settings", { settings: clientPreferences(settings), baseline: clientPreferences(baseline), initialize }, z.object({ settings: clientPreferencesSchema, revision: z.string(), publication: settingsPublicationSchema })); }
+  catch (reason) {
+    const message = reason instanceof Error ? reason.message : String(reason);
+
+    if (!message.includes("Client preference conflict at ")) throw reason;
+    let latest: AppSettings | undefined;
+
+    try { latest = await withClientSettings(baseline); } catch { }
+
+    throw new ClientPreferenceConflictError(message, latest);
+  }
+
+  const error = publicationError(stored.publication);
+  durabilityFailure = error ? { revision: stored.revision, error } : undefined;
 
   if (!error) { try { localStorage.removeItem(storageKey); } catch { } }
 
-  return { ...settings, ...clientRevision(saved.revision) };
+  return { ...applyClientPreferences(settings, stored.settings), ...clientRevision(stored.revision) };
+}
+
+export function preserveDaemonPreferences(settings: AppSettings, daemonSettings: AppSettings): AppSettings {
+  return { ...settings, ...clientPreferences(daemonSettings), keybindings: { ...daemonSettings.keybindings }, clientSettingsRevision: daemonSettings.clientSettingsRevision, clientSettingsDurabilityError: daemonSettings.clientSettingsDurabilityError };
 }
 
 function clientRevision(revision: string): Pick<AppSettings, "clientSettingsRevision" | "clientSettingsDurabilityError"> {
   return { clientSettingsRevision: revision, clientSettingsDurabilityError: durabilityFailure?.revision === revision ? durabilityFailure.error : undefined };
 }
 
-export function preserveDaemonPreferences(settings: AppSettings, daemonSettings: AppSettings): AppSettings {
-  return { ...settings, ...preferences(daemonSettings) };
+function publicationError(publication: z.infer<typeof settingsPublicationSchema>) {
+  return publication.durable ? undefined : publication.error ?? "Disk durability could not be confirmed.";
 }

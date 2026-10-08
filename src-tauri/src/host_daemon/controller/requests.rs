@@ -96,15 +96,14 @@ impl Host {
 
     async fn orchestration(self: &Arc<Self>, packet: Value) -> Result<Value> {
         let id = text(&packet, "sessionKey");
+        if text(&packet, "action") == "locate" { return self.ownership().lookup(&id); }
         if text(&packet, "action") == "interrupt" {
             if self.cancel_deliveries(&id, packet["deliveryId"].as_str()) {
                 return Ok(json!({"sessionId":id,"completed":false}));
             }
             return self.orchestration_cancel(&id).await;
         }
-        if self.ownership().locate(&id, packet["sessionPath"].as_str(), false, true)?.is_none() {
-            return Err("This conversation has been deleted or archived".into());
-        }
+        self.require_orchestration_target(&id, &packet)?;
         let session = self.find_session(&id);
         match text(&packet, "action").as_str() {
             "read" => self.orchestration_read(&packet, session).await,
@@ -119,6 +118,14 @@ impl Host {
             Some(session) => session.execute(json!({"type":"get_snapshot"})).await,
             None => self.ownership().snapshot(&text(packet, "sessionKey"), packet["sessionPath"].as_str()),
         }
+    }
+
+    fn require_orchestration_target(&self, id: &str, packet: &Value) -> Result<()> {
+        let location = self.ownership().lookup(id)?;
+        if location["archived"] == true && text(packet, "action") == "send" {
+            return Err("This conversation has been deleted or archived".into());
+        }
+        Ok(())
     }
 
     fn cancel_deliveries(&self, id: &str, delivery: Option<&str>) -> bool {
@@ -277,10 +284,17 @@ impl Host {
             if operation == "restore" {
                 return guard.restore_finished(self.ownership(), packet["restoredPath"].as_str()).map(|()| Value::Null);
             }
+            let deleted_id = if operation == "delete" && flag(packet, "success") {
+                guard.saved.as_ref().and_then(|saved| saved.header["id"].as_str()).map(str::to_owned)
+            } else { None };
             guard.release(
                 self.ownership(),
                 flag(packet, "success") && matches!(operation.as_str(), "delete" | "archive"),
             )?;
+            if let Some(id) = deleted_id {
+                super::super::queue::clear_saved(&self.home.join(&self.storage), &id)?;
+                self.registry().pending.remove(&id);
+            }
         }
         Ok(Value::Null)
     }

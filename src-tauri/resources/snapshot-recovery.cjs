@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const { readStore } = require('./session-broker/git-diff-store.cjs');
 
 function entries(directory) {
   try { return fs.readdirSync(directory, { withFileTypes: true }); }
@@ -68,18 +69,33 @@ function protectReference(value, sources) {
   sources.paths.add(path.dirname(source));
 }
 
+function protectRecord(name, record, directory, sources) {
+  if (record.sessionPath && path.isAbsolute(record.sessionPath)) sources.stores.add(record.sessionPath.replace(/\.jsonl$/, '.diffs.json'));
+
+  if (name === 'pending-diff.json') {
+    sources.paths.add(directory);
+    protectComparison(record.capture, sources);
+  } else if (name !== 'snapshot.json') {
+    for (const value of [record.baseline, record.current, record.originalBaseline].filter(Boolean)) protectReference(value, sources);
+  }
+}
+
+function protectComparison(capture, sources) {
+  if (capture?.source === 'copy') return;
+  protectReference(capture?.baseline, sources);
+  protectReference(capture?.current, sources);
+}
+
 function protectDirectory(directory, sources, warnings) {
   const records = [];
   let uncertain = false;
 
-  for (const name of ['comparison-retry.json', 'temporary-owner.json', 'snapshot.json']) {
+  for (const name of ['comparison-retry.json', 'pending-diff.json', 'temporary-owner.json', 'snapshot.json']) {
     try {
       const record = read(path.join(directory, name));
       records.push(record);
 
-      if (name !== 'snapshot.json' && record) {
-        for (const value of [record.baseline, record.current, record.originalBaseline].filter(Boolean)) protectReference(value, sources);
-      }
+      if (record) protectRecord(name, record, directory, sources);
     } catch (error) { uncertain = true; warn(warnings, path.join(directory, name), error); }
   }
 
@@ -92,12 +108,36 @@ function protectDirectory(directory, sources, warnings) {
   }
 }
 
-function protectedSources(directories, warnings) {
-  const sources = { paths: new Set(), sessions: new Set(), unknown: false };
+function protectedSources(root, directories, warnings) {
+  const sources = { paths: new Set(), sessions: new Set(), stores: new Set(), unknown: false };
 
   for (const directory of directories) protectDirectory(directory, sources, warnings);
 
+  for (const area of ['sessions', 'archived', 'deleted-sessions', 'archive-transactions', 'restore-transactions', 'fork-transactions', 'fork-preparations']) {
+    try { comparisonStores(path.join(root, area), sources.stores); }
+    catch (error) { sources.unknown = true; warn(warnings, path.join(root, area), error); }
+  }
+
+  for (const file of sources.stores) protectStore(file, sources, warnings);
+
   return sources;
+}
+
+function comparisonStores(directory, stores) {
+  for (const entry of entries(directory)) {
+    const file = path.join(directory, entry.name);
+
+    if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) comparisonStores(file, stores);
+    else if (entry.name.endsWith('.diffs.json')) stores.add(file);
+  }
+}
+
+function protectStore(file, sources, warnings) {
+  try {
+    const state = readStore(file, false);
+
+    for (const capture of Object.values(state.pending)) protectComparison(capture, sources);
+  } catch (error) { sources.unknown = true; warn(warnings, file, error); }
 }
 
 function savedSnapshots(directory, snapshots, warnings) {
@@ -370,7 +410,7 @@ function recoverLocked(root, parent) {
 
   let objects;
 
-  const state = { parent, boot: bootIdentity(), protected: protectedSources(directories, warnings), snapshots, objects: () => {
+  const state = { parent, boot: bootIdentity(), protected: protectedSources(root, directories, warnings), snapshots, objects: () => {
     if (objects) return objects;
     objects = new Map();
 

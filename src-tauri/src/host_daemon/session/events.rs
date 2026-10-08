@@ -27,6 +27,10 @@ pub(super) fn state_change(name: &str) -> bool {
 
 impl Session {
     pub(super) fn receive(&self, mut event: Value) {
+        if kind(&event) == "queue_consumed" {
+            if event["sessionId"] == self.identity { self.queue.consumed(&text(&event, "queueId")); }
+            return;
+        }
         self.record_tool_failure(&event);
         if !self.ephemeral && (kind(&event) == "agent_settled" || (kind(&event) == "message_end" && event["message"]["role"] == "assistant")) {
             crate::session_registry::record(&self.state().state, self.cwd.as_deref());
@@ -167,11 +171,9 @@ impl Session {
     fn receive_status(&self, event: &Value) -> bool {
         let parsed = || serde_json::from_str::<Value>(event["statusText"].as_str().unwrap_or_default());
         match event["statusKey"].as_str() {
-            Some("piop-async-questions") => match parsed() {
-                Ok(requests) => self.receive_questions(requests),
-                Err(error) => self.host.output(json!({"type":"diagnostic","line":error.to_string()})),
-            },
+            Some("piop-async-questions" | "piop-async-question-recovery") => self.receive_question_status(event, parsed()),
             Some("pi-desktop-turn-capture") => self.receive_capture(parsed()),
+            Some("piop-fork-drain") => self.receive_fork_drain(parsed()),
             Some("pi-desktop-worktree-root") => self.receive_worktree_root(parsed()),
             Some("piop-input-rejected") => {
                 if let Ok(rejection) = parsed() {
@@ -181,6 +183,32 @@ impl Session {
             _ => return false,
         }
         true
+    }
+
+    fn receive_question_status(&self, event: &Value, parsed: serde_json::Result<Value>) {
+        match parsed {
+            Ok(requests) => {
+                if event["statusKey"] == "piop-async-question-recovery" { self.queue.recover_question_answers(&requests); }
+                else { self.receive_questions(requests); }
+            }
+            Err(error) => self.host.output(json!({"type":"diagnostic","line":error.to_string()})),
+        }
+    }
+
+    fn receive_fork_drain(&self, parsed: serde_json::Result<Value>) {
+        let Ok(request) = parsed else { return; };
+        let nonce = text(&request, "nonce");
+        let session_id = text(&request, "sessionId");
+        if Uuid::parse_str(&nonce).is_err() || session_id != text(&self.state().state, "sessionId") { return; }
+        let weak = self.weak.clone();
+        tokio::spawn(async move {
+            let Some(session) = weak.upgrade() else { return; };
+            let mut reply = json!({"type":"fork_drained","nonce":nonce,"sessionId":session_id});
+            if let Err(error) = session.host.drain_capture(&session.key()).await { reply["error"] = json!(error); }
+            if let Err(error) = session.raw(reply).await {
+                session.host.output(json!({"type":"diagnostic","line":format!("Fork capture acknowledgment failed: {error}")}));
+            }
+        });
     }
 
     fn receive_capture(&self, parsed: serde_json::Result<Value>) {

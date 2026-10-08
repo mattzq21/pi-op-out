@@ -8,15 +8,38 @@ const path = require("node:path");
 const os = require("node:os");
 const readline = require("node:readline");
 const { execFile } = require("node:child_process");
+const { addRoot, discoverRoots } = require('./storage-inventory-roots.cjs');
+const { createObservation, observeEntry, recordSession, resolveOwners, sessionKind } = require('./storage-inventory-owners.cjs');
+const { diskStorage } = require('./storage-inventory-disk.cjs');
+const { checkpointStorage } = require('./storage-inventory-checkpoints.cjs');
+const { inventoryCategories, archiveCoverage } = require('./storage-inventory-report.cjs');
+const { discoverEphemeral, discoverPendingLogs } = require('./storage-inventory-ephemeral.cjs');
+const { reconcileGoalAssets } = require('./storage-inventory-goals.cjs');
+const { discoverGoalDiagnostics } = require('./storage-inventory-diagnostics.cjs');
+const { sharedArchiveRestore, discoverArchiveResources } = require('./storage-inventory-resources.cjs');
 
-const piopRoot = path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
+const configuredRoot = process.env.PIOP_STORAGE_DIRECTORY || '.piop';
 
-const sessionRoots = [path.join(piopRoot, "sessions"), path.join(piopRoot, "archived")];
+const piopRoot = path.join(os.homedir(), configuredRoot);
 
 function queuedInputPath(sessionId) {
   return Check(Type.String(), sessionId) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
     ? path.join(piopRoot, "queued-input", `${sessionId.toLowerCase()}.json`)
     : undefined;
+}
+
+function queuedInputOwners(discovery) {
+  const queued = new Map();
+
+  for (const [id, owners] of discovery.sessions) {
+    const file = queuedInputPath(id);
+
+    if (!file) continue;
+    const category = owners.some(owner => owner.kind === 'active') ? 'active-conversations' : 'archived-conversations';
+    queued.set(file, { category, owners });
+  }
+
+  return queued;
 }
 
 function promptRepository(entry, header) { return entry.data?.repositoryRoot ?? header.checkpointRepositoryRoot ?? header.cwd; }
@@ -87,6 +110,7 @@ async function inspectSession(file, includeArchiveDetails) {
   let malformed = false;
   let checkpointError = "";
   const checkpointRepositories = new Map();
+  const observation = createObservation();
 
   const recordSnapshot = (entry) => {
     if (entry.type === "custom" && entry.customType === "pi-project-files-watch-snapshot") {
@@ -132,6 +156,8 @@ async function inspectSession(file, includeArchiveDetails) {
 
       try { entry = JSON.parse(line); } catch { malformed = true; continue; }
 
+      observeEntry(observation, entry);
+
       if (!header) {
         if (entry.type !== "session") throw new Error("Invalid session header");
         header = entry;
@@ -144,11 +170,15 @@ async function inspectSession(file, includeArchiveDetails) {
     }
   } finally { lines.close(); }
 
-  const result = { checkpointRepositories: [...checkpointRepositories.values()], cwd: validSessionHeader(header) ? header.cwd : undefined, sessionId: Check(Type.String(), header?.id) ? safeSessionId(header.id) : undefined };
+  const result = sessionDetails(header, malformed, observation, checkpointRepositories);
 
   if (!includeArchiveDetails) return result;
 
   return archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result);
+}
+
+function sessionDetails(header, malformed, observation, repositories) {
+  return { observation, readable: validSessionHeader(header) && !malformed, fork: Boolean(header?.parentSession), checkpointRepositories: [...repositories.values()], cwd: validSessionHeader(header) ? header.cwd : undefined, sessionId: Check(Type.String(), header?.id) ? safeSessionId(header.id) : undefined };
 }
 
 async function archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result) {
@@ -169,8 +199,9 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
     name: explicitName || firstPrompt || "Untitled conversation",
     modifiedAt: Math.floor(metadata.mtimeMs / 1000),
     byteSize: metadata.size + diffBytes + queuedBytes,
+    byteSizeCoverage: archiveCoverage + ' Includes the archived conversation’s queued input file.',
     deletable,
-    ...await archivedWorktree(header),
+    ...await archivedWorktree(header, file),
   };
 
   if (!deletable) archive.deleteError = deleteError;
@@ -194,8 +225,14 @@ function currentWorktree(cwd) {
   return worktreeChecks.get(cwd);
 }
 
-async function archivedWorktree(header) {
+async function archivedWorktree(header, file) {
   if (!validSessionHeader(header)) return {};
+
+  if (header.archiveResourceId !== undefined) {
+    try { return sharedArchiveRestore(await fs.realpath(piopRoot), file, header); }
+    catch (error) { return { restorable: false, restoreError: 'Shared archive profile unavailable: ' + error.message }; }
+  }
+
   const current = await currentWorktree(header.cwd);
 
   if (current === undefined) return restorableWorktree(header.worktreeRestore);
@@ -287,7 +324,7 @@ function checkpointRepository(cwd) {
       return { common };
     } catch (error) {
 
-      if (error.message.startsWith("fatal: not a git repository")) return { unavailable: true, error: `Checkpoint repository is no longer a Git repository: ${cwd}` };
+      if (error.message.startsWith("fatal: not a git repository")) return { unavailable: true, notGit: true, error: `Checkpoint repository is no longer a Git repository: ${cwd}` };
 
       return { error: `Checkpoint repository could not be inspected: ${cwd}: ${error.message}` };
     }
@@ -348,163 +385,6 @@ async function verifyCheckpointIdentity(repository, prefix, legacy) {
   return "";
 }
 
-function checkpointWarnings(repository) {
-  return repository.unavailable ? [] : [repository.error];
-}
-
-async function checkpointBytes(cwd, refs, snapshots) {
-  if (!snapshots.length) return 0;
-  const snapshotRefs = new Set(snapshots);
-  const ordinary = refs.filter((ref) => !snapshotRefs.has(ref)).map((ref) => `^${ref}`);
-
-  try { await git(cwd, ["rev-parse", "--verify", "HEAD"]); ordinary.push("^HEAD"); } catch { }
-
-  const revisions = `${snapshots.join("\n")}\n${ordinary.join("\n")}\n`;
-  const objects = [...new Set((await git(cwd, ["rev-list", "--objects", "--stdin"], revisions)).trim().split("\n").filter(Boolean).map((line) => line.split(" ", 1)[0]))];
-
-  if (!objects.length) return 0;
-  const sizes = await git(cwd, ["cat-file", "--batch-check=%(objectsize:disk)"], `${objects.join("\n")}\n`);
-
-  let byteSize = 0;
-
-  for (const value of sizes.trim().split("\n")) if (/^\d+$/.test(value)) byteSize += Number(value);
-
-  return byteSize;
-}
-
-function archivedCheckpoint(ref, archivedSessionIds) {
-  const match = /^refs\/pi-session-snapshots\/chats\/([^/]+)\//.exec(ref)
-    ?? /^refs\/pi-session-snapshots\/([^/]+)$/.exec(ref);
-
-  return !!match && archivedSessionIds.has(match[1]);
-}
-
-function recordCheckpointCategory(category, refs, common) {
-  category.itemCount += refs.length;
-
-  if (refs.length) category.directories.push(common);
-}
-
-async function checkpointStorage(repositoryRoots, measuredDirectories, archivedSessionIds) {
-  const repositories = new Set();
-  const active = { byteSize: 0, itemCount: 0, directories: [] };
-  const warnings = [];
-  const archived = { byteSize: 0, itemCount: 0, directories: [] };
-
-  for (const cwd of repositoryRoots) {
-    try {
-      const repository = await checkpointRepository(cwd);
-
-      if (repository.error) { warnings.push(...checkpointWarnings(repository)); continue; }
-
-      const common = repository.common;
-
-      if (repositories.has(common)) continue;
-      repositories.add(common);
-      const refs = (await git(cwd, ["for-each-ref", "--format=%(refname)"])).trim().split("\n").filter(Boolean);
-      const snapshots = refs.filter((ref) => ref === "refs/pi-session-snapshots" || ref.startsWith("refs/pi-session-snapshots/"));
-
-      if (!snapshots.length) continue;
-      const archiveRefs = new Set(snapshots.filter((ref) => archivedCheckpoint(ref, archivedSessionIds)));
-      const archivedSnapshots = snapshots.filter((ref) => archiveRefs.has(ref));
-      const otherSnapshots = snapshots.filter((ref) => !archiveRefs.has(ref));
-      recordCheckpointCategory(active, otherSnapshots, common);
-      recordCheckpointCategory(archived, archivedSnapshots, common);
-
-      if (measuredDirectories.has(common)) continue;
-      archived.byteSize += await checkpointBytes(cwd, refs, archivedSnapshots);
-      active.byteSize += await checkpointBytes(cwd, refs.filter((ref) => !archiveRefs.has(ref)), otherSnapshots);
-    } catch (error) {
-      warnings.push(`${cwd}: ${error.message}`);
-    }
-  }
-
-  return { ...active, warnings, archived };
-}
-
-function snapshotCategory(target, category, metadata) {
-  if (metadata.isDirectory() && target.endsWith('.snapshots')) {
-    if (category === 'active-conversations') category = 'git-diff-snapshots';
-    else if (category === 'archived-conversations') category = 'archived-git-diff-snapshots';
-  }
-
-  return category;
-}
-
-async function diskStorage(worktreeRoots, queuedInputCategories) {
-  const sizes = new Map();
-  const seen = new Set();
-  const directories = new Set();
-  const worktrees = new Set();
-  const snapshotCounts = new Map();
-  let archivedDirectories = 0;
-  const warnings = [];
-  const root = await fs.realpath(piopRoot).catch(() => piopRoot);
-  const categories = { sessions: "active-conversations", archived: "archived-conversations", "git-snapshots": "git-diff-snapshots", tmp: "temporary-chats", worktrees: "worktrees", "archived-tmp": "archived-worktrees" };
-
-  function countDirectory(target, category, entries) {
-    if (['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && path.dirname(target).endsWith('.snapshots') && entries.some((entry) => entry.name === 'snapshot.json')) snapshotCounts.set(category, (snapshotCounts.get(category) || 0) + 1);
-
-    if (target === path.join(root, 'archived-tmp')) archivedDirectories = entries.filter((entry) => entry.isDirectory()).length;
-    const managed = path.relative(path.join(root, "worktrees"), target).split(path.sep);
-
-    if (category === "worktrees" && managed.length === 2 && !managed.includes("..") && entries.some((entry) => entry.name === ".git")) worktrees.add(target);
-
-  }
-
-  function childCategory(target, category, name) {
-    if (target === path.join(root, "queued-input")) return queuedInputCategories.get(name) ?? "other-storage";
-
-    if (target !== root) return category;
-
-    return Object.hasOwn(categories, name) ? categories[name] : 'other-storage';
-  }
-
-  async function visit(target, category) {
-    try {
-      const metadata = await fs.lstat(target);
-
-      category = snapshotCategory(target, category, metadata);
-
-      const identity = `${metadata.dev}:${metadata.ino}`;
-
-      if (seen.has(identity)) return;
-      seen.add(identity);
-      const bytes = Check(Type.Number(), metadata.blocks) ? metadata.blocks * 512 : metadata.size;
-      sizes.set(category, (sizes.get(category) || 0) + bytes);
-
-      if (!metadata.isDirectory()) return;
-      directories.add(target);
-      const entries = await fs.readdir(target, { withFileTypes: true });
-
-      countDirectory(target, category, entries);
-
-      for (const entry of entries) {
-        await visit(path.join(target, entry.name), childCategory(target, category, entry.name));
-      }
-    } catch (error) {
-      if (error.code !== "ENOENT") warnings.push(`${target}: ${error.message}`);
-    }
-  }
-
-  await visit(root, "other-storage");
-
-  for (const worktree of new Set([...worktrees, ...worktreeRoots])) {
-    const canonical = await fs.realpath(worktree).catch(() => worktree);
-    await visit(canonical, "worktrees");
-
-    if (directories.has(canonical)) worktrees.add(canonical);
-
-    try {
-      const own = await fs.realpath((await git(canonical, ["rev-parse", "--absolute-git-dir"])).trim());
-      await visit(own, "worktrees");
-    } catch (error) { warnings.push(`${worktree}: ${error.message}`); }
-  }
-
-  return { sizes, directories, worktrees, archivedDirectories, snapshotCounts, warnings };
-
-}
-
 async function collectUnreadableArchive(file, archives) {
   let metadata;
 
@@ -516,122 +396,96 @@ async function collectUnreadableArchive(file, archives) {
     name: "Unreadable conversation", cwd: "Unknown project",
     modifiedAt: Math.floor(metadata.mtimeMs / 1000),
     byteSize: metadata.size + await regularFileSize(file.replace(/\.jsonl$/, ".diffs.json")),
+    byteSizeCoverage: archiveCoverage,
     deletable: false,
     deleteError: "This archive is malformed, so piop cannot discover and safely remove its project checkpoint refs.",
   });
 }
 
-function collectArchivedSession(details, archived, archivedSessionIds) {
-  if (archived && details.sessionId) archivedSessionIds.add(details.sessionId);
-}
+async function collectSession(candidate, discovery, archives, referencedWorktrees) {
+  try {
+    const details = await inspectSession(candidate.file, candidate.archived);
+    recordSession(discovery, details, candidate);
 
-function collectQueuedInput(sessionId, archived, categories) {
-  const queuedFile = queuedInputPath(sessionId);
+    if (!details.readable) discovery.warnings.push(`${candidate.file}: session provenance is incomplete`);
 
-  if (queuedFile) categories.set(path.basename(queuedFile), archived ? "archived-conversations" : "active-conversations");
-}
+    if (details.cwd) {
+      const worktree = await currentWorktree(details.cwd);
 
-async function collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedSessionIds, queuedInputCategories) {
-  for (const candidate of sessionFiles) {
-    try {
-      const details = await inspectSession(candidate.file, candidate.archived);
-      details.checkpointRepositories.forEach((repository) => checkpointRoots.add(repository.root));
-      collectArchivedSession(details, candidate.archived, archivedSessionIds);
-      collectQueuedInput(details.sessionId, candidate.archived, queuedInputCategories);
-
-      if (details.cwd) {
-        const worktree = await currentWorktree(details.cwd);
-
-        if (worktree) worktreeRoots.add(worktree);
-      }
-
-      if (details.archive) {
-        if (details.archive.deletable) {
-          const problem = await checkpointIdentity(details.archive.id, details.checkpointRepositories);
-
-          if (problem) { details.archive.deletable = false; details.archive.deleteError = `${problem}. Restore or relocate the repository before deleting this archive.`; }
-        }
-
-        archives.push(details.archive);
-      }
-    } catch {
-      if (candidate.archived) {
-        await collectUnreadableArchive(candidate.file, archives);
-      }
+      if (worktree) addRoot(referencedWorktrees, worktree, `Conversation cwd: ${candidate.file}; ownership not established`, 'referenced', [{ sessionId: details.sessionId, sessionPath: candidate.file, kind: candidate.kind }]);
     }
-  }
 
+    if (!details.archive) return;
+
+    if (details.archive.deletable) {
+      const problem = await checkpointIdentity(details.archive.id, details.checkpointRepositories);
+
+      if (problem) { details.archive.deletable = false; details.archive.deleteError = `${problem}. Restore or relocate the repository before deleting this archive.`; }
+    }
+
+    archives.push(details.archive);
+  } catch (error) {
+    discovery.warnings.push(`${candidate.file}: conversation provenance unavailable: ${error.message}`);
+
+    if (candidate.archived) await collectUnreadableArchive(candidate.file, archives);
+  }
+}
+
+async function scanSessions(root, warnings) {
+  try { return await scanDirectory(root, entry => entry.isFile() && entry.name.endsWith('.jsonl'), entry => entry.name.endsWith('.jsonl')); }
+  catch (error) {
+    warnings.push(`${root}: conversation discovery unavailable: ${error.message}`);
+
+    return { itemCount: 0, files: [] };
+  }
 }
 
 async function main() {
   const snapshotWarnings = recoverSnapshotTemps(piopRoot);
-  const activeRoot = sessionRoots[0];
-  const archiveRoot = sessionRoots[1];
+  const profile = await fs.realpath(piopRoot).catch(() => piopRoot);
+  const discovery = await discoverRoots(profile);
+  await discoverEphemeral(profile, discovery);
+  discovery.sessions = new Map();
+  discovery.headers = new Map();
+  discovery.goals = new Map();
+  const activeRoot = path.join(profile, 'sessions');
+  const archiveRoot = path.join(profile, 'archived');
+  const active = await scanSessions(activeRoot, discovery.warnings);
+  const archived = await scanSessions(archiveRoot, discovery.warnings);
+  const candidates = new Map();
 
-  const [active, archived, gitDiffSnapshots, temporaryChats] = await Promise.all([
-    scanDirectory(activeRoot, (entry) => entry.isFile() && entry.name.endsWith(".jsonl"), (entry) => entry.name.endsWith(".jsonl") || entry.name.endsWith(".diffs.json")),
-    scanDirectory(archiveRoot, (entry) => entry.isFile() && entry.name.endsWith(".jsonl"), (entry) => entry.name.endsWith(".jsonl") || entry.name.endsWith(".diffs.json")),
-    scanDirectory(path.join(piopRoot, "git-snapshots"), (entry, topLevel) => topLevel && entry.isDirectory() && entry.name.startsWith("pi-desktop-diff-"), () => false, false),
-    scanDirectory(path.join(piopRoot, "tmp"), (entry, topLevel) => topLevel && entry.isDirectory(), () => false, false),
-  ]);
+  for (const file of active.files) candidates.set(file, { file, archived: false, kind: 'active' });
 
-  const checkpointRoots = new Set();
-  const archivedSessionIds = new Set();
-  const worktreeRoots = new Set();
+  for (const file of archived.files) candidates.set(file, { file, archived: true, kind: 'archived' });
+
+  for (const file of discovery.sessionPaths) {
+    if (!candidates.has(file)) candidates.set(file, { file, archived: false, kind: discovery.ephemeralRecords.has(file) ? 'ephemeral' : sessionKind(file, profile) });
+  }
+
   const archives = [];
-  const queuedInputCategories = new Map();
+  const referencedWorktrees = new Map();
 
-  const sessionFiles = [
-    ...active.files.filter((file) => file.endsWith(".jsonl")).map((file) => ({ file, archived: false })),
-    ...archived.files.filter((file) => file.endsWith(".jsonl")).map((file) => ({ file, archived: true })),
-  ];
+  for (const candidate of candidates.values()) await collectSession(candidate, discovery, archives, referencedWorktrees);
+  resolveOwners(discovery);
+  discoverPendingLogs(profile, discovery);
+  await discoverGoalDiagnostics(profile, discovery);
+  await discoverArchiveResources(profile, discovery);
+  await reconcileGoalAssets(profile, discovery);
 
-  await collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedSessionIds, queuedInputCategories);
+  for (const record of discovery.cwds.values()) {
+    const worktree = await currentWorktree(record.path);
 
-  const disk = await diskStorage(worktreeRoots, queuedInputCategories);
-  const checkpoints = await checkpointStorage(checkpointRoots, disk.directories, archivedSessionIds);
+    if (worktree) addRoot(referencedWorktrees, worktree, record.provenance.join('; '), 'referenced', record.owners);
+  }
 
-  const directoryCandidates = {
-    'active-conversations': [activeRoot, path.join(piopRoot, 'queued-input')],
-    'archived-conversations': [archiveRoot, path.join(piopRoot, 'queued-input')],
-    'project-checkpoints': checkpoints.directories,
-    'archived-project-checkpoints': checkpoints.archived.directories,
-    'git-diff-snapshots': [path.join(piopRoot, 'git-snapshots'), ...active.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots'))],
-    'archived-git-diff-snapshots': archived.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots')),
-    'temporary-chats': [path.join(piopRoot, 'tmp')],
-    'worktrees': [path.join(piopRoot, 'worktrees'), ...[...worktreeRoots].filter((directory) => !directory.startsWith(path.join(piopRoot, 'worktrees') + path.sep))],
-    'archived-worktrees': [path.join(piopRoot, 'archived-tmp')],
-    'other-storage': [piopRoot],
-  };
-
-  const categoryDirectories = Object.fromEntries(await Promise.all(Object.entries(directoryCandidates).map(async ([id, candidates]) => {
-    const directories = await Promise.all([...new Set(candidates)].map(async (directory) => {
-      try { return (await fs.stat(directory)).isDirectory() ? directory : null; }
-      catch { return null; }
-    }));
-
-    return [id, directories.filter(Boolean)];
-  })));
-
-  const storedBytes = id => disk.sizes.get(id) || 0;
-  const snapshotCount = id => disk.snapshotCounts.get(id) || 0;
-
+  discovery.queuedInput = queuedInputOwners(discovery);
+  const disk = await diskStorage(profile, discovery, referencedWorktrees, git);
+  const checkpoints = await checkpointStorage(discovery, disk.directories, checkpointRepository, git);
   archives.sort((left, right) => right.modifiedAt - left.modifiedAt);
   process.stdout.write(JSON.stringify({
-    categories: [
-      { id: "active-conversations", byteSize: storedBytes("active-conversations"), itemCount: active.itemCount },
-      { id: "archived-conversations", byteSize: storedBytes("archived-conversations"), itemCount: archived.itemCount },
-      { id: "project-checkpoints", byteSize: checkpoints.byteSize, itemCount: checkpoints.itemCount, estimated: true },
-      { id: "archived-project-checkpoints", byteSize: checkpoints.archived.byteSize, itemCount: checkpoints.archived.itemCount, estimated: true },
-      { id: "git-diff-snapshots", byteSize: storedBytes("git-diff-snapshots"), itemCount: gitDiffSnapshots.itemCount + (snapshotCount("git-diff-snapshots")) },
-      { id: "archived-git-diff-snapshots", byteSize: storedBytes("archived-git-diff-snapshots"), itemCount: snapshotCount("archived-git-diff-snapshots") },
-      { id: "temporary-chats", byteSize: storedBytes("temporary-chats"), itemCount: temporaryChats.itemCount },
-      { id: "worktrees", byteSize: storedBytes("worktrees"), itemCount: disk.worktrees.size },
-      { id: "archived-worktrees", byteSize: storedBytes("archived-worktrees"), itemCount: disk.archivedDirectories },
-      { id: "other-storage", byteSize: storedBytes("other-storage"), itemCount: 1 },
-    ].map((category) => ({ ...category, directories: categoryDirectories[category.id] })),
+    categories: inventoryCategories(disk, checkpoints, active.itemCount, archived.itemCount),
     archives,
-    warnings: [...disk.warnings, ...checkpoints.warnings, ...snapshotWarnings],
+    warnings: [...new Set([...discovery.warnings, ...disk.warnings, ...checkpoints.warnings, ...snapshotWarnings])],
   }));
 }
 

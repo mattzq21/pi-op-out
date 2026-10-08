@@ -1,3 +1,4 @@
+use super::control_state;
 use super::protocol::{flag, text, Result};
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
@@ -15,6 +16,9 @@ use tokio::{
     sync::watch,
 };
 use uuid::Uuid;
+
+#[path = "conversation_lookup.rs"]
+mod conversation_lookup;
 
 pub(super) fn ownership_error() -> String {
     "Take ownership of this conversation before changing it".into()
@@ -336,8 +340,8 @@ impl ConversationOwnership {
         self.write(id, &record)
     }
 
-    pub fn snapshot(&self, id: &str, path: Option<&str>) -> Result<Value> {
-        let saved = self.locate(id, path, false, false)?;
+    pub fn snapshot(&self, id: &str, _path: Option<&str>) -> Result<Value> {
+        let saved = self.lookup_saved(id, false)?.map(|(saved, _)| saved);
         let entries: Vec<Value> = saved
             .as_ref()
             .into_iter()
@@ -348,9 +352,16 @@ impl ConversationOwnership {
             .as_ref()
             .map(|saved| saved.revision.clone())
             .unwrap_or_else(|| format!("missing:{id}"));
+        let leaf_id = entries
+            .iter()
+            .rev()
+            .find(|entry| entry["type"] != "session")
+            .and_then(|entry| entry["id"].as_str());
+        let control = control_state::reduce(&entries, leaf_id)?;
         let mut snapshot = json!({"revision":revision,"state":{"sessionId":id,"model":null,"thinkingLevel":"off","isStreaming":false,"pendingMessageCount":0,
+                "isPaused":control.is_paused,"isPausing":false,"needsInput":control.needs_input,
                 "messageCount":entries.iter().filter(|entry| entry["type"] == "message").count()},
-            "history":{"leafId":entries.last().and_then(|entry| entry.get("id")),"entries":entries},"sequence":0,"epoch":format!("readonly:{id}"),
+            "history":{"leafId":leaf_id,"entries":entries},"sequence":0,"epoch":format!("readonly:{id}"),
             "liveTools":[],"queue":{"type":"queue_update","steering":[],"followUp":[],"pendingMessages":[]}});
         if let Some(saved) = saved {
             snapshot["state"]["sessionFile"] = json!(saved.path);
@@ -358,8 +369,8 @@ impl ConversationOwnership {
         Ok(snapshot)
     }
 
-    pub fn revision(&self, id: &str, path: Option<&str>) -> Result<Value> {
-        let saved = self.locate(id, path, false, true)?;
+    pub fn revision(&self, id: &str, _path: Option<&str>) -> Result<Value> {
+        let saved = self.lookup_saved(id, true)?.map(|(saved, _)| saved);
         Ok(json!({"revision":saved.map(|saved| saved.revision).unwrap_or_else(|| format!("missing:{id}"))}))
     }
 
@@ -456,11 +467,8 @@ fn read_candidate(id: &str, path: &Path, root: &Path, metadata_only: bool) -> Re
     let lines = if metadata_only {
         Vec::new()
     } else {
-        match std::fs::read_to_string(&path) {
-            Ok(content) => content.trim_end().split('\n').map(str::to_owned).collect(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.to_string()),
-        }
+        let Some(lines) = read_saved_lines(id, &path)? else { return Ok(None); };
+        lines
     };
     Ok(Some(SavedConversation {
         path,
@@ -468,6 +476,18 @@ fn read_candidate(id: &str, path: &Path, root: &Path, metadata_only: bool) -> Re
         lines,
         revision,
     }))
+}
+
+fn read_saved_lines(id: &str, path: &Path) -> Result<Option<Vec<String>>> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let lines: Vec<String> = content.trim_end().split('\n').map(str::to_owned).collect();
+    let header: Value = lines.first().and_then(|line| serde_json::from_str(line).ok()).unwrap_or(Value::Null);
+    if header["type"] != "session" || header["id"] != id { return Ok(None); }
+    Ok(Some(lines))
 }
 
 fn read_saved_header(id: &str, path: &Path) -> Result<Option<(Value, std::fs::Metadata)>> {

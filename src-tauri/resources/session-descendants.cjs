@@ -4,6 +4,12 @@ const { Check } = require("typebox/value");
 
 const sessionIdSchema = Type.String();
 
+const parentSchema = Type.Object({ parentSessionId: Type.String(), sessionId: Type.Optional(Type.String()) });
+
+const entrySchema = Type.Object({ type: Type.String() });
+
+const headerSchema = Type.Object({ type: Type.Literal("session"), id: Type.String(), parentSession: Type.Optional(Type.Unknown()) });
+
 const { createReadStream } = require("node:fs");
 const { createInterface } = require("node:readline");
 const path = require("node:path");
@@ -14,23 +20,44 @@ async function metadata(file) {
   const lines = createInterface({ input, crlfDelay: Infinity });
   let id;
   let parent;
+  let ownParent;
   let fork = false;
+  let malformed = 0;
 
   try {
     for await (const line of lines) {
-      let entry;
+      const entry = savedEntry(line);
 
-      try { entry = JSON.parse(line); } catch { continue; }
+      if (!entry) { malformed += Number(Boolean(line.trim())); continue; }
 
-      if (entry.type === "session") { id = entry.id; fork = Boolean(entry.parentSession); }
+      if (id === undefined && Check(headerSchema, entry)) { id = entry.id; fork = Boolean(entry.parentSession); }
 
-      if (entry.type === "custom" && ["piop-subagent-parent", "piop-review-parent"].includes(entry.customType)) parent = entry.data?.parentSessionId;
+      if (!parentEntry(entry)) continue;
 
-      if (parent || fork) break;
+      if (entry.data.sessionId === id) ownParent = entry.data.parentSessionId;
+      else if (entry.data.sessionId === undefined) parent = entry.data.parentSessionId;
     }
   } finally { lines.close(); input.destroy(); }
 
-  return { file, id, parent: fork ? undefined : parent };
+  warnMalformed(file, malformed);
+
+  return { file, id, parent: ownParent ?? (fork ? undefined : parent) };
+}
+
+function warnMalformed(file, count) {
+  if (count) console.error(`Skipped ${count} malformed records in ${file}; descendant lineage may be incomplete`);
+}
+
+function savedEntry(line) {
+  let entry;
+
+  try { entry = JSON.parse(line); } catch { return; }
+
+  return Check(entrySchema, entry) ? entry : undefined;
+}
+
+function parentEntry(entry) {
+  return entry.type === "custom" && ["piop-subagent-parent", "piop-review-parent"].includes(entry.customType) && Check(parentSchema, entry.data);
 }
 
 async function collect(root) {
