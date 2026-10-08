@@ -336,7 +336,7 @@ async function dispatch(command, session, output) {
   }
 }
 
-const isReview = text => /^\/review(?:\s|$)/.test(text);
+const isReview = text => /^\/(?:review|rs)(?:\s|$)/.test(text);
 
 const reviewText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
@@ -561,7 +561,8 @@ function bindFollowUpDrain(session) {
 async function executeQueuedReview(session, text, images) {
   const ctx = session.extensionRunner.createCommandContext();
   const signal = ctx.signal;
-  const request = { command: "start_review", payload: { args: text.slice(7).trim(), images }, ctx };
+  const command = text.split(/\s/, 1)[0].slice(1);
+  const request = { command: "start_review", payload: { command, args: text.slice(command.length + 1).trim(), images }, ctx };
 
   try {
     Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge")).value(request);
@@ -570,7 +571,7 @@ async function executeQueuedReview(session, text, images) {
     await request.ready;
   } catch (error) {
     if (signal?.aborted) return false;
-    ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+    ctx.ui.notify(`/${command} failed: ${error instanceof Error ? error.message : String(error)}`, "error");
   }
 
   return !signal?.aborted;

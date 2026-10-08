@@ -330,7 +330,7 @@ export function createAppConversations(preloadChat: () => void) {
     const imagePayload = images.length ? { images } : {};
 
 
-    if (/^\/review(?:\s|$)/.test(text.trim())) reviewImages.set(capturedTransport, images);
+    if (/^\/(?:review|rs)(?:\s|$)/.test(text.trim())) reviewImages.set(capturedTransport, images);
 
     try {
       if (behavior) { const result = await submitDurablePrompt(ownerTransport, { type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload });

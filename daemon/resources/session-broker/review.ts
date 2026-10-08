@@ -20,7 +20,7 @@ const settingsSchema = Schema.Object({ reviewAgent: Schema.Optional(Schema.Strin
 
 const fileErrorSchema = Schema.Object({ code: Schema.String() });
 
-const reviewRequestSchema = Schema.Object({ args: Schema.String(), images: Schema.Array(Schema.Object({ type: Schema.Literal("image"), data: Schema.String(), mimeType: Schema.String(), name: Schema.Optional(Schema.String()) })) });
+const reviewRequestSchema = Schema.Object({ command: Schema.Optional(Schema.Union([Schema.Literal("review"), Schema.Literal("rs")])), args: Schema.String(), images: Schema.Array(Schema.Object({ type: Schema.Literal("image"), data: Schema.String(), mimeType: Schema.String(), name: Schema.Optional(Schema.String()) })) });
 
 const sessionHeaderSchema = Schema.Object({ type: Schema.Literal("session"), id: Schema.String() });
 
@@ -147,6 +147,31 @@ async function reviewSettings() {
   return { agent, prompt };
 }
 
+function reviewSubagentCount(args: string, command: string, ctx: ExtensionContext) {
+  if (command === "review") {
+    if (!args.trim()) return 0;
+    ctx.ui.notify("Usage: /review — reviews the current branch", "warning");
+
+    return;
+  }
+
+  const count = Number(args.trim());
+
+  if (/^[1-9]\d*$/.test(args.trim()) && Number.isSafeInteger(count)) return count;
+  ctx.ui.notify("Usage: /rs <n> — n must be a positive integer", "warning");
+}
+
+function subagentReviewTask(state: SessionAgentState, count: number, prompt: string) {
+  if (!count) return prompt;
+  if (!state.snapshot) throw new Error("Reviewer profile is unavailable for subagent review");
+  const tools = state.snapshot.definition.tools;
+
+  if (!tools.includes("subagent")) tools.push("subagent");
+  state.locked = true;
+
+  return `${prompt}\n\nFor this review, you must spawn exactly ${count} review subagents using spawn_agent with worktree: "same" and unique task names. Omit agent to inherit your reviewer profile. Divide the review into complementary scopes and give each child the review instructions above, including the base and committed-change scope. Children must not delegate further, modify files, or run tests. Launch children concurrently, with at most eight active at once; for larger counts, launch the remaining children as slots become available. Collect all ${count} results before giving your final review. Verify and deduplicate their findings, then report one consolidated review.`;
+}
+
 export function registerReview(pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => reconcileReviews(pi, ctx));
   pi.on("agent_settled", (_event, ctx) => reconcileReviews(pi, ctx));
@@ -171,13 +196,12 @@ export function registerReview(pi: ExtensionAPI) {
     ];
   }) }));
 
-  const startReview = async (args: string, ctx: ExtensionContext, images?: Static<typeof reviewRequestSchema>["images"]) => {
+  const startReview = async (args: string, ctx: ExtensionContext, images?: Static<typeof reviewRequestSchema>["images"], command = "review") => {
     const signal = ctx.signal;
     signal?.throwIfAborted();
+    const count = reviewSubagentCount(args, command, ctx);
 
-    if (args.trim()) { ctx.ui.notify("Usage: /review — reviews the current branch", "warning");
-
-    return; }
+    if (count === undefined) return;
 
     await requireReviewRepository(ctx.cwd, signal);
     signal?.throwIfAborted();
@@ -189,21 +213,26 @@ export function registerReview(pi: ExtensionAPI) {
     signal?.throwIfAborted();
 
     if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${settings.agent}`);
+    const task = subagentReviewTask(profile.state, count, settings.prompt);
     const { record, publication } = await createReview(ctx, profile.state, signal);
     await publishReview(pi, ctx, record, publication);
     signal?.throwIfAborted();
-    await openReview(ctx, record, settings.prompt, false, images);
+    await openReview(ctx, record, task, false, images);
   };
 
   pi.registerCommand("review", {
     description: "Review this branch against its base in a side pane",
     handler: (args, ctx) => startReview(args, ctx),
   });
+  pi.registerCommand("rs", {
+    description: "Review this branch with n reviewer subagents: /rs <n>",
+    handler: (args, ctx) => startReview(args, ctx, undefined, "rs"),
+  });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "start_review") return;
     request.ready = (async () => {
       const payload = Parse(reviewRequestSchema, request.payload);
-      await startReview(payload.args, request.ctx, payload.images);
+      await startReview(payload.args, request.ctx, payload.images, payload.command);
     })();
   });
   pi.events.on("piop:rpc", request => {

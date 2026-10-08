@@ -450,7 +450,7 @@ impl SessionQueue {
         if !matches!(name, "steer" | "follow_up") {
             return self.execute(command).await;
         }
-        let review = text(&command, "message").split_whitespace().next() == Some("/review");
+        let review = matches!(text(&command, "message").split_whitespace().next(), Some("/review" | "/rs"));
         self.enqueue(command, if review { "follow_up" } else { name }).await
     }
 
@@ -526,8 +526,8 @@ impl SessionQueue {
         let Some((target, behavior, neighbor)) = self.pending_change(id, &action) else {
             return Ok(Value::Null);
         };
-        if action == "steer" && text(&target, "message").split_whitespace().next() == Some("/review") {
-            return Err("/review can only be queued as a follow-up".into());
+        if action == "steer" && matches!(text(&target, "message").split_whitespace().next(), Some("/review" | "/rs")) {
+            return Err("Review commands can only be queued as a follow-up".into());
         }
         self.acknowledge_question_removal(&target, &behavior).await?;
         if cancelling {
