@@ -1,6 +1,7 @@
 use super::super::protocol::Result;
 use serde_json::{json, Value};
-use std::{fs, path::{Path, PathBuf}};
+use std::path::{Path, PathBuf};
+use rusqlite::OptionalExtension;
 use uuid::Uuid;
 
 pub(crate) struct QueueStorage {
@@ -20,16 +21,19 @@ impl QueueStorage {
         Ok(self)
     }
 
+    fn root(&self) -> Result<&Path> { self.path.parent().and_then(Path::parent).ok_or_else(|| "Queued-input storage has no root".into()) }
+
+    fn id(&self) -> Result<&str> { self.path.file_stem().and_then(|name| name.to_str()).ok_or_else(|| "Queued-input identity is missing".into()) }
+
+    pub fn record(&self) -> Result<Option<Value>> {
+        let db = crate::session_registry::open(self.root()?)?;
+        let body: Option<String> = db.query_row("SELECT record_json FROM queued_inputs WHERE session_id=?", [self.id()?], |row| row.get(0))
+            .optional().map_err(|error| error.to_string())?;
+        body.map(|body| serde_json::from_str(&body).map_err(|error| error.to_string())).transpose()
+    }
+
     pub fn load(&self) -> Result<Vec<Value>> {
-        if fs::symlink_metadata(&self.path).is_ok_and(|meta| !meta.is_file()) {
-            return Err("Queued-input journal must be a regular file".into());
-        }
-        let bytes = match fs::read(&self.path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error.to_string()),
-        };
-        recover_items(&bytes)
+        match self.record()? { Some(saved) => recover_items(saved), None => Ok(Vec::new()) }
     }
 
     pub fn recover(&self, pending: Vec<Value>) -> Result<Vec<Value>> {
@@ -47,46 +51,29 @@ impl QueueStorage {
     }
 
     pub fn save(&self, items: &[Value]) -> Result<()> {
-        let parent = self.path.parent().ok_or("Queued-input journal has no directory")?;
-        let root = parent.parent().ok_or("Queued-input storage has no root")?;
+        let root = self.root()?;
         let _publication = super::super::reference_publication::lock(root)?;
         let _storage = super::temporary::lock(root)?;
-        if fs::symlink_metadata(parent).is_ok_and(|meta| meta.file_type().is_symlink()) {
-            return Err("Queued-input directory cannot be a symbolic link".into());
-        }
-        super::temporary::cleanup(parent, Some(&self.path))?;
+        let db = crate::session_registry::open(root)?;
         if items.is_empty() {
-            return self.remove(parent);
+            db.execute("DELETE FROM queued_inputs WHERE session_id=?", [self.id()?]).map_err(|error| error.to_string())?;
+            return Ok(());
         }
         super::super::reference_publication::validate_new_references(root, items, &self.load()?)?;
-        self.write_items(items, parent)
+        self.write_items(&db, items)
     }
 
-    fn write_items(&self, items: &[Value], parent: &Path) -> Result<()> {
+    fn write_items(&self, db: &rusqlite::Connection, items: &[Value]) -> Result<()> {
         let origin = self.origin.as_ref().ok_or("Queued-input recovery is missing its working directory")?;
-        let body = serde_json::to_vec(&json!({"version":1,"origin":origin,"items":items})).map_err(|error| error.to_string())?;
-        crate::atomic_write_private(&self.path, &body)?;
-        sync_path(&self.path)?;
-        sync_path(parent)?;
-        if let Some(root) = parent.parent() { sync_path(root)?; }
+        let body = json!({"version":1,"origin":origin,"items":items}).to_string();
+        let written = db.execute("INSERT INTO queued_inputs SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))
+            ON CONFLICT(session_id) DO UPDATE SET record_json=excluded.record_json", rusqlite::params![self.id()?, body, self.id()?]).map_err(|error| error.to_string())?;
+        if written == 0 { return Err("Cannot queue input for a deleted session".into()); }
         Ok(())
     }
-
-    fn remove(&self, parent: &Path) -> Result<()> {
-        match fs::remove_file(&self.path) {
-            Ok(()) => sync_path(parent),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.to_string()),
-        }
-    }
 }
 
-fn sync_path(path: &Path) -> Result<()> {
-    fs::File::open(path).and_then(|file| file.sync_all()).map_err(|error| error.to_string())
-}
-
-fn recover_items(bytes: &[u8]) -> Result<Vec<Value>> {
-    let saved: Value = serde_json::from_slice(bytes).map_err(|error| format!("Cannot recover queued inputs: {error}"))?;
+fn recover_items(saved: Value) -> Result<Vec<Value>> {
     if saved["version"] != 1 { return Err("Unsupported queued-input journal version".into()); }
     let mut items = saved["items"].as_array().ok_or("Invalid queued-input journal")?.clone();
     let mut identities = std::collections::HashSet::new();

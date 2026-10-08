@@ -20,7 +20,10 @@ function forget(root, targets) {
 
     const mark = db.prepare('INSERT INTO session_deletion_tombstones VALUES (?, ?, ?) ON CONFLICT(session_id) DO NOTHING');
 
-    for (const target of targets) mark.run(target.sessionId.toLowerCase(), Date.now(), target.path);
+    for (const target of targets) {
+      mark.run(target.sessionId.toLowerCase(), Date.now(), target.path);
+      db.prepare('DELETE FROM queued_inputs WHERE session_id=lower(?)').run(target.sessionId);
+    }
 
     const registry = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_repositories'").get();
 

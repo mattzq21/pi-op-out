@@ -26,13 +26,12 @@ pub(crate) fn recover_missing_transcripts(root: &Path, ownership: &ConversationO
 }
 
 fn recover_storage(root: &Path, ownership: &ConversationOwnership) -> Result<Recovery> {
-    let entries = match fs::read_dir(root.join("queued-input")) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Recovery::default()),
-        Err(error) => return Err(error.to_string()),
-    };
     let Some(_storage_locks) = storage_locks(root)? else { return Ok(Recovery { retry: true, ..Recovery::default() }); };
     if transactions_pending(root)? { return Ok(Recovery { retry: true, transactions_pending: true, ..Recovery::default() }); }
+    let db = crate::session_registry::open(root)?;
+    let mut statement = db.prepare("SELECT session_id FROM queued_inputs ORDER BY session_id").map_err(|error| error.to_string())?;
+    let entries = statement.query_map([], |row| row.get::<_, String>(0)).map_err(|error| error.to_string())?
+        .collect::<std::result::Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
     Ok(recover_entries(root, ownership, entries))
 }
 
@@ -42,10 +41,10 @@ fn cleanup_temporary(root: &Path) -> Result<()> {
     super::temporary::cleanup(&root.join("queued-input"), None)
 }
 
-fn recover_entries(root: &Path, ownership: &ConversationOwnership, entries: fs::ReadDir) -> Recovery {
+fn recover_entries(root: &Path, ownership: &ConversationOwnership, entries: Vec<String>) -> Recovery {
     let mut recovery = Recovery::default();
     for entry in entries {
-        let result = entry.map_err(|error| error.to_string()).and_then(|entry| recover_journal(root, ownership, &entry.path()));
+        let result = recover_journal(root, ownership, &root.join("queued-input").join(format!("{entry}.json")));
         match result {
             Ok(recovered) => recovery.recovered |= recovered,
             Err(error) => recovery.errors.push(error),
@@ -108,7 +107,7 @@ fn recover_journal(root: &Path, ownership: &ConversationOwnership, path: &Path) 
     let Some((id, _ownership_lock, _worker_lock)) = lock_journal(root, path)? else { return Ok(false); };
     remove_temporary(&root.join("sessions").join(format!(".queued-input-recovery-{id}")))?;
     if ownership.removed(&id)? || transcript_exists(root, &id)? { return Ok(false); }
-    recover_contents(root, path, &id)
+    recover_contents(root, &id)
 }
 
 fn lock_journal(root: &Path, path: &Path) -> Result<Option<(String, File, File)>> {
@@ -120,10 +119,11 @@ fn lock_journal(root: &Path, path: &Path) -> Result<Option<(String, File, File)>
     Ok(Some((id.into(), ownership_lock, worker_lock)))
 }
 
-fn recover_contents(root: &Path, path: &Path, id: &str) -> Result<bool> {
-    let pending = QueueStorage::new(&root.join("queued-input"), id)?.load()?;
+fn recover_contents(root: &Path, id: &str) -> Result<bool> {
+    let storage = QueueStorage::new(&root.join("queued-input"), id)?;
+    let pending = storage.load()?;
     if pending.is_empty() { return Ok(false); }
-    let journal: Value = serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    let journal = storage.record()?.ok_or("Queued input is no longer available")?;
     let cwd = journal["origin"]["cwd"].as_str().filter(|cwd| Path::new(cwd).is_absolute())
         .ok_or("Queued input retained: recovery working directory is missing")?;
     let target = recovery_path(root, id, &journal["origin"])?;

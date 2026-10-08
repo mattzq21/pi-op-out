@@ -22,26 +22,6 @@ const configuredRoot = process.env.PIOP_STORAGE_DIRECTORY || '.piop';
 
 const piopRoot = path.join(os.homedir(), configuredRoot);
 
-function queuedInputPath(sessionId) {
-  return Check(Type.String(), sessionId) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
-    ? path.join(piopRoot, "queued-input", `${sessionId.toLowerCase()}.json`)
-    : undefined;
-}
-
-function queuedInputOwners(discovery) {
-  const queued = new Map();
-
-  for (const [id, owners] of discovery.sessions) {
-    const file = queuedInputPath(id);
-
-    if (!file) continue;
-    const category = owners.some(owner => owner.kind === 'active') ? 'active-conversations' : 'archived-conversations';
-    queued.set(file, { category, owners });
-  }
-
-  return queued;
-}
-
 function promptRepository(entry, header) { return entry.data?.repositoryRoot ?? header.checkpointRepositoryRoot ?? header.cwd; }
 
 async function regularFileSize(file) {
@@ -185,8 +165,6 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
   const metadata = await fs.lstat(file);
   const diffFile = file.replace(/\.jsonl$/, ".diffs.json");
   const diffBytes = await regularFileSize(diffFile);
-  const queuedFile = queuedInputPath(header?.id);
-  const queuedBytes = queuedFile ? await regularFileSize(queuedFile) : 0;
   const validHeader = validSessionHeader(header);
   const deletable = validHeader && !malformed && !checkpointError;
 
@@ -198,8 +176,8 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
     ...archiveLocation(header, file),
     name: explicitName || firstPrompt || "Untitled conversation",
     modifiedAt: Math.floor(metadata.mtimeMs / 1000),
-    byteSize: metadata.size + diffBytes + queuedBytes,
-    byteSizeCoverage: archiveCoverage + ' Includes the archived conversation’s queued input file.',
+    byteSize: metadata.size + diffBytes,
+    byteSizeCoverage: archiveCoverage + ' Queued messages are stored in the shared database and excluded from this size.',
     deletable,
     ...await archivedWorktree(header, file),
   };
@@ -478,7 +456,6 @@ async function main() {
     if (worktree) addRoot(referencedWorktrees, worktree, record.provenance.join('; '), 'referenced', record.owners);
   }
 
-  discovery.queuedInput = queuedInputOwners(discovery);
   const disk = await diskStorage(profile, discovery, referencedWorktrees, git);
   const checkpoints = await checkpointStorage(discovery, disk.directories, checkpointRepository, git);
   archives.sort((left, right) => right.modifiedAt - left.modifiedAt);

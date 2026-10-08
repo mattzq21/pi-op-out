@@ -119,7 +119,6 @@ async function collectDeletionFiles(root, targets, sources, request, files) {
       const header = entries[0];
       validateHeader(header, request);
       trace.sessionId = header.id;
-      await appendQueuedInput(files, header, target);
       await collectCompletedTransfers(root, source, header, files);
       const diffLock = await readFile(source.replace(/\.jsonl$/, '.diffs.json.lock'), true);
 
@@ -195,27 +194,6 @@ async function main(root) {
   catch (error) { console.error(`Deletion committed; cleanup will retry. Recovery data: ${transaction.garbagePath}: ${error.message}`); }
 }
 
-
-async function appendQueuedInput(files, header, target) {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)) return;
-  const storage = path.dirname(await deletionStorageRoot(target));
-  const directory = path.join(storage, "queued-input");
-  let metadata;
-
-  try { metadata = await fs.lstat(directory); }
-  catch (error) { if (error.code === "ENOENT") return; throw error; }
-
-  if (!metadata.isDirectory()) throw new Error("Invalid queued input directory");
-  const name = `${header.id.toLowerCase()}.json`;
-  const temporary = new RegExp(`^\\.${name.replaceAll(".", "\\.")}\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.tmp$`, "i");
-
-  for (const entry of await fs.readdir(directory)) {
-    if (entry !== name && !temporary.test(entry)) continue;
-    const queued = await readFile(path.join(directory, entry), true);
-
-    if (queued && !files.some(saved => saved.file === queued.file)) files.push(queued);
-  }
-}
 
 async function appendConversationNote(files, header, target) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)) return undefined;

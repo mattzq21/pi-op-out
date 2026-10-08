@@ -216,18 +216,13 @@ function goalReferences(found, goals, candidates, inventory) {
 }
 
 function queuedReferences(root, excluded, candidates, found, inventory) {
-  const directory = path.join(root, 'queued-input');
+  for (const row of require('./session-database.cjs').queuedInputs(root)) {
+    const file = path.join(root, 'queued-input', `${row.session_id}.json`);
 
-  for (const entry of entries(directory)) {
-    const file = path.join(directory, entry.name);
-
-    if (!entry.name.endsWith('.json') || excluded.has(file)) continue;
-
-    if (!entry.isFile()) { inventory.uncertain = true; continue; }
-
+    if (excluded.has(file)) continue;
     let value;
 
-    try { value = JSON.parse(fs.readFileSync(file, 'utf8')); }
+    try { value = JSON.parse(row.record_json); }
     catch (error) { if (!(error instanceof SyntaxError)) throw error; inventory.uncertain = true; continue; }
 
     references(value, candidates, found);
