@@ -325,11 +325,6 @@ test('native file and directory helpers normalize nullable results and image typ
   assert.equal(await client.gitBranch(), null);
   responses.set('git_branch', 'main');
   assert.equal(await client.gitBranch(), 'main');
-  responses.set('plugin:dialog|open', ['/wrong']);
-  assert.equal(await client.selectProjectDirectory(), null);
-  responses.set('plugin:dialog|open', '/repo');
-  assert.equal(await client.selectProjectDirectory('/default'), '/repo');
-
   for (const [name, type] of [['picture.PNG', 'image/png'], ['a.jpeg', 'image/jpeg'], ['a.txt', '']]) {
     responses.set('read_dropped_file', { name, data: [65, 66] });
     const file = await native.readDroppedFile('/file');

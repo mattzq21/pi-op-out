@@ -12,7 +12,6 @@ import { nativeTerminals } from "./nativeTerminals";
 import { ConversationCommands } from "./conversationCommands";
 import { commandListingSchema } from "./fastModeCommands";
 import { htmlPreviewSize, listen, type UnlistenFn } from "./platform";
-import { open } from "@tauri-apps/plugin-dialog";
 import { restoredSessionTarget, targetedWindowSession } from "./sessionResume";
 import { inspectRecoveryDirectory, isTemporaryRecoveryDirectory, recoverSessionDirectory } from "./sessionRecovery";
 import type { GroupChange, SessionGroup, SessionGroups, SessionGroupSeed } from "./sessionGroups";
@@ -566,9 +565,6 @@ export class NativeTransport {
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" | "daemon" = "all", baseline?: AppSettings) {
     return this.settings.save(settings, reconnect, agentHostId, scope, baseline);
   }
-  async selectProjectDirectory(defaultPath?: string) { const selected = await open({ directory: true, multiple: false, title: "Open project", defaultPath });
-
-  return Array.isArray(selected) ? null : selected; }
   homeDirectory(hostId: string) { return call("home_directory", { hostId }, z.string()); }
   validateProjectDirectory(path: string, hostId: string, allowStorage = false) { return call("validate_project_directory", { path, hostId, allowStorage }, z.string()); }
   listDirectories(hostId: string, path?: string) { return call("list_directories", { hostId, path }, directoryListingSchema); }

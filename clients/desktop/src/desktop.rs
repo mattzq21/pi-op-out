@@ -188,7 +188,7 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
-    builder.plugin(tauri_plugin_dialog::init()).manage(desktop_daemon::DesktopDaemon::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
+    builder.manage(desktop_daemon::DesktopDaemon::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         for window in app.webview_windows().values() {
             configure_dictation_microphone(window)?;
             configure_image_copy(window)?;

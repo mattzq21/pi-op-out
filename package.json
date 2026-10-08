@@ -74,7 +74,6 @@
     "@lezer/common": "^1.5.3",
     "@solid-primitives/keyed": "^1.5.3",
     "@tauri-apps/api": "^2.8.0",
-    "@tauri-apps/plugin-dialog": "^2.7.2",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-serialize": "^0.13.0",
     "@xterm/xterm": "^5.5.0",

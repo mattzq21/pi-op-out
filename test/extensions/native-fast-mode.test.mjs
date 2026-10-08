@@ -7,7 +7,7 @@ const compiled = await build({
   bundle: true, write: false, format: 'esm', platform: 'node',
   define: { 'import.meta.env.MODE': '"test"' },
   plugins: [{ name: 'native-bridge', setup(builder) {
-    builder.onResolve({ filter: /(?:^|\/)platform$|^@tauri-apps\/plugin-dialog$/ }, args => ({ path: args.path, namespace: 'bridge' }));
+    builder.onResolve({ filter: /(?:^|\/)platform$/ }, args => ({ path: args.path, namespace: 'bridge' }));
     builder.onLoad({ filter: /.*/, namespace: 'bridge' }, () => ({ contents: `
       export const calls = [];
       export const isMobile = false;
@@ -18,7 +18,6 @@ const compiled = await build({
         return args.command.type === 'get_commands' ? { commands } : {};
       }
       export async function listen() { return () => {}; }
-      export async function open() {}
     ` }));
   } }],
 });

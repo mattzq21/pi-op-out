@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Core piop capability",
   "windows": ["main", "chat-*"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": ["core:default"]
 }
