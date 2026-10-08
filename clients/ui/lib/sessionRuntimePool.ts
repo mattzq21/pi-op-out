@@ -256,6 +256,7 @@ export class SessionRuntimePool {
   }
 
   activate(transport?: NativeTransport) { const previous = this.activeTransport; this.activeTransport = transport;
+  this.notify();
 
   if (previous && previous !== transport) previous.setVisible(this.interactiveTransports.has(previous));
 
@@ -264,7 +265,11 @@ export class SessionRuntimePool {
   this.publishSessionStates(); }
 
   setErrorHandler(handler?: (message: string) => void) { this.errorHandler = handler; }
-  setInteractive(transport: NativeTransport, interactive: boolean) { if (interactive) { this.interactiveTransports.add(transport); this.unseenTransports.delete(transport); } else this.interactiveTransports.delete(transport); transport.setVisible(interactive || transport === this.activeTransport); this.publishSessionStates(); }
+  setInteractive(transport: NativeTransport, interactive: boolean) {
+    if (interactive) { this.interactiveTransports.add(transport); this.unseenTransports.delete(transport); } else this.interactiveTransports.delete(transport);
+    this.notify();
+    transport.setVisible(interactive || transport === this.activeTransport); this.publishSessionStates();
+  }
   isRunning(transport: NativeTransport) { return this.runningTransports.has(transport); }
   isRetained(transport: NativeTransport) { return this.retainedTransports.has(transport); }
   isAnyRunning() { return this.runningTransports.size > 0; }
