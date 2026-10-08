@@ -62,7 +62,6 @@ export function ResizableSidebar(componentProps: { compact: boolean; children: J
       onPointerDown={(event) => {
         if (event.button !== 0 || !event.isPrimary) return;
         event.preventDefault();
-        event.currentTarget.focus();
         event.currentTarget.setPointerCapture(event.pointerId);
         drag.current = { pointerId: event.pointerId, x: event.clientX, width: visibleWidth() };
         setDragging(true);
@@ -78,7 +77,10 @@ export function ResizableSidebar(componentProps: { compact: boolean; children: J
       }}
       onPointerCancel={() => { drag.current = null; setDragging(false); }}
       onLostPointerCapture={() => { drag.current = null; setDragging(false); }}
-      onDblClick={() => resize(window.innerWidth <= 1050 ? 232 : 260)}
+      onDblClick={(event) => {
+        resize(window.innerWidth <= 1050 ? 232 : 260);
+        event.currentTarget.blur();
+      }}
       onKeyDown={(event) => {
         const step = event.shiftKey ? 50 : 10;
         const next = event.key === "ArrowLeft" ? visibleWidth() - step : event.key === "ArrowRight" ? visibleWidth() + step : event.key === "Home" ? MIN_WIDTH : event.key === "End" ? maxWidth() : undefined;
