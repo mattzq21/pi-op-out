@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -26,17 +26,19 @@ const feedbackDetailsSchema = Schema.Object({ toolCallId: Schema.String() });
 
 const runFile = promisify(execFile);
 
-async function requireReviewRepository(cwd: string) {
+async function requireReviewRepository(cwd: string, signal?: AbortSignal) {
   try {
-    const { stdout } = await runFile("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], { timeout: 5000 });
+    const { stdout } = await runFile("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], { timeout: 5000, signal });
 
     if (stdout.trim() === "true") return;
   } catch { }
 
+  signal?.throwIfAborted();
   throw new Error("/review is only available in Git repository projects");
 }
 
-async function createReview(ctx: ExtensionContext, agentState: SessionAgentState): Promise<ReviewRecord> {
+async function createReview(ctx: ExtensionContext, agentState: SessionAgentState, signal?: AbortSignal): Promise<ReviewRecord> {
+  signal?.throwIfAborted();
   const header = ctx.sessionManager.getHeader();
 
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save the main conversation before starting a review");
@@ -51,6 +53,10 @@ async function createReview(ctx: ExtensionContext, agentState: SessionAgentState
     { type: "session_info", id: randomUUID().slice(0, 8), parentId: `${metadataId}-agent`, timestamp, name: "Code review" },
   ]);
 
+  if (signal?.aborted) {
+    await rm(record.sessionPath, { force: true });
+    signal.throwIfAborted();
+  }
   return record;
 }
 
@@ -97,18 +103,24 @@ export function registerReview(pi: ExtensionAPI) {
     ];
   }) }));
   const startReview = async (args: string, ctx: ExtensionContext, images?: Static<typeof reviewRequestSchema>["images"]) => {
+    const signal = ctx.signal;
+    signal?.throwIfAborted();
     if (args.trim()) { ctx.ui.notify("Usage: /review — reviews the current branch", "warning");
 
     return; }
 
-    await requireReviewRepository(ctx.cwd);
+    await requireReviewRepository(ctx.cwd, signal);
+    signal?.throwIfAborted();
     const settings = await reviewSettings();
+    signal?.throwIfAborted();
     const profile: SubagentProfileRequest = { agent: settings.agent };
     pi.events.emit("piop:agents:subagent", profile);
     await profile.ready;
+    signal?.throwIfAborted();
 
     if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${settings.agent}`);
-    const record = await createReview(ctx, profile.state);
+    const record = await createReview(ctx, profile.state, signal);
+    signal?.throwIfAborted();
     pi.appendEntry("piop-review", record);
     pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
     openReview(ctx, record, settings.prompt, images);

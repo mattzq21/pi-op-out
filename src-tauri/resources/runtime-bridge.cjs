@@ -82,6 +82,7 @@ function bindFollowUpDrain(agent) {
 
 async function executeQueuedReview(session, text, images) {
   const ctx = session.extensionRunner.createCommandContext();
+  const signal = ctx.signal;
   const request = { command: "start_review", payload: { args: text.slice(7).trim(), images }, ctx };
 
   try {
@@ -89,6 +90,7 @@ async function executeQueuedReview(session, text, images) {
     if (!request.ready) throw new Error("Review requests are unavailable");
     await request.ready;
   } catch (error) {
+    if (signal?.aborted) return;
     ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
   }
 }
