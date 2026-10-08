@@ -1,6 +1,5 @@
 import { createMemo, createSignal, onCleanup } from "solid-js";
 import { NativeTransport, type NativeConnectionTarget } from "./lib/nativeTransport";
-import type { ConversationDraft } from "./lib/conversationDraftStorage";
 import type { StateUpdate } from "./lib/solid";
 import type { ComposerUpload, SessionSummary } from "./types";
 import { z } from "zod";
@@ -8,7 +7,7 @@ import { DraftStorage, draftEndpoint, durableDraftId, type DraftDestination, typ
 import { bindDraftStaging, goalPreparationSchema, submissionFingerprint, type DraftSubmissionHandle, type DraftSubmissionPayload } from "./lib/draftSubmission";
 import type { DraftConflictSnapshot } from "./lib/draftStorage";
 
-export type { ConversationDraft } from "./lib/conversationDraftStorage";
+export interface ConversationDraft { text: string; uploads: ComposerUpload[]; target?: NativeConnectionTarget; updatedAt: number; }
 
 const legacyEntriesSchema = z.record(z.string(), z.json());
 
