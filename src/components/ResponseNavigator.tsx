@@ -16,15 +16,21 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; scr
   const frame = createRef<number | undefined>(undefined);
   const navigationFrame = createRef<number | undefined>(undefined);
   const rail = createRef<HTMLElement>(null);
+  const visible = () => props.responses.length >= 2 && overflowing();
 
   createDependencyEffect(() => {
-    const container = rail.current;
-    const marker = container?.querySelector<HTMLElement>("[aria-current]");
+    if (!visible()) return;
+    const markerFrame = requestAnimationFrame(() => {
+      const container = rail.current;
+      const marker = container?.querySelector<HTMLElement>("[aria-current]");
 
-    if (!container || !marker) return;
-    if (marker.offsetTop < container.scrollTop) container.scrollTop = marker.offsetTop;
-    else if (marker.offsetTop + marker.offsetHeight > container.scrollTop + container.clientHeight) container.scrollTop = marker.offsetTop + marker.offsetHeight - container.clientHeight;
-  }, () => [active()]);
+      if (!container || !marker) return;
+      if (marker.offsetTop < container.scrollTop) container.scrollTop = marker.offsetTop;
+      else if (marker.offsetTop + marker.offsetHeight > container.scrollTop + container.clientHeight) container.scrollTop = marker.offsetTop + marker.offsetHeight - container.clientHeight;
+    });
+
+    return () => cancelAnimationFrame(markerFrame);
+  }, () => [active(), visible()]);
 
   createDependencyEffect(() => {
     const root = props.scrollRoot.current;
@@ -88,7 +94,7 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; scr
     });
   };
 
-  return <Show when={props.responses.length >= 2 && overflowing()}><nav ref={element => { rail.current = element; }} class="response-navigator" aria-label="Agent responses" style={{ bottom: bottom() }}>
+  return <Show when={visible()}><nav ref={element => { rail.current = element; }} class="response-navigator" aria-label="Agent responses" style={{ bottom: bottom() }}>
     <Key each={props.responses} by={response => response.messageId}>{(response, index) => <button type="button" class="response-navigator-marker" aria-label={`Go to agent response ${index() + 1}: ${response().preview}`} aria-current={active() === response().messageId ? "location" : undefined} title={`Response ${index() + 1}: ${response().preview}`} onClick={() => navigate(response())}><span /></button>}</Key>
   </nav></Show>;
 }
