@@ -10,6 +10,7 @@ const shared = require('./archive-resource-restore.cjs');
 const migration = require('./archive-resource-migration.cjs');
 const ownerLocks = require('./transaction-owner-locks.cjs');
 const { lockStorage } = require('./storage-transaction-lock.cjs');
+const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 
 function exists(file) {
   try { return fs.lstatSync(file); }
@@ -46,6 +47,7 @@ function write(file, body) {
 
   fs.renameSync(temporary, file);
   sync(path.dirname(file));
+  checkpointIndex.refresh(file);
 }
 
 function rename(source, destination) {
@@ -55,6 +57,7 @@ function rename(source, destination) {
   sync(path.dirname(source));
 
   if (exists(source) || !matches(destination, expected)) throw new Error(`Restoration move could not be verified: ${source}`);
+  checkpointIndex.relocate(source, destination);
 }
 
 function identity(file) {
@@ -394,6 +397,10 @@ function cleanup(journal) { fs.unlinkSync(journal); sync(path.dirname(journal));
 
 function finishCommit(transaction, journal) {
   const root = path.dirname(path.dirname(journal));
+
+  for (const item of [transaction.trace, ...transaction.moves]) {
+    if (item.destination.endsWith('.jsonl')) checkpointIndex.relocate(item.source, item.destination);
+  }
 
   for (const resource of resourceTransactions(transaction)) shared.finish(root, resource);
 

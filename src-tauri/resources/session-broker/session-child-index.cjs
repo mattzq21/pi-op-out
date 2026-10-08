@@ -5,6 +5,7 @@ const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('./session-publication-io.cjs');
+const checkpoints = require('./checkpoint-owner-index.cjs');
 
 const childSchema = Type.Object({ sessionId: Type.String(), sessionPath: Type.String(), kind: Type.Union([Type.Literal('subagent'), Type.Literal('review')]) });
 
@@ -57,6 +58,7 @@ function add(root, parentSessionId, parentSessionPath, child) {
 }
 
 function registerTranscript(root, sessionPath, body) {
+  checkpoints.recordTranscript(root, sessionPath, body);
   const entries = body.trim().split('\n').map(JSON.parse);
   const header = entries[0];
 

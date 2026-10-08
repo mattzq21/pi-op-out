@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { homedir } = require('node:os');
@@ -86,6 +87,7 @@ try {
   fs.fsyncSync(file);
   fs.closeSync(file); file = undefined;
   fs.renameSync(temporary, sessionPath);
+  checkpointIndex.refresh(sessionPath);
 } finally {
   if (file !== undefined) fs.closeSync(file);
   fs.rmSync(temporary, { force: true });

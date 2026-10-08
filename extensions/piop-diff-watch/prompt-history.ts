@@ -2,6 +2,13 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Check } from "typebox/value";
 import { runGit } from "./git.ts";
 import { checkpointSchema, pendingCheckpointSchema, type PromptCheckpoint } from "./schemas.ts";
+import { recordCheckpoint } from "../session-broker/checkpoint-owner-index.cjs";
+
+export function indexCheckpoint(ctx: ExtensionContext, repository: string) {
+  const file = ctx.sessionManager.getSessionFile();
+
+  if (file) recordCheckpoint(file, ctx.sessionManager.getSessionId(), repository);
+}
 
 type CheckpointHistory = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
 

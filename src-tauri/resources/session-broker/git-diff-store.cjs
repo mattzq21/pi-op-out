@@ -6,6 +6,7 @@ const { spawnSync } = require('node:child_process');
 const pages = require('./git-diff-pages.cjs');
 const transfers = require('./git-diff-transfer.cjs');
 const { createMigration } = require('./git-diff-migration.cjs');
+const checkpointIndex = require('./checkpoint-owner-index.cjs');
 
 const header = 'PIOP-DIFFS-1\n';
 
@@ -438,6 +439,7 @@ function retainComparison(filename, request) {
   const destination = path.join(root, 'pending-diff.json');
   const temporary = `${destination}.${crypto.randomUUID()}.tmp`;
   const body = recordBytes({ sessionId: transcriptId(filename), id: request.id, capture: request.capture });
+  checkpointIndex.recordCapture(path.dirname(snapshotParent()), 'pointer', destination, transcriptId(filename), request.capture);
 
   try {
     const fd = fs.openSync(temporary, 'wx', 0o600);
@@ -445,6 +447,7 @@ function retainComparison(filename, request) {
     try { writeAll(fd, body); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 
     fs.renameSync(temporary, destination); syncParent(destination);
+    checkpointIndex.replaceCaptures(path.dirname(snapshotParent()), 'pointer', destination, transcriptId(filename), [request.capture]);
   } finally { fs.rmSync(temporary, { force: true }); }
 
   return null;
@@ -555,6 +558,10 @@ function finishStore(filename, request, state) {
 }
 
 function saveStore(filename, request, state, records) {
+  for (const record of records) {
+    if (record.op === 'pending') checkpointIndex.recordCapture(path.dirname(snapshotParent()), 'diff', filename, transcriptId(filename), record.capture);
+  }
+
   if (state.legacy || !state.end) migrate(filename, state);
   const fd = fs.openSync(filename, fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW, 0o600);
 
@@ -570,7 +577,22 @@ function saveStore(filename, request, state, records) {
     syncParent(filename);
   } finally { fs.closeSync(fd); }
 
+  indexPending(filename, state, records);
+
   return null;
+}
+
+function indexPending(filename, state, records) {
+  if (records.some(record => ['pending', 'done', 'remove'].includes(record.op))) {
+    const pending = { ...state.pending };
+
+    for (const record of records) {
+      if (record.op === 'pending') pending[record.id] = record.capture;
+      else if (['done', 'remove'].includes(record.op)) delete pending[record.id];
+    }
+
+    checkpointIndex.replaceCaptures(path.dirname(snapshotParent()), 'diff', filename, transcriptId(filename), Object.values(pending));
+  }
 }
 
 function appendChanges(request, state, records, append) {

@@ -43,7 +43,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 44] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 46] = [
     ("review-prompt.txt", include_str!("../../../../resources/session-broker/review-prompt.txt")),
     ("client.ts", include_str!("../../../../resources/session-broker/client.ts")),
     ("conversation-location.ts", include_str!("../../../../resources/session-broker/conversation-location.ts")),
@@ -53,6 +53,8 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 44] = [
     ("session-file.ts", include_str!("../../../../resources/session-broker/session-file.ts")),
     ("session-child-index.cjs", include_str!("../../../../resources/session-broker/session-child-index.cjs")),
     ("session-child-index.d.cts", include_str!("../../../../resources/session-broker/session-child-index.d.cts")),
+    ("checkpoint-owner-index.cjs", include_str!("../../../../resources/session-broker/checkpoint-owner-index.cjs")),
+    ("checkpoint-owner-index.d.cts", include_str!("../../../../resources/session-broker/checkpoint-owner-index.d.cts")),
     ("session-publication.cjs", include_str!("../../../../resources/session-broker/session-publication.cjs")),
     ("session-publication-io.cjs", include_str!("../../../../resources/session-broker/session-publication-io.cjs")),
     ("session-publication-dependencies.cjs", include_str!("../../../../resources/session-broker/session-publication-dependencies.cjs")),

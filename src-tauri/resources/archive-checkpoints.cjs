@@ -6,6 +6,7 @@ const owners = require('./transaction-owner-locks.cjs');
 const resources = require('./archive-resources.cjs');
 const checkpoints = require('./worktree-checkpoint-preservation.cjs');
 const diffs = require('./session-broker/git-diff-store.cjs');
+const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 
 function targets(transaction) {
   return transaction.groups.filter(group => group.kind === 'git').map(group => ({ path: group.path, common: group.common, identity: group.identity.identity }));
@@ -13,19 +14,6 @@ function targets(transaction) {
 
 function peerIds(transaction) {
   return transaction.groups.flatMap(group => group.resource ? resources.headerUpdates(transaction.root, group.resource.change).map(update => update.sessionId) : []);
-}
-
-function walk(directory, archived, records) {
-  if (!io.exists(directory)) return;
-
-  if (fs.realpathSync(directory) !== directory) throw new Error('Checkpoint owner storage has ambiguous ancestry');
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isDirectory() && !entry.name.endsWith('.snapshots') && entry.name !== 'attachments') walk(file, archived, records);
-    else if (entry.isFile() && entry.name.endsWith('.jsonl')) records.push(read(file, archived));
-  }
 }
 
 function read(file, archived) {
@@ -105,14 +93,9 @@ function checkDiffs(file, target) {
   if (Object.values(state.pending).some(capture => captureUses(capture, target))) throw new Error('Pending diff comparisons require the archived worktree; recovery retained: ' + log);
 }
 
-function checkGlobalDiffs(root, worktrees) {
-  const directory = path.join(root, 'git-snapshots');
-
-  if (!io.exists(directory)) return;
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !entry.name.startsWith('pi-desktop-diff-')) continue;
-    const file = path.join(directory, entry.name, 'pending-diff.json');
+function checkGlobalDiffs(links, worktrees) {
+  for (const { file, kind } of links) {
+    if (kind !== 'pointer') continue;
 
     if (!io.exists(file)) continue;
     const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -126,21 +109,39 @@ function checkGlobalDiffs(root, worktrees) {
   }
 }
 
-function scan(transaction) {
+function scan(transaction, links) {
   const records = [];
   const worktrees = targets(transaction);
   const resourceOwners = new Set(peerIds(transaction));
-  walk(path.join(transaction.root, 'sessions'), false, records);
-  walk(path.join(transaction.root, 'archived'), true, records);
+
+  for (const link of links) {
+    const record = readLinked(transaction.root, link, worktrees);
+
+    if (record) records.push(record);
+  }
 
   for (const record of records) for (const target of worktrees) map(record, target, resourceOwners);
-  checkGlobalDiffs(transaction.root, worktrees);
+  checkGlobalDiffs(links, worktrees);
 
   return records.sort((left, right) => left.file.localeCompare(right.file));
 }
 
-function verifyPlan(before, after) {
-  if (before.length !== after.length || before.some((record, index) => record.file !== after[index].file || record.original.identity !== after[index].original.identity || record.original.digest !== after[index].original.digest)) throw new Error('Historical owners changed before archive preservation; retry');
+function readLinked(root, link, worktrees) {
+  if (link.kind === 'diff') {
+    for (const target of worktrees) checkDiffs(link.file.replace(/\.diffs\.json$/, '.jsonl'), target);
+
+    return;
+  }
+
+  if (link.kind !== 'transcript' || !io.exists(link.file)) return;
+  const archived = io.inside(path.join(root, 'archived'), link.file);
+
+  if (!archived && !io.inside(path.join(root, 'sessions'), link.file)) throw new Error('Checkpoint owner index points outside conversation storage');
+  const record = read(link.file, archived);
+
+  if (record.header.id !== link.sessionId) throw new Error('Checkpoint owner index identity changed');
+
+  return record;
 }
 
 function save(transaction) { io.write(path.join(transaction.container, 'recovery.json'), JSON.stringify(transaction)); }
@@ -164,6 +165,7 @@ function publish(transaction, record) {
   if (!io.matches(record.file, record.original)) throw new Error('Historical checkpoint owner changed before publication; temporary retained');
   fs.renameSync(planned.prepared, record.file);
   io.sync(path.dirname(record.file));
+  checkpointIndex.refresh(record.file);
 }
 
 function validate(transaction) {
@@ -175,13 +177,15 @@ function validate(transaction) {
 }
 
 function preserve(transaction, borrowedIds, operation) {
-  const initial = scan(transaction);
-  const affected = initial.filter(record => record.changed).map(record => record.header.id);
-  const ids = [...affected, ...peerIds(transaction), ...transaction.records.map(record => record.sessionId)];
+  const worktrees = targets(transaction).map(target => target.path);
+  const initial = checkpointIndex.linked(transaction.root, worktrees);
+  const ids = [...initial.map(link => link.sessionId), ...peerIds(transaction), ...transaction.records.map(record => record.sessionId)];
 
   return owners.withOwners(transaction.root, ids, borrowedIds, () => {
-    const locked = scan(transaction);
-    verifyPlan(initial, locked);
+    const links = checkpointIndex.linked(transaction.root, worktrees);
+
+    if (JSON.stringify(initial) !== JSON.stringify(links)) throw new Error('Checkpoint owner links changed before archive preservation; retry');
+    const locked = scan(transaction, links);
     const selected = new Set(transaction.records.map(record => record.file));
 
     for (const record of locked.filter(record => record.changed && !selected.has(record.file))) publish(transaction, record);
