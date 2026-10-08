@@ -6,7 +6,10 @@ import { buildArtifact, buildBundle, buildInParallel } from "./incremental-build
 import { agentCommandInputs, agentCommandInventory } from "./agent-command-inventory.mjs";
 
 async function fastMode() {
-  const license = await readFile("extensions/piop-openai-fast-mode/LICENSE", "utf8");
+  const license = await readFile("extensions/piop-openai-fast-mode/LICENSE", "utf8").catch(error => {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  });
 
   await buildBundle({
     entryPoints: ["extensions/piop-openai-fast-mode/src/index.ts"],
@@ -16,7 +19,7 @@ async function fastMode() {
     format: "esm",
     target: "node22",
     minify: true,
-    banner: { js: `/*! piop-openai-fast-mode 0.3.0-piop.1.\n${license}*/` },
+    banner: { js: `/*! piop-openai-fast-mode 0.3.0-piop.1.${license ? `\n${license}` : ""}*/` },
     external: ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"],
   }, "src-tauri/resources/fast-mode.bundle.mjs", { script: import.meta.url });
 }
