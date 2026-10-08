@@ -139,11 +139,16 @@ function bindReviewQueue(session) {
     return config;
   };
   agent.runPromptMessages = async function (messages, options) {
-    if (options?.skipInitialSteeringPoll) return runPromptMessages.call(this, messages, options);
-    const prompts = await consumeReviews(session, messages);
+    if (options?.skipInitialSteeringPoll || !messages.some(message => isReview(reviewText(message)))) {
+      return runPromptMessages.call(this, messages, options);
+    }
+    let cancelled = false;
+    await this.runWithLifecycle(async signal => {
+      await consumeReviews(session, messages);
+      cancelled = signal.aborted;
+    });
 
-    if (prompts.length) return runPromptMessages.call(this, prompts, options);
-    if (this.hasQueuedMessages()) return this.continue();
+    if (!cancelled && this.hasQueuedMessages()) return this.continue();
   };
 }
 
