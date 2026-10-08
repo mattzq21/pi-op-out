@@ -4,9 +4,8 @@ import { constants, createReadStream, closeSync, fsyncSync, lstatSync, mkdirSync
 import { open, readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
-import { Type as Schema, type Static } from "typebox";
+import { Type as Schema } from "typebox";
 import { Check } from "typebox/value";
-import { goalTokens } from "./goal-state.ts";
 import { resultNotificationId, runSchema, type SubagentRun } from "./subagent-identity.ts";
 
 export { resultNotificationId } from "./subagent-identity.ts";
@@ -14,20 +13,6 @@ export { resultNotificationId } from "./subagent-identity.ts";
 export { runSchema, type SubagentRun } from "./subagent-identity.ts";
 
 export const SUBAGENT_RUN = "piop-subagent-run";
-
-const usageSchema = Schema.Object({ input: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.Number()), cacheWrite: Schema.Optional(Schema.Number()), cost: Schema.Optional(Schema.Object({ total: Schema.Optional(Schema.Number()) })) });
-
-const transcriptEntrySchema = Schema.Object({ type: Schema.String(), timestamp: Schema.Optional(Schema.String()), usage: Schema.Optional(usageSchema), message: Schema.Optional(Schema.Unknown()) });
-
-const descendantUsageSchema = Schema.Object({ type: Schema.Literal("custom"), customType: Schema.Literal("piop-subagent-usage"), data: Schema.Object({ tokens: Schema.Integer({ minimum: 0 }) }) });
-
-const assistantSchema = Schema.Object({ role: Schema.Literal("assistant"), timestamp: Schema.Optional(Schema.Number()), stopReason: Schema.String(), errorMessage: Schema.Optional(Schema.String()), content: Schema.Array(Schema.Unknown()), usage: Schema.Optional(usageSchema) });
-
-const responseUsageSchema = Schema.Object({ type: Schema.Literal("custom"), customType: Schema.Literal("piop-subagent-response-usage"), data: Schema.Object({ key: Schema.String(), tokens: Schema.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) }) });
-
-const textSchema = Schema.Object({ type: Schema.Literal("text"), text: Schema.String() });
-
-export type SubagentResponse = Static<typeof assistantSchema>;
 
 let runWrites = Promise.resolve();
 
@@ -248,110 +233,6 @@ export function forgetSubagentRun(ctx: ExtensionContext, run: SubagentRun) {
   return serializeRun(() => removeSubagentRun(ctx, run));
 }
 
-export function completedSubagentOutput(last: SubagentResponse | undefined) {
-  if (!last) throw new Error("Subagent produced no assistant response; inspect its transcript");
-
-  if (last.stopReason === "error" || last.stopReason === "aborted") throw new Error(last.errorMessage || `Subagent ${last.stopReason}`);
-
-  if (last.stopReason === "toolUse") throw new Error("Subagent stopped before completing its task");
-  const output = last.content.flatMap((part) => Check(textSchema, part) ? [part.text] : []).join("\n") || "(No text returned; inspect the saved transcript.)";
-
-  return output.length > 16_000 ? `${output.slice(0, 16_000)}\n[Result truncated. Full conversation is saved in the child transcript.]` : output;
-}
-
-function subagentEntryCost(usage: Static<typeof usageSchema> | undefined) {
-  const amount = usage?.cost?.total;
-
-  return amount !== undefined && Number.isFinite(amount) ? Math.max(0, amount) : 0;
-}
-
-type SubagentTranscript = Pick<SubagentRun, "sessionPath" | "offset" | "startedAt">;
-
-function relevantEntry(line: string, run: SubagentTranscript) {
-  let entry;
-
-  try { entry = JSON.parse(line); } catch { return; }
-
-  if (!Check(transcriptEntrySchema, entry)) return;
-
-  if (run.offset === undefined && (!entry.timestamp || Date.parse(entry.timestamp) < run.startedAt)) return;
-
-  return entry;
-}
-
-function responseUsageKey(timestamp: number | undefined, tokens: number) {
-  return JSON.stringify([timestamp, tokens]);
-}
-
-function unrecordedResponse(message: SubagentResponse, recorded: Map<string, number>) {
-  const tokens = goalTokens(message.usage);
-  const key = responseUsageKey(message.timestamp, tokens);
-  const remaining = recorded.get(key) ?? 0;
-
-  if (!remaining) return tokens;
-  recorded.set(key, remaining - 1);
-
-  return 0;
-}
-
-async function scanSubagentTranscript(run: SubagentTranscript, reportUsage: (tokens: number) => Promise<void>) {
-  let last: SubagentResponse | undefined;
-  let cost = 0;
-  let tokens = 0;
-  const recorded = new Map<string, number>();
-  const input = createReadStream(run.sessionPath, { start: run.offset ?? 0 });
-  const lines = createInterface({ input, crlfDelay: Infinity });
-
-  try {
-    for await (const line of lines) {
-      const entry = relevantEntry(line, run);
-
-      if (!entry) continue;
-
-      if (Check(descendantUsageSchema, entry)) { tokens += entry.data.tokens; continue; }
-
-      if (Check(responseUsageSchema, entry)) {
-        tokens += entry.data.tokens;
-        recorded.set(entry.data.key, (recorded.get(entry.data.key) ?? 0) + 1);
-        continue;
-      }
-
-      if (entry.type !== "message") { tokens += goalTokens(entry.usage); cost += subagentEntryCost(entry.usage); continue; }
-
-      if (Check(Schema.Object({ role: Schema.Literal("user") }), entry.message)) last = undefined;
-
-      if (!Check(assistantSchema, entry.message)) continue;
-      last = entry.message;
-      cost += subagentEntryCost(last.usage);
-      tokens += unrecordedResponse(last, recorded);
-    }
-  } finally { lines.close(); input.destroy(); await reportUsage(tokens); }
-
-  return { last, cost };
-}
-
-export async function subagentUsageTotal(run: SubagentTranscript) {
-  let total = 0;
-  await scanSubagentTranscript(run, async tokens => { total = tokens; });
-
-  return total;
-}
-
-export async function subagentCompletion(run: SubagentRun, reportUsage: (tokens: number) => Promise<void>) {
-  const { last, cost } = await scanSubagentTranscript(run, reportUsage);
-  run.apiCost = cost;
-
-  return last;
-}
-
-export async function persistSubagentResponseUsage(pi: ExtensionAPI, ctx: ExtensionContext, timestamp: number, tokens: number) {
-  const path = ctx.sessionManager.getSessionFile();
-
-  if (!path) throw new Error("Subagent usage requires a saved conversation");
-  pi.appendEntry("piop-subagent-response-usage", { key: responseUsageKey(timestamp, tokens), tokens });
-  await syncPath(path);
-}
-
 export function ownedSubagentRuns(ctx: ExtensionContext) {
   const parentSessionId = ctx.sessionManager.getSessionId();
 
@@ -375,12 +256,4 @@ export function reportedSubagentUsage(ctx: ExtensionContext, run: SubagentRun) {
   const runId = resultNotificationId(run);
 
   return ctx.sessionManager.getEntries().reduce((total, entry) => entry.type === "custom" && entry.customType === "piop-subagent-usage" && Check(schema, entry.data) && entry.data.runId === runId ? Math.max(total, entry.data.total) : total, 0);
-}
-
-export async function persistSubagentUsage(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun, total: number, tokens: number) {
-  const path = ctx.sessionManager.getSessionFile();
-
-  if (!path) throw new Error("Subagent usage requires a saved parent conversation");
-  pi.appendEntry("piop-subagent-usage", { version: 1, runId: resultNotificationId(run), goalId: run.goalId, total, tokens });
-  await syncPath(path);
 }
