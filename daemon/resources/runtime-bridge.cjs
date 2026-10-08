@@ -380,13 +380,9 @@ function trackReleasedPrompt(session, scope) {
 }
 
 async function releaseQueuedReviews(session, messages, prompt) {
-  let cancelled = false;
-  await session.agent.runWithLifecycle(async signal => {
-    await consumeReviews(session, messages);
-    cancelled = signal.aborted;
-  });
+  await session._runAgentPrompt(messages);
 
-  if (!cancelled && session.isIdle && !hasGoal(session)) await releaseGoalQueue(session, prompt);
+  if (!session._agentRunAbortRequested && session.isIdle && !hasGoal(session)) await releaseGoalQueue(session, prompt);
 }
 
 async function releaseGoalQueue(session, prompt) {
