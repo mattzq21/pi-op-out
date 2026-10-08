@@ -427,9 +427,11 @@ export function createAppConversations(preloadChat: () => void) {
     setComposerDraft(key, composerState().composerDraft); setComposerUploads(owner, composerState().composerUploads);
   };
 
+  const closeMobileSidebar = () => { if (window.matchMedia("(max-width: 700px)").matches) setPanelOpen(false); };
+
   const startNewSession = async (clearProject = false, group?: SessionGroup, discardDraft = false) => {
     if (!canStartNewSession()) return;
-    setPanelOpen(false);
+    closeMobileSidebar();
     setArchivesOpen(false);
     const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;
     const isCurrent = () => activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey;
@@ -483,7 +485,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const newSession = async () => {
     if (!canStartNewSession()) return;
-    setPanelOpen(false);
+    closeMobileSidebar();
     setArchivesOpen(false);
     const empty = !currentSessionHasSavedMessages() && !chatSession().state.isStreaming && chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
     const repeat = view() === "chat" && empty && lastNewSessionSelection.current === activeConversationKey();
