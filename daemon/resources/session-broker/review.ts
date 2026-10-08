@@ -155,14 +155,15 @@ function reviewSubagentCount(args: string, command: string, ctx: ExtensionContex
     return;
   }
 
+  if (!args.trim()) return null;
   const count = Number(args.trim());
 
   if (/^[1-9]\d*$/.test(args.trim()) && Number.isSafeInteger(count)) return count;
-  ctx.ui.notify("Usage: /rs <n> — n must be a positive integer", "warning");
+  ctx.ui.notify("Usage: /rs [n] — omit n for proportionate delegation, or supply a positive integer", "warning");
 }
 
-function subagentReviewTask(state: SessionAgentState, count: number, prompt: string) {
-  if (!count) return prompt;
+function subagentReviewTask(state: SessionAgentState, count: number | null, prompt: string) {
+  if (count === 0) return prompt;
   if (!state.snapshot) throw new Error("Reviewer profile is unavailable for subagent review");
   const limit = state.snapshot.definition.max_subagents ?? 8;
 
@@ -171,8 +172,11 @@ function subagentReviewTask(state: SessionAgentState, count: number, prompt: str
 
   if (!tools.includes("subagent")) tools.push("subagent");
   state.locked = true;
+  const delegation = count === null
+    ? "First assess the size, complexity, and risk of the changes, then choose a proportionate number of review subagents. Use only as many subagents as the task warrants, avoiding redundant work."
+    : `You must spawn exactly ${count} review subagents.`;
 
-  return `${prompt}\n\nFor this review, you must spawn exactly ${count} review subagents using spawn_agent with worktree: "same" and unique task names. Omit agent to inherit your reviewer profile. Divide the review into complementary scopes and give each child the review instructions above, including the base and committed-change scope. Children must not delegate further, modify files, or run tests. Launch children concurrently, with at most ${limit} active at once; for larger counts, launch the remaining children as slots become available. Collect all ${count} results before giving your final review. Verify and deduplicate their findings, then report one consolidated review.`;
+  return `${prompt}\n\nFor this review: ${delegation} Spawn them using spawn_agent with worktree: "same" and unique task names. Omit agent to inherit your reviewer profile. Divide the review into complementary scopes and give each child the review instructions above, including the base and committed-change scope. Children must not delegate further, modify files, or run tests. Launch children concurrently, with at most ${limit} active at once; for larger counts, launch the remaining children as slots become available. Collect every subagent's results before giving your final review. Verify and deduplicate their findings, then report one consolidated review.`;
 }
 
 export function registerReview(pi: ExtensionAPI) {
@@ -228,7 +232,7 @@ export function registerReview(pi: ExtensionAPI) {
     handler: (args, ctx) => startReview(args, ctx),
   });
   pi.registerCommand("rs", {
-    description: "Review this branch with n reviewer subagents: /rs <n>",
+    description: "Review with proportionate delegation, or an explicit subagent count: /rs [n]",
     handler: (args, ctx) => startReview(args, ctx, undefined, "rs"),
   });
   pi.events.on("piop:rpc", request => {
