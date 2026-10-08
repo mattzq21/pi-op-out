@@ -19,7 +19,8 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const [chats, setChats] = createSignal<RegularChat[]>([]);
   const [chat, setChat] = createSignal<RegularChat>();
   const [prompt, setPrompt] = createSignal("");
-  const [includeContext, setIncludeContext] = createSignal(true);
+  const [draftIncludeContext, setDraftIncludeContext] = createSignal(true);
+  const includeContext = () => chat()?.messages.length ? Boolean(chat()?.contextSource) : draftIncludeContext();
   const modelSelection = createModelSelection(models);
   const source = () => includeContext() ? request()?.source() : undefined;
   const responding = () => isResponding(chat());
@@ -191,6 +192,8 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   }, () => [chat()?.id, open(), loading()]);
 
   const editable = () => open() && (!chat() || chat()?.ownership?.owned === true);
+  const canChooseContext = () => !chat()?.messages.length && !busy() && !loading() && !catalogLoading() && !responding();
+  const setIncludeContext = (value: boolean) => { if (canChooseContext()) setDraftIncludeContext(value); };
   const canSend = () => editable() && !busy() && !loading() && !catalogLoading() && models().length > 0 && !responding() && Boolean(prompt().trim());
   const contextSource = () => source()?.messages.length || source()?.selected ? source() : undefined;
   const targetChatId = () => chat()?.id ?? draftId();
@@ -324,7 +327,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 
   onCleanup(() => { disposed = true; desiredChat = undefined; generation++; submission?.abort(); release(); });
 
-  return { models, modelSelection, chats, chat, prompt, setPrompt, source, includeContext, setIncludeContext, responding, recovering,
+  return { models, modelSelection, chats, chat, prompt, setPrompt, source, includeContext, setIncludeContext, canChooseContext, responding, recovering,
     busy, loading: () => loading() || catalogLoading(), editable, error: () => error() ?? cancellationError() ?? catalogError() ?? pollError(), fresh, select, send, stop };
 }
 

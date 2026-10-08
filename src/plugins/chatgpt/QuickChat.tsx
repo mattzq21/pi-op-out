@@ -63,8 +63,8 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
       }} />
       <div class="quick-chat-controls">
         <div class="quick-chat-context-mode" role="group" aria-label="Chat context">
-          <button type="button" aria-pressed={!state.includeContext()} disabled={active() || state.loading()} onClick={() => state.setIncludeContext(false)}>Chat</button>
-          <button type="button" aria-pressed={state.includeContext()} disabled={active() || state.loading()} onClick={() => state.setIncludeContext(true)}>Piop context</button>
+          <button type="button" aria-pressed={!state.includeContext()} disabled={!state.canChooseContext()} onClick={() => state.setIncludeContext(false)}>Chat</button>
+          <button type="button" aria-pressed={state.includeContext()} disabled={!state.canChooseContext()} onClick={() => state.setIncludeContext(true)}>Piop context</button>
         </div>
         <Show when={active()}>
           <button type="button" aria-label={state.recovering() ? "Stop recovery" : "Stop ChatGPT"} disabled={!state.editable() || state.chat()?.status === "stopping"} onClick={() => void state.stop()}><Square size={16} /><Show when={state.recovering()}>Stop recovery</Show></button>
