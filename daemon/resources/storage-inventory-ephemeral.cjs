@@ -149,20 +149,19 @@ async function pointer(directory, profile, discovery) {
 }
 
 async function manifests(root, discovery) {
-  for (const entry of await entries(path.join(root, 'manifests'), discovery.warnings)) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    const file = path.join(root, 'manifests', entry.name);
-    const record = addRoot(discovery.cleanup, file, 'Ephemeral cleanup manifest; retained for identity verification and crash replay', 'owned');
+  const profile = path.dirname(root);
+  const file = path.join(profile, 'sessions.sqlite');
 
+  for (const row of require('./ephemeral-cleanup-records.cjs').list(profile)) {
     try {
-      const manifest = await json(file);
+      const manifest = JSON.parse(row.record_json);
 
       if (!Check(manifestSchema, manifest)) throw new Error('Invalid cleanup manifest ownership or phase');
-      record.state = manifest.phase;
-      record.owners = [{ sessionId: manifest.sessionId, sessionPath: manifest.path, kind: 'cleanup-manifest-provenance' }];
-    } catch (error) { discovery.warnings.push(`${file}: cleanup manifest unavailable: ${error.message}`); }
+      const owners = [{ sessionId: manifest.sessionId, sessionPath: manifest.path, kind: 'cleanup-manifest-provenance' }];
+      const record = addRoot(discovery.cleanup, file, `Cleanup record ${row.token}: ${manifest.phase}`, 'shared', owners);
+      record.state = 'stored-cleanup-records';
+    } catch (error) { discovery.warnings.push(`${file}, cleanup record ${row.token}: ${error.message}`); }
   }
-
 }
 
 async function discoverEphemeral(profile, discovery) {

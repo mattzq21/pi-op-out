@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash, randomUUID } = require('node:crypto');
+const { createHash } = require('node:crypto');
 
 function exists(file) {
   try { return fs.lstatSync(file); }
@@ -26,25 +26,6 @@ function directory(file) {
   directory(path.dirname(file));
   fs.mkdirSync(file, { mode: 0o700 });
   sync(path.dirname(file));
-}
-
-function write(file, value) {
-  directory(path.dirname(file));
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  const descriptor = fs.openSync(temporary, 'wx', 0o600);
-
-  try { fs.writeFileSync(descriptor, JSON.stringify(value)); fs.fsyncSync(descriptor); }
-  finally { fs.closeSync(descriptor); }
-
-  fs.renameSync(temporary, file);
-  sync(path.dirname(file));
-}
-
-function read(file) {
-  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-
-  try { return JSON.parse(fs.readFileSync(descriptor, 'utf8')); }
-  finally { fs.closeSync(descriptor); }
 }
 
 function identity(file) {
@@ -183,4 +164,4 @@ function remove(item) {
   sync(path.dirname(item.path));
 }
 
-module.exports = { exists, sync, directory, write, read, identity, describe, verify, remove };
+module.exports = { exists, sync, directory, identity, describe, verify, remove };

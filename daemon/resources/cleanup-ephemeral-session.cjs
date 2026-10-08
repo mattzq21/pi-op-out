@@ -7,6 +7,7 @@ const { createInterface } = require('node:readline');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const files = require('./ephemeral-cleanup-files.cjs');
+const records = require('./ephemeral-cleanup-records.cjs');
 const checkpoints = require('./ephemeral-cleanup-checkpoints.cjs');
 const pending = require('./ephemeral-cleanup-pending.cjs');
 
@@ -89,8 +90,7 @@ function transcriptPresent(request, profile) {
     return true;
   }
 
-  const destination = path.join(profile, 'ephemeral-cleanup', 'manifests', `${request.token}.json`);
-  const manifest = files.read(destination);
+  const manifest = records.read(profile, request.token);
 
   validateManifest(manifest, request);
 
@@ -119,10 +119,9 @@ async function permit(request, profile) {
 
 function recoveryRequired(request, profile, present) {
   if (!present) return false;
-  const destination = path.join(profile, 'ephemeral-cleanup', 'manifests', `${request.token}.json`);
+  const manifest = records.read(profile, request.token);
 
-  if (!files.exists(destination)) return true;
-  const manifest = files.read(destination);
+  if (manifest === undefined) return true;
 
   validateManifest(manifest, request);
 
@@ -152,7 +151,7 @@ function validateManifest(manifest, request) {
   }
 }
 
-async function prepare(request, destination, profile) {
+async function prepare(request, profile) {
   const inspected = checkpoints.inspect(request.path, request.sessionId);
 
   if (inspected.identity !== request.identity) throw new Error('Ephemeral transcript inode changed; retained');
@@ -160,7 +159,7 @@ async function prepare(request, destination, profile) {
 
   const manifest = { version: 1, token: request.token, owner: request.owner, sessionId: request.sessionId, path: request.path, identity: request.identity, phase: 'waiting', files: [], repositories: [], references: [], pendingComparisons: comparisons };
 
-  files.write(destination, manifest);
+  records.write(profile, manifest);
 
   if (comparisons.length) throw new Error(`Ephemeral cleanup deferred: ${comparisons.length} pending comparisons/transfers retain source logs and comparison/transfer staging`);
   const captured = await checkpoints.capture(request.path, inspected.header);
@@ -172,7 +171,7 @@ async function prepare(request, destination, profile) {
 
   if (after.identity !== request.identity) throw new Error('Ephemeral transcript changed during cleanup preparation; retained');
   manifest.phase = 'prepared';
-  files.write(destination, manifest);
+  records.write(profile, manifest);
 
   return manifest;
 }
@@ -195,11 +194,9 @@ function verify(manifest, request, profile) {
 }
 
 async function cleanup(request, profile) {
-  const destination = path.join(profile, 'ephemeral-cleanup', 'manifests', `${request.token}.json`);
-  let manifest;
+  let manifest = records.read(profile, request.token);
 
-  if (files.exists(destination)) {
-    manifest = files.read(destination);
+  if (manifest !== undefined) {
     validateManifest(manifest, request);
 
     if (manifest.phase === 'complete') {
@@ -211,14 +208,14 @@ async function cleanup(request, profile) {
     }
   }
 
-  if (!manifest || manifest.phase === 'waiting') manifest = await prepare(request, destination, profile);
+  if (!manifest || manifest.phase === 'waiting') manifest = await prepare(request, profile);
   verify(manifest, request, profile);
 
   for (const item of manifest.references) checkpoints.remove(item);
 
   for (const item of manifest.files) files.remove(item);
   manifest.phase = 'complete';
-  files.write(destination, manifest);
+  records.write(profile, manifest);
 
   return { complete: true };
 }

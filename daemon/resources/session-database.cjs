@@ -62,6 +62,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS snapshot_directories (directory TEXT PRIMARY KEY, owner_json TEXT);
       CREATE TABLE IF NOT EXISTS snapshot_comparison_retries (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS snapshot_pending_diffs (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS ephemeral_cleanup_records (token TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_comparison_state (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_completed_comparisons (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, turn_id TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY(session_id, turn_id));`);
 
