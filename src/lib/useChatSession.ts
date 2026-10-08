@@ -12,7 +12,7 @@ import { contextUsageAfterCompaction } from "./contextUsage";
 import { appendFileChanges, appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
-import { reconcileMessages, upsertLiveMessage } from "./reconcileMessages";
+import { matchesSubmittedMessage, reconcileMessages, sameUserContent, upsertLiveMessage } from "./reconcileMessages";
 
 interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 
@@ -199,7 +199,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       if (marker) resumeMarkers.current.add(marker); }
 
       const cachedSession = session.memory.getSnapshot();
-      const cachedMessages = cachedSession.state.sessionId === snapshot.state.sessionId ? cachedSession.messages : [];
+      const cachedMessages = !cachedSession.state.sessionId || cachedSession.state.sessionId === snapshot.state.sessionId ? cachedSession.messages : [];
       const previous = new Map(cachedMessages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
 
       const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
@@ -389,7 +389,13 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       session.setState((current) => ({ ...current, isStreaming: false, isCompacting: false, isPausing: false, activity: undefined }));
     };
 
-    const messageLiveId = (rawMessage: WireMessage, roleKey: string) => {
+    const messageLiveId = (rawMessage: WireMessage, roleKey: string, normalized: ChatMessage) => {
+      const submitted = session.messages.find(message => matchesSubmittedMessage(message, normalized));
+
+      if (submitted) return submitted.id;
+      const savedUser = event.type === "message_end" ? session.messages.find(message => message.timestamp === normalized.timestamp && sameUserContent(message, normalized)) : undefined;
+
+      if (savedUser) return savedUser.id;
       const toolCallId = rawMessage.toolCallId;
 
       return rawMessage.role === "toolResult" && toolCallId !== undefined ? toolCallId : event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
@@ -410,10 +416,11 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       if (isResumeMessage(rawMessage, resumeMarkers.current)) return;
 
       if (rawMessage.role === "custom" && rawMessage.display === false && !isContextInjection(rawMessage)) return;
-      const liveId = messageLiveId(rawMessage, roleKey);
+      const normalized = normalizeMessage(rawMessage);
+      const liveId = messageLiveId(rawMessage, roleKey, normalized);
 
       if (event.type === "message_start") trackLiveId(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
-      let message = normalizeMessage(rawMessage, undefined, undefined, liveId);
+      let message = { ...normalized, id: liveId };
 
       if (message.customType === "pi-desktop-btw") return;
       message = updateAssistant(message);

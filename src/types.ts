@@ -112,4 +112,6 @@ export interface ChatMessage { toolCallId?: string; details?: unknown; fileChang
 
 export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; toolPayloadVersion?: number; loadedToolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
 
+export interface ChatMessage { submissionId?: string; }
+
 export type PendingMessageAction = "steer" | "followUp" | "remove" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" };

@@ -114,7 +114,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
   const sessionCache = createMemo(() => hasSentPrompt() ? cacheHitStats(sessionUsage()) : undefined);
   const sessionToolFailures = createMemo(() => props.debug && hasSentPrompt() ? toolFailureStats(messages()) : undefined);
   const pendingSubmission = createMemo(() => chatSubmission(props.transport));
-  const mcpPendingMessage = () => pendingSubmission()?.message;
 
   const stageSubmission = (payload: DraftSubmissionPayload) => {
     const owner = props.transport;
@@ -252,9 +251,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>πop</span></div>}
         {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn messages={turn().messages} promptContexts={turn().promptContexts} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={onBranch} canRollback={props.canRollback} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} /></DeferredTurn>}</Key>}
-        {pendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><Message message={required(pendingSubmission()).message} showActions={false} /><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(pendingSubmission()).status}</span></div></section>}
+        {pendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(pendingSubmission()).status}</span></div></section>}
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
-          {mcpPendingMessage() && <div class="mcp-pending-message"><Message message={required(mcpPendingMessage())} showActions={false} /></div>}
           <div class="mcp-loading-list" role="status">{props.debug ? <Key each={loadingServers()} by={(server) => server.id}>{(server, _index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
         </section>}
       </div></div>);
