@@ -3,6 +3,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { readStore } = require('./session-broker/git-diff-store.cjs');
+const recoveryRecords = require('./snapshot-recovery-records.cjs');
 
 function entries(directory) {
   try { return fs.readdirSync(directory, { withFileTypes: true }); }
@@ -23,17 +24,6 @@ function sync(file) {
   const descriptor = fs.openSync(file, 'r');
 
   try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
-}
-
-function write(file, value) {
-  const temporary = path.join(path.dirname(file), `.snapshot-recovery-${randomUUID()}.tmp`);
-
-  try {
-    fs.writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 });
-    sync(temporary);
-    fs.renameSync(temporary, file);
-    sync(path.dirname(file));
-  } finally { fs.rmSync(temporary, { force: true }); }
 }
 
 function alive(processOwner) {
@@ -330,15 +320,15 @@ function discard(directory) {
 
   fs.rmSync(destination, { recursive: true });
   sync(parent);
+  recoveryRecords.remove(path.join(parent, path.basename(directory).replace(/^\.cleanup-/, '')));
 }
 
 function legacySnapshot(directory, boot, saved) {
-  const file = path.join(directory, 'recovery.json');
-  let record = read(file);
+  let record = recoveryRecords.read(directory);
 
   if (!record) {
     record = { version: 1, boot, discoveredAt: Date.now(), reason: 'Reader ownership was not recorded; preserve until duplicate data and an ended reader lifetime can be verified.', sessionId: saved?.sessionId, tree: saved?.tree, repositoryRoot: saved?.repositoryRoot };
-    write(file, record);
+    recoveryRecords.write(directory, record);
   }
 
   return record;
@@ -378,7 +368,7 @@ function preserveLegacy(directory, state, owner, blocked) {
     if (saved?.selfContained) fs.rmSync(path.join(directory, 'index'), { force: true });
 
     deduplicate(directory, state.objects());
-    write(path.join(directory, 'recovery.json'), { ...recovery, deduplicated: true });
+    recoveryRecords.write(directory, { ...recovery, deduplicated: true });
   }
 
   if (!blocked && !owner && expiredDuplicate(recovery, saved, state) && fullyShared(directory, state.objects())) {
