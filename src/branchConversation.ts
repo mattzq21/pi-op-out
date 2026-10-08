@@ -8,6 +8,7 @@ import { branchMessages, type PiEntry } from "./lib/messages";
 import { NativeTransport } from "./lib/nativeTransport";
 import { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import { inheritSessionGroup } from "./lib/sessionGroups";
+import { resolveMessageEntry } from "./lib/resolveMessageEntry";
 import type { AgentState, AppSettings, ChatMessage, SessionSummary } from "./types";
 
 type Context = {
@@ -35,10 +36,8 @@ type Context = {
 
 export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setTerminalOpen, setTerminalTarget, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, syncSessionIndex }: Context) {
   return async (message: ChatMessage, destinationCwd?: string) => {
-    const entryId = message.entryId;
-
-    if (!entryId) throw new Error("Could not find the response to branch from");
     const ownerTransport = transport; const previousKey = activeConversationKeyRef.current;
+    const entryId = await resolveMessageEntry(ownerTransport, message);
     const pendingKey = `${previousKey}:${entryId}`;
 
     if (branchPending.current.has(pendingKey)) return false;

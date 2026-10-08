@@ -1,6 +1,7 @@
 import { required } from "../lib/required";
 import { extensionUiSchema } from "../lib/extensionUiSchema";
 import { inheritSessionGroup } from "../lib/sessionGroups";
+import { resolveMessageEntry } from "../lib/resolveMessageEntry";
 import { Key } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type StateUpdate } from "../lib/solid";
@@ -295,7 +296,7 @@ export function SplitChatPane(componentProps: Props) {
     const finishBranching = beginBranching();
     const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSession1 = componentProps.session; const capturedOnSessionChange2 = componentProps.onSessionChange;
 
- try { if (!message.entryId) throw new Error("Could not find the response to branch from"); const result = await capturedTransport.command({ type: "fork_after", entryId: message.entryId }, z.object({ cancelled: z.boolean().optional() }));
+ try { const entryId = await resolveMessageEntry(capturedTransport, message); const result = await capturedTransport.command({ type: "fork_after", entryId }, z.object({ cancelled: z.boolean().optional() }));
 
  if (result.cancelled) return false; const nextState = await capturedSession.refresh(); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport); await capturedRuntimePool0.refreshSavedDiffs(capturedTransport, nextState.sessionFile);
 
@@ -317,14 +318,13 @@ export function SplitChatPane(componentProps: Props) {
     forgettingRef.current = true;
 
     try {
-      if (!message.entryId) throw new Error("Could not find the selected assistant response");
-
       if (conversationBusy()) throw new Error("Wait for the current response and queued messages to finish first");
+      const entryId = await resolveMessageEntry(owner, message);
 
       if (withWorktree) {
         if (source.projectKind !== "worktree") throw new Error("Branch and forget is only available in linked worktrees");
         const hostId = source.hostId ?? "local";
-        const result = await owner.command({ type: "branch_checkpoint", entryId: message.entryId, name: crypto.randomUUID().slice(0, 8), afterResponse: true }, z.object({ branch: z.string(), path: z.string(), sessionPath: z.string(), sessionId: z.string() }));
+        const result = await owner.command({ type: "branch_checkpoint", entryId, name: crypto.randomUUID().slice(0, 8), afterResponse: true }, z.object({ branch: z.string(), path: z.string(), sessionPath: z.string(), sessionId: z.string() }));
         await inheritSessionGroup(`${hostId}:${source.id}`, `${hostId}:${result.sessionId}`, source);
         await owner.runWorktreeSetup(source.cwd, result.path, hostId);
         await owner.disconnect();
@@ -334,7 +334,7 @@ export function SplitChatPane(componentProps: Props) {
         pool.bind(hostId, result.sessionId, owner);
         changeSession({ ...source, id: result.sessionId, path: result.sessionPath, cwd: result.path, worktreeRoot: result.path, branch: result.branch, name: result.branch }, owner);
       } else {
-        if (!await branch(message)) return;
+        if (!await branch({ ...message, entryId })) return;
       }
 
       await archiveOriginal(source);
