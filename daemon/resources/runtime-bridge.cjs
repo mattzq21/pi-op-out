@@ -460,7 +460,7 @@ async function releaseGoalQueue(session, prompt, messages = session.agent.follow
   }
 }
 
-function takeQueuedGoalPrompt(session) {
+function peekQueuedGoalPrompt(session) {
   const goal = currentGoal(session);
 
   if (!goal) return undefined;
@@ -469,7 +469,18 @@ function takeQueuedGoalPrompt(session) {
   const queue = session.agent.followUpQueue.messages;
   const index = queue.findIndex(message => message.piopGoalId === goal.id);
 
-  return index < 0 ? [] : queue.splice(index, 1);
+  return index < 0 ? [] : [queue[index]];
+}
+
+function takeQueuedGoalPrompt(session) {
+  const messages = peekQueuedGoalPrompt(session);
+
+  if (messages?.length) {
+    const queue = session.agent.followUpQueue.messages;
+    queue.splice(queue.indexOf(messages[0]), 1);
+  }
+
+  return messages;
 }
 
 function scheduleGoalQueueRelease(session, prompt) {
@@ -504,12 +515,16 @@ function bindGoalQueue(session, prompt) {
   goalQueueRelease.set(session, releaseQueue);
   const queue = session.agent.followUpQueue;
 
-  for (const [name, blocked] of [["hasItems", false], ["peek", []]]) {
-    const read = queue[name];
-    queue[name] = function (...args) {
-      return hasGoal(session) ? blocked : read.apply(this, args);
-    };
-  }
+  const hasItems = queue.hasItems;
+  queue.hasItems = function () {
+    const messages = peekQueuedGoalPrompt(session);
+
+    return messages === undefined ? hasItems.call(this) : messages.length > 0;
+  };
+  const peek = queue.peek;
+  queue.peek = function () {
+    return peekQueuedGoalPrompt(session) ?? peek.call(this);
+  };
 
   const manager = session.sessionManager;
   const appendCustomEntry = manager.appendCustomEntry;
@@ -529,7 +544,9 @@ function bindFollowUpDrain(session) {
   const drain = queue.drain;
 
   queue.drain = function () {
-    if (hasGoal(session)) return [];
+    const goalMessages = takeQueuedGoalPrompt(session);
+
+    if (goalMessages !== undefined) return goalMessages;
     const messages = drain.call(this);
     const review = messages.findIndex(message => isReview(reviewText(message)));
 
