@@ -27,7 +27,14 @@ function initialize(db) {
         kind TEXT NOT NULL CHECK(kind IN ('subagent', 'review')),
         position INTEGER NOT NULL,
         PRIMARY KEY(parent_id, child_id));
-      CREATE INDEX IF NOT EXISTS session_children_child ON session_children(child_id);`);
+      CREATE INDEX IF NOT EXISTS session_children_child ON session_children(child_id);
+      CREATE TABLE IF NOT EXISTS session_mailbox_state (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS session_mailbox (
+        session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        delivery_id TEXT NOT NULL, sequence INTEGER NOT NULL, fingerprint TEXT NOT NULL,
+        message_json TEXT NOT NULL, PRIMARY KEY(session_id, delivery_id));
+      CREATE INDEX IF NOT EXISTS session_mailbox_order ON session_mailbox(session_id, sequence);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,

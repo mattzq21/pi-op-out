@@ -1,10 +1,12 @@
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, rename, rm, type FileHandle } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { open, readdir, type FileHandle } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { Type, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
+import type { DatabaseSync } from "node:sqlite";
+import { open as openDatabase, register } from "../session-database.cjs";
 
 const detailsSchema = Type.Object({ notificationId: Type.String(), mailboxSessionId: Type.String(), mailboxFingerprint: Type.String() });
 
@@ -46,23 +48,6 @@ async function syncDirectory(path: string) {
   finally { await directory.close(); }
 }
 
-async function syncRecord(path: string) {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-
-  try { await file.sync(); }
-  finally { await file.close(); }
-
-  await syncDirectory(dirname(path));
-}
-
-async function privateDirectory(path: string) {
-  await mkdir(path, { recursive: true, mode: 0o700 });
-  const stat = await lstat(path);
-
-  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Agent mailbox storage must be a directory");
-  await syncDirectory(dirname(path));
-}
-
 async function readJson(path: string) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
 
@@ -76,19 +61,6 @@ async function readJson(path: string) {
 async function optionalJson(path: string) {
   try { return await readJson(path); }
   catch (error) { if (error instanceof Error && missing(error)) return undefined; throw error; }
-}
-
-async function writeJson(path: string, value: MailboxRecord | Static<typeof ownerSchema>) {
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  const file = await open(temporary, "wx", 0o600);
-
-  try {
-    try { await file.writeFile(JSON.stringify(value)); await file.sync(); }
-    finally { await file.close(); }
-
-    await rename(temporary, path);
-    await syncDirectory(dirname(path));
-  } finally { await rm(temporary, { force: true }); }
 }
 
 function mailboxPath(ctx: ExtensionContext) {
@@ -108,23 +80,6 @@ function normalizeMessage(ctx: ExtensionContext, message: SendMessage, deliveryI
   const fingerprint = createHash("sha256").update(JSON.stringify([message.customType, message.content, details])).digest("hex");
 
   return Parse(messageSchema, { ...message, details: { ...details, notificationId: deliveryId, mailboxSessionId: ctx.sessionManager.getSessionId(), mailboxFingerprint: fingerprint } });
-}
-
-async function ensureOwner(ctx: ExtensionContext, root: string) {
-  const sessionId = ctx.sessionManager.getSessionId();
-  await privateDirectory(dirname(root));
-  await privateDirectory(root);
-  await privateDirectory(join(root, "pending"));
-  const path = join(root, "owner.json");
-  const previous = await optionalJson(path);
-
-  if (previous) {
-    if (Parse(ownerSchema, previous).sessionId !== sessionId) throw new Error("Agent mailbox belongs to another conversation");
-
-    return;
-  }
-
-  await writeJson(path, { version: 1, sessionId });
 }
 
 function messageDetails(entry: SessionEntry): MailboxDetails | undefined {
@@ -190,7 +145,7 @@ async function savedDeliveries(ctx: ExtensionContext, required = false) {
   } finally { await file.close(); }
 }
 
-async function pendingRecords(ctx: ExtensionContext, root: string) {
+async function legacyPendingRecords(ctx: ExtensionContext, root: string) {
   const owner = await optionalJson(join(root, "owner.json"));
 
   if (!owner) return [];
@@ -213,6 +168,116 @@ async function pendingRecords(ctx: ExtensionContext, root: string) {
 
 function assertSameDelivery(fingerprint: string, message: MailboxMessage) {
   if (fingerprint !== message.details.mailboxFingerprint) throw new Error("Agent delivery ID was reused for a different message");
+}
+
+function storageRoot(file: string) {
+  let directory = dirname(file);
+
+  while (dirname(directory) !== directory) {
+    if (["sessions", "archived"].includes(basename(directory))) return dirname(directory);
+    directory = dirname(directory);
+  }
+
+  throw new Error("Agent mailbox is outside session storage");
+}
+
+async function mailboxDatabase(ctx: ExtensionContext, root: string) {
+  const sessionId = ctx.sessionManager.getSessionId();
+  const file = ctx.sessionManager.getSessionFile();
+
+  if (!file) throw new Error("Durable agent mail requires a saved conversation");
+  const db = openDatabase(storageRoot(file));
+
+  try {
+    if (!db.prepare("SELECT 1 FROM session_mailbox_state WHERE session_id=?").get(sessionId)) {
+      const records = await legacyPendingRecords(ctx, root);
+
+      if (ctx.sessionManager.getSessionId() !== sessionId) throw new Error("Conversation changed while recovering agent mail");
+      importPending(db, sessionId, file, records);
+    }
+
+    return db;
+  } catch (error) { db.close(); throw error; }
+}
+
+function importPending(db: DatabaseSync, sessionId: string, file: string, records: MailboxRecord[]) {
+  db.exec("BEGIN IMMEDIATE");
+
+  try {
+    if (!db.prepare("SELECT 1 FROM session_mailbox_state WHERE session_id=?").get(sessionId)) {
+      register(db, sessionId, file);
+
+      for (const record of records) insertPending(db, record);
+      db.prepare("INSERT INTO session_mailbox_state VALUES (?)").run(sessionId);
+    }
+
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+
+function insertPending(db: DatabaseSync, record: MailboxRecord) {
+  db.prepare("INSERT INTO session_mailbox VALUES (?, ?, ?, ?, ?)").run(record.sessionId, record.deliveryId,
+    record.sequence, record.message.details.mailboxFingerprint, JSON.stringify(record.message));
+}
+
+const savedRecordSchema = Type.Object({ session_id: Type.String(), delivery_id: Type.String(), sequence: Type.Integer(), fingerprint: Type.String(), message_json: Type.String() });
+
+function mailboxRecord(saved: Static<typeof savedRecordSchema>): MailboxRecord {
+  const record = Parse(recordSchema, { version: 1, sessionId: saved.session_id, deliveryId: saved.delivery_id,
+    sequence: saved.sequence, message: JSON.parse(saved.message_json) });
+
+  if (record.message.details.mailboxSessionId !== record.sessionId || record.message.details.notificationId !== record.deliveryId) throw new Error("Invalid saved agent delivery identity");
+  assertSameDelivery(saved.fingerprint, record.message);
+
+  return record;
+}
+
+async function pendingRecords(ctx: ExtensionContext, root: string) {
+  const sessionId = ctx.sessionManager.getSessionId();
+  const db = await mailboxDatabase(ctx, root);
+
+  try {
+    if (sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed while reading agent mail");
+
+    return db.prepare("SELECT * FROM session_mailbox WHERE session_id=? ORDER BY sequence, delivery_id")
+      .all(sessionId).map(row => mailboxRecord(Parse(savedRecordSchema, row)));
+  } finally { db.close(); }
+}
+
+async function storePending(ctx: ExtensionContext, root: string, deliveryId: string, message: MailboxMessage) {
+  const db = await mailboxDatabase(ctx, root);
+
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    const sessionId = message.details.mailboxSessionId;
+
+    if (sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed before agent mail was accepted");
+    const existing = db.prepare("SELECT * FROM session_mailbox WHERE session_id=? AND delivery_id=?").get(sessionId, deliveryId);
+    const record = existing ? mailboxRecord(Parse(savedRecordSchema, existing)) : nextRecord(db, sessionId, deliveryId, message);
+    assertSameDelivery(record.message.details.mailboxFingerprint, message);
+    db.exec("COMMIT");
+
+    return record;
+  } finally { db.close(); }
+}
+
+function nextRecord(db: DatabaseSync, sessionId: string, deliveryId: string, message: MailboxMessage): MailboxRecord {
+  const row = Parse(Type.Object({ sequence: Type.Integer() }), db.prepare(
+    "SELECT max(coalesce(max(sequence)+1, 0), ?) AS sequence FROM session_mailbox WHERE session_id=?").get(Date.now(), sessionId));
+
+  const record: MailboxRecord = { version: 1, sessionId, deliveryId, sequence: row.sequence, message };
+  insertPending(db, record);
+
+  return record;
+}
+
+async function removePending(ctx: ExtensionContext, root: string, record: MailboxRecord) {
+  const db = await mailboxDatabase(ctx, root);
+
+  try {
+    db.prepare("DELETE FROM session_mailbox WHERE session_id=? AND delivery_id=? AND fingerprint=?")
+      .run(record.sessionId, record.deliveryId, record.message.details.mailboxFingerprint);
+  } finally { db.close(); }
 }
 
 export class DurableMailbox {
@@ -263,28 +328,12 @@ export class DurableMailbox {
       const saved = (await savedDeliveries(ctx, true)).get(deliveryId);
 
       if (sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed before agent mail was accepted");
-      await ensureOwner(ctx, root);
-
-      if (sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed before agent mail was accepted");
 
       if (saved) { assertSameDelivery(saved, normalized);
 
         return false; }
 
-      const path = pendingPath(root, deliveryId);
-      const existing = await optionalJson(path);
-
-      if (existing) {
-        const previous = Parse(recordSchema, existing);
-        assertSameDelivery(previous.message.details.mailboxFingerprint, normalized);
-        await syncRecord(path);
-
-        return this.submit(ctx, previous, send);
-      }
-
-      const sequence = (await pendingRecords(ctx, root)).reduce((latest, record) => Math.max(latest, record.sequence + 1), Date.now());
-      const record: MailboxRecord = { version: 1, sessionId, deliveryId, sequence, message: normalized };
-      await writeJson(path, record);
+      const record = await storePending(ctx, root, deliveryId, normalized);
 
       return this.submit(ctx, record, send);
     });
@@ -304,10 +353,9 @@ export class DurableMailbox {
 
         if (!fingerprint) continue;
         assertSameDelivery(fingerprint, record.message);
-        await rm(pendingPath(root, record.deliveryId));
+        await removePending(ctx, root, record);
       }
 
-      await syncDirectory(join(root, "pending"));
     });
   }
 
