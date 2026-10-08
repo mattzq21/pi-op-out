@@ -164,12 +164,15 @@ function reviewSubagentCount(args: string, command: string, ctx: ExtensionContex
 function subagentReviewTask(state: SessionAgentState, count: number, prompt: string) {
   if (!count) return prompt;
   if (!state.snapshot) throw new Error("Reviewer profile is unavailable for subagent review");
+  const limit = state.snapshot.definition.max_subagents ?? 8;
+
+  if (!limit) throw new Error("The review agent's max_subagents must be greater than zero to use /rs");
   const tools = state.snapshot.definition.tools;
 
   if (!tools.includes("subagent")) tools.push("subagent");
   state.locked = true;
 
-  return `${prompt}\n\nFor this review, you must spawn exactly ${count} review subagents using spawn_agent with worktree: "same" and unique task names. Omit agent to inherit your reviewer profile. Divide the review into complementary scopes and give each child the review instructions above, including the base and committed-change scope. Children must not delegate further, modify files, or run tests. Launch children concurrently, with at most eight active at once; for larger counts, launch the remaining children as slots become available. Collect all ${count} results before giving your final review. Verify and deduplicate their findings, then report one consolidated review.`;
+  return `${prompt}\n\nFor this review, you must spawn exactly ${count} review subagents using spawn_agent with worktree: "same" and unique task names. Omit agent to inherit your reviewer profile. Divide the review into complementary scopes and give each child the review instructions above, including the base and committed-change scope. Children must not delegate further, modify files, or run tests. Launch children concurrently, with at most ${limit} active at once; for larger counts, launch the remaining children as slots become available. Collect all ${count} results before giving your final review. Verify and deduplicate their findings, then report one consolidated review.`;
 }
 
 export function registerReview(pi: ExtensionAPI) {

@@ -1,5 +1,5 @@
-import { For } from "solid-js";
-import type { ToolConfig } from "../types";
+import { For, Show } from "solid-js";
+import type { AgentProfile, ToolConfig } from "../types";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import "./agent-tools.css";
 
@@ -8,7 +8,7 @@ const toolGroups = [
   { name: "Subagents", tools: ["subagent", "wait_agent"] },
 ];
 
-export function AgentTools(props: { tools: ToolConfig[]; selected: string[]; onChange: (tools: string[]) => void }) {
+export function AgentTools(props: { tools: ToolConfig[]; selected: string[]; onChange: (tools: string[]) => void; agent: AgentProfile; onLimitsChange: (limits: Partial<AgentProfile>) => void }) {
   const toggle = (names: string[], enabled: boolean) => props.onChange(enabled
     ? [...new Set([...props.selected, ...names])]
     : props.selected.filter(name => !names.includes(name)));
@@ -29,5 +29,9 @@ export function AgentTools(props: { tools: ToolConfig[]; selected: string[]; onC
         <div class="agent-tool-group-members"><For each={members()}>{renderTool}</For></div>
       </section>;
     }}</For>
+    <Show when={props.selected.includes("subagent")}>
+      <label class="field"><span>Maximum concurrent subagents</span><input type="number" aria-label="Maximum concurrent subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_subagents ?? 8} onInput={event => props.onLimitsChange({ max_subagents: event.currentTarget.valueAsNumber })} /></label>
+      <label class="field"><span>Maximum concurrent children per subagent</span><input type="number" aria-label="Maximum concurrent children per subagent" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_sub_subagents ?? 8} onInput={event => props.onLimitsChange({ max_sub_subagents: event.currentTarget.valueAsNumber })} /></label>
+    </Show>
   </>;
 }

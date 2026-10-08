@@ -2,6 +2,7 @@ import { stableSnapshot, settingsSnapshot, agentEditsSnapshot, settingKeys } fro
 import { applyClientPreferences, clientPreferenceKeys, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { required } from "../lib/required";
 import { AgentTools } from "./AgentTools";
+import { agentProfileSchema } from "../lib/agentSchemas";
 import { McpSettings, type McpEditorDraft } from "./McpSettings";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
@@ -294,7 +295,7 @@ export function SettingsView(props: SettingsViewProps) {
     const { availableModelIds, hiddenModels, modelChoices } = modelCatalog();
     const modelDiscoveryUnavailable = settingsProps().models.length === 0;
     const thinkingDiscoveryUnavailable = modelDiscoveryUnavailable;
-    const agentsValid = !agentConfig() || (agentDrafts().some(isBuiltInAgent) && agentDrafts().every((item) => item.name.length > 0 && !!item.path_systemprompt?.trim() && (!item.model || modelDiscoveryUnavailable || availableModelIds.has(item.model)) && (!item.effort || thinkingDiscoveryUnavailable || agentLevels(item).includes(item.effort))) && new Set(agentDrafts().map((item) => item.name)).size === agentDrafts().length);
+    const agentsValid = !agentConfig() || (agentDrafts().some(isBuiltInAgent) && agentDrafts().every((item) => agentProfileSchema.safeParse(item).success && item.name.length > 0 && !!item.path_systemprompt?.trim() && (!item.model || modelDiscoveryUnavailable || availableModelIds.has(item.model)) && (!item.effort || thinkingDiscoveryUnavailable || agentLevels(item).includes(item.effort))) && new Set(agentDrafts().map((item) => item.name)).size === agentDrafts().length);
     const defaultAgentAvailable = !agentConfig() || agentDrafts().some((item) => item.name === (draft().defaultAgent ?? "general"));
     const invalidHost = draft().hosts.find((host) => !host.name.trim() || !host.target.trim() || !host.piPath.trim());
 
@@ -457,7 +458,7 @@ export function SettingsView(props: SettingsViewProps) {
               {renderAgentDefaults()}
               {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agent_prompt ?? ""} onInput={(event) => updateAgent({ path_agent_prompt: event.target.value })} /></label>
               <label class="field"><span>piop extensions (one path per line)</span><textarea aria-label="Agent piop extensions" placeholder="/path/to/extension.ts" value={(agent().extensions ?? []).join("\n")} onInput={(event) => updateAgent({ extensions: event.target.value.split("\n") })} onBlur={() => updateAgent({ extensions: (agent().extensions ?? []).map(path => path.trim()).filter(Boolean) })} /></label>
-              <AgentAllowlist title="Tools"><AgentTools tools={draft().tools} selected={agent().tools} onChange={tools => updateAgent({ tools })} /></AgentAllowlist><AgentAllowlist title="Skills">{<Key each={draft().skills} by={(skill) => skill.path}>{(skill, _index) => <label ><input type="checkbox" aria-label={`Allow ${skill().name}`} checked={agent().skills.includes(skill().path)} onInput={() => toggleAgentResource("skills", skill().path)} />{skill().name}</label>}</Key>}</AgentAllowlist><Toggle label="Allow codemode" checked={agent().codemode !== false} onChange={codemode => updateAgent({ codemode })} /><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
+              <AgentAllowlist title="Tools"><AgentTools tools={draft().tools} selected={agent().tools} agent={agent()} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills">{<Key each={draft().skills} by={(skill) => skill.path}>{(skill, _index) => <label ><input type="checkbox" aria-label={`Allow ${skill().name}`} checked={agent().skills.includes(skill().path)} onInput={() => toggleAgentResource("skills", skill().path)} />{skill().name}</label>}</Key>}</AgentAllowlist><Toggle label="Allow codemode" checked={agent().codemode !== false} onChange={codemode => updateAgent({ codemode })} /><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
             </div></Show>);
           };
 

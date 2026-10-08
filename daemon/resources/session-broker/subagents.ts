@@ -1,4 +1,5 @@
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft } from "@earendil-works/pi-coding-agent";
+import type { SubagentLimitsRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type } from "@earendil-works/pi-ai";
 import { Parse } from "typebox/value";
 import { resolveAgentProfile } from "./agent-profiles.ts";
@@ -18,6 +19,20 @@ import { accountingUnresolved, resultNotificationId, savedSubagentRuns } from ".
 import { boundedRecovery, registerSubagentRecovery } from "./subagent-recovery.ts";
 
 const MAX_DELEGATION_DEPTH = 2;
+
+function subagentLimits(pi: ExtensionAPI, ctx: ExtensionContext) {
+  const limits: SubagentLimitsRequest = {};
+  pi.events.emit("piop:agents:subagent-limits", limits);
+  const parent = subagentParent(ctx);
+
+  return { max_subagents: Math.min(limits.max_subagents ?? 8, parent?.max_subagents ?? Number.MAX_SAFE_INTEGER), max_sub_subagents: limits.max_sub_subagents ?? 8 };
+}
+
+function requireSubagentSlots(pi: ExtensionAPI, ctx: ExtensionContext, occupied: number, requested: number) {
+  const limit = subagentLimits(pi, ctx).max_subagents;
+
+  if (occupied + requested > limit) throw new Error(`This agent allows at most ${limit} concurrent subagents; ${occupied} slots are occupied`);
+}
 
 function delegationScope(ctx: ExtensionContext) {
   const parent = subagentParent(ctx);
@@ -135,7 +150,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: workspace.cwd },
     ...retained,
     entry({ type: "session_info", name: `Subagent: ${task.name}` }),
-    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath } }),
+    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath, max_subagents: subagentLimits(pi, ctx).max_sub_subagents } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
   ], { dependencies: { workspace: { path: workspace.cwd, kind: workspace.worktree === "new" ? "created-worktree" : "existing", branch: workspace.branch } } }); }
   catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; publication dependencies and any created worktree are retained: ${String(error)}`, { cause: error }); }
@@ -231,10 +246,11 @@ function publishObservedRun(execution: SubagentExecution, run: SubagentRun) {
 }
 
 async function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "ready">, pending: Set<Promise<void>>) {
-  if (task.sessionId) await recoverPreviousRuns(task.sessionId, execution);
-
   return new Promise<void>((ready) => {
-    const completion = executeSubagent(task, { ...execution, ready })
+    const completion = (async () => {
+      if (task.sessionId) await recoverPreviousRuns(task.sessionId, execution);
+      await executeSubagent(task, { ...execution, ready });
+    })()
       .catch(error => execution.ctx.ui.notify(`Subagent failed: ${String(error)}`, "error"))
       .finally(() => { ready(); pending.delete(completion); });
 
@@ -284,7 +300,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
     if (task.sessionId && latestRuns(ctx).some(run => run.sessionId === task.sessionId && run.status === "running")) throw new Error("This child's previous task is unresolved; observe or interrupt it before starting another run");
 
-    if (pending.size - accountingJobs.size >= 8) throw new Error("All eight subagent slots are occupied; wait for a child to finish");
+    requireSubagentSlots(pi, ctx, pending.size - accountingJobs.size, 1);
 
     if (!task.sessionId && latestRuns(ctx).some(run => run.name === task.name)) throw new Error("Task name already exists; use followup_task to reuse the child");
     const results: SubagentRun[] = [];
@@ -312,7 +328,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   pi.on("session_shutdown", unsubscribeTools);
   pi.registerTool({
     name: "spawn_agent", label: "Spawn agent", exposure: "model-only",
-    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. Profile choice is independent of fork_turns: none (default), all, or a positive number of recent user turns. Up to eight children per parent run concurrently. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. worktree is required: same shares files with the caller; new creates a separate Git worktree, copies current changes and runs configured setup. Created worktrees are retained. Final results start a new parent turn immediately if idle, or after the parent agent settles. Use followup_task for more work and send_message for updates. Finish your current run when waiting for mailbox delivery. Children are cancelled on parent close/switch and time out after ten minutes.",
+    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. Profile choice is independent of fork_turns: none (default), all, or a positive number of recent user turns. Concurrent children are limited by the caller's max_subagents (default eight). A child is also capped by its parent's max_sub_subagents (default eight); zero disables delegation at that level. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. worktree is required: same shares files with the caller; new creates a separate Git worktree, copies current changes and runs configured setup. Created worktrees are retained. Final results start a new parent turn immediately if idle, or after the parent agent settles. Use followup_task for more work and send_message for updates. Finish your current run when waiting for mailbox delivery. Children are cancelled on parent close/switch and time out after ten minutes.",
     parameters: Type.Object({ task_name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), message: Type.String({ minLength: 1, maxLength: 100_000 }), worktree: worktreeChoice, agent: Type.Optional(Type.String({ minLength: 1, description: "Exact configured profile name from list_agent_profiles; omit to inherit the caller" })), fork_turns: Type.Optional(Type.String()) }),
     async execute(id, params, signal, _update, ctx) { return start({ name: params.task_name, task: params.message, agent: params.agent, fork_turns: params.fork_turns, worktree: params.worktree }, id, ctx, signal); },
   });
@@ -534,7 +550,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   pi.registerTool({
     name: "subagent", label: "Subagents",
     exposure: "model-only",
-    description: "Delegate 1–8 independent tasks in the background. Returns child session IDs once created, without waiting for results. Completion or failure starts a new parent turn immediately if idle, or after the parent agent settles. Continue independent work while children run; finish your current run when waiting for mailbox delivery. Call await_subagents to wait until all children finish. Each child has a fresh context, a saved transcript visible in piop, and an explicit worktree choice: same shares files with the caller; new creates a separate Git worktree, copies current changes and runs configured setup. Created worktrees are retained. Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
+    description: "Delegate 1–8 independent tasks per call in the background, subject to the caller's max_subagents and the parent's max_sub_subagents concurrency limits (both default eight; zero disables delegation). Returns child session IDs once created, without waiting for results. Completion or failure starts a new parent turn immediately if idle, or after the parent agent settles. Continue independent work while children run; finish your current run when waiting for mailbox delivery. Call await_subagents to wait until all children finish. Each child has a fresh context, a saved transcript visible in piop, and an explicit worktree choice: same shares files with the caller; new creates a separate Git worktree, copies current changes and runs configured setup. Created worktrees are retained. Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
     parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1, maxLength: 120 }), task: Type.String({ minLength: 1, maxLength: 100_000 }), worktree: worktreeChoice, agent: Type.Optional(Type.String({ minLength: 1 })), sessionId: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 8 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
@@ -545,7 +561,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
       reconcile(ctx);
 
-      if (pending.size - accountingJobs.size + params.tasks.length > 8) throw new Error("At most eight children may run concurrently");
+      requireSubagentSlots(pi, ctx, pending.size - accountingJobs.size, params.tasks.length);
       const resumed = params.tasks.flatMap((task) => task.sessionId ? [task.sessionId] : []);
 
       if (new Set(resumed).size !== resumed.length) throw new Error("A child can only receive one task at a time");

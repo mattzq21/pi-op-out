@@ -58,7 +58,7 @@ export interface ExtensionUiResponse { cancelled?: boolean; confirmed?: boolean;
 
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; thinkingLevelMap?: Record<string, JSONType>; contextWindow?: number; input?: ("text" | "image")[]; }
 
-export interface AgentProfile { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; extensions?: string[]; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers; }
+export interface AgentProfile { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers; }
 
 export interface AgentConfig { revision?: string; agents: AgentProfile[]; fastModeModels?: string[]; }
 

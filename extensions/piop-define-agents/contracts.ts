@@ -17,7 +17,7 @@ interface FastModeChange { enabled?: boolean }
 
 interface FastModelsChange { ctx: ExtensionContext }
 
-export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; extensions?: string[]; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
+export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
 
 export type AgentSnapshot = { version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
 
@@ -25,12 +25,16 @@ export type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; loc
 
 export interface SubagentProfileRequest { agent?: string; state?: SessionAgentState; error?: string; ready?: Promise<void> }
 
-export interface AgentProfileSummary { name: string; model: string; effort: string; fastMode?: boolean; tools: string[]; skills: string[]; mcpServers: string[]; path_systemprompt: string; path_agent_prompt: string }
+export interface AgentProfileSummary { name: string; model: string; effort: string; fastMode?: boolean; max_subagents?: number; max_sub_subagents?: number; tools: string[]; skills: string[]; mcpServers: string[]; path_systemprompt: string; path_agent_prompt: string }
+
+export interface SubagentLimitsRequest { max_subagents?: number; max_sub_subagents?: number }
 
 export interface AgentProfilesRequest { active?: string; profiles?: AgentProfileSummary[] }
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
+    on(channel: "piop:agents:subagent-limits", handler: (request: SubagentLimitsRequest) => void): () => void;
+    emit(channel: "piop:agents:subagent-limits", request: SubagentLimitsRequest): void;
     on(channel: "piop:agents:profiles", handler: (request: AgentProfilesRequest) => void): () => void;
     emit(channel: "piop:agents:profiles", request: AgentProfilesRequest): void;
     on(channel: "piop:agents:subagent", handler: (request: SubagentProfileRequest) => void): () => void;

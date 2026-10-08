@@ -1,7 +1,7 @@
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { SessionAgentState } from "./contracts.ts";
+import type { Agent, SessionAgentState } from "./contracts.ts";
 import { nativeMcpSchema, legacyMcpSchema, mcpServers } from "./mcp-config.ts";
 
 export const STATE_ENTRY = "pi-define-agents-state";
@@ -15,9 +15,25 @@ export type RuntimeDefaults = { model: string; effort: string };
 export const agentThinkingLevels: Array<Parameters<ExtensionAPI["setThinkingLevel"]>[0]> = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 export const agentSchema = Type.Object({
+  max_subagents: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })), max_sub_subagents: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
   name: Type.String(), model: Type.String(), effort: Type.String(), fastMode: Type.Optional(Type.Boolean()), codemode: Type.Optional(Type.Boolean()), extensions: Type.Optional(Type.Array(Type.String())),
   path_systemprompt: Type.String(), path_agent_prompt: Type.String(), tools: Type.Array(Type.String()), skills: Type.Array(Type.String()), mcpServers: nativeMcpSchema,
 });
+
+export function subagentLimit(value: number | undefined, name: string, field: string) {
+  if (value === undefined) return 8;
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Agent "${name}" ${field} must be a nonnegative integer`);
+
+  return value;
+}
+
+export function registerSubagentLimits(pi: ExtensionAPI, currentAgent: () => Agent | undefined) {
+  const stop = pi.events.on("piop:agents:subagent-limits", request => {
+    request.max_subagents = currentAgent()?.max_subagents ?? 8;
+    request.max_sub_subagents = currentAgent()?.max_sub_subagents ?? 8;
+  });
+  pi.on("session_shutdown", stop);
+}
 
 const storedAgentSchema = Type.Object({
   ...Type.Omit(agentSchema, ["path_agent_prompt"]).properties,

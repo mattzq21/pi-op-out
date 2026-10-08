@@ -13,6 +13,7 @@ export const SUBAGENT_RUN = "piop-subagent-run";
 export const SUBAGENT_PARENT = "piop-subagent-parent";
 
 const parentSchema = Schema.Object({
+  max_subagents: Schema.Optional(Schema.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
   parentSessionId: Schema.String(), sessionId: Schema.Optional(Schema.String()), depth: Schema.Optional(Schema.Integer({ minimum: 1 })),
   hostId: Schema.Optional(Schema.String()), parentHostId: Schema.Optional(Schema.String()),
   taskPath: Schema.Optional(Schema.String()), parentTaskPath: Schema.Optional(Schema.String()),
