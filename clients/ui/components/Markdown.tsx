@@ -43,15 +43,6 @@ let purifier: ReturnType<typeof DOMPurify> | undefined;
 
 let purifierWindow: Window | undefined;
 
-export function markdownHtml(source: string, streaming = false, detectFiles = false) {
-  try { return sanitizeMarkdown(parser.parse(source, { async: false }), streaming, detectFiles); }
-  catch (error) {
-    if (!(error instanceof RangeError)) throw error;
-
-    return `<pre>${escapeHtml(source)}</pre>`;
-  }
-}
-
 function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean, allowFile?: (value: string) => boolean) {
   if (!purifier || purifierWindow !== window) { purifier = DOMPurify(window); purifierWindow = window; }
 
