@@ -286,11 +286,17 @@ export class NativeTransport {
 
     if (command.type === "get_state" || command.type === "get_snapshot") { const state = command.type === "get_snapshot" ? result.state ?? {} : result;
 
-    if (this.sessionId && this.sessionId !== state.sessionId) forgetSession(this); this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
+    this.retainSessionIdentity(state, command.type === "get_snapshot"); }
 
     if (command.type === "get_snapshot") {
       for (const event of result.extensionState ?? []) this.emit(event);
     }
+  }
+  private retainSessionIdentity(state: CommandSession, snapshot: boolean) {
+    if (!state.sessionId) return;
+
+    if (!snapshot && this.sessionId && this.sessionId !== state.sessionId) forgetSession(this);
+    this.sessionPath = state.sessionFile; this.sessionId = state.sessionId;
   }
   private emit(event: RpcEvent) {
     if (event.type === "session_switched") this.retainClassification(event.ephemeral);

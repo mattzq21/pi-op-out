@@ -145,7 +145,9 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
       if (marker) resumeMarkers.current.add(marker); }
 
-      const previous = new Map(session.memory.getSnapshot().messages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
+      const cachedSession = session.memory.getSnapshot();
+      const cachedMessages = cachedSession.state.sessionId === snapshot.state.sessionId ? cachedSession.messages : [];
+      const previous = new Map(cachedMessages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
 
       const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
         const cached = previous.get(message.deferredToolPayload);
