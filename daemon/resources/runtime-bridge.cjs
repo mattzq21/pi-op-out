@@ -26,6 +26,8 @@ let queueValidation;
 
 class GoalPreparationError extends Error {}
 
+class GoalQueueBlocked extends Error {}
+
 function promptError(command, error, output) {
   const response = { type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) };
 
@@ -362,6 +364,7 @@ function bindReleasedPromptPreparation(session) {
 
     if (scope?.session === this && !scope.runRequested) {
       if (this._agentRunAbortRequested) throw new Error("Released follow-up preparation was cancelled.");
+      if (hasGoal(this)) throw new GoalQueueBlocked("A goal is holding released follow-ups.");
       scope.preparing = false;
       scope.runRequested = true;
       messages = messages.flatMap(message => {
@@ -398,6 +401,13 @@ async function releaseQueuedReviews(session, messages, prompt) {
   if (!session._agentRunAbortRequested && session.isIdle && !hasGoal(session)) await releaseGoalQueue(session, prompt);
 }
 
+function restoreReleasedPrompt(session, scope) {
+  if (scope.started) return;
+  session.agent.followUpQueue.messages.unshift(...scope.messages);
+
+  if (session._pendingNextTurnMessages !== scope.nextTurnMessages) session._pendingNextTurnMessages.unshift(...scope.nextTurnMessages);
+}
+
 async function releaseGoalQueue(session, prompt) {
   const messages = session.agent.followUpQueue.drain();
 
@@ -414,12 +424,8 @@ async function releaseGoalQueue(session, prompt) {
   try {
     await releasedPromptContext.run(scope, () => prompt.call(session, reviewText(first), { images, source: "rpc", expandPromptTemplates: false }));
   } catch (error) {
-    if (!scope.started) {
-      session.agent.followUpQueue.messages.unshift(...messages);
-
-      if (session._pendingNextTurnMessages !== scope.nextTurnMessages) session._pendingNextTurnMessages.unshift(...scope.nextTurnMessages);
-    }
-    session.extensionRunner.createContext().ui.notify(String(error), "error");
+    restoreReleasedPrompt(session, scope);
+    if (!(error instanceof GoalQueueBlocked)) session.extensionRunner.createContext().ui.notify(String(error), "error");
   } finally {
     stopTracking();
 
@@ -579,7 +585,7 @@ function bindReviewQueue(session) {
 }
 
 function holdFollowUp(session, options) {
-  return options?.streamingBehavior === "followUp" && options?.source === "rpc" && !options?.goalPrepared && !session.isStreaming && hasGoal(session);
+  return options?.streamingBehavior === "followUp" && options?.source === "rpc" && !options?.goalPrepared && hasGoal(session);
 }
 
 async function queueHeldFollowUp(session, text, options) {
