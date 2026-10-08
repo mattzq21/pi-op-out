@@ -187,53 +187,6 @@ function verifyCopy(before, source, destination) {
   }
 }
 
-function discoverLegacySessions(profileRoot) {
-  const sessions = [];
-
-  const warnings = [];
-
-  const storage = createRecoveryStorage(profileRoot);
-
-  function candidate(header, sessionPath) {
-    const exists = Boolean(existingLegacyDirectory(header.cwd));
-    const pending = storage.find(header, sessionPath, 'legacy-copy');
-
-    const retainedDirectories = storage.retained(header, sessionPath).map(record => ({ directory: record.directory, state: record.state, mode: record.mode }));
-
-    return { sessionId: header.id, sessionPath, cwd: header.cwd, exists, stagedDirectory: pending?.directory ?? null, retainedDirectories };
-  }
-
-  function visit(directory) {
-    let entries;
-
-    try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-    catch (error) {
-      if (error.code !== 'ENOENT') warnings.push(`${directory}: ${error.message}`);
-
-      return;
-    }
-
-    for (const entry of entries) {
-      const file = path.join(directory, entry.name);
-
-      if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) visit(file);
-      else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-        try {
-          const header = readSession(file);
-
-          if (legacyDirectory(header.cwd)) sessions.push(candidate(header, file));
-        } catch (error) { warnings.push(`${file}: ${error.message}`); }
-      }
-    }
-  }
-
-  visit(path.join(path.dirname(storage.root), 'sessions'));
-
-  visit(path.join(path.dirname(storage.root), 'archived'));
-
-  return { sessions, warnings };
-}
-
 function createRecoveryStorage(profileRoot) {
   const profile = fs.existsSync(profileRoot) ? fs.realpathSync(profileRoot) : path.resolve(profileRoot);
 
@@ -409,4 +362,4 @@ function createRecoveryStorage(profileRoot) {
   return { root, allocate, ready, find, current, published, migrate, records, retained };
 }
 
-module.exports = { createRecoveryStorage, discoverLegacySessions, existingLegacyDirectory, legacyDirectory, readSession };
+module.exports = { createRecoveryStorage, existingLegacyDirectory, legacyDirectory, readSession };

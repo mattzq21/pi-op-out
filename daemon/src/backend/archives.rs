@@ -510,16 +510,15 @@ pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host
 }
 
 fn validate_recovery_action(action: &str) -> Result<(), String> {
-    if matches!(action, "inspect" | "discover" | "remote" | "empty" | "migrate") { Ok(()) } else { Err("Unknown recovery action".into()) }
+    if matches!(action, "inspect" | "remote" | "empty" | "migrate") { Ok(()) } else { Err("Unknown recovery action".into()) }
 }
 
 fn recovery_mutation(app: &AppHandle, host_id: &str, path: &str, client_id: &str, archived: bool, action: &str) -> Result<Option<conversation_ownership::MutationGuard>, String> {
-    if matches!(action, "inspect" | "discover") { return Ok(None); }
+    if action == "inspect" { return Ok(None); }
     conversation_ownership::MutationGuard::acquire(app, host_id, path, client_id, archived, "relocate").map(Some)
 }
 
 fn recovery_session_location(settings: &AppSettings, host_id: &str, session_path: &str, action: &str) -> Result<(String, bool), String> {
-    if action == "discover" { return Ok((String::new(), false)); }
     match desktop_session_file(settings, host_id, session_path) {
         Ok(path) => Ok((path, false)),
         Err(error) if matches!(action, "inspect" | "migrate") => archived_session_file(settings, host_id, session_path).map(|path| (path, true)).map_err(|_| error),

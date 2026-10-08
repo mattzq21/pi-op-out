@@ -18,11 +18,6 @@ const resultSchema = z.object({
   warnings: z.array(z.string()),
 });
 
-const discoverySchema = z.object({
-  sessions: z.array(z.object({ sessionId: z.string(), sessionPath: z.string(), cwd: z.string(), exists: z.boolean(), stagedDirectory: z.string().nullable(), retainedDirectories: z.array(retainedSchema) })),
-  warnings: z.array(z.string()),
-});
-
 export type RecoveryInspection = z.infer<typeof inspectionSchema>;
 
 export type RecoveredDirectory = z.infer<typeof resultSchema>;
@@ -32,8 +27,6 @@ export function isTemporaryRecoveryDirectory(cwd: string) {
 }
 
 export const inspectRecoveryDirectory = (sessionPath: string, hostId = "local") => nativeCall("recover_missing_session", { sessionPath, hostId, action: "inspect" }, inspectionSchema);
-
-export const discoverRecoveryDirectories = (hostId = "local") => nativeCall("recover_missing_session", { sessionPath: "", hostId, action: "discover" }, discoverySchema);
 
 export const migrateRecoveryDirectory = (sessionPath: string, hostId = "local") => nativeCall("recover_missing_session", { sessionPath, hostId, action: "migrate" }, resultSchema);
 

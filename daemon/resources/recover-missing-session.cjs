@@ -13,17 +13,11 @@ if (!process.argv[4]) throw new Error('Piop recovery storage helper is unavailab
 
 new Function('require', 'module', process.argv[4])(require, recoveryModule);
 
-const { createRecoveryStorage, discoverLegacySessions, existingLegacyDirectory, legacyDirectory, readSession } = recoveryModule.exports;
+const { createRecoveryStorage, existingLegacyDirectory, legacyDirectory, readSession } = recoveryModule.exports;
 
 const profileRoot = path.join(os.homedir(), request.storage || process.env.PIOP_STORAGE_DIRECTORY || '.piop');
 
 const storage = createRecoveryStorage(profileRoot);
-
-if (request.action === 'discover') {
-  process.stdout.write(JSON.stringify(discoverLegacySessions(profileRoot)));
-
-  process.exit(0);
-}
 
 const header = readSession(request.sessionPath);
 
