@@ -101,7 +101,10 @@ fn restart_bind(url: &str) -> String {
 pub(crate) fn prepare(app: AppHandle, mut args: Value) -> Result<Value, String> {
     if !args.is_object() { return Err("Restart arguments must be an object".into()); }
     if daemon_endpoint::restart_active() { return Err("A daemon restart is already in progress".into()); }
-    if !app.state::<crate::TerminalRuntime>().working_directories("local")?.is_empty() { return Err("Close running terminals before restarting the daemon".into()); }
+    let terminals = app.state::<crate::TerminalRuntime>().running_count()?;
+    if terminals > 0 && args["closeTerminals"].as_bool() != Some(true) {
+        return Ok(json!({"confirmationRequired":"terminals","terminalCount":terminals}));
+    }
     let daemon = crate::plugins::connection(&app)?;
     if PREPARING.swap(true, std::sync::atomic::Ordering::SeqCst) { return Err("A daemon restart is already being prepared".into()); }
     let _preparation = Preparation;
@@ -111,11 +114,12 @@ pub(crate) fn prepare(app: AppHandle, mut args: Value) -> Result<Value, String> 
 }
 
 fn prepare_plugin_handoff(app: &AppHandle, daemon: &crate::daemon::Daemon, args: Value) -> Result<Value, String> {
-    let leases = crate::host_supervisor::preserve_leases_for_restart()?;
     let prepared = daemon.request(args)?;
+    let preserving_notes = ["enabled", "previous"].iter().all(|key| prepared[key].as_array().is_some_and(|ids| ids.iter().any(|id| id == "markdown")));
+    let leases = if preserving_notes { Some(crate::host_supervisor::preserve_leases_for_restart()?) } else { None };
     let plan = make_plan(app, prepared)?;
     let result = prepare_handoff(&plan)?;
-    leases.commit();
+    if let Some(leases) = leases { leases.commit(); }
     Ok(result)
 }
 

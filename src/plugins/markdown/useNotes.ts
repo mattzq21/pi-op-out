@@ -307,5 +307,5 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const ready = () => !!document() && !document()?.deleted && !document()?.disabled;
   const pending = () => loading() || saving() || releasing() || dirty() || ownership().owned;
 
-  return { content, loading, saving, error, deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending, editable, edit, save, retry, takeControl };
+  return { content, loading, saving, dirty, error, deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending, editable, edit, save, retry, takeControl };
 }

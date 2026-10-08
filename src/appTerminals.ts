@@ -3,7 +3,8 @@ import { appendTerminalOutputs, initialTerminals, MAX_TERMINALS, terminalConvers
 import { reassignTerminals } from "./appRuntime";
 import type { NativeTransport } from "./lib/nativeTransport";
 import { createDependencyEffect, createMemoFields, createRef } from "./lib/solid";
-import { isMobile } from "./lib/platform";
+import { isMobile, listen } from "./lib/platform";
+import { z } from "zod";
 import { appendTerminalOutput, TERMINAL_OUTPUT_LIMIT } from "./lib/terminalOutput";
 import { nativeTerminals, type SharedTerminal, type TerminalEvent } from "./lib/nativeTerminals";
 
@@ -26,6 +27,17 @@ type TerminalContext = {
 };
 
 export function createTerminalController({ transport, sessionTransport, conversationKey, location, addNotice }: TerminalContext) {
+  let restarting = false;
+
+  const restartListener = listen("pi://daemon-restarting", ({ payload }) => {
+    if (!payload.hostId || payload.hostId === "local" || payload.hostId === location().hostId) restarting = true;
+  }, z.object({ hostId: z.string().optional() }).passthrough());
+  const reconnectListener = listen("pi://event", ({ payload }) => {
+    if (payload.type === "connection_restored") restarting = false;
+  }, z.object({ type: z.string().optional() }).passthrough());
+
+  onCleanup(() => { void restartListener.then(stop => stop()); void reconnectListener.then(stop => stop()); });
+
   const [terminalOpen, setTerminalOpen] = createSignal(false);
   const [terminalTarget, setTerminalTarget] = createSignal<TerminalTarget>();
   const [terminalsBySession, setTerminalsBySession] = createSignal<Record<string, SessionTerminals>>({});
@@ -136,7 +148,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
         if (!cancelled) {
           setReadySession(undefined);
 
-          if (!reportedError) {
+          if (!reportedError && !restarting) {
             const dismiss = addNotice({ title: "Could not sync terminals", message: String(reason) });
 
             if (dismiss) dismissError = dismiss;

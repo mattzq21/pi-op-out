@@ -437,7 +437,7 @@ export function SettingsView(props: SettingsViewProps) {
       };
 
       return (<section class="settings-content">
-        {formValidation().visibleSection === "plugins" && <SettingsSection title="Plugins" description="Bundled plugins for this daemon."><PluginSettings hostId={providerHostId()} onBusyChange={settingsProps().onSavingChange} /></SettingsSection>}
+        {formValidation().visibleSection === "plugins" && <PluginSettings hostId={providerHostId()} onBusyChange={settingsProps().onSavingChange} />}
         {!formValidation().matchingSections.length && <div class="empty-small" role="status">No settings match your search.</div>}
         {formValidation().visibleSection === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
         {renderWorktreeScripts()}

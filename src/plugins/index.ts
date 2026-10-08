@@ -6,7 +6,7 @@ import { flushPlugins } from "./lifecycle";
 
 export const plugins = [
   { id: "chatgpt", scope: "client", name: "ChatGPT", description: "Client-owned ChatGPT chats with context from any agent host.", load: (): Promise<PluginModule> => import("./chatgpt/plugin") },
-  { id: "markdown", scope: "conversation", name: "Markdown notes", description: "Shared conversation notes, with one client editing at a time.", load: (): Promise<PluginModule> => import("./markdown/plugin") },
+  { id: "markdown", scope: "conversation", name: "Notes", description: "Shared conversation notes, with one client editing at a time.", load: (): Promise<PluginModule> => import("./markdown/plugin") },
 ];
 
 export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), revision: z.string(), error: z.string().nullable() });
@@ -44,10 +44,20 @@ export async function refreshPlugins(host: string) {
   return status;
 }
 
-export async function restartPlugins(host: string, enabled: string[], revision: string) {
+export async function restartPlugins(host: string, enabled: string[], revision: string, closeTerminals = false) {
   await flushPlugins(host);
-  await Promise.all(plugins.flatMap(plugin => enabled.includes(plugin.id) ? [plugin.load()] : []));
-  const { restartId } = await invoke("restart_daemon", { hostId: host, enabled, revision }, z.object({ restartId: z.string() }));
+  for (const id of enabled) {
+    const plugin = plugins.find(plugin => plugin.id === id);
+    if (plugin) await plugin.load();
+  }
+
+  const response = await invoke("restart_daemon", { hostId: host, enabled, revision, closeTerminals }, z.union([
+    z.object({ restartId: z.string() }),
+    z.object({ confirmationRequired: z.literal("terminals"), terminalCount: z.number() }),
+  ]));
+
+  if ("confirmationRequired" in response) return response;
+  const { restartId } = response;
 
   if (host === "local") window.dispatchEvent(new Event("piop-daemon-restarting"));
   const result = await waitForRestart(host, restartId);

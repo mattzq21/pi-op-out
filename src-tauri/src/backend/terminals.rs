@@ -215,6 +215,9 @@ pub(super) fn shutdown(runtime: &TerminalRuntime) {
 pub(crate) mod terminal_lookup;
 
 impl TerminalRuntime {
+    pub(super) fn running_count(&self) -> Result<usize, String> {
+        Ok(self.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.len())
+    }
     pub(super) fn ensure_owner(&self, id: &str, owner: &str) -> Result<(), String> {
         if self.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Terminal belongs to another connection".into()); }
         Ok(())
