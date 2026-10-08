@@ -1,11 +1,11 @@
-import { GitError, runGit, acquireWorktreePublicationLock } from "./git.ts";
+import { GitError, runGit, acquireWorktreePublicationLock, markWorktreeAllocation, recordWorktreeAllocation } from "./git.ts";
 import { pinPromptHistory } from "./pin-checkpoints.ts";
 import { publishFork, ForkPublicationPending } from "./fork-publication.ts";
 import { registerPreparedCheckpoints } from "./fork-preparation.ts";
 import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
 import { resolvePromptHistory, recordRecoveredCheckpoints } from "./prompt-history.ts";
 import { Check } from "typebox/value";
-import { lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, realpath, rm, rmdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -301,6 +301,7 @@ async function checkpointWorktreeTarget(root: string, branch: string) {
   if (!project) throw new Error("Git repository directory has no name");
   const storage = join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "worktrees");
   await mkdir(storage, { recursive: true, mode: 0o700 });
+  await markWorktreeAllocation(storage);
   const container = join(storage, randomUUID().slice(0, 4));
   const target = join(container, project);
 
@@ -309,7 +310,7 @@ async function checkpointWorktreeTarget(root: string, branch: string) {
   try { await mkdir(container, { mode: 0o700 }); }
   catch (error) { if (Check(fileErrorSchema, error) && error.code === "EEXIST") throw new Error(`Worktree directory already exists: ${container}`); throw error; }
 
-  try { await writeFile(join(container, "parent.json"), JSON.stringify({ branch, parentBranch }), { flag: "wx", mode: 0o600 }); }
+  try { await recordWorktreeAllocation(container, target, branch, parentBranch); }
   catch (error) { await rmdir(container).catch(() => undefined); throw error; }
 
   return target;
@@ -322,7 +323,7 @@ async function createCheckpointWorktree(root: string, branch: string, commit: st
   try {
     target = await checkpointWorktreeTarget(root, branch);
     await assertWorktreeAvailable(root, branch, target);
-    await runGit(root, ["worktree", "add", "-b", branch, target, commit]);
+    await runGit(root, ["worktree", "add", "-b", branch, target, commit], {}, undefined, lock.fd);
 
     return target;
   } catch (error) { if (target) await cleanupCheckpointContainer(target); throw error; }

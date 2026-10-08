@@ -79,4 +79,18 @@ export const providerListingSchema = z.object({ providers: z.array(providerAccou
 
 export const projectDirectorySchema = z.object({ path: z.string(), parent: z.union([z.string(), z.null()]), entries: z.array(z.object({ name: z.string(), path: z.string(), directory: z.boolean() })) });
 
-export const projectFileSchema = z.object({ path: z.string(), content: z.string(), revision: z.string() });
+const projectFilePublicationSchema = z.object({
+  committed: z.boolean().nullable(), durable: z.boolean(), conflict: z.boolean(),
+  recoveryPath: z.string(), warning: z.string().nullable(),
+});
+
+export const projectFileSchema = z.object({
+  path: z.string(), content: z.string(), revision: z.string(),
+  recoveries: z.array(z.object({ path: z.string(), name: z.string() })).optional(),
+  recoveryWarning: z.string().optional(),
+  publication: projectFilePublicationSchema.optional(),
+});
+
+export const projectFileSaveSchema = projectFileSchema.extend({
+  content: z.string().nullable(), revision: z.string().nullable(), publication: projectFilePublicationSchema,
+});

@@ -1,10 +1,29 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { mkdir, open } from "node:fs/promises";
+import { mkdir, open, lstat, writeFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const MAX_GIT_OUTPUT = 4 * 1024 * 1024;
+
+export async function markWorktreeAllocation(storage: string) {
+  await writeFile(join(dirname(storage), "worktree-retention.pending"), "", { flag: "a", mode: 0o600, flush: true });
+}
+
+export async function recordWorktreeAllocation(container: string, target: string, branch: string, parentBranch: string | null) {
+  const info = await lstat(container, { bigint: true });
+  const allocation = { version: 1, identity: `${info.dev}:${info.ino}`, target };
+  const temporary = join(container, `.parent-v1-${info.dev}-${info.ino}.tmp`);
+  await writeFile(temporary, JSON.stringify({ branch, parentBranch, allocation }), { flag: "wx", mode: 0o600, flush: true });
+  await rename(temporary, join(container, "parent.json"));
+
+  for (const directory of [container, dirname(container), dirname(dirname(container))]) {
+    const handle = await open(directory, "r");
+
+    try { await handle.sync(); }
+    finally { await handle.close(); }
+  }
+}
 
 export async function acquireWorktreePublicationLock() {
   const root = join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
@@ -32,11 +51,11 @@ export class GitError extends Error {
   constructor(message: string, readonly exitCode: number | null) { super(message); }
 }
 
-export async function runGit(cwd: string, args: string[], env: Record<string, string> = {}, input?: string): Promise<string> {
+export async function runGit(cwd: string, args: string[], env: Record<string, string> = {}, input?: string, owner?: number): Promise<string> {
   const deadline = Date.now() + 10_000;
 
   for (let attempt = 0; ; attempt += 1) {
-    try { return await runGitOnce(cwd, args, env, input); }
+    try { return await runGitOnce(cwd, args, env, input, owner); }
     catch (error) {
       const indexBusy = error instanceof GitError && error.exitCode === 128
         && /(?:^|\n)fatal: Unable to create '[^\n]*[\\/]index\.lock': File exists\./.test(error.message);
@@ -49,9 +68,9 @@ export async function runGit(cwd: string, args: string[], env: Record<string, st
   }
 }
 
-function runGitOnce(cwd: string, args: string[], env: Record<string, string> = {}, input?: string): Promise<string> {
+function runGitOnce(cwd: string, args: string[], env: Record<string, string> = {}, input?: string, owner?: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn("git", ["-C", cwd, ...args], { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("git", ["-C", cwd, ...args], { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe", ...(owner === undefined ? [] : [owner])] });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let outputBytes = 0;
@@ -67,8 +86,8 @@ function runGitOnce(cwd: string, args: string[], env: Record<string, string> = {
       target.push(chunk);
     };
 
-    child.stdout.on("data", collect(stdout));
-    child.stderr.on("data", collect(stderr));
+    child.stdout?.on("data", collect(stdout));
+    child.stderr?.on("data", collect(stderr));
     child.on("error", reject);
     child.on("close", (code) => {
       if (outputTooLarge) { reject(new GitError("Git output exceeded 4 MiB", code));
@@ -81,6 +100,6 @@ function runGitOnce(cwd: string, args: string[], env: Record<string, string> = {
       if (code === 0) resolve(out);
       else reject(new GitError(error || `git ${args[0]} exited with code ${code}`, code));
     });
-    child.stdin.end(input);
+    child.stdin?.end(input);
   });
 }

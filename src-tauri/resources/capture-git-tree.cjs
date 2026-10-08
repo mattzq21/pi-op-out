@@ -74,7 +74,7 @@ function linkSnapshot(source, destination) {
   fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
 
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-    if (['comparison-retry.json', 'retry-before', 'materialization.json', 'index', 'index.lock', '.previous-objects', '.sealed-objects', '.pack-status', '.reachable-objects'].includes(entry.name) || entry.name.endsWith('.tmp')) continue;
+    if (['comparison-retry.json', 'retry-before', 'materialization.json', 'temporary-owner.json', 'recovery.json', 'index', 'index.lock', '.previous-objects', '.sealed-objects', '.pack-status', '.reachable-objects'].includes(entry.name) || entry.name.endsWith('.tmp')) continue;
     const file = path.join(source, entry.name);
     const target = path.join(destination, entry.name);
 
@@ -184,8 +184,20 @@ function retainedBaselines(retained) {
 function temporarySnapshot() {
   const parent = path.join(storageRoot(), 'git-snapshots');
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const directory = fs.mkdtempSync(path.join(parent, 'pi-desktop-diff-'));
 
-  return fs.mkdtempSync(path.join(parent, 'pi-desktop-diff-'));
+  try { ownTemporary(directory, owner?.phase === 'end' ? 'recoverable' : owner?.sessionId ? 'reader' : 'external'); }
+  catch (error) { fs.rmSync(directory, { recursive: true, force: true }); throw error; }
+
+  return directory;
+}
+
+function ownTemporary(directory, state) {
+  const pids = [process.pid, process.ppid, Number(process.env.PIOP_GIT_CAPTURE_READER_PID)].filter((pid) => Number.isSafeInteger(pid) && pid > 1);
+  const processes = [...new Set(pids)].map((pid) => ({ pid, identity: processIdentity(pid) }));
+  const boot = fs.existsSync('/proc/sys/kernel/random/boot_id') ? fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() : null;
+  writeJson(path.join(directory, 'temporary-owner.json'), { version: 1, state, boot, processes, sessionId: owner?.sessionId, turnId: owner?.turnId, sessionPath: owner?.sessionPath, messageId: owner?.messageId, baseline: owner?.baseline });
+  syncPath(path.dirname(directory));
 }
 
 function materialize(directory, repositoryRoot) {
@@ -193,8 +205,8 @@ function materialize(directory, repositoryRoot) {
   const temporary = temporarySnapshot();
 
   try {
-    writeJson(path.join(temporary, 'materialization.json'), { sessionId: owner.sessionId, pid: process.ppid, identity: processIdentity(process.ppid) });
     copySnapshot(directory, temporary);
+    ownTemporary(temporary, 'reader');
   }
   catch (error) { fs.rmSync(temporary, { recursive: true, force: true }); throw error; }
 
@@ -515,7 +527,6 @@ function importFallbacks(retained) {
     if (!entry.isDirectory() || !entry.name.startsWith('pi-desktop-diff-')) continue;
     const directory = path.join(parent, entry.name);
 
-    if (cleanupMaterialization(directory)) continue;
     const record = ownedFallback(directory);
 
     if (record) retainRequested(retained, record);
@@ -525,24 +536,6 @@ function importFallbacks(retained) {
 function processIdentity(pid) {
   try { return fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ').at(-1).split(' ')[19]; }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-}
-
-function cleanupMaterialization(directory) {
-  const file = path.join(directory, 'materialization.json');
-
-  if (!fs.existsSync(file)) return false;
-  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-
-  if (!Number.isSafeInteger(saved.pid) || saved.pid < 1) throw new Error('Invalid comparison reader ownership');
-  let alive = true;
-
-  try { process.kill(saved.pid, 0); }
-  catch (error) { if (error.code !== 'ESRCH') throw error; alive = false; }
-
-  if (alive && (!saved.identity || processIdentity(saved.pid) === saved.identity)) return false;
-  fs.rmSync(directory, { recursive: true });
-
-  return true;
 }
 
 function checkCaptureSize() {
@@ -574,9 +567,10 @@ function captureSnapshot(root, retained) {
   const token = { root: snapshot, tree: git(['write-tree'], env).toString().trim(), repository_root: root };
   fs.rmSync(path.join(snapshot, 'index'), { force: true });
 
-  if (!owner?.sessionId) return token;
-
-  try { retainCapture(token, env, retained); }
+  try {
+    if (owner?.sessionId) retainCapture(token, env, retained);
+    else snapshotMetadata(token, retained);
+  }
   catch (error) {
     if (preparing) fs.rmSync(preparing, { recursive: true, force: true });
     preparing = undefined;
@@ -590,13 +584,20 @@ function retainCapture(token, env, retained) {
   if (owner.phase === 'end' && retained) storeFallback(token, retained);
   sealSnapshot(token, env, retained);
 
-  if (!retained) return;
+  if (!retained) {
+    if (owner.ephemeral) ownTemporary(token.root, 'reader');
+
+    return;
+  }
+
   ensureStorage(retained);
 
   if (owner.phase === 'end') {
     retainRequested(retained, { ...owner, current: JSON.stringify(token) });
     token.durable = true;
   } else promoteBaseline(retained, snapshot);
+
+  ownTemporary(token.root, 'reader');
 
 }
 

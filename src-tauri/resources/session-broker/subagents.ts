@@ -12,6 +12,7 @@ import { createdWorktreeSchema } from "./fork.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { listenSubagentUsage, registerSubagentUsage } from "./subagent-usage.ts";
 import { registerSubagentMailbox } from "./subagent-mailbox.ts";
+import { boundedRecovery, recoverDescendantAccounting, registerSubagentRecovery, type RecoveryScope } from "./subagent-recovery.ts";
 import { interruptSession, sendAgentMailbox, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { completedSubagentOutput, forgetSubagentRun, hasSubagentResult, ownedSubagentRuns, persistSubagentRun, persistSubagentUsage, reportedSubagentUsage, resultNotificationId, savedSubagentRuns, subagentCompletion, unresolvedSubagentRuns, type SubagentResponse, type SubagentRun } from "./subagent-results.ts";
@@ -210,7 +211,7 @@ class SubagentRetiredError extends Error {}
 
 type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Map<string, ActiveSubagent>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => Promise<void>; reportDescendants: (tokens: number, ctx: ExtensionContext) => Promise<void> };
 
-type UsageExecution = Pick<SubagentExecution, "signal" | "pi" | "ctx" | "reportDescendants">;
+type UsageExecution = Pick<SubagentExecution, "signal" | "pi" | "ctx" | "reportDescendants"> & RecoveryScope;
 
 async function confirmSubagentStopped(run: SubagentRun, ctx: ExtensionContext, deliveryId?: string) {
   let notified = false;
@@ -272,36 +273,38 @@ async function stopDispatchedSubagent(run: SubagentRun, ctx: ExtensionContext, l
   if (retired.some(Boolean)) throw new SubagentRetiredError("Subagent was archived or deleted; its worker has stopped");
 }
 
-async function requireDescendantAccounting(run: SubagentRun) {
+async function requireDescendantAccounting(run: SubagentRun, scope: RecoveryScope) {
+  await recoverDescendantAccounting(run, scope);
   const unresolved = await unresolvedSubagentRuns(run.sessionPath, run.sessionId);
 
-  if (unresolved.length) throw new Error(`Usage accounting is pending for descendants of ${run.name}: ${unresolved.map(child => child.name).join(", ")}. Finish or reopen conversation ${run.sessionId} to recover them, then retry.`);
+  if (unresolved.length) throw new Error(`Usage accounting is pending for descendants of ${run.name}: ${unresolved.map(child => child.name).join(", ")}. Automatic recovery remains saved for retry.`);
 }
 
-async function reconcileSubagentTranscript(run: SubagentRun, reportUsage: (total: number) => Promise<void>) {
-  await requireDescendantAccounting(run);
+async function reconcileSubagentTranscript(run: SubagentRun, reportUsage: (total: number) => Promise<void>, scope: RecoveryScope) {
+  await requireDescendantAccounting(run, scope);
   const last = await subagentCompletion(run, reportUsage);
-  await requireDescendantAccounting(run);
+  await requireDescendantAccounting(run, scope);
   run.accountingPending = false;
 
   return last;
 }
 
 async function recoverSubagentAccounting(run: SubagentRun, execution: UsageExecution) {
-  const timeout = AbortSignal.timeout(30_000);
-  const signal = execution.signal ? AbortSignal.any([execution.signal, timeout]) : timeout;
-  await restoreSubagentPath(run, signal);
-  const reportUsage = await usageReporter(run, { ...execution, signal }, true);
-  await reconcileSubagentTranscript(run, reportUsage);
+  const scope = boundedRecovery(execution);
+  await restoreSubagentPath(run, scope.signal);
+  const reportUsage = await usageReporter(run, { ...execution, ...scope }, true);
+  await reconcileSubagentTranscript(run, reportUsage, scope);
   await persistSubagentRun(execution.pi, execution.ctx, run);
 }
 
-async function finishSubagentUsage(run: SubagentRun, reportUsage: (total: number) => Promise<void>, closeUsage: () => Promise<void>, dispatched: boolean) {
+async function finishSubagentUsage(run: SubagentRun, closeUsage: () => Promise<void>, dispatched: boolean, execution: UsageExecution) {
   let cleanupFailure;
 
   try { await closeUsage(); } catch (error) { cleanupFailure = error; }
 
-  const last = await reconcileSubagentTranscript(run, reportUsage);
+  const scope = boundedRecovery({ ...execution, signal: undefined });
+  const reportUsage = await usageReporter(run, { ...execution, ...scope }, true);
+  const last = await reconcileSubagentTranscript(run, reportUsage, scope);
 
   if (dispatched && cleanupFailure) throw cleanupFailure;
 
@@ -348,7 +351,7 @@ async function dispatchSubagent(run: SubagentRun, execution: SubagentExecution, 
   }
 
   finally {
-    last = await finishSubagentUsage(run, reportUsage, closeUsage, dispatched);
+    last = await finishSubagentUsage(run, closeUsage, dispatched, execution);
   }
 
   run.output = completedSubagentOutput(last);
@@ -466,6 +469,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   const active = new Map<string, ActiveSubagent>();
   const pending = new Set<Promise<void>>();
   let controller = new AbortController();
+  registerSubagentRecovery(pi, active, () => controller.signal, (run, ctx, scope) => recoverSubagentAccounting(run, { pi, ctx, reportDescendants, ...scope }));
   const latestRuns = (ctx: ExtensionContext) => [...new Map(ownedSubagentRuns(ctx).map(run => [run.sessionId, run])).values()];
   const taskPath = (ctx: ExtensionContext, run: SubagentRun) => run.taskPath ?? `${delegationScope(ctx).taskPath}/${run.name}`;
 
@@ -615,6 +619,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   pi.on("session_before_switch", stop);
   pi.on("session_shutdown", async () => { detachAbort(); unsubscribeCancellation(); await stop(); });
   pi.on("session_start", async (_event, ctx) => {
+    if (process.env.PIOP_USAGE_RECOVERY === "1") return;
     await stopping;
     const signal = controller.signal;
     const runs = await savedSubagentRuns(ctx);

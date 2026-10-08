@@ -1,6 +1,7 @@
 const { Type } = require("typebox");
 const { Check } = require("typebox/value");
 const { unavailableCheckpoint, promptCheckpoint, snapshotCheckpoint, validSessionHeader } = require("./checkpoint-schemas.cjs");
+const { recoverSnapshotTemps } = require('./snapshot-recovery.cjs');
 const fs = require("node:fs/promises");
 const { createReadStream } = require("node:fs");
 const path = require("node:path");
@@ -563,6 +564,7 @@ async function collectSessions(sessionFiles, checkpointRoots, worktreeRoots, arc
 }
 
 async function main() {
+  const snapshotWarnings = recoverSnapshotTemps(piopRoot);
   const activeRoot = sessionRoots[0];
   const archiveRoot = sessionRoots[1];
 
@@ -629,7 +631,7 @@ async function main() {
       { id: "other-storage", byteSize: storedBytes("other-storage"), itemCount: 1 },
     ].map((category) => ({ ...category, directories: categoryDirectories[category.id] })),
     archives,
-    warnings: [...disk.warnings, ...checkpoints.warnings],
+    warnings: [...disk.warnings, ...checkpoints.warnings, ...snapshotWarnings],
   }));
 }
 

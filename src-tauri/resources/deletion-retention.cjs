@@ -1,10 +1,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
+const { spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { validSessionHeader } = require('./checkpoint-schemas.cjs');
 const { describeCandidates } = require('./retention-candidates.cjs');
+const { containerContents } = require('./worktree-container.cjs');
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -34,6 +36,38 @@ function goalDirectories(directory, goals) {
   for (const entry of entries(directory)) {
     if (entry.isDirectory() && /^goal-[A-Za-z0-9]{6}$/.test(entry.name)) goals.add(path.join(directory, entry.name));
   }
+}
+
+function activeGoalAllocation(directory) {
+  const lock = path.join(directory, 'allocation.lock');
+
+  if (!metadata(lock)) return false;
+  const descriptor = fs.openSync(lock, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
+
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid goal attachment ownership lock');
+    const child = spawnSync('flock', ['--exclusive', '--nonblock', '--conflict-exit-code', '75', '3'], { stdio: ['ignore', 'pipe', 'pipe', descriptor] });
+
+    if (child.error) throw child.error;
+
+    if (child.status === 75) return true;
+
+    if (child.status !== 0) throw new Error(child.stderr.toString().trim() || 'Could not inspect goal attachment ownership');
+
+    return false;
+  } finally { fs.closeSync(descriptor); }
+}
+
+function retainActiveGoals(goals, retained) {
+  let pending = false;
+
+  for (const directory of goals) {
+    if (retained.has(directory) || !activeGoalAllocation(directory)) continue;
+    retained.add(directory);
+    pending = true;
+  }
+
+  return pending;
 }
 
 function sessionFiles(directory, inventory) {
@@ -98,9 +132,7 @@ function worktreeContainers(root) {
   return entries(path.join(root, 'worktrees')).flatMap(entry => {
     if (!entry.isDirectory() || !/^[a-f0-9]{4}$/.test(entry.name)) return [];
     const directory = path.join(root, 'worktrees', entry.name);
-    const children = entries(directory);
-
-    return children.every(child => child.name === 'parent.json' && child.isFile()) ? [directory] : [];
+    return containerContents(directory) ? [directory] : [];
   });
 }
 
@@ -256,13 +288,15 @@ function recoveryPending(root) {
     || ['restore-transactions', 'deleted-sessions'].some(name => entries(path.join(root, name)).length);
 }
 
-function collectRetention(root, sources, savedFiles, deferred = { directories: [], sessionIds: [] }) {
+function collectRetention(root, sources, savedFiles, deferred = { directories: [], sessionIds: [] }, unpublishedGoals = false) {
   const inventory = { goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: recoveryPending(root) };
 
   for (const area of ['sessions', 'archived', 'fork-transactions', 'fork-preparations']) sessionFiles(path.join(root, area), inventory);
   externalTranscripts(root, inventory);
   const candidates = new Set([...inventory.goals, ...worktreeContainers(root)]);
   const owned = new Set(deferred.directories.filter(file => candidates.has(file)));
+
+  if (unpublishedGoals) for (const directory of inventory.goals) owned.add(directory);
   const ignored = { sessionIds: new Set(), uncertain: false };
   const deleted = savedFiles.filter(saved => saved.sessionId);
 
@@ -271,10 +305,13 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
   const excluded = new Set([...sources, ...savedFiles.map(saved => saved.file)]);
   const retained = survivingReferences(inventory, candidates, excluded);
   queuedReferences(root, excluded, candidates, retained, inventory);
+  const pendingGoals = retainActiveGoals(inventory.goals, retained);
   goalReferences(retained, inventory.goals, candidates, inventory);
   const requestedIds = [...new Set([...deleted.map(saved => saved.sessionId), ...deferred.sessionIds])].filter(id => uuidPattern.test(id));
 
   return {
+    uncertain: inventory.uncertain,
+    pendingGoals,
     directories: inventory.uncertain ? [] : [...owned].filter(file => !retained.has(file)),
     files: invalidReceipts(root, excluded),
     registryIds: inventory.uncertain ? [] : requestedIds.filter(id => !inventory.sessionIds.has(id.toLowerCase())),

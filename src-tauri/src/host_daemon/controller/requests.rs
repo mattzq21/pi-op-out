@@ -107,12 +107,17 @@ impl Host {
         }
         let session = self.find_session(&id);
         match text(&packet, "action").as_str() {
-            "read" => match session {
-                Some(session) => session.execute(json!({"type":"get_snapshot"})).await,
-                None => self.ownership().snapshot(&id, packet["sessionPath"].as_str()),
-            },
+            "read" => self.orchestration_read(&packet, session).await,
             "send" => self.orchestration_send(packet, session).await,
+            "recover_usage" => self.orchestration_recover_usage(packet, session).await,
             _ => Err("Unknown orchestration action".into()),
+        }
+    }
+
+    async fn orchestration_read(&self, packet: &Value, session: Option<Arc<Session>>) -> Result<Value> {
+        match session {
+            Some(session) => session.execute(json!({"type":"get_snapshot"})).await,
+            None => self.ownership().snapshot(&text(packet, "sessionKey"), packet["sessionPath"].as_str()),
         }
     }
 
@@ -194,6 +199,31 @@ impl Host {
         if self.registry().cancelled_deliveries.contains(&text(packet, "deliveryId")) { return Err("Agent delivery was cancelled".into()); }
         queue_command(&session, json!({"type":"orchestration_message","deliveryId":packet["deliveryId"],"sourceSessionId":packet["sourceSessionId"],
             "sourceHostId":packet["sourceHostId"],"message":packet["message"],"wake":packet["wake"]})).await
+    }
+
+    async fn orchestration_recover_usage(self: &Arc<Self>, packet: Value, existing: Option<Arc<Session>>) -> Result<Value> {
+        let id = text(&packet, "sessionKey");
+        let runtime = format!("usage-recovery-{}", Uuid::new_v4());
+        let attached = existing.is_none();
+        if attached {
+            let result = self.attach(json!({"type":"attach","runtimeId":runtime,"clientId":packet["clientId"],
+                "sessionKey":id,"spec":packet["spec"],"cwd":packet["cwd"],"presence":{"visible":false}})).await?;
+            if !flag(&result, "owned") {
+                self.registry().attachments.remove(&runtime);
+                self.registry().readonly.remove(&runtime);
+                return Err(ownership_error());
+            }
+        }
+        let result = match self.find_session(&id) {
+            Some(session) => session.execute(json!({"type":"recover_subagent_usage","sourceSessionId":packet["sourceSessionId"],
+                "recoveryDepth":packet["recoveryDepth"],"deadline":packet["deadline"]})).await,
+            None => Err("Conversation is no longer running".into()),
+        };
+        if attached {
+            let detached = self.orchestration_detach(&runtime).await;
+            if result.is_ok() { detached?; }
+        }
+        result
     }
 
     async fn orchestration_detach(&self, runtime: &str) -> Result<Value> {

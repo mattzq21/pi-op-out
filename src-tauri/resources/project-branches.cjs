@@ -6,7 +6,7 @@ const { execFileSync } = require('node:child_process');
 
 const [cwd, storage, selected] = process.argv.slice(1);
 
-const git = (args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+const git = (args, descriptor) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe', ...(descriptor === undefined ? [] : [descriptor])] });
 
 function withCreationLock(operation) {
   const root = path.join(os.homedir(), storage);
@@ -17,7 +17,7 @@ function withCreationLock(operation) {
     if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid reference publication lock');
     execFileSync('flock', ['--shared', '3'], { stdio: ['ignore', 'pipe', 'pipe', descriptor] });
 
-    return operation();
+    return operation(descriptor);
   } finally { fs.closeSync(descriptor); }
 }
 
@@ -29,7 +29,7 @@ function worktrees() {
   });
 }
 
-function checkout(branch, trees) {
+function checkout(branch, trees, descriptor) {
   const existing = trees.find((tree) => tree.branch === branch);
 
   if (existing) {
@@ -41,6 +41,7 @@ function checkout(branch, trees) {
   const root = path.join(os.homedir(), storage, 'worktrees');
   const project = path.basename(trees[0].path);
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(path.dirname(root), 'worktree-retention.pending'), '', { flag: 'a', mode: 0o600, flush: true });
   const container = path.join(root, randomUUID().slice(0, 4));
 
   try { fs.mkdirSync(container, { mode: 0o700 }); }
@@ -52,12 +53,36 @@ function checkout(branch, trees) {
     try { fs.lstatSync(target); throw new Error(`Worktree directory already exists: ${target}`); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
 
-    git(['worktree', 'add', '--', target, branch]);
+    recordAllocation(container, target, branch);
+    git(['worktree', 'add', '--', target, branch], descriptor);
 
     return target;
-  } catch (error) { try { fs.rmdirSync(container); } catch { }
+  } catch (error) { cleanupAllocation(container, target);
 
   throw error; }
+}
+
+function recordAllocation(container, target, branch) {
+  const info = fs.lstatSync(container, { bigint: true });
+  const allocation = { version: 1, identity: `${info.dev}:${info.ino}`, target };
+  const temporary = path.join(container, `.parent-v1-${info.dev}-${info.ino}.tmp`);
+  fs.writeFileSync(temporary, JSON.stringify({ branch, parentBranch: null, allocation }), { flag: 'wx', mode: 0o600, flush: true });
+  fs.renameSync(temporary, path.join(container, 'parent.json'));
+
+  for (const directory of [container, path.dirname(container), path.dirname(path.dirname(container))]) {
+    const descriptor = fs.openSync(directory, 'r');
+
+    try { fs.fsyncSync(descriptor); }
+    finally { fs.closeSync(descriptor); }
+  }
+}
+
+function cleanupAllocation(container, target) {
+  if (fs.existsSync(target)) return;
+
+  try { fs.unlinkSync(path.join(container, 'parent.json')); } catch { }
+
+  try { fs.rmdirSync(container); } catch { }
 }
 
 try {
@@ -73,6 +98,6 @@ try {
 
   if (selected && !branches.includes(selected)) throw new Error('Branch no longer exists');
   const trees = worktrees();
-  const directory = selected ? withCreationLock(() => checkout(selected, worktrees())) : root;
+  const directory = selected ? withCreationLock(descriptor => checkout(selected, worktrees(), descriptor)) : root;
   process.stdout.write(JSON.stringify({ branches, current: selected || current, path: directory, mainPath: trees[0].path }));
 } catch (error) { console.error(error.message); process.exitCode = 1; }

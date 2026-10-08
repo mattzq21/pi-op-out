@@ -115,6 +115,7 @@ export function registerGoals(pi: ExtensionAPI) {
   pi.on("session_tree", (_event, ctx) => coordination.run(ctx, () => restore(ctx)));
 
   const ready = pi.events.on("piop:agents:ready", ({ ctx }) => {
+    if (process.env.PIOP_USAGE_RECOVERY === "1") return;
     schedule(ctx, () => {
     if (!restored || state.goal?.status !== "active") return;
 

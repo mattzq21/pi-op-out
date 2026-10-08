@@ -3,6 +3,8 @@ const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
+const { directoryInUse } = require('./directory-liveness.cjs');
+const { containerContents } = require('./worktree-container.cjs');
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -154,15 +156,23 @@ function cleanupStages(record) {
     if (!metadata(staged)) continue;
 
     if (!matches(candidate, staged)) throw new Error('Deferred retention staging identity changed');
+    if (!worktreeRemovalReady(candidate, staged)) throw new Error('Deferred worktree storage remains in use or contains files');
     fs.rmSync(staged, { recursive: true });
     sync(path.dirname(staged));
   }
+}
+
+function worktreeRemovalReady(candidate, file) {
+  if (path.basename(path.dirname(candidate.path)) !== 'worktrees') return true;
+
+  return Boolean(containerContents(file)) && !directoryInUse(file);
 }
 
 function removeCandidate(record, index) {
   const candidate = record.pending.directories[index];
 
   if (!matches(candidate)) return;
+  if (!worktreeRemovalReady(candidate, candidate.path)) return;
   const parent = path.dirname(candidate.path);
 
   if (fs.realpathSync(parent) !== parent) throw new Error('Deferred retention parent changed');

@@ -81,6 +81,7 @@ pub(super) fn capture_local_git_tree(root: &Path, repository_objects: &Path, sna
     let seed = String::from_utf8_lossy(&seed.stdout).trim().to_owned();
     fs::create_dir_all(&objects).map_err(|error| format!("Could not create Git snapshot: {error}"))?;
     let result = (|| {
+        own_local_snapshot(&snapshot_root)?;
         let configure = |command: &mut Command| { command.env("GIT_INDEX_FILE", &index).env("GIT_OBJECT_DIRECTORY", &objects).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", repository_objects); };
         let mut read_tree = Command::new("git"); read_tree.args(["-C", cwd, "read-tree", &seed]); configure(&mut read_tree);
         let output = run_limited(&mut read_tree, 64 * 1024, "Could not prepare Git snapshot")?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
@@ -90,10 +91,24 @@ pub(super) fn capture_local_git_tree(root: &Path, repository_objects: &Path, sna
         let output = run_limited(&mut write_tree, 64 * 1024, "Could not finalize Git snapshot")?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         let tree = String::from_utf8_lossy(&output.stdout).trim().to_string();
         fs::remove_file(&index).map_err(|error| format!("Could not remove temporary Git index: {error}"))?;
+        local_snapshot_metadata(&snapshot_root, &tree, cwd)?;
         serde_json::to_string(&GitSnapshotToken { root: snapshot_root.to_string_lossy().into_owned(), tree, repository_root: cwd.to_owned() }).map_err(|error| error.to_string())
     })();
     if result.is_err() { let _ = fs::remove_dir_all(&snapshot_root); }
     result
+}
+
+fn own_local_snapshot(root: &Path) -> Result<(), String> {
+    let pid = std::process::id();
+    let identity = fs::read_to_string(format!("/proc/{pid}/stat")).ok().and_then(|stat| stat.rsplit_once(") ").and_then(|(_, fields)| fields.split_whitespace().nth(19).map(str::to_owned)));
+    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").ok().map(|value| value.trim().to_owned());
+    let owner = serde_json::json!({"version":1,"state":"external","boot":boot,"processes":[{"pid":pid,"identity":identity}]});
+    crate::private_fs::atomic_write_private(&root.join("temporary-owner.json"), &serde_json::to_vec(&owner).map_err(|error| error.to_string())?)
+}
+
+fn local_snapshot_metadata(root: &Path, tree: &str, cwd: &str) -> Result<(), String> {
+    let saved = serde_json::to_vec(&serde_json::json!({"tree":tree,"repositoryRoot":cwd})).map_err(|error| error.to_string())?;
+    crate::private_fs::atomic_write_private(&root.join("snapshot.json"), &saved)
 }
 
 pub(super) fn local_git_diff(cwd: &str, base_token: &str) -> Result<Option<GitDiffSnapshot>, String> {

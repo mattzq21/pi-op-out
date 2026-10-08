@@ -198,11 +198,13 @@ async function loadChannel(ctx: ExtensionContext): Promise<Channel | undefined> 
   if (!path || !ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-parent")) return;
 
   try {
-    const channel = JSON.parse(await readFile(channelPath(path), "utf8"));
+    const content = await readFile(channelPath(path), "utf8");
+    let channel: unknown;
 
-    if (!Check(channelSchema, channel)) throw new Error("Invalid subagent usage channel");
+    try { channel = JSON.parse(content); }
+    catch (error) { if (error instanceof SyntaxError) return; throw error; }
 
-    return channel;
+    if (Check(channelSchema, channel)) return channel;
   } catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error; }
 }
 

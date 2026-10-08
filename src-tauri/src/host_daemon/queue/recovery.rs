@@ -16,7 +16,12 @@ pub(crate) struct Recovery {
 }
 
 pub(crate) fn recover_missing_transcripts(root: &Path, ownership: &ConversationOwnership) -> Recovery {
-    recover_storage(root, ownership).unwrap_or_else(|error| Recovery { errors: vec![error], ..Recovery::default() })
+    let mut recovery = recover_storage(root, ownership).unwrap_or_else(|error| Recovery { errors: vec![error], ..Recovery::default() });
+    if let Err(error) = cleanup_temporary(root) {
+        recovery.errors.push(error);
+        recovery.retry = true;
+    }
+    recovery
 }
 
 fn recover_storage(root: &Path, ownership: &ConversationOwnership) -> Result<Recovery> {
@@ -28,6 +33,12 @@ fn recover_storage(root: &Path, ownership: &ConversationOwnership) -> Result<Rec
     let Some(_storage_locks) = storage_locks(root)? else { return Ok(Recovery { retry: true, ..Recovery::default() }); };
     if transactions_pending(root)? { return Ok(Recovery { retry: true, transactions_pending: true, ..Recovery::default() }); }
     Ok(recover_entries(root, ownership, entries))
+}
+
+fn cleanup_temporary(root: &Path) -> Result<()> {
+    let _publication = super::super::reference_publication::lock(root)?;
+    let _storage = super::temporary::lock(root)?;
+    super::temporary::cleanup(&root.join("queued-input"), None)
 }
 
 fn recover_entries(root: &Path, ownership: &ConversationOwnership, entries: fs::ReadDir) -> Recovery {

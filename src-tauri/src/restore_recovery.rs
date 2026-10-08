@@ -5,7 +5,7 @@ pub(crate) fn recover_remote(host: &crate::RemoteHost) -> Result<(), String> {
     use crate::worktree_setup::{run_limited, shell_quote};
     let script = include_str!("../resources/restore-archived-worktree.bundle.mjs");
     let storage = crate::STORAGE_DIRECTORY;
-    let command = format!(r#"piopPending=; for candidate in "$HOME/{storage}/restore-transactions/"*.json "$HOME/{storage}/fork-transactions/"* "$HOME/{storage}/fork-transactions/".cleanup-* "$HOME/{storage}/fork-preparations/"* "$HOME/{storage}/fork-preparations/".cleanup-* "$HOME/{storage}/archive-transaction-"* "$HOME/{storage}/deleted-sessions/"*; do [ ! -e "$candidate" ] || piopPending=1; done; for area in sessions archived; do [ -d "$HOME/{storage}/$area" ] || continue; candidate=$(find "$HOME/{storage}/$area" -type d -name '*.snapshots' -prune -o -type d -name '.delete-*.lock' -print -quit) || exit $?; [ -z "$candidate" ] || piopPending=1; done; [ -n "$piopPending" ] || exit 0; PIOP_STORAGE_DIRECTORY={storage} node -e {} -- --recover"#, shell_quote(script));
+    let command = format!(r#"piopPending=; for candidate in "$HOME/{storage}/git-snapshots/"pi-desktop-diff-* "$HOME/{storage}/git-snapshots/".cleanup-pi-desktop-diff-* "$HOME/{storage}/restore-transactions/"*.json "$HOME/{storage}/fork-transactions/"* "$HOME/{storage}/fork-transactions/".cleanup-* "$HOME/{storage}/fork-preparations/"* "$HOME/{storage}/fork-preparations/".cleanup-* "$HOME/{storage}/archive-transaction-"* "$HOME/{storage}/deleted-sessions/"*; do [ ! -e "$candidate" ] || piopPending=1; done; for area in sessions archived; do [ -d "$HOME/{storage}/$area" ] || continue; candidate=$(find "$HOME/{storage}/$area" -type d -name '*.snapshots' -prune -o -type d -name '.delete-*.lock' -print -quit) || exit $?; [ -z "$candidate" ] || piopPending=1; done; [ -n "$piopPending" ] || exit 0; PIOP_STORAGE_DIRECTORY={storage} node -e {} -- --recover"#, shell_quote(script));
     let output = run_limited(ssh(host).arg(remote_login_command(&command)), 64 * 1024, "Could not recover session storage")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().into()); }
     Ok(())
@@ -68,8 +68,23 @@ fn transaction_directories_pending(root: &Path) -> Result<bool, String> {
     Ok(false)
 }
 
+fn snapshot_cleanup_pending(root: &Path) -> Result<bool, String> {
+    let entries = match std::fs::read_dir(root.join("git-snapshots")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.to_string()),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("pi-desktop-diff-") || name.starts_with(".cleanup-pi-desktop-diff-") { return Ok(true); }
+    }
+    Ok(false)
+}
+
 pub(crate) fn recover(root: &Path) -> Result<(), String> {
-    if !restoration_pending(root)? && !transaction_directories_pending(root)? { return Ok(()); }
+    if !restoration_pending(root)? && !transaction_directories_pending(root)? && !snapshot_cleanup_pending(root)? { return Ok(()); }
     let output = crate::node_command()
         .env("PIOP_RESTORE_ROOT", root)
         .args(["-e", include_str!("../resources/restore-archived-worktree.bundle.mjs"), "--", "--recover"])

@@ -1,4 +1,7 @@
 use std::collections::{HashMap, HashSet};
+#[path = "broker_output.rs"]
+mod output;
+use output::MessageOutput;
 use crate::{change_session_groups, stop_message_worker};
 use serde_json::json;
 use serde_json::Value;
@@ -10,11 +13,9 @@ use std::io::Read;
 use std::io::Write;
 use std::net::TcpListener;
 use std::net::TcpStream;
-use std::path::PathBuf;
 use std::process::Child;
 use std::process::Command;
 use std::process::ExitStatus;
-use std::process::Stdio;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -32,7 +33,6 @@ use crate::pi_launch::{PiLaunch, build_pi_command};
 use crate::session_index::{collect_sessions, list_local_sessions};
 use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
-use crate::settings_storage::{ensure_private_dir};
 
 pub(super) fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str) -> Result<&'a SessionSummary, String> {
     sessions.iter().find(|session| session.host_id == host_id && session.id == session_id).ok_or_else(|| format!("Agent {host_id}/{session_id} was not found"))
@@ -120,6 +120,7 @@ fn with_broker_access<T>(app: &AppHandle, work: impl FnOnce() -> Result<T, Strin
 }
 
 pub(super) fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), String> {
+    output::recover();
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|error| format!("Could not start session broker: {error}"))?;
     *broker.port.lock().map_err(|_| "Session broker lock was poisoned")? = listener.local_addr().map_err(|error| error.to_string())?.port();
     thread::spawn(move || {
@@ -274,30 +275,6 @@ fn message_command(broker: &BrokerRuntime, settings: &AppSettings, session: &Ses
     Ok(command)
 }
 
-struct MessageOutput { root: PathBuf, stdout: PathBuf, stderr: PathBuf }
-
-impl MessageOutput {
-    fn prepare(command: &mut Command) -> Result<Self, String> {
-        let root = std::env::temp_dir().join(format!("pi-desktop-broker-{}", Uuid::new_v4()));
-        let output = Self { stdout: root.join("stdout"), stderr: root.join("stderr"), root };
-        ensure_private_dir(&output.root).map_err(|error| format!("Could not prepare agent message: {error}"))?;
-        let stdout = fs::File::create(&output.stdout).map_err(|error| format!("Could not capture agent output: {error}"))?;
-        let stderr = fs::File::create(&output.stderr).map_err(|error| format!("Could not capture agent errors: {error}"))?;
-        command.stdin(Stdio::piped()).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
-        Ok(output)
-    }
-
-    fn remove(&self) {
-        if let Err(error) = fs::remove_dir_all(&self.root) {
-            if error.kind() != std::io::ErrorKind::NotFound { eprintln!("Could not remove agent output {}: {error}", self.root.display()); }
-        }
-    }
-}
-
-impl Drop for MessageOutput {
-    fn drop(&mut self) { self.remove(); }
-}
-
 struct MessageJob { child: Mutex<Child>, output: MessageOutput }
 
 fn start_message_job(mut command: Command, broker: &BrokerRuntime, request_id: &str, deadline: Instant) -> Result<Arc<MessageJob>, String> {
@@ -430,9 +407,10 @@ fn broker_conversation_operation(app: &AppHandle, broker: &BrokerRuntime, value:
     let runtime = app.state::<PiRuntime>();
     let daemon = crate::daemon::connect(app, &runtime, broker, &settings, host)?;
     let mut packet = json!({"type":"orchestration","action":action,"sessionKey":id,"sessionPath":session.path,
-        "sourceSessionId":value["sourceSessionId"],"sourceHostId":value["sourceHostId"],"message":value["message"],"wake":value["wake"],"clientId":value["clientId"],"deliveryId":value["deliveryId"]});
-    if action == "send" {
-        let command = build_pi_command(broker, &settings, host, PiLaunch::Rpc { cwd: Some(&session.cwd), session_path: Some(&session.path), session_id: None, fork_path: None, no_session: false }, daemon.remote_port)?;
+        "sourceSessionId":value["sourceSessionId"],"sourceHostId":value["sourceHostId"],"message":value["message"],"wake":value["wake"],"clientId":value["clientId"],"deliveryId":value["deliveryId"],"deadline":value["deadline"],"recoveryDepth":value["recoveryDepth"]});
+    if matches!(action, "send" | "recover_usage") {
+        let mut command = build_pi_command(broker, &settings, host, PiLaunch::Rpc { cwd: Some(&session.cwd), session_path: Some(&session.path), session_id: None, fork_path: None, no_session: false }, daemon.remote_port)?;
+        if action == "recover_usage" { command.env("PIOP_USAGE_RECOVERY", "1"); }
         packet["spec"] = crate::daemon::spec(&command);
         packet["cwd"] = json!(session.cwd);
     }
@@ -452,7 +430,7 @@ fn broker_interruption_status(broker: &BrokerRuntime, request: &Value, mut resul
 fn orchestration_target(value: &Value) -> Result<(&str, &str), String> {
     let id = value["sessionId"].as_str().ok_or("sessionId is required")?;
     let action = value["action"].as_str().ok_or("action is required")?;
-    if !matches!(action, "read" | "send" | "interrupt") { return Err("Unknown orchestration action".into()); }
+    if !matches!(action, "read" | "send" | "interrupt" | "recover_usage") { return Err("Unknown orchestration action".into()); }
     Ok((id, action))
 }
 

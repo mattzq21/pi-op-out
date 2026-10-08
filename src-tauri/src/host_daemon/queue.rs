@@ -9,6 +9,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 mod storage;
+mod temporary;
 mod durability;
 mod holding;
 mod recovery;

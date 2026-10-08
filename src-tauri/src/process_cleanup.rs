@@ -1,5 +1,54 @@
 use std::{process::Child, thread, time::{Duration, Instant}};
 
+#[cfg(target_os = "linux")]
+pub(crate) fn directory_in_use(directory: &std::path::Path, ignored: Option<&std::path::Path>) -> std::io::Result<bool> {
+    for entry in std::fs::read_dir("/proc")? {
+        let entry = entry?;
+        if !owned_process(&entry)? { continue; }
+        if process_uses_directory(&entry.path(), directory, ignored)? { return Ok(true); }
+    }
+    Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn owned_process(entry: &std::fs::DirEntry) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    if entry.file_name().to_str().is_none_or(|name| name.parse::<u32>().is_err()) { return Ok(false); }
+    match entry.metadata() {
+        Ok(metadata) => Ok(metadata.uid() == unsafe { libc::geteuid() }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn process_uses_directory(process: &std::path::Path, directory: &std::path::Path, ignored: Option<&std::path::Path>) -> std::io::Result<bool> {
+    if link_uses_directory(&process.join("cwd"), directory, ignored)? { return Ok(true); }
+    let Some(handles) = process_handles(process)? else { return Ok(false); };
+    for handle in handles {
+        let handle = handle?;
+        if link_uses_directory(&handle.path(), directory, ignored)? { return Ok(true); }
+    }
+    Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn process_handles(process: &std::path::Path) -> std::io::Result<Option<std::fs::ReadDir>> {
+    match std::fs::read_dir(process.join("fd")) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        result => result.map(Some),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn link_uses_directory(link: &std::path::Path, directory: &std::path::Path, ignored: Option<&std::path::Path>) -> std::io::Result<bool> {
+    match std::fs::read_link(link) {
+        Ok(path) => Ok(path.starts_with(directory) && ignored != Some(path.as_path())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 pub(crate) fn stop_message_worker(child: &mut Child) {
     if matches!(child.try_wait(), Ok(Some(_))) { return; }
     #[cfg(target_os = "linux")]

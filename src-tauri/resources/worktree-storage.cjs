@@ -16,7 +16,7 @@ function withCreationLock(operation) {
     if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid reference publication lock');
     execFileSync('flock', ['--shared', '3'], { stdio: ['ignore', 'pipe', 'pipe', descriptor] });
 
-    return operation();
+    return operation(descriptor);
   } finally { fs.closeSync(descriptor); }
 }
 
@@ -45,6 +45,7 @@ function allocate() {
 
   if (!project) throw new Error('Git repository directory has no name');
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(path.dirname(root), 'worktree-retention.pending'), '', { flag: 'a', mode: 0o600, flush: true });
   const container = path.join(root, randomUUID().slice(0, 4));
   const target = path.join(container, project);
 
@@ -53,20 +54,35 @@ function allocate() {
   try { fs.mkdirSync(container, { mode: 0o700 }); }
   catch (error) { if (error.code === 'EEXIST') throw new Error(`Worktree directory already exists: ${container}`); throw error; }
 
-  try { fs.writeFileSync(path.join(container, 'parent.json'), JSON.stringify({ branch, parentBranch }), { flag: 'wx', mode: 0o600 }); }
+  try { recordAllocation(container, target, branch, parentBranch); }
   catch (error) { cleanup(target); throw error; }
 
   return target;
 }
 
-function create() {
+function recordAllocation(container, target, branch, parentBranch) {
+  const info = fs.lstatSync(container, { bigint: true });
+  const allocation = { version: 1, identity: `${info.dev}:${info.ino}`, target };
+  const temporary = path.join(container, `.parent-v1-${info.dev}-${info.ino}.tmp`);
+  fs.writeFileSync(temporary, JSON.stringify({ branch, parentBranch, allocation }), { flag: 'wx', mode: 0o600, flush: true });
+  fs.renameSync(temporary, path.join(container, 'parent.json'));
+
+  for (const directory of [container, root, path.dirname(root)]) {
+    const descriptor = fs.openSync(directory, 'r');
+
+    try { fs.fsyncSync(descriptor); }
+    finally { fs.closeSync(descriptor); }
+  }
+}
+
+function create(descriptor) {
   const target = allocate();
 
   try {
     const args = ['worktree', 'add', ...(revision === '--orphan' ? ['--orphan'] : []), '-b', branch, '--', target];
 
     if (revision !== '--orphan') args.push(revision);
-    execFileSync('git', ['-C', directory, ...args], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+    execFileSync('git', ['-C', directory, ...args], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe', descriptor] });
     process.stdout.write(target);
   } finally { cleanup(target); }
 }

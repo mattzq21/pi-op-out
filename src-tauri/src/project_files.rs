@@ -1,7 +1,10 @@
 use serde_json::{json, Value};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use sha2::{Digest, Sha256};
-use std::{fs::{self, File, OpenOptions}, io::{Read, Write}, path::{Path, PathBuf}, sync::Mutex};
+use std::{fs::{self, File}, io::Read, path::{Path, PathBuf}, sync::Mutex};
+
+#[path = "project_file_publication.rs"]
+mod publication;
 
 const FILE_LIMIT: u64 = 2 * 1024 * 1024;
 const ENTRY_LIMIT: usize = 10_000;
@@ -89,6 +92,10 @@ fn directory_entry(root: &Path, entry: &fs::DirEntry) -> Option<Value> {
 fn read_text(path: &Path) -> Result<String, String> {
     if !fs::metadata(path).map_err(|error| error.to_string())?.is_file() { return Err("Select a regular text file".into()); }
     let file = File::open(path).map_err(|error| format!("Could not read file: {error}"))?;
+    read_text_file(file)
+}
+
+fn read_text_file(file: File) -> Result<String, String> {
     let metadata = file.metadata().map_err(|error| error.to_string())?;
     if !metadata.is_file() { return Err("Select a regular text file".into()); }
     if metadata.len() > FILE_LIMIT { return Err("Files larger than 2 MB cannot be opened in the editor".into()); }
@@ -104,35 +111,14 @@ fn revision(content: &str) -> String { format!("{:x}", Sha256::digest(content.as
 pub(crate) fn read(cwd: &str, path: &str) -> Result<Value, String> {
     let (root, path) = resolve(cwd, path)?;
     let content = read_text(&path)?;
-    Ok(json!({ "path": relative(&root, &path), "content": content, "revision": revision(&content) }))
+    Ok(publication::with_recoveries(json!({ "path": relative(&root, &path), "content": content, "revision": revision(&content) }), &root, &path))
 }
 
 pub(crate) fn save(cwd: &str, path: &str, content: &str, expected: &str) -> Result<Value, String> {
     if content.len() as u64 > FILE_LIMIT { return Err("File exceeds the 2 MB editor limit".into()); }
     let _guard = SAVE_LOCK.lock().map_err(|_| "File save lock unavailable")?;
     let (root, path) = resolve(cwd, path)?;
-    check_revision(&path, expected)?;
-    replace_file(&path, content, expected)?;
-    Ok(json!({ "path": relative(&root, &path), "content": content, "revision": revision(content) }))
-}
-
-fn check_revision(path: &Path, expected: &str) -> Result<(), String> {
-    if revision(&read_text(path)?) != expected { return Err("This file changed on disk. Reload it before saving to avoid overwriting those changes.".into()); }
-    Ok(())
-}
-
-fn replace_file(path: &Path, content: &str, expected: &str) -> Result<(), String> {
-    let temporary = path.with_file_name(format!(".piop-save-{}", uuid::Uuid::new_v4()));
-    let result = (|| {
-        let mut file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
-        file.set_permissions(fs::metadata(path)?.permissions())?;
-        file.write_all(content.as_bytes())?;
-        file.sync_all()?;
-        check_revision(path, expected).map_err(std::io::Error::other)?;
-        fs::rename(&temporary, path)?;
-        let parent = path.parent().ok_or_else(|| std::io::Error::other("Saved file has no parent directory"))?;
-        File::open(parent)?.sync_all()
-    })();
-    if result.is_err() { let _ = fs::remove_file(&temporary); }
-    result.map_err(|error: std::io::Error| format!("Could not save file: {error}"))
+    let mut result = publication::replace_file(&root, &path, content, expected)?;
+    result["path"] = json!(relative(&root, &path));
+    Ok(publication::with_recoveries(result, &root, &path))
 }

@@ -1,7 +1,7 @@
 import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { GoalState, validateBudget } from "./goal-state.ts";
-import { materializeGoal } from "./goal-files.ts";
+import { materializeGoal, releaseSavedGoals } from "./goal-files.ts";
 import type { GoalCoordination } from "./goal-coordination.ts";
 
 export type GoalControls = {
@@ -112,12 +112,12 @@ async function prepareGoal(args: string, ctx: ExtensionContext, controls: GoalCo
     const summary = await commit(ctx, controls, () => {
       if (snapshot(ctx, controls) !== captured.key) throw new Error("The goal changed while preparing this operation. Submit /goal again.");
       controls.assertAvailable(ctx);
-      applyDraft(ctx, controls, draft.objective, editing);
       applied = true;
+      applyDraft(ctx, controls, draft.objective, editing);
     }, start);
 
     return { summary, objective: draft.objective };
-  } finally { if (!applied) await draft.cleanup(); }
+  } finally { await draft.release(applied); }
 }
 
 function applyDraft(ctx: ExtensionContext, controls: GoalControls, objective: string, editing: boolean) {
@@ -160,6 +160,9 @@ function applyCommand(value: string, ctx: ExtensionCommandContext, controls: Goa
 
 export function registerGoalControls(pi: ExtensionAPI, controls: GoalControls) {
   registerGoalTool(pi, controls);
+  pi.on("turn_end", (_event, ctx) => releaseSavedGoals(ctx));
+  pi.on("agent_end", (_event, ctx) => releaseSavedGoals(ctx));
+  pi.on("session_start", (_event, ctx) => releaseSavedGoals(ctx, true));
   pi.on("input", (event, ctx) => {
     if (goalObjective(event.text) !== undefined) controls.assertAvailable(ctx);
   });
