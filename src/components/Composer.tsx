@@ -2,13 +2,14 @@ import { ToolFailureMeter } from "./ToolFailureMeter";
 import { CacheIcon } from "./CacheIcon";
 import { required } from "../lib/required";
 import { trackToastMessage } from "../lib/toastHistory";
+import { createComposerPromptHistory } from "../lib/promptHistory";
+import { createComposerEditorKey } from "../lib/composerKeyboard";
 import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createMemo,createSelector,createSignal,Show,splitProps } from "solid-js";
 import { clipboardImageFile,pastedFiles,readClipboardImages } from "../lib/clipboardImages";
 import { buildComposerPrompt,composerReference,isPromptCommand,skillName } from "../lib/composerPrompt";
-import { isMobile } from "../lib/platform";
 import { accountModelNameLookup,providerAccountLabel } from "../lib/providerAccounts";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
 import { useComposerAttachments } from "../lib/useComposerAttachments";
@@ -53,6 +54,7 @@ interface Props {
   controlsDisabled?: boolean;
   submissionDisabled?: boolean;
   draft?: string;
+  recentPrompts?: () => string[];
   onDraftChange?: (value: StateUpdate<string>) => void;
   uploads?: ComposerUpload[];
   onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void;
@@ -147,10 +149,6 @@ function canPickCommand(event: KeyboardEvent) {
   return (event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey;
 }
 
-function pasteShortcut(event: KeyboardEvent) {
-  return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v" && !event.altKey;
-}
-
 function reviewBehavior(message: string, behavior: "steer" | "followUp") {
   return /^\/review(?:\s|$)/.test(message) ? "followUp" : behavior;
 }
@@ -187,7 +185,11 @@ export function Composer(props: Props) {
   const fastModeSupported = createMemo(() => (fastModeEnabled() || composer().fastModeStatus === "Fast mode off"));
   const [togglingFastMode, setTogglingFastMode] = createSignal(false);
   const togglingFastModeRef = createRef(false);
-  const setValue = (next: string) => { if (composer().onDraftChange) required((composer().onDraftChange))(next); else setLocalValue(next); };
+  const writeValue = (next: string) => { if (composer().onDraftChange) required((composer().onDraftChange))(next); else setLocalValue(next); };
+
+  const promptHistory = createComposerPromptHistory(value, writeValue, () => props.recentPrompts?.() ?? [], next => { setPaletteDismissed(true); setSelection({ start: next.length, end: next.length }); });
+
+  const setValue = (next: string) => { promptHistory.reset(); writeValue(next); };
 
   const attachments = useComposerAttachments(composer);
   const { uploads, updateUploads, uploadError, setUploadError, readingUploads, imageInputError, setImageInputError, addFiles, addPaths } = attachments;
@@ -389,6 +391,8 @@ export function Composer(props: Props) {
     const { message, images } = buildComposerPrompt(capturedValue, capturedUploads, capturedComposer.commands);
 
     if (!canSubmit(message, images)) return;
+    const rememberPrompt = promptHistory.captureRemember();
+
     setSending(true); setUploadError(undefined);
     const submittedValue = capturedValue; const submittedUploads = capturedUploads;
     const changeDraft = capturedComposer.onDraftChange ?? setLocalValue;
@@ -406,6 +410,7 @@ export function Composer(props: Props) {
 
       if (accepted === false) throw new Error("Message was not submitted");
 
+      rememberPrompt(submittedValue);
       clearUnstaged(submission);
     } catch (reason) {
       setUploadError(reason instanceof Error ? reason.message : String(reason));
@@ -498,15 +503,7 @@ export function Composer(props: Props) {
     return () => document.removeEventListener("piop-native-image-paste", handle);
   }, () => []);
 
-  const handleEditorKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (pasteShortcut(event)) pasteWithoutEvent();
-
-    if (props.ownershipRequired) return;
-
-    if (event.isComposing || handlePaletteKey(event)) return;
-
-    if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); }
-  };
+  const handleEditorKey = createComposerEditorKey({ paste: pasteWithoutEvent, ownershipRequired: () => props.ownershipRequired, palette: handlePaletteKey, history: promptHistory.handleKey, submit });
 
   const renderStreamBanner = () => {
     const statusText = () => stopping() ? "Stopping…" : controlAction() === "resume" ? "Resuming…" : composer().pausing || controlAction() === "pause" ? "Pausing…" : composer().compacting ? "Compacting context…" : composer().paused ? "Paused · Completed turns saved" : undefined;
