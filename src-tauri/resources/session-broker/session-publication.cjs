@@ -430,9 +430,9 @@ function abandon(publication) {
   });
 }
 
-function acknowledge(publication) {
+async function acknowledge(publication) {
   try {
-    return io.locked(publication.root, () => {
+    return await io.lockedAsync(publication.root, () => {
       const journal = load(publication.root, io.journalPath(publication.root, publication.id));
 
       if (!journal.review || !reviews.acknowledge(journal)) return false;
@@ -447,10 +447,12 @@ function acknowledge(publication) {
   } finally { release(publication); }
 }
 
-function pendingReviews(parentPath, parentId) {
+async function pendingReviews(parentPath, parentId) {
   const root = io.rootForTarget(parentPath);
 
-  return io.locked(root, () => {
+  if (!journalFiles(root).length) return [];
+
+  return io.lockedAsync(root, () => {
     const parent = io.header(parentPath);
 
     if (!parent || parent.id !== parentId) throw new Error('Live review publication requires its actual original parent');

@@ -3,6 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createHash, randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const { setTimeout: delay } = require('node:timers/promises');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 
@@ -218,7 +219,7 @@ function transactionLock(root) {
 
   const descriptor = borrowed ? 3 : claim(file);
 
-  if (descriptor === null) throw new Error('Session storage is busy; retry publication after the current transaction');
+  if (descriptor === null) return null;
 
   if (borrowed && !lockDescriptor(descriptor)) throw new Error('Inherited session storage lock is unavailable');
 
@@ -226,7 +227,10 @@ function transactionLock(root) {
 }
 
 function locked(root, operation) {
-  const { descriptor, borrowed } = transactionLock(root);
+  const lock = transactionLock(root);
+
+  if (!lock) throw storageBusy();
+  const { descriptor, borrowed } = lock;
 
   try {
     return operation();
@@ -235,10 +239,25 @@ function locked(root, operation) {
 }
 
 async function lockedAsync(root, operation) {
-  const { descriptor, borrowed } = transactionLock(root);
+  const { descriptor, borrowed } = await waitForTransactionLock(root);
 
   try { return await operation(); }
   finally { if (!borrowed) fs.closeSync(descriptor); }
+}
+
+function storageBusy() { return new Error('Session storage is busy; retry publication after the current transaction'); }
+
+async function waitForTransactionLock(root) {
+  const deadline = performance.now() + 5000;
+
+  for (;;) {
+    const lock = transactionLock(root);
+
+    if (lock) return lock;
+
+    if (performance.now() >= deadline) throw storageBusy();
+    await delay(50);
+  }
 }
 
 function processStart(pid) {

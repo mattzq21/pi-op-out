@@ -102,7 +102,7 @@ async function publishReview(pi: ExtensionAPI, ctx: ExtensionContext, record: Re
 
     if (!saved.some(entry => entry.type === "custom_message" && entry.customType === "piop-review-link" && Check(reviewSchema, entry.details) && matchesPublication(entry.details, record))) pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
 
-    if (!acknowledge(publication)) ctx.ui.notify(`Review parent publication is pending; the transcript is retained at ${record.sessionPath}`, "warning");
+    if (!await acknowledge(publication)) ctx.ui.notify(`Review parent publication is pending; the transcript is retained at ${record.sessionPath}`, "warning");
   } finally { release(publication); }
 }
 
@@ -112,7 +112,7 @@ async function reconcileReviews(pi: ExtensionAPI, ctx: ExtensionContext) {
   if (!parent) return;
 
   try {
-    const pending = pendingReviews(parent, ctx.sessionManager.getSessionId());
+    const pending = await pendingReviews(parent, ctx.sessionManager.getSessionId());
 
     try { for (const item of pending) await publishReview(pi, ctx, item.record, item.publication); }
     finally { for (const item of pending) release(item.publication); }
