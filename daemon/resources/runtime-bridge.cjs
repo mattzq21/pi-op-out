@@ -45,6 +45,15 @@ function isQueuedUserMessage(message) {
   return queueValidation.check(message);
 }
 
+function tagGoalPrompt(agent, name, message) {
+  const scope = goalPromptContext.getStore();
+
+  if (name !== "followUp" || scope?.session.agent !== agent) return;
+  const goal = currentGoal(scope.session);
+
+  if (goal && message?.role === "user") message.piopGoalId = goal.id;
+}
+
 async function queueContracts(root) {
   const runtimeRequire = createRequire(join(root, "package.json"));
 
@@ -91,6 +100,8 @@ function installQueueProtocol(session, output) {
             scope.tagged = true;
           }
         }
+
+        tagGoalPrompt(this, name, args[0]);
 
         return submit.apply(this, args);
       };
@@ -262,12 +273,16 @@ function acceptGoalPrompt(prepared) {
 function installGoalAcceptance(AgentSession) {
   for (const name of ["_queueSteer", "_queueFollowUp"]) {
     const queue = AgentSession.prototype[name];
-    AgentSession.prototype[name] = function (...args) {
+    AgentSession.prototype[name] = async function (...args) {
       const scope = goalPromptContext.getStore();
 
       if (scope?.session === this) acceptGoalPrompt(scope.prepared);
 
-      return queue.apply(this, args);
+      const result = await queue.apply(this, args);
+
+      if (name === "_queueFollowUp" && scope?.session === this) goalQueueRelease.get(this)?.();
+
+      return result;
     };
   }
 
@@ -325,16 +340,24 @@ const isReview = text => /^\/review(?:\s|$)/.test(text);
 
 const reviewText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
-function hasGoal(session) {
+function currentGoal(session) {
   const entries = session.sessionManager.getEntries();
 
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
 
-    if (entry.type === "custom" && entry.customType === "piop-goal") return entry.data !== null;
+    if (entry.type === "custom" && entry.customType === "piop-goal") return entry.data;
   }
 
-  return false;
+  return null;
+}
+
+const hasGoal = session => currentGoal(session) !== null;
+
+function goalBlocksRelease(session, scope) {
+  const goal = currentGoal(session);
+
+  return goal && (scope.goalId !== goal.id || goal.status !== "active");
 }
 
 function bindReleasedPromptPreparation(session) {
@@ -364,7 +387,7 @@ function bindReleasedPromptPreparation(session) {
 
     if (scope?.session === this && !scope.runRequested) {
       if (this._agentRunAbortRequested) throw new Error("Released follow-up preparation was cancelled.");
-      if (hasGoal(this)) throw new GoalQueueBlocked("A goal is holding released follow-ups.");
+      if (goalBlocksRelease(this, scope)) throw new GoalQueueBlocked("A goal is holding released follow-ups.");
       scope.preparing = false;
       scope.runRequested = true;
       messages = messages.flatMap(message => {
@@ -408,15 +431,14 @@ function restoreReleasedPrompt(session, scope) {
   if (session._pendingNextTurnMessages !== scope.nextTurnMessages) session._pendingNextTurnMessages.unshift(...scope.nextTurnMessages);
 }
 
-async function releaseGoalQueue(session, prompt) {
-  const messages = session.agent.followUpQueue.drain();
+async function releaseGoalQueue(session, prompt, messages = session.agent.followUpQueue.drain()) {
 
   if (!messages.length) return;
   const first = messages[0];
 
   if (isReview(reviewText(first))) return releaseQueuedReviews(session, messages, prompt);
   const images = first.role === "user" ? first.content.filter(part => part.type === "image") : [];
-  const scope = { session, messages, nextTurnMessages: session._pendingNextTurnMessages, inputPending: true, preparing: true, runRequested: false, started: false };
+  const scope = { session, messages, goalId: first.piopGoalId, nextTurnMessages: session._pendingNextTurnMessages, inputPending: true, preparing: true, runRequested: false, started: false };
   const stopTracking = trackReleasedPrompt(session, scope);
   session._agentRunAbortRequested = false;
   session._isAgentRunActive = true;
@@ -438,12 +460,24 @@ async function releaseGoalQueue(session, prompt) {
   }
 }
 
+function takeQueuedGoalPrompt(session) {
+  const goal = currentGoal(session);
+
+  if (!goal) return undefined;
+
+  if (goal.status !== "active" || session._agentRunAbortRequested) return [];
+  const queue = session.agent.followUpQueue.messages;
+  const index = queue.findIndex(message => message.piopGoalId === goal.id);
+
+  return index < 0 ? [] : queue.splice(index, 1);
+}
+
 function scheduleGoalQueueRelease(session, prompt) {
   let pendingSessionId;
   const schedule = () => setImmediate(() => {
     if (!pendingSessionId) return;
 
-    if (session.sessionManager.getSessionId() !== pendingSessionId || hasGoal(session)) {
+    if (session.sessionManager.getSessionId() !== pendingSessionId) {
       pendingSessionId = undefined;
 
       return;
@@ -451,7 +485,10 @@ function scheduleGoalQueueRelease(session, prompt) {
 
     if (!session.isIdle || session._isEmittingAgentSettled) return;
     pendingSessionId = undefined;
-    void releaseGoalQueue(session, prompt);
+    const messages = takeQueuedGoalPrompt(session);
+
+    if (messages?.length === 0) return;
+    void releaseGoalQueue(session, prompt, messages);
   });
 
   session.subscribe(event => {
