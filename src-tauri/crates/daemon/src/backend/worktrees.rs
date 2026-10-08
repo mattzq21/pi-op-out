@@ -482,7 +482,7 @@ pub(super) fn validate_worktree_unused(settings: &AppSettings, host_id: &str, ta
 }
 
 fn remove_worktree_with_checkpoints(settings: &AppSettings, host_id: &str, target: &WorktreeRemovalTarget, cancelled: &AtomicBool) -> Result<(), String> {
-    let script = format!("{}\n(() => {{ {}\ntry {{ preserveAndRemoveWorktree(process.argv[1], authorizeWorktreeRemoval, diffStore.readStore); }} catch (error) {{ process.stderr.write(error.message + '\\n'); process.exitCode = 1; }} }})();", crate::git_diffs::embedded_diff_store(), include_str!("../../../../resources/worktree-checkpoint-preservation.cjs"));
+    let script = format!("{}\n((builtinRequire) => {{ const require = name => name === './session-broker/checkpoint-owner-index.cjs' ? checkpointOwnerIndex : builtinRequire(name); {}\ntry {{ preserveAndRemoveWorktree(process.argv[1], authorizeWorktreeRemoval, diffStore.readStore); }} catch (error) {{ process.stderr.write(error.message + '\\n'); process.exitCode = 1; }} }})(require);", crate::git_diffs::embedded_diff_store(), include_str!("../../../../resources/worktree-checkpoint-preservation.cjs"));
     let mut preserve = if host_id == "local" {
         let mut command = node_command(); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", &script, &target.path]); command
     } else {
