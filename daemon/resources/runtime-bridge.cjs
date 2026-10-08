@@ -10,6 +10,8 @@ const queuePromptContext = new AsyncLocalStorage();
 
 const goalPromptContext = new AsyncLocalStorage();
 
+const releasedPromptContext = new AsyncLocalStorage();
+
 const queuePromptScope = Symbol("piop.queue-prompt");
 
 const wrappedSessions = new WeakSet();
@@ -331,7 +333,75 @@ function hasGoal(session) {
   return false;
 }
 
-function bindGoalQueue(session) {
+function bindReleasedPromptPreparation(session) {
+  const input = session._runInputHandlers;
+  session._runInputHandlers = function (text, images, ...args) {
+    const scope = releasedPromptContext.getStore();
+
+    if (scope?.session === this && scope.inputPending) {
+      scope.inputPending = false;
+
+      return Promise.resolve({ text, images });
+    }
+
+    return input.call(this, text, images, ...args);
+  };
+
+  const run = session._runAgentPrompt;
+  session._runAgentPrompt = function (messages) {
+    const scope = releasedPromptContext.getStore();
+
+    if (scope?.session === this && !scope.started) {
+      scope.started = true;
+      messages = messages.flatMap(message => message.role === "user" ? scope.messages : [message]);
+    }
+
+    return run.call(this, messages);
+  };
+}
+
+async function releaseGoalQueue(session, prompt) {
+  const messages = session.agent.followUpQueue.drain();
+
+  if (!messages.length) return;
+  const first = messages[0];
+  const images = first.role === "user" ? first.content.filter(part => part.type === "image") : [];
+  const scope = { session, messages, inputPending: true, started: false };
+
+  try {
+    await releasedPromptContext.run(scope, () => prompt.call(session, reviewText(first), { images, source: "rpc", expandPromptTemplates: false }));
+  } catch (error) {
+    if (!scope.started) session.agent.followUpQueue.messages.unshift(...messages);
+    session.extensionRunner.createContext().ui.notify(String(error), "error");
+  }
+}
+
+function scheduleGoalQueueRelease(session, prompt) {
+  let pendingSessionId;
+  const schedule = () => setImmediate(() => {
+    if (!pendingSessionId) return;
+
+    if (session.sessionManager.getSessionId() !== pendingSessionId || hasGoal(session)) {
+      pendingSessionId = undefined;
+
+      return;
+    }
+
+    if (!session.isIdle) return;
+    pendingSessionId = undefined;
+    void releaseGoalQueue(session, prompt);
+  });
+
+  session.subscribe(event => {
+    if (pendingSessionId && (event.type === "compaction_end" || event.type === "agent_settled")) schedule();
+  });
+
+  return () => { pendingSessionId = session.sessionManager.getSessionId(); schedule(); };
+}
+
+function bindGoalQueue(session, prompt) {
+  bindReleasedPromptPreparation(session);
+  const releaseQueue = scheduleGoalQueueRelease(session, prompt);
   const queue = session.agent.followUpQueue;
 
   for (const [name, blocked] of [["hasItems", false], ["peek", []]]) {
@@ -347,14 +417,7 @@ function bindGoalQueue(session) {
     const release = customType === "piop-goal" && data === null && hasGoal(session);
     const result = appendCustomEntry.call(this, customType, data, ...args);
 
-    if (release) setImmediate(() => {
-      if (!session.isIdle || hasGoal(session)) return;
-      const messages = session.agent.followUpQueue.drain();
-
-      if (messages.length) void session._runAgentPrompt(messages).catch(error => {
-        session.extensionRunner.createContext().ui.notify(String(error), "error");
-      });
-    });
+    if (release) releaseQueue();
 
     return result;
   };
@@ -507,7 +570,7 @@ async function main() {
   AgentSession.prototype.bindExtensions = async function (...bindings) {
     installQueueProtocol(this, output);
     if (session !== this) {
-      bindGoalQueue(this);
+      bindGoalQueue(this, prompt);
       bindReviewQueue(this);
     }
     await bind.apply(this, bindings);
