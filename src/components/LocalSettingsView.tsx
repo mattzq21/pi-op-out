@@ -13,6 +13,7 @@ import { NativeTransport } from "../lib/nativeTransport";
 import { isMobile, listen } from "../lib/platform";
 import type { AgentConfig, AppSettings, Model, SessionSummary } from "../types";
 import { clientSections, sections, SettingsView, type Section } from "./SettingsView";
+import { LegacyNoteDrafts } from "../plugins/markdown/LegacyNoteDraftRecovery";
 
 interface Props {
   settings: AppSettings;
@@ -40,7 +41,7 @@ export function LocalSettingsView(props: Props) {
       <div class="settings-nav-group"><p class="eyebrow">Daemons</p>{<Key each={[{ id: "local", name: isMobile ? "Connected daemon" : "This computer" }, ...props.settings.hosts.filter((host) => host.enabled !== false)]} by={(host) => host.id}>{(host, _index) => <div ><button class={target() === host().id ? "active" : ""} disabled={target() !== host().id && (dirty() || saving())} aria-expanded={target() === host().id} onClick={() => { if (target() !== host().id) { setTarget(host().id); setSelectedSection("general"); } }}><Monitor size={16} /><span>{host().name}</span></button>{target() === host().id && <div class="settings-daemon-tabs">{<Key each={sections.filter((item) => !clientSections.has(item.id))} by={(item) => item.id}>{(item, _index) => <button  class={selectedSection() === item().id ? "active" : ""} aria-current={selectedSection() === item().id ? "page" : undefined} onClick={() => setSelectedSection(item().id)}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>}</div>}</Key>}</div>
       {dirty() && <p class="settings-switch-hint">Save before switching computers, or <button disabled={saving()} onClick={() => { changeDirty(false); setGeneration((value) => value + 1); }}>discard changes</button>.</p>}
     </nav>
-    <div class="settings-editor-content"><Rerun on={() => `${target()}:${generation()}`}>{(_key) => <DaemonSettingsEditor  {...props} target={target()} label={label()} selectedSection={selectedSection()} onDirtyChange={changeDirty} onSavingChange={setSaving} />}</Rerun></div>
+    <div class="settings-editor-content"><LegacyNoteDrafts busy={saving()} /><Rerun on={() => `${target()}:${generation()}`}>{(_key) => <DaemonSettingsEditor  {...props} target={target()} label={label()} selectedSection={selectedSection()} onDirtyChange={changeDirty} onSavingChange={setSaving} />}</Rerun></div>
   </div>;
 }
 

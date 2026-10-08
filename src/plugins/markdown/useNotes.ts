@@ -1,10 +1,11 @@
-import { batch, createSignal, onCleanup, onMount, type Accessor } from "solid-js";
+import { batch, createMemo, createSignal, onCleanup, onMount, type Accessor } from "solid-js";
 import { z } from "zod";
 import { captureDaemonTransport } from "../../lib/platform";
 import { required } from "../../lib/required";
 import { registerPluginFlush } from "../lifecycle";
 import { createDependencyEffect } from "../../lib/solid";
 import { ownershipSchema } from "../ownership";
+import { legacyNoteDraftCurrent, readLegacyNoteDraft, retireLegacyNoteDraft, type LegacyNoteDraft } from "./legacyNoteDrafts";
 
 const noteOwnershipSchema = ownershipSchema.extend({ token: z.string().nullable() });
 
@@ -31,6 +32,9 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const [readError, setReadError] = createSignal("");
   const [saveError, setSaveError] = createSignal("");
   const [conflict, setConflict] = createSignal(false);
+  const [restoredLegacyDraft, setRestoredLegacyDraft] = createSignal<LegacyNoteDraft>();
+  const storedLegacyDraft = createMemo(() => readLegacyNoteDraft(target));
+  const legacyDraft = () => storedLegacyDraft()?.stored === restoredLegacyDraft()?.stored ? undefined : storedLegacyDraft();
   const error = () => readError() || saveError();
   const leaseId = crypto.randomUUID();
   let leaseTimer: ReturnType<typeof setTimeout> | undefined;
@@ -45,8 +49,6 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const dirty = () => !!document() && (unconfirmed() !== undefined || content() !== document()?.content);
   const editable = () => visible() && !loading() && !flushing() && !releasing() && !conflict() && leaseValid() && ownership().owned;
   const pendingWork = () => !!inFlight || dirty();
-
-  try { localStorage.removeItem("piop-chat-note:" + JSON.stringify([target.hostId, target.sessionId])); } catch { }
 
   const call = (action: string, fields: Record<string, string> = {}) => {
     const result = operations.then(() => transport.invoke("plugin_call", { hostId: target.hostId, pluginId: "markdown", request: { sessionId: target.sessionId, leaseId, action, ...fields } }, noteSchema));
@@ -88,6 +90,18 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     else if (!unsaved || confirmedSave(next) || content() === next.content) setUnconfirmed(undefined);
   };
 
+  const retireRestoredDraft = () => {
+    const draft = restoredLegacyDraft();
+
+    if (!draft) return;
+    setRestoredLegacyDraft(undefined);
+    retireLegacyNoteDraft(draft);
+  };
+
+  const confirmRestoredDraft = (next: NoteDocument) => {
+    if (!next.deleted && (next.content === restoredLegacyDraft()?.content || !dirty())) retireRestoredDraft();
+  };
+
   const selectDocument = (next: NoteDocument) => batch(() => {
     const unsaved = dirty();
     const displaced = displacesDraft(next);
@@ -102,6 +116,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
 
     if (!dirty()) { setConflict(false); setSaveError(""); }
     else if (!next.ownership.owned && !saveError()) setSaveError("Your unsaved edits are retained. Take control of the note to save them.");
+    confirmRestoredDraft(next);
   });
 
   const loadDocument = async (action: string) => {
@@ -298,7 +313,27 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
 
   const useSaved = () => {
     if (loading() || saving()) return;
-    setUnconfirmed(undefined); setContent(document()?.content ?? ""); setConflict(false); setSaveError("");
+    batch(() => {
+      retireRestoredDraft();
+      setUnconfirmed(undefined); setContent(document()?.content ?? ""); setConflict(false); setSaveError("");
+    });
+  };
+
+  const restoreLegacyDraft = () => {
+    const draft = legacyDraft();
+
+    if (!draft || draft.content === undefined || !document() || loading() || saving() || dirty() || !transport.active()) return;
+
+    if (!legacyNoteDraftCurrent(draft)) { setSaveError("The older draft changed or could not be read. Review it again before restoring it.");
+
+    return; }
+
+    const body = draft.content;
+
+    batch(() => {
+      setRestoredLegacyDraft(draft);
+      setContent(body); setUnconfirmed(body); setConflict(true);
+    });
   };
 
   const resume = () => { if (!window.document.hidden) void sync(); };
@@ -339,6 +374,6 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const ready = () => !!document() && !document()?.deleted && !document()?.disabled;
   const pending = () => loading() || saving() || releasing() || dirty() || ownership().owned;
 
-  return { content, loading, saving, dirty, error, conflict, savedContent: () => document()?.content ?? "", owned: () => ownership().owned,
+  return { content, loading, saving, dirty, error, conflict, legacyDraft, restoreLegacyDraft, savedVersion: () => document()?.version, savedContent: () => document()?.content ?? "", owned: () => ownership().owned,
     deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending, editable, edit, save, retry, takeControl, saveEdits, useSaved };
 }
