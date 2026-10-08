@@ -640,7 +640,7 @@ export function Composer(props: Props) {
 
       return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} >
         {renderPendingDragHandle()}
-        <span class="pending-message-text" data-tooltip={text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().retry && <small>Not sent · </small>}{text()}</span>
+        <span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().retry && <small>{message().recovered ? "Saved answer · " : "Not sent · "}</small>}{text()}</span>
         {renderPendingMessageActions()}
       </div>;
     }}</Key>}</div>}

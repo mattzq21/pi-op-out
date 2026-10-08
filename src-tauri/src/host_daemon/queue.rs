@@ -1,5 +1,7 @@
 mod persistence;
 mod ordering;
+mod submission;
+mod questions;
 
 pub(super) use persistence::{clear_saved, PendingStore};
 use ordering::{cleared_messages, move_item, queue_neighbor};
@@ -338,6 +340,7 @@ impl SessionQueue {
         let id = text(item, "id");
         self.state().sending.insert(id.clone());
         let mut command = json!({"type":"queue_prompt","queueId":id,"message":item["message"],"streamingBehavior":item["behavior"],"discardOnRejection":discard_on_rejection});
+        if let Some(response) = item.get("questionResponse") { command["questionResponse"] = response.clone(); }
         if item["images"].as_array().is_some_and(|images| !images.is_empty()) {
             command["images"] = item["images"].clone();
         }
@@ -495,12 +498,16 @@ impl SessionQueue {
     async fn clear(&self, command: Value) -> Result<Value> {
         let originals = self.state().pending.clone();
         let result = self.execute(command).await?;
+        let removed: Vec<_> = {
+            let state = self.state();
+            originals.iter().filter(|item| !flag(item, "retry")
+                && array(&result, if item["behavior"] == "steer" { "steering" } else { "followUp" }).contains(&item["message"]))
+                .chain(state.held.iter().flatten()).cloned().collect()
+        };
+        for item in &removed { self.acknowledge_question_removal(item, "remove").await?; }
         {
             let mut state = self.state();
-            let removed: Vec<_> = originals.iter().filter(|item| !flag(item, "retry")
-                && array(&result, if item["behavior"] == "steer" { "steering" } else { "followUp" }).contains(&item["message"]))
-                .chain(state.held.iter().flatten()).map(|item| text(item, "id")).collect();
-            for id in removed { state.remove(&id); }
+            for item in removed { state.remove(&text(&item, "id")); }
             state.held = None;
             state.steering.clear(); state.follow_up.clear(); state.awaiting_steering.clear();
             self.persist(&mut state)?;
@@ -518,46 +525,6 @@ impl SessionQueue {
         Ok(result)
     }
 
-    async fn enqueue(&self, command: Value, name: &str) -> Result<Value> {
-        let id = Uuid::new_v4().to_string();
-        let mut pending = json!({"id":id,"message":command["message"],"behavior":if name == "steer" { "steer" } else { "followUp" }});
-        if let Some(images) = command.get("images") {
-            pending["images"] = images.clone();
-        }
-        let held = {
-            let mut state = self.state();
-            state.pending.push(pending.clone());
-            if let Err(error) = self.persist(&mut state) {
-                state.remove(&id);
-                return Err(error);
-            }
-            if let Some(held) = &mut state.held {
-                held.push(pending.clone());
-                held.sort_by_key(|item| item["behavior"] == "followUp");
-                true
-            } else {
-                state.sending.insert(id.clone());
-                false
-            }
-        };
-        if held {
-            self.publish();
-            return Ok(Value::Null);
-        }
-        let result = self.deliver(&pending, true).await;
-        let rejected = {
-            let mut state = self.state();
-            let rejected = result.is_err() && state.failed_submission(&id);
-            state.sending.remove(&id);
-            rejected
-        };
-        self.publish();
-        if result.is_err() && !rejected {
-            self.report_storage_error(result.map(|_| ()));
-            return Ok(Value::Null);
-        }
-        result
-    }
     async fn stop(&self, result: Result<Value>) -> Result<Value> {
         match result {
             Err(error) if error == "Pi command timed out" => {
@@ -595,19 +562,10 @@ impl SessionQueue {
         } else {
             self.gate.lock().await
         };
-        let (target, behavior, neighbor) = {
-            let state = self.state();
-            let Some(target) = state.pending.iter().find(|item| item["id"] == id).cloned() else {
-                return Ok(Value::Null);
-            };
-            let behavior = action.as_str().unwrap_or("reorder").to_owned();
-            let moving = matches!(behavior.as_str(), "moveUp" | "moveDown" | "reorder");
-            let neighbor = queue_neighbor(&state.pending, &target, &action, &behavior);
-            if moving && (flag(&target, "retry") || neighbor.is_none()) {
-                return Ok(Value::Null);
-            }
-            (target, behavior, neighbor)
+        let Some((target, behavior, neighbor)) = self.pending_change(id, &action) else {
+            return Ok(Value::Null);
         };
+        self.acknowledge_question_removal(&target, &behavior).await?;
         if cancelling {
             return self.change_live(id, "remove", None, &action).await;
         }
@@ -618,6 +576,16 @@ impl SessionQueue {
             return self.retry(id, target, &behavior).await;
         }
         self.change_live(id, &behavior, neighbor.as_deref(), &action).await
+    }
+
+    fn pending_change(&self, id: &str, action: &Value) -> Option<(Value, String, Option<String>)> {
+        let state = self.state();
+        let target = state.pending.iter().find(|item| item["id"] == id)?.clone();
+        let behavior = action.as_str().unwrap_or("reorder").to_owned();
+        let moving = matches!(behavior.as_str(), "moveUp" | "moveDown" | "reorder");
+        let neighbor = queue_neighbor(&state.pending, &target, action, &behavior);
+        if moving && (flag(&target, "retry") || neighbor.is_none()) { return None; }
+        Some((target, behavior, neighbor))
     }
 
     fn change_held(&self, id: &str, behavior: &str, neighbor: Option<&str>, action: &Value) -> bool {

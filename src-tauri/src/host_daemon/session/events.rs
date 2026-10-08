@@ -171,10 +171,7 @@ impl Session {
     fn receive_status(&self, event: &Value) -> bool {
         let parsed = || serde_json::from_str::<Value>(event["statusText"].as_str().unwrap_or_default());
         match event["statusKey"].as_str() {
-            Some("piop-async-questions") => match parsed() {
-                Ok(requests) => self.receive_questions(requests),
-                Err(error) => self.host.output(json!({"type":"diagnostic","line":error.to_string()})),
-            },
+            Some("piop-async-questions" | "piop-async-question-recovery") => self.receive_question_status(event, parsed()),
             Some("pi-desktop-turn-capture") => self.receive_capture(parsed()),
             Some("pi-desktop-worktree-root") => self.receive_worktree_root(parsed()),
             Some("piop-input-rejected") => {
@@ -185,6 +182,16 @@ impl Session {
             _ => return false,
         }
         true
+    }
+
+    fn receive_question_status(&self, event: &Value, parsed: serde_json::Result<Value>) {
+        match parsed {
+            Ok(requests) => {
+                if event["statusKey"] == "piop-async-question-recovery" { self.queue.recover_question_answers(&requests); }
+                else { self.receive_questions(requests); }
+            }
+            Err(error) => self.host.output(json!({"type":"diagnostic","line":error.to_string()})),
+        }
     }
 
     fn receive_capture(&self, parsed: serde_json::Result<Value>) {

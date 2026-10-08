@@ -42,7 +42,7 @@ export interface PromptContextInfo {
   tokens: { system: number; instructions: number; tools: number; skills: number };
 }
 
-export interface PendingMessage { id: string; message: string; behavior: "steer" | "followUp"; images?: Omit<ImageAttachment, "data">[]; retry?: boolean; }
+export interface PendingMessage { id: string; message: string; behavior: "steer" | "followUp"; images?: Omit<ImageAttachment, "data">[]; retry?: boolean; recovered?: boolean; }
 
 export interface AgentState { viewers?: number; pendingMessages?: PendingMessage[]; model: Model | null; thinkingLevel: string; isStreaming: boolean; isCompacting?: boolean; isPaused?: boolean; isPausing?: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
 

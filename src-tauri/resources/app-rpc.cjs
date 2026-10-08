@@ -4,12 +4,19 @@ const { pathToFileURL } = require("node:url");
 const { execFileSync } = require("node:child_process");
 const { PassThrough } = require("node:stream");
 const { AsyncLocalStorage } = require("node:async_hooks");
+const { createRequire } = require("node:module");
 
 const queuePromptContext = new AsyncLocalStorage();
+
 const queuePromptScope = Symbol("piop.queue-prompt");
+
 const wrappedSessions = new WeakSet();
+
 const wrappedAgents = new WeakSet();
+
 const wrappedManagers = new WeakSet();
+
+let queueValidation;
 
 function syncPath(path, flags) {
   const fd = openSync(path, flags);
@@ -18,7 +25,22 @@ function syncPath(path, flags) {
 }
 
 function isQueuedUserMessage(message) {
-  return message.role === "user" && typeof message.piopQueueId === "string" && Boolean(message.piopQueueId);
+  return queueValidation.check(message);
+}
+
+async function queueContracts(root) {
+  const runtimeRequire = createRequire(join(root, "package.json"));
+
+  const [{ Type }, { Check, Parse }] = await Promise.all([
+    import(pathToFileURL(runtimeRequire.resolve("typebox")).href),
+    import(pathToFileURL(runtimeRequire.resolve("typebox/value")).href),
+  ]);
+
+  const response = Type.Object({ type: Type.Literal("answer_question"), requestId: Type.String(), value: Type.Optional(Type.String()), cancelled: Type.Optional(Type.Boolean()) });
+  const prompt = Type.Object({ queueId: Type.String({ minLength: 1 }), message: Type.String(), streamingBehavior: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]), images: Type.Optional(Type.Array(Type.Unknown())), questionResponse: Type.Optional(response) });
+  const user = Type.Object({ role: Type.Literal("user"), piopQueueId: Type.String({ minLength: 1 }) });
+
+  return { parse: payload => Parse(prompt, payload), check: message => Check(user, message) };
 }
 
 function installQueueProtocol(session, output) {
@@ -78,16 +100,20 @@ function installQueueProtocol(session, output) {
 
         if (newSessionFiles.has(file)) {
           syncPath(dirname(file), "r");
+
           newSessionFiles.delete(file);
         }
       } catch (error) {
         console.error(`Could not sync queued prompt ${message.piopQueueId}: ${error instanceof Error ? error.message : String(error)}`);
+
         return entryId;
       }
 
       output({ type: "queue_consumed", queueId: message.piopQueueId, sessionId: this.getSessionId(), entryId });
+
       return entryId;
     };
+
     wrappedManagers.add(manager);
   }
 }
@@ -132,32 +158,53 @@ function appInput(dispatch) {
   stdin.on("end", () => { if (pending) input.write(pending); input.end(); });
 }
 
+async function resolveQueuedAnswer(payload, session) {
+  if (!payload.questionResponse) return false;
+  const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.app-rpc"))?.value;
+
+  if (!emit) throw new Error("Piop app requests are unavailable");
+  const request = { command: "answer_question", payload: { ...payload.questionResponse, action: "resolve", queueId: payload.queueId }, ctx: session.extensionRunner.createCommandContext() };
+  emit(request);
+
+  if (!request.ready) throw new Error("Question answer resolution is unavailable");
+  await request.ready;
+
+  return session.sessionManager.getBranch().some(entry => entry.type === "message" && entry.message.role === "user" && entry.message.piopQueueId === payload.queueId);
+}
+
+async function dispatchQueuedPrompt(command, session, output) {
+  const payload = queueValidation.parse(command.payload);
+
+  if (await resolveQueuedAnswer(payload, session)) {
+    output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition: "handled" } });
+
+    return;
+  }
+
+  let preflightSucceeded = false;
+  void session.prompt(payload.message, {
+    images: payload.images,
+    streamingBehavior: payload.streamingBehavior,
+    source: "rpc",
+    [queuePromptScope]: { session, queueId: payload.queueId, tagged: false },
+    preflightResult: disposition => {
+      preflightSucceeded = true;
+      output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition } });
+    },
+  }).catch(error => {
+    if (!preflightSucceeded) {
+      output({ type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+}
+
 async function dispatch(command, session, output) {
   try {
     if (!session) throw new Error("Piop app requests are unavailable");
 
     if (command.command === "queue_prompt") {
-      const payload = command.payload;
+      await dispatchQueuedPrompt(command, session, output);
 
-      if (typeof payload?.queueId !== "string" || !payload.queueId || typeof payload.message !== "string") {
-        throw new Error("queue_prompt requires queueId and message");
-      }
-
-      let preflightSucceeded = false;
-      void session.prompt(payload.message, {
-        images: payload.images,
-        streamingBehavior: payload.streamingBehavior,
-        source: "rpc",
-        [queuePromptScope]: { session, queueId: payload.queueId, tagged: false },
-        preflightResult: disposition => {
-          preflightSucceeded = true;
-          output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition } });
-        },
-      }).catch(error => {
-        if (!preflightSucceeded) {
-          output({ type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) });
-        }
-      });
       return;
     }
 
@@ -178,6 +225,7 @@ async function dispatch(command, session, output) {
 async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const root = runtimeRoot(executable);
+  queueValidation = await queueContracts(root);
   const { AgentSession } = await import(pathToFileURL(join(root, "dist/index.js")).href);
   const { writeRawStdout } = await import(pathToFileURL(join(root, "dist/core/output-guard.js")).href);
   const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);

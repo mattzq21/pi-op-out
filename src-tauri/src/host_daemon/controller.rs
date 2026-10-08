@@ -582,7 +582,7 @@ impl Host {
             session.send(&command).await?;
             return Ok(Value::Null);
         }
-        let response=dialog.queued_response.unwrap_or_else(||json!({"type":"answer_question","requestId":dialog.event["asyncQuestion"],"value":command["value"],"cancelled":flag(&command,"cancelled")}));
+        let response=dialog.queued_response.or_else(||session.queue.question_response(&text(&dialog.event,"asyncQuestion"))).unwrap_or_else(||json!({"type":"answer_question","requestId":dialog.event["asyncQuestion"],"value":command["value"],"cancelled":flag(&command,"cancelled")}));
         session.change_dialog(&id, |dialog| dialog.answering = true);
         let result = async {
             let mut prepare = response.clone();
@@ -591,7 +591,7 @@ impl Host {
             if prepared["message"].as_str().is_some_and(|message| !message.is_empty()) && !dialog.answer_queued {
                 session
                     .queue
-                    .command(json!({"type":if session.working(){"steer"}else{"follow_up"},"message":prepared["message"]}))
+                    .command(json!({"type":if session.working(){"steer"}else{"follow_up"},"message":prepared["message"],"questionResponse":response}))
                     .await?;
                 session.change_dialog(&id, |dialog| {
                     dialog.answer_queued = true;
@@ -600,6 +600,7 @@ impl Host {
             }
             let mut resolve = response;
             resolve["action"] = json!("resolve");
+            resolve["queueId"] = prepared["queueId"].clone();
             session.raw(resolve).await?;
             Ok(Value::Null)
         }
