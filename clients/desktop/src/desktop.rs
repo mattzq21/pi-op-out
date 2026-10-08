@@ -2,9 +2,11 @@ mod platform;
 mod daemon_endpoint;
 mod desktop_daemon;
 mod client_settings;
+#[path = "../../../shared/rust/settings_concurrency.rs"]
 mod settings_concurrency;
-#[path = "backend/private_fs.rs"]
+#[path = "../../../shared/rust/private_fs.rs"]
 mod private_fs;
+use private_fs::ensure_private_dir;
 mod clipboard_image;
 use clipboard_image::{configure_image_copy, read_clipboard_image};
 use client_settings::{load_client_settings, save_client_settings};
@@ -23,19 +25,6 @@ fn home_dir() -> Result<PathBuf, String> {
     #[cfg(feature = "webdriver")]
     if let Some(path) = std::env::var_os("PIOP_TEST_HOME") { return Ok(PathBuf::from(path)); }
     std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| "HOME is not set".into())
-}
-
-fn ensure_private_dir(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path).map_err(|error| error.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let permissions = fs::metadata(path).map_err(|error| error.to_string())?.permissions();
-        if permissions.mode() & 0o777 != 0o700 {
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
 }
 
 #[tauri::command]

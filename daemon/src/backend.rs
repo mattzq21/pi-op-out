@@ -340,6 +340,7 @@ mod tests;
 
 #[path = "backend/settings_storage.rs"]
 mod settings_storage;
+#[path = "../../shared/rust/settings_concurrency.rs"]
 mod settings_concurrency;
 #[path = "backend/extensions.rs"]
 mod extensions;
