@@ -68,6 +68,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS ephemeral_cleanup_records (token TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ephemeral_cleanup_owners (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS queued_inputs (session_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS legacy_queued_inputs (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_comparison_state (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_completed_comparisons (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, turn_id TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY(session_id, turn_id));`);
 
@@ -188,6 +189,7 @@ function importSessions(db, root) {
     importPendingDiffs(db);
     importJsonRecords(db, root, 'ephemeral-cleanup/owners', 'ephemeral_cleanup_owners', 'ephemeral-cleanup-owners-v1');
     importJsonRecords(db, root, 'queued-input', 'queued_inputs', 'queued-inputs-v1');
+    importJsonRecords(db, root, 'conversation-queues', 'legacy_queued_inputs', 'legacy-queued-inputs-v1');
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
@@ -214,7 +216,7 @@ function importJsonRecords(db, root, area, table, migration) {
 function queuedInputs(root) {
   const db = open(root);
 
-  try { return db.prepare('SELECT session_id, record_json FROM queued_inputs').all(); }
+  try { return db.prepare('SELECT session_id, record_json FROM queued_inputs UNION ALL SELECT owner_key AS session_id, record_json FROM legacy_queued_inputs').all(); }
   finally { db.close(); }
 }
 
@@ -222,7 +224,8 @@ function queuedInput(root, id) {
   const db = open(root);
 
   try {
-    const row = db.prepare('SELECT record_json FROM queued_inputs WHERE session_id=lower(?)').get(id);
+    const key = require('node:crypto').createHash('sha256').update(id.toLowerCase()).digest('hex').slice(0, 40);
+    const row = db.prepare('SELECT record_json FROM queued_inputs WHERE session_id=lower(?) UNION ALL SELECT record_json FROM legacy_queued_inputs WHERE owner_key=? LIMIT 1').get(id, key);
 
     return row ? JSON.parse(row.record_json) : undefined;
   } finally { db.close(); }

@@ -38,7 +38,12 @@ fn recover_storage(root: &Path, ownership: &ConversationOwnership) -> Result<Rec
 fn cleanup_temporary(root: &Path) -> Result<()> {
     let _publication = super::super::reference_publication::lock(root)?;
     let _storage = super::temporary::lock(root)?;
-    super::temporary::cleanup(&root.join("queued-input"), None)
+    let db = crate::session_registry::open(root)?;
+    let cleaned: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM storage_migrations WHERE name='queued-input-temporary-cleanup-v1')", [], |row| row.get(0)).map_err(|error| error.to_string())?;
+    if cleaned { return Ok(()); }
+    super::temporary::cleanup(&root.join("queued-input"), None)?;
+    db.execute("INSERT INTO storage_migrations VALUES ('queued-input-temporary-cleanup-v1')", []).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn recover_entries(root: &Path, ownership: &ConversationOwnership, entries: Vec<String>) -> Recovery {

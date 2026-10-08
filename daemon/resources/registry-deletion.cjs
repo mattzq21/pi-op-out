@@ -23,6 +23,8 @@ function forget(root, targets) {
     for (const target of targets) {
       mark.run(target.sessionId.toLowerCase(), Date.now(), target.path);
       db.prepare('DELETE FROM queued_inputs WHERE session_id=lower(?)').run(target.sessionId);
+      const key = require('node:crypto').createHash('sha256').update(target.sessionId.toLowerCase()).digest('hex').slice(0, 40);
+      db.prepare('DELETE FROM legacy_queued_inputs WHERE owner_key=?').run(key);
     }
 
     const registry = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_repositories'").get();
