@@ -46,7 +46,10 @@ export async function refreshPlugins(host: string) {
 
 export async function restartPlugins(host: string, enabled: string[], revision: string, closeTerminals = false) {
   await flushPlugins(host);
-  await Promise.all(plugins.flatMap(plugin => enabled.includes(plugin.id) ? [plugin.load()] : []));
+  for (const id of enabled) {
+    const plugin = plugins.find(plugin => plugin.id === id);
+    if (plugin) await plugin.load();
+  }
 
   const response = await invoke("restart_daemon", { hostId: host, enabled, revision, closeTerminals }, z.union([
     z.object({ restartId: z.string() }),

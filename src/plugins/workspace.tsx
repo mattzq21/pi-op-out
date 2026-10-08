@@ -25,7 +25,10 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const runtimeHost = (scope: string) => scope === "client" ? "local" : host();
   const hosts = createMemo(() => [...new Set(plugins.map(plugin => runtimeHost(plugin.scope)))]);
   const conversationReady = createMemo(() => Boolean(source().sessionId) && (source().messageCount ?? 0) > 0);
-  const enabledPlugins = createMemo(() => plugins.filter(plugin => (plugin.scope === "client" || conversationReady()) && pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
+  const enabledPlugins = createMemo(() => {
+    const order = [...new Set(hosts().flatMap(target => pluginStatus(target)?.enabled ?? []))];
+    return order.flatMap(id => plugins.filter(plugin => plugin.id === id && (plugin.scope === "client" || conversationReady()) && pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
+  });
   const error = () => loadError() ?? hosts().map(pluginError).filter(Boolean).join("\n");
 
   const activate = (id: string) => {
@@ -58,36 +61,35 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
     setRunning(retained);
 
     for (const item of previous) if (!retained.includes(item)) item.dispose();
-    void Promise.allSettled(enabled.map(async definition => ({ definition, module: retained.some(item => item.id === definition.id) ? undefined : await definition.load() }))).then(loaded => {
-      if (disposed || current !== generation) return;
+    void (async () => {
       const next: RunningPlugin[] = [];
       const failures: string[] = [];
 
-      for (const [index, result] of loaded.entries()) {
-        if (result.status === "rejected") { failures.push(`${enabled[index].name}: ${String(result.reason)}`); continue; }
-
-        const { definition, module } = result.value;
+      for (const definition of enabled) {
+        if (disposed || current !== generation) return;
         const existing = retained.find(item => item.id === definition.id);
 
         if (existing) { next.push(existing); continue; }
 
-        if (!module) continue;
-
         try {
+          const module = await definition.load();
+          if (disposed || current !== generation) return;
           next.push(createRoot(dispose => {
             try {
               return { id: definition.id, name: definition.name, dispose,
                 instance: module.createPlugin({ source, visible: () => open() && visible() && active() === definition.id, activate: () => activate(definition.id) }) };
             } catch (reason) { dispose(); throw reason; }
           }, owner));
+          setRunning([...next, ...retained.filter(item => !next.includes(item))]);
         } catch (reason) { failures.push(`${definition.name}: ${String(reason)}`); }
       }
 
+      if (disposed || current !== generation) return;
       setRunning(next);
 
       if (!next.length) setOpen(false);
       setLoadError(failures.length ? `Plugins could not load: ${failures.join("\n")}` : undefined);
-    }).catch(reason => { if (current === generation) setLoadError(`Plugins could not load: ${String(reason)}`); });
+    })().catch(reason => { if (current === generation) setLoadError(`Plugins could not load: ${String(reason)}`); });
   });
   createEffect(() => { if (!tabs().some(item => item.id === active())) setActive(tabs()[0]?.id ?? ""); });
   createEffect(() => { if (open()) running().find(item => item.id === active())?.instance.show?.(); });

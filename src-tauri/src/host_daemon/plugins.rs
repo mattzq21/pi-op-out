@@ -54,10 +54,19 @@ impl Events for PluginEvents {
 impl Runtime {
     async fn load(executable: &str, enabled: Vec<String>, events: Arc<dyn Events>) -> Result<Self> {
         validate(&enabled)?;
-        if enabled.iter().any(|id| id == "markdown") { markdown::initialize()?; }
-        let chatgpt = if enabled.iter().any(|id| id == "chatgpt") {
-            Some(Arc::new(start_chatgpt(executable, events).await?))
-        } else { None };
+        let mut chatgpt: Option<Arc<Sdk>> = None;
+        for id in &enabled {
+            match id.as_str() {
+                "markdown" => {
+                    if let Err(error) = markdown::initialize() {
+                        if let Some(sdk) = &chatgpt { sdk.shutdown().await; }
+                        return Err(error);
+                    }
+                },
+                "chatgpt" => chatgpt = Some(Arc::new(start_chatgpt(executable, events.clone()).await?)),
+                _ => unreachable!(),
+            }
+        }
         Ok(Self { enabled, chatgpt })
     }
 
