@@ -448,11 +448,13 @@ async function acknowledge(publication) {
 }
 
 async function pendingReviews(parentPath, parentId) {
+  if (!io.exists(parentPath)) return [];
   const root = io.rootForTarget(parentPath);
 
   if (!journalFiles(root).length) return [];
 
   return io.lockedAsync(root, () => {
+    if (!io.exists(parentPath)) return [];
     const parent = io.header(parentPath);
 
     if (!parent || parent.id !== parentId) throw new Error('Live review publication requires its actual original parent');

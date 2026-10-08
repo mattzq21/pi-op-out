@@ -108,15 +108,22 @@ async function publishReview(pi: ExtensionAPI, ctx: ExtensionContext, record: Re
 
 async function reconcileReviews(pi: ExtensionAPI, ctx: ExtensionContext) {
   const parent = ctx.sessionManager.getSessionFile();
+  const parentId = ctx.sessionManager.getSessionId();
 
   if (!parent) return;
+  const current = () => ctx.sessionManager.getSessionFile() === parent && ctx.sessionManager.getSessionId() === parentId;
 
   try {
-    const pending = await pendingReviews(parent, ctx.sessionManager.getSessionId());
+    const pending = await pendingReviews(parent, parentId);
 
-    try { for (const item of pending) await publishReview(pi, ctx, item.record, item.publication); }
+    try {
+      for (const item of pending) {
+        if (!current()) return;
+        await publishReview(pi, ctx, item.record, item.publication);
+      }
+    }
     finally { for (const item of pending) release(item.publication); }
-  } catch (error) { ctx.ui.notify(`Review publication recovery is pending: ${String(error)}`, "warning"); }
+  } catch (error) { if (current()) ctx.ui.notify(`Review publication recovery is pending: ${String(error)}`, "warning"); }
 }
 
 async function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string, inherited = false, images?: Static<typeof reviewRequestSchema>["images"]) {
