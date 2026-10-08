@@ -71,7 +71,7 @@ export function registerWorktreePreparation(owner: NativeTransport, prepare: () 
 }
 
 export function waitForConversationReady(owner: NativeTransport, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
-  if (!ready()) updateChatPreparation(owner, "Preparing conversation…");
+  if (!ready()) updateChatPreparation(owner, "Getting ready...");
 
   return new Promise<void>((resolve, reject) => createRoot((dispose) => {
     const finish = (error?: Error) => { dispose();
@@ -90,7 +90,7 @@ export function waitForConversationReady(owner: NativeTransport, active: Accesso
 
 export async function prepareChatWorktree(owner: NativeTransport, select: (path: string, host: string, onActivate: (destination: NativeTransport) => Promise<void>) => Promise<void>, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
   await waitForConversationReady(owner, active, ready, error);
-  updateChatPreparation(owner, "Preparing conversation…");
+  updateChatPreparation(owner, "Getting ready...");
   const preparation = registeredWorktreePreparation(owner);
   const path = preparation ? await preparation : undefined;
 
@@ -100,7 +100,7 @@ export async function prepareChatWorktree(owner: NativeTransport, select: (path:
 
   return owner; }
 
-  updateChatPreparation(owner, "Preparing conversation…");
+  updateChatPreparation(owner, "Getting ready...");
   let selected: NativeTransport | undefined;
   await select(path, owner.currentHostId(), async (destination) => {
     const current = chatSubmission(owner);
