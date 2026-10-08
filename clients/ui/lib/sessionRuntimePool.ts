@@ -40,6 +40,8 @@ export class SessionRuntimePool {
   private readonly runningTransports = new Set<NativeTransport>();
   private readonly unseenTransports = new Set<NativeTransport>();
   private readonly interactiveTransports = new Set<NativeTransport>();
+  private readonly observers = new Map<NativeTransport, number>();
+  private readonly deferredReleases = new Set<NativeTransport>();
   private readonly retainedTransports = new Set<NativeTransport>();
   private readonly diffStates = new Map<NativeTransport, DiffState>();
   private readonly listeners = new Set<() => void>();
@@ -300,12 +302,37 @@ export class SessionRuntimePool {
 
   isInteractive(transport: NativeTransport) { return this.interactiveTransports.has(transport); }
 
+  observe(transport: NativeTransport) {
+    this.observers.set(transport, (this.observers.get(transport) ?? 0) + 1);
+    let observing = true;
+
+    return () => {
+      if (!observing) return;
+      observing = false;
+      const remaining = (this.observers.get(transport) ?? 1) - 1;
+
+      if (remaining) { this.observers.set(transport, remaining);
+
+      return; }
+
+      this.observers.delete(transport);
+
+      if (this.deferredReleases.delete(transport)) queueMicrotask(() => {
+        if (transport !== this.activeTransport) void this.release(transport).catch(reason => this.errorHandler?.(`Could not release viewed conversation: ${String(reason)}`));
+      });
+    };
+  }
+
   async release(transport: NativeTransport) {
     const pending = this.releasing.get(transport);
 
     if (pending) return pending;
 
     if (!this.transports.has(transport) || this.isInteractive(transport)) return;
+
+    if (this.observers.has(transport)) { this.deferredReleases.add(transport);
+
+    return; }
 
     const release = Promise.resolve().then(async () => {
       await transport.dispose();

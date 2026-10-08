@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { TranscriptPlugins } from "../plugins/transcript";
+import type { PluginConversation } from "../plugins/types";
 import { stringsSchema, validItems } from "../lib/messageSchemas";
 import { required } from "../lib/required";
 import { GoalBar } from "./GoalBar";
@@ -7,7 +8,7 @@ import { ReviewNavigationContext } from "./ReviewLink";
 import { chatSubmission, trackChatSubmission } from "../lib/newChatWorktree";
 import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandle, type DraftSubmissionPayload } from "../lib/draftSubmission";
 import { Key, Rerun } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
+import { createComputed, createMemo, createSignal, Index, Show, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
 
@@ -35,7 +36,7 @@ function canRetry(props: Props, ownsConversation: boolean) {
   return ownsConversation && !props.readOnly && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
 }
 
-export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
+export function ChatView(props: Props & { transcriptActions?: JSXElement; followConversation?: () => Accessor<PluginConversation> }) {
   const imageProject = () => {
     const cwd = props.projectCwd ?? (props.state.sessionId ? props.transport?.currentCwd() : undefined);
 
@@ -273,7 +274,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement }) {
   const ConversationShell = () => <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} oncapture:focus={() => props.onActivate?.()} oncapture:pointerdown={() => props.onActivate?.()}>
     {props.transcriptActions}
     <ConversationContent />
-    <TranscriptPlugins messages={() => messagesRef.current} source={() => ({ hostId: props.transport?.currentHostId() ?? "local", sessionId: props.state.sessionId, title: props.state.sessionName || "Current conversation", messageCount: props.state.messageCount, messages: [...props.messages], gitDiffs: props.gitDiffs })} />
+    <TranscriptPlugins messages={() => messagesRef.current} source={() => ({ hostId: props.transport?.currentHostId() ?? "local", sessionId: props.state.sessionId, title: props.state.sessionName || "Current conversation", messageCount: props.state.messageCount, messages: [...props.messages], gitDiffs: props.gitDiffs, follow: props.followConversation })} />
   </main>;
 
   return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><ReviewNavigationContext.Provider value={{ sessionId: () => props.state.sessionId, open: async id => { if (!props.transport) throw new Error("Conversation is unavailable"); await props.transport.command({ type: "open_review", reviewId: id }); } }}><ConversationShell /></ReviewNavigationContext.Provider></ConversationHostContext.Provider>;
