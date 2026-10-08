@@ -9,7 +9,7 @@ mod markdown;
 
 pub(crate) use markdown::preserve_leases_for_restart;
 
-const BUNDLED: &[&str] = &["chatgpt", "markdown"];
+const BUNDLED: &[&str] = &["chatgpt", "markdown", "diff"];
 const CHATGPT_SOURCE: &str = concat!(
     include_str!("../../resources/chatgpt-stream.mjs"), "\n",
     include_str!("../../resources/chatgpt-storage.mjs"), "\n",
@@ -65,6 +65,7 @@ impl Runtime {
                     }
                 },
                 "chatgpt" => chatgpt = Some(Arc::new(start_chatgpt(executable, events.clone()).await?)),
+                "diff" => {},
                 _ => unreachable!(),
             }
         }

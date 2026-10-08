@@ -14,9 +14,7 @@ import { cacheHitStats, isContextInjection } from "../lib/messages";
 import { ToolFailureMeter } from "./ToolFailureMeter";
 import { CacheIcon } from "./CacheIcon";
 import type { ToolFailureStats } from "../lib/toolFailureStats";
-import type { turnDiff } from "../lib/turnDiff";
 import type { ChatMessage } from "../types";
-import { DiffViewer } from "./DiffViewer";
 import { IconButton } from "./IconButton";
 import { Markdown } from "./Markdown";
 import { WorkingIndicator } from "./WorkingIndicator";
@@ -24,7 +22,7 @@ import { ZoomableImage } from "./ZoomableImage";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
 import type { FileReference } from "../lib/projectFiles";
 
-interface Props { toolFailures?: ToolFailureStats; message: ChatMessage; onOpenFile?: (file: FileReference) => void; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; canRollback?: boolean; onForkAndForget?: (message: ChatMessage, restoreWorktree?: boolean) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
+interface Props { toolFailures?: ToolFailureStats; message: ChatMessage; onOpenFile?: (file: FileReference) => void; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; canRollback?: boolean; onForkAndForget?: (message: ChatMessage, restoreWorktree?: boolean) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
 function cacheTokenDigits(tokens: number) {
   const groups = String(tokens).match(/\d{1,3}(?=(?:\d{3})*$)/g) ?? [];
@@ -279,7 +277,6 @@ export function Message(componentProps: Props) {
         {renderMessageFailure()}
         {failureState().pausedResponse && <div class="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
         {renderStreamCaret()}
-        {componentProps.diff && <DiffViewer {...(componentProps.diff)} />}
         {renderMessageActions()}
       </div>);
     };
