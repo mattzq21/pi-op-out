@@ -172,8 +172,8 @@ async function discoverEphemeral(profile, discovery) {
 
   await manifests(root, discovery);
 
-  for (const entry of await entries(path.join(profile, 'git-snapshots'), discovery.warnings)) {
-    if (entry.isDirectory() && entry.name.startsWith('pi-desktop-diff-')) await pointer(path.join(profile, 'git-snapshots', entry.name), profile, discovery);
+  for (const row of require('./session-database.cjs').snapshotDirectories(profile)) {
+    if (path.dirname(row.directory) === path.join(profile, 'git-snapshots') && path.basename(row.directory).startsWith('pi-desktop-diff-')) await pointer(row.directory, profile, discovery);
   }
 }
 

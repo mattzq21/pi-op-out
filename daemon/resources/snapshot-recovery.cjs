@@ -82,7 +82,7 @@ function protectDirectory(directory, sources, warnings) {
 
   for (const name of ['comparison-retry.json', 'pending-diff.json', 'temporary-owner.json', 'snapshot.json']) {
     try {
-      const record = read(path.join(directory, name));
+      const record = name === 'temporary-owner.json' ? require('./session-database.cjs').snapshotOwner(directory) : read(path.join(directory, name));
       records.push(record);
 
       if (record) protectRecord(name, record, directory, sources);
@@ -186,7 +186,7 @@ function usedScopes(directories, warnings) {
 
   for (const directory of directories) {
     try {
-      const owner = read(path.join(directory, 'temporary-owner.json'));
+      const owner = require('./session-database.cjs').snapshotOwner(directory);
 
       if (owner?.scope) used.add(owner.scope);
     } catch (error) {
@@ -317,7 +317,10 @@ function discard(directory) {
 
   fs.rmSync(destination, { recursive: true });
   sync(parent);
-  recoveryRecords.remove(path.join(parent, path.basename(directory).replace(/^\.cleanup-/, '')));
+  const original = path.join(parent, path.basename(directory).replace(/^\.cleanup-/, ''));
+  recoveryRecords.remove(original);
+  require('./session-database.cjs').removeSnapshotDirectory(original);
+  require('./session-database.cjs').removeSnapshotDirectory(destination);
 }
 
 function legacySnapshot(directory, boot, saved) {
@@ -341,7 +344,7 @@ function recoverDirectory(directory, state) {
   clearRecoveryWrites(directory);
 
   if (state.protected.paths.has(directory)) return 0;
-  const owner = read(path.join(directory, 'temporary-owner.json'));
+  const owner = require('./session-database.cjs').snapshotOwner(directory);
   const released = releasedReader(owner, state);
 
   if (owner && active(owner, state.boot, released)) return 0;
@@ -383,8 +386,32 @@ function expiredDuplicate(recovery, saved, state) {
   return state.snapshots.some((item) => item.saved.sessionId === saved.sessionId && item.saved.tree === saved.tree);
 }
 
+function snapshotDirectoryExists(directory) {
+  try { return fs.lstatSync(directory).isDirectory(); }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+}
+
+function snapshotChildren(root, parent) {
+  const database = require('./session-database.cjs');
+
+  return database.snapshotDirectories(root).flatMap(row => {
+    if (path.dirname(row.directory) !== parent || !/^(\.cleanup-)?pi-desktop-diff-/.test(path.basename(row.directory))) throw new Error('Invalid temporary snapshot directory');
+    const renamed = path.join(parent, `.cleanup-${path.basename(row.directory)}`);
+    const directory = snapshotDirectoryExists(row.directory) ? row.directory : renamed;
+
+    if (!snapshotDirectoryExists(directory)) {
+      database.removeSnapshotDirectory(row.directory);
+      recoveryRecords.remove(row.directory);
+
+      return [];
+    }
+
+    return [{ name: path.basename(directory), isDirectory: () => snapshotDirectoryExists(directory) }];
+  });
+}
+
 function recoverLocked(root, parent) {
-  const children = entries(parent);
+  const children = snapshotChildren(root, parent);
   const warnings = [];
 
   for (const child of children) {

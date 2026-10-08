@@ -104,7 +104,11 @@ fn own_local_snapshot(root: &Path) -> Result<(), String> {
     let identity = fs::read_to_string(format!("/proc/{pid}/stat")).ok().and_then(|stat| stat.rsplit_once(") ").and_then(|(_, fields)| fields.split_whitespace().nth(19).map(str::to_owned)));
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").ok().map(|value| value.trim().to_owned());
     let owner = serde_json::json!({"version":1,"state":"external","boot":boot,"processes":[{"pid":pid,"identity":identity}]});
-    crate::private_fs::atomic_write_private(&root.join("temporary-owner.json"), &serde_json::to_vec(&owner).map_err(|error| error.to_string())?)
+    let profile = root.parent().and_then(Path::parent).ok_or("Snapshot storage has no profile")?;
+    let db = crate::session_registry::open(profile)?;
+    db.execute("INSERT INTO snapshot_directories VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET owner_json=excluded.owner_json",
+        rusqlite::params![root.to_string_lossy(), owner.to_string()]).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn local_snapshot_metadata(root: &Path, tree: &str, cwd: &str) -> Result<(), String> {

@@ -204,7 +204,7 @@ function ownTemporary(directory, state) {
   const pids = [process.pid, process.ppid, Number(process.env.PIOP_GIT_CAPTURE_READER_PID)].filter((pid) => Number.isSafeInteger(pid) && pid > 1);
   const processes = [...new Set(pids)].map((pid) => ({ pid, identity: processIdentity(pid) }));
   const boot = fs.existsSync('/proc/sys/kernel/random/boot_id') ? fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() : null;
-  writeJson(path.join(directory, 'temporary-owner.json'), { version: 1, state, boot, processes, readerPid: Number(process.env.PIOP_GIT_CAPTURE_READER_PID) || null, scope: process.env.PIOP_GIT_CAPTURE_READER_SCOPE, sessionId: owner?.sessionId, turnId: owner?.turnId, sessionPath: owner?.sessionPath, messageId: owner?.messageId, baseline: owner?.baseline });
+  require('./session-database.cjs').saveSnapshotOwner(directory, { version: 1, state, boot, processes, readerPid: Number(process.env.PIOP_GIT_CAPTURE_READER_PID) || null, scope: process.env.PIOP_GIT_CAPTURE_READER_SCOPE, sessionId: owner?.sessionId, turnId: owner?.turnId, sessionPath: owner?.sessionPath, messageId: owner?.messageId, baseline: owner?.baseline });
   syncPath(path.dirname(directory));
 }
 

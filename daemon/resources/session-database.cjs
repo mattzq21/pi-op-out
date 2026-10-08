@@ -58,7 +58,8 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS worktree_allocations (container TEXT PRIMARY KEY, metadata_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS recovery_directories (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS snapshot_recovery (directory TEXT PRIMARY KEY, identity TEXT NOT NULL, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS snapshot_reader_releases (scope TEXT PRIMARY KEY, record_json TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS snapshot_reader_releases (scope TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS snapshot_directories (directory TEXT PRIMARY KEY, owner_json TEXT);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -177,8 +178,69 @@ function importSessions(db, root) {
     importWorktrees(db, root);
     importRecoveryDirectories(db, root);
     importReaderReleases(db, root);
+    importSnapshotDirectories(db, root);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importSnapshotDirectories(db, root) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-directories-v1')) return;
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const parent = path.join(root, 'git-snapshots');
+  let entries;
+
+  try { entries = fs.readdirSync(parent, { withFileTypes: true }); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^(\.cleanup-)?pi-desktop-diff-/.test(entry.name)) continue;
+    const directory = path.join(parent, entry.name);
+    let owner = null;
+
+    try { owner = fs.readFileSync(path.join(directory, 'temporary-owner.json'), 'utf8'); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+
+    db.prepare('INSERT INTO snapshot_directories VALUES (?, ?)').run(directory, owner);
+  }
+
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('snapshot-directories-v1');
+}
+
+function saveSnapshotOwner(directory, owner) {
+  const path = require('node:path');
+  const db = open(path.dirname(path.dirname(directory)));
+
+  try {
+    db.prepare('INSERT INTO snapshot_directories VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET owner_json=excluded.owner_json')
+      .run(directory, JSON.stringify(owner));
+  } finally { db.close(); }
+}
+
+function snapshotDirectories(root) {
+  const db = open(root);
+
+  try { return db.prepare('SELECT directory, owner_json FROM snapshot_directories').all(); }
+  finally { db.close(); }
+}
+
+function snapshotOwner(directory) {
+  const path = require('node:path');
+  const db = open(path.dirname(path.dirname(directory)));
+
+  try {
+    const row = db.prepare('SELECT owner_json FROM snapshot_directories WHERE directory=?').get(directory);
+
+    return row?.owner_json ? JSON.parse(row.owner_json) : undefined;
+  } finally { db.close(); }
+}
+
+function removeSnapshotDirectory(directory) {
+  const path = require('node:path');
+  const db = open(path.dirname(path.dirname(directory)));
+
+  try { db.prepare('DELETE FROM snapshot_directories WHERE directory=?').run(directory); }
+  finally { db.close(); }
 }
 
 function importReaderReleases(db, root) {
@@ -521,4 +583,4 @@ function storageRoot(file) {
 
 module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot,
   publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
-  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease };
+  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory };

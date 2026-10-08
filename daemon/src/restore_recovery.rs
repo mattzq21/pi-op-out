@@ -110,21 +110,8 @@ fn released_snapshots_pending(root: &Path) -> Result<bool, String> {
 
 fn snapshot_cleanup_pending(root: &Path) -> Result<bool, String> {
     if released_snapshots_pending(root)? { return Ok(true); }
-    let entries = match std::fs::read_dir(root.join("git-snapshots")) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error.to_string()),
-    };
-    for entry in entries {
-        let entry = entry.map_err(|error| error.to_string())?;
-        if snapshot_entry_pending(&entry.file_name()) { return Ok(true); }
-    }
-    Ok(false)
-}
-
-fn snapshot_entry_pending(name: &std::ffi::OsStr) -> bool {
-    let name = name.to_string_lossy();
-    name.starts_with("pi-desktop-diff-") || name.starts_with(".cleanup-pi-desktop-diff-")
+    let db = crate::session_registry::open(root)?;
+    db.query_row("SELECT EXISTS(SELECT 1 FROM snapshot_directories)", [], |row| row.get(0)).map_err(|error| error.to_string())
 }
 
 pub(crate) fn recover(root: &Path) -> Result<(), String> {
