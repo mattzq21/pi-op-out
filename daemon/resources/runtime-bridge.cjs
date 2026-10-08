@@ -353,11 +353,40 @@ function bindReleasedPromptPreparation(session) {
 
     if (scope?.session === this && !scope.started) {
       scope.started = true;
-      messages = messages.flatMap(message => message.role === "user" ? scope.messages : [message]);
+      messages = messages.flatMap(message => {
+        if (message.role !== "user") return [message];
+        const first = scope.messages[0];
+        scope.preparedMessage = first.role === "user" ? { ...first, content: message.content } : first;
+
+        return [scope.preparedMessage, ...scope.messages.slice(1)];
+      });
     }
 
     return run.call(this, messages);
   };
+}
+
+function trackReleasedPrompt(session, scope) {
+  return session.subscribe(event => {
+    if (event.type !== "message_start" || event.message !== scope.preparedMessage) return;
+    const original = reviewText(scope.messages[0]);
+
+    if (original === reviewText(event.message)) return;
+    const pending = session.getFollowUpMessages();
+    const index = pending.indexOf(original);
+
+    if (index !== -1) { pending.splice(index, 1); session._emitQueueUpdate(); }
+  });
+}
+
+async function releaseQueuedReviews(session, messages, prompt) {
+  let cancelled = false;
+  await session.agent.runWithLifecycle(async signal => {
+    await consumeReviews(session, messages);
+    cancelled = signal.aborted;
+  });
+
+  if (!cancelled && session.isIdle && !hasGoal(session)) await releaseGoalQueue(session, prompt);
 }
 
 async function releaseGoalQueue(session, prompt) {
@@ -365,15 +394,18 @@ async function releaseGoalQueue(session, prompt) {
 
   if (!messages.length) return;
   const first = messages[0];
+
+  if (isReview(reviewText(first))) return releaseQueuedReviews(session, messages, prompt);
   const images = first.role === "user" ? first.content.filter(part => part.type === "image") : [];
   const scope = { session, messages, inputPending: true, started: false };
+  const stopTracking = trackReleasedPrompt(session, scope);
 
   try {
     await releasedPromptContext.run(scope, () => prompt.call(session, reviewText(first), { images, source: "rpc", expandPromptTemplates: false }));
   } catch (error) {
     if (!scope.started) session.agent.followUpQueue.messages.unshift(...messages);
     session.extensionRunner.createContext().ui.notify(String(error), "error");
-  }
+  } finally { stopTracking(); }
 }
 
 function scheduleGoalQueueRelease(session, prompt) {
