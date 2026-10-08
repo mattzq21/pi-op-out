@@ -639,6 +639,16 @@ async function queueHeldFollowUp(session, text, options) {
   if (!hasGoal(session)) goalQueueRelease.get(session)();
 }
 
+function installGoalPendingMessages(AgentSession) {
+  const bindCore = AgentSession.prototype._bindExtensionCore;
+  AgentSession.prototype._bindExtensionCore = function (runner) {
+    const result = bindCore.call(this, runner);
+    runner.hasPendingMessagesFn = () => this.getSteeringMessages().length > 0 || (!hasGoal(this) && this.getFollowUpMessages().length > 0);
+
+    return result;
+  };
+}
+
 async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const root = runtimeRoot(executable);
@@ -666,6 +676,7 @@ async function main() {
   };
 
   installGoalAcceptance(AgentSession);
+  installGoalPendingMessages(AgentSession);
 
   let session;
   const bind = AgentSession.prototype.bindExtensions;
@@ -677,7 +688,6 @@ async function main() {
     }
     await bind.apply(this, bindings);
 
-    this.extensionRunner.hasPendingMessagesFn = () => this.getSteeringMessages().length > 0 || (!hasGoal(this) && this.getFollowUpMessages().length > 0);
     session = this;
   };
 
