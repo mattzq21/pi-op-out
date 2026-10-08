@@ -4,12 +4,12 @@ import { ReviewLink } from "./ReviewLink";
 import { HtmlPreview } from "./HtmlPreview";
 import { AgentDelivery } from "./AgentDelivery";
 import { Key } from "@solid-primitives/keyed";
-import { type Accessor, createMemo, createSignal, Index, useContext } from "solid-js";
+import { type Accessor, createMemo, createSignal, Index, Show, useContext } from "solid-js";
 import { ConversationImageProject } from "./markdownImages";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, Pause, Split, Undo2, Wrench } from "lucide-solid";
-import { textOf, thinkingOf } from "../lib/content";
+import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, isContextInjection } from "../lib/messages";
 import { ToolFailureMeter } from "./ToolFailureMeter";
 import { CacheIcon } from "./CacheIcon";
@@ -215,7 +215,7 @@ export function Message(componentProps: Props) {
       </div>}
       <div class="message-actions">
         {sentTime() && <span class="message-time">{required(sentTime()).short}</span>}
-        <MessageCopyButton state={copyState()} copy={copy} />
+        <Show when={hasVisibleText(textOf(componentProps.message.content))}><MessageCopyButton state={copyState()} copy={copy} /></Show>
         {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy message</span>}
       </div>
     </article>{imageContext().notes && <ContextInjection title="Image context" content={imageContext().notes} />}</>;
