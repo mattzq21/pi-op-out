@@ -35,28 +35,17 @@ function ownsAllocation(value, container, info) {
     && path.dirname(value.allocation.target) === container;
 }
 
-function readParent(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch (error) { if (error instanceof SyntaxError) return; throw error; }
-}
-
 function ownership(container, info, boot) {
   if (containerContents(container, info)?.pending) return true;
-  const parent = path.join(container, 'parent.json');
-  const parentInfo = metadata(parent);
-  let value;
+  const value = require('./session-database.cjs').worktreeMetadata(container);
 
-  if (parentInfo) {
-    if (!parentInfo.isFile()) return false;
+  if (!value || value.containerIdentity !== identity(info)) return false;
 
-    value = readParent(parent);
+  if (Object.hasOwn(value, 'allocation')) return ownsAllocation(value, container, info);
 
-    if (Object.hasOwn(value ?? {}, 'allocation')) return ownsAllocation(value, container, info);
+  if (Object.hasOwn(value, 'branch') && !Check(parentSchema, value)) return false;
 
-    if (!Check(parentSchema, value)) return false;
-  }
-
-  return Number(info.ctimeMs) < boot && (!parentInfo || Number(parentInfo.ctimeMs) < boot);
+  return Number(info.ctimeMs) < boot;
 }
 
 function emptyAllocation(container, info, boot) {
@@ -73,9 +62,8 @@ function candidates(root) {
   const boot = bootTime();
   const selected = [];
 
-  for (const entry of fs.readdirSync(storage, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^[a-f0-9]{4}$/.test(entry.name)) continue;
-    const container = path.join(storage, entry.name);
+  for (const container of require('./session-database.cjs').worktreeContainers(root)) {
+    if (path.dirname(container) !== storage || !/^[a-f0-9]{4}$/.test(path.basename(container))) throw new Error('Invalid worktree allocation path');
     const info = metadata(container);
 
     if (!emptyAllocation(container, info, boot)) continue;

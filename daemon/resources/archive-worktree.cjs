@@ -19,7 +19,7 @@ function parentMetadata() {
   const root = path.join(os.homedir(), storage, 'worktrees');
 
   if (path.dirname(container) !== root || !/^[a-f0-9]{4}$/.test(path.basename(container))) return null;
-  const metadata = JSON.parse(fs.readFileSync(path.join(container, 'parent.json'), 'utf8'));
+  const metadata = require('./session-database.cjs').worktreeMetadata(container);
 
   if (!Check(parentSchema, metadata)) return null;
   const branch = git(target, ['symbolic-ref', '--quiet', 'HEAD']).trim();
@@ -77,7 +77,7 @@ try {
   else if (metadata && action === 'remove') {
     git(source, ['worktree', 'remove', '--', target]);
     removeBranch(metadata);
-    fs.unlinkSync(path.join(path.dirname(target), 'parent.json'));
+    fs.rmSync(path.join(path.dirname(target), 'parent.json'), { force: true });
     fs.rmdirSync(path.dirname(target));
   }
 } catch (error) {

@@ -54,7 +54,8 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS session_restore_receipts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS retention_candidates (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, retry_at REAL NOT NULL);
       CREATE INDEX IF NOT EXISTS retention_retry_order ON retention_candidates(retry_at, record_id);
-      CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS worktree_allocations (container TEXT PRIMARY KEY, metadata_json TEXT NOT NULL);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -170,8 +171,67 @@ function importSessions(db, root) {
     importRestorations(db, root, true);
     importRetention(db, root);
     importCleanupRequests(db, root);
+    importWorktrees(db, root);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importWorktrees(db, root) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('worktree-allocations-v1')) return;
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const directory = path.join(root, 'worktrees');
+  let entries;
+
+  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^[a-f0-9]{4}$/.test(entry.name)) continue;
+    const container = path.join(directory, entry.name);
+    const info = fs.lstatSync(container, { bigint: true });
+    let parent = {};
+
+    try { parent = JSON.parse(fs.readFileSync(path.join(container, 'parent.json'), 'utf8')); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const value = { ...parent, containerIdentity: `${info.dev}:${info.ino}` };
+    db.prepare('INSERT INTO worktree_allocations VALUES (?, ?)').run(container, JSON.stringify(value));
+  }
+
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('worktree-allocations-v1');
+}
+
+function recordWorktree(container, target, branch, parentBranch) {
+  const path = require('node:path');
+  const fs = require('node:fs');
+  const db = open(path.dirname(path.dirname(container)));
+
+  try {
+    const info = fs.lstatSync(container, { bigint: true });
+
+    if (!info.isDirectory()) throw new Error('Worktree allocation must be a directory');
+    const identity = `${info.dev}:${info.ino}`;
+    const value = { branch, parentBranch, containerIdentity: identity, allocation: { version: 1, identity, target } };
+    db.prepare('INSERT INTO worktree_allocations VALUES (?, ?) ON CONFLICT(container) DO UPDATE SET metadata_json=excluded.metadata_json')
+      .run(container, JSON.stringify(value));
+  } finally { db.close(); }
+}
+
+function worktreeMetadata(container) {
+  const db = open(require('node:path').dirname(require('node:path').dirname(container)));
+
+  try {
+    const row = db.prepare('SELECT metadata_json FROM worktree_allocations WHERE container=?').get(container);
+
+    return row ? JSON.parse(row.metadata_json) : undefined;
+  } finally { db.close(); }
+}
+
+function worktreeContainers(root) {
+  const db = open(root);
+
+  try { return db.prepare('SELECT container FROM worktree_allocations ORDER BY container').all().map(row => row.container); }
+  finally { db.close(); }
 }
 
 function importCleanupRequests(db, root) {
@@ -370,4 +430,5 @@ function storageRoot(file) {
 }
 
 module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot,
-  publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup };
+  publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+  recordWorktree, worktreeMetadata, worktreeContainers };

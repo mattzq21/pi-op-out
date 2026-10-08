@@ -63,11 +63,7 @@ function checkout(branch, trees, descriptor) {
 }
 
 function recordAllocation(container, target, branch) {
-  const info = fs.lstatSync(container, { bigint: true });
-  const allocation = { version: 1, identity: `${info.dev}:${info.ino}`, target };
-  const temporary = path.join(container, `.parent-v1-${info.dev}-${info.ino}.tmp`);
-  fs.writeFileSync(temporary, JSON.stringify({ branch, parentBranch: null, allocation }), { flag: 'wx', mode: 0o600, flush: true });
-  fs.renameSync(temporary, path.join(container, 'parent.json'));
+  require('./session-database.cjs').recordWorktree(container, target, branch, null);
 
   for (const directory of [container, path.dirname(container), path.dirname(path.dirname(container))]) {
     const descriptor = fs.openSync(directory, 'r');

@@ -68,7 +68,7 @@ function remoteBranch() {
   let branch = request.branch?.trim() || saved?.upstream_branch || saved?.branch;
 
   if (!branch) {
-    try { branch = JSON.parse(fs.readFileSync(path.join(path.dirname(header.cwd), 'parent.json'), 'utf8')).branch; } catch { }
+    try { branch = require('./session-database.cjs').worktreeMetadata(path.dirname(header.cwd))?.branch; } catch { }
   }
 
   return branch;

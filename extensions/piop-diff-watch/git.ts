@@ -1,7 +1,7 @@
-import { markCleanup } from "../session-database.cjs";
+import { markCleanup, recordWorktree } from "../session-database.cjs";
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { mkdir, open, lstat, writeFile, rename } from "node:fs/promises";
+import { mkdir, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -12,11 +12,7 @@ export async function markWorktreeAllocation(storage: string) {
 }
 
 export async function recordWorktreeAllocation(container: string, target: string, branch: string, parentBranch: string | null) {
-  const info = await lstat(container, { bigint: true });
-  const allocation = { version: 1, identity: `${info.dev}:${info.ino}`, target };
-  const temporary = join(container, `.parent-v1-${info.dev}-${info.ino}.tmp`);
-  await writeFile(temporary, JSON.stringify({ branch, parentBranch, allocation }), { flag: "wx", mode: 0o600, flush: true });
-  await rename(temporary, join(container, "parent.json"));
+  recordWorktree(container, target, branch, parentBranch);
 
   for (const directory of [container, dirname(container), dirname(dirname(container))]) {
     const handle = await open(directory, "r");
