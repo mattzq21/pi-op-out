@@ -41,7 +41,14 @@ function initialize(db) {
         session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
         run_id TEXT NOT NULL, started_at REAL NOT NULL, run_json TEXT NOT NULL,
         PRIMARY KEY(session_id, run_id));
-      CREATE INDEX IF NOT EXISTS session_subagent_order ON session_subagent_runs(session_id, started_at);`);
+      CREATE INDEX IF NOT EXISTS session_subagent_order ON session_subagent_runs(session_id, started_at);
+      CREATE TABLE IF NOT EXISTS session_group_state (id INTEGER PRIMARY KEY CHECK(id=1), initialized INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_groups (
+        group_id TEXT PRIMARY KEY, position INTEGER NOT NULL, name TEXT NOT NULL, cwd TEXT,
+        host_id TEXT, host_name TEXT, project_kind TEXT, branch TEXT);
+      CREATE TABLE IF NOT EXISTS session_group_assignments (session_key TEXT PRIMARY KEY, group_id TEXT);
+      CREATE TABLE IF NOT EXISTS session_group_removed_projects (project_id TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS session_group_deletions (session_key TEXT PRIMARY KEY);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,

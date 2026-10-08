@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fs, path::Path};
+use std::{collections::HashSet, path::Path};
 use super::{SessionGroups, SessionSeed};
 
 fn normalize(key: &str) -> String {
@@ -9,11 +9,7 @@ fn normalize(key: &str) -> String {
 }
 
 pub(super) fn known(path: &Path) -> Result<HashSet<String>, String> {
-    match fs::read(path.with_extension("deletions.json")) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| format!("Could not read permanent deletion metadata: {error}")),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HashSet::new()),
-        Err(error) => Err(format!("Could not read permanent deletion metadata: {error}")),
-    }
+    super::storage::deleted(path)
 }
 
 pub(super) fn contains(deleted: &HashSet<String>, key: &str) -> bool { deleted.contains(&normalize(key)) }
@@ -60,8 +56,7 @@ pub(super) fn refresh(path: &Path, settings: &crate::AppSettings, seeds: &[Sessi
     let previous = deleted.len();
     learn(settings, hosts(&state, seeds, key), &mut deleted);
     if deleted.len() != previous {
-        let bytes = serde_json::to_vec(&deleted).map_err(|error| error.to_string())?;
-        crate::atomic_write_private(&path.with_extension("deletions.json"), &bytes).map_err(|error| error.to_string())?;
+        super::storage::remember_deleted(path, &deleted)?;
     }
     if prune(&mut state, &deleted) { super::write(path, &state)?; }
     Ok(())

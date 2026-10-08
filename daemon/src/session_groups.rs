@@ -8,6 +8,9 @@ const DIRLESS_KEY: &str = "__pi-desktop-dirless__";
 #[path = "session_group_deletions.rs"]
 mod deletions;
 
+#[path = "session_group_storage.rs"]
+mod storage;
+
 #[cfg(test)]
 #[path = "session_groups_tests.rs"]
 mod tests;
@@ -64,16 +67,11 @@ fn lock_storage(path: &Path) -> Result<fs::File, String> {
 }
 
 fn read(path: &Path) -> Result<Option<SessionGroups>, String> {
-    match fs::read(path) {
-        Ok(body) => serde_json::from_slice(&body).map(Some).map_err(|error| format!("Could not read session groups: {error}")),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("Could not read session groups: {error}")),
-    }
+    storage::read(path)
 }
 
 fn write(path: &Path, groups: &SessionGroups) -> Result<(), String> {
-    super::atomic_write_private(path, &serde_json::to_vec_pretty(groups).map_err(|error| error.to_string())?)
-        .map_err(|error| format!("Could not save session groups: {error}"))
+    storage::write(path, groups)
 }
 
 pub fn attach_assignments(sessions: &mut [super::SessionSummary]) -> Result<(), String> {
