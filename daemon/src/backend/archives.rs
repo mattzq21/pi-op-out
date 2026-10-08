@@ -499,8 +499,8 @@ pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host
     let arguments = json!({"sessionPath":path,"action":action,"repository":repository,"branch":branch,"storage":STORAGE_DIRECTORY}).to_string();
     let script = include_str!("../../resources/recover-missing-session.cjs");
     let relocate = include_str!("../../resources/relocate-session.bundle.mjs");
-    let registry = include_str!("../../resources/session-registry.cjs");
-    let mut command = directory_recovery_command(&settings, &host_id, script, &arguments, relocate, registry)?;
+    let registry = crate::session_registry::source();
+    let mut command = directory_recovery_command(&settings, &host_id, script, &arguments, relocate, &registry)?;
     let result = run_directory_recovery(&mut command)?;
     if let Some(mutation) = mutation {
         mutation.finish()?;

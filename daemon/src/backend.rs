@@ -99,6 +99,7 @@ struct CachedSession { fingerprint: String, summary: SessionSummary }
 #[derive(Default)]
 struct SessionIndexRuntime {
     local: Mutex<HashMap<PathBuf, CachedSession>>,
+    local_database: Mutex<Option<(PathBuf, rusqlite::Connection)>>,
     remote: Mutex<HashMap<String, HashMap<String, CachedSession>>>,
     projects: project_metadata::ProjectMetadataCache,
 }

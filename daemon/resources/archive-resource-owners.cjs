@@ -117,7 +117,7 @@ function registered(root, binding, resourceId, found) {
     const hasTombstones = tables.some(table => table.name === 'session_deletion_tombstones');
     const exclusion = hasTombstones ? ' WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id = lower(r.session_id))' : '';
 
-    for (const row of database.prepare('SELECT session_id, session_path, cwd FROM session_repositories r' + exclusion).all()) registeredOwner(root, row, binding, resourceId, found);
+    for (const row of database.prepare(require('./session-database.cjs').repositoryQuery(database, ['session_id', 'session_path', 'cwd'], exclusion)).all()) registeredOwner(root, row, binding, resourceId, found);
   } finally { database.close(); }
 }
 

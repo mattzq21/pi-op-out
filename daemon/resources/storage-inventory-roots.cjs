@@ -42,7 +42,7 @@ async function readRegistry(profile, discovery) {
     await fs.lstat(database);
     const { DatabaseSync } = require('node:sqlite');
     db = new DatabaseSync(database, { readOnly: true });
-    const rows = db.prepare('SELECT session_id, session_path, cwd, repository_root FROM session_repositories').all();
+    const rows = db.prepare(require('./session-database.cjs').repositoryQuery(db, ['session_id', 'session_path', 'cwd', 'repository_root'])).all();
 
     for (const row of rows) {
       if (!Check(registrySchema, row)) { discovery.warnings.push(`${database}: invalid registry row; owner provenance is unresolved`); continue; }

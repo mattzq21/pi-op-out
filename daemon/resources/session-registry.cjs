@@ -3,6 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
+const sessionTables = require('./session-database.cjs');
 
 const request = JSON.parse(process.argv[1]);
 
@@ -16,18 +17,7 @@ const db = new DatabaseSync(database);
 
 fs.chmodSync(database, 0o600);
 
-db.exec(`PRAGMA busy_timeout=10000;
-  PRAGMA journal_mode=WAL;
-  PRAGMA synchronous=FULL;
-  CREATE TABLE IF NOT EXISTS session_deletion_tombstones (
-    session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL, session_path TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS session_repositories (
-    session_id TEXT PRIMARY KEY, session_path TEXT, cwd TEXT NOT NULL,
-    repository_root TEXT, remote_name TEXT, remote_url TEXT, branch TEXT,
-    upstream_branch TEXT, head_commit TEXT, checked_at INTEGER NOT NULL,
-    observed_at INTEGER, directory_exists INTEGER NOT NULL
-  );`);
+sessionTables.initialize(db);
 
 const git = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], {
   encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' }, timeout: 10000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
@@ -97,9 +87,11 @@ function savedSession(session) {
 function insertRecord(session, checked, exists, state) {
   const { repository, remote, url, branch, upstream, head } = state;
 
-  db.prepare(`INSERT INTO session_repositories SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+  if (db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id = lower(?)').get(session.sessionId)) return;
+  db.prepare(`INSERT INTO sessions VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path`).run(session.sessionId, session.sessionPath);
+  db.prepare(`INSERT INTO session_repositories SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id = lower(?))
-    ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, cwd=excluded.cwd,
+    ON CONFLICT(session_id) DO UPDATE SET cwd=excluded.cwd,
       repository_root=CASE WHEN excluded.directory_exists THEN excluded.repository_root ELSE repository_root END,
       remote_name=CASE WHEN excluded.directory_exists THEN excluded.remote_name ELSE remote_name END,
       remote_url=CASE WHEN excluded.directory_exists THEN excluded.remote_url ELSE remote_url END,
@@ -111,7 +103,7 @@ function insertRecord(session, checked, exists, state) {
       directory_exists=excluded.directory_exists
     WHERE excluded.checked_at >= session_repositories.checked_at
       AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id = lower(excluded.session_id))`).run(
-    session.sessionId, session.sessionPath || null, session.cwd, repository, remote, url, branch, upstream, head, checked, exists ? checked : null, Number(exists), session.sessionId);
+    session.sessionId, session.cwd, repository, remote, url, branch, upstream, head, checked, exists ? checked : null, Number(exists), session.sessionId);
 }
 
 function record(session) {
@@ -150,7 +142,8 @@ function scan(directory) {
 }
 
 try {
-  if (request.action === 'get') process.stdout.write(JSON.stringify(db.prepare('SELECT * FROM session_repositories WHERE session_id = ?').get(request.sessionId) || null));
+  if (request.action === 'initialize') { }
+  else if (request.action === 'get') process.stdout.write(JSON.stringify(db.prepare('SELECT r.*, s.session_path FROM session_repositories r JOIN sessions s USING(session_id) WHERE r.session_id = ?').get(request.sessionId) || null));
   else if (request.action === 'deleted') process.stdout.write(JSON.stringify(db.prepare('SELECT session_id FROM session_deletion_tombstones').all().map(record => record.session_id)));
   else if (request.action === 'scan') { scan(path.join(root, 'sessions')); scan(path.join(root, 'archived')); }
   else if (request.action === 'record') record(request);

@@ -25,16 +25,16 @@ pub(super) fn prune(state: &mut SessionGroups, deleted: &HashSet<String>) -> boo
 }
 
 fn command(settings: &crate::AppSettings, host_id: &str) -> Result<std::process::Command, String> {
-    let script = include_str!("../resources/session-registry.cjs");
+    let script = crate::session_registry::source();
     let request = r#"{"action":"deleted"}"#;
     if host_id == "local" {
         let mut command = crate::node_command();
-        command.args(["-e", script, request]);
+        command.args(["-e", &script, request]);
         return Ok(command);
     }
     let host = crate::remote_host(settings, host_id)?;
     let mut command = crate::ssh(host);
-    let remote = format!("PIOP_STORAGE_DIRECTORY={} node -e {} {}", crate::shell_quote(crate::STORAGE_DIRECTORY), crate::shell_quote(script), crate::shell_quote(request));
+    let remote = format!("PIOP_STORAGE_DIRECTORY={} node -e {} {}", crate::shell_quote(crate::STORAGE_DIRECTORY), crate::shell_quote(&script), crate::shell_quote(request));
     command.arg(crate::remote_login_command(&remote));
     Ok(command)
 }

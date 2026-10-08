@@ -397,6 +397,7 @@ function cleanup(journal) { fs.unlinkSync(journal); sync(path.dirname(journal));
 
 function finishCommit(transaction, journal) {
   const root = path.dirname(path.dirname(journal));
+  require('./session-database.cjs').movePaths(root, [transaction.trace, ...transaction.moves].filter(item => item.destination.endsWith('.jsonl')));
 
   for (const item of [transaction.trace, ...transaction.moves]) {
     if (item.destination.endsWith('.jsonl')) checkpointIndex.relocate(item.source, item.destination);

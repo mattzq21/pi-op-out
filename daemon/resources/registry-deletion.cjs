@@ -15,9 +15,8 @@ function forget(root, targets) {
 
   try {
     fs.chmodSync(database, 0o600);
-    db.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-      CREATE TABLE IF NOT EXISTS session_deletion_tombstones (session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL, session_path TEXT NOT NULL);
-      BEGIN IMMEDIATE;`);
+    require('./session-database.cjs').initialize(db);
+    db.exec('BEGIN IMMEDIATE');
 
     const mark = db.prepare('INSERT INTO session_deletion_tombstones VALUES (?, ?, ?) ON CONFLICT(session_id) DO NOTHING');
 
@@ -26,7 +25,7 @@ function forget(root, targets) {
     const registry = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_repositories'").get();
 
     if (registry) {
-      const remove = db.prepare('DELETE FROM session_repositories WHERE lower(session_id) = ?');
+      const remove = db.prepare('DELETE FROM sessions WHERE lower(session_id) = ?');
 
       for (const target of targets) remove.run(target.sessionId.toLowerCase());
     }

@@ -455,6 +455,8 @@ function finish(transaction) {
 }
 
 function finishLocked(transaction) {
+  require('./session-database.cjs').movePaths(transaction.root, transaction.records.map(record => ({ source: record.file, destination: record.destination })));
+
   for (const group of transaction.groups.filter(group => group.kind === 'git' && !group.removed)) finishGroup(transaction, group);
   shared.finishArchive(transaction);
   finishOwnership(transaction);

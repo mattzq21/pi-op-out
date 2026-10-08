@@ -1,10 +1,16 @@
 use serde_json::{json, Value};
 use std::{sync::OnceLock, time::{SystemTime, UNIX_EPOCH}};
 
+pub(crate) fn source() -> String {
+    format!("const sessionDatabase = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n{}",
+        include_str!("../resources/session-database.cjs"),
+        include_str!("../resources/session-registry.cjs").replace("require('./session-database.cjs')", "sessionDatabase"))
+}
+
 fn run(mut request: Value) {
     let result = (|| -> Result<(), String> {
         request["root"] = json!(crate::environment::home_dir()?.join(crate::STORAGE_DIRECTORY));
-        let output = crate::node_command().args(["-e", include_str!("../resources/session-registry.cjs"), &request.to_string()])
+        let output = crate::node_command().args(["-e", &source(), &request.to_string()])
             .output().map_err(|error| error.to_string())?;
         if !output.status.success() || !output.stderr.is_empty() {
             eprintln!("Session registry: {}", String::from_utf8_lossy(&output.stderr));

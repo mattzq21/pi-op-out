@@ -349,7 +349,8 @@ function cleanupRegistry(root, sessionIds) {
   const db = new DatabaseSync(database);
 
   try {
-    db.exec('PRAGMA busy_timeout=10000; BEGIN IMMEDIATE');
+    require('./session-database.cjs').initialize(db);
+    db.exec('BEGIN IMMEDIATE');
     const completed = removeRegistryRows(db, sessionIds);
     db.exec('COMMIT');
 
@@ -359,8 +360,8 @@ function cleanupRegistry(root, sessionIds) {
 
 function removeRegistryRows(db, sessionIds) {
   if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_repositories'").get()) return [...sessionIds];
-  const remove = db.prepare('DELETE FROM session_repositories WHERE lower(session_id) = ?');
-  const read = db.prepare('SELECT session_id, session_path FROM session_repositories WHERE lower(session_id) = ?');
+  const remove = db.prepare('DELETE FROM sessions WHERE lower(session_id) = ?');
+  const read = db.prepare('SELECT session_id, session_path FROM sessions WHERE lower(session_id) = ?');
   const completed = [];
 
   for (const id of sessionIds) {

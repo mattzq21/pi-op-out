@@ -64,7 +64,7 @@ function registered(root, observation, deleted) {
 
     if (!table) return;
 
-    for (const record of database.prepare('SELECT session_id, session_path FROM session_repositories').all()) observeRegistered(root, record, observation, deleted);
+    for (const record of database.prepare(require('./session-database.cjs').repositoryQuery(database, ['session_id', 'session_path'])).all()) observeRegistered(root, record, observation, deleted);
   } finally { database.close(); }
 }
 

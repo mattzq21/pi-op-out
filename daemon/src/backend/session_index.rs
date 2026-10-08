@@ -20,6 +20,8 @@ pub(crate) use crate::git_ops::project_inspection::inspect_session_projects_with
 use crate::pi_launch::{local_launch_directory, remote_directory_path, remote_host, remote_login_command, ssh};
 use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
+#[path = "sidebar_storage.rs"]
+mod sidebar_storage;
 
 fn unix_timestamp(time: SystemTime) -> u64 { time.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs() }
 
@@ -78,18 +80,52 @@ pub(super) fn read_session_summaries_with(candidates: &[(String, String, u64, u6
 pub(super) fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
     crate::restore_recovery::recover(root.parent().ok_or("Session storage root missing")?)?;
     crate::session_registry::index_existing();
+    let mut sessions = cached_local_sessions(index, root)?;
+    inspect_session_projects(index, &mut sessions, None)?; Ok(sessions)
+}
+
+fn cached_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
     let mut cache = index.local.lock().map_err(|_| "Local session index lock was poisoned")?;
+    let storage_root = root.parent().ok_or("Session storage root missing")?;
+    let mut database = index.local_database.lock().map_err(|_| "Sidebar database lock was poisoned")?;
+    let mut needs_save = sidebar_storage::prepare(&mut database, storage_root, &mut cache);
+    needs_save |= refresh_local_cache(root, &mut cache)?;
+    if needs_save {
+        sidebar_storage::persist(&mut database, &cache);
+    }
+    drop(database);
+    Ok(cache.values().map(|cached| cached.summary.clone()).collect())
+}
+
+fn refresh_local_cache(root: &Path, cache: &mut HashMap<PathBuf, CachedSession>) -> Result<bool, String> {
+    let (seen, changed) = local_session_candidates(root, cache)?;
+    let summaries = read_session_summaries(&changed, None)?;
+    let needs_save = !changed.is_empty() || cache.keys().any(|path| !seen.contains(path));
+    for (path, _, _, _) in &changed { cache.remove(Path::new(path)); }
+    for (path, summary) in summaries { cache.insert(PathBuf::from(path), summary); }
+    cache.retain(|path, _| seen.contains(path));
+    Ok(needs_save)
+}
+
+type SessionCandidate = (String, String, u64, u64);
+
+fn local_session_candidates(root: &Path, cache: &HashMap<PathBuf, CachedSession>) -> Result<(HashSet<PathBuf>, Vec<SessionCandidate>), String> {
     let mut seen = HashSet::new(); let mut changed = Vec::new();
-    for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")) {
-        let path = entry.path().to_path_buf(); let Ok(metadata) = entry.metadata() else { continue };
+    for entry in WalkDir::new(root).follow_links(false) {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry.file_type().is_file() || entry.path().extension().and_then(|value| value.to_str()) != Some("jsonl") { continue; }
+        let path = entry.path().to_path_buf();
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) if error.io_error().is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => continue,
+            Err(error) => return Err(error.to_string()),
+        };
         let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         let fingerprint = format!("{}:{}", modified.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos(), metadata.len());
         seen.insert(path.clone());
         if cache.get(&path).is_none_or(|cached| cached.fingerprint != fingerprint) { changed.push((path.to_string_lossy().into_owned(), fingerprint, unix_timestamp(modified), metadata.len())); }
     }
-    for (path, summary) in read_session_summaries(&changed, None)? { cache.insert(PathBuf::from(path), summary); }
-    cache.retain(|path, _| seen.contains(path)); let mut sessions = cache.values().map(|cached| cached.summary.clone()).collect::<Vec<_>>(); drop(cache);
-    inspect_session_projects(index, &mut sessions, None)?; Ok(sessions)
+    Ok((seen, changed))
 }
 
 pub(super) fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
