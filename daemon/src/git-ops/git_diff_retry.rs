@@ -18,15 +18,15 @@ struct PendingDiff {
 }
 
 fn pending_command(request: Value, host: Option<&RemoteHost>) -> Result<Value, String> {
-    let script = include_str!("../../resources/capture-git-tree.cjs");
+    let script = crate::session_registry::with_database(include_str!("../../resources/capture-git-tree.cjs"));
     let arguments = request.to_string();
     let mut command = if let Some(host) = host {
         let mut command = ssh(host);
-        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&arguments))));
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(&script), shell_quote(&arguments))));
         command
     } else {
         let mut command: Command = node_command();
-        command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, &arguments]);
+        command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", &script, &arguments]);
         command
     };
     let output = run_limited(&mut command, MAX_GIT_DIFFS_BYTES, "Could not recover pending project changes")?;

@@ -57,7 +57,8 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS worktree_allocations (container TEXT PRIMARY KEY, metadata_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS recovery_directories (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS snapshot_recovery (directory TEXT PRIMARY KEY, identity TEXT NOT NULL, record_json TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS snapshot_recovery (directory TEXT PRIMARY KEY, identity TEXT NOT NULL, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS snapshot_reader_releases (scope TEXT PRIMARY KEY, record_json TEXT NOT NULL);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -175,8 +176,52 @@ function importSessions(db, root) {
     importCleanupRequests(db, root);
     importWorktrees(db, root);
     importRecoveryDirectories(db, root);
+    importReaderReleases(db, root);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importReaderReleases(db, root) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-reader-releases-v1')) return;
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const directory = path.join(root, 'git-snapshots', '.released-readers');
+  let entries;
+
+  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !/^[a-f0-9-]{36}\.json$/.test(entry.name)) continue;
+    const body = fs.readFileSync(path.join(directory, entry.name), 'utf8');
+    JSON.parse(body);
+    db.prepare('INSERT INTO snapshot_reader_releases VALUES (?, ?)').run(entry.name.slice(0, -5), body);
+  }
+
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('snapshot-reader-releases-v1');
+}
+
+function releaseSnapshotReader(root, scope, record) {
+  const db = open(root);
+
+  try {
+    db.prepare('INSERT INTO snapshot_reader_releases VALUES (?, ?) ON CONFLICT(scope) DO UPDATE SET record_json=excluded.record_json')
+      .run(scope, JSON.stringify(record));
+  } finally { db.close(); }
+}
+
+function snapshotReaderReleases(root) {
+  const db = open(root);
+
+  try { return db.prepare('SELECT scope, record_json FROM snapshot_reader_releases').all(); }
+  finally { db.close(); }
+}
+
+function removeSnapshotReaderRelease(root, row) {
+  const db = open(root);
+
+  try { db.prepare('DELETE FROM snapshot_reader_releases WHERE scope=? AND record_json=?').run(row.scope, row.record_json); }
+  finally { db.close(); }
 }
 
 function importRecoveryDirectories(db, root) {
@@ -476,4 +521,4 @@ function storageRoot(file) {
 
 module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot,
   publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
-  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord };
+  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease };

@@ -53,7 +53,7 @@ pub(crate) fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
 }
 
 fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, String> {
-    let script = format!("cd {} && PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {}", shell_quote(cwd), shell_quote(include_str!("../../resources/capture-git-tree.cjs")));
+    let script = format!("cd {} && PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {}", shell_quote(cwd), shell_quote(&crate::session_registry::with_database(include_str!("../../resources/capture-git-tree.cjs"))));
     let mut command = ssh(host); command.arg(remote_login_command(&script));
     query_remote_git_tree(&mut command, &host.name)
 }

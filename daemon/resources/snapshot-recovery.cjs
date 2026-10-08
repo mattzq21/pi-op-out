@@ -163,7 +163,7 @@ function addSavedSnapshot(directory, snapshots, warnings) {
 
 function releasedReader(owner, state) {
   if (!/^[a-f0-9-]{36}$/.test(owner?.scope)) return false;
-  const receipt = read(path.join(state.parent, '.released-readers', `${owner.scope}.json`));
+  const receipt = state.releases.get(owner.scope);
 
   return receipt?.version === 1;
 }
@@ -199,25 +199,22 @@ function usedScopes(directories, warnings) {
   return used;
 }
 
-function pruneReceipt(file, boot, warnings) {
-  try {
-    const record = read(file);
-
-    if (record?.boot && record.boot !== boot) fs.rmSync(file);
-  } catch (error) { warn(warnings, file, error); }
-}
-
 function pruneReleasedReaders(parent, directories, boot, warnings) {
   if (!boot) return;
   const used = usedScopes(directories, warnings);
 
   if (!used) return;
-  const receipts = path.join(parent, '.released-readers');
+  const root = path.dirname(parent);
+  const database = require('./session-database.cjs');
 
-  for (const entry of entries(receipts)) {
-    if (!entry.isFile() || !/^[a-f0-9-]{36}\.json$/.test(entry.name) || used.has(entry.name.slice(0, -5))) continue;
+  for (const row of database.snapshotReaderReleases(root)) {
+    if (used.has(row.scope)) continue;
 
-    pruneReceipt(path.join(receipts, entry.name), boot, warnings);
+    try {
+      const record = JSON.parse(row.record_json);
+
+      if (record?.boot && record.boot !== boot) database.removeSnapshotReaderRelease(root, row);
+    } catch (error) { warn(warnings, row.scope, error); }
   }
 }
 
@@ -401,7 +398,9 @@ function recoverLocked(root, parent) {
 
   let objects;
 
-  const state = { parent, boot: bootIdentity(), protected: protectedSources(root, directories, warnings), snapshots, objects: () => {
+  const releases = new Map(require('./session-database.cjs').snapshotReaderReleases(root).map(row => [row.scope, JSON.parse(row.record_json)]));
+
+  const state = { parent, releases, boot: bootIdentity(), protected: protectedSources(root, directories, warnings), snapshots, objects: () => {
     if (objects) return objects;
     objects = new Map();
 

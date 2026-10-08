@@ -125,11 +125,8 @@ function lockedCapture() {
 
 function releaseReader() {
   if (!/^[a-f0-9-]{36}$/.test(owner.scope)) throw new Error('Invalid comparison reader scope');
-  const directory = path.join(storageRoot(), 'git-snapshots', '.released-readers');
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const boot = fs.existsSync('/proc/sys/kernel/random/boot_id') ? fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() : null;
-  writeJson(path.join(directory, `${owner.scope}.json`), { version: 1, boot, releasedAt: Date.now() });
-  syncPath(path.dirname(directory));
+  require('./session-database.cjs').releaseSnapshotReader(storageRoot(), owner.scope, { version: 1, boot, releasedAt: Date.now() });
   console.log('null');
 }
 
