@@ -304,34 +304,15 @@ function verified(file, journal) {
   return snapshot.bytes === journal.bytes && snapshot.digest === journal.digest;
 }
 
-function files(directory) {
-  if (!exists(directory)) return [];
-
-  if (!exists(directory).isDirectory() || !canonical(directory)) throw new Error(`Conversation storage has ambiguous ancestry: ${directory}`);
-  const result = [];
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) result.push(...files(file));
-    else if (entry.isFile() && entry.name.endsWith('.jsonl')) result.push(file);
-  }
-
-  return result;
-}
-
 function locate(root, id, nonce) {
-  const matches = [];
+  const file = require('../session-database.cjs').lookup(root, id);
 
-  for (const file of [...files(path.join(root, 'sessions')), ...files(path.join(root, 'archived'))]) {
-    const value = header(file);
+  if (!file) return;
 
-    if (value?.id === id && (!nonce || value.piopPublicationId === nonce)) matches.push({ path: file, header: value });
-  }
+  if (!inside(path.join(root, 'sessions'), file) && !inside(path.join(root, 'archived'), file)) throw new Error('Conversation database path is outside session storage');
+  const value = header(file);
 
-  if (matches.length > 1) throw new Error(`Conversation ${id} has ambiguous publication locations; retained`);
-
-  return matches[0];
+  if (value?.id === id && (!nonce || value.piopPublicationId === nonce)) return { path: file, header: value };
 }
 
 function deleted(root, id) {
@@ -349,4 +330,4 @@ function deleted(root, id) {
   } finally { database.close(); }
 }
 
-module.exports = { uuid, headerSchema, writerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, write, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, writer, writerDead, lockPath, journalPath, matches, verified, files, locate, deleted };
+module.exports = { uuid, headerSchema, writerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, write, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, writer, writerDead, lockPath, journalPath, matches, verified, locate, deleted };

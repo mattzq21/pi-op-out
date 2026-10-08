@@ -17,7 +17,17 @@ function initialize(db) {
       head_commit TEXT, checked_at INTEGER NOT NULL, observed_at INTEGER, directory_exists INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS session_sidebar (
         session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
-        fingerprint TEXT NOT NULL, modified_at INTEGER NOT NULL, summary_json TEXT NOT NULL);`);
+        fingerprint TEXT NOT NULL, modified_at INTEGER NOT NULL, summary_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_child_state (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+        complete INTEGER NOT NULL CHECK(complete IN (0, 1)));
+      CREATE TABLE IF NOT EXISTS session_children (
+        parent_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        child_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK(kind IN ('subagent', 'review')),
+        position INTEGER NOT NULL,
+        PRIMARY KEY(parent_id, child_id));
+      CREATE INDEX IF NOT EXISTS session_children_child ON session_children(child_id);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -132,4 +142,36 @@ function importSessions(db, root) {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions };
+function open(root) {
+  const file = require('node:path').join(root, 'sessions.sqlite');
+  const db = new (require('node:sqlite').DatabaseSync)(file);
+
+  try {
+    require('node:fs').chmodSync(file, 0o600);
+    initialize(db);
+    importSessions(db, root);
+
+    return db;
+  } catch (error) { db.close(); throw error; }
+}
+
+function lookup(root, sessionId) {
+  const db = open(root);
+
+  try {
+    return db.prepare(`SELECT session_path FROM sessions WHERE session_id=?
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))`).get(sessionId, sessionId)?.session_path;
+  } finally { db.close(); }
+}
+
+function paths(root) {
+  const db = open(root);
+
+  try {
+    return db.prepare(`SELECT session_path FROM sessions WHERE session_path IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`)
+      .all().map(row => row.session_path);
+  } finally { db.close(); }
+}
+
+module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths };

@@ -37,11 +37,14 @@ function readSession(file) {
 }
 
 function walkSessions(directory, visit) {
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
+  for (const file of require('./session-database.cjs').paths(root)) {
+    if (!inside(directory, file)) continue;
+    let metadata;
 
-    if (entry.isDirectory()) walkSessions(file, visit);
-    else if (entry.isFile() && entry.name.endsWith('.jsonl')) visit(file);
+    try { metadata = fs.lstatSync(file); }
+    catch (error) { if (['ENOENT', 'ENOTDIR'].includes(error.code)) continue; throw error; }
+
+    if (metadata.isFile()) visit(file);
   }
 }
 

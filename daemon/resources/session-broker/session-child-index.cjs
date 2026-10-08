@@ -6,6 +6,7 @@ const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('./session-publication-io.cjs');
 const checkpoints = require('./checkpoint-owner-index.cjs');
+const tables = require('../session-database.cjs');
 
 const childSchema = Type.Object({ sessionId: Type.String(), sessionPath: Type.String(), kind: Type.Union([Type.Literal('subagent'), Type.Literal('review')]) });
 
@@ -13,29 +14,93 @@ const indexSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.Stri
 
 const parentSchema = Type.Object({ type: Type.Literal('custom'), customType: Type.String(), data: Type.Object({ sessionId: Type.String(), parentSessionId: Type.String(), parentSessionPath: Type.Optional(Type.String()) }) });
 
-function indexPath(root, sessionId) {
-  return path.join(root, 'conversation-children', createHash('sha256').update(sessionId).digest('hex') + '.json');
+function database(root) {
+  const db = tables.open(root);
+
+  try {
+    migrate(db, root);
+
+    return db;
+  } catch (error) { db.close(); throw error; }
+}
+
+function migrate(db, root) {
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    if (!db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('session-children-v1')) {
+      importFiles(db, root);
+      db.prepare('INSERT INTO storage_migrations VALUES (?)').run('session-children-v1');
+    }
+
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importFiles(db, root) {
+  const directory = path.join(root, 'conversation-children');
+
+  if (!io.exists(directory)) return;
+
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isFile() || !/^[a-f0-9]{64}\.json$/.test(entry.name)) continue;
+    const value = JSON.parse(io.read(path.join(directory, entry.name)).body);
+
+    if (!Check(indexSchema, value) || entry.name !== createHash('sha256').update(value.sessionId).digest('hex') + '.json') throw new Error('Invalid conversation child index');
+    write(db, value);
+  }
 }
 
 function read(root, sessionId) {
-  const file = indexPath(root, sessionId);
+  const db = database(root);
 
-  if (!io.exists(file)) return;
-  const value = JSON.parse(io.read(file).body);
+  try {
+    const saved = db.prepare(`SELECT s.session_path, c.complete FROM session_child_state c
+      JOIN sessions s USING(session_id) WHERE c.session_id=?`).get(sessionId);
 
-  if (!Check(indexSchema, value) || value.sessionId !== sessionId) throw new Error('Invalid conversation child index');
+    if (!saved) return;
 
-  return value;
+    const children = db.prepare(`SELECT c.child_id AS sessionId, coalesce(s.session_path, '') AS sessionPath, c.kind
+      FROM session_children c JOIN sessions s ON s.session_id=c.child_id WHERE c.parent_id=? ORDER BY c.position, c.child_id`).all(sessionId);
+
+    return { version: 1, sessionId, sessionPath: saved.session_path ?? '', complete: Boolean(saved.complete), children };
+  } finally { db.close(); }
+}
+
+function identity(db, sessionId, sessionPath) {
+  if (db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(sessionId)) return false;
+  db.prepare(`INSERT INTO sessions (session_id, session_path) VALUES (?, ?) ON CONFLICT(session_id)
+    DO UPDATE SET session_path=coalesce(sessions.session_path, excluded.session_path)`)
+    .run(sessionId, sessionPath || null);
+
+  return true;
+}
+
+function write(db, value) {
+  if (!identity(db, value.sessionId, value.sessionPath)) return;
+  db.prepare(`INSERT INTO session_child_state VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET complete=excluded.complete`)
+    .run(value.sessionId, Number(value.complete));
+  db.prepare('DELETE FROM session_children WHERE parent_id=?').run(value.sessionId);
+  const insert = db.prepare('INSERT INTO session_children VALUES (?, ?, ?, ?)');
+
+  for (const [position, child] of value.children.entries()) {
+    if (identity(db, child.sessionId, child.sessionPath)) insert.run(value.sessionId, child.sessionId, child.kind, position);
+  }
 }
 
 function store(root, value) {
   if (!Check(indexSchema, value)) throw new Error('Invalid conversation child index');
-  io.mkdir(path.join(root, 'conversation-children'));
-  io.write(indexPath(root, value.sessionId), value);
+  const db = database(root);
+
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    write(db, value);
+    db.exec('COMMIT');
+  } finally { db.close(); }
 }
 
 function ensure(root, sessionId, sessionPath, complete = false) {
-  if (sessionPath) require('../session-database.cjs').registerPath(root, sessionId, sessionPath);
+  if (sessionPath) tables.registerPath(root, sessionId, sessionPath);
   const previous = read(root, sessionId);
 
   if (previous && (!sessionPath || previous.sessionPath === sessionPath)) return previous;
