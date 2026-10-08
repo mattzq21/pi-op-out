@@ -315,6 +315,106 @@ async function dispatch(command, session, output) {
   }
 }
 
+const isReview = text => /^\/review(?:\s|$)/.test(text);
+
+const reviewText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
+
+function bindFollowUpDrain(agent) {
+  const queue = agent.followUpQueue;
+  const drain = queue.drain;
+
+  queue.drain = function () {
+    const messages = drain.call(this);
+    const review = messages.findIndex(message => isReview(reviewText(message)));
+
+    if (review === -1) return messages;
+    const count = review === 0 ? 1 : review;
+    this.messages.unshift(...messages.slice(count));
+
+    return messages.slice(0, count);
+  };
+}
+
+async function executeQueuedReview(session, text, images) {
+  const ctx = session.extensionRunner.createCommandContext();
+  const signal = ctx.signal;
+  const request = { command: "start_review", payload: { args: text.slice(7).trim(), images }, ctx };
+
+  try {
+    Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge")).value(request);
+
+    if (!request.ready) throw new Error("Review requests are unavailable");
+    await request.ready;
+  } catch (error) {
+    if (signal?.aborted) return false;
+    ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+  }
+
+  return !signal?.aborted;
+}
+
+async function consumeReviews(session, messages) {
+  const prompts = [];
+
+  for (const message of messages) {
+    const text = reviewText(message);
+
+    if (!isReview(text)) { prompts.push(message); continue; }
+
+    const pending = session.getFollowUpMessages();
+    const index = pending.indexOf(text);
+
+    if (index !== -1) pending.splice(index, 1);
+    session._emitQueueUpdate();
+    const consumed = await executeQueuedReview(session, text, message.content.filter(part => part.type === "image"));
+
+    if (consumed && isQueuedUserMessage(message)) session.sessionManager.appendMessage(message);
+  }
+
+  return prompts;
+}
+
+async function drainReviews(session, drain) {
+  while (true) {
+    if (session.agent.signal?.aborted) return [];
+    const messages = await drain();
+
+    if (!messages.length) return messages;
+    const prompts = await consumeReviews(session, messages);
+
+    if (prompts.length) return prompts;
+  }
+}
+
+function bindReviewQueue(session) {
+  const agent = session.agent;
+  bindFollowUpDrain(agent);
+  const createLoopConfig = agent.createLoopConfig;
+  const runPromptMessages = agent.runPromptMessages;
+
+  agent.createLoopConfig = function (...args) {
+    const config = createLoopConfig.apply(this, args);
+    const followUp = config.getFollowUpMessages;
+    config.getFollowUpMessages = () => drainReviews(session, followUp);
+
+    return config;
+  };
+
+  agent.runPromptMessages = async function (messages, options) {
+    if (options?.skipInitialSteeringPoll || !messages.some(message => isReview(reviewText(message)))) {
+      return runPromptMessages.call(this, messages, options);
+    }
+
+    let cancelled = false;
+    await this.runWithLifecycle(async signal => {
+      await consumeReviews(session, messages);
+      cancelled = signal.aborted;
+    });
+
+    if (!cancelled && this.hasQueuedMessages()) return this.continue();
+  };
+}
+
 async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const root = runtimeRoot(executable);
@@ -330,6 +430,15 @@ async function main() {
   const { AgentSession } = await import(pathToFileURL(join(root, "dist/index.js")).href);
   const { writeRawStdout } = await import(pathToFileURL(join(root, "dist/core/output-guard.js")).href);
   const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);
+  const prompt = AgentSession.prototype.prompt;
+  AgentSession.prototype.prompt = function (text, options) {
+    if (isReview(text) && this.isStreaming) {
+      return this._queueFollowUp(text, options?.images).then(() => options?.preflightResult?.("queued"));
+    }
+
+    return prompt.call(this, text, options);
+  };
+
   installGoalAcceptance(AgentSession);
 
   let session;
@@ -337,6 +446,8 @@ async function main() {
   AgentSession.prototype.bindExtensions = async function (...bindings) {
     installQueueProtocol(this, output);
     await bind.apply(this, bindings);
+
+    if (session !== this) bindReviewQueue(this);
     session = this;
   };
 

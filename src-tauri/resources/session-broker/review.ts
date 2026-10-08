@@ -20,6 +20,8 @@ const settingsSchema = Schema.Object({ reviewAgent: Schema.Optional(Schema.Strin
 
 const fileErrorSchema = Schema.Object({ code: Schema.String() });
 
+const reviewRequestSchema = Schema.Object({ args: Schema.String(), images: Schema.Array(Schema.Object({ type: Schema.Literal("image"), data: Schema.String(), mimeType: Schema.String(), name: Schema.Optional(Schema.String()) })) });
+
 const sessionHeaderSchema = Schema.Object({ type: Schema.Literal("session"), id: Schema.String() });
 
 type ReviewRecord = Static<typeof reviewSchema>;
@@ -52,23 +54,26 @@ async function requireSavedReviewParent(ctx: ExtensionContext) {
   } finally { await file.close(); }
 }
 
-async function requireReviewRepository(cwd: string) {
+async function requireReviewRepository(cwd: string, signal?: AbortSignal) {
   try {
-    const { stdout } = await runFile("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], { timeout: 5000 });
+    const { stdout } = await runFile("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], { timeout: 5000, signal });
 
     if (stdout.trim() === "true") return;
   } catch { }
 
+  signal?.throwIfAborted();
   throw new Error("/review is only available in Git repository projects");
 }
 
-async function createReview(ctx: ExtensionContext, agentState: SessionAgentState) {
+async function createReview(ctx: ExtensionContext, agentState: SessionAgentState, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   const header = ctx.sessionManager.getHeader();
 
   const parentSessionPath = ctx.sessionManager.getSessionFile();
 
   if (!header || !parentSessionPath) throw new Error("Save the main conversation before starting a review");
   await requireSavedReviewParent(ctx);
+  signal?.throwIfAborted();
   const timestamp = new Date().toISOString();
   const sessionId = randomUUID();
   const record = { sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(), publicationId: randomUUID() };
@@ -79,7 +84,7 @@ async function createReview(ctx: ExtensionContext, agentState: SessionAgentState
     { type: "custom", id: metadataId, parentId: null, timestamp, customType: "piop-review-parent", data: { parentSessionId: record.parentSessionId, sessionId, hostId: record.hostId, parentHostId: record.hostId, publicationId: record.publicationId } },
     { type: "custom", id: `${metadataId}-agent`, parentId: metadataId, timestamp, customType: "pi-define-agents-state", data: agentState },
     { type: "session_info", id: randomUUID().slice(0, 8), parentId: `${metadataId}-agent`, timestamp, name: "Code review" },
-  ], { review: { record, parentSessionPath } });
+  ], { review: { record, parentSessionPath }, beforeWrite: () => signal?.throwIfAborted() });
 
   return { record, publication };
 }
@@ -114,14 +119,14 @@ async function reconcileReviews(pi: ExtensionAPI, ctx: ExtensionContext) {
   } catch (error) { ctx.ui.notify(`Review publication recovery is pending: ${String(error)}`, "warning"); }
 }
 
-async function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string, inherited = false) {
+async function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string, inherited = false, images?: Static<typeof reviewRequestSchema>["images"]) {
   const hostId = record.hostId ?? currentHost();
   const location = await locateConversation(record.sessionId, hostId);
   ctx.ui.setStatus("review", "Opening code review…");
   const readOnly = inherited || location.archived;
-  const payload: ReviewRecord & { task?: string; readOnly: boolean; archived: boolean; inherited: boolean } = { ...record, ...location, hostId, readOnly, inherited };
+  const payload: ReviewRecord & { task?: string; images?: Static<typeof reviewRequestSchema>["images"]; readOnly: boolean; archived: boolean; inherited: boolean } = { ...record, ...location, hostId, readOnly, inherited };
 
-  if (task && !readOnly) payload.task = task;
+  if (task && !readOnly) { payload.task = task; payload.images = images; }
 
   void ctx.ui.input("__pi_desktop_review__", JSON.stringify(payload)).catch(error => {
     ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
@@ -165,24 +170,41 @@ export function registerReview(pi: ExtensionAPI) {
       { role: "toolResult", toolCallId, toolName: "review_feedback", content: [{ type: "text", text: Parse(Schema.String(), message.content) }], isError: false, timestamp: message.timestamp },
     ];
   }) }));
+
+  const startReview = async (args: string, ctx: ExtensionContext, images?: Static<typeof reviewRequestSchema>["images"]) => {
+    const signal = ctx.signal;
+    signal?.throwIfAborted();
+
+    if (args.trim()) { ctx.ui.notify("Usage: /review — reviews the current branch", "warning");
+
+    return; }
+
+    await requireReviewRepository(ctx.cwd, signal);
+    signal?.throwIfAborted();
+    const settings = await reviewSettings();
+    signal?.throwIfAborted();
+    const profile: SubagentProfileRequest = { agent: settings.agent };
+    pi.events.emit("piop:agents:subagent", profile);
+    await profile.ready;
+    signal?.throwIfAborted();
+
+    if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${settings.agent}`);
+    const { record, publication } = await createReview(ctx, profile.state, signal);
+    await publishReview(pi, ctx, record, publication);
+    signal?.throwIfAborted();
+    await openReview(ctx, record, settings.prompt, false, images);
+  };
+
   pi.registerCommand("review", {
     description: "Review this branch against its base in a side pane",
-    handler: async (args, ctx) => {
-      if (args.trim()) { ctx.ui.notify("Usage: /review — reviews the current branch", "warning");
-
-      return; }
-
-      await requireReviewRepository(ctx.cwd);
-      const settings = await reviewSettings();
-      const profile: SubagentProfileRequest = { agent: settings.agent };
-      pi.events.emit("piop:agents:subagent", profile);
-      await profile.ready;
-
-      if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${settings.agent}`);
-      const { record, publication } = await createReview(ctx, profile.state);
-      await publishReview(pi, ctx, record, publication);
-      await openReview(ctx, record, settings.prompt);
-    },
+    handler: (args, ctx) => startReview(args, ctx),
+  });
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "start_review") return;
+    request.ready = (async () => {
+      const payload = Parse(reviewRequestSchema, request.payload);
+      await startReview(payload.args, request.ctx, payload.images);
+    })();
   });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "open_review") return;

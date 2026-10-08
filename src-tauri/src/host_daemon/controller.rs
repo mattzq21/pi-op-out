@@ -650,8 +650,10 @@ pub(super) async fn queue_command(session: &Session, mut command: Value) -> Resu
     if kind(&command) == "change_pending" {
         return session.queue.change_pending(&text(&command, "id"), command["action"].clone()).await;
     }
-    if kind(&command) == "prompt" && !text(&command, "message").starts_with('/') && !session.queue.held() {
-        command["type"] = json!(if command["streamingBehavior"] == "steer" {
+    let message = text(&command, "message");
+    let review = message.split_whitespace().next() == Some("/review");
+    if kind(&command) == "prompt" && (!message.starts_with('/') || review) && !session.queue.held() {
+        command["type"] = json!(if !review && command["streamingBehavior"] == "steer" {
             "steer"
         } else {
             "follow_up"

@@ -14,7 +14,7 @@ import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiReque
 
 const optionalString = z.string().optional().catch(undefined);
 
-const reviewPayloadSchema = z.object({ task: optionalString, cwd: optionalString, parentSessionId: optionalString, sessionId: optionalString, sessionPath: optionalString, hostId: optionalString, readOnly: z.boolean().optional(), archived: z.boolean().optional(), inherited: z.boolean().optional() });
+const reviewPayloadSchema = z.object({ task: optionalString, cwd: optionalString, parentSessionId: optionalString, sessionId: optionalString, sessionPath: optionalString, hostId: optionalString, readOnly: z.boolean().optional(), archived: z.boolean().optional(), inherited: z.boolean().optional(), images: z.array(z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string(), name: z.string().optional() })).optional() });
 
 type AppEventsContext = {
   transport: NativeTransport;
@@ -127,6 +127,8 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
         const reviewHost = (hostId?: string) => hostId ?? capturedOptions.activeHostIdRef.current;
 
+        const reviewImages = (payload: z.infer<typeof reviewPayloadSchema>) => payload.readOnly ? undefined : payload.images ?? capturedOptions.reviewImages.get(capturedOptions.transport);
+
         const openReview = () => {
           try {
             const payload = reviewPayload();
@@ -139,7 +141,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
             capturedOptions.setSplitPane({
               key: crypto.randomUUID(),
               session: { id: payload.sessionId, path: payload.sessionPath, name: "Code review", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task ?? "Code review", messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId },
-              review: { task: payload.task, requestId: request.id, readOnly: payload.readOnly, archived: payload.archived, inherited: payload.inherited, parentSessionId: payload.parentSessionId, images: payload.readOnly ? undefined : capturedOptions.reviewImages.get(capturedOptions.transport), messageMain: payload.readOnly ? undefined : async message => {
+              review: { task: payload.task, requestId: request.id, readOnly: payload.readOnly, archived: payload.archived, inherited: payload.inherited, parentSessionId: payload.parentSessionId, images: reviewImages(payload), messageMain: payload.readOnly ? undefined : async message => {
                   const parent = capturedOptions.transport;
 
                   if (parent.connectionTarget().sessionId !== payload.parentSessionId) throw new Error("The original main conversation is no longer connected");
