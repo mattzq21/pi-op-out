@@ -195,6 +195,8 @@ function validateTargets(targets: Target[], ctx: ExtensionContext) {
 
 function registerDelivery(pi: ExtensionAPI) {
   let generation = 0;
+  let runSignal: AbortSignal | undefined;
+  let runAborted = false;
   let navigationTimer: ReturnType<typeof setTimeout> | undefined;
   const cancel = () => {
     generation++;
@@ -212,10 +214,23 @@ function registerDelivery(pi: ExtensionAPI) {
   };
 
   const unsubscribeCancellation = pi.events.on("piop:cancel-preparation", cancel);
-  pi.on("session_start", cancel);
-  pi.on("session_shutdown", () => { cancel(); unsubscribeCancellation(); });
+  const reset = () => { cancel(); runSignal = undefined; runAborted = false; };
+  pi.on("session_start", reset);
+  pi.on("session_shutdown", () => { reset(); unsubscribeCancellation(); });
+  pi.on("agent_start", (_event, ctx) => {
+    runSignal = ctx.signal;
+    runAborted = false;
+  });
+  pi.on("agent_end", (event, ctx) => {
+    runSignal = ctx.signal ?? runSignal;
+    runAborted = event.messages.some(message => message.role === "assistant" && message.stopReason === "aborted");
+  });
   pi.on("agent_settled", (_event, ctx) => {
-    if (ctx.signal?.aborted) { cancel(); return; }
+    const aborted = runAborted || runSignal?.aborted;
+    runSignal = undefined;
+    runAborted = false;
+
+    if (aborted) { cancel(); return; }
 
     flush(ctx);
   });
