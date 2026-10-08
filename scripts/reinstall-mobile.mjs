@@ -52,8 +52,8 @@ try {
   const serial = process.argv[2] || env.ANDROID_SERIAL || (devices.length === 1 ? devices[0] : undefined);
 
   if (!serial || !devices.includes(serial)) throw new Error('Connect and authorize one Android device, or select one with npm run reinstall -- <device-serial>.');
-  console.log('Building and starting the Piop daemon…');
-  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'daemon']);
+  console.log('Building and starting the Piop debug daemon…');
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'daemon:dev']);
   console.log(`Rebuilding Piop for ${serial}…`);
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'android:build']);
   run(adb, ['-s', serial, 'install', '-r', join(root, 'android/app/build/outputs/apk/debug/app-debug.apk')]);
