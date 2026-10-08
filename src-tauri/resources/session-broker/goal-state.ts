@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { legacyReceiptSchema, recoverLegacyUsage, saveLegacyRecovery, type LegacyUsageRecovery } from "./goal-legacy-usage.ts";
 
 export const GOAL_ENTRY = "piop-goal";
 
@@ -25,6 +26,7 @@ const goalSchema = Type.Object({
   objective: Type.String(), status: statusSchema, tokenBudget: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })]),
   tokensUsed: accountingSchema, elapsedMs: accountingSchema, createdAt: accountingSchema, updatedAt: accountingSchema,
   subagentUsage: Type.Optional(Type.Array(Type.Object({ runId: Type.String(), total: accountingSchema }))),
+  legacySubagentUsage: Type.Optional(Type.Array(legacyReceiptSchema)), legacyUsageUncertainTokens: Type.Optional(accountingSchema),
 });
 
 export type Goal = Static<typeof goalSchema>;
@@ -76,6 +78,7 @@ export class GoalState {
   private clock: number | undefined;
   private accountingGoalId: string | undefined;
   private saved = "";
+  private legacyUsageRecovery: LegacyUsageRecovery[] = [];
   constructor(private pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext) {
@@ -87,6 +90,10 @@ export class GoalState {
     if (data !== null && !Check(goalSchema, data)) throw new Error("Invalid saved goal");
     this.goal = validateSaved(data);
     this.saved = JSON.stringify(this.goal);
+    this.legacyUsageRecovery = recoverLegacyUsage(ctx, this.goal);
+    this.enforceBudget(true);
+    this.save(ctx);
+    saveLegacyRecovery(this.pi, ctx, this.legacyUsageRecovery);
     this.replaySubagentUsage(ctx);
 
     if (this.goal?.status === "complete") { this.clear(ctx);
@@ -211,7 +218,8 @@ export class GoalState {
     const goal = this.goal && { ...this.goal, timeUsedSeconds: Math.floor(this.goal.elapsedMs / 1000) };
     const completionBudgetReport = completed && goal?.status === "complete" && (goal.tokenBudget !== null || goal.timeUsedSeconds > 0) ? "Goal achieved. Report final usage from this tool result's structured goal fields. If goal.tokenBudget is present, include goal.tokensUsed and goal.tokenBudget. If goal.timeUsedSeconds is greater than 0, summarize elapsed time in a concise, human-friendly form appropriate to the response language." : null;
 
-    return { goal, remainingTokens: goal?.tokenBudget == null ? null : Math.max(0, goal.tokenBudget - goal.tokensUsed), completionBudgetReport };
+    return { goal, remainingTokens: goal?.tokenBudget == null ? null : Math.max(0, goal.tokenBudget - goal.tokensUsed), completionBudgetReport,
+      legacyUsageRecovery: this.legacyUsageRecovery.length ? { records: this.legacyUsageRecovery, explanation: "Recovered tokens were missing from this goal's saved total. Uncertain records may already be counted; existing totals are preserved. Missing records for cleared or completed goals remain recorded without reopening those goals. Unattributed records have no unambiguous saved goal owner." } : undefined };
   }
 
   save(ctx: ExtensionContext) {

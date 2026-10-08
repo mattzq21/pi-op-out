@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
 import { lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -7,6 +7,9 @@ import { createInterface } from "node:readline";
 import { Type as Schema, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { goalTokens } from "./goal-state.ts";
+import { resultNotificationId } from "./subagent-identity.ts";
+
+export { resultNotificationId } from "./subagent-identity.ts";
 
 export const SUBAGENT_RUN = "piop-subagent-run";
 
@@ -43,10 +46,6 @@ function serializeRun<T>(action: () => Promise<T>) {
   runWrites = next.then(() => {}, () => {});
 
   return next;
-}
-
-export function resultNotificationId(run: SubagentRun) {
-  return `subagent-${createHash("sha256").update(JSON.stringify([run.parentSessionId, run.sessionId, run.toolCallId, run.startedAt])).digest("hex")}`;
 }
 
 async function syncPath(path: string) {
