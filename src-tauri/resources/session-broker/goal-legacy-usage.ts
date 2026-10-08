@@ -101,6 +101,12 @@ function legacyUsage(entry: Entry, totals: Map<string, number>) {
   return { ...record, valid, state: "invalid" };
 }
 
+function ownerOfRun(ownership: Map<string, Set<string | null>>, runId: string | null) {
+  const candidates = runId === null ? undefined : ownership.get(runId);
+
+  return candidates?.size === 1 ? [...candidates][0] : undefined;
+}
+
 function inspectLegacy(entries: Entry[]) {
   const history = snapshots(entries);
   const ownership = owners(entries);
@@ -111,8 +117,7 @@ function inspectLegacy(entries: Entry[]) {
     const usage = legacyUsage(entry, totals);
 
     if (!usage || usage.tokens === 0 && usage.valid) return;
-    const candidates = usage.runId === null ? undefined : ownership.get(usage.runId);
-    const owner = candidates?.size === 1 ? [...candidates][0] : undefined;
+    const owner = ownerOfRun(ownership, usage.runId);
 
     if (owner === null) return;
     const goalId = owner ?? null;
@@ -123,26 +128,29 @@ function inspectLegacy(entries: Entry[]) {
   return records;
 }
 
+function applyLegacyRecovery(goal: Goal, record: LegacyUsageRecovery) {
+  if (record.state !== "missing" || record.goalId !== goal.id || record.tokens === null) return;
+
+  if (goal.tokensUsed > Number.MAX_SAFE_INTEGER - record.tokens) { record.state = "uncertain";
+
+  return; }
+
+  const receipts = goal.legacySubagentUsage ??= [];
+
+  if (!receipts.some(receipt => receipt.entryId === record.entryId && receipt.goalId === goal.id)) {
+    goal.tokensUsed += record.tokens;
+    receipts.push({ entryId: record.entryId, goalId: goal.id, tokens: record.tokens });
+  }
+
+  record.state = "recovered";
+}
+
 export function recoverLegacyUsage(ctx: ExtensionContext, goal: Goal | null) {
   const records = inspectLegacy(ctx.sessionManager.getEntries());
 
   if (!goal || goal.status === "complete") return records;
 
-  for (const record of records) {
-    if (record.state !== "missing" || record.goalId !== goal.id || record.tokens === null) continue;
-
-    if (goal.tokensUsed > Number.MAX_SAFE_INTEGER - record.tokens) { record.state = "uncertain";
-
-    continue; }
-    const receipts = goal.legacySubagentUsage ??= [];
-
-    if (!receipts.some(receipt => receipt.entryId === record.entryId && receipt.goalId === goal.id)) {
-      goal.tokensUsed += record.tokens;
-      receipts.push({ entryId: record.entryId, goalId: goal.id, tokens: record.tokens });
-    }
-
-    record.state = "recovered";
-  }
+  for (const record of records) applyLegacyRecovery(goal, record);
 
   const uncertain = records.filter(record => record.goalId === goal.id && record.state === "uncertain").reduce((sum, record) => Math.min(Number.MAX_SAFE_INTEGER, sum + (record.tokens ?? 0)), 0);
 

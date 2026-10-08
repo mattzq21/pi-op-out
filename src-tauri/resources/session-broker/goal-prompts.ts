@@ -8,6 +8,7 @@ const objectiveUpdated = "The active thread goal objective was edited by the use
 
 function render(template: string, goal: Goal) {
   const uncertainty = goal.legacyUsageUncertainTokens ? ` (saved total; ${goal.legacyUsageUncertainTokens} older subagent tokens have uncertain inclusion)` : "";
+
   const values = new Map([
     ["objective", goal.objective.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")],
     ["tokens_used", `${goal.tokensUsed}${uncertainty}`], ["token_budget", String(goal.tokenBudget ?? "none")],

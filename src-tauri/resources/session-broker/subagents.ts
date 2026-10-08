@@ -247,10 +247,12 @@ async function usageReporter(run: SubagentRun, execution: UsageExecution, restor
 
   return (total: number) => {
     const next = pending.then(async () => {
+      signal?.throwIfAborted();
       const tokens = Math.max(0, total - reported);
       const saved = Math.max(reported, reportedSubagentUsage(ctx, run));
 
       if (total > saved) await persistSubagentUsage(pi, ctx, run, total, total - saved);
+      signal?.throwIfAborted();
       const usage: GoalUsage = { ctx };
       pi.events.emit("piop:goal-usage", usage);
       await usage.ready;
@@ -292,6 +294,7 @@ async function reconcileSubagentTranscript(run: SubagentRun, reportUsage: (total
 const accountingRecoveries = new Map<string, { run: SubagentRun; done: Promise<void> }>();
 
 async function recoverSubagentAccounting(run: SubagentRun, execution: UsageExecution) {
+  execution.signal?.throwIfAborted();
   const key = resultNotificationId(run);
   let recovery = accountingRecoveries.get(key);
 
@@ -310,10 +313,12 @@ async function performAccountingRecovery(run: SubagentRun, execution: UsageExecu
   if (latest && !latest.accountingPending && latest.status !== "running") { Object.assign(run, latest);
 
   return; }
+
   const scope = boundedRecovery(execution);
   await restoreSubagentPath(run, scope.signal);
   const reportUsage = await usageReporter(run, { ...execution, ...scope }, true);
   await reconcileSubagentTranscript(run, reportUsage, scope);
+  scope.signal.throwIfAborted();
   await persistSubagentRun(execution.pi, execution.ctx, run);
 }
 
@@ -610,7 +615,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     if (stopping) return stopping;
     controller.abort();
     mailbox.reset();
-    stopping = Promise.allSettled([...pending]).then(() => {
+    stopping = Promise.allSettled([...pending, ...[...accountingRecoveries.values()].map(recovery => recovery.done)]).then(() => {
       controller = new AbortController();
       stopping = undefined;
     });

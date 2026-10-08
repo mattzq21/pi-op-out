@@ -47,6 +47,7 @@ export async function waitForAccounting(done: Promise<void>, scope: RecoveryScop
 async function recoverStoppedRun(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun, scope: RecoveryScope) {
   if (run.status !== "running") return;
   const snapshot = await sessionSnapshot(run.sessionId, run.hostId, scope.signal);
+  scope.signal?.throwIfAborted();
 
   if (!["idle", "paused"].includes(snapshotStatus(snapshot))) throw new Error(`Subagent ${run.name} is still running`);
   run.status = "cancelled";
@@ -111,16 +112,18 @@ async function retryPendingAccounting(pi: ExtensionAPI, ctx: ExtensionContext, r
 export function registerSubagentRecovery(pi: ExtensionAPI, runtime: RecoveryRuntime) {
   const { active, stopped, recover } = runtime;
   let pending = Promise.resolve();
+  let operations = new AbortController();
   let retryController = new AbortController();
   let retrying = Promise.resolve();
 
   const stopRetries = async () => { retryController.abort(); await retrying; };
+
   const startRetries = async (ctx: ExtensionContext) => {
     await stopRetries();
 
     if (process.env.PIOP_USAGE_RECOVERY === "1") return;
     retryController = new AbortController();
-    const signal = AbortSignal.any([retryController.signal, stopped()]);
+    const signal = retryController.signal;
     retrying = retryPendingAccounting(pi, ctx, runtime, signal).catch(error => { if (!signal.aborted) ctx.ui.notify(`Token usage recovery remains pending: ${String(error)}`, "error"); });
   };
 
@@ -141,7 +144,7 @@ export function registerSubagentRecovery(pi: ExtensionAPI, runtime: RecoveryRunt
     if (event.command !== "recover_subagent_usage") return;
     const payload = Parse(recoverySchema, event.payload);
     authorizeRecovery(event.ctx, payload.sourceSessionId);
-    const scope = boundedRecovery({ signal: stopped(), recoveryDepth: payload.recoveryDepth, recoveryDeadline: payload.deadline });
+    const scope = boundedRecovery({ signal: AbortSignal.any([operations.signal, stopped()]), recoveryDepth: payload.recoveryDepth, recoveryDeadline: payload.deadline });
     event.ready = pending.then(async () => {
       for (let run of await savedSubagentRuns(event.ctx)) {
         scope.signal.throwIfAborted();
@@ -164,8 +167,12 @@ export function registerSubagentRecovery(pi: ExtensionAPI, runtime: RecoveryRunt
     pending = event.ready.then(() => {}, () => {});
   });
 
-  pi.on("session_start", (_event, ctx) => startRetries(ctx));
+  const stopRecovery = async () => { operations.abort(); await stopRetries(); await pending; };
+
+  pi.on("session_start", (_event, ctx) => { operations = new AbortController();
+
+  return startRetries(ctx); });
   pi.on("agent_start", (_event, ctx) => startRetries(ctx));
-  pi.on("session_before_switch", stopRetries);
-  pi.on("session_shutdown", async () => { unsubscribe(); await stopRetries(); });
+  pi.on("session_before_switch", stopRecovery);
+  pi.on("session_shutdown", async () => { unsubscribe(); await stopRecovery(); });
 }
