@@ -42,6 +42,18 @@ function run(command, args, capture = false) {
   return result.stdout;
 }
 
+function wirelessAddress(connection) {
+  const target = `unix:${join(connection.runtime.daemonDirectory, 'tailscale.sock')}`;
+  console.log('Configuring wireless Tailscale access (sudo may request your password)…');
+  run('sudo', ['tailscale', 'serve', '--bg', '--https=443', '--yes', target]);
+  const configuration = JSON.parse(run('tailscale', ['serve', 'status', '--json'], true));
+  const route = Object.entries(configuration.Web ?? {}).find(([address, site]) => address.endsWith(':443') && site.Handlers?.['/']?.Proxy === target);
+
+  if (!route) throw new Error('Could not find the rebuilt daemon’s Tailscale address.');
+
+  return `wss://${route[0].replace(/:443$/, '')}/`;
+}
+
 try {
   const devices = run(adb, ['devices'], true).split(/\r?\n/).flatMap((line) => {
     const match = line.match(/^(\S+)\s+device$/);
@@ -55,14 +67,13 @@ try {
   console.log('Building and starting the Piop debug daemon…');
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'daemon:dev:restart']);
   const connection = JSON.parse(run(process.execPath, ['scripts/mobile-debug-connection.mjs'], true));
-  const debugUrl = new URL(connection.url);
-  debugUrl.hostname = '127.0.0.1';
+  const hostUrl = wirelessAddress(connection);
   console.log(`Rebuilding Piop for ${serial}…`);
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'android:build']);
   run(adb, ['-s', serial, 'install', '-r', join(root, 'android/app/build/outputs/apk/debug/app-debug.apk')]);
-  run(adb, ['-s', serial, 'reverse', `tcp:${debugUrl.port}`, `tcp:${debugUrl.port}`]);
-  run(adb, ['-s', serial, 'shell', 'am', 'start', '-S', '-n', 'dev.pi.mobile/.MainActivity', '--es', 'piopDebugUrl', debugUrl.href]);
+  run(adb, ['-s', serial, 'shell', 'am', 'start', '-S', '-n', 'dev.pi.mobile/.MainActivity', '--es', 'piopHostUrl', hostUrl]);
   console.log('Piop reinstalled and opened. App data preserved.');
+  console.log(`Connected wirelessly through Tailscale: ${hostUrl}`);
   console.log('Daemon controls: npm run daemon:dev:stop | npm run daemon:dev:restart');
 } catch (error) {
   console.error(error.message);

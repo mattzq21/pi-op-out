@@ -1,6 +1,6 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 
-const debugConnection = registerPlugin<{ load(): Promise<{ url?: string }> }>("DebugConnection");
+const debugConnection = registerPlugin<{ load(): Promise<{ url?: string; hostUrl?: string }> }>("DebugConnection");
 
 let debugUrl: string | undefined;
 
@@ -11,6 +11,14 @@ function validDebugAddress(url: URL) {
 export async function loadMobileDebugConnection(): Promise<string | undefined> {
   if (Capacitor.getPlatform() !== "android") return undefined;
   const configuration = await debugConnection.load();
+
+  if (configuration.hostUrl) {
+    const host = new URL(configuration.hostUrl);
+
+    if (host.protocol !== "wss:") throw new Error("Use a secure wss:// address for your Piop host.");
+
+    return host.href;
+  }
 
   if (!configuration.url) return undefined;
   const url = new URL(configuration.url);
