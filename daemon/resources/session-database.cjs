@@ -53,7 +53,8 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS session_restorations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_restore_receipts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS retention_candidates (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, retry_at REAL NOT NULL);
-      CREATE INDEX IF NOT EXISTS retention_retry_order ON retention_candidates(retry_at, record_id);`);
+      CREATE INDEX IF NOT EXISTS retention_retry_order ON retention_candidates(retry_at, record_id);
+      CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -168,8 +169,48 @@ function importSessions(db, root) {
     importRestorations(db, root);
     importRestorations(db, root, true);
     importRetention(db, root);
+    importCleanupRequests(db, root);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importCleanupRequests(db, root) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('cleanup-requests-v1')) return;
+  const fs = require('node:fs');
+  const path = require('node:path');
+
+  for (const kind of ['goal', 'worktree']) {
+    let metadata;
+
+    try { metadata = fs.lstatSync(path.join(root, `${kind}-retention.pending`)); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+
+    if (!metadata.isFile()) throw new Error('Invalid cleanup request');
+    db.prepare('INSERT OR IGNORE INTO cleanup_requests VALUES (?, 1)').run(kind);
+  }
+
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('cleanup-requests-v1');
+}
+
+function markCleanup(root, kind) {
+  const db = open(root);
+
+  try { db.prepare('INSERT INTO cleanup_requests VALUES (?, 1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1').run(kind); }
+  finally { db.close(); }
+}
+
+function cleanupRequest(root, kind) {
+  const db = open(root);
+
+  try { return db.prepare('SELECT revision FROM cleanup_requests WHERE kind=?').get(kind)?.revision; }
+  finally { db.close(); }
+}
+
+function finishCleanup(root, kind, revision) {
+  const db = open(root);
+
+  try { db.prepare('DELETE FROM cleanup_requests WHERE kind=? AND revision=?').run(kind, revision); }
+  finally { db.close(); }
 }
 
 function importRetention(db, root) {
@@ -329,4 +370,4 @@ function storageRoot(file) {
 }
 
 module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot,
-  publication, savePublication, removePublication, publications };
+  publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup };

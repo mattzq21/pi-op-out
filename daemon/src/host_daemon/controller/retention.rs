@@ -29,11 +29,9 @@ impl Host {
 }
 
 fn retention_pending(root: &Path) -> Result<bool> {
-    if root.join("worktree-retention.pending").try_exists().map_err(|error| error.to_string())? { return Ok(true); }
-    if root.join("goal-retention.pending").try_exists().map_err(|error| error.to_string())? { return Ok(true); }
     if pending_entry(&root.join("deleted-sessions"), committed_deletion)? { return Ok(true); }
     let database = crate::session_registry::open(root)?;
-    database.query_row("SELECT EXISTS(SELECT 1 FROM retention_candidates)", [], |row| row.get(0)).map_err(|error| error.to_string())
+    database.query_row("SELECT EXISTS(SELECT 1 FROM retention_candidates) OR EXISTS(SELECT 1 FROM cleanup_requests)", [], |row| row.get(0)).map_err(|error| error.to_string())
 }
 
 fn committed_deletion(entry: &std::fs::DirEntry) -> Result<bool> {
@@ -56,25 +54,17 @@ fn pending_entry(directory: &Path, matches: impl Fn(&std::fs::DirEntry) -> Resul
 }
 
 async fn retention_pass(root: &Path, initialize: bool) -> Result<()> {
-    if initialize { mark_retention_scan(root, "goal-retention.pending")?; mark_retention_scan(root, "worktree-retention.pending")?; }
+    if initialize { mark_retention_scan(root, "goal")?; mark_retention_scan(root, "worktree")?; }
     if !retention_pending(root)? { return Ok(()); }
     tokio::time::timeout(Duration::from_secs(30), super::recovery::collect_retention(root)).await
         .map_err(|_| "Deferred retention cleanup timed out; candidates remain available for retry".to_string())?
 }
 
 fn mark_retention_scan(root: &Path, marker: &str) -> Result<()> {
-    crate::ensure_private_dir(root)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    let file = options.open(root.join(marker)).map_err(|error| error.to_string())?;
-    if !file.metadata().map_err(|error| error.to_string())?.is_file() { return Err("Invalid retention recovery marker".into()); }
-    file.sync_all().map_err(|error| error.to_string())?;
-    std::fs::File::open(root).and_then(|directory| directory.sync_all()).map_err(|error| error.to_string())
+    let database = crate::session_registry::open(root)?;
+    database.execute("INSERT INTO cleanup_requests VALUES (?, 1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1", [marker])
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn report_retention(host: &Host, result: Result<()>, reported: &mut Option<String>) {

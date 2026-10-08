@@ -194,14 +194,14 @@ fn project_worktree_root(cwd: &str, host: Option<&RemoteHost>) -> Result<PathBuf
 struct ManagedWorktreeTarget { path: PathBuf, host: Option<RemoteHost> }
 
 fn worktree_storage_command(action: &str, directory: &Path, host: Option<&RemoteHost>, branch: &str, revision: &str) -> Command {
-    let script = include_str!("../../resources/worktree-storage.cjs");
+    let script = crate::session_registry::with_database(include_str!("../../resources/worktree-storage.cjs"));
     if let Some(host) = host {
         let mut command = ssh(host);
-        command.arg(format!("node -e {} {} {} {} {} {}", shell_quote(script), shell_quote(action), shell_quote(&directory.to_string_lossy()), shell_quote(STORAGE_DIRECTORY), shell_quote(branch), shell_quote(revision)));
+        command.arg(format!("node -e {} {} {} {} {} {}", shell_quote(&script), shell_quote(action), shell_quote(&directory.to_string_lossy()), shell_quote(STORAGE_DIRECTORY), shell_quote(branch), shell_quote(revision)));
         command
     } else {
         let mut command = node_command();
-        command.args(["-e", script, action]).arg(directory).arg(STORAGE_DIRECTORY).arg(branch).arg(revision);
+        command.args(["-e", &script, action]).arg(directory).arg(STORAGE_DIRECTORY).arg(branch).arg(revision);
         command
     }
 }
@@ -248,7 +248,7 @@ pub(crate) fn create_git_worktree(app: AppHandle, cwd: String, name: String, hos
         let settings = load_app_settings(app)?; let host = remote_host(&settings, host_id)?;
         let root = remote_worktree_root(&cwd, host)?;
         let branch = child_worktree_branch(Path::new(&root), name, Some(host))?;
-        let storage_script = shell_quote(include_str!("../../resources/worktree-storage.cjs"));
+        let storage_script = shell_quote(&crate::session_registry::with_database(include_str!("../../resources/worktree-storage.cjs")));
         let create = format!("node -e {storage_script} create \"$root\" {} \"$branch\" \"$revision\"", shell_quote(STORAGE_DIRECTORY));
         let cleanup = format!("node -e {storage_script} cleanup \"$target\" {} ''", shell_quote(STORAGE_DIRECTORY));
         let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; {cleanup} >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --src-prefix=a/ --dst-prefix=b/ --binary --no-textconv --no-ext-diff HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard $(test "$has_head" -eq 0 && printf %s --cached) -- > "$temporary/untracked" || exit 1; revision=HEAD; if [ "$has_head" -eq 0 ]; then revision=--orphan; fi; target=$({create}) || exit 1; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,

@@ -45,7 +45,7 @@ function allocate() {
 
   if (!project) throw new Error('Git repository directory has no name');
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(path.dirname(root), 'worktree-retention.pending'), '', { flag: 'a', mode: 0o600, flush: true });
+  require('./session-database.cjs').markCleanup(path.dirname(root), 'worktree');
   const container = path.join(root, randomUUID().slice(0, 4));
   const target = path.join(container, project);
 

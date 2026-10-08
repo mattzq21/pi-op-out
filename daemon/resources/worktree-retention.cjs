@@ -91,13 +91,6 @@ function removableContainer(candidate) {
   return info?.isDirectory() && identity(info) === candidate.identity && contents(candidate.path) && !directoryInUse(candidate.path);
 }
 
-function sync(directory) {
-  const descriptor = fs.openSync(directory, 'r');
-
-  try { fs.fsyncSync(descriptor); }
-  finally { fs.closeSync(descriptor); }
-}
-
 function retainCandidate(root, candidate) {
   const key = createHash('sha256').update('worktree-allocation:' + JSON.stringify(candidate)).digest('hex');
   const id = `${key.slice(0, 8)}-${key.slice(8, 12)}-${key.slice(12, 16)}-${key.slice(16, 20)}-${key.slice(20, 32)}`;
@@ -105,12 +98,10 @@ function retainCandidate(root, candidate) {
 }
 
 function collectWorktreeAllocations(root) {
-  const marker = path.join(root, 'worktree-retention.pending');
-  const info = metadata(marker);
+  const database = require('./session-database.cjs');
+  const revision = database.cleanupRequest(root, 'worktree');
 
-  if (!info) return;
-
-  if (!info.isFile()) throw new Error('Invalid worktree allocation recovery marker');
+  if (revision === undefined) return;
   const selected = candidates(root);
   const retention = selected.length ? collectRetention(root, [], [], { directories: selected.map(candidate => candidate.path), sessionIds: [] }) : { directories: [] };
   const removable = new Set(retention.directories);
@@ -124,7 +115,7 @@ function collectWorktreeAllocations(root) {
 
   for (const candidate of ready) retainCandidate(root, candidate);
 
-  if (!pending) { fs.unlinkSync(marker); sync(root); }
+  if (!pending) database.finishCleanup(root, 'worktree', revision);
 }
 
 module.exports = { collectWorktreeAllocations };

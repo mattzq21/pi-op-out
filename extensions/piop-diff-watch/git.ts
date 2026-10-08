@@ -1,3 +1,4 @@
+import { markCleanup } from "../session-database.cjs";
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { mkdir, open, lstat, writeFile, rename } from "node:fs/promises";
@@ -7,7 +8,7 @@ import { dirname, join } from "node:path";
 const MAX_GIT_OUTPUT = 4 * 1024 * 1024;
 
 export async function markWorktreeAllocation(storage: string) {
-  await writeFile(join(dirname(storage), "worktree-retention.pending"), "", { flag: "a", mode: 0o600, flush: true });
+  markCleanup(dirname(storage), "worktree");
 }
 
 export async function recordWorktreeAllocation(container: string, target: string, branch: string, parentBranch: string | null) {

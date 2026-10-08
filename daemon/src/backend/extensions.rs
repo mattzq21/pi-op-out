@@ -222,13 +222,18 @@ fn remove_legacy_diff_assets(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn prepare_diff_storage(dir: &Path) -> Result<(), String> {
+    ensure_private_dir(dir)?;
+    atomic_write_private(&dir.join("../session-database.cjs"), include_str!("../../resources/session-database.cjs").as_bytes())
+}
+
 pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
     migrate_extension_directory("pi-diff-watch", "piop-diff-watch")?;
     let config_dir = home_dir()?.join(STORAGE_DIRECTORY);
     let legacy_dir = config_dir.join("pi-git-change-context");
     if legacy_dir.exists() { fs::remove_dir_all(&legacy_dir).map_err(|error| format!("Could not remove legacy diff watch extension: {error}"))?; }
     let dir = generated_extension_root()?.join("piop-diff-watch");
-    ensure_private_dir(&dir)?;
+    prepare_diff_storage(&dir)?;
     let extension_path = dir.join("index.ts");
     for (name, content) in [
         ("index.ts", include_str!("../../../extensions/piop-diff-watch/index.ts")),

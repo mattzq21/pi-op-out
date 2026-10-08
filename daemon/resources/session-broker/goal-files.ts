@@ -1,3 +1,4 @@
+import { markCleanup } from "../session-database.cjs";
 import { mkdir, mkdtemp, open, readFile, rename, rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
@@ -54,14 +55,7 @@ function ownGoalDirectory(directory: string) {
 
 async function markGoalAllocation(ctx: ExtensionContext) {
   const root = rootForDirectory(ctx.sessionManager.getSessionDir());
-  const pending = await open(join(root, "goal-retention.pending"), constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
-
-  try {
-    if (!(await pending.stat()).isFile()) throw new Error("Invalid goal attachment recovery marker");
-    await pending.sync();
-  } finally { await pending.close(); }
-
-  await syncDirectory(root);
+  markCleanup(root, "goal");
 }
 
 async function syncDirectory(path: string) {

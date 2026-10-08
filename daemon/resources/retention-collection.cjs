@@ -1,5 +1,3 @@
-const fs = require('node:fs');
-const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { collectRetention, cleanupRegistry } = require('./deletion-retention.cjs');
 const { collectWorktreeAllocations } = require('./worktree-retention.cjs');
@@ -26,24 +24,17 @@ function collectDeferredLocked(root) {
 }
 
 function collectGoalAllocations(root) {
-  const marker = path.join(root, 'goal-retention.pending');
-  let info;
+  const database = require('./session-database.cjs');
+  const revision = database.cleanupRequest(root, 'goal');
 
-  try { info = fs.lstatSync(marker); }
-  catch (error) { if (error.code === 'ENOENT') return; throw error; }
-
-  if (!info.isFile()) throw new Error('Invalid goal attachment recovery marker');
+  if (revision === undefined) return;
   const retention = collectRetention(root, [], [], undefined, true);
 
   if (retention.uncertain) return;
   recordRetention(root, randomUUID(), describeCandidates(retention.directories, []));
 
   if (retention.pendingGoals) return;
-  fs.unlinkSync(marker);
-  const directory = fs.openSync(root, 'r');
-
-  try { fs.fsyncSync(directory); }
-  finally { fs.closeSync(directory); }
+  database.finishCleanup(root, 'goal', revision);
 }
 
 function collectRecords(root, records, errors) {

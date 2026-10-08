@@ -41,7 +41,7 @@ function checkout(branch, trees, descriptor) {
   const root = path.join(os.homedir(), storage, 'worktrees');
   const project = path.basename(trees[0].path);
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(path.dirname(root), 'worktree-retention.pending'), '', { flag: 'a', mode: 0o600, flush: true });
+  require('./session-database.cjs').markCleanup(path.dirname(root), 'worktree');
   const container = path.join(root, randomUUID().slice(0, 4));
 
   try { fs.mkdirSync(container, { mode: 0o700 }); }
