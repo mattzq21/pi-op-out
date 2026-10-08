@@ -29,7 +29,6 @@ pub(super) fn prepare_rtk_extension() -> Result<PathBuf, String> {
     ensure_private_dir(&dir)?;
     let path = dir.join("rtk.ts");
     atomic_write_private(&path, include_str!("../../../extensions/piop-rtk/rtk.ts").as_bytes())?;
-    atomic_write_private(&dir.join("rtk.LICENSE"), include_str!("../../../extensions/piop-rtk/LICENSE").as_bytes())?;
     Ok(path)
 }
 pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf, String> {
@@ -236,10 +235,9 @@ fn prepare_agent_configuration(legacy_dir: &Path) -> Result<(), String> {
     migrate_agent_config(&config_dir.join("config.json"), legacy_dir)
 }
 
-pub(super) const EXCALIDRAW_ASSETS: [(&str, &str); 3] = [
+pub(super) const EXCALIDRAW_ASSETS: [(&str, &str); 2] = [
     ("SKILL.md", include_str!("../../../extensions/piop-excalidraw/SKILL.md")),
     ("references/cheatsheet.md", include_str!("../../../extensions/piop-excalidraw/references/cheatsheet.md")),
-    ("LICENSE", include_str!("../../../extensions/piop-excalidraw/LICENSE")),
 ];
 
 fn prepare_agent_directories(dir: &Path) -> Result<(), String> {

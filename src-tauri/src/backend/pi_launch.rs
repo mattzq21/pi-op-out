@@ -162,7 +162,6 @@ fn remote_broker_command(host: &RemoteHost, local_port: u16, remote_port: u16) -
 
 fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<(), String> {
     let rtk_extension = shell_quote(include_str!("../../../extensions/piop-rtk/rtk.ts"));
-    let rtk_license = shell_quote(include_str!("../../../extensions/piop-rtk/LICENSE"));
     let runtime_settings_extension = shell_quote(include_str!("../../../extensions/piop-runtime-settings/index.ts"));
     let provider_accounts = shell_quote(include_str!("../../resources/provider-accounts.bundle.mjs"));
     let app_rpc = shell_quote(include_str!("../../resources/app-rpc.cjs"));
@@ -193,7 +192,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json""#);
     let remote = format!(r#"{remote} && printf %s {provider_accounts} > "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs""#);
     let remote = format!(r#"{remote} && printf %s {app_rpc} > "$HOME/{STORAGE_DIRECTORY}/app-rpc.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/app-rpc.cjs""#);
-    let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && printf %s {rtk_license} > "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts" "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE""#);
+    let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts""#);
     let mut remote = remote;
     remote.push_str(&format!(r#" && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw/references" && chmod 700 "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw" "$HOME/{STORAGE_DIRECTORY}/piop-excalidraw/references""#));
     for (name, content) in EXCALIDRAW_ASSETS {
