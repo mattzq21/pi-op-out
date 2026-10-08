@@ -377,7 +377,7 @@ use archives::{archive_local_session, archive_remote_session, collect_storage_re
 use git_ops::git_diffs::{capture_git_tree, discard_git_tree, discard_git_tree_at_host, load_git_diff, load_git_diffs, save_git_diffs};
 #[cfg(test)]
 use git_ops::git_diffs::{discard_remote_git_tree, load_git_diff_at_host, load_git_diff_between_at_host, load_local_git_diffs, load_remote_git_diff_between, load_remote_git_diff_with, query_remote_git_diffs, query_remote_git_tree, remote_save_git_diffs_script, remote_session_sidecar_script, save_git_diffs_at_host, save_local_git_diffs, valid_remote_snapshot, write_remote_git_diffs};
-use git_ops::worktrees::{create_git_worktree, create_project_worktree, git_branch, git_project_kind, git_worktree_roots, is_git_repository, remove_git_worktree, sessions_on_host};
+use git_ops::worktrees::{create_git_worktree, create_project_worktree, git_branch, git_project_kind, is_git_repository, remove_git_worktree, sessions_on_host};
 #[cfg(test)]
 use git_ops::worktrees::{canonical_worktree_roots, copy_untracked_file, create_local_git_worktree, create_project_worktree_at, git_branch_at, git_relative_path, inspect_git_project_kind, inspect_worktree_removal, local_branch_exists, local_worktree_is_registered, parse_worktree_output, remove_created_worktree, remove_worktree_target, validate_worktree_unused, worktree_branch_name, worktree_suffix, write_worktree_patch};
 use git_ops::worktree_setup::{cancel_worktree_setup, ensure_desktop_sessions_dir, run_limited, run_worktree_setup, shell_quote, verify_setup_owner};

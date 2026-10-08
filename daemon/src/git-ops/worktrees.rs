@@ -364,13 +364,6 @@ done"#;
     }
     Ok(roots)
 }
-pub(crate) async fn git_worktree_roots(app: AppHandle, paths: Vec<String>, host_id: Option<String>) -> Result<Vec<Option<String>>, String> {
-    crate::platform::async_runtime::spawn_blocking(move || {
-        let settings = load_app_settings(app)?;
-        canonical_worktree_roots(&settings, host_id.as_deref().unwrap_or("local"), &paths)
-    }).await.map_err(|error| error.to_string())?
-}
-
 pub(crate) fn sessions_on_host(settings: &AppSettings, index: &SessionIndexRuntime, host_id: &str) -> Result<Vec<SessionSummary>, String> {
     if host_id == "local" {
         let root = ensure_desktop_sessions_dir(&home_dir()?)?;

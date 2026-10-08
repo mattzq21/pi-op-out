@@ -52,8 +52,6 @@ export async function resolveBranchGroup(group: SessionGroup) {
   return { ...group, cwd: selected.path };
 }
 
-export const gitWorktreeRoots = (paths: string[], hostId: string) => call("git_worktree_roots", { paths, hostId }, z.array(z.union([z.string(), z.null()])));
-
 export interface GitWorktree { branch: string; path: string; }
 
 export interface GitWorktreeRemoval { branch?: string; branchDeleted: boolean; warning?: string; }

@@ -109,7 +109,6 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("git_branch", handle_git_branch),
     ("git_project_kind", handle_git_project_kind),
     ("project_branches", handle_project_branches),
-    ("git_worktree_roots", handle_git_worktree_roots),
     ("create_project_worktree", handle_create_project_worktree),
     ("create_git_worktree", handle_create_git_worktree),
     ("remove_git_worktree", handle_remove_git_worktree),
@@ -359,12 +358,6 @@ fn handle_git_project_kind(app: AppHandle, _owner: String, args: Value) -> Comma
 fn handle_project_branches(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || project_branches(app, argument(&args, "cwd")?, argument(&args, "hostId")?, argument(&args, "branch")?)).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_git_worktree_roots(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        serde_json::to_value(git_worktree_roots(app.clone(), argument(&args, "paths")?, argument(&args, "hostId")?).await?).map_err(|error| error.to_string())
     })
 }
 
