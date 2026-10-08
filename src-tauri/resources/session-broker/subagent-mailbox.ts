@@ -39,7 +39,7 @@ function waitResult(activity: Activity): AgentToolResult<{ timed_out: boolean }>
     mailbox: "Wait completed. Subagent results are delivered separately in the conversation.",
     input: "Wait interrupted by new input.",
     cancelled: "Wait cancelled.",
-    timeout: "Wait timed out.",
+    timeout: "Wait timed out. Finish your current run so queued mailbox messages can be delivered in a new turn.",
   };
 
   return { content: [{ type: "text", text: messages[activity] }], details: { timed_out: activity === "timeout" } };
@@ -77,7 +77,7 @@ export function registerSubagentMailbox(pi: ExtensionAPI) {
   });
   pi.registerTool({
     name: "wait_agent", label: "Wait for subagents", exposure: "model-only",
-    description: "Wait for a subagent mailbox update, new user input, or timeout. Results arrive separately in the conversation. Use only when there is no independent work to do. Does not start or cancel child agents. Defaults to 30 seconds; timeout_ms is clamped to at least 10000 and must be at most 3600000.",
+    description: "Wait for new user input, an already delivered mailbox notification, or timeout. Messages arriving during this run are queued until the agent settles; finish your current run to receive them in a new turn. Does not start or cancel child agents. Defaults to 30 seconds; timeout_ms is clamped to at least 10000 and must be at most 3600000.",
     parameters: Type.Object({ timeout_ms: Type.Optional(Type.Integer({ minimum: 0, maximum: 3_600_000 })) }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       signal?.throwIfAborted();
