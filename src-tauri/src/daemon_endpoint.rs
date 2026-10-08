@@ -1,5 +1,7 @@
 use super::*;
 
+pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Endpoint {
     pub url: String,
