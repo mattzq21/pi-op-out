@@ -25,7 +25,7 @@ const triple = run('rustc', ['-vV'], { encoding: 'utf8', stdio: 'pipe' }).stdout
 
 if (!triple) throw new Error('Could not determine the native Rust target');
 
-run('cargo', ['build', '--locked', '--manifest-path', 'src-tauri/Cargo.toml', '--target-dir', 'src-tauri/target', '--no-default-features', '--features', 'daemon', '--bin', 'piopd', ...(debug ? [] : ['--release'])]);
+run('cargo', ['build', '--locked', '--manifest-path', 'src-tauri/Cargo.toml', '--target-dir', 'src-tauri/target', '-p', 'piop-daemon', '--bin', 'piopd', ...(debug ? [] : ['--release'])]);
 
 const extension = process.platform === 'win32' ? '.exe' : '';
 

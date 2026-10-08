@@ -1,0 +1,16 @@
+use super::*;
+
+pub(crate) fn for_owner(app: AppHandle, owner: String, host_id: Option<String>, request: Value) -> Result<Value, String> {
+    if !matches!(request["action"].as_str(), Some("list" | "begin" | "poll" | "reply" | "cancel" | "logout" | "create" | "fast_capabilities")) { return Err("Unknown provider authentication operation".into()); }
+    if request.to_string().len() > 256 * 1024 { return Err("Provider authentication request is too large".into()); }
+    let settings = load_app_settings(app.clone())?;
+    let runtime = app.state::<PiRuntime>();
+    let broker = app.state::<BrokerRuntime>();
+    let daemon = daemon::connect(&app, &runtime, &broker, &settings, host_id.as_deref().unwrap_or("local"))?;
+    daemon.request(json!({"type":"provider_auth","owner":owner,"request":request}))
+}
+
+pub(crate) fn cancel_owner(runtime: &PiRuntime, owner: &str) {
+    let daemons = runtime.connections.snapshot();
+    for daemon in daemons { let _ = daemon.request(json!({"type":"provider_auth_cancel_owner","owner":owner})); }
+}

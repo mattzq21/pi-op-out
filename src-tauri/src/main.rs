@@ -1,4 +1,4 @@
 fn main() {
     unsafe { std::env::set_var("GTK_OVERLAY_SCROLLING", "0") };
-    piop_lib::run();
+    piop_desktop::run();
 }

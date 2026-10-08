@@ -119,7 +119,7 @@ export async function watchBackend(command, args, options, root, { port, branchL
       return true;
     }
 
-    return !["extensions", "src-tauri/resources"].some(directory => path.startsWith(join(root, directory) + sep));
+    return !["extensions", "src-tauri/resources", "src-tauri/crates/daemon"].some(directory => path.startsWith(join(root, directory) + sep));
   };
 
   const applyChanges = async changes => {
@@ -176,7 +176,7 @@ export async function watchBackend(command, args, options, root, { port, branchL
   const observeBackend = () => {
     if (!watch) return;
 
-    for (const directory of ["src-tauri/src", "src-tauri/capabilities", "src-tauri/resources", "src-tauri/icons", "extensions", "scripts", ".cargo"]) observe(join(root, directory), true);
+    for (const directory of ["src-tauri/src", "src-tauri/crates", "src-tauri/capabilities", "src-tauri/resources", "src-tauri/icons", "extensions", "scripts", ".cargo"]) observe(join(root, directory), true);
     observe(join(root, "src-tauri"));
 
     for (const filename of ["package.json", "package-lock.json"]) {

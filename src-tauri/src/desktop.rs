@@ -25,20 +25,6 @@ fn home_dir() -> Result<PathBuf, String> {
     std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| "HOME is not set".into())
 }
 
-fn set_private_file_permissions(path: &Path) -> Result<(), String> {
-    if !path.exists() { return Ok(()); }
-    if path.is_dir() { return Err(format!("Configuration path is a directory: {}", path.display())); }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let permissions = fs::metadata(path).map_err(|error| error.to_string())?.permissions();
-        if permissions.mode() & 0o777 != 0o600 {
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
-}
-
 fn ensure_private_dir(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|error| error.to_string())?;
     #[cfg(unix)]
@@ -52,7 +38,6 @@ fn ensure_private_dir(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "desktop")]
 #[tauri::command]
 fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
     let (label, path) = conversation_window_target(&target)?;
@@ -90,7 +75,6 @@ fn configure_dictation_microphone(window: &tauri::WebviewWindow) -> Result<(), S
     Ok(())
 }
 
-#[cfg(feature = "desktop")]
 fn conversation_window_target(target: &Value) -> Result<(String, String), String> {
     if !target["sessionId"].as_str().is_some_and(|id| !id.trim().is_empty()) { return Err("Select a conversation to open in another window".into()); }
     let label = format!("chat-{}", Uuid::new_v4());
@@ -106,9 +90,7 @@ fn open_system_resource(target: &std::ffi::OsStr) -> Result<(), String> {
     thread::spawn(move || { let _ = child.wait(); });
     Ok(())
 }
-
-#[cfg_attr(feature = "desktop", tauri::command(async))]
-#[cfg(feature = "desktop")]
+#[tauri::command(async)]
 fn read_dropped_file(path: String) -> Result<Value, String> {
     let path = Path::new(&path);
     let file = fs::File::open(path).map_err(|error| error.to_string())?;
@@ -122,14 +104,11 @@ fn read_dropped_file(path: String) -> Result<Value, String> {
     let name = path.file_name().ok_or("Attachment has no filename")?.to_string_lossy();
     Ok(json!({ "name": name, "data": data }))
 }
-
-#[cfg_attr(feature = "desktop", tauri::command(async))]
-#[cfg(feature = "desktop")]
+#[tauri::command(async)]
 fn open_external_url(url: String) -> Result<(), String> {
     open_external_url_with(&url, open_system_resource)
 }
 
-#[cfg(feature = "desktop")]
 fn open_external_url_with(url: &str, open: impl FnOnce(&std::ffi::OsStr) -> Result<(), String>) -> Result<(), String> {
     let parsed = reqwest::Url::parse(url).map_err(|_| "Enter a valid HTTP or HTTPS URL")?;
     if !matches!(parsed.scheme(), "http" | "https") || !parsed.has_host() { return Err("Only HTTP and HTTPS links can be opened in the browser".into()); }
@@ -152,7 +131,7 @@ fn open_rollout_file(path: String, host_id: Option<String>) -> Result<(), String
     open_system_resource(path.as_os_str())
 }
 
-#[cfg(all(feature = "desktop", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 const LOAD_ERROR_HTML: &str = r#"<!doctype html>
 <html lang="en">
 <head>
@@ -182,7 +161,6 @@ const LOAD_ERROR_HTML: &str = r#"<!doctype html>
 </body>
 </html>"#;
 
-#[cfg(feature = "desktop")]
 #[tauri::command]
 async fn reload_development_window(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
     if !DEVELOPMENT { return Err("Development reload is unavailable".into()); }
@@ -192,12 +170,7 @@ async fn reload_development_window(app: AppHandle, window: tauri::WebviewWindow)
     window.reload().map_err(|error| error.to_string())
 }
 
-#[cfg(feature = "desktop")]
 pub fn run() {
-    if std::env::args().nth(1).as_deref() == Some("--daemon-log-writer") {
-        if let Err(error) = daemon_log::run() { eprintln!("Piop daemon log writer: {error}"); std::process::exit(1); }
-        return;
-    }
     let mut context = tauri::generate_context!();
     if DEVELOPMENT {
         let config = context.config_mut();

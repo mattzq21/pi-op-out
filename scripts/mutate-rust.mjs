@@ -23,13 +23,13 @@ try {
     });
   }
 
-  const manifest = join(temporaryRoot, 'src-tauri', 'Cargo.toml');
+  const manifest = join(temporaryRoot, 'src-tauri', 'crates', 'daemon', 'Cargo.toml');
   const manifestSource = await readFile(manifest, 'utf8');
 
   if (!manifestSource.includes('[lib]\n')) throw new Error('Rust mutation runner requires a library target');
-  const backend = join(temporaryRoot, 'src-tauri', 'src', 'backend.rs');
-  const library = await readFile(join(temporaryRoot, 'src-tauri', 'src', 'lib.rs'), 'utf8');
-  const backendInclude = '#[cfg(not(feature = "desktop"))]\ninclude!("backend.rs");';
+  const backend = join(temporaryRoot, 'src-tauri', 'crates', 'daemon', 'src', 'backend.rs');
+  const library = await readFile(join(temporaryRoot, 'src-tauri', 'crates', 'daemon', 'src', 'lib.rs'), 'utf8');
+  const backendInclude = 'include!("backend.rs");';
 
   if (!library.includes(backendInclude)) throw new Error('Rust mutation runner requires the backend library include');
   await writeFile(backend, library.slice(0, library.indexOf(backendInclude)) + await readFile(backend, 'utf8'));
@@ -44,7 +44,7 @@ try {
     '--output', join(root, 'reports', 'mutation', 'rust'),
     ...process.argv.slice(2),
   ], {
-    cwd: join(temporaryRoot, 'src-tauri'),
+    cwd: join(temporaryRoot, 'src-tauri', 'crates', 'daemon'),
     env: {
       ...process.env,
       CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR || join(root, 'src-tauri', 'target'),

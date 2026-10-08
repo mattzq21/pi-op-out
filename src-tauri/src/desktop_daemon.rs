@@ -3,7 +3,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc as async_mpsc, Mutex as AsyncMutex};
 use tokio_tungstenite::{connect_async_with_config, tungstenite::{Message, protocol::WebSocketConfig}};
 
-const MAX_DAEMON_RESPONSE: usize = 128 * 1024 * 1024;
+const MAX_DAEMON_RESPONSE: usize = piop_protocol::MAX_RESPONSE_BYTES;
 
 #[derive(Default)]
 pub(crate) struct DesktopDaemon {
@@ -40,8 +40,8 @@ impl Connection {
         if !self.alive.load(Ordering::SeqCst) { return Err("Disconnected from the Piop daemon. Reconnect before retrying.".into()); }
         let terminal = args["terminalId"].as_str().map(str::to_owned);
         let id = self.sequence.fetch_add(1, Ordering::SeqCst);
-        let packet = json!({"id":id,"command":command,"args":args}).to_string();
-        if packet.len() > 32 * 1024 * 1024 { return Err("This message exceeds the host's 32 MiB request limit. Remove an attachment or shorten the message.".into()); }
+        let packet = serde_json::to_string(&piop_protocol::Request { id, command: command.into(), args }).map_err(|error| error.to_string())?;
+        if packet.len() > piop_protocol::MAX_REQUEST_BYTES { return Err("This message exceeds the host's 32 MiB request limit. Remove an attachment or shorten the message.".into()); }
         if command == "start_terminal" {
             self.register_terminal(&terminal)?;
         }
@@ -175,10 +175,10 @@ fn configured_endpoint() -> Result<Option<daemon_endpoint::Endpoint>, String> {
     let loopback = parsed.host_str().is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1"));
     if parsed.scheme() != "wss" && !(parsed.scheme() == "ws" && loopback) { return Err("Remote daemons require wss://; ws:// is allowed only on loopback".into()); }
     if !parsed.username().is_empty() || parsed.password().is_some() || parsed.query().is_some() || parsed.fragment().is_some() { return Err("Daemon URL must not contain credentials, a query, or a fragment".into()); }
-    Ok(Some(daemon_endpoint::Endpoint { url, token, protocol: 1 }))
+    Ok(Some(daemon_endpoint::Endpoint { url, token, protocol: piop_protocol::PROTOCOL_VERSION }))
 }
 async fn open(endpoint: &daemon_endpoint::Endpoint) -> Result<Socket, String> {
-    if endpoint.protocol != 1 || endpoint.token.len() < 32 { return Err("Invalid Piop daemon connection configuration".into()); }
+    if endpoint.protocol != piop_protocol::PROTOCOL_VERSION || endpoint.token.len() < 32 { return Err("Invalid Piop daemon connection configuration".into()); }
     tokio::time::timeout(Duration::from_secs(5), async {
         let config = WebSocketConfig::default().max_message_size(Some(MAX_DAEMON_RESPONSE)).max_frame_size(Some(MAX_DAEMON_RESPONSE));
         let (mut socket, _) = connect_async_with_config(&endpoint.url, Some(config), false).await.map_err(|_| "Could not connect to the Piop daemon")?;
@@ -195,7 +195,7 @@ fn parse_handshake(message: &Message) -> Result<Value, String> {
 }
 
 fn validate_handshake(reply: &Value) -> Result<(), String> {
-    if reply["type"] != "ready" || reply["backend"] != "daemon" || reply["protocol"] != 1 { return Err("Incompatible Piop daemon; restart it after upgrading".into()); }
+    if reply["type"] != "ready" || reply["backend"] != "daemon" || reply["protocol"] != piop_protocol::PROTOCOL_VERSION { return Err("Incompatible Piop daemon; restart it after upgrading".into()); }
     Ok(())
 }
 async fn existing_local_socket() -> Result<Option<Socket>, String> {
@@ -255,7 +255,7 @@ fn ensure_development_daemon() -> Result<(), String> {
         let prepared = std::env::var_os("PIOP_PREBUILT_DAEMON_FOR").is_some_and(|path| path == manifest);
         if prepared && manifest.join("target/debug").join(format!("piopd{}", std::env::consts::EXE_SUFFIX)).is_file() { return Ok(()); }
         let output = Command::new("cargo")
-            .args(["build", "--locked", "--no-default-features", "--features", "daemon", "--bin", "piopd", "--target-dir"])
+            .args(["build", "--locked", "-p", "piop-daemon", "--bin", "piopd", "--target-dir"])
             .arg(manifest.join("target")).current_dir(manifest).output()
             .map_err(|error| format!("Could not rebuild the development daemon: {error}"))?;
         if !output.status.success() {

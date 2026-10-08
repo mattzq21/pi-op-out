@@ -59,11 +59,6 @@ fn private_file_matches(path: &Path, body: &[u8]) -> Result<bool, String> {
     Ok(false)
 }
 
-#[cfg(not(feature = "desktop"))]
-pub(super) fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
-    match publish_private(path, body)?.error { Some(error) => Err(error), None => Ok(()) }
-}
-
 pub(super) fn publish_private(path: &Path, body: &[u8]) -> Result<Publication, String> {
     let parent = path.parent().ok_or("Configuration file has no parent directory")?;
     ensure_private_dir(parent)?;
