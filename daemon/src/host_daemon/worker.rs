@@ -1,4 +1,4 @@
-use super::protocol::{kind, wire_command, LaunchSpec, Result};
+use super::{protocol::{kind, wire_command, LaunchSpec, Result}, session::SessionCallbacks};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
@@ -24,22 +24,13 @@ pub(super) struct Request {
     reply: oneshot::Sender<Result<Value>>,
 }
 
-pub(super) trait Observer: Send + Sync {
-    fn event(&self, event: Value);
-    fn response(&self, event: Value, request: &Request) -> Result<Value>;
-    fn stderr(&self, line: String);
-    fn diagnostic(&self, line: String);
-    fn finished(&self);
-    fn disconnect_error(&self) -> String;
-}
-
 pub(super) struct RuntimeWorker {
     stdin: AsyncMutex<ChildStdin>,
     pending: Mutex<HashMap<String, Request>>,
     signals: mpsc::UnboundedSender<bool>,
     closed: watch::Receiver<bool>,
     exited: AtomicBool,
-    observer: Arc<dyn Observer>,
+    observer: Arc<SessionCallbacks>,
     timeout: Duration,
 }
 
@@ -105,7 +96,7 @@ impl RuntimeWorker {
         spec: &LaunchSpec,
         identity: &str,
         timeout: Duration,
-        observer: Arc<dyn Observer>,
+        observer: Arc<SessionCallbacks>,
         home: &std::path::Path,
     ) -> Result<Arc<Self>> {
         let mut child = launch_command(spec, identity, home)?

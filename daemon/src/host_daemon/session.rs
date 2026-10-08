@@ -8,7 +8,8 @@ use super::{
     tool_payload::{ToolPayload, ToolPayloadCache},
     protocol::{array, flag, kind, text, LaunchSpec, Result, SessionLaunch},
     queue::{Execution, QueueStorage, SessionQueue},
-    worker::{Observer, Request, RuntimeWorker},
+    worker::{Request, RuntimeWorker},
+    controller::Callbacks,
 };
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
@@ -20,22 +21,6 @@ use std::{
 };
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
-
-pub(super) trait SessionHost: Send + Sync {
-    fn output(&self, packet: Value);
-    fn queue_root(&self) -> Option<std::path::PathBuf> { None }
-    fn drain_capture<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async { Err("Capture drain unavailable".into()) })
-    }
-    fn record_tool_failure(&self, _record: Value) {}
-    fn configuration(&self) -> Option<Value>;
-    fn readonly_views(&self, identity: &str) -> Vec<String>;
-    fn readonly(&self, runtime: &str) -> bool;
-    fn rekey(&self, old: &str, new: &str, epoch: &str);
-    fn finished(&self, key: &str, epoch: &str, pending: Vec<Value>, transient: bool);
-    fn maintenance(&self, key: &str);
-    fn refresh_providers(&self) -> BoxFuture<'_, Result<u64>>;
-}
 
 #[derive(Clone)]
 pub(super) struct Dialog {
@@ -94,14 +79,14 @@ pub(super) struct Session {
     epoch: String,
     state: Mutex<SessionState>,
     worker: OnceLock<Arc<RuntimeWorker>>,
-    host: Arc<dyn SessionHost>,
+    host: Arc<Callbacks>,
     configuration_gate: AsyncMutex<()>,
     publication: Mutex<()>,
     weak: Weak<Self>,
     tool_payloads: Arc<ToolPayloadCache>,
 }
 
-struct SessionCallbacks(Weak<Session>);
+pub(super) struct SessionCallbacks(Weak<Session>);
 
 impl Execution for SessionCallbacks {
     fn saved_user_messages(&self) -> Result<Vec<Value>> {
@@ -121,16 +106,16 @@ impl Execution for SessionCallbacks {
     }
 }
 
-impl Observer for SessionCallbacks {
-    fn event(&self, event: Value) {
+impl SessionCallbacks {
+    pub(super) fn event(&self, event: Value) {
         if let Some(session) = self.0.upgrade() {
             session.receive(event);
         }
     }
-    fn response(&self, event: Value, request: &Request) -> Result<Value> {
+    pub(super) fn response(&self, event: Value, request: &Request) -> Result<Value> {
         self.0.upgrade().ok_or("Pi is not running")?.response(event, request)
     }
-    fn stderr(&self, line: String) {
+    pub(super) fn stderr(&self, line: String) {
         if let Some(session) = self.0.upgrade() {
             let views = {
                 let mut state = session.state();
@@ -144,17 +129,17 @@ impl Observer for SessionCallbacks {
             }
         }
     }
-    fn diagnostic(&self, line: String) {
+    pub(super) fn diagnostic(&self, line: String) {
         if let Some(session) = self.0.upgrade() {
             session.host.output(json!({"type":"diagnostic","line":line}));
         }
     }
-    fn finished(&self) {
+    pub(super) fn finished(&self) {
         if let Some(session) = self.0.upgrade() {
             session.finish();
         }
     }
-    fn disconnect_error(&self) -> String {
+    pub(super) fn disconnect_error(&self) -> String {
         self.0
             .upgrade()
             .and_then(|session| session.state().startup_error.clone())
@@ -165,7 +150,7 @@ impl Observer for SessionCallbacks {
 impl Session {
     pub fn client_id(&self) -> String { self.client_id.lock().unwrap_or_else(|error| error.into_inner()).clone() }
     pub fn set_client_id(&self, client: String) { *self.client_id.lock().unwrap_or_else(|error| error.into_inner()) = client; }
-    pub fn spawn(launch: SessionLaunch, pending: Vec<Value>, host: Arc<dyn SessionHost>, home: &Path, tool_payloads: Arc<ToolPayloadCache>) -> Result<Arc<Self>> {
+    pub fn spawn(launch: SessionLaunch, pending: Vec<Value>, host: Arc<Callbacks>, home: &Path, tool_payloads: Arc<ToolPayloadCache>) -> Result<Arc<Self>> {
         let SessionLaunch {
             key,
             mut spec,
@@ -594,7 +579,7 @@ impl Session {
     }
 }
 
-fn queue_storage(host: &dyn SessionHost, spec: &LaunchSpec, cwd: Option<&str>, home: &Path, key: &str, ephemeral: bool) -> Result<Option<QueueStorage>> {
+fn queue_storage(host: &Callbacks, spec: &LaunchSpec, cwd: Option<&str>, home: &Path, key: &str, ephemeral: bool) -> Result<Option<QueueStorage>> {
     if ephemeral { return Ok(None); }
     let Some(root) = host.queue_root() else { return Ok(None); };
     let directory = cwd.or(spec.cwd.as_deref()).or_else(|| spec.env.get("PIOP_SESSION_CWD").map(String::as_str))

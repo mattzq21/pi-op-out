@@ -8,7 +8,7 @@ use super::{
     payload::{client_payload, saved_tool_payload},
     tool_payload::{ToolPayload, ToolPayloadCache},
     protocol::{expand_home, flag, kind, text, LaunchSpec, Result, SessionLaunch},
-    session::{Session, SessionHost},
+    session::Session,
     services::HostServices,
 };
 use futures_util::future::BoxFuture;
@@ -63,31 +63,29 @@ pub(super) struct Host {
     tool_failures: super::tool_failures::Writer,
 }
 
-struct Callbacks(Weak<Host>);
+pub(super) struct Callbacks(Weak<Host>);
 
-impl SessionHost for Callbacks {
-    fn queue_root(&self) -> Option<PathBuf> { self.0.upgrade().map(|host| host.home.join(&host.storage).join("queued-input")) }
-    fn drain_capture<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            self.0.upgrade().ok_or("Host daemon disconnected")?.drain_capture(key).await
-        })
+impl Callbacks {
+    pub(super) fn queue_root(&self) -> Option<PathBuf> { self.0.upgrade().map(|host| host.home.join(&host.storage).join("queued-input")) }
+    pub(super) async fn drain_capture(&self, key: &str) -> Result<()> {
+        self.0.upgrade().ok_or("Host daemon disconnected")?.drain_capture(key).await
     }
-    fn record_tool_failure(&self, record: Value) {
+    pub(super) fn record_tool_failure(&self, record: Value) {
         if let Some(host) = self.0.upgrade() {
             if let Err(error) = host.tool_failures.record(record) {
                 host.output(json!({"type":"diagnostic","line":format!("Could not record tool failure: {error}")}));
             }
         }
     }
-    fn output(&self, packet: Value) {
+    pub(super) fn output(&self, packet: Value) {
         if let Some(host) = self.0.upgrade() {
             host.output(packet);
         }
     }
-    fn configuration(&self) -> Option<Value> {
+    pub(super) fn configuration(&self) -> Option<Value> {
         self.0.upgrade().and_then(|host| host.registry().configuration.clone())
     }
-    fn readonly_views(&self, identity: &str) -> Vec<String> {
+    pub(super) fn readonly_views(&self, identity: &str) -> Vec<String> {
         self.0
             .upgrade()
             .map(|host| {
@@ -100,10 +98,10 @@ impl SessionHost for Callbacks {
             })
             .unwrap_or_default()
     }
-    fn readonly(&self, runtime: &str) -> bool {
+    pub(super) fn readonly(&self, runtime: &str) -> bool {
         self.0.upgrade().is_some_and(|host| host.registry().readonly.contains_key(runtime))
     }
-    fn rekey(&self, old: &str, new: &str, epoch: &str) {
+    pub(super) fn rekey(&self, old: &str, new: &str, epoch: &str) {
         if let Some(host) = self.0.upgrade() {
             let mut registry = host.registry();
             if registry.sessions.get(old).is_some_and(|session| session.epoch() == epoch) {
@@ -113,7 +111,7 @@ impl SessionHost for Callbacks {
             }
         }
     }
-    fn finished(&self, key: &str, epoch: &str, pending: Vec<Value>, transient: bool) {
+    pub(super) fn finished(&self, key: &str, epoch: &str, pending: Vec<Value>, transient: bool) {
         if let Some(host) = self.0.upgrade() {
             let mut registry = host.registry();
             if !transient && registry.sessions.get(key).is_some_and(|session| session.epoch() == epoch) {
@@ -125,20 +123,18 @@ impl SessionHost for Callbacks {
             registry.subscriptions.retain(|_, session| session.epoch() != epoch);
         }
     }
-    fn maintenance(&self, key: &str) {
+    pub(super) fn maintenance(&self, key: &str) {
         if let Some(host) = self.0.upgrade() {
             host.maintain(key);
         }
     }
-    fn refresh_providers(&self) -> BoxFuture<'_, Result<u64>> {
-        Box::pin(async move {
-            self.0
-                .upgrade()
-                .ok_or("Host daemon disconnected")?
-                .services
-                .refresh_providers()
-                .await
-        })
+    pub(super) async fn refresh_providers(&self) -> Result<u64> {
+        self.0
+            .upgrade()
+            .ok_or("Host daemon disconnected")?
+            .services
+            .refresh_providers()
+            .await
     }
 }
 
