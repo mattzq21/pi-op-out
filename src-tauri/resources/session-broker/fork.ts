@@ -1,12 +1,15 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import { readFile, realpath, mkdir, rmdir, open, rm } from "node:fs/promises";
+import { realpath, mkdir, rmdir, open, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "./client.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from "../piop-diff-watch/pin-checkpoints.ts";
+import { readStoreLocked } from "./git-diff-store.cjs";
+import { existsSync } from "node:fs";
+import { releaseHistory, retainHistory, rootForDirectory } from "./goal-assets.cjs";
 
 export type ForkOptions = { cwd?: string; worktree?: string; entryId?: string };
 
@@ -40,10 +43,12 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let created = false;
   let checkpoints: PinnedCheckpoint[] = [];
+  let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
   try {
     checkpoints = await pinPromptHistory(header.cwd, sessionId, retained);
-    await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source }, ...retained]);
+    goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), retained, sessionId, sessionPath);
+    await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...retained]);
     created = true;
 
     await copyRetainedDiffs(source, sessionPath, new Set(retained.map(entry => entry.id)));
@@ -53,6 +58,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
       await rm(sessionPath.replace(/\.jsonl$/, ".diffs.json"), { force: true });
     }
 
+    if (goalAssets && !existsSync(sessionPath)) releaseHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), goalAssets, sessionId);
     await removePinnedCheckpoints(checkpoints);
     await cleanupForkDirectory(cwd, options);
 
@@ -65,11 +71,15 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
 
 async function copyRetainedDiffs(source: string, destination: string, ids: ReadonlySet<string>) {
   try {
-    const diffs = JSON.parse(await readFile(source.replace(/\.jsonl$/, ".diffs.json"), "utf8"));
+    const diffs = readStoreLocked(source.replace(/\.jsonl$/, ".diffs.json")).snapshots;
     const file = await open(destination.replace(/\.jsonl$/, ".diffs.json"), "wx", 0o600);
 
-    try { await file.writeFile(JSON.stringify(Object.fromEntries(Object.entries(diffs).filter(([id]) => ids.has(id))))); }
+    try { await file.writeFile(JSON.stringify(Object.fromEntries(Object.entries(diffs).filter(([id]) => ids.has(id))))); await file.sync(); }
     finally { await file.close(); }
+
+    const directory = await open(dirname(destination), "r");
+
+    try { await directory.sync(); } finally { await directory.close(); }
   } catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error; }
 }
 

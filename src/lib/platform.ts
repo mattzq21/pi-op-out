@@ -15,10 +15,10 @@ export const isMobile = import.meta.env.MODE === "mobile";
 export function htmlPreviewSize() {
   const width = typeof window === "undefined" ? undefined : window.screen?.width;
 
-  return typeof width === "number" && Number.isFinite(width) && width >= 2560 ? 750 : 600;
+  return z.number().finite().min(2560).safeParse(width).success ? 750 : 600;
 }
 
-const clientPreferences = registerPlugin<{ load(): Promise<{ settings: unknown }>; save(options: { settings: unknown }): Promise<void> }>("ClientPreferences");
+const clientPreferences = registerPlugin<{ load(): Promise<{ settings: unknown }>; save(options: { settings: unknown; baseline: unknown; initialize: boolean }): Promise<{ settings: unknown }> }>("ClientPreferences");
 
 const conversationClientId = (() => {
   const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}-${Math.random()}`;
@@ -65,7 +65,7 @@ export async function invoke(command: string, args?: NativeArguments, schema: z.
 
   if (command === "load_client_settings") return clientPreferences.load().then(result => schema.parse(result.settings));
 
-  if (command === "save_client_settings") return clientPreferences.save({ settings: args.settings }).then(() => schema.parse(undefined));
+  if (command === "save_client_settings") return clientPreferences.save({ settings: args.settings, baseline: args.baseline, initialize: z.boolean().default(false).parse(args.initialize) }).then(result => schema.parse(result.settings));
 
   if (command === "open_external_url") {
     const url = String(args?.url);

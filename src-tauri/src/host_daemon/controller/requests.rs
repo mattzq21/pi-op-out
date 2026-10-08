@@ -96,6 +96,7 @@ impl Host {
 
     async fn orchestration(self: &Arc<Self>, packet: Value) -> Result<Value> {
         let id = text(&packet, "sessionKey");
+        if text(&packet, "action") == "locate" { return self.ownership().lookup(&id); }
         if text(&packet, "action") == "interrupt" {
             if self.cancel_deliveries(&id, packet["deliveryId"].as_str()) {
                 return Ok(json!({"sessionId":id,"completed":false}));

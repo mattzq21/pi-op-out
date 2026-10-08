@@ -10,6 +10,7 @@ export const regularChatSchema = z.object({
   acceptedSubmissionIds: z.array(z.string()).default([]),
   messages: z.array(z.object({ id: z.string(), role: z.enum(["user", "assistant"]), text: z.string() })).default([]),
   ownership: ownershipSchema.optional(),
+  storageDiagnostic: z.object({ chatId: z.string(), filename: z.string(), path: z.string(), message: z.string(), preserved: z.literal(true) }).optional(),
 });
 
 export const chatModelsSchema = z.array(z.object({

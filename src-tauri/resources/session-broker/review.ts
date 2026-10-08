@@ -52,9 +52,14 @@ async function createReview(ctx: ExtensionContext, agentState: SessionAgentState
   return record;
 }
 
-function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string) {
+function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string, readOnly = false) {
   ctx.ui.setStatus("review", "Opening code review…");
-  void ctx.ui.input("__pi_desktop_review__", JSON.stringify(task ? { ...record, task } : record)).catch(error => {
+  const payload: ReviewRecord & { task?: string; readOnly?: boolean } = { ...record };
+
+  if (task) payload.task = task;
+
+  if (readOnly) payload.readOnly = true;
+  void ctx.ui.input("__pi_desktop_review__", JSON.stringify(payload)).catch(error => {
     ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
   }).finally(() => ctx.ui.setStatus("review", undefined));
 }
@@ -124,8 +129,7 @@ export function registerReview(pi: ExtensionAPI) {
       if (!entry || entry.type !== "custom") throw new Error("Review not found in this conversation");
       const record = Parse(reviewSchema, entry.data);
 
-      if (record.parentSessionId !== ctx.sessionManager.getSessionId()) throw new Error("This review belongs to another conversation");
-      openReview(ctx, record);
+      openReview(ctx, record, undefined, record.parentSessionId !== ctx.sessionManager.getSessionId());
     })();
   });
 }

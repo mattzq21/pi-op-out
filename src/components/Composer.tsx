@@ -11,6 +11,7 @@ import { isMobile } from "../lib/platform";
 import { accountModelNameLookup,providerAccountLabel } from "../lib/providerAccounts";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
 import { useComposerAttachments } from "../lib/useComposerAttachments";
+import { stageComposerDraft, type DraftSubmissionHandle, type StageDraftSubmission } from "../lib/draftSubmission";
 import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
 import { DictationControls } from "./DictationControls";
 
@@ -57,7 +58,8 @@ interface Props {
   focusRequest?: number;
   pendingMessages?: import("../types").PendingMessage[];
   onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>;
-  onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
+  onStageSubmission?: StageDraftSubmission;
+  onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>;
   onAbort: () => void | Promise<void>;
   onPause: () => void | Promise<void>;
   onResume: () => void | Promise<void>;
@@ -101,8 +103,8 @@ function skillMatches(commands: SlashCommand[], query: string) {
   return matches;
 }
 
-function composerDefaults({ streaming, compacting = false, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
-  return { streaming, compacting, paused, pausing, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
+function composerDefaults({ streaming, compacting = false, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onStageSubmission, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
+  return { streaming, compacting, paused, pausing, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onStageSubmission, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
 }
 
 function composerControlState(controlsDisabled: boolean, action: "pause" | "resume" | undefined, pausing: boolean, stopping: boolean) {
@@ -391,14 +393,15 @@ export function Composer(props: Props) {
     const submittedValue = capturedValue; const submittedUploads = capturedUploads;
     const changeDraft = capturedComposer.onDraftChange ?? setLocalValue;
     const changeUploads = attachments.captureUploadWriter();
-    setValue(""); updateUploads([]);
 
     try {
-      const accepted = await capturedComposer.onSend(message, capturedComposer.streaming ? behavior : undefined, images);
+      const submission = await stageComposerDraft(capturedComposer.onStageSubmission, { rawText: submittedValue, uploads: submittedUploads, consume: true }, changeDraft, changeUploads);
+      const accepted = await capturedComposer.onSend(message, capturedComposer.streaming ? behavior : undefined, images, submission);
 
       if (accepted === false) throw new Error("Message was not submitted");
     } catch (reason) {
-      restoreSubmission(submittedValue, submittedUploads, reason, changeDraft, changeUploads);
+      if (capturedComposer.onStageSubmission) setUploadError(reason instanceof Error ? reason.message : String(reason));
+      else restoreSubmission(submittedValue, submittedUploads, reason, changeDraft, changeUploads);
     } finally { sendingRef.current = false; setSending(false); }
   };
 

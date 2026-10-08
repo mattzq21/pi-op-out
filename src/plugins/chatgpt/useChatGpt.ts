@@ -85,16 +85,32 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     const selected = accounts.find(account => account.configured && account.id === provider) ?? accounts.find(account => account.configured);
 
     if (!selected || selected.id !== provider && (desiredChat || busy())) throw new Error("Sign in to the chat's ChatGPT account in Settings → Providers.");
+
+    if (selected.id !== provider) { setChats([]); setModels([]); }
+
     provider = selected.id; call = createChatGptCall(provider, leaseId);
     const catalogCall = call;
-    const [history, catalog] = await Promise.all([catalogCall("list", z.array(regularChatSchema)), catalogCall("models", chatModelsSchema)]);
 
-    if (generation !== current) return;
-    receiveHistory(history, started); setModels(catalog);
+    await loadCatalogRecords(catalogCall, current, started);
+  };
+
+  const loadCatalogRecords = async (catalogCall: typeof call, current: number, started: number) => {
+    const [history, catalog] = await Promise.allSettled([catalogCall("list", z.array(regularChatSchema)), catalogCall("models", chatModelsSchema)]);
+    const diagnostics = await catalogCall("diagnostics", z.object({ models: z.array(z.object({ message: z.string() })) })).catch(() => undefined);
+
+    if (generation !== current || catalogCall !== call) return;
+
+    if (history.status === "fulfilled") receiveHistory(history.value, started);
+
+    if (catalog.status === "fulfilled") setModels(catalog.value);
+    const failures = [...[history, catalog].flatMap(result => result.status === "rejected" ? [String(result.reason)] : []), ...diagnostics?.models.map(value => value.message) ?? []];
+
+    if (failures.length) throw new Error(failures.join("\n"));
   };
 
   const receiveHistory = (history: RegularChat[], started: number) => {
     setChats(previous => [...history.map(value => {
+      if (value.storageDiagnostic) return value;
       const newer = previous.find(item => item.id === value.id && item.updatedAt > value.updatedAt);
 
       return newer ?? value;
@@ -194,6 +210,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const editable = () => open() && (!chat() || chat()?.ownership?.owned === true);
   const canChooseContext = () => !chat()?.messages.length && !busy() && !loading() && !catalogLoading() && !responding();
   const setIncludeContext = (value: boolean) => { if (canChooseContext()) setDraftIncludeContext(value); };
+
   const canSend = () => editable() && !busy() && !loading() && !catalogLoading() && models().length > 0 && !responding() && Boolean(prompt().trim());
   const contextSource = () => source()?.messages.length || source()?.selected ? source() : undefined;
   const targetChatId = () => chat()?.id ?? draftId();

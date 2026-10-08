@@ -34,13 +34,10 @@ async fn open(scope: &str) -> Result<(Socket, Value), String> {
 }
 
 fn start_daemon(mode: &str) -> Result<PathBuf, String> {
-    let directory = daemon_endpoint::directory()?;
-    ensure_private_dir(&directory)?;
-    let log_path = directory.join("daemon.log");
-    let log = OpenOptions::new().create(true).append(true).open(&log_path).map_err(|error| error.to_string())?;
-    set_private_file_permissions(&log_path)?;
-    let mut command = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
-    command.arg(mode).stdin(Stdio::null()).stdout(Stdio::null()).stderr(log);
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let mut command = Command::new(&executable);
+    command.arg(mode).stdin(Stdio::null()).stdout(Stdio::null());
+    let log_path = crate::daemon_log::configure(&mut command, &executable)?;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

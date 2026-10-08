@@ -32,12 +32,10 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
     if command == "debug_runtime" {
         return tokio::task::spawn_blocking(daemon_endpoint::debug_runtime).await.map_err(|error| error.to_string())?;
     }
-    if command == "daemon_restart_status" { return crate::daemon_restart::status(&argument::<String>(&args, "restartId")?); }
+    if command == "daemon_restart_status" { return local_restart_status(&args); }
     let state = app.state::<crate::daemon_restart::Runtime>();
     if command == "restart_daemon" {
-        let _guard = tokio::time::timeout(std::time::Duration::from_secs(30), state.gate.write()).await
-            .map_err(|_| "Pending daemon requests did not finish within 30 seconds. Try restarting again once they finish.")?;
-        return handle_restart_daemon(app.clone(), owner, args).await;
+        return local_restart(&state, app.clone(), owner, args).await;
     }
     if command == "plugin_call" {
         if crate::daemon_restart::blocking() { return Err("The daemon is restarting. Reconnect before retrying.".into()); }
@@ -48,6 +46,16 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
     } else { state.gate.read().await };
     if crate::daemon_restart::blocking() { return Err("The daemon is restarting. Reconnect before retrying.".into()); }
     dispatch_command(app.clone(), owner, command, args).await
+}
+
+fn local_restart_status(args: &Value) -> Result<Value, String> {
+    crate::daemon_restart::status(&argument::<String>(args, "restartId")?)
+}
+
+async fn local_restart(state: &crate::daemon_restart::Runtime, app: AppHandle, owner: String, args: Value) -> Result<Value, String> {
+    let _guard = tokio::time::timeout(std::time::Duration::from_secs(30), state.gate.write()).await
+        .map_err(|_| "Pending daemon requests did not finish within 30 seconds. Try restarting again once they finish.")?;
+    handle_restart_daemon(app, owner, args).await
 }
 
 async fn dispatch_command(app: AppHandle, owner: String, command: String, args: Value) -> Result<Value, String> {
@@ -74,6 +82,7 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("dictation_transcribe", handle_dictation_transcribe),
     ("broker_request", handle_broker_request),
     ("load_host_settings", handle_load_host_settings),
+    ("load_host_settings_change", handle_load_settings_change),
     ("save_host_settings", handle_save_host_settings),
     ("host_storage_report", handle_host_storage_report),
     ("provider_auth", handle_provider_auth),
@@ -123,6 +132,7 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("relocate_session", handle_relocate_session),
     ("recover_missing_session", handle_recover_missing_session),
     ("load_app_settings", handle_load_app_settings),
+    ("load_settings_change", handle_load_settings_change),
     ("save_app_settings", handle_save_app_settings),
     ("codex_usage", handle_codex_usage),
     ("opencode_go_usage", handle_opencode_go_usage),
@@ -492,6 +502,12 @@ fn handle_relocate_session(app: AppHandle, _owner: String, args: Value) -> Comma
 fn handle_load_app_settings(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || serde_json::to_value(load_app_settings(app.clone())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_load_settings_change(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || load_settings_change(app)).await.map_err(|error| error.to_string())?
     })
 }
 

@@ -1,0 +1,448 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const { randomUUID } = require('node:crypto');
+const io = require('./session-transactions.cjs');
+const { canonicalTranscriptBasename } = require('./transcript-identity.cjs');
+
+const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+
+function save(transaction) {
+  io.write(path.join(transaction.container, 'recovery.json'), JSON.stringify(transaction));
+}
+
+function sidecars(file, destination) {
+  return sidecarPaths(file, destination).flatMap(([source, target]) => io.exists(source) ? [{ source, destination: target, identity: io.describe(source) }] : []);
+}
+
+function archiveDestinations(root, records) {
+  const selected = new Set();
+
+  return records.map(record => {
+    const destination = path.join(root, 'archived', canonicalTranscriptBasename(record.header));
+
+    if (selected.has(destination)) throw new Error(`Duplicate archive transcript mapping: ${destination}`);
+    selected.add(destination);
+
+    for (const target of [destination, ...sidecarPaths(record.file, destination).map(([, target]) => target)]) {
+      if (io.exists(target)) throw new Error(`Archive destination already exists: ${target}`);
+    }
+
+    return destination;
+  });
+}
+
+function plan(root, groups, records) {
+  const destinations = archiveDestinations(root, records);
+  const id = randomUUID();
+
+  const container = path.join(root, 'archive-transactions', id);
+
+  io.mkdir(container);
+
+  const plannedRecords = records.map((record, index) => {
+    const destination = destinations[index];
+
+    return {
+      file: record.file, sessionId: record.header.id, group: groups.findIndex(group => group.records.includes(record)),
+      original: io.describe(record.file), mode: fs.statSync(record.file).mode & 0o777, destination,
+      backup: path.join(container, `${index}.original`), prepared: path.join(container, `${index}.prepared`),
+      rollbackCopy: path.join(container, `${index}.rollback`), moves: sidecars(record.file, destination),
+    };
+  });
+
+  const plannedGroups = groups.map((group, index) => {
+    const { records: owners, ...location } = group;
+
+    return {
+      ...location, storedPath: path.join(root, 'archived-tmp', randomUUID()),
+      identity: ['directory', 'git'].includes(group.kind) ? io.describe(group.path) : undefined,
+      repositoryIdentity: group.common ? io.identity(group.common) : undefined,
+      registrationIdentity: group.own ? io.identity(group.own) : undefined,
+      metadata: path.join(container, `${index}.git`), dataBackup: path.join(container, `${index}.directory`), index: path.join(container, `${index}.index`),
+      refs: group.kind === 'git' ? owners.map(record => `refs/pi-session-snapshots/chats/${record.header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session'}/archive/${randomUUID()}`) : [],
+    };
+  });
+
+  const transaction = { version: 2, kind: 'archive', id, root, container, containerIdentity: io.identity(container), state: 'planned', groups: plannedGroups, records: plannedRecords };
+  save(transaction);
+
+  return transaction;
+}
+
+function validateRecord(transaction, record) {
+  const sessions = path.join(transaction.root, 'sessions');
+
+  const archive = path.join(transaction.root, 'archived');
+
+  if (!io.inside(sessions, record.file) || !record.file.endsWith('.jsonl') || path.dirname(record.destination) !== archive) throw new Error('Invalid archive transcript mapping');
+
+  for (const file of [record.backup, record.prepared, record.rollbackCopy]) {
+    if (path.dirname(file) !== transaction.container) throw new Error('Invalid archive backup mapping');
+  }
+
+  const expected = sidecarPaths(record.file, record.destination);
+
+  for (const move of record.moves) {
+    if (!expected.some(([source, destination]) => source === move.source && destination === move.destination)) throw new Error('Invalid archive sidecar mapping');
+  }
+}
+
+function sidecarPaths(file, destination) {
+  return [
+    [file.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.snapshots')],
+    [file.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json')],
+    [file.replace(/\.jsonl$/, '.diffs.json.lock'), destination.replace(/\.jsonl$/, '.diffs.json.lock')],
+    [`${file}.loop-detection.json`, `${destination}.loop-detection.json`],
+  ];
+}
+
+function validateGroup(transaction, group) {
+  if (!path.isAbsolute(group.path) || path.resolve(group.path) !== group.path || path.dirname(group.storedPath) !== path.join(transaction.root, 'archived-tmp')) throw new Error('Invalid archive directory mapping');
+
+  for (const file of [group.metadata, group.dataBackup, group.index]) {
+    if (path.dirname(file) !== transaction.container) throw new Error('Invalid archive Git backup');
+  }
+
+  if (group.kind === 'git' && (!path.isAbsolute(group.common) || !path.isAbsolute(group.own))) throw new Error('Invalid archive repository');
+  validateRefs(transaction, group);
+}
+
+function validateRefs(transaction, group) {
+  if (group.commit && !/^[a-f0-9]{40,64}$/.test(group.commit)) throw new Error('Invalid archive commit ownership');
+
+  if (group.branchRef && !group.branchRef.startsWith('refs/heads/')) throw new Error('Invalid archive branch ownership');
+  const owners = transaction.records.filter(record => transaction.groups[record.group] === group);
+
+  for (const ref of group.refs) {
+    if (!owners.some(record => {
+      const id = record.sessionId.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
+      const prefix = `refs/pi-session-snapshots/chats/${id}/archive/`;
+
+      return ref.startsWith(prefix) && uuid.test(ref.slice(prefix.length));
+    })) throw new Error('Invalid archive ref ownership');
+  }
+}
+
+function load(root, id) {
+  if (!uuid.test(id)) throw new Error('Invalid archive transaction identity');
+  const container = path.join(root, 'archive-transactions', id);
+
+  const file = path.join(container, 'recovery.json');
+
+  if (!io.exists(file)?.isFile()) throw new Error(`Archive journal is unavailable: ${container}`);
+  const transaction = JSON.parse(fs.readFileSync(file, 'utf8'));
+
+  validateIdentity(transaction, root, id, container, file);
+  transaction.records.forEach(record => validateRecord(transaction, record));
+  transaction.groups.forEach(group => validateGroup(transaction, group));
+
+  return transaction;
+}
+
+function validateIdentity(transaction, root, id, container, file) {
+  if (transaction.version !== 2 || transaction.kind !== 'archive' || transaction.id !== id || transaction.root !== root || transaction.container !== container || io.identity(container) !== transaction.containerIdentity) throw new Error(`Invalid archive journal: ${file}`);
+
+  if (fs.realpathSync(container) !== container || !['planned', 'pending', 'committed', 'rolled-back'].includes(transaction.state)) throw new Error(`Invalid archive transaction state: ${file}`);
+}
+
+function begin(transaction) {
+  if (transaction.state !== 'planned') throw new Error('Archive transaction is no longer awaiting execution');
+
+  for (const record of transaction.records) {
+    if (!io.matches(record.file, record.original)) throw new Error(`Conversation changed before archiving: ${record.file}`);
+  }
+
+  for (const group of transaction.groups.filter(group => group.identity)) {
+    if (!io.matches(group.path, group.identity, false)) throw new Error(`Working directory changed before archiving: ${group.path}`);
+    group.identity = io.describe(group.path);
+
+    if (group.kind === 'git') {
+      registration(group, group.path);
+      const pointer = path.join(group.path, '.git');
+      group.pointer = { text: fs.readFileSync(pointer, 'utf8'), identity: io.identity(pointer), mode: fs.statSync(pointer).mode & 0o777 };
+      group.contents = io.describe(group.path, ['.git']);
+    }
+  }
+
+  io.write(path.join(transaction.container, 'pending.json'), JSON.stringify({ version: 2, id: transaction.id }));
+  transaction.state = 'pending';
+  save(transaction);
+  io.mkdir(path.join(transaction.root, 'archived'));
+  io.mkdir(path.join(transaction.root, 'archived-tmp'));
+}
+
+function repository(group) {
+  if (io.identity(group.common) !== group.repositoryIdentity) throw new Error(`Archive repository was replaced: ${group.common}`);
+
+  return group.common;
+}
+
+function registration(group, directory) {
+  repository(group);
+
+  if (io.identity(group.own) !== group.registrationIdentity) throw new Error(`Archive worktree registration was replaced: ${group.own}`);
+  const pointer = path.join(directory, '.git');
+
+  if (!io.exists(pointer)?.isFile()) throw new Error(`Archive worktree pointer is unavailable: ${directory}`);
+  const value = fs.readFileSync(pointer, 'utf8').trim();
+
+  if (value.startsWith('gitdir: ') && path.resolve(directory, value.slice(8)) === group.own) return;
+
+  if (io.identity(pointer) !== group.pointer?.identity || ![group.pointer.text.trim(), ''].includes(value)) throw new Error(`Archive worktree identity changed: ${directory}`);
+}
+
+function repairDirectory(group, directory) {
+  registration(group, directory);
+  const pointer = path.join(directory, '.git');
+  fs.writeFileSync(pointer, `gitdir: ${group.own}\n`);
+  fs.chmodSync(pointer, group.pointer.mode);
+  io.sync(pointer);
+  io.git(group.common, ['worktree', 'repair', directory]);
+
+  if (directory === group.path) {
+    fs.writeFileSync(pointer, group.pointer.text);
+    fs.chmodSync(pointer, group.pointer.mode);
+    io.sync(pointer);
+  }
+
+  io.syncTree(pointer);
+  io.sync(directory);
+  io.syncTree(group.own);
+  io.sync(path.dirname(group.own));
+}
+
+function moveGroup(transaction, group) {
+  io.syncTree(group.path);
+
+  if (group.kind === 'git') registration(group, group.path);
+  io.move({ source: group.path, destination: group.storedPath, identity: group.identity });
+
+  if (group.kind === 'git') {
+    repairDirectory(group, group.storedPath);
+  }
+
+  group.moved = true;
+  save(transaction);
+}
+
+function publishRecord(transaction, record) {
+  if (!io.matches(record.file, record.original) || !io.matches(record.backup, record.backupIdentity) || !io.matches(record.prepared, record.preparedIdentity)) throw new Error(`Archive publication files changed: ${record.file}`);
+  fs.renameSync(record.prepared, record.file);
+  io.sync(path.dirname(record.file));
+  record.trace = { source: record.file, destination: record.destination, identity: record.preparedIdentity };
+  save(transaction);
+
+  for (const move of [...record.moves, record.trace]) {
+    io.syncTree(move.source);
+    io.move(move);
+    save(transaction);
+  }
+}
+
+function commit(transaction) {
+  for (const record of transaction.records) {
+    if (!io.matches(record.destination, record.preparedIdentity) || io.exists(record.file)) throw new Error(`Archive commit could not be verified: ${record.file}`);
+
+    for (const move of record.moves) {
+      if (!io.matches(move.destination, move.identity) || io.exists(move.source)) throw new Error(`Archive sidecar commit could not be verified: ${move.source}`);
+    }
+  }
+
+  transaction.state = 'committed';
+  save(transaction);
+}
+
+function restoreGroup(group) {
+  if (!group.identity) return;
+
+  if (io.matches(group.path, group.identity, false) && !io.exists(group.storedPath)) {
+    if (group.kind === 'git') repairGroup(group);
+
+    return;
+  }
+
+  if (io.exists(group.path) || !io.matches(group.storedPath, group.identity, false)) throw new Error(`Archive directory recovery is ambiguous: ${group.path}`);
+
+  if (group.kind === 'git') registration(group, group.storedPath);
+  const identity = io.describe(group.storedPath);
+  io.move({ source: group.storedPath, destination: group.path, identity });
+
+  if (group.kind === 'git') repairGroup(group);
+}
+
+function repairGroup(group) {
+  repairDirectory(group, group.path);
+}
+
+function restoreRecord(transaction, record) {
+  const trace = { source: record.file, destination: record.destination, identity: record.preparedIdentity };
+
+  if (io.exists(record.destination)) io.undo(trace);
+
+  for (const move of [...record.moves].reverse()) io.undo(move);
+
+  if (io.matches(record.file, record.original) || io.matches(record.file, record.rollbackIdentity)) return;
+
+  if (!io.matches(record.file, record.preparedIdentity) || !io.matches(record.backup, record.backupIdentity)) throw new Error(`Archive transcript recovery is ambiguous: ${record.file}`);
+
+  prepareRollbackCopy(transaction, record);
+
+  if (!io.matches(record.rollbackCopy, record.rollbackIdentity)) throw new Error(`Archive rollback copy changed: ${record.rollbackCopy}`);
+  fs.renameSync(record.rollbackCopy, record.file);
+  io.sync(path.dirname(record.file));
+}
+
+function prepareRollbackCopy(transaction, record) {
+  if (record.rollbackIdentity) return;
+
+  if (!io.exists(record.rollbackCopy)) fs.copyFileSync(record.backup, record.rollbackCopy, fs.constants.COPYFILE_EXCL);
+
+  if (!io.sameContents(record.rollbackCopy, record.backupIdentity)) throw new Error(`Archive rollback copy is ambiguous; retained: ${record.rollbackCopy}`);
+  io.syncTree(record.rollbackCopy);
+  record.rollbackIdentity = io.describe(record.rollbackCopy);
+  save(transaction);
+}
+
+function complete(transaction) {
+  transaction.finished = true;
+  save(transaction);
+  const pending = path.join(transaction.container, 'pending.json');
+
+  if (io.exists(pending)) fs.unlinkSync(pending);
+  io.sync(transaction.container);
+}
+
+function verifyRollback(transaction) {
+  for (const group of transaction.groups.filter(group => group.identity)) {
+    if (!io.matches(group.path, group.identity) || io.exists(group.storedPath)) throw new Error(`Archive directory rollback could not be verified: ${group.path}`);
+  }
+
+  for (const record of transaction.records) {
+    if (!io.sameContents(record.file, record.original) || io.exists(record.destination)) throw new Error(`Archive transcript rollback could not be verified: ${record.file}`);
+
+    for (const move of record.moves) {
+      if (!io.matches(move.source, move.identity) || io.exists(move.destination)) throw new Error(`Archive sidecar rollback could not be verified: ${move.source}`);
+    }
+  }
+}
+
+function rollbackData(transaction) {
+  for (const group of [...transaction.groups].reverse()) restoreGroup(group);
+
+  for (const record of [...transaction.records].reverse()) restoreRecord(transaction, record);
+  verifyRollback(transaction);
+  transaction.state = 'rolled-back';
+  save(transaction);
+}
+
+function cleanupRollback(transaction) {
+  if (!transaction.cleanup) {
+    const files = transaction.records.flatMap(record => [record.backup, record.prepared, record.rollbackCopy]);
+    files.push(...transaction.groups.flatMap(group => [group.metadata, group.dataBackup, group.index]));
+    transaction.cleanup = files.flatMap(file => io.exists(file) ? [{ file, entries: io.removalPlan(file) }] : []);
+    save(transaction);
+  }
+
+  for (const artifact of transaction.cleanup) {
+    if (path.dirname(artifact.file) !== transaction.container) throw new Error('Invalid archive cleanup mapping');
+    io.removeOwned(artifact.file, artifact.entries);
+  }
+
+  const remaining = fs.readdirSync(transaction.container).filter(name => !['recovery.json', 'pending.json'].includes(name));
+
+  if (remaining.length) throw new Error(`Unknown archive transaction artifacts retained: ${remaining.join(', ')}`);
+
+  if (io.exists(path.join(transaction.container, 'pending.json'))) fs.unlinkSync(path.join(transaction.container, 'pending.json'));
+  fs.unlinkSync(path.join(transaction.container, 'recovery.json'));
+  io.sync(transaction.container);
+  fs.rmdirSync(transaction.container);
+  io.sync(path.dirname(transaction.container));
+}
+
+function rollback(transaction) {
+  if (transaction.state !== 'rolled-back') rollbackData(transaction);
+
+  for (const group of transaction.groups.filter(group => group.commit)) {
+    for (const ref of group.refs) io.removeRef(repository(group), ref, group.commit);
+  }
+
+  cleanupRollback(transaction);
+}
+
+function removeBranch(group) {
+  if (!group.branchRef) return;
+  const common = repository(group);
+
+  const current = io.refValue(common, group.branchRef);
+
+  if (current === null) return;
+
+  if (current !== group.head || io.git(common, ['worktree', 'list', '--porcelain', '-z']).split('\0').includes(`branch ${group.branchRef}`)) {
+    console.error(`Archived successfully; branch with a surviving owner retained: ${group.branchRef}`);
+
+    return;
+  }
+
+  io.removeRef(common, group.branchRef, group.head);
+}
+
+function finishGroup(transaction, group) {
+  if (io.exists(group.storedPath)) {
+    if (!io.matches(group.storedPath, group.contents) || !io.matches(group.dataBackup, group.dataBackupIdentity) || !io.matches(group.metadata, group.metadataIdentity)) throw new Error(`Archive recovery data changed; retained: ${group.storedPath}`);
+    registration(group, group.storedPath);
+    io.git(group.common, ['worktree', 'remove', '--force', '--force', group.storedPath]);
+    io.sync(path.dirname(group.storedPath));
+    io.sync(path.dirname(group.own));
+  } else if (io.exists(group.own)) throw new Error(`Archive worktree removal needs repair; registration retained: ${group.own}`);
+
+  removeBranch(group);
+  group.removed = true;
+  save(transaction);
+}
+
+function finish(transaction) {
+  for (const group of transaction.groups.filter(group => group.kind === 'git' && !group.removed)) finishGroup(transaction, group);
+  complete(transaction);
+}
+
+function replay(transaction) {
+  if (transaction.finished || transaction.state === 'planned') return;
+
+  if (transaction.state === 'committed') {
+    try { finish(transaction); }
+    catch (error) { console.error(`Committed archive recovery retained: ${transaction.container}: ${error.message}`); }
+
+    return;
+  }
+
+  if (transaction.state === 'rolled-back') {
+    try { rollback(transaction); }
+    catch (error) { console.error(`Verified archive rollback cleanup retained: ${transaction.container}: ${error.message}`); }
+
+    return;
+  }
+
+  rollback(transaction);
+}
+
+function recover(root) {
+  const directory = path.join(root, 'archive-transactions');
+
+  const failures = [];
+
+  for (const entry of io.exists(directory) ? fs.readdirSync(directory) : []) {
+    if (!uuid.test(entry)) continue;
+
+    try {
+      replay(load(root, entry));
+    } catch (error) { failures.push(`${path.join(directory, entry)}: ${error.message}`); }
+  }
+
+  for (const name of fs.readdirSync(root).filter(name => /^archive-transaction-[a-zA-Z0-9]{6}$/.test(name))) {
+    console.error(`Legacy archive recovery retained without sufficient durable identity evidence: ${path.join(root, name)}`);
+  }
+
+  if (failures.length) throw new Error(failures.join('\n'));
+}
+
+module.exports = { plan, load, begin, save, moveGroup, publishRecord, commit, rollback, finish, recover };

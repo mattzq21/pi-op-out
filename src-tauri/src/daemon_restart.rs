@@ -1,4 +1,4 @@
-use crate::{daemon_clients::DaemonClients, daemon_endpoint, platform::AppHandle};
+use crate::{daemon_clients::DaemonClients, daemon_endpoint, platform::AppHandle, restart_artifacts};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf, process::{Child, Command, Stdio}, thread, time::{Duration, Instant}};
@@ -17,7 +17,7 @@ pub(crate) struct Runtime {
 
 pub(crate) fn blocking() -> bool {
     PREPARING.load(std::sync::atomic::Ordering::SeqCst)
-        || (daemon_endpoint::restart_active() && read_plan().is_ok_and(|plan| plan.owner == std::process::id()))
+        || (restart_artifacts::active_plan().unwrap_or(true) && read_plan().is_ok_and(|plan| plan.owner == std::process::id()))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -37,6 +37,7 @@ struct Plan {
 fn path(name: &str) -> Result<PathBuf, String> { Ok(daemon_endpoint::directory()?.join(name)) }
 
 fn write(name: &str, value: &impl Serialize) -> Result<(), String> {
+    let _publication = restart_artifacts::publication_lock()?;
     crate::atomic_write_private(&path(name)?, &serde_json::to_vec(value).map_err(|error| error.to_string())?)
 }
 
@@ -62,31 +63,42 @@ fn executable() -> Result<PathBuf, String> {
     Ok(text.strip_suffix(" (deleted)").map(PathBuf::from).unwrap_or(current))
 }
 
-fn backup(id: &str) -> Result<PathBuf, String> {
-    let target = path(&format!("restart-{id}{}", std::env::consts::EXE_SUFFIX))?;
-    #[cfg(target_os = "linux")]
-    let source = PathBuf::from("/proc/self/exe");
-    #[cfg(not(target_os = "linux"))]
-    let source = std::env::current_exe().map_err(|error| error.to_string())?;
-    fs::copy(source, &target).map_err(|error| error.to_string())?;
+fn replacement_executable() -> Result<PathBuf, String> {
+    let executable = fs::canonicalize(executable()?).map_err(|error| format!("Updated daemon is unavailable: {error}"))?;
+    let metadata = fs::metadata(&executable).map_err(|error| error.to_string())?;
+    if !metadata.is_file() { return Err(format!("Updated daemon is missing: {}", executable.display())); }
     #[cfg(unix)]
-    { use std::os::unix::fs::PermissionsExt; fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).map_err(|error| error.to_string())?; }
-    Ok(target)
+    { use std::os::unix::fs::PermissionsExt; if metadata.permissions().mode() & 0o111 == 0 { return Err("Updated daemon is not executable".into()); } }
+    Ok(executable)
 }
 
-fn make_plan(app: &AppHandle, prepared: Value) -> Result<Plan, String> {
+fn make_plan(app: &AppHandle, prepared: Value) -> Result<(Plan, restart_artifacts::Backup), String> {
     let id = uuid::Uuid::new_v4().to_string();
-    let debug_bind = fs::read(path("debug-mobile.json")?).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|endpoint| endpoint["url"].as_str().map(|url| url.trim_start_matches("ws://").to_owned()));
+    let debug_bind = debug_restart_bind()?;
     let endpoint = daemon_endpoint::read()?;
-    Ok(Plan {
-        fallback: backup(&id)?, id, owner: std::process::id(), executable: executable()?,
-        enabled: serde_json::from_value(prepared["enabled"].clone()).map_err(|error| error.to_string())?,
-        previous: serde_json::from_value(prepared["previous"].clone()).map_err(|error| error.to_string())?,
-        tickets: prepared["tickets"].clone(),
-        bind: restart_bind(&endpoint.url),
-        debug_bind, automatic: app.state::<DaemonClients>().automatic(),
-    })
+    let executable = replacement_executable()?;
+    let enabled = serde_json::from_value(prepared["enabled"].clone()).map_err(|error| error.to_string())?;
+    let previous = serde_json::from_value(prepared["previous"].clone()).map_err(|error| error.to_string())?;
+    if !prepared["tickets"].is_array() { return Err("Invalid restart checkpoint tickets".into()); }
+    let bind = restart_bind(&endpoint.url);
+    validate_restart_bind(&bind)?;
+    let backup = restart_artifacts::Backup::create(&id, &executable)?;
+    let plan = Plan { fallback: backup.path.clone(), id, owner: std::process::id(), executable, enabled, previous,
+        tickets: prepared["tickets"].clone(), bind, debug_bind, automatic: app.state::<DaemonClients>().automatic() };
+    Ok((plan, backup))
+}
+
+fn validate_restart_bind(bind: &str) -> Result<(), String> {
+    use std::net::ToSocketAddrs;
+    let mut addresses = bind.to_socket_addrs().map_err(|error| format!("Invalid restart bind address: {error}"))?;
+    addresses.next().map(|_| ()).ok_or_else(|| "Restart bind address has no addresses".into())
+}
+
+fn debug_restart_bind() -> Result<Option<String>, String> {
+    let bind = fs::read(path("debug-mobile.json")?).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|endpoint| endpoint["url"].as_str().map(|url| url.trim_start_matches("ws://").to_owned()));
+    if let Some(bind) = &bind { validate_restart_bind(bind)?; }
+    Ok(bind)
 }
 
 fn restart_bind(url: &str) -> String {
@@ -100,7 +112,7 @@ fn restart_bind(url: &str) -> String {
 
 pub(crate) fn prepare(app: AppHandle, mut args: Value) -> Result<Value, String> {
     if !args.is_object() { return Err("Restart arguments must be an object".into()); }
-    if daemon_endpoint::restart_active() { return Err("A daemon restart is already in progress".into()); }
+    reconcile_restart()?;
     let terminals = app.state::<crate::TerminalRuntime>().running_count()?;
     if terminals > 0 && args["closeTerminals"].as_bool() != Some(true) {
         return Ok(json!({"confirmationRequired":"terminals","terminalCount":terminals}));
@@ -113,12 +125,19 @@ pub(crate) fn prepare(app: AppHandle, mut args: Value) -> Result<Value, String> 
     prepare_plugin_handoff(&app, &daemon, args)
 }
 
+fn reconcile_restart() -> Result<(), String> {
+    if let Err(error) = restart_artifacts::reconcile() { eprintln!("Restart artifact cleanup remains pending: {error}"); }
+    if restart_artifacts::active_plan()? { return Err("A daemon restart is already in progress".into()); }
+    Ok(())
+}
+
 fn prepare_plugin_handoff(app: &AppHandle, daemon: &crate::daemon::Daemon, args: Value) -> Result<Value, String> {
     let prepared = daemon.request(args)?;
     let preserving_notes = ["enabled", "previous"].iter().all(|key| prepared[key].as_array().is_some_and(|ids| ids.iter().any(|id| id == "markdown")));
     let leases = if preserving_notes { Some(crate::host_supervisor::preserve_leases_for_restart()?) } else { None };
-    let plan = make_plan(app, prepared)?;
+    let (plan, backup) = make_plan(app, prepared)?;
     let result = prepare_handoff(&plan)?;
+    backup.hand_off();
     if let Some(leases) = leases { leases.commit(); }
     Ok(result)
 }
@@ -138,12 +157,11 @@ pub(crate) fn ensure_local_idle(app: &AppHandle) -> Result<(), String> {
 }
 
 fn prepare_handoff(plan: &Plan) -> Result<Value, String> {
-    write("restart-plan.json", plan)?;
-    publish(plan, "preparing", None, None)?;
-    let result = arm(plan);
+    let result = write("restart-plan.json", plan).and_then(|()| publish(plan, "preparing", None, None)).and_then(|()| arm(plan));
     if let Err(error) = &result {
-        let _ = publish(plan, "failed", Some(error), None);
-        let _ = fs::remove_file(&plan.fallback);
+        if read_plan().is_ok_and(|current| current.id == plan.id) {
+            let _ = publish(plan, "failed", Some(error), None);
+        }
     }
     result.map(|()| json!({"restartId":plan.id}))
 }
@@ -151,8 +169,8 @@ fn prepare_handoff(plan: &Plan) -> Result<Value, String> {
 fn arm(plan: &Plan) -> Result<(), String> {
     let mut coordinator = launch(plan, &plan.fallback, "--restart-coordinator")?;
     let result = wait_armed(plan, &mut coordinator);
-    if result.is_err() { let _ = coordinator.kill(); }
-    thread::spawn(move || { let _ = coordinator.wait(); });
+    if result.is_err() { let _ = coordinator.kill(); let _ = coordinator.wait(); }
+    else { thread::spawn(move || { let _ = coordinator.wait(); }); }
     result
 }
 
@@ -181,12 +199,11 @@ pub(crate) fn commit(app: AppHandle, id: &str) {
 }
 
 fn launch(plan: &Plan, executable: &std::path::Path, mode: &str) -> Result<Child, String> {
-    let log_path = path("daemon.log")?;
-    let log = fs::OpenOptions::new().create(true).append(true).open(&log_path).map_err(|error| error.to_string())?;
-    crate::set_private_file_permissions(&log_path)?;
     let mut command = Command::new(executable);
-    command.args([mode, &plan.id]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(log)
+    command.args([mode, &plan.id]).stdin(Stdio::null()).stdout(Stdio::null())
         .env("PIOP_DAEMON_EXECUTABLE", &plan.executable).env("PIOP_MOBILE_BIND", &plan.bind);
+    let logger = if mode == "--restart-candidate" { executable.to_path_buf() } else { crate::daemon_log::running_executable()? };
+    crate::daemon_log::configure(&mut command, &logger)?;
     if let Some(bind) = &plan.debug_bind { command.env("PIOP_DEBUG_MOBILE_BIND", bind); }
     if plan.automatic { command.env("PIOP_RESTART_AUTOMATIC", "1"); } else { command.env_remove("PIOP_RESTART_AUTOMATIC"); }
     #[cfg(unix)]
@@ -269,7 +286,7 @@ fn run_special(mode: &str) -> Result<(), String> {
     }
     let result = coordinate(&plan);
     if let Err(error) = &result { let _ = publish(&plan, "failed", Some(error), None); }
-    if status(&plan.id).is_ok_and(|value| value["phase"] == "complete") { let _ = fs::remove_file(&plan.fallback); }
+    if let Err(error) = restart_artifacts::reconcile() { eprintln!("Restart artifact cleanup remains pending: {error}"); }
     result
 }
 

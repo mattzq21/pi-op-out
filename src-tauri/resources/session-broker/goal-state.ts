@@ -19,9 +19,14 @@ const goalSchema = Type.Object({
   version: Type.Literal(1), id: Type.String({ minLength: 1 }), sessionId: Type.String({ minLength: 1 }),
   objective: Type.String(), status: statusSchema, tokenBudget: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })]),
   tokensUsed: accountingSchema, elapsedMs: accountingSchema, createdAt: accountingSchema, updatedAt: accountingSchema,
+  subagentUsage: Type.Optional(Type.Record(Type.String(), accountingSchema)),
 });
 
 export type Goal = Static<typeof goalSchema>;
+
+function subagentConsumed(goal: Goal, sourceId: string) {
+  return Object.hasOwn(goal.subagentUsage ?? {}, sourceId) ? goal.subagentUsage?.[sourceId] ?? 0 : 0;
+}
 
 type Usage = { input?: number; output?: number; cacheWrite?: number };
 
@@ -130,6 +135,31 @@ export class GoalState {
     this.goal.tokensUsed = Math.min(Number.MAX_SAFE_INTEGER, this.goal.tokensUsed + amount(tokens));
     const limited = this.enforceBudget(includeStopped);
     this.save(ctx);
+
+    return limited;
+  }
+
+  accountSubagent(ctx: ExtensionContext, sourceId: string, total: number) {
+    if (!this.goal || this.goal.status === "complete") return false;
+
+    if (!sourceId || !Number.isSafeInteger(total) || total < 0) throw new Error("Invalid cumulative subagent usage");
+    const previous = structuredClone(this.goal);
+    const saved = this.saved;
+    const clock = this.clock;
+    const consumed = subagentConsumed(this.goal, sourceId);
+
+    if (total <= consumed) return false;
+    this.flushClock();
+    this.goal.subagentUsage = { ...this.goal.subagentUsage, [sourceId]: total };
+    this.goal.tokensUsed = Math.min(Number.MAX_SAFE_INTEGER, this.goal.tokensUsed + total - consumed);
+    const limited = this.enforceBudget(true);
+
+    try { this.save(ctx); }
+    catch (error) {
+      if (this.saved === saved) { this.goal = previous; this.clock = clock; }
+
+      throw error;
+    }
 
     return limited;
   }

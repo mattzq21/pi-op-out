@@ -1,8 +1,10 @@
 import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
-import { GoalState, validateBudget } from "./goal-state.ts";
-import { materializeGoal } from "./goal-files.ts";
+import { GoalState, validateBudget, type Goal } from "./goal-state.ts";
+import { goalImagesSchema, goalPreparationView, materializeGoal, readGoalPreparation } from "./goal-files.ts";
 import type { GoalCoordination } from "./goal-coordination.ts";
+import { Type as Schema, type Static } from "typebox";
+import { Parse } from "typebox/value";
 
 export type GoalControls = {
   state: GoalState;
@@ -14,10 +16,14 @@ export type GoalControls = {
 
 const USAGE = "/goal [objective|edit|pause|resume|clear|budget <tokens|clear>]";
 
+const promptSchema = Schema.Object({ message: Schema.String(), goalSubmissionId: Schema.Optional(Schema.String()), images: Schema.Optional(goalImagesSchema) });
+
+const preparationRequestSchema = Schema.Object({ goalSubmissionId: Schema.String() });
+
 const isGoalObjective = (value: string) => Boolean(value) && !["edit", "clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget ");
 
 function goalObjective(text: string) {
-  const value = text.match(/^\/goal\s+([\s\S]*)$/)?.[1].trim();
+  const value = text.trimStart().match(/^\/goal\s+([\s\S]*)$/)?.[1].trim();
 
   return value !== undefined && isGoalObjective(value) ? value : undefined;
 }
@@ -87,7 +93,7 @@ function commit(ctx: ExtensionContext, controls: GoalControls, operation: () => 
   });
 }
 
-async function prepareGoal(args: string, ctx: ExtensionContext, controls: GoalControls, editing: boolean, start = true) {
+async function prepareGoal(args: string, ctx: ExtensionContext, controls: GoalControls, editing: boolean, start = true, submissionId?: string, images: Static<typeof goalImagesSchema> = []) {
   const captured = await controls.coordination.run(ctx, () => {
     controls.assertAvailable(ctx);
 
@@ -96,28 +102,60 @@ async function prepareGoal(args: string, ctx: ExtensionContext, controls: GoalCo
     return { key: snapshot(ctx, controls), goal: controls.state.goal && { ...controls.state.goal } };
   });
 
-  let objective: string | undefined = args;
-
-  if (editing) {
-    if (!captured.goal) throw new Error("No goal is set for this conversation.");
-    objective = await ctx.ui.editor("Edit goal", captured.goal.objective);
-  }
-  else if (captured.goal && captured.goal.status !== "complete" && !await ctx.ui.confirm("Replace current goal?", "This starts a new objective with fresh usage and no token budget.")) return;
+  const reused = await preparedGoalMatches(ctx, submissionId, captured.goal);
+  const objective = await goalInput(args, ctx, captured.goal, editing, reused);
 
   if (objective === undefined) return;
-  const draft = await materializeGoal(objective, ctx);
-  let applied = false;
 
-  try {
-    const summary = await commit(ctx, controls, () => {
-      if (snapshot(ctx, controls) !== captured.key) throw new Error("The goal changed while preparing this operation. Submit /goal again.");
+  return commitPreparedGoal(objective, ctx, controls, captured.key, editing, start, reused, submissionId, images);
+}
+
+async function preparedGoalMatches(ctx: ExtensionContext, submissionId: string | undefined, goal: Goal | null) {
+  if (!submissionId) return false;
+  const previous = await readGoalPreparation(ctx, submissionId);
+
+  if (!previous || !goal) return false;
+
+  if (!previous.goalId) return previous.objective === goal.objective;
+
+  if (previous.goalId === goal.id) return true;
+
+  throw new Error(`This submission already prepared a goal (${previous.objective}), but the current goal changed. Inspect the prepared goal in saved input recovery before retrying.`);
+}
+
+async function goalInput(args: string, ctx: ExtensionContext, goal: Goal | null, editing: boolean, reused: boolean) {
+  if (editing) {
+    if (!goal) throw new Error("No goal is set for this conversation.");
+
+    return ctx.ui.editor("Edit goal", goal.objective);
+  }
+
+  if (!reused && goal && goal.status !== "complete" && !await ctx.ui.confirm("Replace current goal?", "This starts a new objective with fresh usage and no token budget.")) return;
+
+  return args;
+}
+
+function commitPreparedGoal(objective: string, ctx: ExtensionContext, controls: GoalControls, captured: string, editing: boolean, start: boolean, reused: boolean, submissionId: string | undefined, images: Static<typeof goalImagesSchema>) {
+  return controls.coordination.run(ctx, async () => {
+    if (snapshot(ctx, controls) !== captured) throw new Error("The goal changed while preparing this operation. Submit /goal again.");
+    controls.assertAvailable(ctx);
+    const draft = await materializeGoal(objective, ctx, submissionId, images);
+    let applied = false;
+
+    try {
+      if (snapshot(ctx, controls) !== captured) throw new Error("The conversation changed while preparing the goal. Submit /goal again.");
       controls.assertAvailable(ctx);
-      applyDraft(ctx, controls, draft.objective, editing);
-      applied = true;
-    }, start);
 
-    return { summary, objective: draft.objective };
-  } finally { if (!applied) await draft.cleanup(); }
+      if (!reused) applyDraft(ctx, controls, draft.objective, editing);
+      applied = true;
+      await draft.bind(controls.state.require().id, ctx);
+      controls.state.save(ctx);
+
+      if (start) controls.start(ctx);
+
+      return { summary: goalSummary(controls.state), objective: draft.objective };
+    } finally { if (!applied) await draft.cleanup(); }
+  });
 }
 
 function applyDraft(ctx: ExtensionContext, controls: GoalControls, objective: string, editing: boolean) {
@@ -160,25 +198,43 @@ function applyCommand(value: string, ctx: ExtensionCommandContext, controls: Goa
 
 export function registerGoalControls(pi: ExtensionAPI, controls: GoalControls) {
   registerGoalTool(pi, controls);
-  pi.on("input", (event, ctx) => {
-    if (goalObjective(event.text) !== undefined) controls.assertAvailable(ctx);
-  });
-  pi.on("message_start", async (event, ctx) => {
-    if (event.message.role !== "user") return;
-    const content = event.message.content;
-    const text = Array.isArray(content) ? content.flatMap(part => part.type === "text" ? [part.text] : []).join("") : content;
-    const value = goalObjective(text);
 
-    if (value === undefined) return;
-    event.message.content = [];
+  const preparePrompt = async (message: string, ctx: ExtensionContext, submissionId?: string, images: Static<typeof goalImagesSchema> = []) => {
+    const value = goalObjective(message) ?? (images.length && message.trim() === "/goal" ? "" : undefined);
+
+    if (value === undefined) return message;
 
     try {
-      const prepared = await prepareGoal(value, ctx, controls, false, false);
+      const prepared = await prepareGoal(value, ctx, controls, false, false, submissionId, images);
 
-      if (prepared) event.message.content = [{ type: "text", text: `/goal ${prepared.objective}` }];
-    } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
+      if (!prepared) throw new Error("Goal submission cancelled. The objective was not submitted.");
+
+      return `Work toward the conversation goal:\n\n${prepared.objective}`;
+    } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); throw error; }
+  };
+
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "prepare_goal_prompt") return;
+    request.ready = (async () => {
+      const prompt = Parse(promptSchema, request.payload);
+
+      return { message: await preparePrompt(prompt.message, request.ctx, prompt.goalSubmissionId, prompt.images) };
+    })();
   });
-  pi.on("context", event => ({ messages: event.messages.filter(message => message.role !== "user" || message.content.length > 0) }));
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "get_goal_preparation") return;
+    request.ready = (async () => {
+      const preparation = Parse(preparationRequestSchema, request.payload);
+
+      return goalPreparationView(request.ctx, preparation.goalSubmissionId);
+    })();
+  });
+  pi.on("input", async (event, ctx) => {
+    if (goalObjective(event.text) === undefined) return;
+
+    try { return { action: "transform", text: await preparePrompt(event.text, ctx, undefined, event.images), images: [] }; }
+    catch { return { action: "handled" }; }
+  });
   pi.registerCommand("goal", {
     description: `Persistent conversation goal. ${USAGE}`,
     getArgumentCompletions: prefix => ["edit", "pause", "resume", "clear", "budget"].flatMap(value => value.startsWith(prefix.trim()) ? [{ value, label: value }] : []),
@@ -187,8 +243,7 @@ export function registerGoalControls(pi: ExtensionAPI, controls: GoalControls) {
         const value = args.trim();
 
         if (isGoalObjective(value)) {
-          controls.assertAvailable(ctx);
-          pi.sendUserMessage(`/goal ${value}`, { deliverAs: "followUp" });
+          pi.sendUserMessage(await preparePrompt(`/goal ${value}`, ctx), { deliverAs: "followUp" });
 
           return;
         }

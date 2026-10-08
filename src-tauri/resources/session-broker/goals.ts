@@ -11,7 +11,7 @@ interface GoalControl { action: "pause" | "resume"; ctx: ExtensionContext; ready
 
 export interface GoalScope { goalId?: string; ctx: ExtensionContext; ready?: Promise<void> }
 
-interface GoalUsage { goalId?: string; tokens: number; ctx: ExtensionContext }
+export interface GoalUsage { goalId?: string; tokens: number; ctx: ExtensionContext; sourceId?: string; total?: number; ready?: Promise<void> }
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
@@ -51,6 +51,7 @@ export function registerGoals(pi: ExtensionAPI) {
   let starting = false;
   let pendingStart = false;
   let restored = false;
+  let restoredSessionId: string | undefined;
   let emptyTurns = 0;
   let failedTurns = 0;
   let activity = false;
@@ -105,8 +106,10 @@ export function registerGoals(pi: ExtensionAPI) {
       if (!persistent(ctx)) { state.goal = null; state.publish(ctx); }
 
       restored = true;
+      restoredSessionId = ctx.sessionManager.getSessionId();
     } catch (error) {
       state.goal = null; state.publish(ctx); restored = false;
+      restoredSessionId = undefined;
       ctx.ui.notify(`Could not restore goal: ${String(error)}`, "error");
     }
   };
@@ -267,7 +270,27 @@ export function registerGoals(pi: ExtensionAPI) {
     event.ready = coordination.run(event.ctx, () => { event.goalId = state.usageGoalId(); });
   });
 
+  const cumulativeUsage = (event: GoalUsage, sourceId: string, total: number) => {
+    if (!restored || restoredSessionId !== event.ctx.sessionManager.getSessionId()) restore(event.ctx);
+
+    if (!restored) throw new Error("Saved goal state is invalid; cumulative subagent usage remains pending");
+
+    if (!event.goalId || event.goalId !== state.goal?.id) return;
+
+    if (state.accountSubagent(event.ctx, sourceId, total) && state.goal) {
+      steering(goalBudgetPrompt(state.goal));
+      pause(event.ctx);
+    }
+  };
+
   const usage = pi.events.on("piop:goal-usage", event => {
+    if (event.sourceId !== undefined && event.total !== undefined) {
+      const { sourceId, total } = event;
+      event.ready = coordination.run(event.ctx, () => cumulativeUsage(event, sourceId, total));
+
+      return;
+    }
+
     schedule(event.ctx, () => { if (event.goalId && event.goalId === state.goal?.id) account(event.ctx, event.tokens, true); });
   });
 

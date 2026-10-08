@@ -267,8 +267,9 @@ impl ProviderService {
                 .then(a["number"].as_u64().cmp(&b["number"].as_u64()))
         });
         let mut result = json!({"providers":providers});
-        if let Some(warning) = self.state().catalog_warning.clone() {
-            result["warning"] = json!(warning);
+        let warnings: Vec<_> = [self.state().catalog_warning.clone(), provider_model_warning(&snapshot)].into_iter().flatten().collect();
+        if !warnings.is_empty() {
+            result["warning"] = json!(warnings.join("\n"));
         }
         Ok(result)
     }
@@ -582,6 +583,19 @@ impl ProviderService {
         }
         self.sdk.shutdown().await;
     }
+}
+
+fn provider_model_warning(snapshot: &Value) -> Option<String> {
+    let warnings: Vec<_> = array(snapshot, "modelDiagnostics").iter().filter_map(provider_model_diagnostic).collect();
+    (!warnings.is_empty()).then(|| warnings.join("\n"))
+}
+
+fn provider_model_diagnostic(diagnostic: &Value) -> Option<String> {
+    let message = diagnostic["message"].as_str()?;
+    if message.trim().is_empty() { return None; }
+    let provider = diagnostic["providerId"].as_str().map(|id| format!("{id}: ")).unwrap_or_default();
+    let retained = if diagnostic["usingLastUsableCatalog"] == true { " Using the last usable model catalog." } else { "" };
+    Some(format!("{provider}{message}{retained}"))
 }
 
 fn custom_key(request: &Value) -> Result<Option<&str>> {

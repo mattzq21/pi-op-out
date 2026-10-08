@@ -25,7 +25,7 @@ use std::sync::atomic::Ordering;
 use crate::platform::AppHandle;
 use crate::{AppSettings, MAX_REMOTE_HOSTS, PiRuntime, daemon, peers};
 use crate::pi_launch::{validate_remote_host};
-use crate::settings_storage::{atomic_write_private, migrate_keybindings, settings_path, validate_keybindings};
+use crate::settings_storage::{migrate_keybindings, settings_path, synchronization, validate_keybindings};
 
 
 
@@ -49,9 +49,14 @@ fn migrate_question_tool(settings: &mut AppSettings) {
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
+    synchronization::start(app);
     let mut settings = read_settings_at(&path)?;
     merge_discovered_skills(&mut settings);
     Ok(settings)
+}
+
+pub(super) fn load_settings_change(app: AppHandle) -> Result<Value, String> {
+    synchronization::snapshot(&app)
 }
 
 fn migrate_goal_tools(settings: &mut AppSettings) {
@@ -115,7 +120,10 @@ pub(super) fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent
         |settings| daemon::update_settings(&app, &runtime, settings))?;
     #[cfg(not(feature = "desktop"))]
     peers::invalidate(&app);
-    let _ = app.emit("pi://settings-changed", &change);
+    let mut change = change;
+    if let Err(error) = synchronization::publish_current(&app, &mut change) {
+        append_synchronization_warning(&mut change, format!("Settings were saved; their notification will retry automatically: {error}"));
+    }
     if reload_dictation { crate::dictation::start(app.clone()); }
     Ok(change)
 }
@@ -145,14 +153,34 @@ pub(super) fn save_settings_with(
     migrate_keybindings(&mut settings);
     validate_settings_for_save(&settings)?;
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
-    atomic_write_private(&path()?, &serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?)?;
-    invalidate(&settings)?;
-    let mut change = json!({"settings":settings});
-    if let Some(host_id) = agent_host_id {
-        let revision = runtime.agent_config_revision.fetch_add(1, Ordering::SeqCst) + 1;
-        runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")?.insert(host_id.clone(), revision);
-        change["agentConfigChange"] = json!({"hostId":host_id,"revision":revision});
-    }
-    synchronize(&settings)?;
+    let path = path()?;
+    let _storage = synchronization::storage_lock(&path)?;
+    let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
+    let mut save = synchronization::Save::prepare(path, &body, agent_host_id)?;
+    let mut warnings = Vec::new();
+    save.publish(&body, &mut warnings)?;
+    if let Err(error) = invalidate(&settings) { warnings.push(format!("Settings were saved, but runtime invalidation failed: {error}")); }
+    let mut change = save.change(&settings);
+    save.restore_agents(runtime, &mut change, &mut warnings);
+    if let Err(error) = synchronize(&settings) { warnings.push(format!("Settings were saved, but runtime synchronization failed: {error}")); }
+    save.finish(&mut change, &mut warnings);
+    change["warnings"] = json!(warnings);
     Ok(change)
+}
+
+pub(crate) fn publish_saved_agent_revision(runtime: &PiRuntime, host_id: Option<String>, revision: u64, change: &mut Value, warnings: &mut Vec<String>) {
+    let Some(host_id) = host_id else { return; };
+    runtime.agent_config_revision.fetch_max(revision, Ordering::SeqCst);
+    match runtime.agent_config_revisions.lock() {
+        Ok(mut revisions) => {
+            revisions.insert(host_id.clone(), revision);
+            change["agentConfigChange"] = json!({"hostId":host_id,"revision":revision});
+        }
+        Err(_) => warnings.push("Settings were saved, but the agent configuration revision could not be published".into()),
+    }
+}
+
+fn append_synchronization_warning(change: &mut Value, warning: String) {
+    change["synchronizationPending"] = json!(true);
+    if let Some(warnings) = change["warnings"].as_array_mut() { warnings.push(json!(warning)); }
 }

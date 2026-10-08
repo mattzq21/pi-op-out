@@ -21,7 +21,7 @@ export function ChatHistoryPicker(props: { chats: RegularChat[]; selected?: Regu
 
     return; }
 
-    const buttons = [...(menu?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    const buttons = [...(menu?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
     const current = buttons.findIndex(button => button === document.activeElement);
     const next = menuIndex(event.key, current, buttons.length);
 
@@ -44,9 +44,9 @@ export function ChatHistoryPicker(props: { chats: RegularChat[]; selected?: Regu
     </button>
     <Show when={open()}><div ref={menu} class="quick-chat-history-menu" role="menu" aria-label="ChatGPT chats" onKeyDown={navigate}>
       <button type="button" role="menuitemradio" aria-checked={!props.selected} class="quick-chat-history-new" onClick={() => choose()}><Plus size={15} /><span>New chat</span></button>
-      <For each={props.chats}>{chat => <button type="button" role="menuitemradio" aria-checked={props.selected?.id === chat.id} onClick={() => choose(chat.id)}>
+      <For each={props.chats}>{chat => <div><button type="button" role="menuitemradio" disabled={Boolean(chat.storageDiagnostic)} aria-checked={props.selected?.id === chat.id} onClick={() => choose(chat.id)}>
         <span>{chat.title}</span><Show when={props.selected?.id === chat.id}><Check size={14} /></Show>
-      </button>}</For>
+      </button><Show when={chat.storageDiagnostic}>{diagnostic => <p role="alert">{diagnostic().message}</p>}</Show></div>}</For>
     </div></Show>
   </div>;
 }

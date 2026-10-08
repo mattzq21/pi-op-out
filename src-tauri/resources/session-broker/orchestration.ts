@@ -6,12 +6,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { BrokerRequestError, currentHost, request } from "./client.ts";
 import { createProfileSession, registerAgentProfiles } from "./agent-profiles.ts";
+import { activeConversation } from "./conversation-location.ts";
 
-const messageSchema = Schema.Object({ role: Schema.String(), content: Schema.Optional(Schema.Unknown()), toolName: Schema.Optional(Schema.String()), customType: Schema.Optional(Schema.String()), stopReason: Schema.Optional(Schema.String()), errorMessage: Schema.Optional(Schema.String()) });
+const messageSchema = Schema.Object({ role: Schema.String(), content: Schema.Optional(Schema.Unknown()), toolName: Schema.Optional(Schema.String()), customType: Schema.Optional(Schema.String()), details: Schema.Optional(Schema.Unknown()), stopReason: Schema.Optional(Schema.String()), errorMessage: Schema.Optional(Schema.String()) });
 
-const entrySchema = Schema.Object({ id: Schema.String(), parentId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])), type: Schema.String(), message: Schema.Optional(messageSchema), customType: Schema.Optional(Schema.String()), content: Schema.Optional(Schema.Unknown()) });
+const entrySchema = Schema.Object({ id: Schema.String(), parentId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])), type: Schema.String(), message: Schema.Optional(messageSchema), customType: Schema.Optional(Schema.String()), content: Schema.Optional(Schema.Unknown()), details: Schema.Optional(Schema.Unknown()), timestamp: Schema.Optional(Schema.Union([Schema.String(), Schema.Number()])) });
 
-const stateSchema = Schema.Object({ isPaused: Schema.Optional(Schema.Boolean()), isPausing: Schema.Optional(Schema.Boolean()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), needsInput: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
+const stateSchema = Schema.Object({ isPaused: Schema.Optional(Schema.Boolean()), isPausing: Schema.Optional(Schema.Boolean()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), needsInput: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()), sessionFile: Schema.Optional(Schema.String()) });
 
 const snapshotSchema = Schema.Object({ revision: Schema.String(), state: stateSchema, history: Schema.Object({ entries: Schema.Array(entrySchema), leafId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])) }) });
 
@@ -40,6 +41,7 @@ export async function sessionSnapshot(sessionId: string, hostId: string, signal?
 
 export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal, deliveryId = randomUUID()) {
   if (sessionId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation as the recipient");
+  await activeConversation(sessionId, hostId, signal);
 
   return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost() }, signal, 60_000);
 }
@@ -85,7 +87,7 @@ export function branchEntries(snapshot: Awaited<ReturnType<typeof sessionSnapsho
   const byId = new Map(snapshot.history.entries.map(entry => [entry.id, entry]));
   const branch: typeof snapshot.history.entries = [];
   const seen = new Set<string>();
-  let id = snapshot.history.leafId ?? snapshot.history.entries.at(-1)?.id;
+  let id = snapshot.history.leafId === undefined ? snapshot.history.entries.at(-1)?.id : snapshot.history.leafId;
 
   while (id && !seen.has(id)) {
     seen.add(id);

@@ -20,6 +20,7 @@ import { isConversationChanged } from "./lib/conversationChanged";
 import { initialWindowTarget,NativeTransport,openSessionWindow } from "./lib/nativeTransport";
 import { seedChatSelection } from "./lib/newChatSelection";
 import { chatSubmission,prepareChatWorktree } from "./lib/newChatWorktree";
+import { promptWasAccepted, submitDurablePrompt } from "./lib/draftSubmission";
 import { resolveNewSessionBranch } from "./lib/newSessionBranch";
 import { isMobile,listen } from "./lib/platform";
 import { sessionDebugAction } from "./lib/sessionDebugAction";
@@ -51,6 +52,7 @@ function removedSessionMatches(hostId: string | undefined, sessionId: string, se
 export function createAppConversations(preloadChat: () => void) {
   const runtimePool = createMemo(() => new SessionRuntimePool());
   const initialTarget = initialWindowTarget();
+  const drafts = createConversationDrafts();
 
   const [transport, setTransport] = createSignal((() => { const initial = runtimePool().create(initialTarget); runtimePool().activate(initial);
 
@@ -59,7 +61,7 @@ export function createAppConversations(preloadChat: () => void) {
   const [view, setView] = createSignal<"chat" | "settings">("chat");
   const activeTransportRef = createRef(transport()); createComputed(() => { activeTransportRef.current = transport(); });
   const pendingSessionGroups = createRef(new WeakMap<NativeTransport, SessionGroup>());
-  const initialConversationKey = createRef(`${initialTarget.hostId ?? "local"}:draft-${crypto.randomUUID()}`);
+  const initialConversationKey = createRef(initialTarget.draftKey ?? `${initialTarget.hostId ?? "local"}:${initialTarget.sessionId ?? `draft-${crypto.randomUUID()}`}`);
   const [activeConversationKey, setActiveConversationKey] = createSignal(initialConversationKey.current);
   const chatViewKey = createConversationViewKey(transport, activeConversationKey, () => chatSubmission(transport())?.message);
   const activeConversationKeyRef = createRef(activeConversationKey()); createComputed(() => { activeConversationKeyRef.current = activeConversationKey(); });
@@ -67,8 +69,9 @@ export function createAppConversations(preloadChat: () => void) {
   const liveSessionRevision = createSubscription(() => (listener) => runtimePool().subscribe(listener), () => () => runtimePool().liveSessionRevision());
 
   const liveSessions = createMemo(() => { liveSessionRevision();
+    const live = runtimePool().liveSessionSummaries();
 
-    return runtimePool().liveSessionSummaries(); });
+    return [...live, ...drafts.draftSummaries().filter(draft => !live.some(session => (session.hostId ?? "local") === (draft.hostId ?? "local") && (session.id === draft.id || Boolean(draft.path && draft.path === session.path))))]; });
 
   const runningSessions = createSubscription(() => (listener) => runtimePool().subscribe(listener), () => () => runtimePool().runningSessions());
   const unseenSessions = createSubscription(() => (listener) => runtimePool().subscribe(listener), () => () => runtimePool().unseenSessions());
@@ -109,7 +112,7 @@ export function createAppConversations(preloadChat: () => void) {
   const hasRetainedDraft = (ownerTransport: NativeTransport) => {
     const key = transportConversationKeys.current.get(ownerTransport);
 
-    return Boolean(key && composerDrafts()[key]) || runtimePool().liveSessionSummaries().some(session => session.isDraft && `${session.hostId ?? "local"}:${session.id}` === key);
+    return transportHasDraft(ownerTransport, key) || runtimePool().liveSessionSummaries().some(session => session.isDraft && `${session.hostId ?? "local"}:${session.id}` === key);
   };
 
   const releaseSplitTransport = async (ownerTransport: NativeTransport) => { const capturedRuntimePool = runtimePool();
@@ -129,10 +132,9 @@ export function createAppConversations(preloadChat: () => void) {
   const [worktreeTarget, setWorktreeTarget] = createSignal<WorktreeTarget>();
   const projectOpenRef = createRef(projectOpen()); createComputed(() => { projectOpenRef.current = projectOpen(); });
   const projectOpenRequest = createRef(0);
-  const drafts = createConversationDrafts();
-
-  if (initialTarget.draftKey) drafts.rekeyDraft(initialTarget.draftKey, initialConversationKey.current);
   const { composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, transportHasDraft } = drafts;
+  drafts.bindTransport(transport(), initialConversationKey.current);
+  createDependencyEffect(() => drafts.bindTransport(transport(), activeConversationKey()), () => [transport(), activeConversationKey(), activeCwd(), connected()]);
   const newSessionPending = createRef(false);
   const lastNewSessionSelection = createRef<string | undefined>(undefined);
   const abortPending = createRef(new Set<NativeTransport>());
@@ -166,7 +168,7 @@ export function createAppConversations(preloadChat: () => void) {
   useSessionResume(() => {
     const saved = chatSession().state.messageCount > 0;
 
-    return { ready: connected(), saved, ephemeral: transport().isEphemeral(), target: { sessionId: chatSession().state.sessionId, sessionPath: chatSession().state.sessionFile, cwd: !saved && transport().isTemporaryChat() ? undefined : activeCwd(), hostId: activeHostId(), draftKey: composerDrafts()[activeConversationKey()] ? activeConversationKey() : undefined } };
+    return { ready: connected(), saved, ephemeral: transport().isEphemeral(), target: { sessionId: chatSession().state.sessionId, sessionPath: chatSession().state.sessionFile, cwd: !saved && transport().isTemporaryChat() ? undefined : activeCwd(), hostId: activeHostId(), draftKey: transportHasDraft(transport(), activeConversationKey()) ? activeConversationKey() : undefined } };
   });
   const splitSessionId = createMemo(() => splitConversationKey(splitPane()));
 
@@ -194,12 +196,12 @@ export function createAppConversations(preloadChat: () => void) {
   createDependencyEffect(() => { const capturedSession = { ...chatSession() }; const capturedActiveHostId = activeHostId(); const capturedTransport = transport();
     const previousKey = activeConversationKeyRef.current;
 
-    if (!capturedSession.state.sessionId || !previousKey.includes(":draft-")) return;
+    if (!connected() || !capturedSession.state.sessionFile || capturedSession.state.messageCount === 0 || !capturedSession.state.sessionId || !previousKey.includes(":draft-")) return;
     const canonicalKey = `${capturedActiveHostId}:${capturedSession.state.sessionId}`;
 
     if (previousKey === canonicalKey) return;
     rekeyConversationUi(previousKey, canonicalKey, capturedTransport);
-  }, () => [activeHostId(), chatSession().state.sessionId, transport()]);
+  }, () => [activeHostId(), chatSession().state.sessionId, chatSession().state.sessionFile, chatSession().state.messageCount, connected(), transport()]);
 
   const syncSessionIndex = () => {
     if (sessionIndexRequest.current) { sessionIndexDirty.current = true;
@@ -321,13 +323,13 @@ export function createAppConversations(preloadChat: () => void) {
     if (/^\/review(?:\s|$)/.test(text.trim())) reviewImages.set(capturedTransport, images);
 
     try {
-      if (behavior) { await ownerTransport.submitPrompt({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload });
+      if (behavior) { const result = await submitDurablePrompt(ownerTransport, { type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload });
 
-        return; }
+        return promptWasAccepted(result); }
 
-      await capturedTransport.submitPrompt({ type: "prompt", message: text, ...imagePayload });
+      const result = await submitDurablePrompt(capturedTransport, { type: "prompt", message: text, ...imagePayload });
 
-      return true;
+      return promptWasAccepted(result);
     } catch (reason) { addNotice({ title: "Could not send message", message: reason instanceof Error ? reason.message : String(reason) }); throw reason; }
   };
 
@@ -446,6 +448,7 @@ export function createAppConversations(preloadChat: () => void) {
 
       if (!isCurrent()) return;
       transportConversationKeys.current.set(nextTransport, conversationKey);
+      drafts.bindTransport(nextTransport, conversationKey);
       assignNewSessionGroup(nextTransport, group);
       batch(() => {
         copyNewSessionDraft(conversationKey, owner, (clearProject || Boolean(group && capturedSession.state.messageCount === 0)) && !discardDraft);
@@ -510,7 +513,7 @@ export function createAppConversations(preloadChat: () => void) {
 
     closeSplitForSession(session);
     const nextTransport = runtimePool().forSession(session);
-    const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); activateTransport(nextTransport);
+    const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); drafts.bindTransport(nextTransport, conversationKey); activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); activateTransport(nextTransport);
 
     return nextTransport;
   };
@@ -562,12 +565,26 @@ export function createAppConversations(preloadChat: () => void) {
 
     try { await capturedTransport.command({ type: "select_agent", agent: name }); capturedTransport.promptControls.reset(); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
 
-  const openProject = async (cwd: string, hostId: string, fromBranch = false, onActivate?: (destination: NativeTransport) => void) => {
+  const projectSelectionIsCurrent = (owner: NativeTransport, fromBranch: boolean, request: number) => owner === activeTransportRef.current && (fromBranch || projectOpenRef.current && request === projectOpenRequest.current);
+
+  const openProject = async (cwd: string, hostId: string, fromBranch = false, onActivate?: (destination: NativeTransport) => Promise<void>) => {
     const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool(); const capturedComposerState = { ...composerState() };
 
     if (!canLeaveSettings()) return; const controls = { agent: newChatAgent(definedAgents(), settings()?.defaultAgent), model: composerControls.state(capturedSession.state).model, thinking: composerControls.state(capturedSession.state).thinkingLevel, fastMode: composerControls.statuses(statuses())["pi-desktop-fast-mode"] === "Fast mode on", contextWindow: capturedSession.state.contextUsage?.contextWindow }; const request = projectOpenRequest.current; const validatedCwd = await capturedTransport.validateProjectDirectory(cwd, hostId, fromBranch);
 
-    if (capturedTransport !== activeTransportRef.current || (!fromBranch && (!projectOpenRef.current || request !== projectOpenRequest.current))) return; batch(() => { const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates(); activateConversationKey(conversationKey); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = capturedRuntimePool.create({ cwd: validatedCwd, hostId }); projectControls.set(nextTransport, controls); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, capturedComposerState.composerDraft); setComposerUploads(nextTransport, capturedComposerState.composerUploads); onActivate?.(nextTransport); activateTransport(nextTransport); }); };
+    if (!projectSelectionIsCurrent(capturedTransport, fromBranch, request)) return;
+    const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`;
+    const nextTransport = capturedRuntimePool.create({ cwd: validatedCwd, hostId });
+    projectControls.set(nextTransport, controls); transportConversationKeys.current.set(nextTransport, conversationKey); drafts.bindTransport(nextTransport, conversationKey);
+    capturedRuntimePool.bind(hostId, conversationKey.slice(hostId.length + 1), nextTransport);
+
+    try {
+      if (onActivate) await onActivate(nextTransport);
+      else { setComposerDraft(conversationKey, capturedComposerState.composerDraft); setComposerUploads(nextTransport, capturedComposerState.composerUploads); }
+    } catch (reason) { await capturedRuntimePool.release(nextTransport); throw reason; }
+
+    if (!projectSelectionIsCurrent(capturedTransport, fromBranch, request)) return;
+    batch(() => { projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates(); activateConversationKey(conversationKey); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); activateTransport(nextTransport); }); };
 
   const chooseChatProject = () => { projectOpenRequest.current += 1; setProjectOpen(true); };
 
@@ -629,7 +646,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   };
 
-  const draftChangeFor = (sessionKey: string, owner?: NativeTransport) => (update: StateUpdate<string>) => setComposerDraft(owner ? transportConversationKeys.current.get(owner) ?? sessionKey : sessionKey, update);
+  const draftChangeFor = (sessionKey: string, owner?: NativeTransport) => (update: StateUpdate<string>) => owner ? drafts.setTransportDraft(owner, update) : setComposerDraft(sessionKey, update);
   const uploadsChangeFor = (owner: NativeTransport) => (update: StateUpdate<ComposerUpload[]>) => setComposerUploads(owner, update);
 
   const toggleComposerTerminal = (pane: "main" | "split", target: TerminalTarget) => {
@@ -703,6 +720,6 @@ export function createAppConversations(preloadChat: () => void) {
       } });
   };
 
- return { archiveReplacedSession: (session: SessionSummary) => archives.archiveSession(session, false), isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, gitDiffs, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, isGitRepository, codexUsage, usageClock, opencodeGoBadge, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, worktreeTarget, setWorktreeTarget, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToReview, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, createWorktree, deleteWorktree, branch, forkAndForget, startNewSession, newSession, clearChatProject, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, questionContext, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets };
+ return { drafts, archiveReplacedSession: (session: SessionSummary) => archives.archiveSession(session, false), isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, gitDiffs, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, isGitRepository, codexUsage, usageClock, opencodeGoBadge, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, worktreeTarget, setWorktreeTarget, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToReview, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, createWorktree, deleteWorktree, branch, forkAndForget, startNewSession, newSession, clearChatProject, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, questionContext, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets };
 
 }

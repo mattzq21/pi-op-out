@@ -4,7 +4,7 @@ Triage date: 2026-10-08. Baseline: `11596dea` in `/home/matt/.codex/worktrees/47
 
 Original findings #1–6 are excluded by request. Original IDs #7–31 are retained; IDs #32 onward identify the originally unnumbered lifecycle/accounting findings. This file separates defects needing fixes from justified redundancy and diagnostic retention. Triage is based on current source, not stale documentation. No tests were written or run.
 
-Status: triage complete. 37 open source-confirmed issues: 4 P1, 28 P2, and 5 P3. Each entry preserves its qualifications; no runtime reproduction is claimed. The four P1 issues are #13 (transaction replay), #19 (early draft clearing), #29 (cross-daemon transcript clobber), and #31 (temporary recovery directory durability).
+Status: fixes underway. Of 37 source-confirmed issues, #10, #12, #15–27, #29–31, #34, #37, #38, #40, and #42–43 are fixed (24 total) and 13 remain open. The original priorities were 4 P1, 28 P2, and 5 P3. Each entry preserves its qualifications; no runtime reproduction is claimed. The four P1 issues are #13 (transaction replay), #19 (early draft clearing), #29 (cross-daemon transcript clobber), and #31 (temporary recovery directory durability).
 
 ## Execution rules and order
 
@@ -22,7 +22,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #19 — Drafts are cleared before the daemon accepts a submission
 
-- Status: open; source-confirmed. Priority: P1.
+- Status: fixed; source-reviewed, scoped lint, frontend TypeScript, and whitespace checks passed. Priority: P1. Reload/crash behavior has not been dynamically tested.
+- Implementation: Strict-durability IndexedDB transactions stage submitted text, destination metadata, and shared attachment references before the composer clears. Acknowledgment retires only that submission; newer edits survive. Rejections restore the destination draft, while dispatched RPC failures remain visible as uncertain submissions without automatic resend. Prompt controls flush once, before dispatch. Goal preparation rejection is tracked separately in #28.
 - Trigger and impact: Send a composed message, then reload or terminate the renderer while worktree preparation, connection, or prompt-control flushing is pending. The persisted draft has already been removed; the pending submission and rejection recovery exist only in memory. Retry consumes matching draft text early too.
 - Evidence: [src/components/Composer.tsx:394](/home/matt/.codex/worktrees/4758/piop/src/components/Composer.tsx:394), [src/components/ChatView.tsx:142](/home/matt/.codex/worktrees/4758/piop/src/components/ChatView.tsx:142), [src/lib/newChatWorktree.ts:74](/home/matt/.codex/worktrees/4758/piop/src/lib/newChatWorktree.ts:74), [src/lib/nativeTransport.ts:90](/home/matt/.codex/worktrees/4758/piop/src/lib/nativeTransport.ts:90).
 - Fix: Stage the submitted text and attachment references durably before clearing the visible composer. Retire that record only on a reliable acceptance/acknowledgment; preserve ambiguous submissions without automatically resending them.
@@ -30,7 +31,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #20 — Worktree-switch send failures recover into the old conversation
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, scoped lint, frontend TypeScript, and whitespace checks passed. Priority: P2. Worktree-switch failure behavior has not been dynamically tested.
+- Implementation: A durable submission has a stable UUID and destination. Worktree activation awaits its transactional destination transfer before releasing the original transport; captured writers follow the new owner. Failure preserves the selected destination and merges newer text/uploads, with a separately selectable recovery entry when acknowledgment is uncertain.
 - Trigger and impact: A send changes to a newly prepared worktree, then connection or submission fails. The captured draft and upload writers still address the original transport/key. The original empty transport may have been released, so the recovered input is not reachable from the new conversation.
 - Evidence: [src/components/Composer.tsx:392](/home/matt/.codex/worktrees/4758/piop/src/components/Composer.tsx:392), [src/lib/newChatWorktree.ts:83](/home/matt/.codex/worktrees/4758/piop/src/lib/newChatWorktree.ts:83), [src/appConversations.ts:632](/home/matt/.codex/worktrees/4758/piop/src/appConversations.ts:632), [src/appTransportActivation.ts:95](/home/matt/.codex/worktrees/4758/piop/src/appTransportActivation.ts:95).
 - Fix: Give pending submissions a stable durable identity and explicitly transfer their destination when a worktree is activated. Restore rejected input and uploads to the selected destination, or retain a separately selectable recovery draft if destination ownership changes.
@@ -38,7 +40,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #21 — Inactive unsent drafts lack selectable restoration metadata
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, scoped lint, frontend TypeScript, and whitespace checks passed. Priority: P2. Startup restoration has not been dynamically tested.
+- Implementation: Endpoint-scoped records save stable draft identity, host, cwd/session metadata, activity, text, and upload references together. Startup rebuilds selectable summaries for inactive and attachment-only drafts. Legacy string-only input remains visible in a recovery list when its location is unknown; damaged records are retained with visible diagnostics. Truly empty draft records are removed transactionally.
 - Trigger and impact: Create unsent draft A, switch to saved chat B, then reload. A's text can remain in the persisted dictionary, but its selectable summary and working directory existed in the runtime pool. The saved session-list cache explicitly excludes drafts.
 - Evidence: [src/appDrafts.ts:45](/home/matt/.codex/worktrees/4758/piop/src/appDrafts.ts:45), [src/appTransportActivation.ts:78](/home/matt/.codex/worktrees/4758/piop/src/appTransportActivation.ts:78), [src/lib/sessionRuntimePool.ts:50](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionRuntimePool.ts:50), [src/lib/sessionListCache.ts:47](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionListCache.ts:47), [src/appConversations.ts:480](/home/matt/.codex/worktrees/4758/piop/src/appConversations.ts:480).
 - Fix: Persist draft identity, endpoint/host, project location, activity metadata, text, and attachment references together. Rebuild every valid draft summary at startup; preserve old string-only records in a visible recovery list rather than guessing their project.
@@ -46,7 +49,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #22 — Failed startup rekeys draft text before updating its resume pointer
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, frontend type check and targeted lint passed. Priority: P2. Crash/reload behavior has not been dynamically tested.
+- Implementation: Startup reuses the restored draft key (or saved conversation identity). An unsent draft keeps its key through connection and only canonicalizes after a ready connection reports saved history and a session file. Failed startup therefore cannot remove the text addressed by the existing resume pointer. Broader inactive-draft discovery and attachment migration remain covered by #21 and #23.
 - Trigger and impact: Startup immediately moves the selected draft from its saved key to a new random key. The last-session pointer is updated only after connection becomes ready. If startup fails, the pointer continues to reference the now-empty old key.
 - Evidence: [src/appConversations.ts:62](/home/matt/.codex/worktrees/4758/piop/src/appConversations.ts:62), [src/appConversations.ts:134](/home/matt/.codex/worktrees/4758/piop/src/appConversations.ts:134), [src/appDrafts.ts:74](/home/matt/.codex/worktrees/4758/piop/src/appDrafts.ts:74), [src/lib/sessionResume.ts:42](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionResume.ts:42).
 - Fix: Keep a stable restored draft identity, or migrate its record and pointer together with recoverable commit ordering. Do not remove the old reference before the replacement can be discovered independently.
@@ -54,7 +58,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #23 — Unsent attachments are memory-only and attachment-only drafts cannot resume
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, scoped lint, frontend TypeScript, and whitespace checks passed. Priority: P2. Attachment reload behavior has not been dynamically tested.
+- Implementation: Images and text attachment payloads live in a shared IndexedDB attachment store referenced by drafts and submissions. Migration replaces healthy legacy inline copies with references. Startup discovery includes uploads even without text. Collection removes only validated unreferenced attachments; damaged/unknown records inhibit cleanup, and persistence errors remain visible without clearing unsaved input.
 - Trigger and impact: Reload a draft containing images or text attachments: text persistence contains only strings and uploads are held in a transport-keyed Map. An attachment-only draft does not get a draft resume pointer because that pointer is conditioned on composer text.
 - Evidence: [src/appDrafts.ts:48](/home/matt/.codex/worktrees/4758/piop/src/appDrafts.ts:48), [src/appDrafts.ts:57](/home/matt/.codex/worktrees/4758/piop/src/appDrafts.ts:57), [src/appConversations.ts:169](/home/matt/.codex/worktrees/4758/piop/src/appConversations.ts:169).
 - Fix: Persist attachment content or durable attachment-file references with draft metadata, and include attachments in draft discovery/resume. Clean up only after confirmed submission or explicit discard; account for shared references and report persistence failure.
@@ -62,7 +67,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #24 — Client preference saves can overwrite a peer window's unrelated changes
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, targeted lint, frontend TypeScript, desktop Rust Clippy, Android plugin javac, and whitespace checks passed. Priority: P2. Multi-window behavior has not been dynamically tested; full Android Gradle compilation is unavailable because generated Cordova configuration is missing.
+- Implementation: Settings editors, debug-mode changes, and model discovery pass their editing baseline and intended preferences. Desktop storage merges under process and file locks; Android merges under the plugin lock. Keybinding conflicts are rejected explicitly, while disjoint keys/model memberships survive. Writers return and publish committed preferences rather than their stale snapshots. Initial migration preserves any preferences another writer already committed.
 - Trigger and impact: The UI merges incoming settings when it receives updates, but a save still sends a captured complete preference snapshot. A peer window can commit another field while that save is pending or before its change event is incorporated. Serialization and atomic replacement do not merge stale snapshots.
 - Evidence: [src/components/SettingsView.tsx:110](/home/matt/.codex/worktrees/4758/piop/src/components/SettingsView.tsx:110), [src/components/SettingsView.tsx:190](/home/matt/.codex/worktrees/4758/piop/src/components/SettingsView.tsx:190), [src/lib/clientSettings.ts:48](/home/matt/.codex/worktrees/4758/piop/src/lib/clientSettings.ts:48), [src-tauri/src/client_settings.rs:34](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/client_settings.rs:34).
 - Fix: Send intended preference mutations plus an editing baseline/revision. Merge disjoint field or keybinding changes against the latest stored value under the storage lock and surface conflicting edits rather than overwriting them.
@@ -70,7 +76,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #25 — Sidebar writes lose peer-window changes and collide across mobile hosts
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, targeted TypeScript and repository lint passed. Priority: P2. Multi-window/host behavior has not been dynamically tested.
+- Implementation: Sidebar collections use endpoint-scoped IndexedDB records. Each mutation runs against the latest layout in a read/write transaction; reordering moves the intended item rather than replacing a stale collection. Revision-checked refreshes follow storage notifications and BroadcastChannel messages. Latest parent placement rejects conflicting cycles/depth violations. Desktop legacy layouts are copied on publication; ambiguous global mobile layouts/group assignments remain retained and are excluded from automatic host migration, with a visible notice. Persistence failures are surfaced in the sidebar.
 - Trigger and impact: Sidebar collapse/order/group collections are saved from locally held complete snapshots. A stale window can erase a peer's unrelated change. On mobile, keys are global and project identity uses hostId='local', so equal project paths/branches on different connected daemons share saved state.
 - Evidence: [src/lib/sidebarState.ts:17](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:17), [src/lib/sidebarState.ts:200](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:200), [src/lib/sidebarState.ts:409](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:409), [src/lib/sessionGroups.ts:124](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionGroups.ts:124).
 - Fix: Scope storage by stable endpoint identity and apply keyed mutations against current persisted state. Reconcile storage events and same-item conflicts. Migrate ambiguous legacy global data without silently assigning it to the wrong mobile host.
@@ -78,7 +85,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #26 — Secondary-window resume records are bypassed on reload
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, frontend type check and targeted lint passed. Priority: P2. Window reload behavior has not been dynamically tested.
+- Implementation: A per-window sessionStorage marker distinguishes first launch from later reloads. First launch uses the validated URL target; later reloads use the validated window-specific saved selection, falling back to the original target. Read-only targets retain their original read-only destination. Independent windows do not share the initialization marker.
 - Trigger and impact: A targeted window opens A, switches to B, and persists B under its URL-specific last-session key. Reload always prefers the original URL target A, so that saved selection has no effective startup consumer.
 - Evidence: [src/lib/nativeTransport.ts:20](/home/matt/.codex/worktrees/4758/piop/src/lib/nativeTransport.ts:20), [src/lib/sessionResume.ts:19](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionResume.ts:19), [src/lib/sessionResume.ts:45](/home/matt/.codex/worktrees/4758/piop/src/lib/sessionResume.ts:45).
 - Fix: Distinguish initial targeted-window launch from subsequent reloads. Restore the validated per-window saved selection after initialization while retaining the original target as the first-open fallback.
@@ -86,7 +94,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #40 — Removing a custom group leaves unread child-order records
 
-- Status: open; source-confirmed. Priority: P3.
+- Status: fixed; source-reviewed, targeted TypeScript and repository lint passed. Priority: P3. Deletion/concurrency behavior has not been dynamically tested.
+- Implementation: Confirmed group removal applies one layout transaction that releases session tokens and prunes the group's child order, parent links, session order, collapse state, and sidebar token. Retired custom UUIDs are retained as tombstones so a late mutation cannot recreate unread entries. Physical project identities can be reused when the project is added again. Unrelated layout entries are preserved.
 - Trigger and impact: Group removal updates group parents, session orders, collapsed projects, and sidebar order, but does not delete groupChildOrders[groupId]. Recreated groups use new UUIDs, making the old ordering entry unreachable.
 - Evidence: [src/lib/sidebarState.ts:167](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:167), [src/lib/sidebarState.ts:394](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:394), [src/lib/sidebarState.ts:409](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:409), [src/lib/sidebarState.ts:418](/home/matt/.codex/worktrees/4758/piop/src/lib/sidebarState.ts:418).
 - Fix: Prune the removed group's child-order entry as part of its confirmed removal, applying the same scoped mutation discipline as other sidebar updates. Keep child items' surviving placement and do not prune hidden but existing groups.
@@ -96,7 +105,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #15 — Restored delegation records do not recreate supervision or completion delivery
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source review, scoped lint, strict SDK-resolved TypeScript, strict daemon Clippy, in-memory builds, and whitespace checks passed. Priority: P2. Restart/delivery/accounting behavior has not been dynamically tested.
+- Implementation: Current-parent/current-host unresolved runs restore observation, occupied slots, cancellation intent, selected-generation accounting, and pending result delivery without resending tasks. Stable run/result IDs and persisted transcript receipts deduplicate delivery. Cumulative accounting receipts persist with goal consumption and propagate run/parent/child identities. Terminal and inherited history never restarts; missing handles leave observation interrupted. Unidentifiable legacy task boundaries remain unresolved; overlapping legacy usage without attribution is conservatively not rebilled.
 - Trigger and impact: After a parent watcher is interrupted, saved unresolved child runs can still be read, but active and pending collections restart empty. await_subagents can immediately report completion, and surviving child work lacks result delivery, slot accounting, or cancellation supervision. Normal shutdown/switch already intentionally cancels children; completed history must not restart.
 - Evidence: [src-tauri/resources/session-broker/subagents.ts:414](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:414), [src-tauri/resources/session-broker/subagents.ts:417](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:417), [src-tauri/resources/session-broker/subagents.ts:572](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:572).
 - Fix: Reconcile unresolved runs owned by the current parent with actual child state and recreate observation without resending tasks. Persist completion-delivery/accounting progress, and distinguish interrupted observation from intentionally canceled or inherited historical runs.
@@ -104,7 +114,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #16 — A partial usage-channel file blocks subsequent child dispatch
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, targeted lint, strict TypeScript, in-memory Node 22 bundle compilation, and whitespace checks passed. Priority: P2. Crash/concurrency behavior has not been dynamically tested.
+- Implementation: A stable lifetime flock protects reclamation, publication, and token-gated cleanup. Complete synced metadata is published through a hard link; interrupted metadata can be reclaimed after exclusive ownership is acquired. Cleanup drains HTTP reports before releasing ownership. Identifiable live legacy owners remain protected; older publishers that do not follow the lock protocol require coordinated retirement/upgrade before concurrent use.
 - Trigger and impact: Termination after exclusive creation but before JSON publication leaves an empty/truncated .goal-usage.json. Reclaim parses it before checking dead ownership, so a later dispatch fails before sending its task.
 - Evidence: [src-tauri/resources/session-broker/subagent-usage.ts:25](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagent-usage.ts:25), [src-tauri/resources/session-broker/subagent-usage.ts:90](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagent-usage.ts:90), [src-tauri/resources/session-broker/subagents.ts:318](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:318).
 - Fix: Atomically publish complete channel metadata under a lifetime ownership lock. Reclaim malformed residue only after exclusive ownership establishes no live writer; preserve live channels and reliable usage accounting.
@@ -112,7 +123,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #17 — Cold snapshots lose saved pause and unanswered-question status
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, strict daemon/library Clippy compilation, helper formatting checks, Rust lint, and whitespace checks passed. Priority: P2. Cold/live comparison has not been dynamically tested.
+- Implementation: Cold snapshots reduce pause/question records along the SDK's persisted leaf/parent chain. Latest pause state and latest record for each request determine isPaused/needsInput; answers and cancellations clear pending requests. Malformed selected-branch question records are rejected using the saved schema, matching live Parse behavior, while historical sibling branches are excluded.
 - Trigger and impact: Reading a saved conversation without a resident session omits isPaused and needsInput. Orchestration interprets it as idle, which can make polling classify paused or unanswered work as finished. The underlying records still restore on opening.
 - Evidence: [src-tauri/src/host_daemon/controller/requests.rs:110](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/host_daemon/controller/requests.rs:110), [src-tauri/src/host_daemon/ownership.rs:351](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/host_daemon/ownership.rs:351), [src-tauri/resources/session-broker/orchestration.ts:108](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/orchestration.ts:108), [src-tauri/resources/session-broker/pause.ts:102](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/pause.ts:102), [src-tauri/resources/ask-user.ts:35](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/ask-user.ts:35).
 - Fix: Reduce saved control state along the selected conversation branch, using the latest pause state and latest record for each question request. Match existing live restoration semantics, including answered/canceled questions.
@@ -120,7 +132,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #18 — Forked history contains review links that the fork cannot open
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, scoped lint, frontend and strict extension TypeScript, and whitespace checks passed. Priority: P2. Navigation has not been dynamically tested.
+- Implementation: Inherited records open a separate read-only runtime in the split pane, retaining the original owner and explaining feedback ownership. The fork receives no feedback callback or editing authority. The original-parent feedback guard remains intact.
 - Trigger and impact: Forked history copies review records with the original parentSessionId. Opening or submitting feedback from the fork fails current-parent checks even though the original review exists. The original owner's authorization guard is valid.
 - Evidence: [src-tauri/resources/session-broker/fork.ts:126](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/fork.ts:126), [src-tauri/resources/session-broker/review.ts:127](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/review.ts:127), [src-tauri/resources/session-broker/review.ts:82](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/review.ts:82).
 - Fix: Represent inherited reviews as references to their original owner. Permit appropriate navigation to that origin or read-only viewing; do not rewrite historical ownership or grant the fork feedback authority.
@@ -178,7 +191,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #10 — Descendant discovery stops before a child's own delegation marker
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source review, scoped lint, strict extension TypeScript, strict daemon Clippy, in-memory bundling, embedded bundle update, and whitespace checks passed. Priority: P2. Cascade behavior has not been dynamically tested.
+- Implementation: New delegation markers include their own child ID. Discovery scans through inherited history, chooses the current header's own parent marker, and excludes independent forks rather than adopting inherited lineage. Legacy children use their latest unqualified marker; damaged records are retained with warnings instead of aborting readable descendants. The broker uses the same own-marker rule.
 - Trigger and impact: Inherited messages precede the child-specific parent marker, but discovery stops at the first message. Archive/delete cascades can omit that child and its descendants; an inherited earlier parent marker can also assign the wrong ancestor.
 - Evidence: [src-tauri/resources/session-descendants.cjs:25](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-descendants.cjs:25), [src-tauri/resources/session-broker/subagents.ts:243](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-broker/subagents.ts:243), [src-tauri/src/backend/archives.rs:160](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/archives.rs:160).
 - Fix: Identify the child's own delegation metadata independently of inherited history. Establish an unambiguous marker/lineage contract and scan enough history to find it. Preserve deliberate exclusion of independent forks.
@@ -194,7 +208,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #12 — Archive refs incorrectly outrank later completed-turn baselines
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, scoped lint, strict extension TypeScript, and whitespace checks passed. Priority: P2. Archive/turn behavior has not been dynamically tested.
+- Implementation: Baseline selection validates recorded refs/commits on the selected branch and chooses the latest valid completed snapshot, using recorded archive snapshots as a fallback. Compatibility discovery accepts timestamped completed refs and legacy single refs; archive UUIDs never determine chronological precedence. Recovery refs remain retained, and the new helper is included in runtime installation.
 - Trigger and impact: Baseline selection sorts ref names descending and excludes only prompts. archive/UUID names outrank timestamped completed snapshots, so new turns after restore compare against the archive snapshot and repeat already-settled changes. UUID ordering also does not establish archive recency.
 - Evidence: [extensions/piop-diff-watch/index.ts:59](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/index.ts:59), [extensions/piop-diff-watch/index.ts:237](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/index.ts:237), [extensions/piop-diff-watch/index.ts:643](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/index.ts:643), [src-tauri/resources/archive-conversations.cjs:114](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/archive-conversations.cjs:114).
 - Fix: Select the latest valid recorded completed baseline explicitly, with archive checkpoints as a deliberate fallback when appropriate. Do not remove recovery refs merely to influence sorting.
@@ -218,7 +233,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #31 — Missing-directory recovery makes a normal conversation depend on /tmp
 
-- Status: open; source-confirmed. Priority: P1.
+- Status: fixed; source review, frontend type/lint, Node syntax, desktop/daemon compilation, inventory integration review, and whitespace checks passed. Priority: P1. Crash, migration, and temporary-directory cleanup behavior has not been dynamically tested.
+- Implementation: Recovery workdirs live under the canonical profile recovery directory with synced ownership records, actual recovered revisions, and explicit latest-remote-branch semantics. Existing temporary recoveries have visible copy-and-verify migration actions that retain their sources. Incomplete attempts remain discoverable. Inventory reports verified containers and owner/state metadata separately from unmarked or legacy temporary residue; discovery does not authorize cleanup.
 - Trigger and impact: Both empty and remote recovery persist newly created temporary paths as the conversation's real working directory. OS temporary cleanup can remove later work; cloned main checkouts are outside profile inventory and are not linked-worktree discoveries. Exact-commit restoration is a separate limitation: current UI explicitly offers recovery of a remote branch, not the registry's saved HEAD.
 - Evidence: [src-tauri/resources/recover-missing-session.cjs:30](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/recover-missing-session.cjs:30), [src-tauri/resources/recover-missing-session.cjs:60](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/recover-missing-session.cjs:60), [src-tauri/resources/recover-missing-session.cjs:62](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/recover-missing-session.cjs:62), [src/components/MissingDirectoryDialog.tsx:47](/home/matt/.codex/worktrees/4758/piop/src/components/MissingDirectoryDialog.tsx:47), [src-tauri/resources/storage-inventory.cjs:181](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:181).
 - Fix: Allocate durable managed recovery directories, register their ownership and inventory, and relocate existing recovery directories with recoverable publication while preserving contents. Update the recovery UI to match the durable destination. Keep latest-remote-branch semantics explicit; do not silently promise recovery of unavailable/unpushed commits.
@@ -234,7 +250,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #34 — Failed child creation leaks checkpoint pins in historical repositories
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, scoped lint, strict extension TypeScript, and whitespace checks passed. Priority: P2. Failure cleanup has not been dynamically tested.
+- Implementation: Branch creation carries exact created-ref handles through transcript publication, including historical roots and the newly created baseline. Failed publication conditionally removes those handles across every affected repository, preserving preexisting refs. Cleanup attempts all handles and reports retained failures rather than abandoning later repositories after the first error. Successful children retain their independent refs.
 - Trigger and impact: Pin creation returns exact created-ref handles across historical repositories, but the child-creation caller discards them. A later failure cleans only the current repository, leaving historical-repository child pins without a published child owner.
 - Evidence: [extensions/piop-diff-watch/pin-checkpoints.ts:40](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/pin-checkpoints.ts:40), [extensions/piop-diff-watch/index.ts:444](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/index.ts:444), [extensions/piop-diff-watch/index.ts:353](/home/matt/.codex/worktrees/4758/piop/extensions/piop-diff-watch/index.ts:353).
 - Fix: Carry created-ref handles through child publication and conditionally clean those owned by a failed operation across every affected repository. Preserve successful child's independent refs and preexisting refs sharing objects.
@@ -252,7 +269,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #27 — Settings can report failure after committing a partially synchronized configuration
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source review, frontend TypeScript, scoped lint, Rust source lint, and strict daemon Clippy passed. Priority: P2. Crash/retry/concurrency behavior has not been dynamically tested.
+- Implementation: Durable publication/phase records precede postcommit actions. Restart retry restores agent revisions and synchronizes/notifies from the current file under locks without rewriting captured settings. Versioned reads and per-daemon synchronization phase counters reject delayed snapshots and let warning banners clear on success. Typed partial-save handling preserves recognized commits, reloads canonical settings before reconnecting, and preserves independent client-preference outcomes.
 - Trigger and impact: Settings are published before fallible daemon invalidation, revision bookkeeping, and synchronization. A later failure reports an error and skips the normal notification despite committed disk state. Frontend error handling can roll back already-saved agent definitions, and daemon/client preferences are saved in separate phases.
 - Evidence: [src-tauri/src/backend/settings.rs:148](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/settings.rs:148), [src-tauri/src/backend/settings.rs:115](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/settings.rs:115), [src-tauri/src/daemon.rs:120](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon.rs:120), [extensions/piop-define-agents/index.ts:755](/home/matt/.codex/worktrees/4758/piop/extensions/piop-define-agents/index.ts:755), [src/appSettings.ts:94](/home/matt/.codex/worktrees/4758/piop/src/appSettings.ts:94), [src/lib/nativeSettings.ts:61](/home/matt/.codex/worktrees/4758/piop/src/lib/nativeSettings.ts:61).
 - Fix: Separate failure-before-commit from committed-with-synchronization-pending. Return the committed revision, publish the committed state, and durably retry failed synchronization. Prevalidate and coordinate agent/settings/client-preference commits, or expose recoverable partial outcomes; do not blindly roll agents back after a recognized settings commit.
@@ -260,7 +278,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #29 — Separate daemons sharing an account can clobber ChatGPT transcripts
 
-- Status: open; source-confirmed. Priority: P1.
+- Status: fixed; source-reviewed, targeted lint, combined embedded syntax/binding/lint checks, and whitespace checks passed. Priority: P1. Cross-daemon crash/concurrency behavior has not been dynamically tested.
+- Implementation: ChatGPT leases hold shared OS locks through streaming and final persistence. Revision baselines reject stale saves, and complete records publish through synced temporary files, atomic replacement, and parent-directory synchronization. Send/progress/final/stop/recovery mutations follow the same ownership protocol; recovery skips records owned by another daemon. The shared helper is embedded with the service for desktop/mobile/SSH. Persistent lock files deliberately remain stable coordination points.
 - Trigger and impact: Storage derives from a shared Pi auth directory/account, while chat ownership and operation/write queues are process-local. Two daemons can read stale snapshots, both believe they own editing, and replace each other's messages/status. Recovery reads can also write without an editing lease.
 - Evidence: [src-tauri/resources/chatgpt-service.mjs:139](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:139), [src-tauri/resources/chatgpt-service.mjs:82](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:82), [src-tauri/resources/chatgpt-service.mjs:209](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:209), [src-tauri/resources/chatgpt-service.mjs:629](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:629).
 - Fix: Coordinate shared per-chat ownership over the full streaming lifetime, with revision-checked updates. Cover progress/final writes, recovery, and stop, and prevent recovery from rewriting a chat another daemon actively owns. Keep atomic publication for torn-write protection.
@@ -268,7 +287,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #30 — One malformed ChatGPT record blocks its account's healthy catalog
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source-reviewed, scoped lint, combined embedded JavaScript syntax/binding checks, frontend TypeScript, daemon Clippy, and whitespace checks passed. Priority: P2. Damaged-record and model-fallback behavior has not been dynamically tested.
+- Implementation: Chat records are validated independently against their filenames and identities. Damaged files remain untouched and appear as disabled history rows with their preserved paths. History and model loading settle independently; account/provider-scoped last-usable model catalogs remain available, and both the ChatGPT pane and SDK provider catalog expose damage/fallback diagnostics. Repair and mutation paths retain #29's shared locking.
 - Trigger and impact: A matching record file with invalid JSON, null, or invalid record identity causes Promise.all to reject the selected account's entire chat list. Initial UI loading combines history and model availability. Malformed model arrays can independently fail model loading. This is not evidence that unrelated daemon/provider catalogs are poisoned.
 - Evidence: [src-tauri/resources/chatgpt-service.mjs:235](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:235), [src-tauri/resources/chatgpt-service.mjs:368](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:368), [src/plugins/chatgpt/useChatGpt.ts:90](/home/matt/.codex/worktrees/4758/piop/src/plugins/chatgpt/useChatGpt.ts:90), [src-tauri/resources/provider-sdk.mjs:224](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/provider-sdk.mjs:224), [src-tauri/src/host_daemon/providers.rs:516](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/host_daemon/providers.rs:516).
 - Fix: Validate and isolate persisted records individually, checking filename/record identity and preserving damaged files with visible diagnostics. Keep healthy history usable; independently validate model catalogs and preserve the last usable model catalog where available.
@@ -292,7 +312,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #37 — Restart preparation failures and old stopped fallbacks leave unowned executables
 
-- Status: open; source-confirmed. Priority: P3.
+- Status: fixed; source review, Rust lint, strict desktop/daemon Clippy, and whitespace checks passed. Priority: P3. Process/restart behavior has not been dynamically tested; Windows was not compiled.
+- Implementation: Preparation validates before allocating a fallback and uses a cleanup guard through plan/status publication. Durable artifact identities, lifetime leases, active-plan references, and Linux process/executable checks retain live candidates/coordinators/fallbacks. Startup/background reconciliation reclaims verified unused artifacts; uncertain legacy ownership remains retained. Cleanup never relies on status expiration alone.
 - Trigger and impact: Backup creation precedes fallible preparation/publication, and there is no stale-backup reconciliation after failure or coordinator termination. Rolled-back daemons can legitimately execute the fallback, so a retained backup is not an orphan while a live process or plan uses it.
 - Evidence: [src-tauri/src/daemon_restart.rs:83](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_restart.rs:83), [src-tauri/src/daemon_restart.rs:140](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_restart.rs:140), [src-tauri/src/daemon_restart.rs:227](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_restart.rs:227), [src-tauri/src/daemon_restart.rs:272](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_restart.rs:272).
 - Fix: Add preparation cleanup guards and reconcile old restart artifacts using active plan/process/executable ownership. Do not infer safe deletion solely from status expiration; retain live rollback/candidate/coordinator executables.
@@ -300,7 +321,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #38 — Confirmed permanent deletion leaves registry and group-assignment metadata
 
-- Status: open; source-confirmed. Priority: P3.
+- Status: fixed; source review, scoped CJS lint, Rust lint, strict daemon Clippy, syntax, in-memory runtime bundle comparison, and whitespace checks passed. Priority: P3. Deletion/late-writer/offline behavior has not been dynamically tested.
+- Implementation: Committed deletion writes explicit SQLite permanent-deletion tombstones and removes registry rows in one durable transaction. Registry inserts/updates reject tombstoned IDs, including late writers. Group loading/mutation and committed-deletion callbacks consume confirmed local/SSH tombstones under the group lock; learned keys persist separately so offline writers cannot recreate assignments already proved deleted. Ordinary ownership flags are excluded because archiving also sets them. Failed registry cleanup retains the committed deletion journal; group cleanup can retry from durable SQL tombstones after journal retirement.
 - Trigger and impact: Registry rows and assignment keys accumulate after permanent deletion. Missing-directory repository metadata and offline assignments are valid retention; absence from a current listing is not sufficient proof of deletion. Stale rows alone do not resurrect conversations.
 - Evidence: [src-tauri/resources/session-registry.cjs:119](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/session-registry.cjs:119), [src-tauri/src/session_groups.rs:198](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/session_groups.rs:198), [src-tauri/src/backend/archives.rs:301](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/archives.rs:301), [src-tauri/src/backend/session_index.rs:138](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/backend/session_index.rs:138).
 - Fix: Prune using explicitly committed permanently deleted IDs, including verified descendants. Use deletion tombstones to reject late asynchronous registry writes. Preserve active/archived sessions, missing-directory recovery metadata, offline-host assignments, and intentional placement choices.
@@ -308,7 +330,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #42 — Daemon logs grow without a retention bound
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source review, Rust lint, strict desktop/daemon Clippy, and whitespace checks passed. Priority: P2. Logging/concurrency behavior has not been dynamically tested; Windows was not compiled.
+- Implementation: Startup/restart producers and directly launched daemon stderr use independent pipe consumers with a shared log lock. Every append compacts the same log inode as needed and caps it at 8 MiB, retaining recent diagnostics. Live producers keep their pipe handles across compaction; consumer retry buffers are bounded too. Profile log storage remains included in inventory.
 - Trigger and impact: Ordinary startup, restart, and daemon diagnostics append across launches without size/age bounds, eventually consuming storage. This is unbounded diagnostic retention, not proof that conversation content is lost.
 - Evidence: [src-tauri/src/daemon_stdio.rs:40](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_stdio.rs:40), [src-tauri/src/desktop_daemon.rs:245](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/desktop_daemon.rs:245), [src-tauri/src/daemon_restart.rs:185](/home/matt/.codex/worktrees/4758/piop/src-tauri/src/daemon_restart.rs:185).
 - Fix: Use bounded logging/rotation across all producers, accounting for concurrent writers and already-open stderr handles. Preserve useful recent startup/restart failure diagnostics and report covered log storage.
@@ -316,7 +339,8 @@ Checks after code changes should be relevant source review, lint/type checks, an
 
 ### #43 — Inventory conflates referenced storage with ownership and incomplete archive row sizes
 
-- Status: open; source-confirmed. Priority: P2.
+- Status: fixed; source/integration review, scoped source lint, frontend TypeScript, Rust lint, strict daemon Clippy, syntax, in-memory bundling, embedded bundle update, and whitespace checks passed. Priority: P2. Inventory accuracy has not been dynamically tested.
+- Implementation: Runtime inventory separates referenced user worktrees from Piop totals and exposes ownership, provenance, coverage, count units, and unknown reclaimability. Discovery includes registry/historical repositories, unmatched refs, external auth-directory ChatGPT data, ephemeral artifacts and cleanup owner/manifest records, pending comparison logs/global recovery pointers, completed/forked goal references, and verified/unmarked durable recovery containers. Remote or unreadable provenance has explicit coverage warnings. Allocated-block and inode deduplication remain intact. Archive rows explicitly cover the logical transcript and diff sidecar only. Discovery and historical owner/claim records do not establish liveness or authorize cleanup.
 - Trigger and impact: Conversation cwd can cause user-created worktrees to count as Piop storage without proving ownership. External ChatGPT/recovery/ephemeral roots can be omitted. Archive row bytes count only JSONL plus .diffs.json, while category totals already use allocated blocks and inode deduplication. Count units vary and other-storage is always 1; these figures do not establish reclaimable space. Checkpoint repositories/owners without readable provenance are incompletely discovered or classified as active.
 - Evidence: [src-tauri/resources/storage-inventory.cjs:162](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:162), [src-tauri/resources/storage-inventory.cjs:399](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:399), [src-tauri/resources/storage-inventory.cjs:458](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:458), [src-tauri/resources/storage-inventory.cjs:481](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:481), [src-tauri/resources/storage-inventory.cjs:524](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:524), [src-tauri/resources/storage-inventory.cjs:601](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/storage-inventory.cjs:601), [src/components/StorageSettings.tsx:221](/home/matt/.codex/worktrees/4758/piop/src/components/StorageSettings.tsx:221), [src-tauri/resources/chatgpt-service.mjs:140](/home/matt/.codex/worktrees/4758/piop/src-tauri/resources/chatgpt-service.mjs:140).
 - Fix: Report owned, referenced/shared, estimated, unattributed, and reclaimable components separately, including count units/coverage and known external roots. Retain repository/ref provenance and expose unavailable roots. Clarify archive row size semantics or include owned/shared sidecars without double-counting. Classify goal assets using actual surviving owners.

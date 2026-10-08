@@ -18,7 +18,7 @@ const EMPTY_DIFFS: GitDiffSnapshots = {};
 
 const startsUserMessage = (event: RpcEvent) => event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success;
 
-type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: string; promise: Promise<GitDiffSnapshots> }; persistence: "session" | "memory" };
+type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: string; promise: Promise<GitDiffSnapshots> }; pendingCopy?: { key: string; snapshots: GitDiffSnapshots }; persistence: "session" | "memory" };
 
 function retainedName(state: AgentState, prompt: string | undefined, previous: SessionSummary | undefined) {
   return state.sessionName || prompt?.slice(0, 60) || previous?.name || "New session";
@@ -75,6 +75,7 @@ export class SessionRuntimePool {
 
   private retainDiffs(transport: NativeTransport, state: DiffState) {
     retainSessionResource(transport, "diffs", state.snapshots, () => {
+      if (state.pendingCopy) return;
       state.snapshots = EMPTY_DIFFS; state.path = undefined; state.load = undefined; this.notify();
     });
   }
@@ -90,24 +91,35 @@ export class SessionRuntimePool {
     const state = this.diffState(transport);
 
     if (state.load?.key === key) return state.load.promise;
+
+    if (state.path !== key) state.snapshots = EMPTY_DIFFS;
     state.path = key;
 
-    const promise = transport.loadGitDiffs(sessionPath, transport.currentHostId()).then((snapshots) => {
+    const promise = this.retryDiffCopy(transport, state, key, sessionPath).then(() => transport.loadGitDiffs(sessionPath, transport.currentHostId())).then((snapshots) => {
       if (state.path === key && state.load?.promise === promise) { state.snapshots = snapshots; this.retainDiffs(transport, state); this.notify(); }
 
       return snapshots;
     }).catch((reason) => {
       if (state.path === key && state.load?.promise === promise) {
-        state.snapshots = EMPTY_DIFFS; state.load = undefined; this.notify();
+        state.load = undefined; this.notify();
         this.errorHandler?.(`Could not load saved project changes: ${reason instanceof Error ? reason.message : String(reason)}`);
       }
 
-      return EMPTY_DIFFS;
+      return state.path === key ? state.snapshots : EMPTY_DIFFS;
     });
 
     state.load = { key, promise };
 
     return promise;
+  }
+
+  private async retryDiffCopy(transport: NativeTransport, state: DiffState, key: string, sessionPath: string) {
+    const pending = state.pendingCopy;
+
+    if (!pending || pending.key !== key) return;
+    await transport.saveGitDiffs(sessionPath, pending.snapshots, transport.currentHostId());
+
+    if (state.pendingCopy === pending) state.pendingCopy = undefined;
   }
 
   private publishSessionStates() {
@@ -233,12 +245,16 @@ export class SessionRuntimePool {
     return transport;
   }
 
+  forReadOnly(session: SessionSummary) {
+    return this.create({ cwd: session.cwd || undefined, sessionPath: session.path, sessionId: session.id, hostId: session.hostId ?? "local", readOnly: true });
+  }
+
   forSession(session: SessionSummary) {
     const hostId = session.hostId ?? "local"; const key = sessionKey(session.daemonId ?? hostId, session.id);
     const existing = this.sessions.get(key) ?? this.sessions.get(sessionKey(hostId, session.id));
 
     if (existing) return existing;
-    const transport = this.create({ cwd: session.cwd, sessionPath: session.path, hostId }); this.sessions.set(key, transport);
+    const transport = this.create({ cwd: session.cwd || undefined, sessionPath: session.path || undefined, sessionId: session.isDraft ? undefined : session.id, hostId, draftKey: session.isDraft ? `${hostId}:${session.id}` : undefined }); this.sessions.set(key, transport);
 
     return transport;
   }
@@ -305,7 +321,15 @@ export class SessionRuntimePool {
     const operation = source.then(async (source) => {
       const snapshots = retainedMessageIds ? Object.fromEntries(Object.entries(source).filter(([id]) => retainedMessageIds.has(id))) : source;
 
-      if (state.persistence === "session") await transport.saveGitDiffs(destinationPath, snapshots, hostId);
+      if (state.persistence === "session") {
+        const pending = { key, snapshots }; state.pendingCopy = pending;
+
+        if (state.path === key) { state.snapshots = snapshots; this.retainDiffs(transport, state); this.notify(); }
+
+        await transport.saveGitDiffs(destinationPath, snapshots, hostId);
+
+        if (state.pendingCopy === pending) state.pendingCopy = undefined;
+      }
 
       return snapshots;
     });
@@ -314,10 +338,12 @@ export class SessionRuntimePool {
       if (state.path === key && state.load?.promise === promise) { state.snapshots = snapshots; this.retainDiffs(transport, state); this.notify(); }
 
       return snapshots;
-    }).catch(() => {
+    }).catch((reason) => {
       if (state.load?.promise === promise) { state.load = undefined; this.notify(); }
 
-      return EMPTY_DIFFS;
+      this.errorHandler?.(`Could not save copied project changes; retained for retry: ${reason instanceof Error ? reason.message : String(reason)}`);
+
+      return state.path === key ? state.snapshots : EMPTY_DIFFS;
     });
 
     state.path = key; state.snapshots = EMPTY_DIFFS; state.load = { key, promise }; this.notify();

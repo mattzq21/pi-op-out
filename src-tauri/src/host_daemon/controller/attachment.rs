@@ -57,14 +57,7 @@ impl Attachment {
     }
 
     fn readonly(&self, host: &Host) -> Result<Value> {
-        if self.path.is_none()
-            || host
-                .ownership()
-                .locate(&self.identity, self.path.as_deref(), false, true)?
-                .is_none()
-        {
-            return Err("This conversation has been deleted or archived".into());
-        }
+        host.ownership().lookup(&self.identity)?;
         self.assert_current(host)?;
         Ok(self.attach_readonly(host))
     }

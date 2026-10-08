@@ -13,7 +13,7 @@ use uuid::Uuid;
 #[cfg(feature = "desktop")]
 use crate::APP_TITLE;
 use crate::{AgentAddress, AppSettings, BlankSessionCleanup, BrokerRuntime, BusyAgent, RemoteHost, cleanup_blank_session, daemon};
-use crate::archives::{desktop_session_file};
+use crate::archives::{archived_session_file, desktop_session_file};
 use crate::pi_launch::{PiLaunch, build_pi_command, cleanup_runtime_ephemeral, create_ephemeral_fork, prepare_ephemeral_path, remote_host, session_identity};
 use crate::session_index::{validate_session_working_directory};
 use crate::settings::{load_app_settings};
@@ -71,13 +71,20 @@ fn prepare_pi_session(runtime: &PiRuntime, settings: &AppSettings, host_id: Stri
     let ephemeral_key = format!("{}:{}:{}", host_id, options.client_id, options.runtime_id.rsplit(':').next().unwrap_or(&options.runtime_id));
     let saved_ephemeral = runtime.ephemeral.get(&ephemeral_key)?;
     let ephemeral = options.no_session.unwrap_or(false) || saved_ephemeral.is_some();
-    let session_path = if ephemeral { None } else { options.session_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()? };
+    let session_path = if ephemeral { None } else { saved_pi_path(settings, &host_id, options)? };
     let fork_path = options.fork_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()?;
     let reused_ephemeral = saved_ephemeral.is_some();
     let ephemeral_path = prepare_ephemeral_path(runtime, &ephemeral_key, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(settings, &host_id, source_path, options.fork_leaf_id.as_deref()))?;
     let created_ephemeral = !reused_ephemeral && ephemeral_path.is_some();
     if ephemeral_path.is_some() { runtime.ephemeral.attach(&options.runtime_id, ephemeral_key)?; }
     Ok(PreparedPiSession { host_id, session_id, session_path, fork_path, ephemeral_path, ephemeral, created_ephemeral })
+}
+
+fn saved_pi_path(settings: &AppSettings, host_id: &str, options: &StartPiOptions) -> Result<Option<String>, String> {
+    let archived = options.presence.as_ref().is_some_and(|presence| presence["readOnly"] == true && presence["archived"] == true);
+    options.session_path.as_deref().map(|path| {
+        if archived { archived_session_file(settings, host_id, path) } else { desktop_session_file(settings, host_id, path) }
+    }).transpose()
 }
 
 pub(super) fn ensure_runtime_owner(runtime: &PiRuntime, runtime_id: &str, owner: &str) -> Result<(), String> {
@@ -91,10 +98,10 @@ fn runtime_is_attached(runtime: &PiRuntime, runtime_id: &str, settings: &AppSett
     Ok(runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(runtime_id).is_some_and(|process| process.daemon.alive.load(Ordering::SeqCst) && process.daemon.matches_connection(settings, host_id)))
 }
 
-fn session_launch_settings(app: AppHandle, host_id: &str, cwd: Option<&str>) -> Result<AppSettings, String> {
+fn session_launch_settings(app: AppHandle, host_id: &str, cwd: Option<&str>, read_only: bool) -> Result<AppSettings, String> {
     let settings = load_app_settings(app)?;
     if host_id == "local" && !settings.local_enabled { return Err("Local machine is disabled. Enable it in Settings → Machines.".into()); }
-    validate_session_working_directory(&settings, host_id, cwd)?;
+    if !read_only { validate_session_working_directory(&settings, host_id, cwd)?; }
     Ok(settings)
 }
 
@@ -102,7 +109,8 @@ pub(super) fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<P
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     ensure_runtime_owner(&runtime, &options.runtime_id, &owner)?;
     let host_id = options.host_id.clone().unwrap_or_else(|| "local".into());
-    let settings = session_launch_settings(app.clone(), &host_id, options.cwd.as_deref())?;
+    let read_only = options.presence.as_ref().is_some_and(|presence| presence["readOnly"] == true);
+    let settings = session_launch_settings(app.clone(), &host_id, options.cwd.as_deref(), read_only)?;
     if runtime_is_attached(&runtime, &options.runtime_id, &settings, &host_id)? { return Ok(json!({"attached":true})); }
     let session = prepare_pi_session(&runtime, &settings, host_id, &options)?;
     let created_ephemeral = session.created_ephemeral;

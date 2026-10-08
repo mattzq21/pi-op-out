@@ -1,0 +1,62 @@
+const archiveCoverage = 'Logical size of this JSONL transcript plus its .diffs.json sidecar only, including append log or older map storage. Excludes snapshot sidecars, loop state, attachments, descendant chats, workdirs, global pending comparison snapshots and shared Git refs. Other retained artifacts are included in category disk totals where their roots are available. This is not an estimate of freed disk space.';
+
+const diskCoverage = 'Allocated filesystem blocks, including directory metadata, deduplicated by device/inode across this scan. Shared files are charged once to the first category encountered; symbolic-link targets are not traversed.';
+
+const checkpointCoverage = 'Estimate of on-disk Git objects reachable only through Piop checkpoint refs, excluding ordinary refs and HEAD. Objects shared across checkpoint groups are charged to active, then unattributed, then archived. Objects inside measured directory trees are already included there. Ref removal may free less space, particularly in packs.';
+
+const definitions = [
+  ['active-conversations', 'conversation', 'owned', 'retained', 'Transcripts, diff histories and other session sidecars; snapshot trees and goal assets are separate.'],
+  ['archived-conversations', 'conversation', 'owned', 'requires-owner-check', 'Archived transcripts, diff histories and other session sidecars; snapshot trees and goal assets are separate.'],
+  ['git-diff-snapshots', 'snapshot', 'owned', 'retained', 'Global diff baselines and active conversation .snapshots trees, excluding roots attributed to pending comparisons.'],
+  ['pending-diff-snapshots', 'snapshot', 'shared', 'unknown', 'Global comparison roots referenced by committed pending diff logs or pending-diff.json recovery pointers. These must remain available until recovery succeeds; permanent limits and unavailable roots remain visible.'],
+  ['archived-git-diff-snapshots', 'snapshot', 'owned', 'requires-owner-check', 'Archived conversation .snapshots trees.'],
+  ['temporary-chats', 'directory', 'owned', 'unknown', 'Profile tmp workdirs, including nonempty work and files.'],
+  ['worktrees', 'worktree', 'owned', 'unknown', 'Working copies in the Piop allocation namespace and their linked Git administration directories, including build outputs.'],
+  ['archived-worktrees', 'directory', 'owned', 'requires-owner-check', 'Retained profile archived-tmp workdirs; surviving conversations can share them.'],
+  ['recovery-storage', 'recovery', 'owned', 'unknown', 'Recovery containers with verified v1 ownership records, including allocated, ready and published states. State and owners appear per root.'],
+  ['unattributed-recovery-storage', 'recovery', 'unattributed', 'unknown', 'Recovery root metadata, loose files and containers without verified ownership; pending artifacts are retained.'],
+  ['legacy-recovery-storage', 'directory', 'unattributed', 'unknown', 'Legacy /tmp recovery candidates and sources retained after migration. Names and conversation references do not prove exclusive profile ownership.'],
+  ['ephemeral-storage', 'artifact', 'unattributed', 'unknown', 'Known temporary side conversation transcripts, sidecars and retained lock files, including paths in durable owner records. Per-root ownership is verified against transcript identity where possible; runtime liveness and reuse are not established.'],
+  ['ephemeral-cleanup', 'record', 'owned', 'retained', 'Durable active owner records, eligible cleanup queue records, crash replay manifests and their lock/temp metadata. Counts include JSON records. Queued eligibility is historical proof; records and claim IDs do not establish current liveness or authorize discovery-driven deletion.'],
+  ['chatgpt-storage', 'chat', 'shared', 'unknown', 'Pi auth-directory piop-chatgpt storage across all saved accounts, including transcripts, locks, device IDs and temporary files; may be shared by profiles/daemons. Counts include chat JSON filenames.'],
+  ['goal-attachments', 'asset directory', 'shared', 'requires-owner-check', 'Goal objective files and attachments referenced by surviving goal history, including completed goals and forks.'],
+  ['unattributed-goal-attachments', 'asset directory', 'unattributed', 'unknown', 'Goal asset directories without a readable surviving reference; unreadable or external history may still own them.'],
+  ['other-storage', 'file', 'owned', 'unknown', 'Profile settings, databases, caches, logs and uncategorized files. Count is regular files, not directories.'],
+  ['referenced-worktrees', 'worktree', 'referenced', 'unknown', 'Cwd/registry-referenced user worktrees and their Git administration files. Ownership is not established; excluded from the Piop total. Bytes are additional blocks not already counted elsewhere.'],
+];
+
+function publicRoot(record) {
+  const root = { path: record.path, ownership: record.ownership, provenance: record.provenance, owners: record.owners, available: record.available ?? false };
+
+  if (record.state) root.state = record.state;
+
+  if (record.refs) root.refs = record.refs;
+
+  return root;
+}
+
+function diskCategory(definition, disk, activeCount, archivedCount) {
+  const [id, countUnit, ownership, reclaimability, coverage] = definition;
+  const roots = [...disk.roots.get(id)?.values() || []].map(publicRoot);
+  let itemCount = disk.counts.get(id) || 0;
+
+  if (id === 'active-conversations') itemCount = activeCount;
+
+  if (id === 'archived-conversations') itemCount = archivedCount;
+
+  const directories = [...disk.roots.get(id)?.values() || []].flatMap(root => root.available && root.directory ? [root.path] : []);
+
+  return { id, countUnit, ownership, reclaimability, coverage: `${coverage} ${diskCoverage}`, measurement: 'allocated-blocks', includedInTotal: id !== 'referenced-worktrees', byteSize: disk.sizes.get(id) || 0, itemCount, directories, roots };
+}
+
+function inventoryCategories(disk, checkpoints, activeCount, archivedCount) {
+  const categories = definitions.map(definition => diskCategory(definition, disk, activeCount, archivedCount));
+
+  for (const category of checkpoints.categories.values()) {
+    categories.push({ ...category, roots: category.roots.map(publicRoot), countUnit: 'ref', ownership: category.id === 'unattributed-project-checkpoints' ? 'unattributed' : 'shared', reclaimability: category.id === 'project-checkpoints' ? 'retained' : 'unknown', coverage: checkpointCoverage, measurement: 'git-object-estimate', estimated: true, includedInTotal: true });
+  }
+
+  return categories;
+}
+
+module.exports = { inventoryCategories, archiveCoverage };

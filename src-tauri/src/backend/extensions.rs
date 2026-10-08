@@ -42,18 +42,24 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 22] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 29] = [
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
+    ("conversation-location.ts", include_str!("../../resources/session-broker/conversation-location.ts")),
     ("pause.ts", include_str!("../../resources/session-broker/pause.ts")),
     ("fast-mode.ts", include_str!("../../resources/session-broker/fast-mode.ts")),
     ("turn-capture.ts", include_str!("../../resources/session-broker/turn-capture.ts")),
     ("session-file.ts", include_str!("../../resources/session-broker/session-file.ts")),
     ("fork.ts", include_str!("../../resources/session-broker/fork.ts")),
+    ("git-diff-store.cjs", include_str!("../../resources/session-broker/git-diff-store.cjs")),
     ("subagents.ts", include_str!("../../resources/session-broker/subagents.ts")),
+    ("subagent-state.ts", include_str!("../../resources/session-broker/subagent-state.ts")),
+    ("subagent-reconciliation.ts", include_str!("../../resources/session-broker/subagent-reconciliation.ts")),
+    ("subagent-transcript.ts", include_str!("../../resources/session-broker/subagent-transcript.ts")),
     ("orchestration.ts", include_str!("../../resources/session-broker/orchestration.ts")),
     ("agent-profiles.ts", include_str!("../../resources/session-broker/agent-profiles.ts")),
     ("subagent-usage.ts", include_str!("../../resources/session-broker/subagent-usage.ts")),
+    ("subagent-usage-channel.ts", include_str!("../../resources/session-broker/subagent-usage-channel.ts")),
     ("subagent-mailbox.ts", include_str!("../../resources/session-broker/subagent-mailbox.ts")),
     ("operations.ts", include_str!("../../resources/session-broker/operations.ts")),
     ("tools.ts", include_str!("../../resources/session-broker/tools.ts")),
@@ -64,6 +70,7 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 22] = [
     ("goal-controls.ts", include_str!("../../resources/session-broker/goal-controls.ts")),
     ("goal-coordination.ts", include_str!("../../resources/session-broker/goal-coordination.ts")),
     ("goal-files.ts", include_str!("../../resources/session-broker/goal-files.ts")),
+    ("goal-assets.cjs", include_str!("../../resources/session-broker/goal-assets.cjs")),
     ("goal-prompts.ts", include_str!("../../resources/session-broker/goal-prompts.ts")),
 ];
 
@@ -203,6 +210,7 @@ pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
         ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
         ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
         ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
+        ("snapshot-baseline.ts", include_str!("../../../extensions/piop-diff-watch/snapshot-baseline.ts")),
     ] {
         atomic_write_private(&dir.join(name), content.as_bytes())?;
     }

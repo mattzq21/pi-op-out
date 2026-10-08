@@ -9,9 +9,12 @@ import { createDependencyEffect } from "../lib/solid";
 import { Monitor } from "lucide-solid";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
 import { definedAgentsCapabilitySchema } from "../lib/agentSchemas";
+import { settingsChangeSchema } from "../lib/responseSchemas";
 import { NativeTransport } from "../lib/nativeTransport";
+import { SettingsPublication } from "../lib/settingsPublication";
+import { SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { isMobile, listen } from "../lib/platform";
-import type { AgentConfig, AppSettings, Model, SessionSummary } from "../types";
+import type { AgentConfig, AppSettings, Model, SessionSummary, SettingsChange } from "../types";
 import { clientSections, sections, SettingsView, type Section } from "./SettingsView";
 import { LegacyNoteDrafts } from "../plugins/markdown/LegacyNoteDraftRecovery";
 
@@ -19,7 +22,7 @@ interface Props {
   settings: AppSettings;
   pendingSettingsCount: number;
   sessions: SessionSummary[];
-  onSave: (settings: AppSettings, config?: AgentConfig, previousConfig?: AgentConfig) => Promise<void>;
+  onSave: (settings: AppSettings, config?: AgentConfig, previousConfig?: AgentConfig, baseline?: AppSettings) => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
   onSavingChange?: (saving: boolean) => void;
   selectedSection?: Section;
@@ -50,14 +53,23 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   const [hostSettings, setHostSettings] = createSignal<AppSettings>();
   const [resources, setResources] = createSignal<{ config: AgentConfig; models: Model[]; levels: string[] }>();
   const [error, setError] = createSignal<string>();
+  const [saveWarnings, setSaveWarnings] = createSignal<string[]>();
   const [revision, setRevision] = createSignal(0);
+  const publications = new SettingsPublication();
+
+  const receiveChange = (change: SettingsChange, host: string) => {
+    if (!publications.accept(change, host)) return;
+    setSaveWarnings(change.warnings);
+    setHostSettings(change.settings);
+  };
+
   createDependencyEffect(() => { const capturedHostId = hostId();
     let cancelled = false;
 
     const listeners = [
       listen("pi://provider-auth-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }, z.object({ hostId: z.string() })),
-      listen("pi://settings-changed", () => { if (!cancelled && capturedHostId === "local") setRevision((value) => value + 1); }, z.unknown()),
-      listen("pi://host-settings-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }, z.object({ hostId: z.string() })),
+      listen("pi://settings-changed", ({ payload }) => { if (!cancelled && capturedHostId === "local") { receiveChange(payload, capturedHostId); setRevision((value) => value + 1); } }, settingsChangeSchema),
+      listen("pi://host-settings-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) { receiveChange(payload, capturedHostId); setRevision((value) => value + 1); } }, settingsChangeSchema.extend({ hostId: z.string() })),
     ];
 
     return () => { cancelled = true;
@@ -87,10 +99,10 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     setError(undefined);
     void (async () => {
       try {
-        const loaded = await reader.loadHostSettings();
+        const loaded = await reader.loadHostSettingsChange();
 
         if (cancelled) return;
-        setHostSettings(loaded);
+        receiveChange(loaded, capturedHostId);
         await reader.connect(undefined, undefined, undefined, undefined, true);
 
         if (cancelled) return;
@@ -112,34 +124,60 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   }, () => [hostId(), componentProps.target, revision()]);
   const current = createMemo(() => (componentProps.target === "client" || hostId() === "local" ? componentProps.settings : hostSettings()));
 
-  const save = async (next: AppSettings, config?: AgentConfig) => { const capturedHostId = hostId(); const capturedResources = resources(); const capturedTarget0 = componentProps.target; const capturedOnSave1 = componentProps.onSave;
-
-    if (capturedTarget0 === "client" || capturedHostId === "local") await capturedOnSave1(next, config, capturedResources?.config);
-    else {
-      const writer = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
-      let agentsSaved = false;
-      const writeAgents = async (value: AgentConfig) => { await writer.command({ type: "configure_agents", configuration: value }); };
-
-      const restoreAgents = async (cause: unknown) => {
-        if (!agentsSaved || !capturedResources?.config) return;
-
-        try { await writeAgents(capturedResources.config); }
-        catch { throw new Error(`Settings could not be saved and agent definitions could not be restored: ${String(cause)}`); }
-      };
-
-      try {
-        if (config) { await writer.connect(undefined, undefined, undefined, undefined, true); await writeAgents(config); agentsSaved = true; }
-
-        const change = await writer.saveHostSettings(next, Boolean(config));
-        setHostSettings(change.settings);
-      } catch (reason) {
-        await restoreAgents(reason);
-        throw reason;
-      } finally { await writer.dispose().catch(() => undefined); }
-    }
-
-    if (config) setResources((value) => value ? { ...value, config } : value);
+  const publishSavedAgents = (config?: AgentConfig) => {
+    if (config) setResources(value => value ? { ...value, config } : value);
   };
 
-  return <>{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : resources()?.config} models={resources()?.models} thinkingLevels={resources()?.levels} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
+  const publishHostChange = (change: SettingsChange) => receiveChange(change, hostId());
+
+  const saveRemote = async (next: AppSettings, config: AgentConfig | undefined, previousConfig: AgentConfig | undefined, capturedHostId: string) => {
+    const writer = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
+    let agentsSaved = false;
+    const writeAgents = async (value: AgentConfig) => { await writer.command({ type: "configure_agents", configuration: value }); };
+
+    const restoreAgents = async (cause: unknown) => {
+      if (!agentsSaved || !previousConfig) return;
+
+      try { await writeAgents(previousConfig); }
+      catch { throw new Error(`Settings could not be saved and agent definitions could not be restored: ${String(cause)}`); }
+    };
+
+    try {
+      if (config) { await writer.connect(undefined, undefined, undefined, undefined, true); await writeAgents(config); agentsSaved = true; }
+
+      return await writer.saveHostSettings(next, Boolean(config));
+    } catch (reason) {
+      if (reason instanceof SettingsSaveError) {
+        publishHostChange(reason.committedChange);
+        setSaveWarnings([...(reason.committedChange.warnings ?? []), reason.message]);
+        throw reason;
+      }
+
+      await restoreAgents(reason);
+      throw reason;
+    } finally { await writer.dispose().catch(() => undefined); }
+  };
+
+  const save = async (next: AppSettings, config?: AgentConfig, baseline?: AppSettings) => {
+    const capturedHostId = hostId(); const capturedResources = resources(); const capturedTarget = componentProps.target; const capturedOnSave = componentProps.onSave;
+    setSaveWarnings(undefined);
+
+    try {
+      if (capturedTarget === "client" || capturedHostId === "local") await capturedOnSave(next, config, capturedResources?.config, baseline);
+      else publishHostChange(await saveRemote(next, config, capturedResources?.config, capturedHostId));
+    } catch (reason) {
+      if (reason instanceof SettingsSaveError) publishSavedAgents(config);
+      throw reason;
+    }
+
+    publishSavedAgents(config);
+  };
+
+  const renderSaveWarnings = () => {
+    const warnings = saveWarnings();
+
+    return warnings && warnings.length > 0 && <p role="alert">Settings saved with synchronization warnings: {warnings.join(" ")}</p>;
+  };
+
+  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : resources()?.config} models={resources()?.models} thinkingLevels={resources()?.levels} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
 }

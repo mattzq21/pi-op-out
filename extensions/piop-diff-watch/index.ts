@@ -1,5 +1,6 @@
 import { GitError, runGit } from "./git.ts";
-import { pinPromptHistory } from "./pin-checkpoints.ts";
+import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from "./pin-checkpoints.ts";
+import { currentSnapshot } from "./snapshot-baseline.ts";
 import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
 import { resolvePromptHistory, recordRecoveredCheckpoints } from "./prompt-history.ts";
 import { Check } from "typebox/value";
@@ -47,33 +48,9 @@ function sessionRefPrefix(sessionId: string) {
   return `${REF_ROOT}/chats/${safeSessionId(sessionId)}/`;
 }
 
-function legacySessionRef(sessionId: string) {
-  return `${REF_ROOT}/${safeSessionId(sessionId)}`;
-}
-
 async function resolveRef(root: string, ref: string) {
   try { return (await runGit(root, ["rev-parse", "--verify", ref])).trim(); }
   catch (error) { if (error instanceof GitError && error.exitCode === 128) return undefined; throw error; }
-}
-
-async function sessionSnapshots(root: string, sessionId: string) {
-  const output = await runGit(root, ["for-each-ref", "--sort=-refname", "--format=%(refname)%09%(objectname)", sessionRefPrefix(sessionId)]);
-
-  return output.split("\n").flatMap((line) => {
-    const [ref, commit] = line.split("\t");
-
-    return ref && commit && !ref.includes("/prompts/") ? [{ ref, commit }] : [];
-  });
-}
-
-async function currentSnapshot(root: string, sessionId: string) {
-  const [snapshot] = await sessionSnapshots(root, sessionId);
-
-  if (snapshot) return snapshot;
-  const ref = legacySessionRef(sessionId);
-  const commit = await resolveRef(root, ref);
-
-  return commit ? { ref, commit } : undefined;
 }
 
 async function sessionIdFromFile(sessionFile: string) {
@@ -253,16 +230,6 @@ function promptRef(sessionId: string, key: string) {
   return `${sessionRefPrefix(sessionId)}prompts/${key}`;
 }
 
-async function promptRefs(root: string, sessionId: string) {
-  const output = await runGit(root, ["for-each-ref", "--sort=-refname", "--format=%(refname)%09%(objectname)", `${sessionRefPrefix(sessionId)}prompts/`]);
-
-  return output.trim().split("\n").filter(Boolean).map((line) => {
-    const [ref, commit] = line.split("\t");
-
-    return { ref, commit };
-  });
-}
-
 async function capturePrompt(root: string, sessionId: string, key: string, capturedAt: string): Promise<PromptCheckpoint> {
   const base = await resolveRef(root, "HEAD") ?? null;
   const captured = await worktreeTree(root);
@@ -334,12 +301,13 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
   let created = false;
   let sessionWritten = false;
+  const createdRefs: PinnedCheckpoint[] = [];
 
   try {
     await assertWorktreeAvailable(root, branch, target);
     await runGit(root, ["worktree", "add", "-b", branch, target, checkpoint.commit]);
     created = true;
-    const entries = await branchSessionEntries(ctx, root, id, history, owner, checkpoint, timestamp, target, afterResponse, entryId);
+    const entries = await branchSessionEntries(ctx, root, id, history, owner, checkpoint, timestamp, target, afterResponse, entryId, createdRefs);
     const session = await open(sessionPath, "wx", 0o600);
     sessionWritten = true;
 
@@ -350,7 +318,7 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
   } catch (error) {
     if (sessionWritten) await rm(sessionPath, { force: true });
 
-    for (const { ref, commit } of [...await promptRefs(root, id), ...await sessionSnapshots(root, id)]) await runGit(root, ["update-ref", "-d", ref, commit]);
+    await removePinnedCheckpoints(createdRefs);
 
     if (created) {
       await runGit(root, ["worktree", "remove", "--force", target])
@@ -439,11 +407,12 @@ async function assertWorktreeAvailable(root: string, branch: string, target: str
 
 }
 
-async function branchSessionEntries(ctx: ExtensionContext, root: string, id: string, history: CheckpointHistory, owner: string, checkpoint: PromptCheckpoint, timestamp: string, target: string, afterResponse: boolean, entryId: string) {
+async function branchSessionEntries(ctx: ExtensionContext, root: string, id: string, history: CheckpointHistory, owner: string, checkpoint: PromptCheckpoint, timestamp: string, target: string, afterResponse: boolean, entryId: string, createdRefs: PinnedCheckpoint[]) {
   const retained = afterResponse ? history : history.slice(0, -1);
-  await pinPromptHistory(root, id, retained, owner);
+  createdRefs.push(...await pinPromptHistory(root, id, retained, owner));
   const baselineRef = `${sessionRefPrefix(id)}${snapshotName(timestamp, checkpoint.commit)}`;
-  await runGit(root, ["update-ref", baselineRef, checkpoint.commit]);
+  await runGit(root, ["update-ref", "--stdin"], {}, ["start", `create ${baselineRef} ${checkpoint.commit}`, "prepare", "commit", ""].join("\n"));
+  createdRefs.push({ root, ref: baselineRef, commit: checkpoint.commit });
 
   const baseline = {
     type: "custom", id: randomUUID(), parentId: retained.at(-1)?.id ?? null, timestamp, customType: SNAPSHOT_ENTRY,
@@ -496,7 +465,7 @@ export default function diffWatch(pi: ExtensionAPI) {
 
     if (!root) return undefined;
     const sessionId = ctx.sessionManager.getSessionId();
-    const current = await currentSnapshot(root, sessionId);
+    const current = await currentSnapshot(root, sessionId, ctx.sessionManager.getBranch());
 
     if (current) return current;
     const copied = await recoverCopiedSnapshot(ctx, root, sessionId);
@@ -621,7 +590,7 @@ export default function diffWatch(pi: ExtensionAPI) {
   const clearIdleSnapshot = async (ctx: ExtensionContext) => { if (pendingSnapshotCleanup && ctx.isIdle()) { await pendingSnapshotCleanup(); pendingSnapshotCleanup = undefined; } };
 
   const inputSnapshot = async (ctx: ExtensionContext, root: string) => {
-    const snapshot = await currentSnapshot(root, ctx.sessionManager.getSessionId());
+    const snapshot = await currentSnapshot(root, ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch());
 
     return snapshot ?? await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession);
   };

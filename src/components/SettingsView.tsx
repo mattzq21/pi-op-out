@@ -1,4 +1,5 @@
 import { stableSnapshot, settingsSnapshot, agentEditsSnapshot, settingKeys } from "../lib/settingsSnapshots";
+import { applyClientPreferences, clientPreferenceKeys, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { required } from "../lib/required";
 import { AgentTools } from "./AgentTools";
 import { McpSettings, type McpEditorDraft } from "./McpSettings";
@@ -54,7 +55,26 @@ function firstValidationError(checks: Array<() => string | undefined>) {
   if (error) return error; }
 }
 
-type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; sessions?: SessionSummary[]; models?: Model[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
+function mergeSettingsDraft(incoming: AppSettings, baseline: AppSettings, local: AppSettings) {
+  const preferenceMerge = mergeClientPreferences(clientPreferences(incoming), clientPreferences(baseline), clientPreferences(local));
+  const merged = applyClientPreferences(incoming, preferenceMerge.preferences);
+  let collisions = preferenceMerge.conflicts.length > 0;
+
+  for (const key of settingKeys) {
+    if (clientPreferenceKeys.has(key) || !Object.hasOwn(local, key)) continue;
+
+    const same = (left: AppSettings[keyof AppSettings], right: AppSettings[keyof AppSettings]) => stableSnapshot(left) === stableSnapshot(right);
+
+    if (!same(local[key], baseline[key])) {
+      if (!same(incoming[key], baseline[key]) && !same(incoming[key], local[key])) collisions = true;
+      Object.assign(merged, { [key]: local[key] });
+    }
+  }
+
+  return { merged, collisions };
+}
+
+type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; sessions?: SessionSummary[]; models?: Model[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig, baseline?: AppSettings) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
 
 function settingsViewDefaults({ selectedSection, embedded = false, resourceError, scope = "daemon", daemonLabel = "Local daemon", providerHosts, onSavingChange, providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, sessions = [], models = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: SettingsViewProps) {
   return { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, sessions, models, thinkingLevels, onSave, onDirtyChange };
@@ -77,6 +97,7 @@ export function SettingsView(props: SettingsViewProps) {
   createComputed(() => { if (!saving()) capabilitiesBeforeSave.current = { configuration: settingsProps().incomingConfiguration }; });
   const agentConfig = createMemo(() => (saving() ? capabilitiesBeforeSave.current.configuration : settingsProps().incomingConfiguration));
   const [draft, setDraft] = createSignal((() => structuredClone(settingsProps().settings))()); const [agentDrafts, setAgentDrafts] = createSignal((() => structuredClone(agentConfig()?.agents ?? []))()); const [agentIndex, setAgentIndex] = createSignal((() => firstAgentIndex(agentConfig()?.agents ?? []))()); const [section, setSection] = createSignal<Section>(settingsProps().scope === "client" ? "keybinds" : "general"); const [saved, setSaved] = createSignal(false); const savingRef = createRef(false); const [saveError, setSaveError] = createSignal<string>();
+  const retainedSaveError = createRef(false);
   const [modelFilter, setModelFilter] = createSignal("");
   const [settingsQuery, setSettingsQuery] = createSignal("");
   const [pastHeader, setPastHeader] = createSignal(false);
@@ -116,20 +137,7 @@ export function SettingsView(props: SettingsViewProps) {
     const baseline = baselineValue();
 
     if (settingsSnapshot(incoming) === baselineSettings()) return;
-    const local = draft();
-    const merged = { ...incoming };
-    let collisions = false;
-
-    for (const key of settingKeys) {
-      if (!Object.hasOwn(local, key)) continue;
-
-      const same = (left: AppSettings[keyof AppSettings], right: AppSettings[keyof AppSettings]) => stableSnapshot(left) === stableSnapshot(right);
-
-      if (!same(local[key], baseline[key])) {
-        if (!same(incoming[key], baseline[key]) && !same(incoming[key], local[key])) collisions = true;
-        Object.assign(merged, { [key]: local[key] });
-      }
-    }
+    const { merged, collisions } = mergeSettingsDraft(incoming, baseline, draft());
 
     setDraft(merged);
     setBaselineValue(structuredClone(incoming));
@@ -138,6 +146,7 @@ export function SettingsView(props: SettingsViewProps) {
   }, () => [settingsProps().settings, saving()]);
 
   const reloadLatest = () => {
+    retainedSaveError.current = false; setSaveError(undefined);
     setDraft(structuredClone(settingsProps().settings));
     setBaselineValue(structuredClone(settingsProps().settings));
     setMcpDrafts([]);
@@ -157,7 +166,7 @@ export function SettingsView(props: SettingsViewProps) {
     const capturedDirty = dirty();
 
  if (capturedDirty) setSaved(false); }, () => [dirty()]);
-  createDependencyEffect(() => { setSaveError(undefined); }, () => [currentSnapshot()]);
+  createDependencyEffect(() => { if (!retainedSaveError.current) setSaveError(undefined); }, () => [currentSnapshot()]);
 
   const applyIncomingAgents = (config?: AgentConfig) => {
     const next = config ? structuredClone(config) : undefined;
@@ -189,13 +198,26 @@ export function SettingsView(props: SettingsViewProps) {
 
   const save = async () => {
     if (conflict()) return;
-    const capturedDirty = dirty(); const capturedSettingsProps = { ...settingsProps() }; const capturedDraft = draft(); const capturedAgentConfigDirty = agentConfigDirty(); const capturedCurrentAgentConfig = currentAgentConfig(); const capturedCurrentSnapshot = currentSnapshot();
+    const capturedDirty = dirty(); const capturedSettingsProps = { ...settingsProps() }; const capturedDraft = structuredClone(draft()); const capturedBaseline = structuredClone(baselineValue()); const capturedAgentConfigDirty = agentConfigDirty(); const capturedCurrentAgentConfig = currentAgentConfig(); const capturedCurrentSnapshot = currentSnapshot();
 
- if (savingRef.current || !capturedDirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined);
+ if (savingRef.current || !capturedDirty) return; savingRef.current = true; retainedSaveError.current = false; setSaving(true); setSaveError(undefined);
 
- try { await capturedSettingsProps.onSave(capturedDraft, capturedAgentConfigDirty ? capturedCurrentAgentConfig : undefined); setBaselineValue(structuredClone(capturedDraft));
+ try { await capturedSettingsProps.onSave(capturedDraft, capturedAgentConfigDirty ? capturedCurrentAgentConfig : undefined, capturedBaseline); setBaselineValue(structuredClone(capturedDraft));
 
- if (capturedAgentConfigDirty) setBaselineAgentConfig(agentEditsSnapshot(capturedCurrentAgentConfig)); setSaved(currentSnapshotRef.current === capturedCurrentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
+ if (capturedAgentConfigDirty) setBaselineAgentConfig(agentEditsSnapshot(capturedCurrentAgentConfig)); setSaved(currentSnapshotRef.current === capturedCurrentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) {
+   recordSaveFailure(reason instanceof Error ? reason : new Error(String(reason)), capturedAgentConfigDirty, capturedCurrentAgentConfig);
+ } finally { savingRef.current = false; setSaving(false); } };
+
+  const recordSaveFailure = (reason: Error, agentsChanged: boolean, configuration?: AgentConfig) => {
+    retainedSaveError.current = reason instanceof SettingsSaveError || reason instanceof ClientPreferenceConflictError;
+
+    if (reason instanceof SettingsSaveError && agentsChanged) setBaselineAgentConfig(agentEditsSnapshot(configuration));
+
+    if (reason instanceof ClientPreferenceConflictError) setSettingsConflict(true);
+
+    if (reason instanceof SettingsSaveError && reason.conflict) setSettingsConflict(true);
+    setSaveError(reason.message);
+  };
 
   const nextAgentSuffixRef = createRef(agentDrafts().length);
   const addHost = () => setDraft((current) => ({ ...current, hosts: [...current.hosts, { id: uid("host"), enabled: true, name: "New machine", target: "", piPath: "piopd" }] }));
@@ -347,7 +369,7 @@ export function SettingsView(props: SettingsViewProps) {
     const renderSaveControls = () => {
       const renderUnsavedBadge = () => (dirty() && !saving() && <small role="status" class="unsaved-badge"><span aria-hidden="true" />Unsaved changes</small>);
       const renderPendingSettingsCount = () => (settingsProps().pendingSettingsCount > 0 && !dirty() && <small role="status">Saved · waiting for {settingsProps().pendingSettingsCount} session{settingsProps().pendingSettingsCount === 1 ? "" : "s"} to apply changes</small>);
-      const renderSaveButton = () => (conflict() ? <small role="alert">Settings changed in another window. <button disabled={saving()} onClick={reloadLatest}>Reload latest settings and discard local edits</button></small> : (saveError() || validationError() || formValidation().fastModeValidationError) && <small role="alert">{saveError() || validationError() || formValidation().fastModeValidationError}</small>);
+      const renderSaveButton = () => (conflict() ? <small role="alert">{saveError() || "Settings changed in another window."} <button disabled={saving()} onClick={reloadLatest}>Reload latest settings and discard local edits</button></small> : (saveError() || validationError() || formValidation().fastModeValidationError) && <small role="alert">{saveError() || validationError() || formValidation().fastModeValidationError}</small>);
 
       const renderSaveButtonLabel = () => {
         const renderSaveStatus = () => (saved() && !dirty() ? <Check size={15} /> : <Save size={15} />);

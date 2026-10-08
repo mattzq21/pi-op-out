@@ -1,10 +1,12 @@
 import { Key } from "@solid-primitives/keyed";
-import { Archive, ArchiveRestore, RefreshCw, Search } from "lucide-solid";
+import { Archive, ArchiveRestore, FolderInput, RefreshCw, Search } from "lucide-solid";
 import { createMemo, createSignal, Show } from "solid-js";
 import { loadStorageReport, restoreArchivedConversation } from "../lib/nativeTransport";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import { IconButton } from "./IconButton";
 import type { StorageReport } from "../types";
+import { isTemporaryRecoveryDirectory } from "../lib/sessionRecovery";
+import { RecoveryDirectoryDialog } from "./RecoveryDirectoryDialog";
 
 export function ArchivedSessionPanel() {
   const [report, setReport] = createSignal<StorageReport>();
@@ -12,6 +14,7 @@ export function ArchivedSessionPanel() {
   const [error, setError] = createSignal<string>();
   const [query, setQuery] = createSignal("");
   const [restoring, setRestoring] = createSignal<string>();
+  const [recoverySession, setRecoverySession] = createSignal<{ name: string; path: string; cwd: string; hostId: string }>();
   const searchRef = createRef<HTMLInputElement>(null);
 
   const refresh = async () => {
@@ -58,6 +61,7 @@ export function ArchivedSessionPanel() {
   }, () => []);
 
   return <aside class="session-panel" aria-label="Archived sessions">
+    <Show when={recoverySession()}>{session => <RecoveryDirectoryDialog session={session()} onCancel={() => { setRecoverySession(undefined); void refresh(); }} />}</Show>
     <div class="archived-session-heading"><span><Archive size={15} />Archived sessions</span><IconButton label="Refresh archived sessions" disabled={loading()} onClick={() => void refresh()}><RefreshCw size={15} class={loading() ? "spinning" : ""} /></IconButton></div>
     <label class="search"><Search size={15} /><input ref={element => { searchRef.current = element; }} aria-label="Search archived sessions" placeholder="Search archived sessions" value={query()} onInput={event => setQuery(event.target.value)} /><kbd>Ctrl G</kbd></label>
     <div class="session-scroll" aria-busy={loading()}>
@@ -73,6 +77,7 @@ export function ArchivedSessionPanel() {
             <small class="archived-session-detail">{archive().cwd}</small>
             <small class="archived-session-detail">{new Date(archive().modifiedAt * 1000).toLocaleString()}</small>
           </div></div>
+          <Show when={isTemporaryRecoveryDirectory(archive().cwd)}><IconButton label={`Move recovery directory for ${archive().name}`} disabled={Boolean(restoring())} onClick={() => setRecoverySession({ name: archive().name, path: archive().path, cwd: archive().cwd, hostId: host().hostId })}><FolderInput size={15} /></IconButton></Show>
           <IconButton label={`Restore ${archive().name} to active sessions`} disabled={Boolean(restoring())} onClick={() => void restore(host().hostId, archive().path)}>{restoring() === `${host().hostId}:${archive().path}` ? <RefreshCw size={15} class="spinning" /> : <ArchiveRestore size={15} />}</IconButton>
         </div>}</Key>
       </section>}</Key>

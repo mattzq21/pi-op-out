@@ -2,14 +2,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { randomUUID } = require('node:crypto');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { exists, recover, restore, restoredResult } = require('./restore-transaction.cjs');
+const { exists, restore, restoredResult } = require('./restore-transaction.cjs');
+const transactions = require('./session-transactions.cjs');
+const { canonicalTranscriptBasename } = require('./transcript-identity.cjs');
 
 const checkpointSchema = Type.Object({ path: Type.String(), repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-f0-9]{40,64}$' }) });
 
-const root = process.env.PIOP_RESTORE_ROOT || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop');
+const configuredRoot = process.env.PIOP_RESTORE_ROOT || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop');
+
+let root;
 
 function absent(file) {
   if (exists(file)) throw new Error(`Restoration destination already exists: ${file}`);
@@ -88,7 +92,6 @@ function directoryPlan(saved) {
 
   if (path.dirname(stored) !== storage || !path.isAbsolute(saved.path ?? '') || !fs.lstatSync(stored).isDirectory()) throw new Error('Invalid archived directory');
   absent(saved.path);
-  fs.mkdirSync(path.dirname(saved.path), { recursive: true });
 
   return { source: stored, destination: saved.path };
 }
@@ -107,12 +110,13 @@ function readArchive(file) {
 
 function restoreArchive(file) {
   const { entries, header } = readArchive(file);
+  const basename = canonicalTranscriptBasename(header);
   const sessions = path.join(root, 'sessions');
   fs.mkdirSync(sessions, { recursive: true });
 
-  const destination = path.join(fs.realpathSync(sessions), path.basename(file));
+  const destination = path.join(fs.realpathSync(sessions), basename);
 
-  for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.diffs.json'), `${destination}.loop-detection.json`]) absent(target);
+  for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json.lock'), `${destination}.loop-detection.json`]) absent(target);
   const saved = header.worktreeRestore;
 
   if (!saved) return restore(root, header, file, destination, { path: header.cwd, branch: null, sessionPath: destination });
@@ -124,23 +128,19 @@ function restoreArchive(file) {
 }
 
 function main() {
+  transactions.recover(root);
+
   if (process.argv[1] === '--result') return restoredResult(root, process.argv[2]);
-  recover(root);
 
   if (process.argv[1] === '--recover') return;
 
   return restoreArchive(fs.realpathSync(process.argv[1]));
 }
 
-if (process.argv.at(-1) !== '--locked') {
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const lock = fs.openSync(path.join(root, 'restore.lock'), 'a', 0o600);
-  const child = spawnSync('sh', ['-c', 'flock --exclusive 3 || exit $?; exec "$@"', 'piop-restore', process.execPath, ...process.execArgv, '--', ...process.argv.slice(1), '--locked'], { stdio: ['inherit', 'inherit', 'inherit', lock] });
-  fs.closeSync(lock);
-
-  if (child.error) throw child.error;
-  process.exitCode = child.status ?? 1;
-} else {
-  try { const result = main(); process.stdout.write(JSON.stringify(result ?? null)); }
-  catch (error) { console.error(error.message); process.exitCode = 1; }
-}
+try {
+  if (transactions.lock(fs.existsSync(configuredRoot) ? fs.realpathSync(configuredRoot) : path.resolve(configuredRoot))) {
+    root = fs.realpathSync(configuredRoot);
+    const result = main();
+    process.stdout.write(JSON.stringify(result ?? null));
+  }
+} catch (error) { console.error(error.message); process.exitCode = 1; }

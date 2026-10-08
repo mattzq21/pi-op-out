@@ -499,7 +499,7 @@ impl Host {
         if let Some(session) = self.find_session(&target.id).filter(|session| !session.transient()) {
             return session.execute(command.clone()).await;
         }
-        if self.ownership().locate(&target.id, target.path.as_deref(), false, true)?.is_none() {
+        if self.ownership().lookup_saved(&target.id, true)?.is_none() {
             if self.ownership().removed(&target.id)? {
                 self.output(json!({"type":"session_removed","sessionId":target.id,"sessionPath":target.path}));
                 return Err("This conversation has been deleted or archived".into());

@@ -529,16 +529,41 @@ pub(super) fn validate_worktree_unused(settings: &AppSettings, host_id: &str, ta
     Ok(())
 }
 
-pub(super) fn preserve_worktree_checkpoints(settings: &AppSettings, host_id: &str, target: &WorktreeRemovalTarget) -> Result<(), String> {
-    let script = include_str!("../../resources/preserve-archive-checkpoints.bundle.mjs");
+fn remove_worktree_with_checkpoints(settings: &AppSettings, host_id: &str, target: &WorktreeRemovalTarget, cancelled: &AtomicBool) -> Result<(), String> {
+    let script = format!("{}\ntry {{ preserveAndRemoveWorktree(process.argv[1], authorizeWorktreeRemoval); }} catch (error) {{ process.stderr.write(error.message + '\\n'); process.exitCode = 1; }}", include_str!("../../resources/worktree-checkpoint-preservation.cjs"));
     let mut preserve = if host_id == "local" {
-        let mut command = node_command(); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, &target.path]); command
+        let mut command = node_command(); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", &script, &target.path]); command
     } else {
         let mut command = ssh(remote_host(settings, host_id)?);
-        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&target.path)))); command
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(&script), shell_quote(&target.path)))); command
     };
-    let preserved = run_limited(&mut preserve, 64 * 1024, "Could not preserve archived checkpoints")?;
-    if !preserved.status.success() { return Err(format!("Could not preserve archived checkpoints: {}", String::from_utf8_lossy(&preserved.stderr).trim())); }
+    complete_checkpoint_removal(&mut preserve, cancelled)
+}
+
+fn complete_checkpoint_removal(command: &mut Command, cancelled: &AtomicBool) -> Result<(), String> {
+    use std::io::{Read, Write};
+    use std::process::Stdio;
+    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| error.to_string())?;
+    let mut stdout = child.stdout.take().ok_or("Checkpoint helper output missing")?;
+    let stderr = child.stderr.take().ok_or("Checkpoint helper diagnostics missing")?;
+    let diagnostics = std::thread::spawn(move || {
+        let mut reader = stderr;
+        let mut bytes = Vec::new();
+        let _ = reader.by_ref().take(64 * 1024).read_to_end(&mut bytes);
+        let _ = std::io::copy(&mut reader, &mut std::io::sink());
+        bytes
+    });
+    let mut acknowledgement = [0u8; 6];
+    let ready = stdout.read_exact(&mut acknowledgement).is_ok() && acknowledgement == *b"ready\n";
+    let mut input = child.stdin.take().ok_or("Checkpoint helper input missing")?;
+    let approved = ready && !cancelled.load(Ordering::SeqCst);
+    let sent = if approved { input.write_all(b"1").map_err(|error| error.to_string()) } else { Ok(()) };
+    drop(input);
+    let status = child.wait().map_err(|error| error.to_string());
+    let bytes = diagnostics.join().map_err(|_| "Checkpoint helper diagnostics failed")?;
+    sent?;
+    if cancelled.load(Ordering::SeqCst) && !approved { return Err("Worktree removal cancelled".into()); }
+    if !status?.success() || !ready { return Err(format!("Could not preserve checkpoints and remove worktree: {}", String::from_utf8_lossy(&bytes).trim())); }
     Ok(())
 }
 
@@ -551,18 +576,8 @@ fn cleanup_worktree_storage(settings: &AppSettings, host_id: &str, path: &str) {
 }
 
 pub(super) fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: WorktreeRemovalTarget, delete_branch: bool, cancelled: &AtomicBool) -> Result<GitWorktreeRemoval, String> {
-    preserve_worktree_checkpoints(settings, host_id, &target)?;
     if cancelled.load(Ordering::SeqCst) { return Err("Worktree removal cancelled".into()); }
-    let removed = if host_id == "local" {
-        run_limited(Command::new("git").arg("-C").arg(&target.source).args(["worktree", "remove"]).arg(&target.path), 64 * 1024, "Could not remove Git worktree")?
-    } else {
-        let host = remote_host(settings, host_id)?;
-        run_limited(ssh(host).arg(format!("git -C {} worktree remove -- {}", shell_quote(&target.source), shell_quote(&target.path))), 64 * 1024, &format!("Could not remove Git worktree on {}", host.name))?
-    };
-    if !removed.status.success() {
-        let error = String::from_utf8_lossy(&removed.stderr).trim().to_string();
-        return Err(if error.is_empty() { "Could not remove Git worktree".into() } else { error });
-    }
+    remove_worktree_with_checkpoints(settings, host_id, &target, cancelled)?;
     cleanup_worktree_storage(settings, host_id, &target.path);
     if !delete_branch { return Ok(GitWorktreeRemoval { branch: target.branch, branch_deleted: false, warning: None }); }
     remove_worktree_branch(settings, host_id, target)

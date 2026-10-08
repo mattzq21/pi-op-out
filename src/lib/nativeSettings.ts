@@ -1,8 +1,9 @@
-import { appSettingsSchema, settingsChangeSchema, voidResultSchema } from "./responseSchemas";
-import type { AppSettings, RpcEvent } from "../types";
+import { appSettingsSchema, settingsChangeSchema } from "./responseSchemas";
+import type { AppSettings, RpcEvent, SettingsChange } from "../types";
 import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import { keybindingsError } from "./keybindings";
 import type { NativeCall } from "./nativeCall";
+import { ClientPreferenceConflictError, SettingsSaveError } from "./clientPreferenceMerge";
 
 type SettingsTarget = { cwd?: string; sessionPath?: string; sessionId?: string; hostId: string };
 
@@ -26,7 +27,36 @@ export class NativeSettings {
 
   constructor(private call: NativeCall, private connection: SettingsConnection) {}
 
-  load() { return withClientSettings(this.call("load_app_settings", undefined, appSettingsSchema), true); }
+  private async daemonChange() {
+    let change: SettingsChange;
+
+    try { change = await this.call("load_settings_change", undefined, settingsChangeSchema); }
+    catch (reason) {
+      if (!String(reason).includes("Command is not available on the daemon: load_settings_change")) throw reason;
+      change = { settings: await this.call("load_app_settings", undefined, appSettingsSchema) };
+    }
+
+    return change;
+  }
+
+  async loadChange() {
+    const change = await this.daemonChange();
+
+    return { ...change, settings: await withClientSettings(change.settings, true) };
+  }
+
+  async load() { return (await this.loadChange()).settings; }
+
+  async loadHostChange() {
+    const hostId = this.connection.target().hostId;
+
+    try { return await this.call(hostId === "local" ? "load_settings_change" : "load_host_settings_change", { hostId }, settingsChangeSchema); }
+    catch (reason) {
+      if (!String(reason).includes("Command is not available on the daemon: load_")) throw reason;
+
+      return { settings: await this.loadHost() };
+    }
+  }
 
   async loadHost() {
     const hostId = this.connection.target().hostId;
@@ -50,50 +80,71 @@ export class NativeSettings {
     }
   }
 
-  save(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" = "all") {
-    const save = () => this.saveNow(settings, reconnect, agentHostId, scope);
+  save(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" = "all", baseline?: AppSettings) {
+    if (!baseline) return Promise.reject(new Error("An editing baseline is required to save client preferences"));
+    const intended = structuredClone(settings);
+    const before = structuredClone(baseline);
+    const save = () => this.saveNow(intended, reconnect, agentHostId, scope, before);
     const result = this.lifecycle.then(save, save);
     this.lifecycle = result.then(() => undefined, () => undefined);
 
     return result;
   }
 
-  private async saveNow(settings: AppSettings, reconnect: boolean, agentHostId: string | undefined, scope: "all" | "client") {
+  private async saveNow(settings: AppSettings, reconnect: boolean, agentHostId: string | undefined, scope: "all" | "client", baseline: AppSettings) {
     const shortcutError = keybindingsError(settings.keybindings);
 
     if (shortcutError) throw new Error(shortcutError);
-    const previous = await this.call("load_app_settings", undefined, appSettingsSchema);
-    const target = this.connection.target();
+    const previousChange = await this.daemonChange();
+    const previous = previousChange.settings;
     const daemonSettings = scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
     const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
-    const change = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { settings: previous };
-    await saveClientSettings(settings);
-    change.settings = await withClientSettings(change.settings);
+    const change: SettingsChange = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { ...previousChange };
+    await this.savePreferences(settings, baseline, change, daemonChanged);
 
-    if (reconnect && daemonChanged) await this.reconnectAfterSave(settings, previous, target);
+    if (daemonChanged) await this.reloadCommitted(change);
+
+    if (reconnect && daemonChanged) {
+      try { await this.reconnect(change.settings); }
+      catch (reason) { throw new SettingsSaveError(`Settings were saved, but this session could not reconnect: ${reason instanceof Error ? reason.message : String(reason)}`, change, "reconnect"); }
+    }
 
     return change;
+  }
+
+  private async reloadCommitted(change: SettingsChange) {
+    try {
+      const current = await this.loadChange();
+
+      if (current.revision === undefined) return;
+      const newer = current.revision > (change.revision ?? -1);
+      const phaseChanged = current.revision === change.revision && (current.phaseRevision ?? 0) > (change.phaseRevision ?? 0);
+
+      if (!newer && !phaseChanged) return;
+      const committedRevision = change.committedRevision;
+      Object.assign(change, current);
+      change.committedRevision = committedRevision;
+    } catch (reason) { throw new SettingsSaveError(`Settings were saved, but their current state could not be reloaded: ${String(reason)}`, change, "reconnect"); }
+  }
+
+  private async savePreferences(settings: AppSettings, baseline: AppSettings, change: SettingsChange, daemonChanged: boolean) {
+    try {
+      const committed = await saveClientSettings(settings, baseline);
+      change.settings = preserveDaemonPreferences(change.settings, committed);
+    } catch (reason) {
+      if (!daemonChanged) throw reason;
+      change.settings = preserveDaemonPreferences(change.settings, baseline);
+
+      try { change.settings = await withClientSettings(change.settings); } catch { }
+
+      throw new SettingsSaveError(`Daemon settings were saved, but client preferences could not be saved: ${reason instanceof Error ? reason.message : String(reason)}`, change, "client", reason instanceof ClientPreferenceConflictError ? reason : undefined);
+    }
   }
 
   private selectAvailableHost(settings: AppSettings, fresh: boolean) {
     const { hostId } = this.connection.target();
 
     if (hostId !== "local" && !settings.hosts.some(host => host.enabled !== false && host.id === hostId)) this.connection.resetToLocal(fresh);
-  }
-
-  private async reconnectAfterSave(settings: AppSettings, previous: AppSettings, target: SettingsTarget) {
-    try {
-      this.selectAvailableHost(settings, false);
-      await this.connection.disconnect();
-      await this.connection.connect();
-    } catch (reason) {
-      await this.call("save_app_settings", { settings: previous }, voidResultSchema);
-      this.connection.selectTarget(target);
-
-      try { await this.connection.disconnect(); await this.connection.connect(); } catch { }
-
-      throw reason;
-    }
   }
 
   async reconnect(settings: AppSettings) {

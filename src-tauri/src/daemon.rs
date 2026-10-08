@@ -6,7 +6,7 @@ mod tests;
 
 enum CaptureWork {
     Packet(Value),
-    Drain(mpsc::Sender<()>),
+    Drain(mpsc::Sender<Result<(), String>>),
 }
 
 pub(crate) struct Daemon {
@@ -93,7 +93,7 @@ impl Daemon {
             completions.push(receiver);
         }
         for completion in completions {
-            completion.recv_timeout(deadline.saturating_duration_since(Instant::now())).map_err(|_| "Could not finish saving project changes before moving the conversation")?;
+            completion.recv_timeout(deadline.saturating_duration_since(Instant::now())).map_err(|_| "Could not finish saving project changes before moving the conversation")??;
         }
         Ok(())
     }
@@ -158,38 +158,56 @@ fn persist_capture(app: &AppHandle, daemon: &Arc<Daemon>, host_id: &str, packet:
         let app = app.clone(); let daemon = Arc::downgrade(daemon); let host_id = host_id.to_owned();
         thread::spawn(move || {
             let mut baselines = HashMap::<String, String>::new();
+            let mut failures = Vec::new();
             while let Ok(work) = receiver.recv() {
-                let packet = match work {
+                let mut packet = match work {
                     CaptureWork::Packet(packet) => packet,
-                    CaptureWork::Drain(completion) => { let _ = completion.send(()); continue; }
+                    CaptureWork::Drain(completion) => { let _ = completion.send(retry_captures(&mut failures, &app, &host_id, host.as_ref())); continue; }
                 };
                 if update_capture_baseline(&mut baselines, &packet, host.as_ref()) { continue; }
                 let Some(turn_id) = packet["turnId"].as_str() else { continue; };
-                let baseline = baselines.remove(turn_id);
-                let current = packet["current"].as_str();
-                let result = (|| -> Result<(), String> {
-                    let (Some(baseline), Some(current), Some(cwd), Some(path), Some(id)) = (baseline.as_deref(), current, packet["cwd"].as_str(), packet["sessionPath"].as_str(), packet["messageId"].as_str()) else { return Ok(()); };
-                    if let Some(diff) = load_git_diff_between_at_host(cwd, baseline, current, host.as_ref())? {
-                        if packet["ephemeral"] == true {
-                            let _ = app.emit("pi://event", json!({"type":"turn_diff","hostId":host_id,"sessionPath":path,"messageId":id,"snapshot":diff}));
-                            return Ok(());
-                        }
-                        let mut diffs = load_git_diffs_at_host(path, host.as_ref())?;
-                        diffs.insert(id.into(), diff);
-                        save_git_diffs_at_host(path, diffs, host.as_ref())?;
-                        if daemon.upgrade().is_some_and(|daemon| daemon.alive.load(Ordering::SeqCst)) { let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path})); }
-                    }
-                    Ok(())
-                })();
-                if let Some(baseline) = baseline { let _ = discard_git_tree_at_host(&baseline, host.as_ref()); }
-                if let Some(current) = current { let _ = discard_git_tree_at_host(current, host.as_ref()); }
-                if let Err(error) = result { if daemon.upgrade().is_some_and(|daemon| daemon.alive.load(Ordering::SeqCst)) { let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":format!("Could not save project changes: {error}")})); } }
+                if let Some(baseline) = baselines.remove(turn_id) { packet["baseline"] = Value::String(baseline); }
+                let _ = retry_captures(&mut failures, &app, &host_id, host.as_ref());
+                if let Err(error) = save_capture_packet(&app, &host_id, &packet, host.as_ref()) {
+                    failures.push(packet);
+                    if daemon.upgrade().is_some_and(|daemon| daemon.alive.load(Ordering::SeqCst)) { let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":format!("Could not save project changes; comparison retained for retry: {error}")})); }
+                }
             }
             for baseline in baselines.into_values() { let _ = discard_git_tree_at_host(&baseline, host.as_ref()); }
         });
         sender
     });
     let _ = sender.send(CaptureWork::Packet(packet));
+}
+
+fn save_capture_packet(app: &AppHandle, host_id: &str, packet: &Value, host: Option<&RemoteHost>) -> Result<(), String> {
+    let baseline = packet["baseline"].as_str(); let current = packet["current"].as_str();
+    let (Some(baseline), Some(current), Some(cwd), Some(path), Some(id)) = (baseline, current, packet["cwd"].as_str(), packet["sessionPath"].as_str(), packet["messageId"].as_str()) else {
+        if let Some(baseline) = baseline { let _ = discard_git_tree_at_host(baseline, host); }
+        if let Some(current) = current { let _ = discard_git_tree_at_host(current, host); }
+        return Ok(());
+    };
+    if packet["ephemeral"] == true {
+        if let Some(diff) = load_git_diff_between_at_host(cwd, baseline, current, host)? {
+            let _ = app.emit("pi://event", json!({"type":"turn_diff","hostId":host_id,"sessionPath":path,"messageId":id,"snapshot":diff}));
+        }
+        let _ = discard_git_tree_at_host(baseline, host);
+        let _ = discard_git_tree_at_host(current, host);
+    }
+    else {
+        crate::git_diffs::persist_capture_diff(path, id, cwd, baseline, current, host)?;
+        let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path}));
+    }
+    Ok(())
+}
+
+fn retry_captures(failures: &mut Vec<Value>, app: &AppHandle, host_id: &str, host: Option<&RemoteHost>) -> Result<(), String> {
+    let mut retained = Vec::new(); let mut errors = Vec::new();
+    for packet in failures.drain(..) {
+        if let Err(error) = save_capture_packet(app, host_id, &packet, host) { retained.push(packet); errors.push(error); }
+    }
+    *failures = retained;
+    if errors.is_empty() { Ok(()) } else { Err(format!("Project changes are pending; snapshots preserved: {}", errors.join("; "))) }
 }
 
 pub(crate) fn spec(command: &Command) -> Value {

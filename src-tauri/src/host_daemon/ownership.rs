@@ -1,3 +1,4 @@
+use super::control_state;
 use super::protocol::{flag, text, Result};
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
@@ -15,6 +16,9 @@ use tokio::{
     sync::watch,
 };
 use uuid::Uuid;
+
+#[path = "conversation_lookup.rs"]
+mod conversation_lookup;
 
 pub(super) fn ownership_error() -> String {
     "Take ownership of this conversation before changing it".into()
@@ -337,7 +341,8 @@ impl ConversationOwnership {
     }
 
     pub fn snapshot(&self, id: &str, path: Option<&str>) -> Result<Value> {
-        let saved = self.locate(id, path, false, false)?;
+        let _ = path;
+        let saved = self.lookup_saved(id, false)?.map(|(saved, _)| saved);
         let entries: Vec<Value> = saved
             .as_ref()
             .into_iter()
@@ -348,9 +353,16 @@ impl ConversationOwnership {
             .as_ref()
             .map(|saved| saved.revision.clone())
             .unwrap_or_else(|| format!("missing:{id}"));
+        let leaf_id = entries
+            .iter()
+            .rev()
+            .find(|entry| entry["type"] != "session")
+            .and_then(|entry| entry["id"].as_str());
+        let control = control_state::reduce(&entries, leaf_id)?;
         let mut snapshot = json!({"revision":revision,"state":{"sessionId":id,"model":null,"thinkingLevel":"off","isStreaming":false,"pendingMessageCount":0,
+                "isPaused":control.is_paused,"isPausing":false,"needsInput":control.needs_input,
                 "messageCount":entries.iter().filter(|entry| entry["type"] == "message").count()},
-            "history":{"leafId":entries.last().and_then(|entry| entry.get("id")),"entries":entries},"sequence":0,"epoch":format!("readonly:{id}"),
+            "history":{"leafId":leaf_id,"entries":entries},"sequence":0,"epoch":format!("readonly:{id}"),
             "liveTools":[],"queue":{"type":"queue_update","steering":[],"followUp":[],"pendingMessages":[]}});
         if let Some(saved) = saved {
             snapshot["state"]["sessionFile"] = json!(saved.path);
@@ -359,7 +371,8 @@ impl ConversationOwnership {
     }
 
     pub fn revision(&self, id: &str, path: Option<&str>) -> Result<Value> {
-        let saved = self.locate(id, path, false, true)?;
+        let _ = path;
+        let saved = self.lookup_saved(id, true)?.map(|(saved, _)| saved);
         Ok(json!({"revision":saved.map(|saved| saved.revision).unwrap_or_else(|| format!("missing:{id}"))}))
     }
 

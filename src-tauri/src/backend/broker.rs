@@ -402,7 +402,7 @@ fn broker_orchestration(app: &AppHandle, broker: &BrokerRuntime, value: Value) -
         return broker_interruption_status(broker, &value, result);
     }
     let (id, action) = orchestration_target(&value)?;
-    if action == "interrupt" {
+    if matches!(action, "interrupt" | "locate") {
         let settings = load_app_settings(app.clone())?;
         let runtime = app.state::<PiRuntime>();
         let daemon = crate::daemon::connect(app, &runtime, broker, &settings, host)?;
@@ -441,7 +441,7 @@ fn broker_interruption_status(broker: &BrokerRuntime, request: &Value, mut resul
 fn orchestration_target(value: &Value) -> Result<(&str, &str), String> {
     let id = value["sessionId"].as_str().ok_or("sessionId is required")?;
     let action = value["action"].as_str().ok_or("action is required")?;
-    if !matches!(action, "read" | "send" | "interrupt") { return Err("Unknown orchestration action".into()); }
+    if !matches!(action, "read" | "send" | "interrupt" | "locate") { return Err("Unknown orchestration action".into()); }
     Ok((id, action))
 }
 

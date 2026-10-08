@@ -7,13 +7,11 @@ impl SessionQueue {
     }
 
     pub(super) async fn enqueue(&self, command: Value, name: &str) -> Result<Value> {
+        let Some(command) = self.prepare_submission(command).await? else { return Ok(json!(false)); };
         let question = command["questionResponse"]["requestId"].as_str();
         let id = question.map(|request| format!("question:{request}")).unwrap_or_else(|| Uuid::new_v4().to_string());
         if self.state().unconsumed.iter().any(|item| text(item, "id") == id || item["questionResponse"]["requestId"].as_str().is_some_and(|request| Some(request) == question)) { return Ok(Value::Null); }
-        let mut pending = json!({"id":id,"message":command["message"],"behavior":if name == "steer" { "steer" } else { "followUp" }});
-        for field in ["images", "questionResponse"] {
-            if let Some(value) = command.get(field) { pending[field] = value.clone(); }
-        }
+        let pending = submission_payload(&command, &id, name);
         let held = self.save_submission(&id, &pending)?;
         if held {
             self.publish();
@@ -34,6 +32,20 @@ impl SessionQueue {
         result
     }
 
+    async fn prepare_submission(&self, mut command: Value) -> Result<Option<Value>> {
+        if !goal_submission(&command) { return Ok(Some(command)); }
+        let mut request = json!({"type":"prepare_goal_prompt","message":command["message"]});
+        for field in ["images", "goalSubmissionId"] {
+            if let Some(value) = command.get(field) { request[field] = value.clone(); }
+        }
+        let prepared = self.execute(request).await?;
+        if prepared == false { return Ok(None); }
+        if !prepared["message"].is_string() { return Err("Goal prompt preparation did not produce an objective".into()); }
+        command["message"] = prepared["message"].clone();
+        command.as_object_mut().map(|command| command.remove("images"));
+        Ok(Some(command))
+    }
+
     fn save_submission(&self, id: &str, pending: &Value) -> Result<bool> {
         let mut state = self.state();
         state.pending.push(pending.clone());
@@ -50,4 +62,22 @@ impl SessionQueue {
             Ok(false)
         }
     }
+}
+
+fn submission_payload(command: &Value, id: &str, name: &str) -> Value {
+    let mut pending = json!({"id":id,"message":command["message"],"behavior":if name == "steer" { "steer" } else { "followUp" }});
+    for field in ["images", "questionResponse"] {
+        if let Some(value) = command.get(field) { pending[field] = value.clone(); }
+    }
+    pending
+}
+
+fn goal_objective(message: &str) -> bool {
+    let Some(value) = message.trim_start().strip_prefix("/goal").filter(|value| value.starts_with(char::is_whitespace)).map(str::trim) else { return false; };
+    !value.is_empty() && !matches!(value, "edit" | "clear" | "pause" | "resume" | "budget") && !value.starts_with("budget ")
+}
+
+fn goal_submission(command: &Value) -> bool {
+    let message = text(command, "message");
+    goal_objective(&message) || message.trim() == "/goal" && command["images"].as_array().is_some_and(|images| !images.is_empty())
 }

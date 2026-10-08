@@ -18,6 +18,15 @@ const wrappedManagers = new WeakSet();
 
 let queueValidation;
 
+class GoalPreparationError extends Error {}
+
+function promptError(command, error, output) {
+  const response = { type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) };
+
+  if (error instanceof GoalPreparationError) response.rejection = "goal_preparation";
+  output(response);
+}
+
 function syncPath(path, flags) {
   const fd = openSync(path, flags);
 
@@ -152,6 +161,7 @@ function appInput(dispatch) {
       try { command = JSON.parse(line); } catch {}
 
       if (command?.type === "piop_request") void dispatch(command);
+      else if (command?.type === "prompt") void dispatch({ ...command, command: "prompt" });
       else input.write(`${line}\n`);
     }
   });
@@ -186,21 +196,64 @@ async function dispatchQueuedPrompt(command, session, output) {
     images: payload.images,
     streamingBehavior: payload.streamingBehavior,
     source: "rpc",
+    goalSubmissionId: payload.queueId,
     [queuePromptScope]: { session, queueId: payload.queueId, tagged: false },
-    preflightResult: disposition => {
+    preflightResult: (disposition, submittedText) => {
       preflightSucceeded = true;
-      output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition } });
+      output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition, submittedText } });
     },
   }).catch(error => {
     if (!preflightSucceeded) {
-      output({ type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) });
+      promptError(command, error, output);
     }
   });
+}
+
+function dispatchPrompt(command, session, output) {
+  let preflightSucceeded = false;
+  void session.prompt(command.message, {
+    images: command.images, streamingBehavior: command.streamingBehavior, source: "rpc", goalSubmissionId: command.goalSubmissionId,
+    preflightResult: (disposition, submittedText) => {
+      preflightSucceeded = true;
+      output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition, submittedText } });
+    },
+  }).catch(error => { if (!preflightSucceeded) promptError(command, error, output); });
+}
+
+function goalObjective(text, images) {
+  const value = text.trimStart().match(/^\/goal\s+([\s\S]*)$/)?.[1].trim();
+
+  return Boolean(value && !["edit", "clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget ")) || Boolean(images?.length && text.trim() === "/goal");
+}
+
+async function prepareGoalPrompt(text, session, goalSubmissionId, images) {
+  if (!goalObjective(text, images)) return text;
+
+  try {
+    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.app-rpc"))?.value;
+
+    if (!emit) throw new Error("Goal prompt preparation is unavailable");
+    const request = { command: "prepare_goal_prompt", payload: { message: text, goalSubmissionId, images }, ctx: session.extensionRunner.createCommandContext() };
+    emit(request);
+
+    if (!request.ready) throw new Error("Goal prompt preparation is unavailable");
+    const prepared = await request.ready;
+
+    if (!prepared?.message) throw new Error("Goal prompt preparation did not produce an objective");
+
+    return prepared.message;
+  } catch (error) { throw new GoalPreparationError(error instanceof Error ? error.message : String(error)); }
 }
 
 async function dispatch(command, session, output) {
   try {
     if (!session) throw new Error("Piop app requests are unavailable");
+
+    if (command.command === "prompt") {
+      dispatchPrompt(command, session, output);
+
+      return;
+    }
 
     if (command.command === "queue_prompt") {
       await dispatchQueuedPrompt(command, session, output);
@@ -218,7 +271,7 @@ async function dispatch(command, session, output) {
     const data = await request.ready;
     output({ type: "response", id: command.id, command: command.command, success: true, data });
   } catch (error) {
-    output({ type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) });
+    promptError(command, command.command === "prepare_goal_prompt" ? new GoalPreparationError(error instanceof Error ? error.message : String(error)) : error, output);
   }
 }
 
@@ -231,11 +284,12 @@ async function main() {
   const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);
   const prompt = AgentSession.prototype.prompt;
 
-  AgentSession.prototype.prompt = function (text, options) {
-    const value = text.match(/^\/goal\s+([\s\S]*)$/)?.[1].trim();
-    const objective = value && !["edit", "clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget ");
+  AgentSession.prototype.prompt = async function (text, options) {
+    const objective = goalObjective(text, options?.images);
+    const prepared = await prepareGoalPrompt(text, this, options?.goalSubmissionId, options?.images);
+    const preflightResult = disposition => options?.preflightResult?.(disposition, objective ? prepared : undefined);
 
-    return prompt.call(this, text, objective ? { ...options, expandPromptTemplates: false } : options);
+    return prompt.call(this, prepared, objective ? { ...options, preflightResult, images: undefined, expandPromptTemplates: false } : { ...options, preflightResult });
   };
 
   let session;

@@ -1,8 +1,7 @@
 import type { AppSettings } from "../types";
 import { invoke } from "./platform";
 import { z } from "zod";
-
-type ClientSettings = Pick<AppSettings, "keybindings" | "hiddenModels" | "knownModels" | "debugMode">;
+import { applyClientPreferences, clientPreferences, clientPreferencesSchema, ClientPreferenceConflictError } from "./clientPreferenceMerge";
 
 const storageKey = "piop-client-settings";
 
@@ -14,10 +13,6 @@ const clientSettingsSchema = z.object({
 }).catch({});
 
 type StoredPreferences = z.infer<typeof clientSettingsSchema>;
-
-function preferences(settings: AppSettings): ClientSettings {
-  return { keybindings: settings.keybindings, hiddenModels: settings.hiddenModels, knownModels: settings.knownModels, debugMode: settings.debugMode };
-}
 
 async function storedPreferences(): Promise<{ settings: StoredPreferences; persisted: boolean }> {
   const stored = await invoke("load_client_settings", undefined, clientSettingsSchema.nullable());
@@ -31,7 +26,7 @@ export async function withClientSettings(source: AppSettings | Promise<AppSettin
   const [settings, preferences] = await Promise.all([source, storedPreferences()]);
   const merged = mergeClientSettings(settings, preferences.settings);
 
-  if (migrate && !preferences.persisted) await saveClientSettings(merged);
+  if (migrate && !preferences.persisted) return saveClientSettings(merged, settings, true);
 
   return merged;
 }
@@ -45,12 +40,26 @@ function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): 
   };
 }
 
-export async function saveClientSettings(settings: AppSettings) {
-  await invoke("save_client_settings", { settings: preferences(settings) });
+export async function saveClientSettings(settings: AppSettings, baseline: AppSettings, initialize = false): Promise<AppSettings> {
+  let stored;
+
+  try { stored = await invoke("save_client_settings", { settings: clientPreferences(settings), baseline: clientPreferences(baseline), initialize }, clientPreferencesSchema); }
+  catch (reason) {
+    const message = reason instanceof Error ? reason.message : String(reason);
+
+    if (!message.includes("Client preference conflict at ")) throw reason;
+    let latest: AppSettings | undefined;
+
+    try { latest = await withClientSettings(baseline); } catch { }
+
+    throw new ClientPreferenceConflictError(message, latest);
+  }
 
   try { localStorage.removeItem(storageKey); } catch { }
+
+  return applyClientPreferences(settings, stored);
 }
 
 export function preserveDaemonPreferences(settings: AppSettings, daemonSettings: AppSettings): AppSettings {
-  return { ...settings, ...preferences(daemonSettings) };
+  return { ...settings, ...clientPreferences(daemonSettings), keybindings: { ...daemonSettings.keybindings } };
 }

@@ -239,13 +239,9 @@ async fn wait_local_socket(log_path: &Path, executable: &Path, child: &mut std::
     Err(format!("Piop daemon did not start. See {}", log_path.display()))
 }
 fn spawn_local_daemon(executable: &Path) -> Result<(PathBuf, std::process::Child), String> {
-    let directory = daemon_endpoint::directory()?;
-    ensure_private_dir(&directory)?;
-    let log_path = directory.join("daemon.log");
-    let log = OpenOptions::new().create(true).append(true).open(&log_path).map_err(|error| error.to_string())?;
-    set_private_file_permissions(&log_path)?;
     let mut command = Command::new(executable);
-    command.arg("--exit-on-disconnect").stdin(Stdio::null()).stdout(Stdio::null()).stderr(log);
+    command.arg("--exit-on-disconnect").stdin(Stdio::null()).stdout(Stdio::null());
+    let log_path = crate::daemon_log::configure(&mut command, executable)?;
     #[cfg(unix)]
     { use std::os::unix::process::CommandExt; command.process_group(0); }
     let child = command.spawn().map_err(|error| format!("Could not start Piop daemon: {error}"))?;

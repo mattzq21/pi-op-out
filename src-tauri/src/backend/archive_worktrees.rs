@@ -15,11 +15,13 @@ pub(super) fn archive_conversations(app: &AppHandle, host_id: &str, paths: &[Str
     terminals.extend(runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
         .filter(|agent| agent.host_id == host_id && !agent.session_path.as_ref().is_some_and(|path| paths.contains(path)))
         .filter_map(|agent| agent.worktree.clone()));
-    let mut arguments = serde_json::json!({ "paths": paths, "terminals": terminals, "inspect": true });
+    let mut arguments = serde_json::json!({ "paths": paths, "terminals": terminals, "action": "plan" });
     let inspected = archive_command(&settings, host_id, &arguments)?;
-    let worktrees: Vec<serde_json::Value> = serde_json::from_slice(&inspected.stdout).map_err(|error| format!("Invalid archive worktree list: {error}"))?;
+    let plan: serde_json::Value = serde_json::from_slice(&inspected.stdout).map_err(|error| format!("Invalid archive transaction plan: {error}"))?;
+    let worktrees: Vec<serde_json::Value> = serde_json::from_value(plan["worktrees"].clone()).map_err(|error| format!("Invalid archive worktree list: {error}"))?;
+    arguments["transaction"] = plan["transaction"].as_str().ok_or("Archive transaction identity is missing")?.into();
     cleanup_worktree_scripts(&settings, host_id, worktrees)?;
-    arguments["inspect"] = false.into();
+    arguments["action"] = "execute".into();
     archive_command(&settings, host_id, &arguments)?;
     Ok(())
 }
@@ -45,5 +47,6 @@ fn archive_command(settings: &AppSettings, host_id: &str, arguments: &serde_json
     };
     let output = run_limited(&mut command, 64 * 1024, "Could not archive conversations and working directories")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    if !output.stderr.is_empty() { eprintln!("{}", String::from_utf8_lossy(&output.stderr).trim()); }
     Ok(output)
 }
