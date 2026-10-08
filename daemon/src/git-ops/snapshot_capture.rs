@@ -95,8 +95,22 @@ pub(crate) fn capture_local_git_tree(root: &Path, repository_objects: &Path, sna
         local_snapshot_metadata(&snapshot_root, &tree, cwd)?;
         serde_json::to_string(&GitSnapshotToken { root: snapshot_root.to_string_lossy().into_owned(), tree, repository_root: cwd.to_owned() }).map_err(|error| error.to_string())
     })();
-    if result.is_err() { let _ = fs::remove_dir_all(&snapshot_root); }
+    if result.is_err() { let _ = remove_local_snapshot(&snapshot_root); }
     result
+}
+
+pub(crate) fn remove_local_snapshot(root: &Path) -> Result<(), String> {
+    let profile = root.parent().and_then(Path::parent).ok_or("Snapshot storage has no profile")?;
+    let mut db = crate::session_registry::open(profile)?;
+    match fs::remove_dir_all(root) {
+        Ok(()) => {},
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+        Err(error) => return Err(format!("Could not discard Git snapshot: {error}")),
+    }
+    let transaction = db.transaction().map_err(|error| error.to_string())?;
+    transaction.execute("DELETE FROM snapshot_directories WHERE directory=?", [root.to_string_lossy()]).map_err(|error| error.to_string())?;
+    transaction.execute("DELETE FROM snapshot_recovery WHERE directory=?", [root.to_string_lossy()]).map_err(|error| error.to_string())?;
+    transaction.commit().map_err(|error| error.to_string())
 }
 
 fn own_local_snapshot(root: &Path) -> Result<(), String> {
@@ -124,10 +138,10 @@ pub(crate) fn local_git_diff_with(cwd: &str, base_token: &str,
     mut parse: impl FnMut(&str) -> Result<GitSnapshotToken, String>,
     capture: impl FnOnce(&str) -> Result<Option<String>, String>) -> Result<Option<GitDiffSnapshot>, String> {
     let base = parse(base_token)?;
-    let Some(current_token) = capture(cwd)? else { let _ = fs::remove_dir_all(&base.root); return Ok(None) };
+    let Some(current_token) = capture(cwd)? else { let _ = remove_local_snapshot(Path::new(&base.root)); return Ok(None) };
     let current = parse(&current_token)?;
     let result = local_git_diff_between(cwd, &base, &current);
-    let _ = fs::remove_dir_all(&base.root); let _ = fs::remove_dir_all(&current.root); result
+    let _ = remove_local_snapshot(Path::new(&base.root)); let _ = remove_local_snapshot(Path::new(&current.root)); result
 }
 
 pub(crate) fn local_git_diff_between(cwd: &str, base: &GitSnapshotToken, current: &GitSnapshotToken) -> Result<Option<GitDiffSnapshot>, String> {

@@ -189,13 +189,18 @@ function retainedBaselines(retained) {
   }).sort((left, right) => (right.saved.capturedAt || 0) - (left.saved.capturedAt || 0));
 }
 
+function removeTemporary(directory) {
+  fs.rmSync(directory, { recursive: true, force: true });
+  require('./session-database.cjs').removeSnapshotDirectory(directory);
+}
+
 function temporarySnapshot() {
   const parent = path.join(storageRoot(), 'git-snapshots');
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
   const directory = fs.mkdtempSync(path.join(parent, 'pi-desktop-diff-'));
 
   try { ownTemporary(directory, owner?.phase === 'end' ? 'recoverable' : owner?.sessionId ? 'reader' : 'external'); }
-  catch (error) { fs.rmSync(directory, { recursive: true, force: true }); throw error; }
+  catch (error) { removeTemporary(directory); throw error; }
 
   return directory;
 }
@@ -216,7 +221,7 @@ function materialize(directory, repositoryRoot) {
     copySnapshot(directory, temporary);
     ownTemporary(temporary, 'reader');
   }
-  catch (error) { fs.rmSync(temporary, { recursive: true, force: true }); throw error; }
+  catch (error) { removeTemporary(temporary); throw error; }
 
   return { root: temporary, tree: saved.tree, repository_root: repositoryRoot || saved.repositoryRoot };
 }
@@ -307,6 +312,7 @@ function cleanupAcknowledged(directory) {
       fs.renameSync(source.root, path.join(directory, `source-${index}`));
       syncPath(path.dirname(source.root));
       syncPath(directory);
+      require('./session-database.cjs').removeSnapshotDirectory(source.root);
     }
   }
 
@@ -629,7 +635,7 @@ try { lockedCapture(); }
 catch (error) {
   if (preparing) fs.rmSync(preparing, { recursive: true, force: true });
 
-  if (snapshot) fs.rmSync(snapshot, { recursive: true, force: true });
+  if (snapshot) removeTemporary(snapshot);
   console.error(error.message);
   process.exitCode = 5;
 }

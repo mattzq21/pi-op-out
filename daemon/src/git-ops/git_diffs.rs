@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fs;
 use std::io::Write;
 use std::io::Read;
 use std::path::Path;
@@ -78,15 +77,15 @@ pub(crate) fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option
 }
 
 pub(crate) fn discard_git_tree_at_host(snapshot: &str, host: Option<&RemoteHost>) -> Result<(), String> {
-    let Some(host) = host else { let snapshot = parse_local_snapshot(snapshot)?; return fs::remove_dir_all(snapshot.root).map_err(|error| format!("Could not discard Git snapshot: {error}")); };
+    let Some(host) = host else { let snapshot = parse_local_snapshot(snapshot)?; return super::snapshot_capture::remove_local_snapshot(Path::new(&snapshot.root)); };
     discard_remote_git_tree(snapshot, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
 }
 
 pub(crate) fn discard_remote_git_tree(snapshot: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let snapshot: GitSnapshotToken = serde_json::from_str(snapshot).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&snapshot) { return Err("Invalid remote Git snapshot location".into()); }
-    let root = shell_quote(&snapshot.root);
-    let script = format!("parent=$(cd \"$HOME/{STORAGE_DIRECTORY}/git-snapshots\" && pwd -P) || exit 7; snap=$(cd {root} && pwd -P) || exit 7; [ \"$(dirname -- \"$snap\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$snap\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; rm -rf -- \"$snap\"");
+    let source = crate::session_registry::with_database(include_str!("../../resources/discard-snapshot.cjs"));
+    let script = remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(&source), shell_quote(&snapshot.root)));
     let output = command(script).output().map_err(|error| format!("Could not discard Git snapshot on {host_name}: {error}"))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }

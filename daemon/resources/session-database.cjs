@@ -380,7 +380,12 @@ function removeSnapshotDirectory(directory) {
   const path = require('node:path');
   const db = open(path.dirname(path.dirname(directory)));
 
-  try { db.prepare('DELETE FROM snapshot_directories WHERE directory=?').run(directory); }
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    db.prepare('DELETE FROM snapshot_directories WHERE directory=?').run(directory);
+    db.prepare('DELETE FROM snapshot_recovery WHERE directory=?').run(directory);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   finally { db.close(); }
 }
 
