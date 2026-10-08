@@ -46,7 +46,7 @@ function appInput(dispatch) {
 
 async function dispatch(command, session, output) {
   try {
-    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.app-rpc"))?.value;
+    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"))?.value;
 
     if (!session || !emit) throw new Error("Piop app requests are unavailable");
     const request = { command: command.command, payload: command.payload, ctx: session.extensionRunner.createCommandContext() };
