@@ -70,7 +70,7 @@ impl Session {
             let input = call.get("args").filter(|value| !value.is_null())
                 .or_else(|| running.and_then(|tool| tool.get("args")))
                 .or_else(|| requested.and_then(|tool| tool.get("arguments")));
-            json!({"session":state.key,"epoch":self.epoch,"cwd":self.cwd,"model":state.state["model"],
+            json!({"sessionId":state.key,"epoch":self.epoch,"cwd":self.cwd,"model":state.state["model"],
                 "toolCallId":id,"toolName":call.get("toolName").or_else(|| running.and_then(|tool| tool.get("toolName"))).or_else(|| requested.and_then(|tool| tool.get("name"))),
                 "input":input,"result":result,"failureKind":super::super::payload::tool_failure_kind(result)})
         };

@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS tool_failures (
   id INTEGER PRIMARY KEY,
   recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  session TEXT NOT NULL,
+  session_id TEXT NOT NULL,
   epoch TEXT NOT NULL,
   cwd TEXT,
   model TEXT,

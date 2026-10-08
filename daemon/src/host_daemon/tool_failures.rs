@@ -83,16 +83,12 @@ fn retained_result(transaction: &rusqlite::Transaction<'_>, record: &Value) -> R
     Ok(result)
 }
 
-fn write(path: &Path, record: &Value) -> Result<(), Box<dyn std::error::Error>> {
-    prepare_database_file(path)?;
-    let mut connection = Connection::open(path)?;
-    connection.busy_timeout(Duration::from_millis(250))?;
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+fn prepare_table(transaction: &rusqlite::Transaction<'_>) -> Result<(), rusqlite::Error> {
     transaction.execute_batch(
         "CREATE TABLE IF NOT EXISTS tool_failures (
             id INTEGER PRIMARY KEY,
             recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-            session TEXT NOT NULL,
+            session_id TEXT NOT NULL,
             epoch TEXT NOT NULL,
             cwd TEXT,
             model TEXT,
@@ -104,18 +100,34 @@ fn write(path: &Path, record: &Value) -> Result<(), Box<dyn std::error::Error>> 
             UNIQUE (epoch, tool_call_id)
         );",
     )?;
+    let old_column: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tool_failures') WHERE name = 'session')",
+        [], |row| row.get(0),
+    )?;
+    if old_column {
+        transaction.execute_batch("ALTER TABLE tool_failures RENAME COLUMN session TO session_id;")?;
+    }
+    Ok(())
+}
+
+fn write(path: &Path, record: &Value) -> Result<(), Box<dyn std::error::Error>> {
+    prepare_database_file(path)?;
+    let mut connection = Connection::open(path)?;
+    connection.busy_timeout(Duration::from_millis(250))?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    prepare_table(&transaction)?;
     let result = retained_result(&transaction, record)?;
     let json = |key: &str| record.get(key).filter(|value| !value.is_null()).map(Value::to_string);
     transaction.execute(
         "INSERT INTO tool_failures
-            (session, epoch, cwd, model, tool_call_id, tool_name, input, result, failure_kind)
+            (session_id, epoch, cwd, model, tool_call_id, tool_name, input, result, failure_kind)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT (epoch, tool_call_id) DO UPDATE SET
             tool_name = COALESCE(excluded.tool_name, tool_failures.tool_name),
             input = COALESCE(excluded.input, tool_failures.input),
             result = excluded.result,
             failure_kind = excluded.failure_kind",
-        params![record["session"].as_str(), record["epoch"].as_str(), record["cwd"].as_str(),
+        params![record["sessionId"].as_str(), record["epoch"].as_str(), record["cwd"].as_str(),
             json("model"), record["toolCallId"].as_str(), record["toolName"].as_str(),
             json("input"), result.to_string(), record["failureKind"].as_str()],
     )?;
