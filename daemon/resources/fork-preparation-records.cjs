@@ -40,8 +40,20 @@ function read(preparation) {
 function remove(preparation) {
   const db = database.open(profile(preparation));
 
-  try { db.prepare('DELETE FROM fork_preparation_checkpoints WHERE preparation=?').run(preparation); }
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    db.prepare('DELETE FROM fork_preparation_checkpoints WHERE preparation=?').run(preparation);
+    db.prepare('DELETE FROM fork_preparations WHERE directory=?').run(preparation);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   finally { db.close(); }
 }
 
-module.exports = { read, remove };
+function list(root) {
+  const db = database.open(root);
+
+  try { return db.prepare('SELECT directory FROM fork_preparations ORDER BY directory').all().map(row => row.directory); }
+  finally { db.close(); }
+}
+
+module.exports = { read, remove, list };

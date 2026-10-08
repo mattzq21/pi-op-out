@@ -69,6 +69,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS ephemeral_cleanup_owners (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS queued_inputs (session_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS legacy_queued_inputs (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS fork_preparations (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS fork_preparation_checkpoints (preparation TEXT NOT NULL, session_id TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(preparation, session_id));
       CREATE TABLE IF NOT EXISTS session_comparison_state (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_completed_comparisons (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, turn_id TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY(session_id, turn_id));`);
@@ -183,6 +184,7 @@ function importSessions(db, root) {
     importRetention(db, root);
     importCleanupRequests(db, root);
     importWorktrees(db, root);
+    importForkPreparations(db, root);
     importRecoveryDirectories(db, root);
     importReaderReleases(db, root);
     importSnapshotDirectories(db, root);
@@ -193,6 +195,22 @@ function importSessions(db, root) {
     importJsonRecords(db, root, 'conversation-queues', 'legacy_queued_inputs', 'legacy-queued-inputs-v1');
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importForkPreparations(db, root) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('fork-preparations-v1')) return;
+  const directory = path.join(root, 'fork-preparations');
+  let entries;
+
+  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) throw new Error('Invalid fork preparation storage');
+    db.prepare('INSERT INTO fork_preparations VALUES (?)').run(path.join(directory, entry.name));
+  }
+
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('fork-preparations-v1');
 }
 
 function importJsonRecords(db, root, area, table, migration) {
@@ -214,12 +232,14 @@ function importJsonRecords(db, root, area, table, migration) {
   db.prepare('INSERT INTO storage_migrations VALUES (?)').run(migration);
 }
 
-function queuedInputs(root) {
+function rows(root, sql) {
   const db = open(root);
 
-  try { return db.prepare('SELECT session_id, record_json FROM queued_inputs UNION ALL SELECT owner_key AS session_id, record_json FROM legacy_queued_inputs').all(); }
+  try { return db.prepare(sql).all(); }
   finally { db.close(); }
 }
+
+function queuedInputs(root) { return rows(root, 'SELECT session_id, record_json FROM queued_inputs UNION ALL SELECT owner_key AS session_id, record_json FROM legacy_queued_inputs'); }
 
 function queuedInput(root, id) {
   const db = open(root);
@@ -232,12 +252,7 @@ function queuedInput(root, id) {
   } finally { db.close(); }
 }
 
-function ephemeralOwners(root) {
-  const db = open(root);
-
-  try { return db.prepare('SELECT owner_key, record_json FROM ephemeral_cleanup_owners ORDER BY owner_key').all(); }
-  finally { db.close(); }
-}
+function ephemeralOwners(root) { return rows(root, 'SELECT owner_key, record_json FROM ephemeral_cleanup_owners ORDER BY owner_key'); }
 
 function importPendingDiffs(db) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-pending-diffs-v1')) return;
@@ -395,12 +410,7 @@ function saveSnapshotOwner(directory, owner) {
   } finally { db.close(); }
 }
 
-function snapshotDirectories(root) {
-  const db = open(root);
-
-  try { return db.prepare('SELECT directory, owner_json FROM snapshot_directories').all(); }
-  finally { db.close(); }
-}
+function snapshotDirectories(root) { return rows(root, 'SELECT directory, owner_json FROM snapshot_directories'); }
 
 function snapshotOwner(directory) {
   const db = open(path.dirname(path.dirname(directory)));
@@ -451,12 +461,7 @@ function releaseSnapshotReader(root, scope, record) {
   } finally { db.close(); }
 }
 
-function snapshotReaderReleases(root) {
-  const db = open(root);
-
-  try { return db.prepare('SELECT scope, record_json FROM snapshot_reader_releases').all(); }
-  finally { db.close(); }
-}
+function snapshotReaderReleases(root) { return rows(root, 'SELECT scope, record_json FROM snapshot_reader_releases'); }
 
 function removeSnapshotReaderRelease(root, row) {
   const db = open(root);
@@ -488,12 +493,7 @@ function importRecoveryDirectories(db, root) {
   db.prepare('INSERT INTO storage_migrations VALUES (?)').run('recovery-directories-v1');
 }
 
-function recoveryRecords(root) {
-  const db = open(root);
-
-  try { return db.prepare('SELECT record_id, record_json FROM recovery_directories ORDER BY record_id').all(); }
-  finally { db.close(); }
-}
+function recoveryRecords(root) { return rows(root, 'SELECT record_id, record_json FROM recovery_directories ORDER BY record_id'); }
 
 function saveRecoveryRecord(root, record) {
   const db = open(root);

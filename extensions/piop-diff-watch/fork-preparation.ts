@@ -36,7 +36,11 @@ export async function registerPreparedCheckpoints(sessionId: string, cwd: string
   const database = open(dirname(dirname(preparation)));
 
   try {
+    database.exec("BEGIN IMMEDIATE");
+    database.prepare("INSERT INTO fork_preparations VALUES (?) ON CONFLICT(directory) DO NOTHING").run(preparation);
     database.prepare("INSERT INTO fork_preparation_checkpoints VALUES (?, ?, ?) ON CONFLICT(preparation, session_id) DO UPDATE SET record_json=excluded.record_json")
       .run(preparation, sessionId, JSON.stringify({ sessionId, roots, repositories, destination }));
-  } finally { database.close(); }
+    database.exec("COMMIT");
+  } catch (error) { database.exec("ROLLBACK"); throw error; }
+  finally { database.close(); }
 }

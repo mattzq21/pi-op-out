@@ -14,11 +14,6 @@ function sync(directory) {
   try { fs.fsyncSync(file); } finally { fs.closeSync(file); }
 }
 
-function children(directory) {
-  try { return fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
-}
-
 function savedIdentity(file) {
   const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
 
@@ -109,7 +104,9 @@ function removeDirectory(directory) {
 
   fs.rmSync(removing, { recursive: true });
   sync(parent);
-  require('./fork-preparation-records.cjs').remove(path.join(parent, path.basename(directory).replace(/^\.cleanup-/, '')));
+  const records = require('./fork-preparation-records.cjs');
+  records.remove(path.join(parent, path.basename(directory).replace(/^\.cleanup-/, '')));
+  records.remove(removing);
 }
 
 function recoverDirectory(directory, owners) {
@@ -128,6 +125,21 @@ function recoverDirectory(directory, owners) {
   } finally { fs.closeSync(descriptor); }
 }
 
+function regularDirectory(directory) {
+  try {
+    if (!fs.lstatSync(directory).isDirectory()) throw new Error('Invalid fork preparation storage');
+
+    return true;
+  } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+}
+
+function existingPreparation(directory) {
+  if (regularDirectory(directory)) return directory;
+  const removing = path.join(path.dirname(directory), `.cleanup-${path.basename(directory)}`);
+
+  return regularDirectory(removing) ? removing : undefined;
+}
+
 function recover(root) {
   const directory = path.join(root, 'fork-preparations');
   let published;
@@ -139,11 +151,13 @@ function recover(root) {
     return published;
   };
 
-  for (const entry of children(directory)) {
-    if (!entry.isDirectory()) throw new Error('Invalid fork preparation storage');
-    const preparation = path.join(directory, entry.name);
+  for (const saved of require('./fork-preparation-records.cjs').list(root)) {
+    if (path.dirname(saved) !== directory) throw new Error('Invalid fork preparation location');
+    const preparation = existingPreparation(saved);
 
-    if (entry.name.startsWith('.cleanup-')) removeDirectory(preparation);
+    if (!preparation) { require('./fork-preparation-records.cjs').remove(saved); continue; }
+
+    if (path.basename(preparation).startsWith('.cleanup-')) removeDirectory(preparation);
     else recoverDirectory(preparation, owners);
   }
 }

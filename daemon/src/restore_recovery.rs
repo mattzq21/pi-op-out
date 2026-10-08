@@ -95,8 +95,13 @@ fn fork_publication_pending(root: &Path, area: &str) -> Result<bool, String> {
     }
 }
 
+fn fork_preparation_pending(root: &Path) -> Result<bool, String> {
+    let db = crate::session_registry::open(root)?;
+    db.query_row("SELECT EXISTS(SELECT 1 FROM fork_preparations)", [], |row| row.get(0)).map_err(|error| error.to_string())
+}
+
 fn transaction_directories_pending(root: &Path) -> Result<bool, String> {
-    if archive_pending(root)? || fork_publication_pending(root, "fork-transactions")? || fork_publication_pending(root, "fork-preparations")? { return Ok(true); }
+    if archive_pending(root)? || fork_publication_pending(root, "fork-transactions")? || fork_preparation_pending(root)? { return Ok(true); }
     for area in ["sessions", "archived", "deleted-sessions"] {
         if deletion_pending(root, area)? { return Ok(true); }
     }
