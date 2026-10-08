@@ -169,7 +169,7 @@ impl PluginService {
 
     pub fn bind(&self, host: Weak<super::controller::Host>) { let _ = self.host.set(host); }
 
-    async fn initialize(&self) {
+    pub async fn initialize(&self) {
         if self.state.read().await.is_some() { return; }
         let mut state = self.state.write().await;
         if state.is_some() { return; }
@@ -197,7 +197,6 @@ impl PluginService {
 
     pub async fn handle(&self, packet: Value) -> Result<Value> {
         if packet["type"] == "plugin_idle" { return self.idle().await; }
-        self.initialize().await;
         if packet["type"] == "prepare_daemon_restart" { return self.prepare_restart(&packet).await; }
         let runtime = {
             let state = self.state.read().await;

@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 pub(super) trait Services: Send + Sync {
     fn bind(&self, host: Weak<Host>);
+    fn initialize(&self) -> BoxFuture<'_, ()>;
     fn handle(&self, packet: Value) -> BoxFuture<'_, Result<Value>>;
     fn refresh_providers(&self) -> BoxFuture<'_, Result<u64>>;
     fn shutdown(&self) -> BoxFuture<'_, ()>;
@@ -177,6 +178,7 @@ impl Host {
         let ownership = ConversationOwnership::new(&host.home, storage, Arc::new(Callbacks(Arc::downgrade(&host)))).await?;
         let _ = host.ownership.set(ownership);
         host.services.bind(Arc::downgrade(&host));
+        host.services.initialize().await;
         host.watch_removals();
         Ok(host)
     }
