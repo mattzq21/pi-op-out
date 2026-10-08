@@ -455,12 +455,17 @@ async function pendingReviews(parentPath, parentId) {
 
   return io.lockedAsync(root, () => {
     if (!io.exists(parentPath)) return [];
-    const parent = io.header(parentPath);
-
-    if (!parent || parent.id !== parentId) throw new Error('Live review publication requires its actual original parent');
     const result = [];
 
-    try { for (const file of journalFiles(root)) pendingReview(root, file, parentId, result); }
+    try {
+      for (const file of journalFiles(root)) pendingReview(root, file, parentId, result);
+
+      if (result.length) {
+        const parent = io.header(parentPath);
+
+        if (!parent || parent.id !== parentId) throw new Error('Live review publication requires its actual original parent');
+      }
+    }
     catch (error) { for (const pending of result) release(pending.publication); throw error; }
 
     return result;
