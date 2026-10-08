@@ -1,16 +1,9 @@
 use crate::{CachedSession, SessionSummary};
 use rusqlite::{params, Connection};
-use std::{collections::HashMap, path::{Path, PathBuf}, time::Duration};
+use std::{collections::HashMap, path::{Path, PathBuf}};
 
 pub(super) fn open(root: &Path) -> Result<Connection, String> {
-    let request = serde_json::json!({"root":root,"action":"initialize"});
-    let output = crate::node_command().args(["-e", &crate::session_registry::source(), &request.to_string()])
-        .output().map_err(|error| error.to_string())?;
-    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
-    let connection = Connection::open(root.join("sessions.sqlite")).map_err(|error| error.to_string())?;
-    connection.busy_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
-    connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;").map_err(|error| error.to_string())?;
-    Ok(connection)
+    crate::session_registry::open(root)
 }
 
 pub(super) fn load(connection: &Connection) -> Result<HashMap<PathBuf, CachedSession>, String> {
@@ -52,9 +45,9 @@ fn save_row(transaction: &rusqlite::Transaction<'_>, cached: &CachedSession) -> 
     if deleted { return Ok(()); }
     let mut value = serde_json::to_value(summary).map_err(|error| error.to_string())?;
     if let Some(object) = value.as_object_mut() { object.remove("id"); object.remove("path"); }
-    transaction.execute("INSERT INTO sessions (session_id, session_path) VALUES (?, ?)
-            ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path WHERE sessions.session_path IS NOT excluded.session_path",
-            params![summary.id, summary.path]).map_err(|error| error.to_string())?;
+    let registered: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=? AND session_path=?)",
+        params![summary.id, summary.path], |row| row.get(0)).map_err(|error| error.to_string())?;
+    if !registered { return Ok(()); }
     transaction.execute("INSERT INTO session_sidebar VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET
             fingerprint=excluded.fingerprint, modified_at=excluded.modified_at, summary_json=excluded.summary_json
             WHERE session_sidebar.fingerprint != excluded.fingerprint OR session_sidebar.summary_json != excluded.summary_json",

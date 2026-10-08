@@ -13,7 +13,6 @@ use std::time::SystemTime;
 use crate::platform::AppHandle;
 use crate::platform::State;
 use uuid::Uuid;
-use walkdir::WalkDir;
 use crate::{AppSettings, CachedSession, DirectoryListing, MAX_REMOTE_HOSTS, MAX_SESSION_INDEX_BATCH_BYTES, RemoteHost, STORAGE_DIRECTORY, SessionIndexRuntime, SessionSummary, TemporaryChat, node_command, peers};
 use crate::git_ops::worktree_setup::{run_limited, shell_quote};
 pub(crate) use crate::git_ops::project_inspection::inspect_session_projects_with;
@@ -79,7 +78,6 @@ pub(super) fn read_session_summaries_with(candidates: &[(String, String, u64, u6
 
 pub(super) fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
     crate::restore_recovery::recover(root.parent().ok_or("Session storage root missing")?)?;
-    crate::session_registry::index_existing();
     let mut sessions = cached_local_sessions(index, root)?;
     inspect_session_projects(index, &mut sessions, None)?; Ok(sessions)
 }
@@ -111,21 +109,31 @@ type SessionCandidate = (String, String, u64, u64);
 
 fn local_session_candidates(root: &Path, cache: &HashMap<PathBuf, CachedSession>) -> Result<(HashSet<PathBuf>, Vec<SessionCandidate>), String> {
     let mut seen = HashSet::new(); let mut changed = Vec::new();
-    for entry in WalkDir::new(root).follow_links(false) {
-        let entry = entry.map_err(|error| error.to_string())?;
-        if !entry.file_type().is_file() || entry.path().extension().and_then(|value| value.to_str()) != Some("jsonl") { continue; }
-        let path = entry.path().to_path_buf();
-        let metadata = match entry.metadata() {
-            Ok(metadata) => metadata,
-            Err(error) if error.io_error().is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => continue,
-            Err(error) => return Err(error.to_string()),
-        };
-        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-        let fingerprint = format!("{}:{}", modified.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos(), metadata.len());
+    let database = crate::session_registry::open(root.parent().ok_or("Session storage root missing")?)?;
+    let mut statement = database.prepare("SELECT session_path FROM sessions WHERE session_path IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(sessions.session_id))")
+        .map_err(|error| error.to_string())?;
+    let paths = statement.query_map([], |row| row.get::<_, String>(0)).map_err(|error| error.to_string())?;
+    for path in paths {
+        let path = PathBuf::from(path.map_err(|error| error.to_string())?);
+        if !path.starts_with(root) { continue; }
+        let Some(candidate) = local_candidate(&path)? else { continue; };
         seen.insert(path.clone());
-        if cache.get(&path).is_none_or(|cached| cached.fingerprint != fingerprint) { changed.push((path.to_string_lossy().into_owned(), fingerprint, unix_timestamp(modified), metadata.len())); }
+        if cache.get(&path).is_none_or(|cached| cached.fingerprint != candidate.1) { changed.push(candidate); }
     }
     Ok((seen, changed))
+}
+
+fn local_candidate(path: &Path) -> Result<Option<SessionCandidate>, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if !metadata.is_file() { return Ok(None); }
+    let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let fingerprint = format!("{}:{}", modified.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos(), metadata.len());
+    Ok(Some((path.to_string_lossy().into_owned(), fingerprint, unix_timestamp(modified), metadata.len())))
 }
 
 pub(super) fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
@@ -137,7 +145,9 @@ pub(super) fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHos
 }
 
 pub(super) fn query_remote_session_metadata(command: impl FnOnce(&str) -> Command) -> Result<Vec<u8>, String> {
-    let mut command = command(&format!(r#"mkdir -p "$HOME/{STORAGE_DIRECTORY}/sessions" && find "$HOME/{STORAGE_DIRECTORY}/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#));
+    let script = format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}",
+        shell_quote(&crate::session_registry::source()), shell_quote(r#"{"action":"metadata"}"#));
+    let mut command = command(&remote_login_command(&script));
     let output = run_limited(&mut command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not list remote sessions")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
     Ok(output.stdout)

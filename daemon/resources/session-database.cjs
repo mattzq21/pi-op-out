@@ -60,4 +60,76 @@ function movePaths(root, moves) {
   } finally { db.close(); }
 }
 
-module.exports = { initialize, repositoryQuery, movePaths };
+function register(db, sessionId, sessionPath) {
+  if (db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(sessionId)) return;
+  const previous = db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId);
+
+  if (previous?.session_path && previous.session_path !== sessionPath && require('node:fs').existsSync(previous.session_path)) {
+    throw new Error(`Conversation identity has more than one transcript: ${sessionId}`);
+  }
+
+  db.prepare(`INSERT INTO sessions (session_id, session_path) VALUES (?, ?)
+    ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path`).run(sessionId, sessionPath);
+}
+
+function registerPath(root, sessionId, sessionPath) {
+  const file = require('node:path').join(root, 'sessions.sqlite');
+  const db = new (require('node:sqlite').DatabaseSync)(file);
+
+  try {
+    require('node:fs').chmodSync(file, 0o600);
+    initialize(db);
+    db.exec('BEGIN IMMEDIATE');
+    register(db, sessionId, sessionPath);
+    db.exec('COMMIT');
+  } finally { db.close(); }
+}
+
+function importDirectory(db, directory) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  let entries;
+
+  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
+
+  for (const entry of entries) {
+    const file = path.join(directory, entry.name);
+
+    if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) importDirectory(db, file);
+
+    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+    importTranscript(db, file);
+  }
+}
+
+function importTranscript(db, file) {
+  const fs = require('node:fs');
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  let header;
+
+  try {
+    const buffer = Buffer.alloc(65536);
+    const count = fs.readSync(descriptor, buffer);
+    header = JSON.parse(buffer.subarray(0, count).toString().split('\n')[0]);
+  } finally { fs.closeSync(descriptor); }
+
+  if (header.type !== 'session') return;
+  require('node:assert/strict').match(header.id, /\S/);
+  register(db, header.id, file);
+}
+
+function importSessions(db, root) {
+  db.exec('CREATE TABLE IF NOT EXISTS storage_migrations (name TEXT PRIMARY KEY); BEGIN IMMEDIATE');
+
+  try {
+    if (!db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('session-catalog-v1')) {
+      for (const area of ['sessions', 'archived']) importDirectory(db, require('node:path').join(root, area));
+      db.prepare('INSERT INTO storage_migrations VALUES (?)').run('session-catalog-v1');
+    }
+
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions };

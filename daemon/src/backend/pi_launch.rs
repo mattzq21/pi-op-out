@@ -220,6 +220,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
     let broker = shell_quote(include_str!("../../resources/session-broker.ts"));
     let session_diff_store = shell_quote(include_str!("../../resources/session-diff-store.cjs"));
+    let session_database = shell_quote(include_str!("../../resources/session-database.cjs"));
     let ask_user = shell_quote(include_str!("../../resources/ask-user.ts"));
     let trace_reader = shell_quote(include_str!("../../resources/trace-reader.ts"));
     let agent_extension_loader = shell_quote(include_str!("../../../extensions/piop-define-agents/extension-loader.ts"));
@@ -240,6 +241,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {agent_extension_loader} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/extension-loader.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/extension-loader.ts" && printf %s {diagrams_extension} > "$HOME/{STORAGE_DIRECTORY}/piop-diagrams.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-diagrams.ts""#);
     let remote = format!(r#"{remote} && printf %s {ask_user} > "$HOME/{STORAGE_DIRECTORY}/ask-user.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/ask-user.ts""#);
     let remote = format!(r#"{remote} && printf %s {session_diff_store} > "$HOME/{STORAGE_DIRECTORY}/session-diff-store.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/session-diff-store.cjs""#);
+    let remote = format!(r#"{remote} && printf %s {session_database} > "$HOME/{STORAGE_DIRECTORY}/session-database.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/session-database.cjs""#);
     let config_migration = format!(r#"if [ ! -f "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/config.json"; fi"#);
     let remote = if DEVELOPMENT { remote } else { format!(r#"{remote} && flock --exclusive --wait 10 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/config.lock" sh -c {} && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#, shell_quote(&config_migration)) };
      let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode" && printf %s {fast_mode} > "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts""#);

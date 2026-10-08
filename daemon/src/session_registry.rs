@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use std::{sync::OnceLock, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::HashSet, path::{Path, PathBuf}, sync::{Mutex, OnceLock}, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 pub(crate) fn source() -> String {
     format!("const sessionDatabase = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n{}",
@@ -27,7 +27,19 @@ pub(crate) fn record(state: &Value, cwd: Option<&str>) {
     std::thread::spawn(move || run(request));
 }
 
-pub(crate) fn index_existing() {
-    static STARTED: OnceLock<()> = OnceLock::new();
-    STARTED.get_or_init(|| { std::thread::spawn(|| run(json!({"action":"scan"}))); });
+pub(crate) fn open(root: &Path) -> Result<rusqlite::Connection, String> {
+    static READY: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    let mut ready = READY.get_or_init(Mutex::default).lock().map_err(|_| "Session database lock was poisoned")?;
+    if !ready.contains(root) {
+        let request = json!({"root":root,"action":"initialize"});
+        let output = crate::node_command().args(["-e", &source(), &request.to_string()])
+            .output().map_err(|error| error.to_string())?;
+        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
+        ready.insert(root.to_path_buf());
+    }
+    drop(ready);
+    let connection = rusqlite::Connection::open(root.join("sessions.sqlite")).map_err(|error| error.to_string())?;
+    connection.busy_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
+    connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;").map_err(|error| error.to_string())?;
+    Ok(connection)
 }

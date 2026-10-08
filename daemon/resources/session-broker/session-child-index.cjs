@@ -35,6 +35,7 @@ function store(root, value) {
 }
 
 function ensure(root, sessionId, sessionPath, complete = false) {
+  if (sessionPath) require('../session-database.cjs').registerPath(root, sessionId, sessionPath);
   const previous = read(root, sessionId);
 
   if (previous && (!sessionPath || previous.sessionPath === sessionPath)) return previous;

@@ -107,6 +107,7 @@ pub(super) fn prepare_session_broker() -> Result<PathBuf, String> {
 }
 
 fn prepare_broker_storage(dir: &Path) -> Result<(), String> {
+    atomic_write_private(&dir.join("session-database.cjs"), include_str!("../../resources/session-database.cjs").as_bytes())?;
     atomic_write_private(&dir.join("sdk-storage.mjs"), include_str!("../../resources/sdk-storage.mjs").as_bytes())?;
     atomic_write_private(&dir.join("session-diff-store.cjs"), include_str!("../../resources/session-diff-store.cjs").as_bytes())?;
     atomic_write_private(&dir.join("ask-user.ts"), include_str!("../../resources/ask-user.ts").as_bytes())

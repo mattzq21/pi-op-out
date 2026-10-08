@@ -1,7 +1,7 @@
 use super::{optional_path, read_candidate, ConversationOwnership, SavedConversation};
 use crate::host_supervisor::protocol::Result;
 use serde_json::{json, Value};
-use walkdir::WalkDir;
+use rusqlite::OptionalExtension;
 
 impl ConversationOwnership {
     pub fn lookup(&self, id: &str) -> Result<Value> {
@@ -11,25 +11,21 @@ impl ConversationOwnership {
 
     pub fn lookup_saved(&self, id: &str, metadata_only: bool) -> Result<Option<(SavedConversation, bool)>> {
         Self::key(id)?;
-        let mut found = None;
+        let database = crate::session_registry::open(&self.root)?;
+        let path: Option<String> = database.query_row("SELECT session_path FROM sessions WHERE session_id=?
+            AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))",
+            [id, id], |row| row.get(0)).optional().map_err(|error| error.to_string())?.flatten();
+        let Some(path) = path else { return Ok(None); };
+        let path = std::path::Path::new(&path);
         for archived in [false, true] {
             let Some(root) = optional_path(&self.root.join(if archived { "archived" } else { "sessions" }))? else { continue; };
-            for entry in WalkDir::new(&root).follow_links(false) {
-                let entry = entry.map_err(|error| error.to_string())?;
-                if !transcript_entry(&entry) { continue; }
-                let Some(saved) = conversation_candidate(id, entry.path(), &root, metadata_only)? else { continue; };
-                if found.is_some() { return Err("Conversation identity is duplicated; resolve its storage copies before opening it".into()); }
-                found = Some((saved, archived));
-            }
+            if !path.starts_with(&root) { continue; }
+            return Ok(conversation_candidate(id, path, &root, metadata_only)?.map(|saved| (saved, archived)));
         }
-        Ok(found)
+        Ok(None)
     }
 }
 
 fn conversation_candidate(id: &str, path: &std::path::Path, root: &std::path::Path, metadata_only: bool) -> Result<Option<SavedConversation>> {
     Ok(read_candidate(id, path, root, metadata_only)?.filter(|saved| saved.header["type"] == "session" && saved.header["cwd"].as_str().is_some()))
-}
-
-fn transcript_entry(entry: &walkdir::DirEntry) -> bool {
-    entry.file_type().is_file() && entry.path().extension().is_some_and(|extension| extension == "jsonl")
 }

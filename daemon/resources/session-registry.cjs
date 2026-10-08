@@ -88,7 +88,7 @@ function insertRecord(session, checked, exists, state) {
   const { repository, remote, url, branch, upstream, head } = state;
 
   if (db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id = lower(?)').get(session.sessionId)) return;
-  db.prepare(`INSERT INTO sessions VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path`).run(session.sessionId, session.sessionPath);
+  sessionTables.register(db, session.sessionId, session.sessionPath);
   db.prepare(`INSERT INTO session_repositories SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id = lower(?))
     ON CONFLICT(session_id) DO UPDATE SET cwd=excluded.cwd,
@@ -119,33 +119,33 @@ function record(session) {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-function scan(directory) {
-  if (!fs.existsSync(directory)) return;
 
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
+function metadata() {
+  sessionTables.importSessions(db, root);
+  const directory = path.join(root, 'sessions') + path.sep;
 
-    if (entry.isDirectory()) { if (!entry.name.endsWith('.snapshots')) scan(file); continue; }
+  const rows = db.prepare(`SELECT session_path FROM sessions WHERE session_path IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(sessions.session_id))`).all();
 
-    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+  for (const row of rows) {
+    if (!row.session_path.startsWith(directory)) continue;
+    let stat;
 
-    try {
-      const fd = fs.openSync(file, 'r');
-      let header;
+    try { stat = fs.lstatSync(row.session_path, { bigint: true }); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
 
-      try { const buffer = Buffer.alloc(65536); const count = fs.readSync(fd, buffer); header = JSON.parse(buffer.subarray(0, count).toString().split('\n')[0]); }
-      finally { fs.closeSync(fd); }
-
-      if (header.type === 'session') record({ sessionId: header.id, sessionPath: file, cwd: header.cwd });
-    } catch (error) { console.error(`Could not index session ${file}: ${error.message}`); }
+    if (!stat.isFile()) continue;
+    const modified = `${stat.mtimeNs / 1000000000n}.${String(stat.mtimeNs % 1000000000n).padStart(9, '0')}`;
+    process.stdout.write(`${row.session_path}\0${modified}\0${stat.size}\0`);
   }
 }
 
 try {
-  if (request.action === 'initialize') { }
+  if (request.action === 'initialize') sessionTables.importSessions(db, root);
+  else if (request.action === 'metadata') metadata();
   else if (request.action === 'get') process.stdout.write(JSON.stringify(db.prepare('SELECT r.*, s.session_path FROM session_repositories r JOIN sessions s USING(session_id) WHERE r.session_id = ?').get(request.sessionId) || null));
   else if (request.action === 'deleted') process.stdout.write(JSON.stringify(db.prepare('SELECT session_id FROM session_deletion_tombstones').all().map(record => record.session_id)));
-  else if (request.action === 'scan') { scan(path.join(root, 'sessions')); scan(path.join(root, 'archived')); }
+  else if (request.action === 'scan') sessionTables.importSessions(db, root);
   else if (request.action === 'record') record(request);
   else throw new Error('Unknown session registry action');
 } finally { db.close(); }
