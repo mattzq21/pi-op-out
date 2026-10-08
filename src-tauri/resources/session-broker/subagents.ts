@@ -448,12 +448,13 @@ export function registerSubagents(pi: ExtensionAPI) {
   const unsubscribeTools = pi.events.on("piop:required-tools", ({ ctx, tools, availableTools }) => {
     const allowed = availableTools ?? pi.getActiveTools();
     const child = ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === SUBAGENT_PARENT);
+    const reviewer = ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-review-parent");
 
     if (allowed.includes("subagent") || latestRuns(ctx).length) tools.push("spawn_agent", "followup_task", "interrupt_agent", "list_agents", "list_agent_profiles", "send_message", "wait_agent", "await_subagents");
 
     if (child) tools.push("send_message", "wait_agent");
 
-    if (allowed.includes("send_message")) tools.push("send_message_to_thread", "stop_thread", "read_thread", "wait_threads", "list_threads", "create_thread", "list_agent_profiles");
+    if (!child && !reviewer && allowed.includes("send_message")) tools.push("send_message_to_thread", "stop_thread", "read_thread", "wait_threads", "list_threads", "create_thread", "list_agent_profiles");
   });
 
   pi.on("session_shutdown", unsubscribeTools);
