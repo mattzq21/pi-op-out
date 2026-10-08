@@ -60,6 +60,72 @@ async function dispatch(command, session, output) {
   }
 }
 
+const isReview = text => /^\/review(?:\s|$)/.test(text);
+
+async function executeQueuedReview(session, text, images) {
+  const ctx = session.extensionRunner.createCommandContext();
+  const request = { command: "start_review", payload: { args: text.slice(7).trim(), images }, ctx };
+
+  try {
+    Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge")).value(request);
+    if (!request.ready) throw new Error("Review requests are unavailable");
+    await request.ready;
+  } catch (error) {
+    ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+  }
+}
+
+async function consumeReviews(session, messages, behavior) {
+  const prompts = [];
+
+  for (const message of messages) {
+    const text = message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
+
+    if (!isReview(text)) { prompts.push(message); continue; }
+    const pending = behavior === "steer" ? session.getSteeringMessages() : session.getFollowUpMessages();
+    const index = pending.indexOf(text);
+
+    if (index !== -1) pending.splice(index, 1);
+    session._emitQueueUpdate();
+    await executeQueuedReview(session, text, message.content.filter(part => part.type === "image"));
+  }
+
+  return prompts;
+}
+
+async function drainReviews(session, drain, behavior) {
+  while (true) {
+    const messages = await drain();
+
+    if (!messages.length) return messages;
+    const prompts = await consumeReviews(session, messages, behavior);
+
+    if (prompts.length) return prompts;
+  }
+}
+
+function bindReviewQueue(session) {
+  const agent = session.agent;
+  const createLoopConfig = agent.createLoopConfig;
+  const runPromptMessages = agent.runPromptMessages;
+
+  agent.createLoopConfig = function (...args) {
+    const config = createLoopConfig.apply(this, args);
+    const steering = config.getSteeringMessages;
+    const followUp = config.getFollowUpMessages;
+    config.getSteeringMessages = () => drainReviews(session, steering, "steer");
+    config.getFollowUpMessages = () => drainReviews(session, followUp, "followUp");
+
+    return config;
+  };
+  agent.runPromptMessages = async function (messages, options) {
+    const prompts = await consumeReviews(session, messages, options?.skipInitialSteeringPoll ? "steer" : "followUp");
+
+    if (prompts.length) return runPromptMessages.call(this, prompts, options);
+    if (this.hasQueuedMessages()) return this.continue();
+  };
+}
+
 async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const root = runtimeRoot(executable);
@@ -69,6 +135,11 @@ async function main() {
   const prompt = AgentSession.prototype.prompt;
 
   AgentSession.prototype.prompt = function (text, options) {
+    if (isReview(text) && this.isStreaming) {
+      const queued = options?.streamingBehavior === "steer" ? this._queueSteer(text, options.images) : this._queueFollowUp(text, options?.images);
+
+      return queued.then(() => options?.preflightResult?.("queued"));
+    }
     const value = text.match(/^\/goal\s+([\s\S]*)$/)?.[1].trim();
     const objective = value && !["edit", "clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget ");
 
@@ -79,6 +150,7 @@ async function main() {
   const bind = AgentSession.prototype.bindExtensions;
   AgentSession.prototype.bindExtensions = async function (...bindings) {
     await bind.apply(this, bindings);
+    if (session !== this) bindReviewQueue(this);
     session = this;
   };
 

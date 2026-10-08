@@ -14,7 +14,7 @@ import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiReque
 
 const optionalString = z.string().optional().catch(undefined);
 
-const reviewPayloadSchema = z.object({ task: optionalString, cwd: optionalString, parentSessionId: optionalString, sessionId: optionalString, sessionPath: optionalString });
+const reviewPayloadSchema = z.object({ task: optionalString, cwd: optionalString, parentSessionId: optionalString, sessionId: optionalString, sessionPath: optionalString, images: z.array(z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string(), name: z.string().optional() })).optional() });
 
 type AppEventsContext = {
   transport: NativeTransport;
@@ -122,7 +122,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
           if (payload.sessionId === undefined || !payload.sessionPath) throw new Error("Missing saved review session");
 
-          return { task: payload.task, cwd: payload.cwd, parentSessionId: payload.parentSessionId, sessionId: payload.sessionId, sessionPath: payload.sessionPath };
+          return { task: payload.task, cwd: payload.cwd, parentSessionId: payload.parentSessionId, sessionId: payload.sessionId, sessionPath: payload.sessionPath, images: payload.images };
         };
 
         const openReview = () => {
@@ -136,7 +136,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
             capturedOptions.setSplitPane({
               key: crypto.randomUUID(),
               session: { id: payload.sessionId, path: payload.sessionPath, name: "Code review", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task ?? "Code review", messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
-              review: { task: payload.task, requestId: request.id, images: capturedOptions.reviewImages.get(capturedOptions.transport), messageMain: async message => {
+              review: { task: payload.task, requestId: request.id, images: payload.images ?? capturedOptions.reviewImages.get(capturedOptions.transport), messageMain: async message => {
                   const parent = capturedOptions.transport;
 
                   if (parent.connectionTarget().sessionId !== payload.parentSessionId) throw new Error("The original main conversation is no longer connected");

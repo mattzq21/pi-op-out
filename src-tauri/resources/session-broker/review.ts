@@ -16,6 +16,8 @@ const settingsSchema = Schema.Object({ reviewAgent: Schema.Optional(Schema.Strin
 
 const fileErrorSchema = Schema.Object({ code: Schema.String() });
 
+const reviewRequestSchema = Schema.Object({ args: Schema.String(), images: Schema.Array(Schema.Object({ type: Schema.Literal("image"), data: Schema.String(), mimeType: Schema.String(), name: Schema.Optional(Schema.String()) })) });
+
 type ReviewRecord = Static<typeof reviewSchema>;
 
 const feedbackSchema = Schema.Object({ sessionId: Schema.String(), message: Schema.String({ minLength: 1 }) });
@@ -52,9 +54,9 @@ async function createReview(ctx: ExtensionContext, agentState: SessionAgentState
   return record;
 }
 
-function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string) {
+function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string, images?: Static<typeof reviewRequestSchema>["images"]) {
   ctx.ui.setStatus("review", "Opening code review…");
-  void ctx.ui.input("__pi_desktop_review__", JSON.stringify(task ? { ...record, task } : record)).catch(error => {
+  void ctx.ui.input("__pi_desktop_review__", JSON.stringify(task ? { ...record, task, images } : record)).catch(error => {
     ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
   }).finally(() => ctx.ui.setStatus("review", undefined));
 }
@@ -94,25 +96,33 @@ export function registerReview(pi: ExtensionAPI) {
       { role: "toolResult", toolCallId, toolName: "review_feedback", content: [{ type: "text", text: Parse(Schema.String(), message.content) }], isError: false, timestamp: message.timestamp },
     ];
   }) }));
+  const startReview = async (args: string, ctx: ExtensionContext, images?: Static<typeof reviewRequestSchema>["images"]) => {
+    if (args.trim()) { ctx.ui.notify("Usage: /review — reviews the current branch", "warning");
+
+    return; }
+
+    await requireReviewRepository(ctx.cwd);
+    const settings = await reviewSettings();
+    const profile: SubagentProfileRequest = { agent: settings.agent };
+    pi.events.emit("piop:agents:subagent", profile);
+    await profile.ready;
+
+    if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${settings.agent}`);
+    const record = await createReview(ctx, profile.state);
+    pi.appendEntry("piop-review", record);
+    pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
+    openReview(ctx, record, settings.prompt, images);
+  };
   pi.registerCommand("review", {
     description: "Review this branch against its base in a side pane",
-    handler: async (args, ctx) => {
-      if (args.trim()) { ctx.ui.notify("Usage: /review — reviews the current branch", "warning");
-
-      return; }
-
-      await requireReviewRepository(ctx.cwd);
-      const settings = await reviewSettings();
-      const profile: SubagentProfileRequest = { agent: settings.agent };
-      pi.events.emit("piop:agents:subagent", profile);
-      await profile.ready;
-
-      if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${settings.agent}`);
-      const record = await createReview(ctx, profile.state);
-      pi.appendEntry("piop-review", record);
-      pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
-      openReview(ctx, record, settings.prompt);
-    },
+    handler: (args, ctx) => startReview(args, ctx),
+  });
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "start_review") return;
+    request.ready = (async () => {
+      const payload = Parse(reviewRequestSchema, request.payload);
+      await startReview(payload.args, request.ctx, payload.images);
+    })();
   });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "open_review") return;
