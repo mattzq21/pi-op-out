@@ -27,6 +27,10 @@ pub(super) fn state_change(name: &str) -> bool {
 
 impl Session {
     pub(super) fn receive(&self, mut event: Value) {
+        if kind(&event) == "queue_consumed" {
+            if event["sessionId"] == self.identity { self.queue.consumed(&text(&event, "queueId")); }
+            return;
+        }
         self.record_tool_failure(&event);
         if !self.ephemeral && (kind(&event) == "agent_settled" || (kind(&event) == "message_end" && event["message"]["role"] == "assistant")) {
             crate::session_registry::record(&self.state().state, self.cwd.as_deref());

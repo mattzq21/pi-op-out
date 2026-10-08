@@ -233,10 +233,17 @@ impl Host {
             if operation == "restore" {
                 return guard.restore_finished(self.ownership(), packet["restoredPath"].as_str()).map(|()| Value::Null);
             }
+            let deleted_id = if operation == "delete" && flag(packet, "success") {
+                guard.saved.as_ref().and_then(|saved| saved.header["id"].as_str()).map(str::to_owned)
+            } else { None };
             guard.release(
                 self.ownership(),
                 flag(packet, "success") && matches!(operation.as_str(), "delete" | "archive"),
             )?;
+            if let Some(id) = deleted_id {
+                super::super::queue::clear_saved(&self.home.join(&self.storage), &id)?;
+                self.registry().pending.remove(&id);
+            }
         }
         Ok(Value::Null)
     }

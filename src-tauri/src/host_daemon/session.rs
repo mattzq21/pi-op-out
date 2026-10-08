@@ -6,7 +6,7 @@ use super::{
     payload::{assistant_delta, saved_tool_payload},
     tool_payload::{ToolPayload, ToolPayloadCache},
     protocol::{array, flag, kind, text, LaunchSpec, Result, SessionLaunch},
-    queue::{Execution, SessionQueue},
+    queue::{Execution, PendingStore, SessionQueue},
     worker::{Observer, Request, Worker},
 };
 use futures_util::future::BoxFuture;
@@ -28,6 +28,7 @@ pub(super) trait SessionHost: Send + Sync {
     fn readonly(&self, runtime: &str) -> bool;
     fn rekey(&self, old: &str, new: &str, epoch: &str);
     fn finished(&self, key: &str, epoch: &str, pending: Vec<Value>, transient: bool);
+    fn restore_queue(&self, _id: &str, _path: Option<&str>, pending: Vec<Value>) -> Result<(Option<PendingStore>, Vec<Value>)> { Ok((None, pending)) }
     fn maintenance(&self, key: &str);
     fn refresh_providers(&self) -> BoxFuture<'_, Result<u64>>;
 }
@@ -85,6 +86,7 @@ pub(super) struct Session {
     pub ephemeral: bool,
     pub timeout: Duration,
     pub queue: SessionQueue,
+    pending_store: Option<PendingStore>,
     pub orchestration_interrupt: AsyncMutex<Option<tokio::task::JoinHandle<Result<Value>>>>,
     epoch: String,
     state: Mutex<SessionState>,
@@ -106,6 +108,10 @@ impl Execution for SessionCallbacks {
         if let Some(session) = self.0.upgrade() {
             session.publish(event, None);
         }
+    }
+    fn save_pending(&self, messages: &[Value]) -> Result<()> {
+        let session = self.0.upgrade().ok_or("Pi is not running")?;
+        session.pending_store.as_ref().map_or(Ok(()), |store| store.save(messages))
     }
 }
 
@@ -169,6 +175,7 @@ impl Session {
         } else {
             spec.argument("--session-id").unwrap_or(&key).into()
         };
+        let (pending_store, pending) = if ephemeral { (None, pending) } else { host.restore_queue(&identity, spec.argument("--session"), pending)? };
         let agent_revision = host
             .configuration()
             .and_then(|configuration| configuration["agentRevision"].as_u64())
@@ -182,6 +189,7 @@ impl Session {
             timeout,
             epoch: Uuid::new_v4().to_string(),
             queue: SessionQueue::new(Arc::new(SessionCallbacks(weak.clone())), pending),
+            pending_store,
             orchestration_interrupt: AsyncMutex::new(None),
             worker: OnceLock::new(),
             host,
@@ -544,7 +552,7 @@ impl Session {
         if self.closed() {
             return Err(self.state().startup_error.clone().unwrap_or_else(|| "Pi is not running".into()));
         }
-        if request_type == "prompt" {
+        if matches!(request_type, "prompt" | "queue_prompt") {
             let mut state = self.state();
             state.input_rejection = Value::Null;
             state.command_errors.clear();

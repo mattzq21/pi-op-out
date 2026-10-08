@@ -85,6 +85,13 @@ impl SessionHost for Callbacks {
     fn configuration(&self) -> Option<Value> {
         self.0.upgrade().and_then(|host| host.registry().configuration.clone())
     }
+    fn restore_queue(&self, id: &str, path: Option<&str>, pending: Vec<Value>) -> Result<(Option<super::queue::PendingStore>, Vec<Value>)> {
+        let host = self.0.upgrade().ok_or("Host daemon disconnected")?;
+        let store = super::queue::PendingStore::new(&host.home.join(&host.storage), id)?;
+        let saved = if store.exists() || !pending.is_empty() { host.ownership().locate(id, path, false, false)? } else { None };
+        let messages = store.restore(saved.as_ref().map(|saved| saved.lines.as_slice()).unwrap_or_default(), pending)?;
+        Ok((Some(store), messages))
+    }
     fn readonly_views(&self, identity: &str) -> Vec<String> {
         self.0
             .upgrade()

@@ -1,3 +1,9 @@
+mod persistence;
+mod ordering;
+
+pub(super) use persistence::{clear_saved, PendingStore};
+use ordering::{cleared_messages, move_item, queue_neighbor};
+
 use super::protocol::{array, flag, kind, message_text, text, Result};
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
@@ -12,23 +18,52 @@ use uuid::Uuid;
 pub(super) trait Execution: Send + Sync {
     fn execute(&self, command: Value) -> BoxFuture<'_, Result<Value>>;
     fn publish(&self, event: Value);
+    fn save_pending(&self, _messages: &[Value]) -> Result<()> { Ok(()) }
 }
 
 #[derive(Default)]
 struct QueueState {
     pending: Vec<Value>,
+    unconsumed: Vec<Value>,
     held: Option<Vec<Value>>,
     steering: Vec<Value>,
     follow_up: Vec<Value>,
     changing: bool,
     clearing: bool,
     sending: HashSet<String>,
+    rejected: HashSet<String>,
     awaiting_steering: Vec<Value>,
     steering_timestamps: HashSet<String>,
     inference_revision: u64,
 }
 
 impl QueueState {
+    fn durable_messages(&mut self) -> &[Value] {
+        let held = self.held.as_deref().unwrap_or_default();
+        let mut messages: Vec<_> = self.pending.iter().filter(|item| !held.iter().any(|saved| saved["id"] == item["id"])).cloned().collect();
+        messages.extend(held.iter().cloned());
+        for item in &self.unconsumed {
+            if !messages.iter().any(|saved| saved["id"] == item["id"]) { messages.push(item.clone()); }
+        }
+        self.unconsumed = messages;
+        &self.unconsumed
+    }
+
+    fn remove(&mut self, id: &str) {
+        self.pending.retain(|item| item["id"] != id);
+        self.unconsumed.retain(|item| item["id"] != id);
+    }
+
+    fn failed_submission(&mut self, id: &str) -> bool {
+        if self.rejected.remove(id) { return true; }
+        if let Some(mut item) = self.unconsumed.iter().find(|item| item["id"] == id).cloned() {
+            item["retry"] = json!(true);
+            self.pending.retain(|item| item["id"] != id);
+            self.pending.push(item);
+        }
+        false
+    }
+
     fn texts(&self, behavior: &str) -> &[Value] {
         if behavior == "steer" {
             &self.steering
@@ -192,6 +227,7 @@ impl SessionQueue {
     pub fn new(executor: Arc<dyn Execution>, pending: Vec<Value>) -> Self {
         Self {
             state: Mutex::new(QueueState {
+                unconsumed: pending.clone(),
                 pending,
                 ..QueueState::default()
             }),
@@ -209,7 +245,7 @@ impl SessionQueue {
         state.view(&state.pending)
     }
     pub fn pending(&self) -> Vec<Value> {
-        self.state().pending.clone()
+        self.state().durable_messages().to_vec()
     }
     pub fn held(&self) -> bool {
         self.state().held.is_some()
@@ -222,9 +258,15 @@ impl SessionQueue {
     }
     fn publish(&self) {
         let _publication = self.publication.lock().unwrap_or_else(|error| error.into_inner());
-        let event = self.state().publish();
+        let (event, saved) = {
+            let mut state = self.state();
+            let event = state.publish();
+            (event, self.persist(&mut state))
+        };
+        self.report_storage_error(saved);
         self.executor.publish(event);
     }
+
     pub fn tag_entries(&self, entries: &mut Value) {
         let state = self.state();
         for entry in entries["entries"].as_array_mut().into_iter().flatten() {
@@ -242,24 +284,29 @@ impl SessionQueue {
                 state.inference_revision += 1;
             }
             if kind(&event) == "disconnected" {
+                state.pending = state.durable_messages().to_vec();
                 for item in &mut state.pending {
                     item["retry"] = json!(true);
                 }
                 state.held = None;
                 state.steering.clear();
                 state.follow_up.clear();
-                Some(state.publish())
+                let event = state.publish();
+                Some(event)
             } else if kind(&event) == "queue_update" {
                 state.receive_queue(&event);
                 if state.changing {
                     return;
                 }
-                Some(state.publish())
+                let event = state.publish();
+                Some(event)
             } else {
                 None
             }
         };
         if let Some(queue_event) = queue_event {
+            let saved = self.persist(&mut self.state());
+            self.report_storage_error(saved);
             self.executor.publish(queue_event);
         }
         if kind(&event) == "queue_update" {
@@ -287,15 +334,16 @@ impl SessionQueue {
         result
     }
 
-    async fn deliver(&self, item: &Value) -> Result<Value> {
+    async fn deliver(&self, item: &Value, discard_on_rejection: bool) -> Result<Value> {
         let id = text(item, "id");
         self.state().sending.insert(id.clone());
-        let mut command = json!({"type":"prompt","message":item["message"],"streamingBehavior":item["behavior"]});
+        let mut command = json!({"type":"queue_prompt","queueId":id,"message":item["message"],"streamingBehavior":item["behavior"],"discardOnRejection":discard_on_rejection});
         if item["images"].as_array().is_some_and(|images| !images.is_empty()) {
             command["images"] = item["images"].clone();
         }
         let result = self.execute(command).await;
         self.state().sending.remove(&id);
+        if result.as_ref().is_ok_and(|value| value["disposition"] == "handled") { self.consumed(&id); }
         result
     }
 
@@ -358,7 +406,12 @@ impl SessionQueue {
 
     fn held_failed(&self) {
         let _publication = self.publication.lock().unwrap_or_else(|error| error.into_inner());
-        let event = self.state().failed_held();
+        let (event, saved) = {
+            let mut state = self.state();
+            let event = state.failed_held();
+            (event, self.persist(&mut state))
+        };
+        self.report_storage_error(saved);
         self.executor.publish(event);
     }
 
@@ -380,7 +433,7 @@ impl SessionQueue {
             if flag(&item, "retry") {
                 continue;
             }
-            if let Err(error) = self.deliver(&item).await {
+            if let Err(error) = self.deliver(&item, false).await {
                 self.state().held.get_or_insert_with(Vec::new).insert(0, item);
                 self.held_failed();
                 return Err(error);
@@ -418,6 +471,7 @@ impl SessionQueue {
     fn waking_orchestration(&self, command: &Value, name: &str) -> bool { name == "orchestration_message" && command["wake"] != false && self.held() }
     fn resuming_prompt(&self, command: &Value, name: &str) -> bool { name == "resume" || name == "prompt" && self.held() && command["message"].is_string() }
     async fn serial_command(&self, command: Value, name: &str) -> Result<Value> {
+        if name == "clear_queue" { return self.clear(command).await; }
         if self.waking_orchestration(&command, name) {
             return self.resume_command(command, name).await;
         }
@@ -436,6 +490,23 @@ impl SessionQueue {
             return self.execute(command).await;
         }
         self.enqueue(command, name).await
+    }
+
+    async fn clear(&self, command: Value) -> Result<Value> {
+        let originals = self.state().pending.clone();
+        let result = self.execute(command).await?;
+        {
+            let mut state = self.state();
+            let removed: Vec<_> = originals.iter().filter(|item| !flag(item, "retry")
+                && array(&result, if item["behavior"] == "steer" { "steering" } else { "followUp" }).contains(&item["message"]))
+                .chain(state.held.iter().flatten()).map(|item| text(item, "id")).collect();
+            for id in removed { state.remove(&id); }
+            state.held = None;
+            state.steering.clear(); state.follow_up.clear(); state.awaiting_steering.clear();
+            self.persist(&mut state)?;
+        }
+        self.publish();
+        Ok(result)
     }
     async fn resume_command(&self, command: Value, name: &str) -> Result<Value> {
         let revision = self.state().inference_revision;
@@ -456,6 +527,10 @@ impl SessionQueue {
         let held = {
             let mut state = self.state();
             state.pending.push(pending.clone());
+            if let Err(error) = self.persist(&mut state) {
+                state.remove(&id);
+                return Err(error);
+            }
             if let Some(held) = &mut state.held {
                 held.push(pending.clone());
                 held.sort_by_key(|item| item["behavior"] == "followUp");
@@ -469,15 +544,18 @@ impl SessionQueue {
             self.publish();
             return Ok(Value::Null);
         }
-        let result = self.deliver(&pending).await;
-        {
+        let result = self.deliver(&pending, true).await;
+        let rejected = {
             let mut state = self.state();
-            if result.is_err() {
-                state.pending.retain(|item| item["id"] != id);
-            }
+            let rejected = result.is_err() && state.failed_submission(&id);
             state.sending.remove(&id);
-        }
+            rejected
+        };
         self.publish();
+        if result.is_err() && !rejected {
+            self.report_storage_error(result.map(|_| ()));
+            return Ok(Value::Null);
+        }
         result
     }
     async fn stop(&self, result: Result<Value>) -> Result<Value> {
@@ -493,6 +571,7 @@ impl SessionQueue {
         self.execute(json!({"type":"force_stop"})).await?;
         {
             let mut state = self.state();
+            state.pending = state.durable_messages().to_vec();
             for item in &mut state.pending {
                 item["retry"] = json!(true);
             }
@@ -533,8 +612,7 @@ impl SessionQueue {
             return self.change_live(id, "remove", None, &action).await;
         }
         if self.change_held(id, &behavior, neighbor.as_deref(), &action) {
-            self.publish();
-            return Ok(Value::Null);
+            return self.publish_saved();
         }
         if flag(&target, "retry") {
             return self.retry(id, target, &behavior).await;
@@ -556,6 +634,7 @@ impl SessionQueue {
                 move_item(held, id, neighbor, action);
             }
             held.sort_by_key(|item| item["behavior"] == "followUp");
+            if behavior == "remove" { state.remove(id); }
             true
         } else {
             false
@@ -564,7 +643,10 @@ impl SessionQueue {
 
     async fn retry(&self, id: &str, mut target: Value, behavior: &str) -> Result<Value> {
         if behavior == "remove" {
-            self.state().pending.retain(|item| item["id"] != id);
+            let mut state = self.state();
+            state.remove(id);
+            self.persist(&mut state)?;
+            drop(state);
             self.publish();
             return Ok(Value::Null);
         }
@@ -573,7 +655,9 @@ impl SessionQueue {
         if let Some(item) = self.state().pending.iter_mut().find(|item| item["id"] == id) {
             *item = target.clone();
         }
-        let result = self.deliver(&target).await;
+        let saved = self.persist(&mut self.state());
+        if let Err(error) = saved { self.mark_retry(&[target]); return Err(error); }
+        let result = self.deliver(&target, false).await;
         if result.is_err() {
             if let Some(item) = self.state().pending.iter_mut().find(|item| item["id"] == id) {
                 item["retry"] = json!(true);
@@ -620,13 +704,19 @@ impl SessionQueue {
             let mut state = self.state();
             state.pending = originals.into_iter().filter(|item| flag(item, "retry")).collect();
             state.pending.extend(remaining.clone());
+            if behavior == "remove" { state.remove(id); }
+            if let Err(error) = self.persist(&mut state) {
+                drop(state);
+                self.mark_retry(&remaining);
+                return Err(error);
+            }
         }
         if remaining.iter().any(|item| flag(item, "retry")) {
             self.mark_retry(&remaining);
             return Err("Another source changed the queue while switching. Pending text has been kept for retry; reattach any images from messages sent outside this window.".into());
         }
         for (index, item) in remaining.iter().enumerate() {
-            if let Err(error) = self.deliver(item).await {
+            if let Err(error) = self.deliver(item, false).await {
                 self.mark_retry(&remaining[index..]);
                 return Err(error);
             }
@@ -640,65 +730,6 @@ impl SessionQueue {
                 pending["retry"] = json!(true);
             }
         }
-    }
-}
-
-fn cleared_messages(cleared: &Value, originals: &[Value], id: &str, behavior: &str) -> Vec<Value> {
-    let mut remaining = Vec::new();
-    for (field, mode) in [("steering", "steer"), ("followUp", "followUp")] {
-        for message in array(cleared, field) {
-            let mut item = originals
-                .iter()
-                .find(|item| !flag(item, "retry") && item["behavior"] == mode && item["message"] == message)
-                .cloned()
-                .unwrap_or_else(|| json!({"id":Uuid::new_v4().to_string(),"message":message,"behavior":mode,"retry":true}));
-            if item["id"] == id && matches!(behavior, "steer" | "followUp") {
-                item["behavior"] = json!(behavior);
-            }
-            remaining.push(item);
-        }
-    }
-    remaining
-}
-
-fn queue_neighbor(pending: &[Value], target: &Value, action: &Value, behavior: &str) -> Option<String> {
-    let id = &target["id"];
-    let peers: Vec<_> = pending
-        .iter()
-        .filter(|item| !flag(item, "retry") && item["behavior"] == target["behavior"])
-        .collect();
-    if action.is_object() {
-        return peers
-            .iter()
-            .find(|item| item["id"] == action["targetId"] && item["id"] != *id)
-            .map(|item| text(item, "id"));
-    }
-    if !matches!(behavior, "moveUp" | "moveDown" | "reorder") {
-        return None;
-    }
-    let index = peers.iter().position(|item| item["id"] == *id)?;
-    let neighbor = if behavior == "moveUp" {
-        index.checked_sub(1)
-    } else {
-        index.checked_add(1)
-    }?;
-    peers.get(neighbor).map(|item| text(item, "id"))
-}
-
-fn move_item(items: &mut Vec<Value>, id: &str, neighbor: &str, action: &Value) {
-    let Some(from) = items.iter().position(|item| item["id"] == id) else {
-        return;
-    };
-    let Some(to) = items.iter().position(|item| item["id"] == neighbor) else {
-        return;
-    };
-    if action.is_object() {
-        let item = items.remove(from);
-        if let Some(destination) = items.iter().position(|item| item["id"] == neighbor) {
-            items.insert(destination + usize::from(action["edge"] == "after"), item);
-        }
-    } else {
-        items.swap(from, to);
     }
 }
 

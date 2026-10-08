@@ -60,7 +60,7 @@ impl Session {
 
     fn prepare_worker_command(&self, command: &Value) -> (Option<Value>, Option<Value>) {
         let mut state = self.state();
-        if kind(command) == "prompt" && !text(command, "message").starts_with('/') {
+        if matches!(kind(command), "prompt" | "queue_prompt") && !text(command, "message").starts_with('/') {
             state.submitted = true;
         }
         let key = (kind(command) == "runtime_settings").then(
@@ -143,10 +143,14 @@ impl Session {
     }
 
     pub(super) fn response(&self, mut event: Value, request: &Request) -> Result<Value> {
-        if request.request_type == "prompt" {
-            self.check_prompt_error(&request.command)?;
+        if matches!(request.request_type.as_str(), "prompt" | "queue_prompt") {
+            if let Err(error) = self.check_prompt_error(&request.command) {
+                if flag(&request.command, "discardOnRejection") { self.queue.rejected(&text(&request.command, "queueId")); }
+                return Err(error);
+            }
         }
         if !flag(&event, "success") {
+            if flag(&request.command, "discardOnRejection") { self.queue.rejected(&text(&request.command, "queueId")); }
             return Err(event["error"].as_str().unwrap_or("Pi command failed").into());
         }
         let mut data = event.get_mut("data").map(std::mem::take).unwrap_or(Value::Null);

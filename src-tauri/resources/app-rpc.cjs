@@ -1,8 +1,96 @@
-const { realpathSync, readFileSync } = require("node:fs");
+const { realpathSync, readFileSync, existsSync, openSync, closeSync, fsyncSync } = require("node:fs");
 const { dirname, join, isAbsolute } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { execFileSync } = require("node:child_process");
 const { PassThrough } = require("node:stream");
+const { AsyncLocalStorage } = require("node:async_hooks");
+
+const queuePromptContext = new AsyncLocalStorage();
+const queuePromptScope = Symbol("piop.queue-prompt");
+const wrappedSessions = new WeakSet();
+const wrappedAgents = new WeakSet();
+const wrappedManagers = new WeakSet();
+
+function syncPath(path, flags) {
+  const fd = openSync(path, flags);
+
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
+
+function isQueuedUserMessage(message) {
+  return message.role === "user" && typeof message.piopQueueId === "string" && Boolean(message.piopQueueId);
+}
+
+function installQueueProtocol(session, output) {
+  if (!wrappedSessions.has(session)) {
+    for (const name of ["prompt", "steer", "followUp"]) {
+      const submit = session[name];
+      session[name] = function (...args) {
+        const scope = name === "prompt" ? args[1]?.[queuePromptScope] : undefined;
+
+        return queuePromptContext.run(scope?.session === this ? scope : undefined, () => submit.apply(this, args));
+      };
+    }
+
+    wrappedSessions.add(session);
+  }
+
+  const agent = session.agent;
+
+  if (!wrappedAgents.has(agent)) {
+    for (const name of ["prompt", "steer", "followUp"]) {
+      const submit = agent[name];
+      agent[name] = function (...args) {
+        const scope = queuePromptContext.getStore();
+
+        if (scope && !scope.tagged && scope.session.agent === this) {
+          const input = args[0];
+          const message = Array.isArray(input) ? input.find(message => message?.role === "user") : input;
+
+          if (message?.role === "user") {
+            message.piopQueueId = scope.queueId;
+            scope.tagged = true;
+          }
+        }
+
+        return submit.apply(this, args);
+      };
+    }
+
+    wrappedAgents.add(agent);
+  }
+
+  const manager = session.sessionManager;
+
+  if (!wrappedManagers.has(manager)) {
+    const appendMessage = manager.appendMessage;
+    const newSessionFiles = new Set();
+    manager.appendMessage = function (message, ...args) {
+      const file = this.isPersisted() ? this.getSessionFile() : undefined;
+
+      if (file && !existsSync(file)) newSessionFiles.add(file);
+      const entryId = appendMessage.call(this, message, ...args);
+
+      if (!file || !entryId || !isQueuedUserMessage(message)) return entryId;
+
+      try {
+        syncPath(file, "r+");
+
+        if (newSessionFiles.has(file)) {
+          syncPath(dirname(file), "r");
+          newSessionFiles.delete(file);
+        }
+      } catch (error) {
+        console.error(`Could not sync queued prompt ${message.piopQueueId}: ${error instanceof Error ? error.message : String(error)}`);
+        return entryId;
+      }
+
+      output({ type: "queue_consumed", queueId: message.piopQueueId, sessionId: this.getSessionId(), entryId });
+      return entryId;
+    };
+    wrappedManagers.add(manager);
+  }
+}
 
 function runtimeRoot(executable) {
   const path = realpathSync(isAbsolute(executable) ? executable : execFileSync("which", [executable], { encoding: "utf8" }).trim());
@@ -46,9 +134,36 @@ function appInput(dispatch) {
 
 async function dispatch(command, session, output) {
   try {
+    if (!session) throw new Error("Piop app requests are unavailable");
+
+    if (command.command === "queue_prompt") {
+      const payload = command.payload;
+
+      if (typeof payload?.queueId !== "string" || !payload.queueId || typeof payload.message !== "string") {
+        throw new Error("queue_prompt requires queueId and message");
+      }
+
+      let preflightSucceeded = false;
+      void session.prompt(payload.message, {
+        images: payload.images,
+        streamingBehavior: payload.streamingBehavior,
+        source: "rpc",
+        [queuePromptScope]: { session, queueId: payload.queueId, tagged: false },
+        preflightResult: disposition => {
+          preflightSucceeded = true;
+          output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition } });
+        },
+      }).catch(error => {
+        if (!preflightSucceeded) {
+          output({ type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) });
+        }
+      });
+      return;
+    }
+
     const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.app-rpc"))?.value;
 
-    if (!session || !emit) throw new Error("Piop app requests are unavailable");
+    if (!emit) throw new Error("Piop app requests are unavailable");
     const request = { command: command.command, payload: command.payload, ctx: session.extensionRunner.createCommandContext() };
     emit(request);
 
@@ -78,6 +193,7 @@ async function main() {
   let session;
   const bind = AgentSession.prototype.bindExtensions;
   AgentSession.prototype.bindExtensions = async function (...bindings) {
+    installQueueProtocol(this, output);
     await bind.apply(this, bindings);
     session = this;
   };
