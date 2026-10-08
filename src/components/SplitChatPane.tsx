@@ -21,7 +21,7 @@ import { createRepositoryStatus } from "../lib/repositoryStatus";
 import { ChatView } from "./ChatView";
 import type { createConversationDrafts } from "../appDrafts";
 import { draftUploadsFromImages, stageDraftSubmission, submitDurablePrompt } from "../lib/draftSubmission";
-import { trackChatSubmission } from "../lib/newChatWorktree";
+import { trackChatSubmission, updateChatPreparation, waitForConversationReady } from "../lib/newChatWorktree";
 
 interface Props { drafts: ReturnType<typeof createConversationDrafts>; onArchiveOriginal: (session: SessionSummary) => Promise<void>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; freshReview?: boolean; inheritedReviewParent?: string; archivedReview?: boolean; onShowArchive: () => void; initialPrompt?: string; initialImages?: ImageAttachment[]; onMessageMain?: (message: string) => Promise<void>; onReady?: () => void; onFailed?: (cause: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 
@@ -281,7 +281,8 @@ export function SplitChatPane(componentProps: Props) {
 
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => { const capturedTransport = transport();
 
-    if (!connectedRef.current) return Promise.reject(new Error("piop is still connecting"));
+    await waitForConversationReady(capturedTransport, transport, connected, () => error() ?? controlError());
+    updateChatPreparation(capturedTransport, "Sending message…");
 
     const command = { type: behavior ? behavior === "steer" ? "steer" : "follow_up" : "prompt", message: text };
     const result = await submitDurablePrompt(capturedTransport, images.length ? { ...command, images } : command);

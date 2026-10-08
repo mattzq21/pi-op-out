@@ -21,9 +21,9 @@ export function updateChatPreparation(owner: NativeTransport, status: string) {
   setSubmissions(current => current.map(item => item.owner === owner ? { ...item, status } : item));
 }
 
-export async function trackChatSubmission<T>(owner: NativeTransport, text: string, images: ImageAttachment[], durable: DraftSubmissionHandle, work: () => Promise<T>) {
+export async function trackChatSubmission<T>(owner: NativeTransport, text: string, images: ImageAttachment[], durable: DraftSubmissionHandle, work: () => Promise<T>, initialStatus = "Sending message…") {
   const message: ChatMessage = { id: durable.id, role: "user", content: [{ type: "text", text }, ...images] };
-  setSubmissions(current => [...current, { owner, message, durable, status: "Sending message…" }]);
+  setSubmissions(current => [...current, { owner, message, durable, status: initialStatus }]);
   retainSubmittedMessage(owner, message);
   ownDraftSubmission(durable);
   let retain = false;
@@ -70,13 +70,15 @@ export function registerWorktreePreparation(owner: NativeTransport, prepare: () 
   return () => { if (preparations.get(owner) === prepare) preparations.delete(owner); };
 }
 
-function waitForConnection(owner: NativeTransport, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
+export function waitForConversationReady(owner: NativeTransport, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
+  if (!ready()) updateChatPreparation(owner, "Preparing conversation…");
+
   return new Promise<void>((resolve, reject) => createRoot((dispose) => {
     const finish = (error?: Error) => { dispose();
 
     if (error) reject(error); else resolve(); };
 
-    const timer = setTimeout(() => finish(new Error("Timed out connecting to the worktree")), 30000);
+    const timer = setTimeout(() => finish(new Error("Timed out preparing the conversation")), 30000);
     onCleanup(() => clearTimeout(timer));
     createEffect(() => {
       if (active() !== owner) finish(new Error("Conversation changed"));
@@ -87,12 +89,16 @@ function waitForConnection(owner: NativeTransport, active: Accessor<NativeTransp
 }
 
 export async function prepareChatWorktree(owner: NativeTransport, select: (path: string, host: string, onActivate: (destination: NativeTransport) => Promise<void>) => Promise<void>, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
+  await waitForConversationReady(owner, active, ready, error);
+  updateChatPreparation(owner, "Preparing conversation…");
   const preparation = registeredWorktreePreparation(owner);
   const path = preparation ? await preparation : undefined;
 
   if (active() !== owner) throw new Error("Conversation changed");
 
-  if (!path) return owner;
+  if (!path) { updateChatPreparation(owner, "Sending message…");
+
+  return owner; }
 
   updateChatPreparation(owner, "Preparing conversation…");
   let selected: NativeTransport | undefined;
@@ -112,7 +118,7 @@ export async function prepareChatWorktree(owner: NativeTransport, select: (path:
   const destination = selected;
 
   if (!destination || active() !== destination) throw new Error("Conversation changed");
-  await waitForConnection(destination, active, ready, error);
+  await waitForConversationReady(destination, active, ready, error);
   owner.promptControls.copyTo(destination.promptControls);
   updateChatPreparation(destination, "Sending message…");
 

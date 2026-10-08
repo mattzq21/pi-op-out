@@ -50,6 +50,7 @@ interface Props {
   toolFailures?: import("../lib/toolFailureStats").ToolFailureStats;
   contextUsage?: ContextUsage;
   controlsDisabled?: boolean;
+  submissionDisabled?: boolean;
   draft?: string;
   onDraftChange?: (value: StateUpdate<string>) => void;
   uploads?: ComposerUpload[];
@@ -372,7 +373,7 @@ export function Composer(props: Props) {
   };
 
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().pausing, composer().onChangePending)), () => (changePending));
-  const controlsBlocked = () => composer().controlsDisabled || composer().compacting || composer().pausing || controlActionRef.current || stoppingRef.current;
+  const controlsBlocked = () => (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || composer().pausing || controlActionRef.current || stoppingRef.current;
 
   const canSubmit = (message: string, images: ImageAttachment[]) => {
     if (!attachments.acceptsImages(images.length)) return false;
@@ -541,7 +542,7 @@ export function Composer(props: Props) {
         const renderStopButton = () => (<Show when={composer().streaming || composer().compacting || composer().paused || composer().pausing}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton></Show>);
         const showPauseResume = () => (composer().streaming || composer().paused) && !(hasVisibleText(value()) || uploads().length) || composer().pausing;
 
-        const renderSend = () => <Show when={showPauseResume()} fallback={<IconButton title="" label="Send message" class="send" disabled={controls().inputDisabled || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
+        const renderSend = () => <Show when={showPauseResume()} fallback={<IconButton title="" label="Send message" class="send" disabled={controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
           <IconButton title="" label={composer().paused ? "Resume piop" : "Pause piop"} class="send" disabled={controls().inputDisabled} onClick={() => void control(composer().paused ? "resume" : "pause")}>{composer().paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
         </Show>;
 

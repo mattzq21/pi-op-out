@@ -133,7 +133,6 @@ export function createAppConversations(preloadChat: () => void) {
   const projectOpenRef = createRef(projectOpen()); createComputed(() => { projectOpenRef.current = projectOpen(); });
   const projectOpenRequest = createRef(0);
   const { composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, transportHasDraft } = drafts;
-  const draftsReady = drafts.loaded;
   const draftSessions = drafts.draftSummaries;
   drafts.bindTransport(transport(), initialConversationKey.current);
   createDependencyEffect(() => drafts.bindTransport(transport(), activeConversationKey()), () => [transport(), activeConversationKey(), activeCwd(), connected()]);
@@ -320,18 +319,11 @@ export function createAppConversations(preloadChat: () => void) {
     const capturedRuntimePool = runtimePool(); const capturedView = view(); const capturedTransport = transport();
     capturedRuntimePool.activate(capturedView === "chat" ? capturedTransport : undefined); }, () => [runtimePool(), transport(), view()]);
 
-  const requireRestoredDrafts = () => {
-    if (!draftsReady()) throw new Error("Saved drafts are still loading. Refocus this window to retry if draft storage failed.");
-  };
-
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
-    requireRestoredDrafts();
-
     const capturedTransport = await prepareChatWorktree(transport(), async (cwd, host, onActivate) => { const group = pendingSessionGroups.current.get(transport()); await openProject(cwd, host, true, onActivate);
 
       if (group) pendingSessionGroups.current.set(transport(), group); }, transport, connected, error);
 
-    if (!connectionReadyRef.current) throw new Error("piop is still connecting");
     const ownerTransport = capturedTransport;
     const imagePayload = images.length ? { images } : {};
 
