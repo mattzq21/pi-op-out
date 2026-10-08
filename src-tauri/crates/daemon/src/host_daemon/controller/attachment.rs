@@ -31,7 +31,7 @@ impl Attachment {
         host.registry().attachments.insert(runtime.clone(), packet.clone());
         let spec: LaunchSpec = serde_json::from_value(packet["spec"].clone()).map_err(|error| error.to_string())?;
         let identity = spec.identity(&text(&packet, "sessionKey"))?;
-        if Uuid::parse_str(&text(&packet, "sessionKey")).is_ok() && identity != text(&packet, "sessionKey") {
+        if !flag(&packet, "ephemeral") && Uuid::parse_str(&text(&packet, "sessionKey")).is_ok() && identity != text(&packet, "sessionKey") {
             return Err("The saved path belongs to another conversation; resolve its identity again".into());
         }
         let path = spec.argument("--session").map(str::to_owned);
