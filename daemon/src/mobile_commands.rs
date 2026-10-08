@@ -411,7 +411,7 @@ fn handle_prepare_worktree_setup(app: AppHandle, owner: String, _args: Value) ->
     Box::pin(async move {
         tokio::task::spawn_blocking(move || {
             let runtime = app.state::<PiRuntime>();
-            Ok(json!(crate::worktree_setup::prepare_for_owner(&runtime, owner)?))
+            Ok(json!(crate::git::worktree_setup::prepare_for_owner(&runtime, owner)?))
         }).await.map_err(|error| error.to_string())?
     })
 }
@@ -462,19 +462,19 @@ fn handle_save_git_diffs(app: AppHandle, _owner: String, args: Value) -> Command
 
 fn handle_load_git_diff_page(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || crate::git_diffs::load_git_diff_page(app, argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "page")?)).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || crate::git::git_diffs::load_git_diff_page(app, argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "page")?)).await.map_err(|error| error.to_string())?
     })
 }
 
 fn handle_load_ephemeral_git_diff_page(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || crate::git_diffs::load_ephemeral_git_diff_page(app, argument(&args, "sessionPath")?, argument(&args, "sessionId")?, argument(&args, "hostId")?, argument(&args, "page")?)).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || crate::git::git_diffs::load_ephemeral_git_diff_page(app, argument(&args, "sessionPath")?, argument(&args, "sessionId")?, argument(&args, "hostId")?, argument(&args, "page")?)).await.map_err(|error| error.to_string())?
     })
 }
 
 fn handle_append_git_diff_part(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || crate::git_diffs::append_git_diff_part(app, argument(&args, "sessionPath")?, argument(&args, "part")?, argument(&args, "hostId")?, argument(&args, "clientId")?)).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || crate::git::git_diffs::append_git_diff_part(app, argument(&args, "sessionPath")?, argument(&args, "part")?, argument(&args, "hostId")?, argument(&args, "clientId")?)).await.map_err(|error| error.to_string())?
     })
 }
 

@@ -7,12 +7,14 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 use crate::platform::AppHandle;
-use crate::{GitDiffSnapshot, GitDiffSnapshots, MAX_GIT_PATCH_BYTES, RemoteHost, STORAGE_DIRECTORY, conversation_ownership};
+use crate::{RemoteHost, STORAGE_DIRECTORY, conversation_ownership};
+use crate::git::{GitDiffSnapshot, GitDiffSnapshots, MAX_GIT_PATCH_BYTES};
 use crate::archives::{local_desktop_session_file_at};
-use crate::worktree_setup::{GitSnapshotToken, ensure_desktop_sessions_dir, run_limited, shell_quote};
+use super::GitSnapshotToken;
+use crate::git::worktree_setup::{ensure_desktop_sessions_dir, run_limited, shell_quote};
 use crate::pi_launch::{remote_login_command, saved_remote_host, ssh};
 use crate::environment::home_dir;
-use crate::snapshot_capture::{local_git_diff, local_git_diff_between, local_git_tree, parse_local_snapshot};
+use crate::git::snapshot_capture::{local_git_diff, local_git_diff_between, local_git_tree, parse_local_snapshot};
 
 #[path = "git_diff_store.rs"]
 mod store;
@@ -42,7 +44,7 @@ pub(crate) fn append_git_diff_part(app: AppHandle, session_path: String, part: G
     Ok(result)
 }
 
-pub(super) fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
+pub(crate) fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
     let path = Path::new(&snapshot.root);
     path.is_absolute()
         && path.components().all(|component| matches!(component, std::path::Component::RootDir | std::path::Component::Normal(_)))
@@ -56,7 +58,7 @@ fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, Strin
     query_remote_git_tree(&mut command, &host.name)
 }
 
-pub(super) fn query_remote_git_tree(command: &mut Command, host_name: &str) -> Result<Option<String>, String> {
+pub(crate) fn query_remote_git_tree(command: &mut Command, host_name: &str) -> Result<Option<String>, String> {
     let output = run_limited(command, 64 * 1024, &format!("Could not capture Git snapshot on {host_name}"))?;
     if let Some(3 | 4 | 6) = output.status.code() { return Ok(None) }
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
@@ -64,23 +66,23 @@ pub(super) fn query_remote_git_tree(command: &mut Command, host_name: &str) -> R
     if !valid_remote_snapshot(&snapshot) || !Path::new(&snapshot.repository_root).is_absolute() { return Err("Remote Git snapshot was invalid".into()); }
     serde_json::to_string(&snapshot).map(Some).map_err(|error| error.to_string())
 }
-pub(super) fn capture_git_tree(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
+pub(crate) fn capture_git_tree(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
     capture_git_tree_at_host(&cwd, saved_remote_host(app, host_id)?.as_ref())
 }
 
 fn capture_git_tree_at_host(cwd: &str, host: Option<&RemoteHost>) -> Result<Option<String>, String> {
     match host { Some(host) => remote_git_tree(host, cwd), None => local_git_tree(cwd) }
 }
-pub(super) fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option<String>) -> Result<(), String> {
+pub(crate) fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option<String>) -> Result<(), String> {
     discard_git_tree_at_host(&snapshot, saved_remote_host(app, host_id)?.as_ref())
 }
 
-pub(super) fn discard_git_tree_at_host(snapshot: &str, host: Option<&RemoteHost>) -> Result<(), String> {
+pub(crate) fn discard_git_tree_at_host(snapshot: &str, host: Option<&RemoteHost>) -> Result<(), String> {
     let Some(host) = host else { let snapshot = parse_local_snapshot(snapshot)?; return fs::remove_dir_all(snapshot.root).map_err(|error| format!("Could not discard Git snapshot: {error}")); };
     discard_remote_git_tree(snapshot, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
 }
 
-pub(super) fn discard_remote_git_tree(snapshot: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
+pub(crate) fn discard_remote_git_tree(snapshot: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let snapshot: GitSnapshotToken = serde_json::from_str(snapshot).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&snapshot) { return Err("Invalid remote Git snapshot location".into()); }
     let root = shell_quote(&snapshot.root);
@@ -88,11 +90,11 @@ pub(super) fn discard_remote_git_tree(snapshot: &str, host_name: &str, command: 
     let output = command(script).output().map_err(|error| format!("Could not discard Git snapshot on {host_name}: {error}"))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
-pub(super) fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<GitDiffSnapshot>, String> {
+pub(crate) fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<GitDiffSnapshot>, String> {
     load_git_diff_at_host(&cwd, &base_tree, saved_remote_host(app, host_id)?.as_ref())
 }
 
-pub(super) fn load_git_diff_at_host(cwd: &str, base_tree: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
+pub(crate) fn load_git_diff_at_host(cwd: &str, base_tree: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
     let Some(host) = host else { return local_git_diff(cwd, base_tree); };
     load_remote_git_diff_with(base_tree,
         || remote_git_tree(host, cwd),
@@ -100,7 +102,7 @@ pub(super) fn load_git_diff_at_host(cwd: &str, base_tree: &str, host: Option<&Re
         |token| discard_git_tree_at_host(token, Some(host)))
 }
 
-pub(super) fn load_remote_git_diff_with(base_tree: &str,
+pub(crate) fn load_remote_git_diff_with(base_tree: &str,
     capture: impl FnOnce() -> Result<Option<String>, String>,
     diff: impl FnOnce(&str, &str) -> Result<Option<GitDiffSnapshot>, String>,
     mut discard: impl FnMut(&str) -> Result<(), String>,
@@ -113,12 +115,12 @@ pub(super) fn load_remote_git_diff_with(base_tree: &str,
     result
 }
 
-pub(super) fn load_git_diff_between_at_host(cwd: &str, base_tree: &str, current_token: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
+pub(crate) fn load_git_diff_between_at_host(cwd: &str, base_tree: &str, current_token: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
     let Some(host) = host else { return local_git_diff_between(cwd, &parse_local_snapshot(base_tree)?, &parse_local_snapshot(current_token)?); };
     load_remote_git_diff_between(base_tree, current_token, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
 }
 
-pub(super) fn load_remote_git_diff_between(base_tree: &str, current_token: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<Option<GitDiffSnapshot>, String> {
+pub(crate) fn load_remote_git_diff_between(base_tree: &str, current_token: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<Option<GitDiffSnapshot>, String> {
     let base: GitSnapshotToken = serde_json::from_str(base_tree).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     let current: GitSnapshotToken = serde_json::from_str(current_token).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&base) || !valid_remote_snapshot(&current) { return Err("Invalid remote Git snapshot location".into()); }
@@ -129,10 +131,10 @@ pub(super) fn load_remote_git_diff_between(base_tree: &str, current_token: &str,
     Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: String::new(), tool_paths: Vec::new() }))
 }
 
-pub(super) fn remote_session_sidecar_script(session_path: &str, action: &str) -> String {
+pub(crate) fn remote_session_sidecar_script(session_path: &str, action: &str) -> String {
     format!("session=$(readlink -f -- {}) || exit 7; sessions=$(cd \"$HOME/{STORAGE_DIRECTORY}/sessions\" && pwd -P) || exit 7; case \"$session\" in \"$sessions\"/*.jsonl) ;; *) exit 7;; esac; sidecar=${{session%.jsonl}}.diffs.json; {action}", shell_quote(session_path))
 }
-pub(super) fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>, cursor: Option<String>) -> Result<serde_json::Value, String> {
+pub(crate) fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>, cursor: Option<String>) -> Result<serde_json::Value, String> {
     if let Some(cursor) = cursor { return compatibility_diff_page(app, session_path, host_id, &cursor); }
     let mut snapshots = GitDiffSnapshots::new(); let mut page = String::new();
     let mut fragment = None;
@@ -193,7 +195,7 @@ pub(crate) fn load_git_diff_page(app: AppHandle, session_path: String, host_id: 
         return Ok(serde_json::json!({"snapshots":{},"next":null}));
     }
     if page.is_empty() {
-        if let Err(error) = crate::git_diff_retry::retry_pending_git_diffs(&session_path, host.as_ref()) { eprintln!("Pending project changes retained for retry: {error}"); }
+        if let Err(error) = crate::git::git_diff_retry::retry_pending_git_diffs(&session_path, host.as_ref()) { eprintln!("Pending project changes retained for retry: {error}"); }
     }
     pending::page(&session_path, &page, host.as_ref())
 }
@@ -205,7 +207,7 @@ fn validate_unsaved_session(home: &Path, candidate: &Path) -> Result<(), String>
         Ok(())
 }
 
-pub(super) fn load_local_git_diffs(home: &Path, session_path: &str) -> Result<GitDiffSnapshots, String> {
+pub(crate) fn load_local_git_diffs(home: &Path, session_path: &str) -> Result<GitDiffSnapshots, String> {
     let candidate = PathBuf::from(session_path);
     if !candidate.exists() {
         validate_unsaved_session(home, &candidate)?;
@@ -217,17 +219,17 @@ pub(super) fn load_local_git_diffs(home: &Path, session_path: &str) -> Result<Gi
 }
 
 #[cfg(test)]
-pub(super) fn load_git_diffs_at_host(session_path: &str, host: Option<&RemoteHost>) -> Result<GitDiffSnapshots, String> {
+pub(crate) fn load_git_diffs_at_host(session_path: &str, host: Option<&RemoteHost>) -> Result<GitDiffSnapshots, String> {
     if host.is_none() && !Path::new(session_path).exists() { return load_local_git_diffs(&home_dir()?, session_path); }
     pending::load(session_path, host)
 }
 
 #[cfg(test)]
-pub(super) fn query_remote_git_diffs(command: &mut Command, host_name: &str) -> Result<GitDiffSnapshots, String> {
+pub(crate) fn query_remote_git_diffs(command: &mut Command, host_name: &str) -> Result<GitDiffSnapshots, String> {
     let state = read_command(command, None).map_err(|error| format!("Diffs on {host_name}: {error}"))?;
     serde_json::from_value(state).map_err(|error| format!("Could not parse saved diffs: {error}"))
 }
-pub(super) fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapshots, host_id: Option<String>, client_id: String) -> Result<(), String> {
+pub(crate) fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapshots, host_id: Option<String>, client_id: String) -> Result<(), String> {
     save_git_diffs_with_mode(app, session_path, snapshots, host_id, client_id, false)
 }
 
@@ -238,24 +240,24 @@ pub(crate) fn save_git_diffs_with_mode(app: AppHandle, session_path: String, sna
     mutation.finish()
 }
 
-pub(super) fn save_git_diffs_at_host(session_path: &str, snapshots: GitDiffSnapshots, host: Option<&RemoteHost>) -> Result<(), String> {
+pub(crate) fn save_git_diffs_at_host(session_path: &str, snapshots: GitDiffSnapshots, host: Option<&RemoteHost>) -> Result<(), String> {
     storage_request(session_path, &serde_json::json!({"action":"merge","snapshots":snapshots}), host).map(|_| ())
 }
 
 #[cfg(test)]
-pub(super) fn save_local_git_diffs(home: &Path, session_path: &str, body: &str) -> Result<(), String> {
+pub(crate) fn save_local_git_diffs(home: &Path, session_path: &str, body: &str) -> Result<(), String> {
     let path = local_desktop_session_file_at(home, session_path)?.with_extension("diffs.json");
     let snapshots: GitDiffSnapshots = serde_json::from_str(body).map_err(|error| error.to_string())?;
     store::request(&path, &serde_json::json!({"action":"replace","snapshots":snapshots})).map(|_| ())
 }
 
-pub(super) fn remote_save_git_diffs_script(session_path: &str) -> String {
+pub(crate) fn remote_save_git_diffs_script(session_path: &str) -> String {
     let helper = shell_quote(&storage_helper());
     remote_login_command(&remote_session_sidecar_script(session_path, &format!("umask 077; PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} exec flock --exclusive \"$sidecar.lock\" node -e {helper} \"$sidecar\"")))
 }
 
 #[cfg(test)]
-pub(super) fn write_remote_git_diffs(command: &mut Command, body: &str) -> Result<(), String> {
+pub(crate) fn write_remote_git_diffs(command: &mut Command, body: &str) -> Result<(), String> {
     let snapshots: GitDiffSnapshots = serde_json::from_str(body).map_err(|error| error.to_string())?;
     read_command(command, Some(&serde_json::json!({"action":"replace","snapshots":snapshots}))).map(|_| ())
 }

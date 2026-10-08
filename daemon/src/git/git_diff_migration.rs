@@ -25,7 +25,7 @@ impl<'de> Visitor<'de> for Entries<'_> {
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
         loop {
             self.count.set(0);
-            let Some((id, snapshot)) = map.next_entry::<String, crate::GitDiffSnapshot>()? else { break; };
+            let Some((id, snapshot)) = map.next_entry::<String, crate::git::GitDiffSnapshot>()? else { break; };
             let bytes = record_bytes(&json!({"op":"set","id":id,"snapshot":snapshot})).map_err(serde::de::Error::custom)?;
             self.file.write_all(&bytes).map_err(serde::de::Error::custom)?;
         }
@@ -93,7 +93,7 @@ fn read_shard(path: &Path) -> Result<Value, String> {
     let id = record["messageId"].as_str().ok_or("Diff shard has no message identity")?;
     let name = format!("{:x}.json", Sha256::digest(id.as_bytes()));
     if path.file_name().and_then(|value| value.to_str()) != Some(name.as_str()) { return Err("Invalid diff shard identity; preserved".into()); }
-    serde_json::from_value::<crate::GitDiffSnapshot>(record["snapshot"].clone()).map_err(error)?;
+    serde_json::from_value::<crate::git::GitDiffSnapshot>(record["snapshot"].clone()).map_err(error)?;
     let record = json!({"op":"set","id":id,"snapshot":record["snapshot"]});
     record_bytes(&record)?;
     Ok(record)

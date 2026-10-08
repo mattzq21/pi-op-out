@@ -1,6 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use serde::Deserialize;
-use serde::Serialize;
 use std::fs;
 use std::thread;
 use std::io::BufReader;
@@ -24,39 +22,23 @@ use crate::platform::AppHandle;
 use crate::platform::State;
 use uuid::Uuid;
 use crate::{AppSettings, PiRuntime, RemoteHost, STORAGE_DIRECTORY, WORKTREE_CLEANUP_TIMEOUT, WorktreeSetupScript};
+
 use crate::pi_launch::{remote_host, remote_login_command, ssh};
 use crate::settings::{load_app_settings};
-pub(super) fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
+pub(crate) fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
 
-pub(super) fn desktop_sessions_dir(home: &Path) -> PathBuf { home.join(STORAGE_DIRECTORY).join("sessions") }
+pub(crate) fn desktop_sessions_dir(home: &Path) -> PathBuf { home.join(STORAGE_DIRECTORY).join("sessions") }
 
-pub(super) fn ensure_desktop_sessions_dir(home: &Path) -> Result<PathBuf, String> {
+pub(crate) fn ensure_desktop_sessions_dir(home: &Path) -> Result<PathBuf, String> {
     let root = desktop_sessions_dir(home);
     fs::create_dir_all(&root).map_err(|error| format!("Could not create piop session directory: {error}"))?;
     Ok(root)
 }
 
-#[derive(Serialize, Deserialize)]
-pub(super) struct GitSnapshotToken { pub(super) root: String, pub(super) tree: String, #[serde(default)] pub(super) repository_root: String }
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct GitWorktree { pub(super) branch: String, pub(super) path: String }
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct GitWorktreeRemoval {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) branch: Option<String>,
-    pub(super) branch_deleted: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) warning: Option<String>,
-}
-
-pub(super) struct LimitedOutput { pub(super) status: ExitStatus, pub(super) stdout: Vec<u8>, pub(super) stderr: Vec<u8> }
+pub(crate) struct LimitedOutput { pub(crate) status: ExitStatus, pub(crate) stdout: Vec<u8>, pub(crate) stderr: Vec<u8> }
 
 #[derive(Clone, Copy)]
-pub(super) enum WorktreeScriptPhase { Setup, Cleanup }
+pub(crate) enum WorktreeScriptPhase { Setup, Cleanup }
 
 impl WorktreeScriptPhase {
     fn name(self) -> &'static str { match self { Self::Setup => "Setup", Self::Cleanup => "Cleanup" } }
@@ -65,7 +47,7 @@ impl WorktreeScriptPhase {
 
 struct WorktreeScriptTarget<'a> { cwd: &'a str, worktree_path: &'a str, host_id: &'a str, host: Option<&'a RemoteHost> }
 
-pub(super) fn run_worktree_scripts(settings: &AppSettings, cwd: &str, worktree_path: &str, host_id: &str, cancelled: &AtomicBool, phase: WorktreeScriptPhase) -> Result<(), String> {
+pub(crate) fn run_worktree_scripts(settings: &AppSettings, cwd: &str, worktree_path: &str, host_id: &str, cancelled: &AtomicBool, phase: WorktreeScriptPhase) -> Result<(), String> {
     let host = if host_id == "local" { None } else { Some(remote_host(settings, host_id)?) };
     let target = WorktreeScriptTarget { cwd, worktree_path, host_id, host };
     let mut scripts = settings.worktree_setup_scripts.iter().filter(|setup| setup.enabled).collect::<Vec<_>>();
@@ -141,7 +123,7 @@ exit "$status""#, source = shell_quote(cwd), project = shell_quote(project_path)
     }
     Ok(())
 }
-pub(super) async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
+pub(crate) async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
     let worker_app = app.clone();
     execute_worktree_setup(&app.state::<PiRuntime>(), &setup_id, move |cancelled| {
         let settings = load_app_settings(worker_app)?;
@@ -150,7 +132,7 @@ pub(super) async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: St
     }).await
 }
 
-pub(super) async fn execute_worktree_setup(runtime: &PiRuntime, setup_id: &str, work: impl FnOnce(Arc<AtomicBool>) -> Result<(), String> + Send + 'static) -> Result<(), String> {
+pub(crate) async fn execute_worktree_setup(runtime: &PiRuntime, setup_id: &str, work: impl FnOnce(Arc<AtomicBool>) -> Result<(), String> + Send + 'static) -> Result<(), String> {
     let cancelled = runtime.setups.pending.lock().map_err(|_| "Setup lock was poisoned")?.get(setup_id).cloned().ok_or("Unknown setup")?;
     let result = crate::platform::async_runtime::spawn_blocking(move || work(cancelled)).await.map_err(|error| error.to_string());
     runtime.setups.pending.lock().map_err(|_| "Setup lock was poisoned")?.remove(setup_id);
@@ -158,13 +140,13 @@ pub(super) async fn execute_worktree_setup(runtime: &PiRuntime, setup_id: &str, 
     result?
 }
 
-pub(super) fn register_worktree_setup(runtime: &PiRuntime) -> Result<String, String> {
+pub(crate) fn register_worktree_setup(runtime: &PiRuntime) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     runtime.setups.pending.lock().map_err(|_| "Setup lock was poisoned")?.insert(id.clone(), Arc::new(AtomicBool::new(false)));
     Ok(id)
 }
 
-pub(super) fn detach_worktree_setups(runtime: &PiRuntime, owner: &str) {
+pub(crate) fn detach_worktree_setups(runtime: &PiRuntime, owner: &str) {
     let Ok(mut owners) = runtime.setups.owners.lock() else { return; };
     owners.detached.insert(owner.to_owned());
     let Ok(mut setups) = runtime.setups.pending.lock() else { return; };
@@ -175,21 +157,21 @@ pub(super) fn detach_worktree_setups(runtime: &PiRuntime, owner: &str) {
     });
 }
 
-pub(super) fn verify_setup_owner(runtime: &PiRuntime, setup_id: &str, owner: &str) -> Result<(), String> {
+pub(crate) fn verify_setup_owner(runtime: &PiRuntime, setup_id: &str, owner: &str) -> Result<(), String> {
     let owners = runtime.setups.owners.lock().map_err(|_| "Setup lock was poisoned")?;
     if owners.detached.contains(owner) || owners.setups.get(setup_id).map(String::as_str) != Some(owner) { return Err("Setup belongs to another connection or has ended".into()); }
     Ok(())
 }
-pub(super) fn cancel_worktree_setup(runtime: State<PiRuntime>, setup_id: String) -> Result<(), String> {
+pub(crate) fn cancel_worktree_setup(runtime: State<PiRuntime>, setup_id: String) -> Result<(), String> {
     signal_worktree_setup_cancellation(&runtime, &setup_id)
 }
 
-pub(super) fn signal_worktree_setup_cancellation(runtime: &PiRuntime, setup_id: &str) -> Result<(), String> {
+pub(crate) fn signal_worktree_setup_cancellation(runtime: &PiRuntime, setup_id: &str) -> Result<(), String> {
     if let Some(cancelled) = runtime.setups.pending.lock().map_err(|_| "Setup lock was poisoned")?.get(setup_id) { cancelled.store(true, Ordering::SeqCst); }
     Ok(())
 }
 
-pub(super) fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &str, completion_marker: String, cancellation_message: &str, timeout: Option<Duration>) -> Result<(i32, Vec<u8>), String> {
+pub(crate) fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &str, completion_marker: String, cancellation_message: &str, timeout: Option<Duration>) -> Result<(i32, Vec<u8>), String> {
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("{context}: {error}"))?;
     let mut input = child.stdin.take();
     let stdout = child.stdout.take().ok_or("Setup stdout was unavailable")?;
@@ -275,7 +257,7 @@ fn wait_setup_process(child: &mut Child, input: &mut Option<ChildStdin>, complet
     Ok((status, stop_reason))
 }
 
-pub(super) fn run_limited(command: &mut Command, max_stdout: usize, context: &str) -> Result<LimitedOutput, String> {
+pub(crate) fn run_limited(command: &mut Command, max_stdout: usize, context: &str) -> Result<LimitedOutput, String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| format!("{context}: {error}"))?;
     let stdout = child.stdout.take().ok_or_else(|| format!("{context}: stdout was unavailable"))?;
@@ -299,7 +281,7 @@ pub(super) fn run_limited(command: &mut Command, max_stdout: usize, context: &st
     Ok(LimitedOutput { status, stdout: bytes, stderr })
 }
 
-pub(super) fn shutdown(runtime: &PiRuntime) {
+pub(crate) fn shutdown(runtime: &PiRuntime) {
     if let Ok(setups) = runtime.setups.pending.lock() { for cancelled in setups.values() { cancelled.store(true, Ordering::SeqCst); } }
 }
 
@@ -307,18 +289,18 @@ pub(super) fn shutdown(runtime: &PiRuntime) {
 struct WorktreeSetupOwners { setups: HashMap<String, String>, detached: HashSet<String> }
 
 #[derive(Default)]
-pub(super) struct WorktreeSetups {
+pub(crate) struct WorktreeSetups {
     pending: Mutex<HashMap<String, Arc<AtomicBool>>>,
     owners: Mutex<WorktreeSetupOwners>,
 }
 impl WorktreeSetups {
-    pub(super) fn attach_owner(&self, owner: &str) {
+    pub(crate) fn attach_owner(&self, owner: &str) {
         if let Ok(mut owners) = self.owners.lock() { owners.detached.remove(owner); }
     }
     #[cfg(test)]
-    pub(super) fn test_pending(&self) -> &Mutex<HashMap<String, Arc<AtomicBool>>> { &self.pending }
+    pub(crate) fn test_pending(&self) -> &Mutex<HashMap<String, Arc<AtomicBool>>> { &self.pending }
 }
-pub(super) fn prepare_for_owner(runtime: &PiRuntime, owner: String) -> Result<String, String> {
+pub(crate) fn prepare_for_owner(runtime: &PiRuntime, owner: String) -> Result<String, String> {
     let mut owners = runtime.setups.owners.lock().map_err(|_| "Setup lock was poisoned")?;
     if owners.detached.contains(&owner) { return Err("Connection has ended".into()); }
     let id = register_worktree_setup(runtime)?;

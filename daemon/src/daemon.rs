@@ -150,7 +150,7 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, _broker: &BrokerRunt
 }
 
 fn retry_capture(app: &AppHandle, host_id: &str, path: &str, host: Option<&RemoteHost>) -> Result<(), String> {
-    if crate::git_diff_retry::retry_pending_git_diffs(path, host)? {
+    if crate::git::git_diff_retry::retry_pending_git_diffs(path, host)? {
         let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path}));
     }
     Ok(())
@@ -158,7 +158,7 @@ fn retry_capture(app: &AppHandle, host_id: &str, path: &str, host: Option<&Remot
 
 fn retain_capture_packet(packet: &Value, baseline: Option<&str>, host: Option<&RemoteHost>) -> Result<(), String> {
     if packet["durable"] == true { return Ok(()); }
-    crate::git_diff_retry::retain_pending_git_diff(packet, baseline.ok_or("Comparison baseline is missing")?, host)
+    crate::git::git_diff_retry::retain_pending_git_diff(packet, baseline.ok_or("Comparison baseline is missing")?, host)
 }
 
 struct CaptureWriter {
@@ -229,15 +229,15 @@ fn save_capture_packet(app: &AppHandle, host_id: &str, packet: &Value, host: Opt
     };
     if packet["ephemeral"] == true {
         let session_id = packet["sessionId"].as_str().ok_or("Temporary capture has no stable session ID; snapshots preserved")?;
-        crate::git_diffs::persist_ephemeral_capture_diff(path, session_id, id, cwd, baseline, current, host)?;
+        crate::git::git_diffs::persist_ephemeral_capture_diff(path, session_id, id, cwd, baseline, current, host)?;
     }
     else if packet["durable"].is_boolean() {
         retain_capture_packet(packet, Some(baseline), host)?;
-        crate::git_diff_retry::retry_pending_git_diffs(path, host)?;
+        crate::git::git_diff_retry::retry_pending_git_diffs(path, host)?;
         let _ = discard_git_tree_at_host(baseline, host);
         let _ = discard_git_tree_at_host(current, host);
     }
-    else { crate::git_diffs::persist_capture_diff(path, id, cwd, baseline, current, host)?; }
+    else { crate::git::git_diffs::persist_capture_diff(path, id, cwd, baseline, current, host)?; }
     let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path}));
     Ok(())
 }
@@ -291,7 +291,7 @@ fn handle_session_state(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str
 
 fn close_session_captures(connection: &Daemon, key: &str, scope: Option<&str>) -> Result<(), String> {
     connection.drain_captures(Some(key))?;
-    if let Some(scope) = scope { crate::git_diff_retry::release_snapshot_reader(scope, connection.host.as_ref())?; }
+    if let Some(scope) = scope { crate::git::git_diff_retry::release_snapshot_reader(scope, connection.host.as_ref())?; }
     let mut captures = connection.captures.lock().map_err(|_| "Capture queue lock was poisoned")?;
     if let Some(sender) = captures.remove(key) { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); }
     Ok(())

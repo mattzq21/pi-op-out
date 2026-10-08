@@ -2,7 +2,7 @@ use std::path::Path;
 
 pub(crate) fn recover_remote(host: &crate::RemoteHost) -> Result<(), String> {
     use crate::pi_launch::{remote_login_command, ssh};
-    use crate::worktree_setup::{run_limited, shell_quote};
+    use crate::git::worktree_setup::{run_limited, shell_quote};
     let script = include_str!("../resources/restore-archived-worktree.bundle.mjs");
     let storage = crate::STORAGE_DIRECTORY;
     let command = format!("PIOP_STORAGE_DIRECTORY={storage} node -e {} -- --recover", shell_quote(script));

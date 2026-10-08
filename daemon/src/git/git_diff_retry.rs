@@ -2,10 +2,11 @@ use std::process::Command;
 use std::sync::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use crate::{GitDiffSnapshot, MAX_GIT_DIFFS_BYTES, RemoteHost, STORAGE_DIRECTORY, node_command};
-use crate::git_diffs::save_git_diffs_at_host;
+use crate::{RemoteHost, STORAGE_DIRECTORY, node_command};
+use crate::git::{GitDiffSnapshot, MAX_GIT_DIFFS_BYTES};
+use crate::git::git_diffs::save_git_diffs_at_host;
 use crate::pi_launch::{remote_login_command, ssh};
-use crate::worktree_setup::{run_limited, shell_quote};
+use crate::git::worktree_setup::{run_limited, shell_quote};
 
 static RETRIES: Mutex<()> = Mutex::new(());
 
@@ -33,14 +34,14 @@ fn pending_command(request: Value, host: Option<&RemoteHost>) -> Result<Value, S
     serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid pending project changes: {error}"))
 }
 
-pub(super) fn retain_pending_git_diff(packet: &Value, baseline: &str, host: Option<&RemoteHost>) -> Result<(), String> {
+pub(crate) fn retain_pending_git_diff(packet: &Value, baseline: &str, host: Option<&RemoteHost>) -> Result<(), String> {
     let _guard = RETRIES.lock().map_err(|_| "Project changes retry lock was poisoned")?;
     pending_command(json!({"action":"retain","sessionPath":packet["sessionPath"],"turnId":packet["turnId"],
         "messageId":packet["messageId"],"baseline":baseline,"current":packet["current"]}), host)?;
     Ok(())
 }
 
-pub(super) fn release_snapshot_reader(scope: &str, host: Option<&RemoteHost>) -> Result<(), String> {
+pub(crate) fn release_snapshot_reader(scope: &str, host: Option<&RemoteHost>) -> Result<(), String> {
     pending_command(json!({"action":"release","scope":scope}), host)?;
     Ok(())
 }
@@ -55,7 +56,7 @@ fn save_pending(session_path: &str, pending: &PendingDiff, host: Option<&RemoteH
     Ok(())
 }
 
-pub(super) fn retry_pending_git_diffs(session_path: &str, host: Option<&RemoteHost>) -> Result<bool, String> {
+pub(crate) fn retry_pending_git_diffs(session_path: &str, host: Option<&RemoteHost>) -> Result<bool, String> {
     let _guard = RETRIES.lock().map_err(|_| "Project changes retry lock was poisoned")?;
     let mut saved = false;
     loop {

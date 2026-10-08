@@ -17,7 +17,7 @@ use crate::platform::AppHandle;
 use uuid::Uuid;
 use crate::{AppSettings, BrokerRuntime, DEVELOPMENT, PiRuntime, RemoteHost, STORAGE_DIRECTORY, hash_claim_key, node_command};
 use crate::archives::{local_desktop_session_file_at};
-use crate::worktree_setup::{ensure_desktop_sessions_dir, run_limited, shell_quote};
+use crate::git::worktree_setup::{ensure_desktop_sessions_dir, run_limited, shell_quote};
 use crate::environment::home_dir;
 use crate::environment::pi_executable;
 use crate::settings::{load_app_settings};

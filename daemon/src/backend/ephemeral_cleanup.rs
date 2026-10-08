@@ -5,7 +5,7 @@ use crate::{RemoteHost, STORAGE_DIRECTORY, hash_claim_key, node_command};
 use crate::environment::home_dir;
 use crate::pi_launch::{EphemeralSession, remote_login_command, ssh};
 use crate::private_fs::ensure_private_dir;
-use crate::worktree_setup::shell_quote;
+use crate::git::worktree_setup::shell_quote;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -136,7 +136,7 @@ fn command(session: &EphemeralSession, request: &serde_json::Value, locked: bool
 }
 
 fn output(command: &mut Command) -> Result<Vec<u8>, String> {
-    let output = crate::worktree_setup::run_limited(command, 256 * 1024, "Ephemeral cleanup helper failed")?;
+    let output = crate::git::worktree_setup::run_limited(command, 256 * 1024, "Ephemeral cleanup helper failed")?;
     if !output.status.success() { return Err(format!("Ephemeral cleanup failed: {}", String::from_utf8_lossy(&output.stderr).trim())); }
     Ok(output.stdout)
 }
@@ -308,7 +308,7 @@ fn recover_pending(record: &Record, required: bool) -> Result<(), String> {
     if !required { return Ok(()); }
     let session = record.location.session();
     let host = match &record.location { Location::Local { .. } => None, Location::Remote { host, .. } => Some(host) };
-    crate::git_diffs::recover_ephemeral_git_diffs_at_host(&session.path(), &record.session_id, host)
+    crate::git::git_diffs::recover_ephemeral_git_diffs_at_host(&session.path(), &record.session_id, host)
         .map_err(|error| format!("Ephemeral comparison recovery retained its transcript and global snapshots: {error}"))
 }
 

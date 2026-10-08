@@ -1,7 +1,7 @@
 use std::{collections::{HashMap, HashSet}, fs::{self, File, OpenOptions}, io::{BufRead, BufReader, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use crate::{GitDiffSnapshots, MAX_GIT_PATCH_BYTES};
+use crate::git::{GitDiffSnapshots, MAX_GIT_PATCH_BYTES};
 
 #[path = "git_diff_pages.rs"]
 mod pages;
@@ -79,7 +79,7 @@ fn apply_transfer(state: &mut State, record: &Value) -> Result<(), String> {
 }
 
 fn apply_snapshot(state: &mut State, id: String, snapshot: &Value) -> Result<(), String> {
-    serde_json::from_value::<crate::GitDiffSnapshot>(snapshot.clone()).map_err(error)?;
+    serde_json::from_value::<crate::git::GitDiffSnapshot>(snapshot.clone()).map_err(error)?;
     state.removed.remove(&id);
     state.digests.insert(id.clone(), digest(snapshot)?);
     if state.materialize { state.snapshots.insert(id, snapshot.clone()); }

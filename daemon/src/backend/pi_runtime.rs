@@ -262,7 +262,7 @@ struct PiProcess {
 
 #[derive(Default)]
 pub(super) struct PiRuntime {
-    pub(super) setups: crate::worktree_setup::WorktreeSetups,
+    pub(super) setups: crate::git::worktree_setup::WorktreeSetups,
     pub(super) ephemeral: crate::pi_launch::EphemeralSessions,
     pub(super) connections: daemon::DaemonRegistry,
     processes: Arc<Mutex<HashMap<String, PiProcess>>>,

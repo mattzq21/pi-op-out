@@ -150,16 +150,7 @@ fn group_has_sessions(state: &SessionGroups, group: &SessionGroup, sessions: &[s
 
 fn branch_is_missing(settings: &super::AppSettings, group: &SessionGroup, branch: &str) -> bool {
     let Some(cwd) = group.cwd.as_deref() else { return false; };
-    let reference = format!("refs/heads/{branch}");
-    let script = format!("git -C {} rev-parse --git-dir >/dev/null 2>&1 || exit 2; git -C {} show-ref --verify --quiet {} && exit 0; [ $? -eq 1 ] || exit 2; printf branch-missing", super::shell_quote(cwd), super::shell_quote(cwd), super::shell_quote(&reference));
-    let host_id = group.host_id.as_deref().unwrap_or("local");
-    let mut command = if host_id == "local" {
-        let mut command = std::process::Command::new("sh"); command.args(["-c", &script]); command
-    } else {
-        let Ok(host) = super::remote_host(settings, host_id) else { return false; };
-        let mut command = super::ssh(host); command.arg(super::remote_login_command(&script)); command
-    };
-    super::run_limited(&mut command, 64 * 1024, "Could not check group branch").is_ok_and(|output| output.status.success() && output.stdout == b"branch-missing")
+    crate::git::project_branches::branch_is_missing(settings, cwd, group.host_id.as_deref().unwrap_or("local"), branch)
 }
 
 fn migrate_group_names(state: &mut SessionGroups) -> bool {
