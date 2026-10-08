@@ -53,11 +53,15 @@ try {
 
   if (!serial || !devices.includes(serial)) throw new Error('Connect and authorize one Android device, or select one with npm run reinstall -- <device-serial>.');
   console.log('Building and starting the Piop debug daemon…');
-  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'daemon:dev']);
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'daemon:dev:restart']);
+  const connection = JSON.parse(run(process.execPath, ['scripts/mobile-debug-connection.mjs'], true));
+  const debugUrl = new URL(connection.url);
+  debugUrl.hostname = '127.0.0.1';
   console.log(`Rebuilding Piop for ${serial}…`);
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'android:build']);
   run(adb, ['-s', serial, 'install', '-r', join(root, 'android/app/build/outputs/apk/debug/app-debug.apk')]);
-  run(adb, ['-s', serial, 'shell', 'am', 'start', '-n', 'dev.pi.mobile/.MainActivity']);
+  run(adb, ['-s', serial, 'reverse', `tcp:${debugUrl.port}`, `tcp:${debugUrl.port}`]);
+  run(adb, ['-s', serial, 'shell', 'am', 'start', '-S', '-n', 'dev.pi.mobile/.MainActivity', '--es', 'piopDebugUrl', debugUrl.href]);
   console.log('Piop reinstalled and opened. App data preserved.');
   console.log('Daemon controls: npm run daemon:dev:stop | npm run daemon:dev:restart');
 } catch (error) {

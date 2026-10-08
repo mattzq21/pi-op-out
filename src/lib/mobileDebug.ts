@@ -5,7 +5,7 @@ const debugConnection = registerPlugin<{ load(): Promise<{ url?: string }> }>("D
 let debugUrl: string | undefined;
 
 function validDebugAddress(url: URL) {
-  return url.protocol === "ws:" && url.hostname === "10.0.2.2" && Boolean(url.port) && url.pathname === "/" && !url.username && !url.password && !url.search && !url.hash;
+  return url.protocol === "ws:" && ["10.0.2.2", "127.0.0.1"].includes(url.hostname) && Boolean(url.port) && url.pathname === "/" && !url.username && !url.password && !url.search && !url.hash;
 }
 
 export async function loadMobileDebugConnection(): Promise<string | undefined> {
@@ -16,7 +16,7 @@ export async function loadMobileDebugConnection(): Promise<string | undefined> {
   const url = new URL(configuration.url);
 
   if (!validDebugAddress(url)) {
-    throw new Error("Invalid emulator debug connection address.");
+    throw new Error("Invalid Android debug connection address.");
   }
 
   debugUrl = url.href;
