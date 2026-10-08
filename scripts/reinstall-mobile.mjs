@@ -59,6 +59,7 @@ try {
   run(adb, ['-s', serial, 'install', '-r', join(root, 'android/app/build/outputs/apk/debug/app-debug.apk')]);
   run(adb, ['-s', serial, 'shell', 'am', 'start', '-n', 'dev.pi.mobile/.MainActivity']);
   console.log('Piop reinstalled and opened. App data preserved.');
+  console.log('Daemon controls: npm run daemon:dev:stop | npm run daemon:dev:restart');
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
