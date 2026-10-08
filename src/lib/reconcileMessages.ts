@@ -10,12 +10,21 @@ export function sameUserContent(submitted: ChatMessage, message: ChatMessage): b
 
 export const matchesSubmittedMessage = (submitted: ChatMessage, message: ChatMessage) => Boolean(submitted.submissionId) && sameUserContent(submitted, message);
 
+function reuseAssistantContent(previous: ChatMessage["content"], incoming: ChatMessage["content"]): ChatMessage["content"] {
+  if (!Array.isArray(previous) || !Array.isArray(incoming)) return incoming;
+  const content = incoming.map((part, position) => JSON.stringify(part) === JSON.stringify(previous[position]) ? previous[position] : part);
+
+  return content.length === previous.length && content.every((part, position) => part === previous[position]) ? previous : content;
+}
+
 export function upsertLiveMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
   const index = messages.findIndex(item => item.id === message.id);
 
   if (index === -1) return [...messages, message];
   const previous = messages[index];
   const next = { ...message, entryId: message.entryId ?? previous.entryId, toolInput: message.toolInput ?? previous.toolInput, details: message.details ?? previous.details, fileChanges: previous.fileChanges, promptContext: previous.promptContext };
+
+  if (message.role === "assistant") next.content = reuseAssistantContent(previous.content, message.content);
 
   if (message.role === "user" && JSON.stringify(previous) === JSON.stringify(next)) return messages;
 

@@ -258,7 +258,6 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       };
 
       const handlers = new Map(Object.entries({
-        "agent_settled": () => { if (current() && !initializing) void capturedOptions.refreshSession().catch(() => undefined); },
         "extension_ui_resolved": handleExtensionUiResolved,
         "terminal_output": handleTerminalOutput,
         "terminal_exit": handleTerminalExit,

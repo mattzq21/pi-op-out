@@ -253,7 +253,6 @@ export function SplitChatPane(componentProps: Props) {
       };
 
       const handlers = new Map(Object.entries({
-        "agent_settled": () => { if (!closing && !reconnecting) void capturedSession.refresh().catch(reportControlError); },
         "ownership_lost": handleOwnershipLost,
         "ownership_acquired": handleOwnershipAcquired,
         "extension_ui_resolved": handleExtensionUiResolved,
