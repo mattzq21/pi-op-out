@@ -16,7 +16,7 @@ if (available.error || available.status !== 0) {
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'piop-rust-mutants-'));
 
 try {
-  for (const directory of ['Cargo.toml', 'Cargo.lock', 'daemon', 'protocol', 'clients/desktop', 'clients/ui', 'extensions', 'dist']) {
+  for (const directory of ['Cargo.toml', 'Cargo.lock', 'daemon', 'crates/protocol', 'clients/desktop', 'clients/ui', 'extensions', 'dist']) {
     await cp(join(root, directory), join(temporaryRoot, directory), {
       recursive: true,
       filter: source => !['target', 'node_modules', '.git', 'mutants.out', 'mutants.out.old'].includes(basename(source)),

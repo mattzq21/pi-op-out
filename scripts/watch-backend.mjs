@@ -176,7 +176,7 @@ export async function watchBackend(command, args, options, root, { port, branchL
   const observeBackend = () => {
     if (!watch) return;
 
-    for (const directory of ["clients/desktop/src", "daemon", "protocol", "clients/desktop/capabilities", "clients/desktop/icons", "extensions", "scripts", ".cargo"]) observe(join(root, directory), true);
+    for (const directory of ["clients/desktop/src", "daemon", "crates/protocol", "clients/desktop/capabilities", "clients/desktop/icons", "extensions", "scripts", ".cargo"]) observe(join(root, directory), true);
     observe(join(root, "clients/desktop"));
 
     for (const filename of ["package.json", "package-lock.json", "Cargo.toml", "Cargo.lock"]) {
