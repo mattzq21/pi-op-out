@@ -12,6 +12,8 @@ const goalPromptContext = new AsyncLocalStorage();
 
 const releasedPromptContext = new AsyncLocalStorage();
 
+const goalQueueRelease = new WeakMap();
+
 const queuePromptScope = Symbol("piop.queue-prompt");
 
 const wrappedSessions = new WeakSet();
@@ -404,7 +406,7 @@ async function releaseGoalQueue(session, prompt) {
 
   if (isReview(reviewText(first))) return releaseQueuedReviews(session, messages, prompt);
   const images = first.role === "user" ? first.content.filter(part => part.type === "image") : [];
-  const scope = { session, messages, inputPending: true, preparing: true, runRequested: false, started: false };
+  const scope = { session, messages, nextTurnMessages: session._pendingNextTurnMessages, inputPending: true, preparing: true, runRequested: false, started: false };
   const stopTracking = trackReleasedPrompt(session, scope);
   session._agentRunAbortRequested = false;
   session._isAgentRunActive = true;
@@ -412,7 +414,11 @@ async function releaseGoalQueue(session, prompt) {
   try {
     await releasedPromptContext.run(scope, () => prompt.call(session, reviewText(first), { images, source: "rpc", expandPromptTemplates: false }));
   } catch (error) {
-    if (!scope.started) session.agent.followUpQueue.messages.unshift(...messages);
+    if (!scope.started) {
+      session.agent.followUpQueue.messages.unshift(...messages);
+
+      if (session._pendingNextTurnMessages !== scope.nextTurnMessages) session._pendingNextTurnMessages.unshift(...scope.nextTurnMessages);
+    }
     session.extensionRunner.createContext().ui.notify(String(error), "error");
   } finally {
     stopTracking();
@@ -452,6 +458,7 @@ function scheduleGoalQueueRelease(session, prompt) {
 function bindGoalQueue(session, prompt) {
   bindReleasedPromptPreparation(session);
   const releaseQueue = scheduleGoalQueueRelease(session, prompt);
+  goalQueueRelease.set(session, releaseQueue);
   const queue = session.agent.followUpQueue;
 
   for (const [name, blocked] of [["hasItems", false], ["peek", []]]) {
@@ -585,6 +592,8 @@ async function queueHeldFollowUp(session, text, options) {
     const disposition = await session._queueUserInput(text, options.images, "followUp", options.source);
     options.preflightResult?.(disposition);
   }
+
+  if (!hasGoal(session)) goalQueueRelease.get(session)();
 }
 
 async function main() {
