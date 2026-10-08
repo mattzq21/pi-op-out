@@ -12,7 +12,7 @@ import { createdWorktreeSchema } from "./fork.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { listenSubagentUsage, registerSubagentUsage } from "./subagent-usage.ts";
 import { registerSubagentMailbox } from "./subagent-mailbox.ts";
-import { boundedRecovery, recoverDescendantAccounting, registerSubagentRecovery, waitForAccounting, type RecoveryScope } from "./subagent-recovery.ts";
+import { boundedRecovery, recoverDescendantAccounting, recoverStoppedRun, registerSubagentRecovery, waitForAccounting, type RecoveryScope } from "./subagent-recovery.ts";
 import { interruptSession, sendAgentMailbox, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { completedSubagentOutput, forgetSubagentRun, hasSubagentResult, ownedSubagentRuns, persistSubagentRun, persistSubagentUsage, reportedSubagentUsage, resultNotificationId, savedSubagentRuns, subagentCompletion, unresolvedSubagentRuns, type SubagentResponse, type SubagentRun } from "./subagent-results.ts";
@@ -310,11 +310,12 @@ async function recoverSubagentAccounting(run: SubagentRun, execution: UsageExecu
 async function performAccountingRecovery(run: SubagentRun, execution: UsageExecution) {
   const latest = (await savedSubagentRuns(execution.ctx)).find(saved => resultNotificationId(saved) === resultNotificationId(run));
 
-  if (latest && !latest.accountingPending && latest.status !== "running") { Object.assign(run, latest);
+  if (latest) Object.assign(run, latest);
 
-  return; }
+  if (!run.accountingPending && run.status !== "running") return;
 
   const scope = boundedRecovery(execution);
+  await recoverStoppedRun(execution.pi, execution.ctx, run, scope);
   await restoreSubagentPath(run, scope.signal);
   const reportUsage = await usageReporter(run, { ...execution, ...scope }, true);
   await reconcileSubagentTranscript(run, reportUsage, scope);

@@ -44,7 +44,7 @@ export async function waitForAccounting(done: Promise<void>, scope: RecoveryScop
   } finally { cancellation.abort(); }
 }
 
-async function recoverStoppedRun(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun, scope: RecoveryScope) {
+export async function recoverStoppedRun(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun, scope: RecoveryScope) {
   if (run.status !== "running") return;
   const snapshot = await sessionSnapshot(run.sessionId, run.hostId, scope.signal);
   scope.signal?.throwIfAborted();
@@ -71,14 +71,13 @@ interface RecoveryRuntime {
   publish: (run: SubagentRun, ctx: ExtensionContext) => Promise<void>;
 }
 
-async function retryAccountingPass(pi: ExtensionAPI, ctx: ExtensionContext, runtime: RecoveryRuntime, signal: AbortSignal, reported: Set<string>) {
+async function retryAccountingPass(ctx: ExtensionContext, runtime: RecoveryRuntime, signal: AbortSignal, reported: Set<string>) {
   for (const run of await savedSubagentRuns(ctx)) {
     if (!(run.accountingPending || run.status === "running") || runtime.active.has(run.sessionId)) continue;
     signal.throwIfAborted();
 
     try {
       const scope = boundedRecovery({ signal });
-      await recoverStoppedRun(pi, ctx, run, scope);
       await runtime.recover(run, ctx, scope);
       await runtime.publish(run, ctx);
       reported.delete(resultNotificationId(run));
@@ -91,7 +90,7 @@ async function retryAccountingPass(pi: ExtensionAPI, ctx: ExtensionContext, runt
   }
 }
 
-async function retryPendingAccounting(pi: ExtensionAPI, ctx: ExtensionContext, runtime: RecoveryRuntime, signal: AbortSignal) {
+async function retryPendingAccounting(ctx: ExtensionContext, runtime: RecoveryRuntime, signal: AbortSignal) {
   const reported = new Set<string>();
   let pause = 1000;
 
@@ -99,7 +98,7 @@ async function retryPendingAccounting(pi: ExtensionAPI, ctx: ExtensionContext, r
     await delay(pause, undefined, { signal });
     pause = Math.min(30_000, pause * 2);
 
-    try { await retryAccountingPass(pi, ctx, runtime, signal, reported); reported.delete("inventory"); }
+    try { await retryAccountingPass(ctx, runtime, signal, reported); reported.delete("inventory"); }
     catch (error) {
       signal.throwIfAborted();
 
@@ -124,7 +123,7 @@ export function registerSubagentRecovery(pi: ExtensionAPI, runtime: RecoveryRunt
     if (process.env.PIOP_USAGE_RECOVERY === "1") return;
     retryController = new AbortController();
     const signal = retryController.signal;
-    retrying = retryPendingAccounting(pi, ctx, runtime, signal).catch(error => { if (!signal.aborted) ctx.ui.notify(`Token usage recovery remains pending: ${String(error)}`, "error"); });
+    retrying = retryPendingAccounting(ctx, runtime, signal).catch(error => { if (!signal.aborted) ctx.ui.notify(`Token usage recovery remains pending: ${String(error)}`, "error"); });
   };
 
   const unsubscribe = pi.events.on("piop:rpc", event => {
@@ -155,9 +154,7 @@ export function registerSubagentRecovery(pi: ExtensionAPI, runtime: RecoveryRunt
           run = (await savedSubagentRuns(event.ctx)).find(saved => resultNotificationId(saved) === resultNotificationId(run)) ?? run;
         }
 
-        await recoverStoppedRun(pi, event.ctx, run, scope);
-
-        if (run.accountingPending) await recover(run, event.ctx, scope);
+        if (run.accountingPending || run.status === "running") await recover(run, event.ctx, scope);
 
         if (hasSubagentResult(event.ctx, run)) await forgetSubagentRun(event.ctx, run);
       }

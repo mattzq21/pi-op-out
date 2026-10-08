@@ -508,6 +508,13 @@ impl Session {
         }
     }
 
+    pub async fn activate_usage_recovery(&self) -> Result<()> {
+        if self.spec.env.get("PIOP_USAGE_RECOVERY").is_some_and(|mode| mode == "1") {
+            self.execute(json!({"type":"activate_usage_recovery"})).await?;
+        }
+        Ok(())
+    }
+
     pub async fn retire(&self) -> Result<()> {
         if self.transient() {
             return Err("This conversation branch is still being prepared".into());

@@ -116,6 +116,7 @@ impl Attachment {
         host.registry().readonly.remove(&self.runtime);
         host.attach_view(&self.runtime, session.clone(), self.packet["presence"].clone());
         host.remember(&self.runtime, &session);
+        if self.spec.env.get("PIOP_USAGE_RECOVERY").is_none_or(|mode| mode != "1") { session.activate_usage_recovery().await?; }
         host.reconcile(session.clone());
         Ok(json!({"attached":session.views().len()>1||session.submitted(),"owned":true}))
     }

@@ -197,6 +197,7 @@ impl Host {
         session.reconcile(false).await;
         if let Some(error) = session.configuration_error() { return Err(error); }
         if self.registry().cancelled_deliveries.contains(&text(packet, "deliveryId")) { return Err("Agent delivery was cancelled".into()); }
+        if flag(packet, "wake") { session.activate_usage_recovery().await?; }
         queue_command(&session, json!({"type":"orchestration_message","deliveryId":packet["deliveryId"],"sourceSessionId":packet["sourceSessionId"],
             "sourceHostId":packet["sourceHostId"],"message":packet["message"],"wake":packet["wake"]})).await
     }
@@ -233,9 +234,7 @@ impl Host {
         let session = self.registry().subscriptions.remove(runtime);
         if let Some(session) = session {
             session.detach_view(runtime);
-            if session.retire().await.is_err() {
-                session.execute(json!({"type":"activate_usage_recovery"})).await?;
-            }
+            let _ = session.retire().await;
             self.release_unused(&session).await?;
         }
         Ok(Value::Null)
