@@ -33,7 +33,7 @@ pub(super) trait Observer: Send + Sync {
     fn disconnect_error(&self) -> String;
 }
 
-pub(super) struct Worker {
+pub(super) struct RuntimeWorker {
     stdin: AsyncMutex<ChildStdin>,
     pending: Mutex<HashMap<String, Request>>,
     signals: mpsc::UnboundedSender<bool>,
@@ -100,7 +100,7 @@ fn terminate(child: &mut Child) {
     }
 }
 
-impl Worker {
+impl RuntimeWorker {
     pub fn spawn(
         spec: &LaunchSpec,
         identity: &str,

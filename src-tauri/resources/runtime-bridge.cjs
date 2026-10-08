@@ -172,7 +172,7 @@ function appInput(dispatch) {
 
 async function resolveQueuedAnswer(payload, session) {
   if (!payload.questionResponse) return false;
-  const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.app-rpc"))?.value;
+  const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"))?.value;
 
   if (!emit) throw new Error("Piop app requests are unavailable");
   const request = { command: "answer_question", payload: { ...payload.questionResponse, action: "resolve", queueId: payload.queueId }, ctx: session.extensionRunner.createCommandContext() };
@@ -233,7 +233,7 @@ async function prepareGoalPrompt(text, session, goalSubmissionId, images, prepar
   if (!goalObjective(text, images) && !prepared) return { message: text };
 
   try {
-    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.app-rpc"))?.value;
+    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"))?.value;
 
     if (!emit) throw new Error("Goal prompt preparation is unavailable");
     const request = { command: "prepare_goal_prompt", payload: { message: text, goalSubmissionId, images, prepared }, ctx: session.extensionRunner.createCommandContext() };
@@ -301,7 +301,7 @@ async function dispatch(command, session, output) {
       return;
     }
 
-    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.app-rpc"))?.value;
+    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"))?.value;
 
     if (!emit) throw new Error("Piop app requests are unavailable");
     const request = { command: command.command, payload: command.payload, ctx: session.extensionRunner.createCommandContext() };

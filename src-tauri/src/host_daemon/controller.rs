@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 pub(super) trait Services: Send + Sync {
     fn bind(&self, host: Weak<Host>);
+    fn initialize(&self) -> BoxFuture<'_, ()>;
     fn handle(&self, packet: Value) -> BoxFuture<'_, Result<Value>>;
     fn refresh_providers(&self) -> BoxFuture<'_, Result<u64>>;
     fn shutdown(&self) -> BoxFuture<'_, ()>;
@@ -188,6 +189,7 @@ impl Host {
         let _ = host.ownership.set(ownership);
         host.recover_queued_input();
         host.services.bind(Arc::downgrade(&host));
+        host.services.initialize().await;
         host.watch_removals();
         host.watch_retention();
         Ok(host)

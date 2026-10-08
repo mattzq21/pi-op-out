@@ -375,7 +375,7 @@ fn broker_agents(app: &AppHandle, broker: &BrokerRuntime) -> Result<Value, Strin
     let session_index = app.state::<SessionIndexRuntime>();
             let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
             let busy = broker.busy.lock().map_err(|_| "Broker claim lock was poisoned")?.clone();
-            collect_sessions(app, &session_index).map(|sessions| json!(sessions.into_iter().map(|session| json!({"hostId":session.host_id,"sessionId":session.id,"name":session.name,"project":session.project,"cwd":session.cwd,"active":busy.contains(&format!("{}\0{}", session.host_id, session.id)) || active.iter().any(|agent| agent_is_active(&session, agent))})).collect::<Vec<_>>()))
+            collect_sessions(app, &session_index).map(|sessions| json!(sessions.into_iter().filter(|session| session.subagent_parent_id.is_none()).map(|session| json!({"hostId":session.host_id,"sessionId":session.id,"name":session.name,"project":session.project,"cwd":session.cwd,"active":busy.contains(&format!("{}\0{}", session.host_id, session.id)) || active.iter().any(|agent| agent_is_active(&session, agent))})).collect::<Vec<_>>()))
 }
 
 fn broker_message_sessions(app: &AppHandle, session_index: &SessionIndexRuntime, host_id: &str) -> Result<Vec<SessionSummary>, String> {

@@ -240,7 +240,6 @@ export class DurableMailbox {
     try {
       send(record.message);
       this.queued.add(key);
-      this.pi.events.emit("piop:agent-mail", { notificationId: record.deliveryId });
 
       return true;
     } catch (error) {
@@ -250,7 +249,12 @@ export class DurableMailbox {
     }
   }
 
-  send(ctx: ExtensionContext, message: SendMessage, deliveryId: string, send = (item: MailboxMessage) => this.pi.sendMessage(item, { triggerTurn: false })) {
+  private deliver(message: MailboxMessage) {
+    this.pi.sendMessage(message, { triggerTurn: false });
+    this.pi.events.emit("piop:agent-mail", { notificationId: message.details.notificationId });
+  }
+
+  send(ctx: ExtensionContext, message: SendMessage, deliveryId: string, send = (item: MailboxMessage) => this.deliver(item)) {
     return this.serial(async () => {
       if (!deliveryId.trim()) throw new Error("Agent mail requires a stable delivery ID");
       const root = mailboxPath(ctx);
@@ -307,7 +311,7 @@ export class DurableMailbox {
     });
   }
 
-  replay(ctx: ExtensionContext) {
+  replay(ctx: ExtensionContext, send = (message: MailboxMessage) => this.deliver(message)) {
     return this.serial(async () => {
       const root = mailboxPath(ctx);
       const records = await pendingRecords(ctx, root);
@@ -332,7 +336,7 @@ export class DurableMailbox {
         if (live.has(record.deliveryId)) continue;
 
         if (ctx.isIdle()) this.queued.delete(this.key(ctx, record.deliveryId));
-        this.submit(ctx, record, message => this.pi.sendMessage(message, { triggerTurn: false }));
+        this.submit(ctx, record, send);
       }
     });
   }

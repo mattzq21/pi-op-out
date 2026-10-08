@@ -300,18 +300,19 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   const unsubscribeTools = pi.events.on("piop:required-tools", ({ ctx, tools, availableTools }) => {
     const allowed = availableTools ?? pi.getActiveTools();
     const child = subagentParent(ctx);
+    const reviewer = ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-review-parent");
 
     if (allowed.includes("subagent") || latestRuns(ctx).length) tools.push("spawn_agent", "followup_task", "interrupt_agent", "list_agents", "list_agent_profiles", "send_message", "wait_agent", "await_subagents");
 
     if (child) tools.push("send_message", "wait_agent");
 
-    if (allowed.includes("send_message")) tools.push("send_message_to_thread", "stop_thread", "read_thread", "wait_threads", "list_threads", "create_thread", "list_agent_profiles");
+    if (!child && !reviewer && allowed.includes("send_message")) tools.push("send_message_to_thread", "stop_thread", "read_thread", "wait_threads", "list_threads", "create_thread", "list_agent_profiles");
   });
 
   pi.on("session_shutdown", unsubscribeTools);
   pi.registerTool({
     name: "spawn_agent", label: "Spawn agent", exposure: "model-only",
-    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. Profile choice is independent of fork_turns: none (default), all, or a positive number of recent user turns. Up to eight children per parent run concurrently. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. worktree is required: same shares files with the caller; new creates a separate Git worktree, copies current changes and runs configured setup. Created worktrees are retained. Final results arrive in the parent mailbox without starting an idle parent. Use followup_task for more work, send_message for updates, and wait_agent when blocked. Children are cancelled on parent close/switch and time out after ten minutes.",
+    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. Profile choice is independent of fork_turns: none (default), all, or a positive number of recent user turns. Up to eight children per parent run concurrently. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. worktree is required: same shares files with the caller; new creates a separate Git worktree, copies current changes and runs configured setup. Created worktrees are retained. Final results start a new parent turn immediately if idle, or after the parent agent settles. Use followup_task for more work and send_message for updates. Finish your current run when waiting for mailbox delivery. Children are cancelled on parent close/switch and time out after ten minutes.",
     parameters: Type.Object({ task_name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), message: Type.String({ minLength: 1, maxLength: 100_000 }), worktree: worktreeChoice, agent: Type.Optional(Type.String({ minLength: 1, description: "Exact configured profile name from list_agent_profiles; omit to inherit the caller" })), fork_turns: Type.Optional(Type.String()) }),
     async execute(id, params, signal, _update, ctx) { return start({ name: params.task_name, task: params.message, agent: params.agent, fork_turns: params.fork_turns, worktree: params.worktree }, id, ctx, signal); },
   });
@@ -332,14 +333,14 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     },
   });
   pi.registerTool({
-    name: "send_message", label: "Message agent", exposure: "model-only", description: "Deliver an update to a child by session ID or task name, or to parent from a child. Steers a running recipient; an idle recipient receives mailbox content without starting a new turn. Use followup_task to wake a child. Returns acceptance, not a reply. Use send_message_to_thread for independent chats.",
+    name: "send_message", label: "Message agent", exposure: "model-only", description: "Deliver an update to a child by session ID or task name, or to parent from a child. Starts an idle recipient immediately; a busy recipient queues the message until its agent settles, then starts a new turn. Returns acceptance, not a reply. Use send_message_to_thread for independent chats.",
     parameters: Type.Object({ target: Type.String(), message: Type.String({ minLength: 1, maxLength: 100_000 }) }),
     async execute(_id, params, signal, _update, ctx) {
       const parent = subagentParent(ctx);
       const parentTargets = parent ? ["parent", parent.parentTaskPath ?? "/root", parent.parentSessionId] : [];
       const id = parent && parentTargets.includes(params.target) ? parent.parentSessionId : targetRun(ctx, params.target).sessionId;
       const host = parent && parentTargets.includes(params.target) ? parent.parentHostId ?? currentHost() : targetRun(ctx, params.target).hostId;
-      const data = await sendSessionMessage(ctx, id, host, params.message, false, signal);
+      const data = await sendSessionMessage(ctx, id, host, params.message, true, signal);
 
       return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
     },
@@ -518,7 +519,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   pi.on("session_shutdown", async (event) => { detachAbort(); unsubscribeCancellation(); await stop(event.reason !== "reload"); });
   pi.registerTool({
     name: "await_subagents", label: "Await all subagents", exposure: "model-only",
-    description: "Wait until every pending subagent has finished, successfully or with an error. No parameters, timeout, or early return on input or cancellation. Returns immediately if no subagents are pending. Subagent results are delivered separately in the conversation.",
+    description: "Wait until every pending subagent has finished, successfully or with an error. No parameters, timeout, or early return on input or cancellation. Returns immediately if no subagents are pending. Finish your current run afterward; queued results are delivered in a new turn after the parent agent settles.",
     parameters: Type.Object({}),
     async execute(_id, _params, _signal, _update, ctx) {
       reconcile(ctx);
@@ -527,13 +528,13 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
       if (latestRuns(ctx).some(run => run.status === "running")) throw new Error("Subagent work remains unresolved; completion has not been confirmed");
 
-      return { content: [{ type: "text", text: "All subagents have finished. Results are delivered separately in the conversation." }], details: {} };
+      return { content: [{ type: "text", text: "All subagents have finished. Finish your current run so queued results can be delivered in a new turn." }], details: {} };
     },
   });
   pi.registerTool({
     name: "subagent", label: "Subagents",
     exposure: "model-only",
-    description: "Delegate 1–8 independent tasks in the background. Returns child session IDs once created, without waiting for results. Completion or failure is queued in the parent mailbox and does not start a new parent turn. Continue independent work while children run; call await_subagents to wait until all children finish, or wait_agent to wait for mailbox activity. Each child has a fresh context, a saved transcript visible in piop, and an explicit worktree choice: same shares the caller's directory; new creates a separate Git worktree, copies current changes and runs configured setup. Created worktrees are retained. Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
+    description: "Delegate 1–8 independent tasks in the background. Returns child session IDs once created, without waiting for results. Completion or failure starts a new parent turn immediately if idle, or after the parent agent settles. Continue independent work while children run; finish your current run when waiting for mailbox delivery. Call await_subagents to wait until all children finish. Each child has a fresh context, a saved transcript visible in piop, and an explicit worktree choice: same shares files with the caller; new creates a separate Git worktree, copies current changes and runs configured setup. Created worktrees are retained. Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
     parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1, maxLength: 120 }), task: Type.String({ minLength: 1, maxLength: 100_000 }), worktree: worktreeChoice, agent: Type.Optional(Type.String({ minLength: 1 })), sessionId: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 8 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();

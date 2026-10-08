@@ -8,7 +8,7 @@ use super::{
     tool_payload::{ToolPayload, ToolPayloadCache},
     protocol::{array, flag, kind, text, LaunchSpec, Result, SessionLaunch},
     queue::{Execution, QueueStorage, SessionQueue},
-    worker::{Observer, Request, Worker},
+    worker::{Observer, Request, RuntimeWorker},
 };
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
@@ -93,7 +93,7 @@ pub(super) struct Session {
     pub orchestration_interrupt: AsyncMutex<Option<tokio::task::JoinHandle<Result<Value>>>>,
     epoch: String,
     state: Mutex<SessionState>,
-    worker: OnceLock<Arc<Worker>>,
+    worker: OnceLock<Arc<RuntimeWorker>>,
     host: Arc<dyn SessionHost>,
     configuration_gate: AsyncMutex<()>,
     publication: Mutex<()>,
@@ -245,7 +245,7 @@ impl Session {
             }),
         });
         session.reconcile_queue();
-        let worker = Worker::spawn(
+        let worker = RuntimeWorker::spawn(
             &session.spec,
             &session.identity,
             timeout,

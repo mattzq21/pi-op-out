@@ -225,7 +225,7 @@ async fn local_socket(app: &AppHandle) -> Result<Socket, String> {
 }
 
 async fn wait_local_socket(log_path: &Path, executable: &Path, child: &mut std::process::Child) -> Result<Socket, String> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + daemon_endpoint::STARTUP_TIMEOUT;
     let mut retry_delay = Duration::from_millis(10);
     while tokio::time::Instant::now() < deadline {
         if let Ok(endpoint) = daemon_endpoint::read() { if let Ok(Ok(socket)) = tokio::time::timeout_at(deadline, open(&endpoint)).await { return Ok(socket); } }

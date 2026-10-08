@@ -27,6 +27,9 @@ impl Services for HostServices {
         self.plugins.bind(host.clone());
         self.providers.bind(host);
     }
+    fn initialize(&self) -> BoxFuture<'_, ()> {
+        Box::pin(self.plugins.initialize())
+    }
     fn handle(&self, packet: Value) -> BoxFuture<'_, Result<Value>> {
         Box::pin(async move {
             match kind(&packet) {

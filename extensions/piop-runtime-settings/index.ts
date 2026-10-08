@@ -232,7 +232,7 @@ function configureImageLimits(pi: ExtensionAPI) {
 
 export default async function runtimeSettings(pi: ExtensionAPI) {
   configureImageLimits(pi);
-  setGlobal(Symbol.for("piop.app-rpc"), (request: AppRequest) => pi.events.emit("piop:rpc", request));
+  setGlobal(Symbol.for("piop.runtime-bridge"), (request: AppRequest) => pi.events.emit("piop:rpc", request));
   const accountProviders = new Map();
   let promptOptions: BuildSystemPromptOptions | undefined;
 
