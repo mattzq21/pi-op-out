@@ -543,7 +543,7 @@ fn configuration_preparation_reports_failed_writes_and_cleans_temporary_files() 
         assert_eq!(files.len(), expected_files, "failed writes must not leave temporary files: {files:?}");
         if kind == 1 {
             assert!(files.contains(&std::ffi::OsString::from("provider-accounts.mjs")));
-            assert!(files.contains(&std::ffi::OsString::from("app-rpc.cjs")));
+            assert!(files.contains(&std::ffi::OsString::from("runtime-bridge.cjs")));
         }
     }
 }
