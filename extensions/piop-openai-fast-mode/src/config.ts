@@ -222,26 +222,3 @@ export async function loadConfigForScope(
 
   return { ...selected, config };
 }
-
-export async function saveConfigToPath(
-  configPath: string,
-  config: FastModeConfig,
-): Promise<void> {
-  const normalized = normalizeConfig(config);
-  await fs.mkdir(dirname(configPath), { recursive: true });
-  await fs.writeFile(
-    configPath,
-    `${JSON.stringify(normalized, null, 2)}\n`,
-    "utf8",
-  );
-}
-
-export async function saveConfigForScope(
-  options: SelectConfigPathOptions,
-  config: FastModeConfig,
-): Promise<ResolvedConfigPath> {
-  const selected = selectConfigPath(options);
-  await saveConfigToPath(selected.path, config);
-
-  return selected;
-}
