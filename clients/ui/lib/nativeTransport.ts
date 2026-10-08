@@ -1,4 +1,4 @@
-import { sessionGroupsSchema, voidResultSchema, projectBranchesSchema, storageReportSchema, gitWorktreeSchema, gitWorktreeRemovalSchema, rpcEventSchema, sessionSummarySchema, gitDiffSnapshotSchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
+import { sessionGroupsSchema, voidResultSchema, projectBranchesSchema, storageReportSchema, gitWorktreeSchema, gitWorktreeRemovalSchema, rpcEventSchema, sessionSummarySchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
 import { z } from "zod";
 import { jsonResultSchema } from "./transportSchemas";
 import { commandSessionSchema, runtimeEventSchema, runtimeStderrSchema, type CommandSession } from "./rpcSchemas";
@@ -471,7 +471,6 @@ export class NativeTransport {
     if (owned) this.emit({ type: "ownership_lost" });
 
   return this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId, discardBlank }, z.boolean())); }
-  reconnectForSettings(settings: AppSettings) { return this.settings.reconnect(settings); }
   dispose() {
     if (this.disposal) return this.disposal;
     this.disposed = true; this.settings.cancelPending();
@@ -529,9 +528,6 @@ export class NativeTransport {
 
   return () => this.listeners.delete(listener); }
   listSessions() { return call("list_sessions", undefined, z.array(sessionSummarySchema)); }
-  captureGitTree(cwd: string, hostId = "local") { return call("capture_git_tree", { cwd, hostId }, z.union([z.string(), z.null()])); }
-  discardGitTree(snapshot: string, hostId = "local") { return call("discard_git_tree", { snapshot, hostId }, voidResultSchema); }
-  loadGitDiff(cwd: string, baseTree: string, hostId = "local") { return call("load_git_diff", { cwd, baseTree, hostId }, z.union([gitDiffSnapshotSchema, z.null()])); }
   loadGitDiffs(sessionPath: string, hostId = "local") {
     const ephemeral = this.ephemeral && sessionPath === this.sessionPath && hostId === this.hostId;
 
@@ -541,17 +537,11 @@ export class NativeTransport {
   }
   saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId = "local") { return appendGitDiffs(sessionPath, snapshots, hostId); }
   archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionPath, hostId, terminalIds }, voidResultSchema); }
-  deleteSession(sessionPath: string, hostId = "local") { return call("delete_session", { sessionPath, hostId }, z.array(z.string())); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call("relocate_session", { sessionPath, cwd, hostId }, voidResultSchema); }
   inspectMissingSession(sessionPath: string, hostId = "local") { return inspectRecoveryDirectory(sessionPath, hostId); }
   recoverMissingSession(sessionPath: string, action: "remote" | "empty", repository: string, branch: string, hostId = "local") { return recoverSessionDirectory(sessionPath, action, repository, branch, hostId); }
-  async relocateDirlessSession(sessionPath: string, hostId = "local") {
-    const chat = await call("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" }, z.object({ cwd: z.string() }));
-    await this.relocateSession(sessionPath, chat.cwd, hostId);
-  }
   openProjectDirectory(cwd: string, hostId = "local") { return call("open_project_directory", { cwd, hostId }, voidResultSchema); }
   createProjectWorktree(cwd: string, name: string, hostId = "local") { return call("create_project_worktree", { cwd, name, hostId }, gitWorktreeSchema); }
-  createGitWorktree(cwd: string, name: string, hostId = "local") { return call("create_git_worktree", { cwd, name, hostId }, gitWorktreeSchema); }
   removeGitWorktree(cwd: string, hostId = "local", deleteBranch = false) { return call("remove_git_worktree", { cwd, hostId, deleteBranch }, gitWorktreeRemovalSchema); }
   async runWorktreeSetup(cwd: string, worktreePath: string, hostId = "local", onSetup?: (cancel: (() => Promise<void>) | undefined) => void) {
     const setupId = await call("prepare_worktree_setup", { hostId }, z.string());
