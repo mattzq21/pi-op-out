@@ -78,7 +78,7 @@ fn capture_at(storage: &Storage<'_>, id: &str, cwd: &str, baseline: &str, curren
     let capture = json!({"cwd":cwd,"baseline":baseline,"current":current,"ready":false});
     let pointer = storage.request(json!({"action":"retain","id":id,"capture":capture}));
     storage.request(json!({"action":"pending","id":id,"capture":capture})).map_err(|error| {
-        let recovery = match &pointer { Ok(_) => "Durable pending-diff.json recovery pointer saved".to_owned(), Err(pointer) => format!("Recovery pointer also failed: {pointer}") };
+        let recovery = match &pointer { Ok(_) => "Pending comparison saved in the database".to_owned(), Err(pointer) => format!("Recovery pointer also failed: {pointer}") };
         format!("{error}; {recovery}; comparison snapshots preserved: baseline={baseline}, current={current}")
     })?;
     let state = storage.request(json!({"action":"pending_status","id":id}))?;

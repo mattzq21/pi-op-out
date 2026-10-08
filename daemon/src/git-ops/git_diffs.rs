@@ -315,8 +315,13 @@ fn storage_helper() -> String {
 }
 
 pub(crate) fn embedded_diff_store() -> String {
-    format!(r#"const diffStore = ((builtinRequire) => {{
+    format!(r#"const sessionDatabase = ((require) => {{ const module = {{exports: {{}}}}; {}
+return module.exports; }})(require);
+const diffStore = ((builtinRequire) => {{
 const modules = {{}};
+modules['../session-database.cjs'] = sessionDatabase;
+modules['./checkpoint-owner-index.cjs'] = ((require) => {{ const module = {{exports: {{}}}}; {}
+return module.exports; }})(builtinRequire);
 modules['./git-diff-pages.cjs'] = ((require) => {{ const module = {{exports: {{}}}}; {}
 return module.exports; }})(builtinRequire);
 modules['./git-diff-transfer.cjs'] = ((require) => {{ const module = {{exports: {{}}}}; {}
@@ -327,7 +332,7 @@ const require = name => modules[name] ?? builtinRequire(name);
 const module = {{exports: {{}}}};
 {}
 return module.exports;
-}})(require);"#, include_str!("../../resources/session-broker/git-diff-pages.cjs"), include_str!("../../resources/session-broker/git-diff-transfer.cjs"), include_str!("../../resources/session-broker/git-diff-migration.cjs"), include_str!("../../resources/session-broker/git-diff-store.cjs"))
+}})(require);"#, include_str!("../../resources/session-database.cjs"), include_str!("../../resources/session-broker/checkpoint-owner-index.cjs"), include_str!("../../resources/session-broker/git-diff-pages.cjs"), include_str!("../../resources/session-broker/git-diff-transfer.cjs"), include_str!("../../resources/session-broker/git-diff-migration.cjs"), include_str!("../../resources/session-broker/git-diff-store.cjs"))
 }
 
 fn read_command(command: &mut Command, request: Option<&serde_json::Value>) -> Result<serde_json::Value, String> {

@@ -97,15 +97,11 @@ function checkGlobalDiffs(links, worktrees) {
   for (const { file, kind } of links) {
     if (kind !== 'pointer') continue;
 
-    if (!io.exists(file)) continue;
-    const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const record = require('./session-database.cjs').pendingDiff(path.dirname(file));
 
-    try {
-      if (fs.fstatSync(descriptor).size > 4 * 1024 * 1024 * 6 + 64 * 1024) throw new Error('Oversized pending comparison retained');
-      const record = JSON.parse(fs.readFileSync(descriptor, 'utf8'));
+    if (record === undefined) continue;
 
-      if (worktrees.some(target => captureUses(record.capture, target))) throw new Error('Pending comparison recovery requires the archived worktree: ' + file);
-    } finally { fs.closeSync(descriptor); }
+    if (worktrees.some(target => captureUses(record.capture, target))) throw new Error('Pending comparison recovery requires the archived worktree: ' + file);
   }
 }
 

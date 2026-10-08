@@ -477,7 +477,11 @@ pub(crate) fn validate_worktree_unused(settings: &AppSettings, host_id: &str, ta
 }
 
 fn remove_worktree_with_checkpoints(settings: &AppSettings, host_id: &str, target: &WorktreeRemovalTarget, cancelled: &AtomicBool) -> Result<(), String> {
-    let script = format!("{}\n(() => {{ {}\ntry {{ preserveAndRemoveWorktree(process.argv[1], authorizeWorktreeRemoval, diffStore.readStore); }} catch (error) {{ process.stderr.write(error.message + '\\n'); process.exitCode = 1; }} }})();", crate::git_ops::git_diffs::embedded_diff_store(), include_str!("../../resources/worktree-checkpoint-preservation.cjs"));
+    let checkpoint = format!("(() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})()", include_str!("../../resources/session-broker/checkpoint-owner-index.cjs"));
+    let preservation = include_str!("../../resources/worktree-checkpoint-preservation.cjs")
+        .replace("require('./session-database.cjs')", "sessionDatabase")
+        .replace("require('./session-broker/checkpoint-owner-index.cjs')", &checkpoint);
+    let script = format!("{}\n(() => {{ {}\ntry {{ preserveAndRemoveWorktree(process.argv[1], authorizeWorktreeRemoval, diffStore.readStore); }} catch (error) {{ process.stderr.write(error.message + '\\n'); process.exitCode = 1; }} }})();", crate::git_ops::git_diffs::embedded_diff_store(), preservation);
     let mut preserve = if host_id == "local" {
         let mut command = node_command(); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", &script, &target.path]); command
     } else {

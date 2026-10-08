@@ -135,7 +135,9 @@ async function pointer(directory, profile, discovery) {
   const file = path.join(directory, 'pending-diff.json');
 
   try {
-    const record = await json(file);
+    const record = require('./session-database.cjs').pendingDiff(directory);
+
+    if (record === undefined) return;
 
     if (!Check(pointerSchema, record)) throw new Error('Invalid global pending comparison pointer');
     const session = [...discovery.ephemeralRecords.values()].find(owner => owner.sessionId === record.sessionId);

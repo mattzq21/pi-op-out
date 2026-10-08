@@ -183,16 +183,13 @@ function checkPendingPointers(storage, target, common) {
   for (const { file: pointer, kind } of checkpointIndex.linked(storage, [target])) {
     if (kind !== 'pointer') continue;
 
-    if (!fs.existsSync(pointer)) continue;
-    const fd = fs.openSync(pointer, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-
     try {
-      if (fs.fstatSync(fd).size > 4 * 1024 * 1024 * 6 + 64 * 1024) throw new Error(`Oversized pending diff pointer preserved: ${pointer}`);
-      const record = JSON.parse(fs.readFileSync(fd, 'utf8'));
+      const record = require('./session-database.cjs').pendingDiff(path.dirname(pointer));
+
+      if (record === undefined) continue;
 
       if (comparisonUsesWorktree(record.capture, target, common)) throw new Error(`Pending diff recovery still requires this worktree: ${pointer}`);
     } catch (error) { throw new Error(`Pending diff pointer preserved at ${pointer}: ${error.message}`); }
-    finally { fs.closeSync(fd); }
   }
 }
 

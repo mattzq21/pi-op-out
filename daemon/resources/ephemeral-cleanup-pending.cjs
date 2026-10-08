@@ -38,15 +38,12 @@ function pointers(parent, sessionId) {
   if (!files.exists(parent)) return [];
   const records = [];
 
-  for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
-    if (!entry.name.startsWith('pi-desktop-diff-')) continue;
-    const directory = path.join(parent, entry.name);
+  for (const row of require('./session-database.cjs').pendingDiffs(path.dirname(parent))) {
+    const directory = row.directory;
     const pointer = path.join(directory, 'pending-diff.json');
 
-    if (!files.exists(pointer)) continue;
-
-    if (!entry.isDirectory() || fs.realpathSync(directory) !== directory) throw new Error(`Pending comparison storage is unavailable or changed: ${directory}`);
-    const record = files.read(pointer);
+    if (path.dirname(directory) !== parent || !path.basename(directory).startsWith('pi-desktop-diff-')) throw new Error('Invalid pending comparison directory');
+    const record = JSON.parse(row.record_json);
 
     if (!Check(pointerSchema, record)) throw new Error(`Pending comparison provenance is invalid; retained: ${pointer}`);
 

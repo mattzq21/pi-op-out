@@ -437,18 +437,11 @@ function retainComparison(filename, request) {
   const root = comparisonRoot(request.capture.baseline);
   comparisonRoot(request.capture.current);
   const destination = path.join(root, 'pending-diff.json');
-  const temporary = `${destination}.${crypto.randomUUID()}.tmp`;
-  const body = recordBytes({ sessionId: transcriptId(filename), id: request.id, capture: request.capture });
-  checkpointIndex.recordCapture(path.dirname(snapshotParent()), 'pointer', destination, transcriptId(filename), request.capture);
-
-  try {
-    const fd = fs.openSync(temporary, 'wx', 0o600);
-
-    try { writeAll(fd, body); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-
-    fs.renameSync(temporary, destination); syncParent(destination);
-    checkpointIndex.replaceCaptures(path.dirname(snapshotParent()), 'pointer', destination, transcriptId(filename), [request.capture]);
-  } finally { fs.rmSync(temporary, { force: true }); }
+  const record = { sessionId: transcriptId(filename), id: request.id, capture: request.capture };
+  recordBytes(record);
+  checkpointIndex.recordCapture(path.dirname(snapshotParent()), 'pointer', destination, record.sessionId, request.capture);
+  require('../session-database.cjs').savePendingDiff(root, record);
+  checkpointIndex.replaceCaptures(path.dirname(snapshotParent()), 'pointer', destination, record.sessionId, [request.capture]);
 
   return null;
 }
@@ -456,14 +449,13 @@ function retainComparison(filename, request) {
 function readPointer(filename, sessionId, directory, strict) {
   const root = path.join(directory, filename);
   const pointer = path.join(root, 'pending-diff.json');
-  let fd;
 
   try {
     if (fs.realpathSync(root) !== root) return undefined;
-    fd = fs.openSync(pointer, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const record = require('../session-database.cjs').pendingDiff(root);
 
-    if (fs.fstatSync(fd).size > maxRecordBytes) throw new Error('Pending diff pointer exceeds the per-record limit');
-    const record = JSON.parse(fs.readFileSync(fd, 'utf8'));
+    if (record === undefined) return undefined;
+    recordBytes(record);
 
     if (record.sessionId !== sessionId) return undefined;
 
@@ -475,7 +467,7 @@ function readPointer(filename, sessionId, directory, strict) {
     reportPointerError(error, pointer, strict);
 
     return undefined;
-  } finally { if (fd !== undefined) fs.closeSync(fd); }
+  }
 }
 
 function reportPointerError(error, pointer, strict) {
@@ -488,16 +480,11 @@ function reportPointerError(error, pointer, strict) {
 
 function discoverComparisons(filename, strict) {
   const sessionId = transcriptId(filename); const directory = snapshotParent();
-  let entries;
-
-  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
-
   const records = [];
 
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith('pi-desktop-diff-')) continue;
-    const record = readPointer(entry.name, sessionId, directory, strict);
+  for (const row of require('../session-database.cjs').pendingDiffs(path.dirname(directory))) {
+    if (path.dirname(row.directory) !== directory || !path.basename(row.directory).startsWith('pi-desktop-diff-')) throw new Error('Invalid pending comparison directory');
+    const record = readPointer(path.basename(row.directory), sessionId, directory, strict);
 
     if (record) records.push(record);
   }

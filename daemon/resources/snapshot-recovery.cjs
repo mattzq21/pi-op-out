@@ -83,6 +83,8 @@ function protectionRecord(directory, name) {
 
   if (name === 'comparison-retry.json') return database.comparisonRetry(directory);
 
+  if (name === 'pending-diff.json') return database.pendingDiff(directory);
+
   return read(path.join(directory, name));
 }
 
