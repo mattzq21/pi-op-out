@@ -623,7 +623,7 @@ pub(super) async fn queue_command(session: &Session, mut command: Value) -> Resu
     let message = text(&command, "message");
     let review = message.split_whitespace().next() == Some("/review");
     if kind(&command) == "prompt" && (!message.starts_with('/') || review) && !session.queue.held() {
-        command["type"] = json!(if command["streamingBehavior"] == "steer" {
+        command["type"] = json!(if !review && command["streamingBehavior"] == "steer" {
             "steer"
         } else {
             "follow_up"

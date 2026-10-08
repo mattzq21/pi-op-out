@@ -435,7 +435,8 @@ impl SessionQueue {
         if !matches!(name, "steer" | "follow_up") {
             return self.execute(command).await;
         }
-        self.enqueue(command, name).await
+        let review = text(&command, "message").split_whitespace().next() == Some("/review");
+        self.enqueue(command, if review { "follow_up" } else { name }).await
     }
     async fn resume_command(&self, command: Value, name: &str) -> Result<Value> {
         let revision = self.state().inference_revision;
@@ -521,6 +522,9 @@ impl SessionQueue {
             let Some(target) = state.pending.iter().find(|item| item["id"] == id).cloned() else {
                 return Ok(Value::Null);
             };
+            if action == "steer" && text(&target, "message").split_whitespace().next() == Some("/review") {
+                return Err("/review can only be queued as a follow-up".into());
+            }
             let behavior = action.as_str().unwrap_or("reorder").to_owned();
             let moving = matches!(behavior.as_str(), "moveUp" | "moveDown" | "reorder");
             let neighbor = queue_neighbor(&state.pending, &target, &action, &behavior);

@@ -75,14 +75,14 @@ async function executeQueuedReview(session, text, images) {
   }
 }
 
-async function consumeReviews(session, messages, behavior) {
+async function consumeReviews(session, messages) {
   const prompts = [];
 
   for (const message of messages) {
     const text = message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
     if (!isReview(text)) { prompts.push(message); continue; }
-    const pending = behavior === "steer" ? session.getSteeringMessages() : session.getFollowUpMessages();
+    const pending = session.getFollowUpMessages();
     const index = pending.indexOf(text);
 
     if (index !== -1) pending.splice(index, 1);
@@ -93,12 +93,12 @@ async function consumeReviews(session, messages, behavior) {
   return prompts;
 }
 
-async function drainReviews(session, drain, behavior) {
+async function drainReviews(session, drain) {
   while (true) {
     const messages = await drain();
 
     if (!messages.length) return messages;
-    const prompts = await consumeReviews(session, messages, behavior);
+    const prompts = await consumeReviews(session, messages);
 
     if (prompts.length) return prompts;
   }
@@ -111,15 +111,14 @@ function bindReviewQueue(session) {
 
   agent.createLoopConfig = function (...args) {
     const config = createLoopConfig.apply(this, args);
-    const steering = config.getSteeringMessages;
     const followUp = config.getFollowUpMessages;
-    config.getSteeringMessages = () => drainReviews(session, steering, "steer");
-    config.getFollowUpMessages = () => drainReviews(session, followUp, "followUp");
+    config.getFollowUpMessages = () => drainReviews(session, followUp);
 
     return config;
   };
   agent.runPromptMessages = async function (messages, options) {
-    const prompts = await consumeReviews(session, messages, options?.skipInitialSteeringPoll ? "steer" : "followUp");
+    if (options?.skipInitialSteeringPoll) return runPromptMessages.call(this, messages, options);
+    const prompts = await consumeReviews(session, messages);
 
     if (prompts.length) return runPromptMessages.call(this, prompts, options);
     if (this.hasQueuedMessages()) return this.continue();
@@ -136,7 +135,7 @@ async function main() {
 
   AgentSession.prototype.prompt = function (text, options) {
     if (isReview(text) && this.isStreaming) {
-      const queued = options?.streamingBehavior === "steer" ? this._queueSteer(text, options.images) : this._queueFollowUp(text, options?.images);
+      const queued = this._queueFollowUp(text, options?.images);
 
       return queued.then(() => options?.preflightResult?.("queued"));
     }
