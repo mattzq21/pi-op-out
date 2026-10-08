@@ -81,16 +81,4 @@ async function initialize(sessionPath, sessionId, fresh) {
   });
 }
 
-function migrationPath(root) { return path.join(root, 'conversation-children', 'migration.json'); }
-
-function beginMigration(root) {
-  io.mkdir(path.join(root, 'conversation-children'));
-  io.write(migrationPath(root), { version: 1 });
-}
-
-function finishMigration(root) {
-  fs.unlinkSync(migrationPath(root));
-  io.sync(path.dirname(migrationPath(root)));
-}
-
-module.exports = { read, store, ensure, add, registerTranscript, initialize, migrationPath, beginMigration, finishMigration };
+module.exports = { read, store, ensure, add, registerTranscript, initialize };

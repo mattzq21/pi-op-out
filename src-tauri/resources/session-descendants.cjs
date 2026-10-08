@@ -4,83 +4,10 @@ const { Check } = require("typebox/value");
 
 const sessionIdSchema = Type.String();
 
-const parentSchema = Type.Object({ parentSessionId: Type.String(), sessionId: Type.Optional(Type.String()) });
-
-const entrySchema = Type.Object({ type: Type.String() });
-
-const headerSchema = Type.Object({ type: Type.Literal("session"), id: Type.String(), parentSession: Type.Optional(Type.Unknown()) });
-
-const { createReadStream } = require("node:fs");
-const { createInterface } = require("node:readline");
 const path = require("node:path");
 const os = require("node:os");
 const io = require("./session-broker/session-publication-io.cjs");
 const childIndex = require("./session-broker/session-child-index.cjs");
-
-class MissingChildIndex extends Error {}
-
-async function metadata(file) {
-  const input = createReadStream(file, { encoding: "utf8" });
-  const lines = createInterface({ input, crlfDelay: Infinity });
-  const state = { id: undefined, parent: undefined, ownParent: undefined, kind: undefined, fork: false, malformed: 0 };
-
-  try {
-    for await (const line of lines) {
-      readMetadataLine(line, state);
-    }
-  } finally { lines.close(); input.destroy(); }
-
-  warnMalformed(file, state.malformed);
-
-  if (state.malformed) throw new Error(`Cannot index incomplete conversation lineage: ${file}`);
-
-  return { file, id: state.id, parent: state.ownParent ?? (state.fork ? undefined : state.parent), kind: state.kind };
-}
-
-function readMetadataLine(line, state) {
-  const entry = savedEntry(line);
-
-  if (!entry) { state.malformed += Number(Boolean(line.trim()));
-
-  return; }
-
-  if (state.id === undefined && Check(headerSchema, entry)) { state.id = entry.id; state.fork = Boolean(entry.parentSession); }
-
-  if (!parentEntry(entry)) return;
-  const kind = entry.customType === "piop-subagent-parent" ? "subagent" : "review";
-
-  if (entry.data.sessionId === state.id) { state.ownParent = entry.data.parentSessionId; state.kind = kind; }
-  else if (entry.data.sessionId === undefined) { state.parent = entry.data.parentSessionId; state.kind = kind; }
-}
-
-function warnMalformed(file, count) {
-  if (count) console.error(`Skipped ${count} malformed records in ${file}; descendant lineage may be incomplete`);
-}
-
-function savedEntry(line) {
-  let entry;
-
-  try { entry = JSON.parse(line); } catch { return; }
-
-  return Check(entrySchema, entry) ? entry : undefined;
-}
-
-function parentEntry(entry) {
-  return entry.type === "custom" && ["piop-subagent-parent", "piop-review-parent"].includes(entry.customType) && Check(parentSchema, entry.data);
-}
-
-async function collect(root) {
-  const result = [];
-
-  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
-    const file = path.join(root, entry.name);
-
-    if (entry.isDirectory()) result.push(...await collect(file));
-    else if (entry.isFile() && entry.name.endsWith(".jsonl")) result.push(await metadata(file));
-  }
-
-  return result;
-}
 
 async function validatedParent(root, source) {
   const relative = path.relative(root, source);
@@ -91,38 +18,6 @@ async function validatedParent(root, source) {
   if (!Check(sessionIdSchema, parent?.id)) throw new Error("Conversation has no session ID");
 
   return parent;
-}
-
-async function collectArea(root, area) {
-  const directory = path.join(root, area);
-
-  return io.exists(directory) ? collect(directory) : [];
-}
-
-async function migrate(root) {
-  const sessions = [...await collectArea(root, "sessions"), ...await collectArea(root, "archived")];
-  const indexes = new Map();
-
-  for (const session of sessions) {
-    if (!Check(sessionIdSchema, session.id) || indexes.has(session.id)) throw new Error("Conversation lineage has missing or ambiguous identities");
-    const previous = childIndex.read(root, session.id);
-    indexes.set(session.id, { version: 1, sessionId: session.id, sessionPath: session.file, complete: true, children: previous?.children ?? [] });
-  }
-
-  for (const session of sessions) {
-    const parent = indexes.get(session.parent);
-
-    if (!parent || !session.kind) continue;
-    const children = new Map(parent.children.map(child => [child.sessionId, child]));
-    children.set(session.id, { sessionId: session.id, sessionPath: session.file, kind: session.kind });
-    parent.children = [...children.values()];
-  }
-
-  childIndex.beginMigration(root);
-
-  for (const index of indexes.values()) childIndex.store(root, index);
-
-  childIndex.finishMigration(root);
 }
 
 function allowedPath(root, file) {
@@ -147,13 +42,12 @@ function resolveChild(root, child) {
 }
 
 function descendants(root, parentId, args) {
-  if (io.exists(childIndex.migrationPath(root))) throw new MissingChildIndex();
   const traversal = { seen: new Set([parentId]), queue: [parentId], result: [] };
 
   for (let cursor = 0; cursor < traversal.queue.length; cursor++) {
     const index = childIndex.read(root, traversal.queue[cursor]);
 
-    if (!index?.complete) throw new MissingChildIndex();
+    if (!index) continue;
     appendChildren(root, index, traversal, args);
   }
 
@@ -191,14 +85,7 @@ async function main() {
   const parent = await validatedParent(root, source);
   const profile = path.dirname(root);
 
-  const children = await io.lockedAsync(profile, async () => {
-    try { return descendants(profile, parent.id, args); }
-    catch (error) { if (!(error instanceof MissingChildIndex)) throw error; }
-
-    await migrate(profile);
-
-    return descendants(profile, parent.id, args);
-  });
+  const children = await io.lockedAsync(profile, () => descendants(profile, parent.id, args));
 
   process.stdout.write(JSON.stringify(children));
 }
