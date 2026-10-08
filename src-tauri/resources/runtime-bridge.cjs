@@ -78,10 +78,15 @@ async function executeQueuedReview(session, text, images) {
 async function consumeReviews(session, messages) {
   const prompts = [];
 
-  for (const message of messages) {
+  for (const [position, message] of messages.entries()) {
     const text = message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
     if (!isReview(text)) { prompts.push(message); continue; }
+    if (prompts.length) {
+      session.agent.followUpQueue.messages.unshift(...messages.slice(position));
+
+      return prompts;
+    }
     const pending = session.getFollowUpMessages();
     const index = pending.indexOf(text);
 
