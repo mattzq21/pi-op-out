@@ -429,6 +429,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const startNewSession = async (clearProject = false, group?: SessionGroup, discardDraft = false) => {
     if (!canStartNewSession()) return;
+    setPanelOpen(false);
     setArchivesOpen(false);
     const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;
     const isCurrent = () => activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey;
@@ -482,6 +483,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const newSession = async () => {
     if (!canStartNewSession()) return;
+    setPanelOpen(false);
     setArchivesOpen(false);
     const empty = !currentSessionHasSavedMessages() && !chatSession().state.isStreaming && chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
     const repeat = view() === "chat" && empty && lastNewSessionSelection.current === activeConversationKey();
