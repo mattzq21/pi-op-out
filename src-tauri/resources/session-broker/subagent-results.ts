@@ -60,6 +60,12 @@ function journalDirectory(ctx: ExtensionContext) {
 
   if (!path?.endsWith(".jsonl")) throw new Error("Save the parent conversation before tracking a subagent");
 
+  return runJournalDirectory(path);
+}
+
+function runJournalDirectory(path: string) {
+  if (!path.endsWith(".jsonl")) throw new Error("Subagent recovery requires a saved conversation");
+
   return join(path.replace(/\.jsonl$/, ".snapshots"), "subagent-runs");
 }
 
@@ -118,23 +124,64 @@ export function persistSubagentRun(pi: ExtensionAPI, ctx: ExtensionContext, run:
 
 export async function savedSubagentRuns(ctx: ExtensionContext) {
   const runs = new Map(ownedSubagentRuns(ctx).map(run => [resultNotificationId(run), run]));
+  const path = ctx.sessionManager.getSessionFile();
 
-  if (!ctx.sessionManager.getSessionFile()) return [...runs.values()];
+  if (path) await mergeRunJournals(path, ctx.sessionManager.getSessionId(), runs);
+
+  return [...runs.values()].sort((left, right) => left.startedAt - right.startedAt || resultNotificationId(left).localeCompare(resultNotificationId(right)));
+}
+
+async function mergeRunJournals(path: string, sessionId: string, runs: Map<string, SubagentRun>) {
+  const directory = runJournalDirectory(path);
   let names: string[];
 
-  try { names = await readdir(journalDirectory(ctx)); }
-  catch (error) { if (Check(Schema.Object({ code: Schema.Literal("ENOENT") }), error)) return [...runs.values()]; throw error; }
+  try { names = await readdir(directory); }
+  catch (error) { if (Check(Schema.Object({ code: Schema.Literal("ENOENT") }), error)) return; throw error; }
 
   for (const name of names.filter(name => /^subagent-[a-f0-9]{64}\.json$/.test(name))) {
-    const run = JSON.parse(await readFile(join(journalDirectory(ctx), name), "utf8"));
+    const run = JSON.parse(await readFile(join(directory, name), "utf8"));
 
     if (!Check(runSchema, run) || name !== `${resultNotificationId(run)}.json`) throw new Error("Invalid saved subagent run");
 
-    if (run.parentSessionId !== ctx.sessionManager.getSessionId()) continue;
+    if (run.parentSessionId !== sessionId) continue;
     mergeSavedRun(runs, run);
   }
+}
 
-  return [...runs.values()].sort((left, right) => left.startedAt - right.startedAt || resultNotificationId(left).localeCompare(resultNotificationId(right)));
+export async function unresolvedSubagentRuns(path: string, sessionId: string) {
+  const runs = new Map<string, SubagentRun>();
+  const input = createReadStream(path);
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  let header = false;
+
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+
+      if (!header) {
+        if (!Check(Schema.Object({ type: Schema.Literal("session"), id: Schema.Literal(sessionId) }), JSON.parse(line))) throw new Error("Subagent recovery transcript identity changed");
+        header = true;
+      }
+
+      collectSubagentRun(line, sessionId, runs);
+    }
+  } finally { lines.close(); input.destroy(); }
+
+  if (!header) throw new Error("Subagent recovery transcript is empty");
+  await mergeRunJournals(path, sessionId, runs);
+
+  return [...runs.values()].filter(run => run.status === "running" || run.accountingPending);
+}
+
+function collectSubagentRun(line: string, sessionId: string, runs: Map<string, SubagentRun>) {
+  const entrySchema = Schema.Object({ type: Schema.Literal("custom"), customType: Schema.Literal(SUBAGENT_RUN), data: Schema.Unknown() });
+  const entry = JSON.parse(line);
+
+  if (!Check(entrySchema, entry)) return;
+
+  if (!Check(runSchema, entry.data)) throw new Error("Invalid saved descendant run");
+
+  if (entry.data.parentSessionId === sessionId) runs.set(resultNotificationId(entry.data), entry.data);
 }
 
 function mergeSavedRun(runs: Map<string, SubagentRun>, run: SubagentRun) {

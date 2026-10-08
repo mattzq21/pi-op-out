@@ -14,7 +14,7 @@ import { listenSubagentUsage, registerSubagentUsage } from "./subagent-usage.ts"
 import { registerSubagentMailbox } from "./subagent-mailbox.ts";
 import { interruptSession, sendAgentMailbox, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { setTimeout as delay } from "node:timers/promises";
-import { completedSubagentOutput, forgetSubagentRun, hasSubagentResult, ownedSubagentRuns, persistSubagentRun, persistSubagentUsage, reportedSubagentUsage, resultNotificationId, savedSubagentRuns, subagentCompletion, type SubagentResponse, type SubagentRun } from "./subagent-results.ts";
+import { completedSubagentOutput, forgetSubagentRun, hasSubagentResult, ownedSubagentRuns, persistSubagentRun, persistSubagentUsage, reportedSubagentUsage, resultNotificationId, savedSubagentRuns, subagentCompletion, unresolvedSubagentRuns, type SubagentResponse, type SubagentRun } from "./subagent-results.ts";
 
 const SUBAGENT_PARENT = "piop-subagent-parent";
 
@@ -131,6 +131,8 @@ async function subagentWorkspace(ctx: ExtensionContext, task: SubagentTask, sess
 
 function resumeSubagent(runs: SubagentRun[], parentSessionId: string, task: SubagentTask, toolCallId: string): SubagentRun {
   if (task.agent) throw new Error("A resumed subagent keeps its original agent profile");
+
+  if (runs.some(run => run.parentSessionId === parentSessionId && run.sessionId === task.sessionId && run.accountingPending)) throw new Error("Recover the child's previous usage accounting before giving it another task");
   const previous = runs.find(run => run.parentSessionId === parentSessionId && run.sessionId === task.sessionId && run.hostId === currentHost() && run.sessionPath);
 
   if (!previous) throw new Error("Only a child created by this conversation can be resumed");
@@ -208,6 +210,8 @@ class SubagentRetiredError extends Error {}
 
 type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Map<string, ActiveSubagent>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => Promise<void>; reportDescendants: (tokens: number, ctx: ExtensionContext) => Promise<void> };
 
+type UsageExecution = Pick<SubagentExecution, "signal" | "pi" | "ctx" | "reportDescendants">;
+
 async function confirmSubagentStopped(run: SubagentRun, ctx: ExtensionContext, deliveryId?: string) {
   let notified = false;
 
@@ -222,7 +226,7 @@ async function confirmSubagentStopped(run: SubagentRun, ctx: ExtensionContext, d
   }
 }
 
-async function usageReporter(run: SubagentRun, execution: Pick<SubagentExecution, "signal" | "pi" | "ctx" | "reportDescendants">, restored: boolean) {
+async function usageReporter(run: SubagentRun, execution: UsageExecution, restored: boolean) {
   const { signal, pi, ctx } = execution;
   signal?.throwIfAborted();
 
@@ -268,13 +272,36 @@ async function stopDispatchedSubagent(run: SubagentRun, ctx: ExtensionContext, l
   if (retired.some(Boolean)) throw new SubagentRetiredError("Subagent was archived or deleted; its worker has stopped");
 }
 
+async function requireDescendantAccounting(run: SubagentRun) {
+  const unresolved = await unresolvedSubagentRuns(run.sessionPath, run.sessionId);
+
+  if (unresolved.length) throw new Error(`Usage accounting is pending for descendants of ${run.name}: ${unresolved.map(child => child.name).join(", ")}. Finish or reopen conversation ${run.sessionId} to recover them, then retry.`);
+}
+
+async function reconcileSubagentTranscript(run: SubagentRun, reportUsage: (total: number) => Promise<void>) {
+  await requireDescendantAccounting(run);
+  const last = await subagentCompletion(run, reportUsage);
+  await requireDescendantAccounting(run);
+  run.accountingPending = false;
+
+  return last;
+}
+
+async function recoverSubagentAccounting(run: SubagentRun, execution: UsageExecution) {
+  const timeout = AbortSignal.timeout(30_000);
+  const signal = execution.signal ? AbortSignal.any([execution.signal, timeout]) : timeout;
+  await restoreSubagentPath(run, signal);
+  const reportUsage = await usageReporter(run, { ...execution, signal }, true);
+  await reconcileSubagentTranscript(run, reportUsage);
+  await persistSubagentRun(execution.pi, execution.ctx, run);
+}
+
 async function finishSubagentUsage(run: SubagentRun, reportUsage: (total: number) => Promise<void>, closeUsage: () => Promise<void>, dispatched: boolean) {
   let cleanupFailure;
 
   try { await closeUsage(); } catch (error) { cleanupFailure = error; }
 
-  const last = await subagentCompletion(run, reportUsage);
-  run.accountingPending = false;
+  const last = await reconcileSubagentTranscript(run, reportUsage);
 
   if (dispatched && cleanupFailure) throw cleanupFailure;
 
@@ -375,7 +402,24 @@ function subagentPayload(runs: SubagentRun[]): AgentToolResult<{ version: 1; run
   return { content: [{ type: "text", text: runs.map((run) => `${run.name}: ${run.status}\nAgent profile: ${run.agent ?? "original profile"}\nSession: ${run.hostId}/${run.sessionId}\nWorkspace: ${run.cwd ?? "original working directory"} (${run.worktree ?? "same"})${run.branch ? `\nBranch: ${run.branch}` : ""}\nTranscript: ${run.sessionPath}${run.output ? `\n${run.output}` : ""}`).join("\n\n") }], details: { version: 1, runs: structuredClone(runs) } };
 }
 
-function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "ready">, pending: Set<Promise<void>>, restored?: SubagentRun) {
+async function recoverPreviousSubagentRuns(sessionId: string, execution: Omit<SubagentExecution, "ready">) {
+  if (execution.active.has(sessionId)) throw new Error("This subagent is already running");
+  const runs = await savedSubagentRuns(execution.ctx);
+
+  for (const run of runs) {
+    if (run.sessionId !== sessionId) continue;
+
+    if (run.status === "running") throw new Error("The child's previous task is still running or awaiting recovery");
+
+    if (!run.accountingPending) continue;
+    await recoverSubagentAccounting(run, execution);
+    await publishSubagentResult(execution.pi, execution.ctx, run);
+  }
+}
+
+async function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "ready">, pending: Set<Promise<void>>, restored?: SubagentRun) {
+  if (task.sessionId && !restored) await recoverPreviousSubagentRuns(task.sessionId, execution);
+
   return new Promise<void>((ready) => {
     const completion = executeSubagent(task, { ...execution, ready }, restored)
       .catch(error => execution.ctx.ui.notify(`Subagent failed: ${String(error)}`, "error"))
@@ -586,12 +630,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
       try {
         if (run.status !== "running") {
-          if (run.accountingPending) {
-            await restoreSubagentPath(run, signal);
-            const reportUsage = await usageReporter(run, { pi, ctx, signal, reportDescendants }, true);
-            await subagentCompletion(run, reportUsage);
-            run.accountingPending = false;
-          }
+          if (run.accountingPending) await recoverSubagentAccounting(run, { pi, ctx, signal, reportDescendants });
 
           if (!tracked.has(JSON.stringify(run))) await persistSubagentRun(pi, ctx, run);
           await publishSubagentResult(pi, ctx, run);
