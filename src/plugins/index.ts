@@ -45,9 +45,11 @@ export async function refreshPlugins(host: string) {
 }
 
 export async function restartPlugins(host: string, enabled: string[], revision: string, closeTerminals = false) {
-  await flushPlugins(host);
+  await flushPlugins(host, enabled);
+
   for (const id of enabled) {
     const plugin = plugins.find(plugin => plugin.id === id);
+
     if (plugin) await plugin.load();
   }
 

@@ -33,7 +33,7 @@ export function LiveMarkdownEditor(props: { content: string; editable: boolean; 
 
     if (!view) return;
 
-    if (content !== view.state.doc.toString() || editable && !nextEditable) view.setState(state());
+    if (content !== view.state.doc.toString()) view.setState(state());
     else if (editable !== nextEditable) view.dispatch({ effects: permissions.reconfigure(permissionExtensions()) });
     editable = nextEditable;
   });

@@ -29,4 +29,5 @@
 .notes-save-status { flex-shrink: 0; padding: 6px 18px 12px; text-align: right; color: var(--muted); font-size: 10px; }
 .notes-error { flex-shrink: 0; padding: 10px 14px; margin-bottom: 8px; background: var(--accent-08); color: var(--ink); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
 .notes-error button { padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--paper); font-size: 11px; }
+.notes-error pre { max-height: 180px; overflow: auto; white-space: pre-wrap; }
 @media (max-width: 700px) { .notes-live-editor .cm-scroller { font-size: 16px; } }

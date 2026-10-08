@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onMount, type Accessor } from "solid-js";
+import { batch, createSignal, onCleanup, onMount, type Accessor } from "solid-js";
 import { z } from "zod";
 import { captureDaemonTransport } from "../../lib/platform";
 import { required } from "../../lib/required";
@@ -27,9 +27,10 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const [releasing, setReleasing] = createSignal(false);
   const [leaseValid, setLeaseValid] = createSignal(false);
   const [flushing, setFlushing] = createSignal(false);
-  const [unconfirmed, setUnconfirmed] = createSignal<{ content: string; token: string }>();
+  const [unconfirmed, setUnconfirmed] = createSignal<string>();
   const [readError, setReadError] = createSignal("");
   const [saveError, setSaveError] = createSignal("");
+  const [conflict, setConflict] = createSignal(false);
   const error = () => readError() || saveError();
   const leaseId = crypto.randomUUID();
   let leaseTimer: ReturnType<typeof setTimeout> | undefined;
@@ -41,8 +42,8 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   let acquisition: Promise<void> | undefined;
   let operations = Promise.resolve();
   let checking = false;
-  const dirty = () => !!document() && (!!unconfirmed() || content() !== document()?.content);
-  const editable = () => visible() && !loading() && !flushing() && !releasing() && leaseValid() && ownership().owned;
+  const dirty = () => !!document() && (unconfirmed() !== undefined || content() !== document()?.content);
+  const editable = () => visible() && !loading() && !flushing() && !releasing() && !conflict() && leaseValid() && ownership().owned;
   const pendingWork = () => !!inFlight || dirty();
 
   try { localStorage.removeItem("piop-chat-note:" + JSON.stringify([target.hostId, target.sessionId])); } catch { }
@@ -68,8 +69,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     generation++;
     clearTimeout(leaseTimer);
     setOwnership(noOwnership);
-    setLeaseValid(false); setUnconfirmed(undefined);
-    setContent(document()?.content ?? "");
+    setLeaseValid(false);
   };
 
   const updateOwnership = (value: NoteOwnership) => {
@@ -80,18 +80,36 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     if (value.owned && !disposed) leaseTimer = setTimeout(() => { setLeaseValid(false); void sync(); }, 25000);
   };
 
-  const selectDocument = (next: NoteDocument) => {
-    if (next.deleted || next.disabled) { setReadError(""); setSaveError(""); }
+  const displacesDraft = (next: NoteDocument) => dirty() && (next.deleted || content() !== next.content
+    && (next.disabled || next.version !== document()?.version && !confirmedSave(next)));
 
-    setDocument(next);
-    setContent(next.content);
-    updateOwnership(next.ownership);
+  const reconcileUnconfirmed = (next: NoteDocument, unsaved: boolean) => {
+    if (unsaved && next.deleted) setUnconfirmed(content());
+    else if (!unsaved || confirmedSave(next) || content() === next.content) setUnconfirmed(undefined);
   };
+
+  const selectDocument = (next: NoteDocument) => batch(() => {
+    const unsaved = dirty();
+    const displaced = displacesDraft(next);
+    setDocument(next);
+
+    if (!unsaved) setContent(next.content);
+
+    reconcileUnconfirmed(next, unsaved);
+    updateOwnership(next.ownership);
+
+    if (displaced) setConflict(true);
+
+    if (!dirty()) { setConflict(false); setSaveError(""); }
+    else if (!next.ownership.owned && !saveError()) setSaveError("Your unsaved edits are retained. Take control of the note to save them.");
+  });
 
   const loadDocument = async (action: string) => {
     relinquish();
     const current = generation;
-    setLoading(true); setReadError(""); setSaveError("");
+    setLoading(true); setReadError("");
+
+    if (!dirty()) setSaveError("");
 
     try {
       const next = await request(action);
@@ -117,9 +135,31 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
       if (disposed || current !== generation) return;
       setReadError("");
       receiveUpdate(next);
-
-      if (!next.ownership.owned) setSaveError("");
     } catch (reason) { if (!disposed && current === generation) setReadError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+
+  const canDrain = async () => {
+    if (conflict()) return false;
+
+    if (!leaseValid()) await refreshAfterFailure();
+
+    return leaseValid() && !conflict() && ownership().owned;
+  };
+
+  const persistDraft = async (current: number) => {
+    if (current !== generation) return false;
+    const note = required(document());
+    const body = content();
+    const leaseToken = required(ownership().token);
+    setUnconfirmed(body);
+    const saved = await request("save", { content: body, version: note.version, leaseToken });
+
+    if (current !== generation) return false;
+
+    if (saved.ownership.token !== leaseToken) relinquish();
+    selectDocument(saved);
+
+    return saved.ownership.token === leaseToken;
   };
 
   const drain = async () => {
@@ -127,31 +167,17 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     setSaving(true);
 
     try {
-      if (!leaseValid()) await refreshAfterFailure();
+      if (!await canDrain()) return !dirty();
 
-      if (!leaseValid()) return !dirty();
-
-      while (dirty() && ownership().owned) {
-        const note = required(document());
-        const body = content();
-        const leaseToken = required(ownership().token);
-        setUnconfirmed({ content: body, token: leaseToken });
-        const saved = await request("save", { content: body, version: note.version, leaseToken });
-
-        if (current !== generation) return true;
-
-        if (saved.ownership.token !== leaseToken) { relinquish(); selectDocument(saved);
-
-        return true; }
-
-        setUnconfirmed(undefined); setDocument(saved); updateOwnership(saved.ownership);
+      while (dirty() && ownership().owned && !conflict()) {
+        if (!await persistDraft(current)) return !dirty();
       }
 
-      setSaveError("");
+      if (!dirty()) setSaveError("");
 
       return !dirty();
     } catch (reason) {
-      if (current !== generation) return true;
+      if (current !== generation) return !dirty();
       setLeaseValid(false);
       setSaveError(reason instanceof Error ? reason.message : String(reason));
       await refreshAfterFailure();
@@ -165,9 +191,11 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
 
     if (!dirty()) return Promise.resolve(true);
 
-    if (!ownership().owned) { relinquish();
+    if (conflict()) return Promise.resolve(false);
 
-    return Promise.resolve(true); }
+    if (!ownership().owned) { setSaveError("Your unsaved edits are retained. Take control of the note to save them.");
+
+    return Promise.resolve(false); }
 
     inFlight = drain().finally(() => { inFlight = undefined;
 
@@ -182,26 +210,18 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     void save();
   };
 
-  onCleanup(registerPluginFlush(target.hostId, async () => {
+  onCleanup(registerPluginFlush(target.hostId, async enabled => {
     if (!transport.active()) return;
     setFlushing(true);
 
     try {
-      if (pendingWork() && !await save()) throw new Error("The note could not be saved. Retry saving before disconnecting or restarting plugins.");
+      if (pendingWork() && !await save() && !(document()?.disabled && enabled?.includes("markdown"))) throw new Error("The note could not be saved. Retry saving, or recover unavailable notes in plugin settings, before disconnecting or restarting plugins.");
     } finally { setFlushing(false); }
   }));
 
-  const confirmedSave = (next: NoteDocument) => unconfirmed()?.token === next.ownership.token && unconfirmed()?.content === next.content;
+  const confirmedSave = (next: NoteDocument) => !next.deleted && unconfirmed() === next.content;
 
-  const receiveUpdate = (next: NoteDocument) => {
-    if (next.deleted || next.disabled || next.ownership.token !== ownership().token || next.version !== document()?.version && !confirmedSave(next)) {
-      relinquish(); selectDocument(next); setSaveError("");
-
-      return;
-    }
-
-    setUnconfirmed(undefined); setDocument(next); updateOwnership(next.ownership);
-  };
+  const receiveUpdate = selectDocument;
 
   const syncUnavailable = () => disposed || loading() || releasing() || !!inFlight || document()?.deleted;
 
@@ -269,6 +289,18 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     if (dirty()) await save();
   };
 
+  const saveEdits = () => {
+    if (!document() || document()?.deleted || document()?.disabled || !ownership().owned) return Promise.resolve(false);
+    setConflict(false);
+
+    return save();
+  };
+
+  const useSaved = () => {
+    if (loading() || saving()) return;
+    setUnconfirmed(undefined); setContent(document()?.content ?? ""); setConflict(false); setSaveError("");
+  };
+
   const resume = () => { if (!window.document.hidden) void sync(); };
 
   const settleOwnership = async () => {
@@ -307,5 +339,6 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const ready = () => !!document() && !document()?.deleted && !document()?.disabled;
   const pending = () => loading() || saving() || releasing() || dirty() || ownership().owned;
 
-  return { content, loading, saving, dirty, error, deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending, editable, edit, save, retry, takeControl };
+  return { content, loading, saving, dirty, error, conflict, savedContent: () => document()?.content ?? "", owned: () => ownership().owned,
+    deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending, editable, edit, save, retry, takeControl, saveEdits, useSaved };
 }
