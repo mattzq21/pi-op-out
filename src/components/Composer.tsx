@@ -50,6 +50,7 @@ interface Props {
   toolFailures?: import("../lib/toolFailureStats").ToolFailureStats;
   contextUsage?: ContextUsage;
   controlsDisabled?: boolean;
+  preparing?: boolean;
   draft?: string;
   onDraftChange?: (value: StateUpdate<string>) => void;
   uploads?: ComposerUpload[];
@@ -519,7 +520,7 @@ export function Composer(props: Props) {
     const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div></Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
-        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} disabled={composer().controlsDisabled && !props.ownershipRequired} placeholder={props.ownershipRequired ? "" : composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
+        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} disabled={composer().controlsDisabled && !props.ownershipRequired} placeholder={props.ownershipRequired ? "" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
 
     const ComposerBar = () => {
@@ -623,6 +624,7 @@ export function Composer(props: Props) {
   return <div class="composer-wrap">
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
+    {props.preparing && <div class="stream-banner" role="status">Preparing conversation…</div>}
     {renderStreamBanner()}
     {composer().pendingMessages.length > 0 && <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={(message) => message.id}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
