@@ -59,7 +59,9 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS recovery_directories (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS snapshot_recovery (directory TEXT PRIMARY KEY, identity TEXT NOT NULL, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS snapshot_reader_releases (scope TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS snapshot_directories (directory TEXT PRIMARY KEY, owner_json TEXT);`);
+      CREATE TABLE IF NOT EXISTS snapshot_directories (directory TEXT PRIMARY KEY, owner_json TEXT);
+      CREATE TABLE IF NOT EXISTS session_comparison_state (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS session_completed_comparisons (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, turn_id TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY(session_id, turn_id));`);
 
     if (columns.some(column => column.name === 'session_path')) {
       db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
@@ -181,6 +183,45 @@ function importSessions(db, root) {
     importSnapshotDirectories(db, root);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function importCompletedComparisons(db, sessionId, retained) {
+  if (db.prepare('SELECT 1 FROM session_comparison_state WHERE session_id=?').get(sessionId)) return;
+  const fs = require('node:fs');
+  let completed = {};
+
+  try { completed = JSON.parse(fs.readFileSync(require('node:path').join(retained, 'completed.json'), 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+
+  if (!completed || Object.getPrototypeOf(completed) !== Object.prototype) throw new Error('Invalid completed comparison records');
+  register(db, sessionId, retained.replace(/\.snapshots$/, '.jsonl'));
+
+  for (const [turnId, messageId] of Object.entries(completed)) {
+    if (String(messageId) !== messageId) throw new Error('Invalid completed comparison message');
+    db.prepare('INSERT INTO session_completed_comparisons VALUES (?, ?, ?)').run(sessionId, turnId, messageId);
+  }
+
+  db.prepare('INSERT INTO session_comparison_state VALUES (?)').run(sessionId);
+}
+
+function completedComparisons(root, sessionId, retained, completed) {
+  const db = open(root);
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    importCompletedComparisons(db, sessionId, retained);
+
+    if (completed) {
+      db.prepare('INSERT INTO session_completed_comparisons VALUES (?, ?, ?) ON CONFLICT(session_id, turn_id) DO UPDATE SET message_id=excluded.message_id')
+        .run(sessionId, completed.turnId, completed.messageId);
+    }
+
+    const rows = db.prepare('SELECT turn_id, message_id FROM session_completed_comparisons WHERE session_id=?').all(sessionId);
+    db.exec('COMMIT');
+
+    return Object.fromEntries(rows.map(row => [row.turn_id, row.message_id]));
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  finally { db.close(); }
 }
 
 function importSnapshotDirectories(db, root) {
@@ -583,4 +624,4 @@ function storageRoot(file) {
 
 module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot,
   publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
-  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory };
+  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons };

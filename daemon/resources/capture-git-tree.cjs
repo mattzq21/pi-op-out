@@ -276,8 +276,7 @@ function acknowledgeComparison(retained) {
 
   if (!record) return;
   promoteBaseline(retained, path.join(record.directory, 'after'));
-  const completed = { ...completedComparisons(retained), [record.turnId]: record.messageId };
-  writeJson(path.join(retained, 'completed.json'), completed);
+  require('./session-database.cjs').completedComparisons(storageRoot(), owner.sessionId, retained, record);
   const queue = path.dirname(record.directory);
   const acknowledged = path.join(queue, `.acknowledged-${record.turnId}`);
   fs.renameSync(record.directory, acknowledged);
@@ -286,9 +285,7 @@ function acknowledgeComparison(retained) {
 }
 
 function completedComparisons(retained) {
-  const file = path.join(retained, 'completed.json');
-
-  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  return require('./session-database.cjs').completedComparisons(storageRoot(), owner.sessionId, retained);
 }
 
 function cleanupAcknowledged(directory) {
@@ -531,9 +528,10 @@ function importFallbacks(retained) {
 
   if (!fs.existsSync(parent)) return;
 
-  for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !entry.name.startsWith('pi-desktop-diff-')) continue;
-    const directory = path.join(parent, entry.name);
+  for (const row of require('./session-database.cjs').snapshotDirectories(storageRoot())) {
+    const directory = row.directory;
+
+    if (path.dirname(directory) !== parent || !path.basename(directory).startsWith('pi-desktop-diff-')) continue;
 
     const record = ownedFallback(directory);
 
