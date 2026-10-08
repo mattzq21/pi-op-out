@@ -68,11 +68,6 @@ function currentRefs(repository) {
   return new Map(output.split("\n").filter(Boolean).map(line => line.split(" ")));
 }
 
-function removeCheckpointRefs(repository) {
-  const updates = repository.refs.flatMap(({ ref, oid, reservation }) => [`create ${reservation} ${oid}`, `delete ${ref} ${oid}`]);
-  updateRefs(repository, updates);
-}
-
 function restoreRepository(repository) {
   const current = currentRefs(repository);
   const updates = [];
@@ -100,47 +95,6 @@ function releaseReservations(repository) {
   }
 
   updateRefs(repository, updates);
-}
-
-function ownershipRecords(root, sessionIds) {
-  return [...new Set(sessionIds)].flatMap(id => {
-    if (!uuidPattern.test(id)) return [];
-    const key = createHash("sha256").update(id.toLowerCase()).digest("hex").slice(0, 40);
-    const file = path.join(root, "conversation-ownership", `${key}.json`);
-
-    if (!exists(file)) return [];
-    const before = fs.readFileSync(file, "utf8");
-    const after = JSON.stringify({ ...JSON.parse(before), deleted: true, client: null });
-
-    return [{ path: file, before, after }];
-  });
-}
-
-function createJournal(root, lock, childLocks, files, repositories, sessionIds, registryIds = [], retention = { directories: [], sessionIds: [] }) {
-  const id = randomUUID();
-  const garbageRoot = path.join(root, "deleted-sessions");
-  fs.mkdirSync(garbageRoot, { recursive: true, mode: 0o700 });
-
-  if (!fs.lstatSync(garbageRoot).isDirectory()) throw new Error("Invalid deleted conversation directory");
-  sync(root);
-
-  const journal = {
-    version: 2, id, root, garbagePath: path.join(garbageRoot, id),
-    locks: [lock, ...childLocks].map(file => ({ path: file, identity: identity(file) })),
-    files: files.map((saved, index) => ({ path: saved.file, staged: `${index}.staged`, identity: identity(saved.file), directory: Boolean(saved.directory) })),
-    repositories: repositories.map((repository, repositoryIndex) => ({ cwd: repository.cwd,
-      refs: repository.refs.map((ref, index) => ({ ...ref, reservation: `refs/piop-deletions/${id}/${repositoryIndex}/${index}` })),
-    })),
-    ownership: ownershipRecords(root, sessionIds), registryIds, retention,
-  };
-
-  files.forEach((saved, index) => { saved.stagedPath = path.join(lock, journal.files[index].staged); });
-  write(path.join(lock, "recovery.json"), JSON.stringify(journal));
-  sync(path.dirname(lock));
-
-  for (const childLock of childLocks) sync(path.dirname(childLock));
-
-  return journal;
 }
 
 function contained(root, file) {
@@ -357,4 +311,4 @@ function recover(root) {
   for (const directory of locks) if (exists(directory)) removeUnstarted(directory);
 }
 
-module.exports = { recover, createJournal, removeCheckpointRefs, cleanupCommitted, sync, syncTree };
+module.exports = { recover, cleanupCommitted, sync, syncTree };
