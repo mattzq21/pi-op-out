@@ -10,10 +10,7 @@ function entries(directory) {
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
 }
 
-function read(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
-}
+function read(file) { return require('./snapshot-metadata.cjs').read(path.dirname(file)); }
 
 function bootIdentity() {
   try { return fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim(); }

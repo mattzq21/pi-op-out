@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const comparisonRecords = require('./snapshot-comparison-records.cjs');
+const snapshotRecords = require('./snapshot-metadata.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
 
 const git = (args, env = process.env) => execFileSync('git', args, { env, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -59,23 +60,16 @@ function syncTree(directory) {
   syncPath(directory);
 }
 
-function writeJson(file, value) {
-  const temporary = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 });
-  syncPath(temporary);
-  fs.renameSync(temporary, file);
-  syncPath(path.dirname(file));
-}
-
 function copySnapshot(source, destination) {
   linkSnapshot(source, destination);
+  snapshotRecords.copy(source, destination);
 }
 
 function linkSnapshot(source, destination) {
   fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
 
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-    if (['comparison-retry.json', 'retry-before', 'materialization.json', 'temporary-owner.json', 'recovery.json', 'index', 'index.lock', '.previous-objects', '.sealed-objects', '.pack-status', '.reachable-objects'].includes(entry.name) || entry.name.endsWith('.tmp')) continue;
+    if (['snapshot.json', 'comparison-retry.json', 'retry-before', 'materialization.json', 'temporary-owner.json', 'recovery.json', 'index', 'index.lock', '.previous-objects', '.sealed-objects', '.pack-status', '.reachable-objects'].includes(entry.name) || entry.name.endsWith('.tmp')) continue;
     const file = path.join(source, entry.name);
     const target = path.join(destination, entry.name);
 
@@ -150,7 +144,9 @@ function clearPreparations(retained) {
 
 function readSnapshot(directory) {
   checkedDirectory(directory);
-  const saved = JSON.parse(fs.readFileSync(path.join(directory, 'snapshot.json'), 'utf8'));
+  const saved = snapshotRecords.read(directory);
+
+  if (!saved) throw new Error('Saved snapshot metadata is missing');
 
   if (saved.sessionId !== owner.sessionId || !treePattern.test(saved.tree) || !path.isAbsolute(saved.repositoryRoot)) throw new Error('Invalid saved comparison baseline');
 
@@ -422,7 +418,7 @@ function sealSnapshot(token, env, retained) {
   syncPath(token.root);
   fs.rmSync(path.join(token.root, 'index'), { force: true });
   syncTree(token.root);
-  writeJson(path.join(token.root, 'snapshot.json'), { ...saved, selfContained: true });
+  snapshotRecords.write(token.root, { ...saved, selfContained: true });
   fs.rmSync(previous, { recursive: true, force: true });
 }
 
@@ -466,10 +462,10 @@ function pruneObjects(token, objects) {
 }
 
 function snapshotMetadata(token, retained) {
-  if (fs.existsSync(path.join(token.root, 'snapshot.json'))) return readSnapshot(token.root);
+  if (snapshotRecords.read(token.root) !== undefined) return readSnapshot(token.root);
   const previous = retained ? retainedBaselines(retained)[0]?.saved.capturedAt || 0 : 0;
   const saved = { sessionId: owner?.sessionId, tree: token.tree, repositoryRoot: token.repository_root, capturedAt: Math.max(Date.now(), previous + 1) };
-  writeJson(path.join(token.root, 'snapshot.json'), saved);
+  snapshotRecords.write(token.root, saved);
 
   return saved;
 }
@@ -518,7 +514,7 @@ function storeFallback(token, retained) {
   const baseline = { ...original, root: path.join(token.root, 'retry-before') };
 
   try {
-    linkSnapshot(validateToken(original), baseline.root);
+    copySnapshot(validateToken(original), baseline.root);
     syncTree(token.root);
     const record = { version: 1, sessionId: owner.sessionId, sessionPath: owner.sessionPath, turnId: owner.turnId, messageId: owner.messageId, cwd: token.repository_root, baseline: JSON.stringify(baseline), originalBaseline: owner.baseline, current: JSON.stringify(token) };
     require('./session-database.cjs').saveComparisonRetry(token.root, record);

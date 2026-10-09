@@ -35,7 +35,7 @@ export function storageSchemaImports() {
 }
 
 const canonicalModules = new Set([
-  "snapshot-operation-stores.cjs", "snapshot-comparison-records.cjs",
+  "snapshot-operation-stores.cjs", "snapshot-comparison-records.cjs", "snapshot-metadata.cjs",
   "archive-checkpoints.cjs", "archive-legacy-recovery.cjs", "archive-resource-migration.cjs", "archive-resource-owners.cjs", "archive-resource-restore.cjs", "archive-resource-transactions.cjs", "archive-resources.cjs", "archive-transaction.cjs",
   "checkpoint-schemas.cjs", "delete-recovery.cjs", "delete-transaction.cjs", "deletion-retention.cjs", "directory-liveness.cjs", "fork-preparation.cjs", "fork-transaction.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
   "restore-receipts.cjs", "restore-transaction.cjs", "retention-candidates.cjs", "retention-collection.cjs", "session-diff-store.cjs", "session-transactions.cjs", "snapshot-recovery.cjs", "storage-lock.cjs", "storage-recovery.cjs", "storage-transaction-lock.cjs",

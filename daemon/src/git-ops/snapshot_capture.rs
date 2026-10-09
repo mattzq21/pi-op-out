@@ -126,8 +126,10 @@ fn own_local_snapshot(root: &Path) -> Result<(), String> {
 }
 
 fn local_snapshot_metadata(root: &Path, tree: &str, cwd: &str) -> Result<(), String> {
-    let saved = serde_json::to_vec(&serde_json::json!({"tree":tree,"repositoryRoot":cwd})).map_err(|error| error.to_string())?;
-    crate::private_fs::atomic_write_private(&root.join("snapshot.json"), &saved)
+    let script = crate::session_registry::with_database("require('./snapshot-metadata.cjs').write(process.argv[1], {tree:process.argv[2], repositoryRoot:process.argv[3]});");
+    let output = run_limited(node_command().args(["-e", &script]).arg(root).arg(tree).arg(cwd), 64 * 1024, "Could not save snapshot metadata")?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    Ok(())
 }
 
 pub(crate) fn local_git_diff(cwd: &str, base_token: &str) -> Result<Option<GitDiffSnapshot>, String> {

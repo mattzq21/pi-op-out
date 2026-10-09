@@ -3,6 +3,7 @@ const path = require('node:path');
 const { validGoalPath } = require('./storage-inventory-owners.cjs');
 const { goalOwner } = require('./storage-inventory-goals.cjs');
 const { stageCategory, observeStage } = require('./storage-inventory-transfers.cjs');
+const snapshotMetadata = require('./snapshot-metadata.cjs');
 
 const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', 'git-snapshots': 'git-diff-snapshots', 'git-diff-transfers': 'diff-transfer-staging', tmp: 'temporary-chats', worktrees: 'worktrees', 'archived-tmp': 'archived-worktrees', recovery: 'unattributed-recovery-storage', 'ephemeral-cleanup': 'ephemeral-cleanup' };
 
@@ -19,6 +20,13 @@ function chatRecordCount(directory, entries) {
 
     return db.prepare('SELECT chat_id FROM chat_records').all().filter(row => /^[a-zA-Z0-9-]{1,100}$/.test(row.chat_id)).length;
   } finally { db.close(); }
+}
+
+function savedSnapshotIdentities(profile, warnings) {
+  try { return new Set(snapshotMetadata.identities(profile)); }
+  catch (error) { warnings.push(`${profile}: snapshot record count unavailable: ${error.message}`);
+
+  return new Set(); }
 }
 
 function specialCategory(target, category, metadata, discovery) {
@@ -67,6 +75,9 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   const unavailable = new Set();
   const root = await fs.realpath(profile).catch(() => profile);
 
+  const savedSnapshots = savedSnapshotIdentities(root, warnings);
+  const savedSnapshotFiles = new Set([...savedSnapshots].map(key => key.split(':').slice(0, 2).map(Number).join(':')));
+
   function addCount(category, amount = 1) { counts.set(category, (counts.get(category) || 0) + amount); }
 
   function register(category, record) {
@@ -93,7 +104,7 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     }
   }
 
-  function countDirectory(target, category, entries) {
+  function countDirectory(target, category, entries, metadata) {
     if (category === 'other-storage') addCount(category, entries.filter(entry => entry.isFile() && !discovery.queuedInput?.has(path.join(target, entry.name))).length);
 
     if (category === 'chatgpt-storage') {
@@ -101,7 +112,7 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
       catch (error) { discovery.warnings.push(target + ': ChatGPT chat count unavailable: ' + error.message); }
     }
 
-    countSnapshots(target, category, entries);
+    countSnapshots(target, category, entries, metadata);
     countWorkdirs(target, category, entries);
 
     if (['goal-attachments', 'unattributed-goal-attachments'].includes(category) && validGoalPath(target)) {
@@ -113,8 +124,10 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     }
   }
 
-  function countSnapshots(target, category, entries) {
-    if (['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && entries.some(entry => entry.name === 'snapshot.json')) addCount(category);
+  function countSnapshots(target, category, entries, metadata) {
+    const saved = savedSnapshotFiles.has(`${metadata.dev}:${metadata.ino}`) && savedSnapshots.has(snapshotMetadata.identity(target));
+
+    if (['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && (saved || entries.some(entry => entry.name === 'snapshot.json'))) addCount(category);
 
     if (target === path.join(root, 'git-snapshots')) addCount(category, entries.filter(entry => entry.isDirectory() && entry.name.startsWith('pi-desktop-diff-') && !discovery.pendingSnapshots.has(path.join(target, entry.name))).length);
 
@@ -147,7 +160,7 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
       if (!metadata.isDirectory()) return;
       directories.add(target);
       const entries = await fs.readdir(target, { withFileTypes: true });
-      countDirectory(target, category, entries);
+      countDirectory(target, category, entries, metadata);
 
       for (const entry of entries) {
         const nextCategory = childCategory(target, entry.name, category);
