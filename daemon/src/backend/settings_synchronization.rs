@@ -1,4 +1,4 @@
-use super::{atomic_write_private, ensure_private_dir, set_private_file_permissions, settings_path};
+use super::{ensure_private_dir, set_private_file_permissions, settings_path};
 use crate::private_fs::{publish_private, Publication as SettingsPublication};
 use crate::{AppSettings, PiRuntime, daemon, daemon_endpoint, platform::AppHandle, settings};
 use serde::{Deserialize, Serialize};
@@ -59,20 +59,10 @@ fn progress_path(path: &Path) -> Result<PathBuf, String> {
     Ok(path.with_extension(format!("synchronization-{owner}.json")))
 }
 
-fn read_record<T: serde::de::DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
-    match fs::read(path) {
-        Ok(body) => serde_json::from_slice(&body).map_err(|error| format!("Could not read settings synchronization record {}: {error}", path.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
-        Err(error) => Err(error.to_string()),
-    }
-}
+#[path = "settings_sync_storage.rs"]
+mod record_storage;
 
-fn write_record(path: &Path, value: &impl Serialize) -> Result<(), String> {
-    atomic_write_private(path, &serde_json::to_vec(value).map_err(|error| error.to_string())?)?;
-    #[cfg(unix)]
-    File::open(path.parent().ok_or("Synchronization record has no directory")?).and_then(|directory| directory.sync_all()).map_err(|error| error.to_string())?;
-    Ok(())
-}
+use record_storage::{read as read_record, write as write_record};
 
 pub(crate) fn storage_lock(path: &Path) -> Result<File, String> {
     let parent = path.parent().ok_or("Settings have no storage directory")?;
