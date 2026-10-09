@@ -141,11 +141,10 @@ function metadata() {
   sessionTables.importSessions(db, root);
   const directory = path.join(root, 'sessions') + path.sep;
 
-  const rows = db.prepare(`SELECT s.session_path, m.modified_ns, m.size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE s.session_path IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(s.session_id))`).all();
+  const rows = db.prepare(`SELECT s.session_path, m.modified_ns, m.size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?))=?
+    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(s.session_id))`).all(directory, directory);
 
   for (const row of rows) {
-    if (!row.session_path.startsWith(directory)) continue;
     const stat = registeredMetadata(row);
 
     if (!stat) continue;

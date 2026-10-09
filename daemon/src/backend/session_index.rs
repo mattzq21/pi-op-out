@@ -110,15 +110,15 @@ type SessionCandidate = (String, String, u64, u64);
 fn local_session_candidates(root: &Path, cache: &HashMap<PathBuf, CachedSession>) -> Result<(HashSet<PathBuf>, Vec<SessionCandidate>), String> {
     let mut seen = HashSet::new(); let mut changed = Vec::new();
     let mut database = crate::session_registry::open(root.parent().ok_or("Session storage root missing")?)?;
-    let mut statement = database.prepare("SELECT s.session_path, m.modified_ns, m.size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE s.session_path IS NOT NULL
+    let prefix = format!("{}{}", root.to_string_lossy().trim_end_matches(std::path::MAIN_SEPARATOR), std::path::MAIN_SEPARATOR);
+    let mut statement = database.prepare("SELECT s.session_path, m.modified_ns, m.size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?1))=?1
         AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(s.session_id))")
         .map_err(|error| error.to_string())?;
-    let paths = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<u64>>(2)?))).map_err(|error| error.to_string())?
+    let paths = statement.query_map([prefix], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<u64>>(2)?))).map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
     drop(statement);
     for (path, modified, size) in paths {
         let path = PathBuf::from(path);
-        if !path.starts_with(root) { continue; }
         let Some(candidate) = registered_candidate(&mut database, &path, modified.zip(size))? else { continue; };
         seen.insert(path.clone());
         if cache.get(&path).is_none_or(|cached| cached.fingerprint != candidate.1) { changed.push(candidate); }
