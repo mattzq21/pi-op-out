@@ -302,8 +302,9 @@ async function branchCheckpoint(pi: ExtensionAPI, ctx: ExtensionContext, entryId
 
     await writeSessionFile(sessionPath, [{ ...header, goalAssets }, ...retained], {
       dependencies: { workspace: { path: target, kind: "created-worktree", branch }, checkpoints: createdRefs },
-      sidecars: [sessionPath.replace(/\.jsonl$/, ".diffs.json")],
-      beforeWrite: () => copyCheckpointDiffs(pi, ctx, source, sessionPath, ids, owner),
+      sidecars: [],
+      databaseDiffs: true,
+      beforeWrite: () => copyCheckpointDiffs(pi, ctx, source, sessionPath, ids, owner, id),
     });
 
     return { branch, path: target, sessionPath, sessionId: id };
@@ -325,11 +326,11 @@ async function checkpointSource(ctx: ExtensionContext, owner: string) {
   return source;
 }
 
-async function copyCheckpointDiffs(pi: ExtensionAPI, ctx: ExtensionContext, source: string, destination: string, ids: ReadonlySet<string>, owner: string) {
+async function copyCheckpointDiffs(pi: ExtensionAPI, ctx: ExtensionContext, source: string, destination: string, ids: ReadonlySet<string>, owner: string, destinationId: string) {
   await drainForkCaptures(pi.events, ctx, ids);
 
   if (ctx.sessionManager.getSessionId() !== owner || await checkpointSource(ctx, owner) !== source) throw new Error("Conversation changed while its checkpoint branch was being prepared");
-  copyRetainedStoreLocked(source.replace(/\.jsonl$/, ".diffs.json"), destination.replace(/\.jsonl$/, ".diffs.json"), ids, owner);
+  copyRetainedStoreLocked(source.replace(/\.jsonl$/, ".diffs.json"), destination.replace(/\.jsonl$/, ".diffs.json"), ids, owner, destinationId);
 }
 
 function releaseCheckpointAssets(ctx: ExtensionContext, root: string, goalAssets: ReturnType<typeof retainHistory> | undefined, id: string) {

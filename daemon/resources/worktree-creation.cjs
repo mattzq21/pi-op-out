@@ -98,10 +98,11 @@ function createGitWorktree(root, plan, fd) {
     const existing = git(plan.source, ['for-each-ref', '--format=%(objectname)', `refs/heads/${plan.branch}`]).trim();
 
     if (existing && existing !== plan.base) throw new Error('Worktree branch changed; retained');
-    const args = ['worktree', 'add', ...(plan.base ? ['--no-checkout', ...(existing ? [] : ['-b', plan.branch])] : ['--orphan', '-b', plan.branch]), '--', plan.target];
+    const args = ['worktree', 'add', '--lock', '--reason', `piop-creation:${plan.id}`, ...(plan.base ? ['--no-checkout', ...(existing ? [] : ['-b', plan.branch])] : ['--orphan', '-b', plan.branch]), '--', plan.target];
 
     if (plan.base) args.push(existing ? plan.branch : plan.base);
     git(plan.source, args, { stdio: ['ignore', 'pipe', 'pipe', fd] });
+    repairEmptyWorktree(root, plan);
   }
 
 }
@@ -184,12 +185,27 @@ function repairRegistration(root, plan, registration) {
   const locked = path.join(registration, 'locked');
 
   if (io.exists(locked)) {
-    if (fs.readFileSync(locked, 'utf8').trim() !== 'initializing') throw new Error('Worktree was locked by another operation; retained');
+    if (fs.readFileSync(locked, 'utf8').trim() !== `piop-creation:${plan.id}`) throw new Error('Worktree was locked by another operation; retained');
+    removeCreationHeadLock(plan, registration);
     fs.unlinkSync(locked);
   }
 
   io.syncTree(registration);
   io.sync(path.dirname(registration));
+}
+
+function removeCreationHeadLock(plan, registration) {
+  const file = path.join(registration, 'HEAD.lock');
+
+  if (!io.exists(file)) return;
+
+  if (!fs.lstatSync(file).isFile()) throw new Error('Worktree HEAD lock changed; retained');
+  const contents = fs.readFileSync(file, 'utf8');
+  const expected = `ref: refs/heads/${plan.branch}\n`;
+
+  if (!expected.startsWith(contents)) throw new Error('Worktree HEAD lock belongs to another branch; retained');
+  fs.unlinkSync(file);
+  io.sync(registration);
 }
 
 function completeRegistrationPath(file, expected) {

@@ -202,7 +202,7 @@ function capture(plan, lock) {
   try { symlinks = git(plan, ['config', '--bool', 'core.symlinks']).toString('ascii').trim() !== 'false'; }
   catch (error) { if (error.status !== 1) throw error; }
 
-  if (!symlinks) for (const file of files) { if (file.mode === '120000') { file.mode = '100644'; delete file.checkout; } }
+  if (!symlinks) for (const file of files) { if (file.checkout && file.mode === '120000') { file.mode = '100644'; delete file.checkout; } }
 
   const object = tree(plan, files, lock);
   references.update(plan, 'content', object, lock);

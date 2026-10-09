@@ -159,6 +159,14 @@ function rollbackPeers(transaction, save) {
 function preparePeerRollback(transaction, peer, save) {
   if (peer.rollbackIdentity) return;
 
+  if (!io.matches(peer.backup, peer.backupIdentity)) throw new Error('Shared archive backup changed; retained');
+
+  if (io.exists(peer.rollback) && !io.sameContents(peer.rollback, peer.original)) {
+    if (!fs.lstatSync(peer.rollback).isFile()) throw new Error('Shared archive rollback copy is not a regular file');
+    fs.unlinkSync(peer.rollback);
+    io.sync(transaction.container);
+  }
+
   if (!io.exists(peer.rollback)) fs.copyFileSync(peer.backup, peer.rollback, fs.constants.COPYFILE_EXCL);
 
   if (!io.sameContents(peer.rollback, peer.original)) throw new Error('Shared archived owner rollback copy changed; retained');

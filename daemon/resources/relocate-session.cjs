@@ -3,7 +3,8 @@ const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { homedir } = require('node:os');
-const { join } = require('node:path');
+const { dirname, join } = require('node:path');
+const io = require('./session-transactions.cjs');
 const { acquireReferencePublicationLock } = require('./storage-lock.cjs');
 
 const snapshotSchema = Type.Object({ repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-fA-F0-9]{40,64}$' }) });
@@ -71,6 +72,11 @@ if (root) {
   }
 }
 
+if (header.cwd !== replacement) {
+  delete header.archiveResourceId;
+  delete header.worktreeRestore;
+}
+
 header.cwd = replacement;
 
 lines[0] = JSON.stringify(header);
@@ -88,6 +94,7 @@ try {
   fs.closeSync(file); file = undefined;
   require('./transcript-metadata.cjs').invalidate(sessionPath);
   fs.renameSync(temporary, sessionPath);
+  io.sync(dirname(sessionPath));
   checkpointIndex.refresh(sessionPath);
   require('./transcript-metadata.cjs').remember(sessionPath);
 } finally {

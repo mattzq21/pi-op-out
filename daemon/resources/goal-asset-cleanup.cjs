@@ -11,6 +11,8 @@ const goalReferences = require('./goal-cleanup-references.cjs');
 
 const registrySchema = Type.Object({ session_id: Type.String(), session_path: Type.Union([Type.String(), Type.Null()]) });
 
+const queuedSchema = Type.Object({ version: Type.Literal(1), items: Type.Array(Type.Object({}, { additionalProperties: true })) });
+
 const receiptSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.String() });
 
 const ephemeralSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.String(), location: Type.Object({ kind: Type.Union([Type.Literal('local'), Type.Literal('remote')]), path: Type.String() }) });
@@ -109,6 +111,7 @@ function recoveryFiles(transaction, kind) {
 function surviving(root, deleted) {
   const observation = { files: new Map(), sessions: new Set(), directories: new Set() };
   registered(root, observation, deleted);
+  queued(root, observation, deleted);
   ephemeral(root, observation);
   external(root, observation);
   transactionFiles(root, 'archive', observation);
@@ -116,6 +119,17 @@ function surviving(root, deleted) {
   publicationDiagnostics(root, observation);
 
   return observation;
+}
+
+function queued(root, observation, deleted) {
+  for (const row of require('./session-database.cjs').queuedInputs(root)) {
+    if (deleted.has(row.session_id)) continue;
+    const record = JSON.parse(row.record_json);
+
+    if (!Check(queuedSchema, record)) throw new Error('Damaged queued input prevents goal asset cleanup');
+    observation.sessions.add(row.session_id);
+    observeReferences(root, [record, ...record.items], observation);
+  }
 }
 
 function publicationDiagnostics(root, observation) {

@@ -128,6 +128,13 @@ function pendingTranscripts(root, binding, resourceId, found) {
 
 }
 
+function relocatedOwner(owner, binding, resourceId) {
+  if (owner.area !== 'active' || !io.exists(owner.sessionPath)) return false;
+  const { header } = headerAt(owner.sessionPath, owner.sessionId);
+
+  return header.archiveResourceId !== resourceId && relativeCwd(binding, header.cwd) === null;
+}
+
 function discover(root, binding, resourceId, recorded) {
   const found = new Map();
 
@@ -135,7 +142,7 @@ function discover(root, binding, resourceId, recorded) {
   pendingTranscripts(root, binding, resourceId, found);
 
   for (const owner of recorded) {
-    if (!found.has(owner.sessionId)) found.set(owner.sessionId, { ...owner, area: 'unresolved', identity: null });
+    if (!found.has(owner.sessionId) && !relocatedOwner(owner, binding, resourceId)) found.set(owner.sessionId, { ...owner, area: 'unresolved', identity: null });
   }
 
   return [...found.values()].sort((left, right) => left.sessionId.localeCompare(right.sessionId));
