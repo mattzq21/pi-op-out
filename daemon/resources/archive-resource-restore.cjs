@@ -40,6 +40,8 @@ function copyDirectory(transaction, journal, publication = transaction) {
 
   if (!io.matches(copy.source, copy.sourceProof) || io.exists(copy.destination) || io.exists(copy.staging)) throw new Error('Shared directory restoration source or destination changed; retained');
   io.mkdir(path.dirname(copy.staging));
+  copy.stagingParentIdentity = io.identity(path.dirname(copy.staging));
+  require('./restore-records.cjs').write(journal, JSON.stringify(publication));
   fs.mkdirSync(copy.staging, { mode: 0o700 });
   io.sync(path.dirname(copy.staging));
   copy.stagingIdentity = io.identity(copy.staging);
@@ -70,11 +72,24 @@ function seal(root, transaction, journal, publication = transaction) {
 function retainCopy(copy, directory) {
   if (!io.exists(directory)) return;
 
+  if (!copy.stagingIdentity && directory === copy.staging) return removeEmptyCopy(copy);
+
   if (!copy.stagingIdentity || io.identity(directory) !== copy.stagingIdentity) throw new Error('Shared restoration copy ownership is ambiguous; retained');
 
   if (copy.prepared && !io.matches(directory, copy.prepared)) throw new Error('Shared restoration copy changed; retained');
   io.mkdir(copy.recovery);
   io.move({ source: directory, destination: path.join(copy.recovery, path.basename(directory)), identity: io.describe(directory) });
+}
+
+function removeEmptyCopy(copy) {
+  const parent = path.dirname(copy.staging);
+  const info = fs.lstatSync(copy.staging);
+
+  if (!copy.stagingParentIdentity || io.identity(parent) !== copy.stagingParentIdentity || fs.realpathSync(parent) !== parent) throw new Error('Shared restoration staging parent changed; retained');
+
+  if (!info.isDirectory() || (info.mode & 0o777) !== 0o700 || process.getuid && info.uid !== process.getuid() || fs.readdirSync(copy.staging).length) throw new Error('Unexpected shared restoration staging contents or owner; retained');
+  fs.rmdirSync(copy.staging);
+  io.sync(parent);
 }
 
 function rollback(root, transaction) {

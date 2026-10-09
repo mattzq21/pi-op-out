@@ -54,6 +54,7 @@ function emptyAllocation(container, info, boot) {
 }
 
 function candidates(root) {
+  require('./worktree-allocation.cjs').recover(root);
   const storage = path.join(root, 'worktrees');
   const info = metadata(storage);
 

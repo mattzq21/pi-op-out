@@ -36,6 +36,8 @@ function targets(root, row) {
 }
 
 function list(root) {
+  require('./worktree-creation.cjs').recover(root);
+  require('./worktree-allocation.cjs').recover(root);
   const db = database.open(root);
 
   try {

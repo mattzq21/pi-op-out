@@ -6,6 +6,7 @@ const { pruneReceipts } = require('./deletion-retention.cjs');
 const { recoverSnapshotTemps } = require('./snapshot-recovery.cjs');
 
 function recoverStorage(root) {
+  require('./worktree-creation.cjs').recover(root);
   recoverArchives(root);
   recoverRestorations(root);
   recoverForks(root);

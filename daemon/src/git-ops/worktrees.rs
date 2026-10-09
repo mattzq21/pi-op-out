@@ -1,4 +1,6 @@
+#[cfg(test)]
 use std::fs;
+#[cfg(test)]
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
@@ -7,11 +9,12 @@ use std::process::Stdio;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use crate::platform::AppHandle;
-use uuid::Uuid;
 use crate::{AppSettings, PiRuntime, RemoteHost, STORAGE_DIRECTORY, SessionIndexRuntime, SessionSummary, TerminalRuntime, node_command};
-use crate::git_ops::{MAX_GIT_PATCH_BYTES, MAX_GIT_PATH_LIST_BYTES, ProjectKind};
+use crate::git_ops::{MAX_GIT_PATH_LIST_BYTES, ProjectKind};
 use super::{GitWorktree, GitWorktreeRemoval};
-use crate::git_ops::worktree_setup::{LimitedOutput, WorktreeScriptPhase, ensure_desktop_sessions_dir, run_limited, run_worktree_scripts, shell_quote};
+#[cfg(test)]
+use crate::git_ops::worktree_setup::LimitedOutput;
+use crate::git_ops::worktree_setup::{ WorktreeScriptPhase, ensure_desktop_sessions_dir, run_limited, run_worktree_scripts, shell_quote};
 use crate::pi_launch::{remote_host, remote_login_command, ssh};
 use crate::session_index::{list_local_sessions, list_remote_sessions};
 use crate::environment::home_dir;
@@ -97,6 +100,7 @@ fn child_worktree_branch(root: &Path, name: &str, host: Option<&RemoteHost>) -> 
     Ok(worktree_branch_name(parent, name))
 }
 
+#[cfg(test)]
 pub(crate) fn parse_worktree_output(output: LimitedOutput, context: &str) -> Result<GitWorktree, String> {
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -110,6 +114,7 @@ pub(crate) fn parse_worktree_output(output: LimitedOutput, context: &str) -> Res
     Ok(GitWorktree { branch, path })
 }
 
+#[cfg(test)]
 fn copy_untracked_symlink(source: &Path, target: &Path, relative: &Path) -> Result<(), String> {
         let link = fs::read_link(source).map_err(|error| format!("Could not read untracked symlink {}: {error}", relative.display()))?;
         #[cfg(unix)]
@@ -121,6 +126,7 @@ fn copy_untracked_symlink(source: &Path, target: &Path, relative: &Path) -> Resu
     Ok(())
 }
 
+#[cfg(test)]
 fn copy_untracked_directory(source_root: &Path, target_root: &Path, relative: &Path) -> Result<(), String> {
         let source = source_root.join(relative); let target = target_root.join(relative);
         fs::create_dir_all(&target).map_err(|error| format!("Could not prepare untracked directory {}: {error}", relative.display()))?;
@@ -132,6 +138,7 @@ fn copy_untracked_directory(source_root: &Path, target_root: &Path, relative: &P
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn copy_untracked_file(source_root: &Path, target_root: &Path, relative: &Path) -> Result<(), String> {
     if !relative.components().all(|component| matches!(component, std::path::Component::Normal(_))) { return Err("Git returned an invalid untracked path".into()); }
     let source = source_root.join(relative); let target = target_root.join(relative);
@@ -147,19 +154,23 @@ pub(crate) fn copy_untracked_file(source_root: &Path, target_root: &Path, relati
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 pub(crate) fn git_relative_path(bytes: &[u8]) -> PathBuf {
     use std::os::unix::ffi::OsStrExt;
     PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
 }
 
 #[cfg(not(unix))]
+#[cfg(test)]
 pub(crate) fn git_relative_path(bytes: &[u8]) -> PathBuf { PathBuf::from(String::from_utf8_lossy(bytes).into_owned()) }
 
+#[cfg(test)]
 pub(crate) fn remove_created_worktree(root: &Path, target: &Path, branch: &str) {
     let _ = Command::new("git").arg("-C").arg(root).args(["worktree", "remove", "--force"]).arg(target).stdout(Stdio::null()).stderr(Stdio::null()).status();
     let _ = Command::new("git").arg("-C").arg(root).args(["branch", "-D", branch]).stdout(Stdio::null()).stderr(Stdio::null()).status();
 }
 
+#[cfg(test)]
 pub(crate) fn local_branch_exists(root: &Path, branch: &str) -> Result<bool, String> {
     let reference = format!("refs/heads/{branch}");
     let status = Command::new("git").arg("-C").arg(root).args(["show-ref", "--verify", "--quiet", &reference]).status().map_err(|error| format!("Could not inspect Git branches: {error}"))?;
@@ -194,7 +205,7 @@ fn project_worktree_root(cwd: &str, host: Option<&RemoteHost>) -> Result<PathBuf
 struct ManagedWorktreeTarget { path: PathBuf, host: Option<RemoteHost> }
 
 fn worktree_storage_command(action: &str, directory: &Path, host: Option<&RemoteHost>, branch: &str, revision: &str) -> Command {
-    let script = crate::session_registry::with_database(include_str!("../../resources/worktree-storage.cjs"));
+    let script = include_str!("../../resources/worktree-storage.bundle.mjs").to_owned();
     if let Some(host) = host {
         let mut command = ssh(host);
         command.arg(format!("node -e {} {} {} {} {} {}", shell_quote(&script), shell_quote(action), shell_quote(&directory.to_string_lossy()), shell_quote(STORAGE_DIRECTORY), shell_quote(branch), shell_quote(revision)));
@@ -246,28 +257,23 @@ pub(crate) fn create_git_worktree(app: AppHandle, cwd: String, name: String, hos
     let host_id = host_id.as_deref().unwrap_or("local");
     if host_id != "local" {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, host_id)?;
-        let root = remote_worktree_root(&cwd, host)?;
-        let branch = child_worktree_branch(Path::new(&root), name, Some(host))?;
-        let storage_script = shell_quote(&crate::session_registry::with_database(include_str!("../../resources/worktree-storage.cjs")));
-        let create = format!("node -e {storage_script} create \"$root\" {} \"$branch\" \"$revision\"", shell_quote(STORAGE_DIRECTORY));
-        let cleanup = format!("node -e {storage_script} cleanup \"$target\" {} ''", shell_quote(STORAGE_DIRECTORY));
-        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; {cleanup} >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --src-prefix=a/ --dst-prefix=b/ --binary --no-textconv --no-ext-diff HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard $(test "$has_head" -eq 0 && printf %s --cached) -- > "$temporary/untracked" || exit 1; revision=HEAD; if [ "$has_head" -eq 0 ]; then revision=--orphan; fi; target=$({create}) || exit 1; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
-            root = shell_quote(&root), branch = shell_quote(&branch),
-            patch_plus_one = MAX_GIT_PATCH_BYTES + 1, max_patch = MAX_GIT_PATCH_BYTES);
-        let output = run_limited(ssh(host).arg(script), 64 * 1024, &format!("Could not create Git worktree on {}", host.name))?;
-        return parse_worktree_output(output, "Could not create Git worktree");
+        return create_remote_worktree(&cwd, name, host);
     }
 
     create_local_git_worktree(&cwd, name)
 }
 
-fn new_local_worktree(root: &Path, branch: &str, has_head: bool) -> Result<ManagedWorktreeTarget, String> {
-    let valid = Command::new("git").args(["check-ref-format", "--branch", branch]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not validate Git branch: {error}"))?;
-    if !valid.success() { return Err(format!("Invalid Git branch name: {branch}")); }
-    if local_branch_exists(root, branch)? { return Err(format!("Git branch already exists: {branch}")); }
-    create_managed_worktree(root, None, branch, if has_head { "HEAD" } else { "--orphan" })
+fn create_remote_worktree(cwd: &str, name: &str, host: &RemoteHost) -> Result<GitWorktree, String> {
+        let root = remote_worktree_root(cwd, host)?;
+        let branch = child_worktree_branch(Path::new(&root), name, Some(host))?;
+        let has_head = run_limited(ssh(host).arg(format!("git -C {} rev-parse --verify HEAD", shell_quote(&root))), 64 * 1024, "Could not inspect Git HEAD")?.status.success();
+        let output = run_limited(&mut worktree_storage_command("create-copy", Path::new(&root), Some(host), &branch, if has_head { "HEAD" } else { "--orphan" }), 64 * 1024, "Could not copy Git worktree")?;
+        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        let path = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+        Ok(GitWorktree { branch, path })
 }
 
+#[cfg(test)]
 pub(crate) fn write_worktree_patch(path: &Path, patch: &[u8]) -> std::io::Result<()> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -285,21 +291,6 @@ pub(crate) fn write_worktree_patch(path: &Path, patch: &[u8]) -> std::io::Result
     Ok(())
 }
 
-fn local_worktree_patch(root: &Path, has_head: bool) -> Result<Vec<u8>, String> {
-    if has_head {
-        let output = run_limited(Command::new("git").arg("-C").arg(root).args(["diff", "--src-prefix=a/", "--dst-prefix=b/", "--binary", "--no-textconv", "--no-ext-diff", "HEAD", "--"]), MAX_GIT_PATCH_BYTES, "Git changes are too large to copy")?;
-        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-        Ok(output.stdout)
-    } else { Ok(Vec::new()) }
-}
-
-fn local_worktree_untracked(root: &Path, has_head: bool) -> Result<LimitedOutput, String> {
-    let mut files = Command::new("git"); files.arg("-C").arg(root).args(["ls-files", "-z", "--others", "--exclude-standard"]); if !has_head { files.arg("--cached"); } files.arg("--");
-    let untracked = run_limited(&mut files, MAX_GIT_PATH_LIST_BYTES, "Untracked file list is too large to copy")?;
-    if !untracked.status.success() { return Err(String::from_utf8_lossy(&untracked.stderr).trim().to_string()); }
-    Ok(untracked)
-}
-
 fn canonical_worktree_root(cwd: &str) -> Result<PathBuf, String> {
     project_worktree_root(cwd, None)?.canonicalize().map_err(|error| format!("Could not resolve Git repository: {error}"))
 }
@@ -309,26 +300,10 @@ pub(crate) fn create_local_git_worktree(cwd: &str, name: &str) -> Result<GitWork
     let root = canonical_worktree_root(cwd)?;
     let branch = child_worktree_branch(&root, name, None)?;
     let has_head = Command::new("git").arg("-C").arg(&root).args(["rev-parse", "--verify", "HEAD"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not inspect Git HEAD: {error}"))?.success();
-    let patch = local_worktree_patch(&root, has_head)?;
-    let untracked = local_worktree_untracked(&root, has_head)?;
-    let reservation = new_local_worktree(&root, &branch, has_head)?;
-    let target = &reservation.path;
-    let copy_result = (|| {
-        if !patch.is_empty() {
-            let patch_path = std::env::temp_dir().join(format!("pi-desktop-worktree-{}.patch", Uuid::new_v4()));
-            write_worktree_patch(&patch_path, &patch).map_err(|error| format!("Could not prepare Git changes for copying: {error}"))?;
-            let applied = run_limited(Command::new("git").arg("-C").arg(target).args(["apply", "--whitespace=nowarn"]).arg(&patch_path), 64 * 1024, "Could not copy Git changes");
-            let _ = fs::remove_file(&patch_path);
-            let applied = applied?;
-            if !applied.status.success() { return Err(String::from_utf8_lossy(&applied.stderr).trim().to_string()); }
-        }
-        for raw in untracked.stdout.split(|byte| *byte == 0).filter(|path| !path.is_empty()) {
-            copy_untracked_file(&root, target, &git_relative_path(raw))?;
-        }
-        Ok(())
-    })();
-    if let Err(error) = copy_result { remove_created_worktree(&root, target, &branch); return Err(error); }
-    Ok(GitWorktree { branch, path: target.to_string_lossy().into_owned() })
+    let output = run_limited(&mut worktree_storage_command("create-copy", &root, None, &branch, if has_head { "HEAD" } else { "--orphan" }), 64 * 1024, "Could not copy Git worktree")?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    let path = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+    Ok(GitWorktree { branch, path })
 }
 
 pub(crate) struct WorktreeRemovalTarget { pub(crate) path: String, pub(crate) source: String, pub(crate) branch: Option<String> }

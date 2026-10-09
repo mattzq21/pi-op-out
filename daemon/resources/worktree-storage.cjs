@@ -66,6 +66,10 @@ function create(descriptor) {
 
 try {
   if (action === 'cleanup') withCreationLock(() => cleanup(directory));
+  else if (action === 'create-copy') withCreationLock(() => {
+    const target = require('./worktree-creation.cjs').create(path.dirname(root), fs.realpathSync(directory), branch, revision, true);
+    process.stdout.write(target);
+  });
   else if (action === 'create') withCreationLock(create);
   else throw new Error('Unknown worktree storage operation');
 } catch (error) { console.error(error.message); process.exitCode = 1; }
