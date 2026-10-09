@@ -109,27 +109,42 @@ type SessionCandidate = (String, String, u64, u64);
 
 fn local_session_candidates(root: &Path, cache: &HashMap<PathBuf, CachedSession>) -> Result<(HashSet<PathBuf>, Vec<SessionCandidate>), String> {
     let mut seen = HashSet::new(); let mut changed = Vec::new();
-    let database = crate::session_registry::open(root.parent().ok_or("Session storage root missing")?)?;
+    let mut database = crate::session_registry::open(root.parent().ok_or("Session storage root missing")?)?;
     let mut statement = database.prepare("SELECT s.session_path, m.modified_ns, m.size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE s.session_path IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(s.session_id))")
         .map_err(|error| error.to_string())?;
-    let paths = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<u64>>(2)?))).map_err(|error| error.to_string())?;
-    for row in paths {
-        let (path, modified, size) = row.map_err(|error| error.to_string())?;
+    let paths = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<u64>>(2)?))).map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+    drop(statement);
+    for (path, modified, size) in paths {
         let path = PathBuf::from(path);
         if !path.starts_with(root) { continue; }
-        let Some(candidate) = registered_candidate(&path, modified.zip(size))? else { continue; };
+        let Some(candidate) = registered_candidate(&mut database, &path, modified.zip(size))? else { continue; };
         seen.insert(path.clone());
         if cache.get(&path).is_none_or(|cached| cached.fingerprint != candidate.1) { changed.push(candidate); }
     }
     Ok((seen, changed))
 }
 
-fn registered_candidate(path: &Path, saved: Option<(String, u64)>) -> Result<Option<SessionCandidate>, String> {
-    let Some((modified, size)) = saved else { return local_candidate(path); };
+fn registered_candidate(database: &mut rusqlite::Connection, path: &Path, saved: Option<(String, u64)>) -> Result<Option<SessionCandidate>, String> {
+    let Some((modified, size)) = saved else { return capture_local_candidate(database, path); };
     let seconds = modified.parse::<u128>().map_err(|error| error.to_string())? / 1_000_000_000;
     let seconds = u64::try_from(seconds).map_err(|error| error.to_string())?;
     Ok(Some((path.to_string_lossy().into_owned(), format!("{modified}:{size}"), seconds, size)))
+}
+
+fn capture_local_candidate(database: &mut rusqlite::Connection, path: &Path) -> Result<Option<SessionCandidate>, String> {
+    let transaction = database.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+    let candidate = local_candidate(path)?;
+    if let Some((file, fingerprint, _, size)) = &candidate {
+        let modified = fingerprint.split(':').next().ok_or("Invalid transcript file details")?;
+        transaction.execute("INSERT INTO session_file_metadata SELECT session_id, session_path, ?, ? FROM sessions WHERE session_path=?
+            AND NOT EXISTS (SELECT 1 FROM session_file_writes w WHERE w.session_id=sessions.session_id)
+            AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(sessions.session_id))
+            ON CONFLICT(session_id) DO NOTHING", rusqlite::params![modified, size, file]).map_err(|error| error.to_string())?;
+    }
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(candidate)
 }
 
 fn local_candidate(path: &Path) -> Result<Option<SessionCandidate>, String> {

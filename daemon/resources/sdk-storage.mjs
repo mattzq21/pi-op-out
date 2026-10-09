@@ -53,6 +53,7 @@ function registerManagedTranscript(manager, saved = false) {
       CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT);
       CREATE TABLE IF NOT EXISTS session_deletion_tombstones (session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL, session_path TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       BEGIN IMMEDIATE;`);
     registerManagedPath(database, header.id, file);
     saveManagedMetadata(database, header.id, file, saved);
@@ -63,11 +64,17 @@ function registerManagedTranscript(manager, saved = false) {
 function saveManagedMetadata(database, id, file, saved) {
   database.prepare("DELETE FROM session_file_metadata WHERE session_id=?").run(id);
 
-  if (!saved) return;
+  if (!saved) {
+    database.prepare("INSERT INTO session_file_writes VALUES (?) ON CONFLICT DO NOTHING").run(id);
+
+    return;
+  }
+
   const metadata = storageFs.lstatSync(file, { bigint: true });
 
   if (!metadata.isFile()) throw new Error("Saved session is not a regular file");
   database.prepare("INSERT INTO session_file_metadata VALUES (?, ?, ?, ?)").run(id, file, String(metadata.mtimeNs), metadata.size);
+  database.prepare("DELETE FROM session_file_writes WHERE session_id=?").run(id);
 }
 
 function finishManagedTranscript(manager) {

@@ -328,6 +328,7 @@ function restoreRecord(transaction, record) {
 
   if (io.matches(record.file, record.original) || io.matches(record.file, record.rollbackIdentity)) {
     checkpointIndex.refresh(record.file);
+    require('./transcript-metadata.cjs').remember(record.file);
 
     return;
   }
@@ -341,6 +342,7 @@ function restoreRecord(transaction, record) {
   fs.renameSync(record.rollbackCopy, record.file);
   io.sync(path.dirname(record.file));
   checkpointIndex.refresh(record.file);
+  require('./transcript-metadata.cjs').remember(record.file);
 }
 
 function prepareRollbackCopy(transaction, record) {
@@ -464,6 +466,8 @@ function finish(transaction) {
 
 function finishLocked(transaction) {
   require('./session-database.cjs').movePaths(transaction.root, transaction.records.map(record => ({ source: record.file, destination: record.destination })));
+
+  for (const record of transaction.records) require('./transcript-metadata.cjs').remember(record.destination);
 
   for (const group of transaction.groups.filter(group => group.kind === 'git' && !group.removed)) finishGroup(transaction, group);
   shared.finishArchive(transaction);

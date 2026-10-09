@@ -10,7 +10,12 @@ function invalidate(file) {
 
   const db = database.open(root);
 
-  try { db.prepare('DELETE FROM session_file_metadata WHERE session_path=?').run(file); }
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    db.prepare('DELETE FROM session_file_metadata WHERE session_path=?').run(file);
+    db.prepare('INSERT INTO session_file_writes SELECT session_id FROM sessions WHERE session_path=? ON CONFLICT DO NOTHING').run(file);
+    db.exec('COMMIT');
+  }
   finally { db.close(); }
 }
 
@@ -29,6 +34,7 @@ function remember(file) {
       AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))
       ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, modified_ns=excluded.modified_ns, size=excluded.size`)
       .run(String(metadata.mtimeNs), metadata.size, file);
+    db.prepare("DELETE FROM session_file_writes WHERE session_id IN (SELECT session_id FROM sessions WHERE session_path=?)").run(file);
     db.exec('COMMIT');
   } finally { db.close(); }
 }

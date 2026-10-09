@@ -127,6 +127,7 @@ function publishPeers(transaction) {
     fs.renameSync(peer.prepared, peer.file);
     io.sync(path.dirname(peer.file));
     checkpointIndex.refresh(peer.file);
+    require('./transcript-metadata.cjs').remember(peer.file);
   }
 }
 
@@ -140,6 +141,7 @@ function rollbackPeers(transaction, save) {
   for (const peer of [...(transaction.resourcePeers ?? [])].reverse()) {
     if (io.matches(peer.file, peer.original) || io.matches(peer.file, peer.rollbackIdentity)) {
       checkpointIndex.refresh(peer.file);
+      require('./transcript-metadata.cjs').remember(peer.file);
       continue;
     }
 
@@ -152,6 +154,7 @@ function rollbackPeers(transaction, save) {
     fs.renameSync(peer.rollback, peer.file);
     io.sync(path.dirname(peer.file));
     checkpointIndex.refresh(peer.file);
+    require('./transcript-metadata.cjs').remember(peer.file);
   }
 }
 

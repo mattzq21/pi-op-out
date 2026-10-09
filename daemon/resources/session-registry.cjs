@@ -122,9 +122,25 @@ function record(session) {
 
 function registeredMetadata(row) {
   if (row.modified_ns !== null && row.size !== null) return { mtimeNs: BigInt(row.modified_ns), size: row.size };
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    const stat = readMetadata(row.session_path);
+
+    if (stat) db.prepare(`INSERT INTO session_file_metadata SELECT session_id, session_path, ?, ? FROM sessions WHERE session_path=?
+      AND NOT EXISTS (SELECT 1 FROM session_file_writes w WHERE w.session_id=sessions.session_id)
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(sessions.session_id))
+      ON CONFLICT(session_id) DO NOTHING`).run(String(stat.mtimeNs), stat.size, row.session_path);
+    db.exec('COMMIT');
+
+    return stat;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function readMetadata(file) {
   let stat;
 
-  try { stat = fs.lstatSync(row.session_path, { bigint: true }); }
+  try { stat = fs.lstatSync(file, { bigint: true }); }
   catch (error) { if (error.code === 'ENOENT') return; throw error; }
 
   return stat.isFile() ? stat : undefined;
