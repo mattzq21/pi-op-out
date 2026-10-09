@@ -387,7 +387,7 @@ async function collectSession(candidate, discovery, archives, referencedWorktree
 
 async function registeredSessions(root, warnings) {
   try {
-    const files = require('./session-database.cjs').paths(path.dirname(root)).filter(file => {
+    const files = require('./session-database.cjs').paths(path.dirname(root), root).filter(file => {
       const relative = path.relative(root, file);
 
       return relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) && file.endsWith('.jsonl');

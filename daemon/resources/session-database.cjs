@@ -725,14 +725,14 @@ function lookup(root, sessionId) {
   const db = open(root);
 
   try {
-    return db.prepare(`SELECT session_path FROM sessions WHERE session_id=?
-      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))`).get(sessionId, sessionId)?.session_path;
+    return db.prepare('SELECT session_path FROM sessions WHERE session_id=? AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))').get(sessionId, sessionId)?.session_path;
   } finally { db.close(); }
 }
 
-function paths(root) {
-  return rows(root, `SELECT session_path FROM sessions WHERE session_path IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`).map(row => row.session_path);
+function paths(root, directory) {
+  const prefix = directory === undefined ? null : path.resolve(directory) + path.sep;
+
+  return rows(root, 'SELECT session_path FROM sessions WHERE session_path IS NOT NULL AND (? IS NULL OR substr(session_path, 1, length(?))=?) AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))', prefix, prefix, prefix).map(row => row.session_path);
 }
 
 function storageRoot(file) {
