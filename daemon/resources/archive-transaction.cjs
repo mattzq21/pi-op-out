@@ -7,11 +7,12 @@ const { isDeepStrictEqual } = require('node:util');
 const { canonicalTranscriptBasename } = require('./transcript-identity.cjs');
 const shared = require('./archive-resource-transactions.cjs');
 const checkpoints = require('./archive-checkpoints.cjs');
+const records = require('./archive-records.cjs');
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
 function save(transaction) {
-  io.write(path.join(transaction.container, 'recovery.json'), JSON.stringify(transaction));
+  records.save(transaction.container, transaction);
 }
 
 function sidecars(file, destination) {
@@ -61,6 +62,7 @@ function plan(root, groups, records) {
 
   const container = path.join(root, 'archive-transactions', id);
 
+  require('./archive-records.cjs').allocate(container);
   io.mkdir(container);
 
   const plannedRecords = records.map((record, index) => {
@@ -154,10 +156,10 @@ function load(root, id) {
   if (!uuid.test(id)) throw new Error('Invalid archive transaction identity');
   const container = path.join(root, 'archive-transactions', id);
 
-  const file = path.join(container, 'recovery.json');
+  const file = container;
+  const transaction = records.read(container);
 
-  if (!io.exists(file)?.isFile()) throw new Error(`Archive journal is unavailable: ${container}`);
-  const transaction = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!transaction) throw new Error(`Archive record is unavailable: ${container}`);
 
   validateIdentity(transaction, root, id, container, file);
   transaction.records.forEach(record => validateRecord(transaction, record));
@@ -203,7 +205,6 @@ function begin(transaction) {
     }
   }
 
-  io.write(path.join(transaction.container, 'pending.json'), JSON.stringify({ version: 2, id: transaction.id }));
   transaction.state = 'pending';
   save(transaction);
   io.mkdir(path.join(transaction.root, 'archived'));
@@ -403,10 +404,13 @@ function cleanupRollback(transaction) {
   if (remaining.length) throw new Error(`Unknown archive transaction artifacts retained: ${remaining.join(', ')}`);
 
   if (io.exists(path.join(transaction.container, 'pending.json'))) fs.unlinkSync(path.join(transaction.container, 'pending.json'));
-  fs.unlinkSync(path.join(transaction.container, 'recovery.json'));
+  transaction.retiring = true;
+  save(transaction);
+  fs.rmSync(path.join(transaction.container, 'recovery.json'), { force: true });
   io.sync(transaction.container);
   fs.rmdirSync(transaction.container);
   io.sync(path.dirname(transaction.container));
+  records.remove(transaction.container);
 }
 
 function rollback(transaction) {
@@ -486,17 +490,37 @@ function replay(transaction) {
   rollback(transaction);
 }
 
+function recoverRecord(root, directory, container) {
+  if (path.dirname(container) !== directory || !uuid.test(path.basename(container))) throw new Error('Invalid registered archive directory');
+  const record = records.read(container);
+
+  if (!record) {
+    if (io.exists(container)) { fs.rmdirSync(container); io.sync(directory); }
+
+    records.remove(container);
+
+    return;
+  }
+
+  if (record.container !== container || record.root !== root) throw new Error('Invalid registered archive identity');
+
+  if (record.retiring === true && !io.exists(container)) {
+    records.remove(container);
+
+    return;
+  }
+
+  replay(load(root, path.basename(container)));
+}
+
 function recover(root) {
   const directory = path.join(root, 'archive-transactions');
 
   const failures = [];
 
-  for (const entry of io.exists(directory) ? fs.readdirSync(directory) : []) {
-    if (!uuid.test(entry)) continue;
-
-    try {
-      replay(load(root, entry));
-    } catch (error) { failures.push(`${path.join(directory, entry)}: ${error.message}`); }
+  for (const container of records.list(root)) {
+    try { recoverRecord(root, directory, container); }
+    catch (error) { failures.push(`${container}: ${error.message}`); }
   }
 
   for (const name of fs.readdirSync(root).filter(name => /^archive-transaction-[a-zA-Z0-9]{6}$/.test(name))) {

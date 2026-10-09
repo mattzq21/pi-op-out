@@ -70,6 +70,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS queued_inputs (session_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS legacy_queued_inputs (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS fork_preparations (directory TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS archive_records (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS deletion_records (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS fork_transactions (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS fork_preparation_checkpoints (preparation TEXT NOT NULL, session_id TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(preparation, session_id));
@@ -190,6 +191,7 @@ function importSessions(db, root) {
     importDirectories(db, root, 'fork-transactions', 'fork_transactions', 'fork-transactions-v1');
     importDirectories(db, root, 'delete-transactions', 'deletion_records', 'deletion-records-pending-v1');
     importDirectories(db, root, 'deleted-sessions', 'deletion_records', 'deletion-records-committed-v1');
+    importDirectories(db, root, 'archive-transactions', 'archive_records', 'archive-records-v1');
     importRecoveryDirectories(db, root);
     importReaderReleases(db, root);
     importSnapshotDirectories(db, root);
@@ -211,6 +213,8 @@ function importDirectories(db, root, area, table, migration) {
   catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
 
   for (const entry of entries) {
+    if (['archive_records', 'deletion_records'].includes(table) && !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(entry.name)) continue;
+
     if (!entry.isDirectory()) throw new Error(`Invalid ${area} storage`);
     db.prepare(`INSERT INTO ${table} (directory) VALUES (?)`).run(path.join(directory, entry.name));
   }
@@ -695,12 +699,7 @@ function removePublication(root, id) {
   finally { db.close(); }
 }
 
-function publications(root) {
-  const db = open(root);
-
-  try { return db.prepare('SELECT publication_id FROM session_publications ORDER BY publication_id').all().map(row => row.publication_id); }
-  finally { db.close(); }
-}
+function publications(root) { return rows(root, 'SELECT publication_id FROM session_publications ORDER BY publication_id').map(row => row.publication_id); }
 
 function open(root) {
   const file = require('node:path').join(root, 'sessions.sqlite');

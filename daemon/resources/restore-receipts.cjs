@@ -30,7 +30,6 @@ const finishedArchiveSchema = Type.Object({
   container: Type.String(), containerIdentity: Type.String({ pattern: '^\\d+:\\d+$' }), state: Type.Literal('committed'), finished: Type.Literal(true),
 });
 
-const archivePendingSchema = Type.Object({ version: Type.Literal(2), id: operationIdSchema });
 
 function receiptPath(root, source) {
   return path.join(root, 'restore-receipts', `${createHash('sha256').update(source).digest('hex')}.json`);
@@ -217,44 +216,21 @@ function pendingDirectory(directory, ignoredJournal) {
   return fs.readdirSync(directory).some(name => path.join(directory, name) !== ignoredJournal);
 }
 
-function finishedArchiveMarker(directory, id) {
-  const marker = readRecord(path.join(directory, 'pending.json'));
-
-  if (!marker) return true;
-
-  return Check(archivePendingSchema, marker.value) && marker.value.id === id && unchanged(marker);
-}
-
-function finishedArchive(root, directory, snapshot) {
-  if (!snapshot || !Check(finishedArchiveSchema, snapshot.value)) return false;
-  const transaction = snapshot.value;
+function finishedArchive(root, directory, transaction) {
+  if (!Check(finishedArchiveSchema, transaction)) return false;
 
   if (transaction.root !== root || transaction.container !== directory || directory !== path.join(root, 'archive-transactions', transaction.id)) return false;
 
   if (fs.realpathSync(directory) !== directory || io.identity(directory) !== transaction.containerIdentity) return false;
 
-  return finishedArchiveMarker(directory, transaction.id) && unchanged(snapshot);
+  return JSON.stringify(transaction) === JSON.stringify(require('./archive-records.cjs').read(directory));
 }
 
 function archivePending(root) {
-  const directory = path.join(root, 'archive-transactions');
+  const records = require('./archive-records.cjs');
 
   try {
-    const metadata = io.exists(directory);
-
-    if (!metadata) return false;
-
-    if (!metadata.isDirectory() || fs.realpathSync(directory) !== directory) return true;
-
-    for (const name of fs.readdirSync(directory)) {
-      const container = path.join(directory, name);
-
-      if (!io.exists(container)?.isDirectory()) return true;
-
-      if (!finishedArchive(root, container, readRecord(path.join(container, 'recovery.json')))) return true;
-    }
-
-    return false;
+    return records.list(root).some(directory => !finishedArchive(root, directory, records.read(directory)));
   } catch (_error) { return true; }
 }
 

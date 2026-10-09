@@ -12,18 +12,6 @@ pub(crate) fn recover_remote(host: &crate::RemoteHost) -> Result<(), String> {
     Ok(())
 }
 
-fn operation_pending(root: &Path, name: &str, marker: &str) -> Result<bool, String> {
-    let entries = match std::fs::read_dir(root.join(name)) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error.to_string()),
-    };
-    for entry in entries {
-        if entry.map_err(|error| error.to_string())?.path().join(marker).is_file() { return Ok(true); }
-    }
-    Ok(false)
-}
-
 fn legacy_pending(root: &Path) -> Result<bool, String> {
     if !root.exists() { return Ok(false); }
     for entry in std::fs::read_dir(root).map_err(|error| error.to_string())? {
@@ -51,12 +39,9 @@ fn legacy_publication_temporary(entry: &walkdir::DirEntry) -> bool {
 
 fn recovery_pending(root: &Path) -> Result<bool, String> {
     let database = crate::session_registry::open(root)?;
-    let publications: bool = database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM session_restore_receipts) OR EXISTS(SELECT 1 FROM deletion_records)", [], |row| row.get(0))
+    let publications: bool = database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM session_restore_receipts) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
         .map_err(|error| error.to_string())?;
     if publications { return Ok(true); }
-    for (directory, marker) in [("archive-transactions", "pending.json")] {
-        if operation_pending(root, directory, marker)? { return Ok(true); }
-    }
     legacy_pending(root)
 }
 

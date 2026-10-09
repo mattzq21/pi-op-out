@@ -92,17 +92,12 @@ function deletionFiles(root, observation) {
 function transactionFiles(root, kind, observation) {
   if (kind === 'delete') return deletionFiles(root, observation);
 
-  const parent = path.join(root, `${kind}-transactions`);
+  const records = require('./archive-records.cjs');
 
-  if (!assets.exists(parent)) return;
+  for (const directory of records.list(root)) {
+    const transaction = records.read(directory);
 
-  for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const directory = path.join(parent, entry.name);
-    const journal = path.join(directory, 'recovery.json');
-
-    if (!assets.exists(journal)?.isFile()) continue;
-    const transaction = JSON.parse(fs.readFileSync(journal, 'utf8'));
+    if (!transaction) continue;
     const files = recoveryFiles(transaction, kind);
 
     for (const file of files) {

@@ -140,7 +140,7 @@ function readLinked(root, link, worktrees) {
   return record;
 }
 
-function save(transaction) { io.write(path.join(transaction.container, 'recovery.json'), JSON.stringify(transaction)); }
+function save(transaction) { require('./archive-records.cjs').save(transaction.container, transaction); }
 
 function publish(transaction, record) {
   for (const ref of record.refs) checkpoints.verifyCheckpoint(ref.common, ref.ref, ref.commit);
