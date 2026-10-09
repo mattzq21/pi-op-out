@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Check } from "typebox/value";
 import { Type } from "typebox";
@@ -96,8 +96,8 @@ for (const agent of config.agents) {
   }
 }
 
-const responsePath = process.env.PIOP_AGENT_RESPONSE_PATH;
+const responseId = process.env.PIOP_AGENT_RESPONSE_ID;
 
-if (!responsePath) throw new Error("Agent definitions response channel is unavailable");
+if (!responseId) throw new Error("Agent definitions response channel is unavailable");
 
-await writeFile(responsePath, JSON.stringify({ config, prompts, configPath }), { mode: 0o600 });
+process.stdout.write(`\n${responseId}:${JSON.stringify({ config, prompts, configPath })}\n`);
