@@ -104,13 +104,23 @@ fn recover_contents(root: &Path, id: &str) -> Result<bool> {
     Ok(created)
 }
 
+fn recovered_file_metadata(target: &Path) -> Result<(String, u64)> {
+    let metadata = fs::metadata(target).map_err(|error| error.to_string())?;
+    let modified = metadata.modified().map_err(|error| error.to_string())?.duration_since(std::time::SystemTime::UNIX_EPOCH).map_err(|error| error.to_string())?.as_nanos().to_string();
+    Ok((modified, metadata.len()))
+}
+
 fn register_recovered(root: &Path, target: &Path, id: &str) -> Result<()> {
-    if matching_header(target, id)? {
-        let database = crate::session_registry::open(root)?;
-        database.execute("INSERT INTO sessions (session_id, session_path) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path",
-            rusqlite::params![id, target.to_string_lossy()]).map_err(|error| error.to_string())?;
-    }
-    Ok(())
+    if !matching_header(target, id)? { return Ok(()); }
+    let (modified, size) = recovered_file_metadata(target)?;
+    let mut database = crate::session_registry::open(root)?;
+    let transaction = database.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+    transaction.execute("INSERT INTO sessions (session_id, session_path) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path",
+        rusqlite::params![id, target.to_string_lossy()]).map_err(|error| error.to_string())?;
+    transaction.execute("INSERT INTO session_file_metadata VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, modified_ns=excluded.modified_ns, size=excluded.size",
+        rusqlite::params![id, target.to_string_lossy(), modified, size]).map_err(|error| error.to_string())?;
+    transaction.execute("DELETE FROM session_file_writes WHERE session_id=?", [id]).map_err(|error| error.to_string())?;
+    transaction.commit().map_err(|error| error.to_string())
 }
 
 fn try_lock(path: &Path) -> Result<Option<File>> {
