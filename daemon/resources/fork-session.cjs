@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const { createInterface } = require('node:readline');
 const path = require('node:path');
 const { homedir } = require('node:os');
-const { createHash, randomUUID } = require('node:crypto');
+const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
 function referencePublication(destination) {
@@ -24,27 +24,16 @@ function referencePublication(destination) {
 }
 
 function registerTranscript(root, destination) {
-  const directory = path.join(root, 'external-transcripts');
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-
-  if (!fs.lstatSync(directory).isDirectory()) throw new Error('Invalid external transcript registry');
-  const record = path.join(directory, createHash('sha256').update(destination).digest('hex') + '.json');
-  const temporary = record + '.' + randomUUID() + '.tmp';
-  const output = fs.openSync(temporary, 'wx', 0o600);
+  const file = path.join(root, 'sessions.sqlite');
+  fs.closeSync(fs.openSync(file, 'a', 0o600));
+  const database = new (require('node:sqlite').DatabaseSync)(file);
 
   try {
-    try { fs.writeFileSync(output, JSON.stringify({ path: destination })); fs.fsyncSync(output); }
-    finally { fs.closeSync(output); }
-
-    fs.renameSync(temporary, record);
-
-    for (const location of [directory, root]) {
-      const file = fs.openSync(location, 'r');
-
-      try { fs.fsyncSync(file); }
-      finally { fs.closeSync(file); }
-    }
-  } finally { fs.rmSync(temporary, { force: true }); }
+    fs.chmodSync(file, 0o600);
+    database.exec('PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL)');
+    database.prepare('INSERT INTO external_transcripts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json')
+      .run(createHash('sha256').update(destination).digest('hex'), JSON.stringify({ path: destination }));
+  } finally { database.close(); }
 }
 
 async function copyThroughLeaf(source, output, id, leafId) {

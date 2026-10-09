@@ -66,6 +66,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS snapshot_comparison_retries (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS snapshot_pending_diffs (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ephemeral_cleanup_records (token TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ephemeral_cleanup_owners (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS queued_inputs (session_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS legacy_queued_inputs (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
@@ -199,6 +200,7 @@ function importSessions(db, root) {
     importPendingDiffs(db);
     importJsonRecords(db, root, 'ephemeral-cleanup/owners', 'ephemeral_cleanup_owners', 'ephemeral-cleanup-owners-v1');
     importJsonRecords(db, root, 'queued-input', 'queued_inputs', 'queued-inputs-v1');
+    importJsonRecords(db, root, 'external-transcripts', 'external_transcripts', 'external-transcripts-v1');
     importJsonRecords(db, root, 'conversation-queues', 'legacy_queued_inputs', 'legacy-queued-inputs-v1');
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -230,11 +232,11 @@ function importJsonRecords(db, root, area, table, migration) {
   try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
   catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
 
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+  for (const entry of entries.filter(entry => entry.name.endsWith('.json'))) {
+    if (!entry.isFile()) throw new Error(`Invalid ${area} record`);
 
     if (table === 'queued_inputs' && db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(entry.name.slice(0, -5))) continue;
-    db.prepare(`INSERT INTO ${table} VALUES (?, ?)`)
+    db.prepare(`INSERT INTO ${table} VALUES (?, ?) ON CONFLICT DO NOTHING`)
       .run(entry.name.slice(0, -5), fs.readFileSync(path.join(directory, entry.name), 'utf8'));
   }
 
@@ -724,13 +726,8 @@ function lookup(root, sessionId) {
 }
 
 function paths(root) {
-  const db = open(root);
-
-  try {
-    return db.prepare(`SELECT session_path FROM sessions WHERE session_path IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`)
-      .all().map(row => row.session_path);
-  } finally { db.close(); }
+  return rows(root, `SELECT session_path FROM sessions WHERE session_path IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`).map(row => row.session_path);
 }
 
 function storageRoot(file) {

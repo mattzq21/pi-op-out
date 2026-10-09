@@ -1,6 +1,5 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const { DatabaseSync } = require('node:sqlite');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
@@ -28,17 +27,6 @@ function readTranscript(file) {
   return entries;
 }
 
-function walk(directory, visit) {
-  if (!assets.exists(directory)) return;
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isDirectory() && entry.name !== 'attachments' && !entry.name.endsWith('.snapshots')) walk(file, visit);
-    else if (/\.jsonl(?:\.[a-f0-9-]+\.tmp)?$/.test(entry.name)) visit(file);
-  }
-}
-
 function observe(root, file, observation, live = true) {
   if (observation.files.has(file)) {
     if (live) observation.sessions.add(observation.files.get(file));
@@ -54,17 +42,10 @@ function observe(root, file, observation, live = true) {
 }
 
 function registered(root, observation, deleted) {
-  const file = path.join(root, 'sessions.sqlite');
-
-  if (!assets.exists(file)) return;
-  const database = new DatabaseSync(file, { readOnly: true });
+  const database = require('./session-database.cjs').open(root);
 
   try {
-    const table = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_repositories'").get();
-
-    if (!table) return;
-
-    for (const record of database.prepare(require('./session-database.cjs').repositoryQuery(database, ['session_id', 'session_path'])).all()) observeRegistered(root, record, observation, deleted);
+    for (const record of database.prepare('SELECT session_id, session_path FROM sessions').all()) observeRegistered(root, record, observation, deleted);
   } finally { database.close(); }
 }
 
@@ -122,10 +103,9 @@ function recoveryFiles(transaction, kind) {
 
 function surviving(root, deleted) {
   const observation = { files: new Map(), sessions: new Set(), directories: new Set() };
-  walk(path.join(root, 'sessions'), file => observe(root, file, observation, file.endsWith('.jsonl')));
-  walk(path.join(root, 'archived'), file => observe(root, file, observation, file.endsWith('.jsonl')));
   registered(root, observation, deleted);
   ephemeral(root, observation);
+  external(root, observation);
   transactionFiles(root, 'archive', observation);
   transactionFiles(root, 'delete', observation);
   publicationDiagnostics(root, observation);
@@ -144,28 +124,23 @@ function publicationDiagnostics(root, observation) {
 }
 
 function ephemeral(root, observation) {
-  for (const directory of new Set([os.tmpdir(), '/tmp'])) {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      if (entry.isFile() && /^pi-desktop-btw-[a-f0-9-]{36}\.jsonl$/.test(entry.name)) observe(root, path.join(directory, entry.name), observation);
-    }
-  }
+  for (const row of require('./session-database.cjs').ephemeralOwners(root)) {
+    const record = JSON.parse(row.record_json);
 
-  const directory = path.join(root, 'ephemeral-cleanup', 'owners');
+    if (!Check(ephemeralSchema, record)) throw new Error('Unresolved ephemeral ownership prevents goal asset cleanup');
 
-  if (!assets.exists(directory)) return;
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    observeEphemeral(root, path.join(directory, entry.name), observation);
+    if (record.location.kind === 'local') observe(root, record.location.path, observation);
   }
 }
 
-function observeEphemeral(root, file, observation) {
-  const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+function external(root, observation) {
+  const records = require('./external-transcripts.cjs');
 
-  if (!Check(ephemeralSchema, record)) throw new Error('Unresolved ephemeral ownership prevents goal asset cleanup');
+  for (const row of records.list(root)) {
+    const file = records.transcript(row);
 
-  if (record.location.kind === 'local') observe(root, record.location.path, observation);
+    if (assets.exists(file)) observe(root, file, observation);
+  }
 }
 
 function walkAssets(directory, visit) {

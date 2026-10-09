@@ -1,8 +1,9 @@
+import { DatabaseSync as StorageDatabase } from "node:sqlite";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
 import { homedir as storageHome } from "node:os";
 import { spawnSync as storageSpawn } from "node:child_process";
-import { createHash as storageHash, randomUUID as storageUuid } from "node:crypto";
+import { createHash as storageHash } from "node:crypto";
 
 const installedStorageClasses = new WeakSet();
 
@@ -20,17 +21,16 @@ function registerExternalTranscript(root, transcript) {
   const relative = storagePath.relative(root, file);
 
   if (["sessions", "archived", "fork-transactions", "fork-preparations"].some(area => relative.startsWith(area + storagePath.sep))) return;
-  const directory = storagePath.join(root, "external-transcripts");
-  storageFs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const databasePath = storagePath.join(root, "sessions.sqlite");
+  storageFs.closeSync(storageFs.openSync(databasePath, "a", 0o600));
+  const database = new StorageDatabase(databasePath);
 
-  if (!storageFs.lstatSync(directory).isDirectory()) throw new Error("Invalid external transcript registry");
-  const record = storagePath.join(directory, storageHash("sha256").update(file).digest("hex") + ".json");
-  const body = JSON.stringify({ path: file });
-
-  if (storageReadOptional(record) !== body) storagePublish(record, record + "." + storageUuid() + ".tmp", body, false);
-  storageSyncDirectory(record);
-  storageSyncDirectory(directory);
-  storageSyncDirectory(root);
+  try {
+    storageFs.chmodSync(databasePath, 0o600);
+    database.exec("PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL)");
+    database.prepare("INSERT INTO external_transcripts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json")
+      .run(storageHash("sha256").update(file).digest("hex"), JSON.stringify({ path: file }));
+  } finally { database.close(); }
 }
 
 function textGoalReferences(text, root, found) {

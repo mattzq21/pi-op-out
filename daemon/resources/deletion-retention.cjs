@@ -92,46 +92,22 @@ function sessionFiles(directory, inventory) {
 }
 
 function externalTranscripts(root, inventory) {
-  const directory = path.join(root, 'external-transcripts');
+  const records = require('./external-transcripts.cjs');
 
-  for (const entry of entries(directory)) {
-    if (!entry.name.endsWith('.json')) continue;
-    const record = path.join(directory, entry.name);
+  for (const row of records.list(root)) {
+    let file;
 
-    if (!entry.isFile()) { inventory.uncertain = true; continue; }
+    try { file = records.transcript(row); }
+    catch { inventory.uncertain = true; continue; }
 
-    const file = externalTranscript(record, inventory);
-
-    if (!file) continue;
     const info = metadata(file);
 
-    if (!info) { discardReceipt(record); continue; }
+    if (!info) { records.remove(root, row); continue; }
 
     if (!info.isFile()) { inventory.uncertain = true; continue; }
 
     inventory.transcripts.push(file);
   }
-}
-
-function externalTranscript(record, inventory) {
-  let value;
-
-  try { value = JSON.parse(fs.readFileSync(record, 'utf8')); }
-  catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
-    inventory.uncertain = true;
-
-    return;
-  }
-
-  if (!Check(Type.Object({ path: Type.String() }), value) || !path.isAbsolute(value.path)
-    || path.basename(record) !== createHash('sha256').update(value.path).digest('hex') + '.json') {
-    inventory.uncertain = true;
-
-    return;
-  }
-
-  return value.path;
 }
 
 function worktreeContainers(root) {
