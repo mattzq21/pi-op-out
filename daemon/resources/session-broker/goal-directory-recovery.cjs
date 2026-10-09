@@ -47,6 +47,8 @@ function moveRecords(db, directory, record) {
   db.prepare('INSERT INTO goal_directory_history VALUES (?, ?, ?) ON CONFLICT(directory, previous_identity) DO UPDATE SET current_identity=excluded.current_identity')
     .run(directory, record.previous, record.current);
   db.prepare('DELETE FROM goal_ownership WHERE directory=? AND identity=?').run(record.staging, record.current);
+
+  for (const table of ['goal_text_files', 'goal_text_contents']) db.prepare(`DELETE FROM ${table} WHERE directory=? AND identity=?`).run(record.staging, record.current);
   db.prepare('DELETE FROM goal_directory_recoveries WHERE directory=?').run(directory);
 }
 

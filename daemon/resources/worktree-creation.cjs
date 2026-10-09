@@ -5,6 +5,7 @@ const { execFileSync } = require('node:child_process');
 const database = require('./session-database.cjs');
 const allocation = require('./worktree-allocation.cjs');
 const io = require('./session-transactions.cjs');
+const fileContents = require('./worktree-files.cjs');
 
 function git(cwd, args, options = {}) {
   return execFileSync('git', ['-C', cwd, '-c', 'core.fsync=all', '-c', 'core.fsyncMethod=fsync', ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], ...options });
@@ -40,103 +41,6 @@ function locked(root, operation, optional = false) {
   } finally { fs.closeSync(fd); }
 }
 
-function validPath(name) {
-  if (!name || path.isAbsolute(name) || name.split('/').some(part => ['.', '..', '.git', ''].includes(part))) throw new Error('Invalid worktree file path');
-
-  return name;
-}
-
-function sourceFile(source, name) {
-  const file = path.join(source, validPath(name));
-  let info;
-
-  try { info = fs.lstatSync(file); }
-  catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null; throw error; }
-
-  if (info.isSymbolicLink()) return { name, mode: '120000', body: fs.readlinkSync(file, { encoding: 'buffer' }).toString('base64') };
-
-  if (!info.isFile()) throw new Error(`Unsupported worktree copy entry: ${file}`);
-
-  return { name, mode: info.mode & 0o111 ? '100755' : '100644', body: fs.readFileSync(file).toString('base64') };
-}
-
-function sourceFiles(source, rawName) {
-  const name = validPath(rawName.replace(/\/$/, ''));
-  const file = path.join(source, name);
-  let info;
-
-  try { info = fs.lstatSync(file); }
-  catch (error) { if (['ENOENT', 'ENOTDIR'].includes(error.code)) return []; throw error; }
-
-  if (info.isDirectory()) return [{ name, mode: '160000', body: null }, ...fs.readdirSync(file).filter(child => child !== '.git').flatMap(child => sourceFiles(source, name + '/' + child))];
-
-  return [sourceFile(source, name)];
-}
-
-function baseFiles(source, base) {
-  if (!base) return [];
-
-  return git(source, ['ls-tree', '-rz', '--full-tree', base]).split('\0').filter(Boolean).map(entry => {
-    const tab = entry.indexOf('\t');
-    const [mode, kind, object] = entry.slice(0, tab).split(' ');
-    const name = validPath(entry.slice(tab + 1));
-
-    if (kind === 'commit') return { name, mode, body: null };
-
-    return { name, mode, object };
-  });
-}
-
-function excludedFiles(source) {
-  const files = new Map();
-
-  for (const entry of git(source, ['ls-files', '--stage', '-t', '-z']).split('\0').filter(Boolean)) {
-    const tab = entry.indexOf('\t');
-    const [tag, mode, object, stage] = entry.slice(0, tab).split(' ');
-
-    if (tag !== 'S' || stage !== '0') continue;
-    const name = validPath(entry.slice(tab + 1));
-    files.set(name, { name, mode, object });
-  }
-
-  return files;
-}
-
-function unchangedContents(source, file) {
-  const destination = path.join(source, file.name);
-
-  if (!io.exists(destination)) return true;
-  const info = fs.lstatSync(destination);
-
-  if (file.mode === '120000') return info.isSymbolicLink() && git(source, ['hash-object', '--stdin'], { input: fs.readlinkSync(destination, { encoding: 'buffer' }) }).trim() === file.object;
-
-  return info.isFile() && git(source, ['hash-object', '--no-filters', '--', destination]).trim() === file.object;
-}
-
-function capture(source, base, copy) {
-  const baseline = baseFiles(source, base);
-
-  if (!copy) return baseline;
-  const names = git(source, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean);
-  const committed = new Map(baseline.map(file => [file.name, file]));
-  const excluded = excludedFiles(source);
-  const changed = new Set(base ? git(source, ['diff', '--no-renames', '--name-only', '-z', base, '--']).split('\0').filter(Boolean) : names);
-
-  const files = [...new Set(names)].flatMap(name => {
-    const original = committed.get(name);
-
-    if (original && original.mode === '160000') return [original];
-
-    if (original && !changed.has(name) && unchangedContents(source, original)) return [original];
-
-    const files = sourceFiles(source, name);
-
-    return files.length || !excluded.has(name) ? files : [excluded.get(name)];
-  });
-
-  return files;
-}
-
 function newPlan(root, source, branch, revision, copy) {
   git(source, ['check-ref-format', '--branch', branch]);
 
@@ -151,7 +55,7 @@ function newPlan(root, source, branch, revision, copy) {
   try { parentBranch = git(source, ['symbolic-ref', '--quiet', 'HEAD']).trim(); } catch { }
 
   const common = fs.realpathSync(git(source, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
-  const plan = { id: randomUUID(), source, common, commonIdentity: io.identity(common), branch, base, parentBranch, container, target, files: capture(source, base, copy), phase: 'planned' };
+  const plan = { id: randomUUID(), source, common, commonIdentity: io.identity(common), branch, base, parentBranch, container, target, files: [], copy, phase: 'capturing' };
   save(root, plan);
 
   return plan;
@@ -168,7 +72,7 @@ function prepare(root, plan, fd) {
   plan.containerIdentity = saved.containerIdentity;
   save(root, plan);
 
-  createGitWorktree(plan, fd);
+  createGitWorktree(root, plan, fd);
 
   const actual = git(plan.target, ['symbolic-ref', 'HEAD']).trim();
 
@@ -183,8 +87,8 @@ function prepare(root, plan, fd) {
   save(root, plan);
 }
 
-function createGitWorktree(plan, fd) {
-  repairEmptyWorktree(plan);
+function createGitWorktree(root, plan, fd) {
+  repairEmptyWorktree(root, plan);
 
   if (!io.exists(plan.target)) {
     const existing = git(plan.source, ['for-each-ref', '--format=%(objectname)', `refs/heads/${plan.branch}`]).trim();
@@ -213,12 +117,23 @@ function restoreGitPointer(plan, registration) {
 
   fs.linkSync(temporary, path.join(plan.target, '.git'));
   fs.unlinkSync(temporary);
-  io.syncTree(plan.target);
+  fileContents.sync(plan.target);
   io.sync(plan.container);
 }
 
-function repairEmptyWorktree(plan) {
-  if (!io.exists(plan.target) || io.exists(path.join(plan.target, '.git'))) return;
+function repairEmptyWorktree(root, plan) {
+  if (!io.exists(plan.target)) return;
+  const pointer = path.join(plan.target, '.git');
+
+  if (io.exists(pointer)) {
+    const text = fs.readFileSync(pointer, 'utf8').trim();
+
+    if (!text.startsWith('gitdir: ')) throw new Error('Incomplete worktree pointer changed; retained');
+    repairRegistration(root, plan, path.resolve(plan.target, text.slice(8)));
+
+    return;
+  }
+
   verifyEmptyWorktree(plan.target);
   const registrations = path.join(plan.common, 'worktrees');
   const candidates = io.exists(registrations) ? fs.readdirSync(registrations) : [];
@@ -228,10 +143,7 @@ function repairEmptyWorktree(plan) {
     const pointer = path.join(registration, 'gitdir');
 
     if (!io.exists(pointer) || fs.readFileSync(pointer, 'utf8').trim() !== path.join(plan.target, '.git')) continue;
-    const head = fs.readFileSync(path.join(registration, 'HEAD'), 'utf8').trim();
-    const common = fs.realpathSync(path.resolve(registration, fs.readFileSync(path.join(registration, 'commondir'), 'utf8').trim()));
-
-    if (head !== `ref: refs/heads/${plan.branch}` || common !== plan.common) throw new Error('Incomplete worktree registration changed; retained');
+    repairRegistration(root, plan, registration);
     restoreGitPointer(plan, registration);
 
     return;
@@ -239,6 +151,39 @@ function repairEmptyWorktree(plan) {
 
   fs.rmdirSync(plan.target);
   io.sync(plan.container);
+}
+
+function repairRegistration(root, plan, registration) {
+  if (path.dirname(registration) !== path.join(plan.common, 'worktrees') || fs.realpathSync(registration) !== registration) throw new Error('Invalid incomplete worktree registration');
+  const identity = io.identity(registration);
+
+  if (plan.registration && (plan.registration.path !== registration || plan.registration.identity !== identity)) throw new Error('Worktree registration was replaced; retained');
+  plan.registration = { path: registration, identity };
+  save(root, plan);
+  completeRegistrationFile(path.join(registration, 'gitdir'), path.join(plan.target, '.git'));
+  completeRegistrationFile(path.join(registration, 'commondir'), '../..');
+  completeRegistrationFile(path.join(registration, 'HEAD'), `ref: refs/heads/${plan.branch}`);
+  const locked = path.join(registration, 'locked');
+
+  if (io.exists(locked)) {
+    if (fs.readFileSync(locked, 'utf8').trim() !== 'initializing') throw new Error('Worktree was locked by another operation; retained');
+    fs.unlinkSync(locked);
+  }
+
+  io.syncTree(registration);
+  io.sync(path.dirname(registration));
+}
+
+function completeRegistrationFile(file, expected) {
+  if (io.exists(file)) {
+    const actual = fs.readFileSync(file, 'utf8').trim();
+
+    if (actual === expected) return;
+
+    if (!expected.startsWith(actual)) throw new Error(`Worktree registration changed; retained: ${file}`);
+  }
+
+  io.write(file, expected + '\n');
 }
 
 function preserveBase(plan) {
@@ -260,108 +205,83 @@ function verifyTarget(plan) {
   if (common !== plan.common || branch !== `refs/heads/${plan.branch}` || tip !== (plan.base ?? '')) throw new Error('Worktree Git ownership changed; retained');
 }
 
-function parents(plan, name) {
-  let directory = plan.target;
-
-  for (const part of name.split('/').slice(0, -1)) {
-    directory = path.join(directory, part);
-
-    if (!io.exists(directory)) { fs.mkdirSync(directory); io.sync(path.dirname(directory)); }
-
-    if (!fs.lstatSync(directory).isDirectory()) throw new Error(`Worktree file parent changed: ${directory}`);
-  }
+function prepareIndex(root, plan, index, lock) {
+  if (plan.indexProof) return;
+  fs.rmSync(index, { force: true });
+  fs.rmSync(index + '.lock', { force: true });
+  git(plan.source, ['read-tree', ...(plan.base ? [plan.base] : ['--empty'])], { env: { ...process.env, GIT_INDEX_FILE: index }, stdio: ['ignore', 'pipe', 'pipe', lock] });
+  io.sync(index);
+  io.sync(path.dirname(index));
+  plan.indexProof = io.describe(index);
+  save(root, plan);
 }
 
-function createSubdirectory(destination) {
-  if (!io.exists(destination)) { fs.mkdirSync(destination); io.sync(path.dirname(destination)); }
+function publishIndex(root, plan, lock) {
+  const destination = git(plan.target, ['rev-parse', '--path-format=absolute', '--git-path', 'index']).trim();
+  const index = path.join(path.dirname(destination), `piop-copy-index-${plan.id}`);
+  const gitLock = destination + '.lock';
 
-  if (!fs.lstatSync(destination).isDirectory()) throw new Error(`Worktree directory changed: ${destination}`);
-}
-
-function matchesFile(plan, file, destination) {
-  if (!file.object) {
-    const current = sourceFile(plan.target, file.name);
-
-    return current?.body === file.body && current?.mode === file.mode;
-  }
-
-  const info = fs.lstatSync(destination);
-
-  if (file.mode === '120000') return info.isSymbolicLink() && git(plan.common, ['hash-object', '--stdin'], { input: fs.readlinkSync(destination, { encoding: 'buffer' }) }).trim() === file.object;
-
-  if (!info.isFile() || (info.mode & 0o111 ? '100755' : '100644') !== file.mode) return false;
-
-  return git(plan.common, ['hash-object', '--no-filters', '--', destination]).trim() === file.object;
-}
-
-function writeContents(plan, file, temporary, lock) {
-  if (file.mode === '120000') {
-    const body = file.object ? git(plan.common, ['cat-file', 'blob', file.object], { encoding: 'buffer' }) : Buffer.from(file.body, 'base64');
-    fs.symlinkSync(body, temporary);
+  if (plan.indexPublished) {
+    if (io.matches(index, plan.indexProof)) { fs.unlinkSync(index); io.sync(path.dirname(index)); }
 
     return;
   }
 
-  const mode = file.mode === '100755' ? 0o755 : 0o644;
-  const descriptor = fs.openSync(temporary, 'wx', mode);
+  if (!io.exists(index) && plan.indexProof && io.matches(destination, plan.indexProof)) {
+    plan.indexPublished = true;
+    save(root, plan);
+
+    return;
+  }
+
+  prepareIndex(root, plan, index, lock);
+
+  if (!io.matches(index, plan.indexProof)) throw new Error('Prepared worktree index changed; retained');
+  acquireIndexLock(index, gitLock, plan.indexProof);
 
   try {
-    fs.fchmodSync(descriptor, mode);
-
-    if (file.object) git(plan.common, ['cat-file', 'blob', file.object], { stdio: ['ignore', descriptor, 'pipe', lock] });
-    else fs.writeFileSync(descriptor, Buffer.from(file.body, 'base64'));
-    fs.fsyncSync(descriptor);
-  } finally { fs.closeSync(descriptor); }
+    if (io.exists(destination) && !fs.readFileSync(destination).equals(fs.readFileSync(index))) throw new Error('Worktree index changed; retained');
+    fs.renameSync(gitLock, destination);
+    io.sync(path.dirname(destination));
+    plan.indexPublished = true;
+    save(root, plan);
+    fs.unlinkSync(index);
+    io.sync(path.dirname(index));
+  } finally {
+    if (io.matches(gitLock, plan.indexProof)) { fs.unlinkSync(gitLock); io.sync(path.dirname(gitLock)); }
+  }
 }
 
-function writeFile(plan, file, index, lock) {
-  parents(plan, file.name);
-  const destination = path.join(plan.target, validPath(file.name));
-
-  if (file.mode === '160000') return createSubdirectory(destination);
-
-  if (io.exists(destination)) {
-    if (!matchesFile(plan, file, destination)) throw new Error(`Worktree file changed; preserved: ${destination}`);
-
-    return;
+function acquireIndexLock(index, lock, proof) {
+  try { fs.linkSync(index, lock); }
+  catch (error) {
+    if (error.code !== 'EEXIST' || !io.matches(lock, proof)) throw new Error('Worktree index is locked by another operation; retained');
   }
 
-  const temporary = path.join(plan.container, `copy-${index}`);
-
-  if (io.exists(temporary)) fs.unlinkSync(temporary);
-  writeContents(plan, file, temporary, lock);
-
-  fs.linkSync(temporary, destination);
-  fs.unlinkSync(temporary);
-  io.sync(path.dirname(destination));
-  io.sync(plan.container);
+  io.sync(path.dirname(lock));
 }
 
 function finish(root, plan, fd) {
+  if (plan.phase === 'capturing') {
+    preserveBase(plan);
+    plan.files = fileContents.capture(plan, fd);
+    plan.phase = 'planned';
+    save(root, plan);
+  }
+
   if (plan.phase === 'planned') prepare(root, plan, fd);
 
   verifyTarget(plan);
 
-  for (const [index, file] of plan.files.entries()) writeFile(plan, file, index, fd);
+  for (const [index, file] of plan.files.entries()) fileContents.write(plan, file, index, fd);
 
   for (const index of plan.files.keys()) fs.rmSync(path.join(plan.container, `copy-${index}`), { force: true });
   fs.rmSync(path.join(plan.container, 'copy-gitdir'), { force: true });
-  const destination = git(plan.target, ['rev-parse', '--path-format=absolute', '--git-path', 'index']).trim();
-  const index = path.join(path.dirname(destination), `piop-copy-index-${plan.id}`);
-  fs.rmSync(index, { force: true });
-  fs.rmSync(index + '.lock', { force: true });
-  git(plan.source, ['read-tree', ...(plan.base ? [plan.base] : ['--empty'])], { env: { ...process.env, GIT_INDEX_FILE: index }, stdio: ['ignore', 'pipe', 'pipe', fd] });
-  io.sync(index);
-
-  if (io.exists(destination + '.lock')) throw new Error('Worktree index is locked; retained');
-
-  if (io.exists(destination) && !fs.readFileSync(destination).equals(fs.readFileSync(index))) throw new Error('Worktree index changed; retained');
-  fs.renameSync(index, destination);
-  io.sync(path.dirname(destination));
-  io.sync(plan.container);
-  io.syncTree(plan.target);
+  publishIndex(root, plan, fd);
+  fileContents.sync(plan.target);
 
   if (plan.base) git(plan.common, ['update-ref', '-d', `refs/piop-worktree-creations/${plan.id}`, plan.base]);
+  git(plan.common, ['update-ref', '-d', `refs/piop-worktree-content/${plan.id}`]);
   const db = open(root);
 
   try { db.prepare('DELETE FROM worktree_creations WHERE target=?').run(plan.target); }

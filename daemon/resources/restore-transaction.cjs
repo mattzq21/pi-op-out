@@ -282,12 +282,30 @@ function undoCheckout(plan, common) {
   removeWorktree(plan, plan.staging, registrations);
 
   for (const registration of registrations) {
-    const retained = path.join(plan.recovery, 'registrations');
-    transactionIO.mkdir(retained);
+    const retained = registrationRecovery(plan, common);
     rename(registration, path.join(retained, path.basename(registration)));
   }
 
   if (exists(worktrees)) sync(worktrees);
+}
+
+function registrationRecovery(plan, common) {
+  const retained = path.join(common, 'piop-restore-recovery', path.basename(plan.recovery), 'registrations');
+  transactionIO.mkdir(retained);
+  transactionIO.mkdir(plan.recovery);
+  const pointer = path.join(plan.recovery, 'registrations');
+
+  const metadata = exists(pointer);
+
+  if (metadata?.isDirectory() && fs.readdirSync(pointer).length === 0) fs.rmdirSync(pointer);
+
+  if (exists(pointer)) {
+    if (!fs.lstatSync(pointer).isSymbolicLink() || fs.readlinkSync(pointer) !== retained) throw new Error('Restore registration recovery location changed; retained');
+  } else fs.symlinkSync(retained, pointer);
+  sync(plan.recovery);
+  sync(path.dirname(plan.recovery));
+
+  return retained;
 }
 
 function hasReservation(plan) {

@@ -1,5 +1,5 @@
 import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "./goal-directory-recovery.cjs";
-import { read as readDependencies, textContents, savePreparedText, removeTextFiles } from "./goal-dependencies.cjs";
+import { read as readDependencies, textContents, savePreparedText, removePreparedText } from "./goal-dependencies.cjs";
 import { markCleanup } from "../session-database.cjs";
 import { link, mkdir, open, rename, rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
@@ -11,8 +11,8 @@ import { validateObjective } from "./goal-state.ts";
 import { Type, type Static } from "typebox";
 import { Parse } from "typebox/value";
 import { read as readPreparation } from "./goal-prepared-files.cjs";
-import { save as savePreparation, remove as removePreparation } from "./goal-preparations.cjs";
-import { save as saveOwnership, remove as removeOwnership, allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
+import { save as savePreparation } from "./goal-preparations.cjs";
+import { save as saveOwnership, allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
 import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
 import { acquireWorktreePublicationLock as acquireReferencePublicationLock } from "../piop-diff-watch/git.ts";
 
@@ -286,12 +286,10 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
   } finally {
     release?.();
     await rm(staging, { recursive: true, force: true });
-    removeOwnership(profile, staging, allocation.identity);
+    removePreparedText(profile, staging, allocation.identity);
 
     if (!published && savedIdentity) {
-      removeTextFiles(profile, directory, savedIdentity);
-      removePreparation(profile, directory, savedIdentity);
-      removeOwnership(profile, directory, savedIdentity);
+      removePreparedText(profile, directory, savedIdentity);
     }
   }
 }

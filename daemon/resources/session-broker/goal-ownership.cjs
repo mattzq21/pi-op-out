@@ -94,13 +94,27 @@ function allocate(root, parent) {
       throw error;
     }
 
-    const expected = save(root, directory, undefined);
-    remove(root, directory, '');
+    const expected = publishAllocation(root, directory);
 
     return { directory, identity: expected };
   }
 
   throw new Error('Could not allocate goal attachment storage');
+}
+
+function publishAllocation(root, directory) {
+  const expected = identity(directory);
+  withDatabase(root, db => {
+    db.exec(`CREATE TABLE IF NOT EXISTS goal_text_files (directory TEXT NOT NULL, identity TEXT NOT NULL, names_json TEXT NOT NULL, PRIMARY KEY(directory, identity));
+      CREATE TABLE IF NOT EXISTS goal_text_contents (directory TEXT NOT NULL, identity TEXT NOT NULL, contents_json TEXT NOT NULL, PRIMARY KEY(directory, identity)); BEGIN IMMEDIATE;`);
+    db.prepare('INSERT INTO goal_ownership VALUES (?, ?, NULL)').run(directory, expected);
+    db.prepare("INSERT INTO goal_text_files VALUES (?, ?, '[]')").run(directory, expected);
+    db.prepare("INSERT INTO goal_text_contents VALUES (?, ?, '[]')").run(directory, expected);
+    db.prepare("DELETE FROM goal_ownership WHERE directory=? AND identity=''").run(directory);
+    db.exec('COMMIT');
+  });
+
+  return expected;
 }
 
 function directories(root, sessionId) {

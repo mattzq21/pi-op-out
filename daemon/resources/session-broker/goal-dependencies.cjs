@@ -58,12 +58,20 @@ function validNames(names) {
   return names;
 }
 
+function unpublished(db, directory, expected) {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_ownership'").get()) return false;
+
+  return Boolean(db.prepare("SELECT 1 FROM goal_ownership WHERE directory=? AND identity IN (?, '') AND record_json IS NULL").get(directory, expected));
+}
+
 function textFiles(root, directory) {
   const expected = identity(directory);
 
   return withDatabase(root, db => {
     const query = db.prepare('SELECT names_json FROM goal_text_files WHERE directory=? AND identity=?');
     const row = query.get(directory, expected);
+
+    if (!row && unpublished(db, directory, expected)) return [];
 
     if (!row) throw new Error('Goal text files are not registered');
 
@@ -96,6 +104,8 @@ function textContents(root, directory) {
   return withDatabase(root, db => {
     const query = db.prepare('SELECT contents_json FROM goal_text_contents WHERE directory=? AND identity=?');
     const row = query.get(directory, expected);
+
+    if (!row && unpublished(db, directory, expected)) return [];
 
     if (!row) throw new Error('Goal text contents are not registered');
 
@@ -147,6 +157,19 @@ function removeTextFiles(root, directory, expected) {
   });
 }
 
+function removePreparedText(root, directory, expected) {
+  withDatabase(root, db => {
+    db.exec('BEGIN IMMEDIATE');
+
+    for (const table of ['goal_preparations', 'goal_text_files', 'goal_text_contents', 'goal_ownership']) {
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) db.prepare(`DELETE FROM ${table} WHERE directory=? AND identity=?`).run(directory, expected);
+    }
+
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_history'").get()) db.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
+    db.exec('COMMIT');
+  });
+}
+
 function matchesDirectory(root, directory, previous, current) {
   if (previous === current) return true;
 
@@ -157,4 +180,4 @@ function matchesDirectory(root, directory, previous, current) {
   });
 }
 
-module.exports = { read, save, retained, remove, textFiles, textContents, saveTextFiles, savePreparedText, removeTextFiles, matchesDirectory };
+module.exports = { read, save, retained, remove, textFiles, textContents, saveTextFiles, savePreparedText, removeTextFiles, removePreparedText, matchesDirectory };

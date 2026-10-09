@@ -447,13 +447,17 @@ function removeBranch(group) {
 }
 
 function finishGroup(transaction, group) {
-  if (io.exists(group.storedPath)) {
+  if (!group.removal) {
     if (!io.matches(group.storedPath, group.contents) || !io.matches(group.dataBackup, group.dataBackupIdentity) || !io.matches(group.metadata, group.metadataIdentity)) throw new Error(`Archive recovery data changed; retained: ${group.storedPath}`);
     registration(group, group.storedPath);
-    io.git(group.common, ['worktree', 'remove', '--force', '--force', group.storedPath]);
-    io.sync(path.dirname(group.storedPath));
-    io.sync(path.dirname(group.own));
-  } else if (io.exists(group.own)) throw new Error(`Archive worktree removal needs repair; registration retained: ${group.own}`);
+
+    if (path.dirname(group.own) !== path.join(group.common, 'worktrees') || io.identity(group.own) !== group.registrationIdentity) throw new Error('Archive Git registration changed; retained');
+    group.removal = { checkout: io.removalPlan(group.storedPath), registration: io.removalPlan(group.own) };
+    save(transaction);
+  }
+
+  io.removeOwned(group.storedPath, group.removal.checkout);
+  io.removeOwned(group.own, group.removal.registration);
 
   removeBranch(group);
   group.removed = true;
