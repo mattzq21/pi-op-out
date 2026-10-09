@@ -211,7 +211,7 @@ function queuedReferences(root, excluded, candidates, found, inventory) {
   }
 }
 
-function survivingSession(file, id, excluded) {
+function survivingSession(root, file, id, excluded) {
   if (excluded.has(file)) return false;
   let info;
 
@@ -221,7 +221,7 @@ function survivingSession(file, id, excluded) {
   if (!info.isFile()) return false;
   let header;
 
-  try { header = JSON.parse(fs.readFileSync(file, 'utf8').split('\n')[0]); }
+  try { header = transcriptRecords.read(root, file)[0]; }
   catch (error) { if (error instanceof SyntaxError) return false; throw error; }
 
   return validSessionHeader(header) && header.id === id;
@@ -235,15 +235,16 @@ function validReceipt(file, excluded) {
 
   if (!Check(receiptSchema, receipt)) return false;
   const { trace, result } = receipt;
+  const root = path.dirname(path.dirname(file));
 
   if (path.basename(file) !== `${createHash('sha256').update(trace.source).digest('hex')}.json`) return false;
 
-  if (!survivingSession(trace.destination, result.sessionId, excluded)) return false;
+  if (!survivingSession(root, trace.destination, result.sessionId, excluded)) return false;
   const info = fs.lstatSync(trace.destination, { bigint: true });
 
   if (`${info.dev}:${info.ino}` !== trace.identity) return false;
 
-  return (result.sessions ?? []).every(session => survivingSession(session.sessionPath, session.sessionId, excluded));
+  return (result.sessions ?? []).every(session => survivingSession(root, session.sessionPath, session.sessionId, excluded));
 }
 
 function invalidReceipts(root, excluded) {

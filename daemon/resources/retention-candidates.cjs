@@ -197,7 +197,7 @@ function goalStorageProtected(record, candidate, file) {
   const publications = require('./session-broker/session-publication.cjs').retainedDependencies(root);
 
   return publications.some(publication => JSON.stringify(publication.dependencies ?? null).includes(candidate.path)
-    || publication.transcriptPaths.some(transcript => fs.readFileSync(transcript, 'utf8').includes(candidate.path)));
+    || publication.transcriptPaths.some(transcript => JSON.stringify(require('./transcript-references.cjs').read(root, transcript)).includes(JSON.stringify(candidate.path).slice(1, -1))));
 }
 
 function forgetRemovedAllocations(database, record) {

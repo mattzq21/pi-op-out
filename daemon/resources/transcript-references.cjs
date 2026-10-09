@@ -32,18 +32,36 @@ function save(db, file, stamp, entries) {
     .run(file, entries[0]?.id?.constructor === String ? entries[0].id.toLowerCase() : null, stamp, JSON.stringify(entries));
 }
 
+function appendSaved(db, file, previous, stamp, entry) {
+  if (!previous) return false;
+
+  if (entry) return Boolean(db.prepare("UPDATE transcript_references SET fingerprint=?, entries_json=json_insert(entries_json, '$[#]', json(?)) WHERE session_path=? AND fingerprint=?")
+    .run(stamp, JSON.stringify(entry), file, previous).changes);
+
+  return Boolean(db.prepare('UPDATE transcript_references SET fingerprint=? WHERE session_path=? AND fingerprint=?').run(stamp, file, previous).changes);
+}
+
+function previousAppend(root, file, entries, entry) {
+  const previous = entry && cache.get(entries);
+
+  return previous?.root === root && previous.file === file && previous.count === entries.length ? previous : undefined;
+}
+
 function publish(root, file, entries, entry) {
   root = fs.realpathSync(root);
-  const previous = cache.get(entries);
-  const record = entry && previous?.root === root && previous.file === file && previous.count === entries.length ? previous.record : summarize(entries, root);
+  const previous = previousAppend(root, file, entries, entry);
+  const record = previous?.record ?? summarize(entries, root);
+  const addition = entry && relevant(entry, root) ? JSON.parse(JSON.stringify(entry)) : undefined;
 
-  if (entry && relevant(entry, root)) record.push(JSON.parse(JSON.stringify(entry)));
+  if (addition) record.push(addition);
+  const stamp = fingerprint(fs.lstatSync(file, { bigint: true }));
   const db = open(root);
 
-  try { save(db, file, fingerprint(fs.lstatSync(file, { bigint: true })), record); }
-  finally { db.close(); }
+  try {
+    if (!appendSaved(db, file, previous?.stamp, stamp, addition)) save(db, file, stamp, record);
+  } finally { db.close(); }
 
-  cache.set(entries, { root, file, count: entries.length + (entry ? 1 : 0), record });
+  cache.set(entries, { root, file, count: entries.length + (entry ? 1 : 0), record, stamp });
 }
 
 function read(root, file) {
