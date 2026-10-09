@@ -42,6 +42,11 @@ for (const candidate of candidates) {
   const loopCheckpoint = `${file}.loop-detection.json`;
 
   if (fs.existsSync(loopCheckpoint)) fs.unlinkSync(loopCheckpoint);
+  const directory = fs.openSync(realRoot, 'r');
+
+  try { fs.fsyncSync(directory); }
+  finally { fs.closeSync(directory); }
+
   const database = require('./session-database.cjs').open(path.dirname(realRoot));
 
   try {
