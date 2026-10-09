@@ -22,7 +22,7 @@ const draftSchema = Type.Object({ objective: Type.String(), attachments: Type.Ar
 
 export const goalImagesSchema = Type.Array(Type.Object({ data: Type.String(), mimeType: Type.String(), name: Type.Optional(Type.String()) }));
 
-const preparationSchema = Type.Object({ version: Type.Literal(1), submissionId: Type.String(), digest: Type.String(), objective: Type.String(), sessionId: Type.String(), sessionPath: Type.Optional(Type.String()), cwd: Type.String(), goalId: Type.Optional(Type.String()), expectedState: Type.Optional(Type.String()) });
+const preparationSchema = Type.Object({ version: Type.Literal(1), submissionId: Type.String(), digest: Type.String(), objective: Type.String(), sessionId: Type.String(), sessionPath: Type.Optional(Type.String()), cwd: Type.String(), goalId: Type.Optional(Type.String()), expectedState: Type.Optional(Type.String()), input: Type.Optional(draftSchema) });
 
 export type GoalPreparation = Static<typeof preparationSchema>;
 
@@ -69,10 +69,47 @@ async function syncPreparation(ctx: ExtensionContext, directory: string) {
   await syncDirectory(directory); await syncDirectory(dirname(directory)); await syncDirectory(ctx.sessionManager.getSessionDir());
 }
 
-async function writeContent(path: string, content: string | Buffer) {
+async function writeContent(path: string, content: string | Buffer, restore = false) {
+  if (restore && await existingContent(path, content)) return;
   const file = await open(path, "wx", 0o600);
 
   try { await file.writeFile(content); await file.sync(); } finally { await file.close(); }
+}
+
+async function existingContent(path: string, content: string | Buffer) {
+  let file;
+
+  try { file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") return false; throw error; }
+
+  try {
+    if (!(await file.stat()).isFile()) throw new Error("Goal attachment is not a regular file");
+
+    const expected = Buffer.isBuffer(content) ? content : Buffer.from(content);
+
+    if (!(await file.readFile()).equals(expected)) throw new Error("Goal attachment differs from the saved input");
+
+    return true;
+  } finally { await file.close(); }
+}
+
+async function restoreGoalFiles(preparation: GoalPreparation, directory: string) {
+  if (!preparation.input) return;
+
+  if (hash(JSON.stringify(preparation.input)) !== preparation.digest) throw new Error("Saved goal input changed");
+  const release = ownGoalDirectory(directory);
+
+  try {
+    const saved = await saveObjective(directory, directory, preparation.input, true);
+
+    if (saved.objective !== preparation.objective) throw new Error("Saved goal objective does not match its input");
+  } finally { release(); }
+}
+
+function retainGoalInput(ctx: ExtensionContext, preparation: GoalPreparation, directory: string, input: Static<typeof draftSchema>) {
+  if (preparation.input) return;
+  preparation.input = input;
+  savePreparation(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, preparation);
 }
 
 export async function readGoalPreparation(ctx: ExtensionContext, id: string) {
@@ -92,7 +129,9 @@ export async function goalPreparationView(ctx: ExtensionContext, id: string) {
 
   if (!preparation) return null;
 
-  return { ...preparation, sessionSaved: Boolean(preparation.sessionPath && existsSync(preparation.sessionPath)) };
+  const { input: _input, ...view } = preparation;
+
+  return { ...view, sessionSaved: Boolean(preparation.sessionPath && existsSync(preparation.sessionPath)) };
 }
 
 function materializedGoal(preparation: GoalPreparation, directory: string, created: boolean) {
@@ -120,6 +159,7 @@ async function loadPreparedGoal(ctx: ExtensionContext, id: string) {
 
   if (!preparation) throw new Error("The queued goal preparation is unavailable. Restore the original submission from saved input recovery.");
   const directory = preparationDirectory(ctx, id);
+  await restoreGoalFiles(preparation, directory);
   claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile(), preparation.objective);
   await syncPreparation(ctx, directory);
 
@@ -144,6 +184,8 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
 
   if (previous) {
     if (previous.digest !== digest) throw new Error("The saved goal submission has different input. Edit the draft before sending a new goal.");
+    retainGoalInput(ctx, previous, directory, draft);
+    await restoreGoalFiles(previous, directory);
     claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile(), previous.objective);
     await syncPreparation(ctx, directory);
 
@@ -163,7 +205,7 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
   try {
     release = ownGoalDirectory(staging);
     const { objective, textFiles } = await saveObjective(staging, directory, draft);
-    const preparation: GoalPreparation = { version: 1, submissionId: id, digest, objective, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
+    const preparation: GoalPreparation = { version: 1, submissionId: id, digest, objective, input: draft, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
     savedIdentity = savePreparation(profile, staging, preparation, directory);
     saveTextFiles(profile, staging, textFiles, directory);
     saveOwnership(profile, staging, { version: 1, kind: "goal-assets", owners: [{ sessionId: preparation.sessionId, sessionPath: preparation.sessionPath }] }, directory);
@@ -187,11 +229,11 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
   }
 }
 
-async function saveObjective(staging: string, directory: string, draft: Static<typeof draftSchema>) {
+async function saveObjective(staging: string, directory: string, draft: Static<typeof draftSchema>, restore = false) {
   if (!draft.attachments.length && [...draft.objective.trim()].length <= 4000) return { objective: validateObjective(draft.objective), textFiles: [] };
-  const references = await Promise.all(draft.attachments.map((attachment, index) => saveAttachment(staging, directory, attachment, index)));
+  const references = await Promise.all(draft.attachments.map((attachment, index) => saveAttachment(staging, directory, attachment, index, restore)));
   const path = join(directory, "goal-objective.md");
-  await writeContent(join(staging, "goal-objective.md"), [draft.objective, ...references].join("\n\n"));
+  await writeContent(join(staging, "goal-objective.md"), [draft.objective, ...references].join("\n\n"), restore);
 
   return {
     objective: validateObjective(`Read the goal objective file at ${path} before continuing.`),
@@ -199,7 +241,7 @@ async function saveObjective(staging: string, directory: string, draft: Static<t
   };
 }
 
-async function saveAttachment(staging: string, directory: string, attachment: Attachment, index: number) {
+async function saveAttachment(staging: string, directory: string, attachment: Attachment, index: number, restore: boolean) {
   const extensions = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
   const image = attachment.image;
 
@@ -208,7 +250,7 @@ async function saveAttachment(staging: string, directory: string, attachment: At
   if (content === undefined) throw new Error("Invalid goal attachment.");
   const name = `attachment-${index + 1}.${image ? extensions[image.mimeType] : "txt"}`;
   const path = join(directory, name);
-  await writeContent(join(staging, name), content);
+  await writeContent(join(staging, name), content, restore);
 
   return `${attachment.name}: ${path}. Read this file before continuing.`;
 }
