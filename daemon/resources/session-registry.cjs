@@ -67,28 +67,18 @@ function repositoryState(cwd, exists) {
   return { repository, remote, url, branch, upstream, head };
 }
 
-function savedSession(session) {
+function registeredSession(session) {
   if (!path.isAbsolute(session.sessionPath || '')) return false;
-  let file;
 
-  try { file = fs.openSync(session.sessionPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); }
-  catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false; throw error; }
-
-  try {
-    if (!fs.fstatSync(file).isFile()) return false;
-    const buffer = Buffer.alloc(65536);
-    const count = fs.readSync(file, buffer);
-    const header = JSON.parse(buffer.subarray(0, count).toString().split('\n')[0]);
-
-    return header?.type === 'session' && header.id === session.sessionId;
-  } finally { fs.closeSync(file); }
+  return Boolean(db.prepare(`SELECT 1 FROM sessions WHERE session_id=? AND session_path=?
+    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))`)
+    .get(session.sessionId, session.sessionPath, session.sessionId));
 }
 
 function insertRecord(session, checked, exists, state) {
   const { repository, remote, url, branch, upstream, head } = state;
 
   if (db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id = lower(?)').get(session.sessionId)) return;
-  sessionTables.register(db, session.sessionId, session.sessionPath);
   db.prepare(`INSERT INTO session_repositories SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id = lower(?))
     ON CONFLICT(session_id) DO UPDATE SET cwd=excluded.cwd,
@@ -107,14 +97,14 @@ function insertRecord(session, checked, exists, state) {
 }
 
 function record(session) {
-  if (!session.sessionId || !path.isAbsolute(session.cwd || '') || !savedSession(session)) return;
+  if (!session.sessionId || !path.isAbsolute(session.cwd || '') || !registeredSession(session)) return;
   const checked = session.checkedAt || Date.now();
   const exists = directoryExists(session.cwd);
   const state = repositoryState(session.cwd, exists);
   db.exec('BEGIN IMMEDIATE');
 
   try {
-    if (savedSession(session)) insertRecord(session, checked, exists, state);
+    if (registeredSession(session)) insertRecord(session, checked, exists, state);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
