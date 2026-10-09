@@ -286,7 +286,7 @@ function verifyContract(root, contract) {
   if (!Check(contractSchema, contract)) throw new Error('Invalid goal asset dependency contract');
 
   for (const dependency of contract.directories) {
-    if (!validPath(root, dependency.path) || identity(dependency.path) !== dependency.identity) throw new Error(`Archived goal assets changed or are missing: ${dependency.path}`);
+    if (!validPath(root, dependency.path) || !goalDependencies.matchesDirectory(root, dependency.path, dependency.identity, identity(dependency.path))) throw new Error(`Archived goal assets changed or are missing: ${dependency.path}`);
   }
 }
 

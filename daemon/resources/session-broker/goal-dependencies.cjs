@@ -154,8 +154,20 @@ function removeTextFiles(root, directory, expected) {
     db.exec('BEGIN IMMEDIATE');
     db.prepare('DELETE FROM goal_text_files WHERE directory=? AND identity=?').run(directory, expected);
     db.prepare('DELETE FROM goal_text_contents WHERE directory=? AND identity=?').run(directory, expected);
+
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_history'").get()) db.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
     db.exec('COMMIT');
   });
 }
 
-module.exports = { read, save, retained, remove, textFiles, textContents, saveTextFiles, removeTextFiles };
+function matchesDirectory(root, directory, previous, current) {
+  if (previous === current) return true;
+
+  return withDatabase(root, db => {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_history'").get()) return false;
+
+    return Boolean(db.prepare('SELECT 1 FROM goal_directory_history WHERE directory=? AND previous_identity=? AND current_identity=?').get(directory, previous, current));
+  });
+}
+
+module.exports = { read, save, retained, remove, textFiles, textContents, saveTextFiles, removeTextFiles, matchesDirectory };

@@ -1,7 +1,8 @@
+import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "./goal-directory-recovery.cjs";
 import { saveTextFiles, removeTextFiles } from "./goal-dependencies.cjs";
 import { markCleanup } from "../session-database.cjs";
-import { mkdir, open, rename, rm } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { link, mkdir, open, rename, rm } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -12,7 +13,7 @@ import { Parse } from "typebox/value";
 import { read as readPreparation } from "./goal-prepared-files.cjs";
 import { save as savePreparation, remove as removePreparation } from "./goal-preparations.cjs";
 import { save as saveOwnership, remove as removeOwnership, allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
-import { claim, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
+import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
 import { acquireWorktreePublicationLock as acquireReferencePublicationLock } from "../piop-diff-watch/git.ts";
 
 const imageSchema = Type.Object({ data: Type.String(), mimeType: Type.Union([Type.Literal("image/png"), Type.Literal("image/jpeg"), Type.Literal("image/gif"), Type.Literal("image/webp")]) });
@@ -74,9 +75,13 @@ async function syncPreparation(ctx: ExtensionContext, directory: string) {
 
 async function writeContent(path: string, content: string | Buffer, restore = false) {
   if (restore && await existingContent(path, content)) return;
-  const file = await open(path, "wx", 0o600);
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  const file = await open(temporary, "wx", 0o600);
 
-  try { await file.writeFile(content); await file.sync(); } finally { await file.close(); }
+  try {
+    await file.writeFile(content); await file.sync();
+    await link(temporary, path);
+  } finally { await file.close(); await rm(temporary, { force: true }); }
 }
 
 async function existingContent(path: string, content: string | Buffer) {
@@ -96,14 +101,14 @@ async function existingContent(path: string, content: string | Buffer) {
   } finally { await file.close(); }
 }
 
-async function restoreGoalFiles(preparation: GoalPreparation, directory: string) {
+async function restoreGoalFiles(preparation: GoalPreparation, directory: string, destination = directory) {
   if (!preparation.input) return restoreSavedFiles(preparation, directory);
 
   if (hash(JSON.stringify(preparation.input)) !== preparation.digest) throw new Error("Saved goal input changed");
   const release = ownGoalDirectory(directory);
 
   try {
-    const saved = await saveObjective(directory, directory, preparation.input, true);
+    const saved = await saveObjective(directory, destination, preparation.input, true);
 
     if (saved.objective !== preparation.objective) throw new Error("Saved goal objective does not match its input");
   } finally { release(); }
@@ -123,6 +128,27 @@ async function restoreSavedFiles(preparation: GoalPreparation, directory: string
   } finally { release(); }
 }
 
+async function restoreGoalDirectory(ctx: ExtensionContext, preparation: GoalPreparation, directory: string) {
+  const root = rootForDirectory(ctx.sessionManager.getSessionDir());
+  const release = acquireGoalAssets(root);
+
+  try {
+    if (existsSync(directory)) { await restoreGoalFiles(preparation, directory);
+
+    return; }
+
+    await mkdir(dirname(directory), { recursive: true, mode: 0o700 });
+    const recovery = beginDirectoryRecovery(root, directory);
+    const saved = Parse(preparationSchema, JSON.parse(recovery.preparation));
+    await restoreGoalFiles(saved, recovery.staging, directory);
+    await syncDirectory(recovery.staging);
+
+    if (goalDirectoryExists(directory)) throw new Error("Goal recovery destination already exists");
+    await rename(recovery.staging, directory);
+    finishDirectoryRecovery(root, directory);
+  } finally { release(); }
+}
+
 function retainGoalInput(ctx: ExtensionContext, preparation: GoalPreparation, directory: string, input: Static<typeof draftSchema>) {
   if (preparation.input) return;
   preparation.input = input;
@@ -130,7 +156,9 @@ function retainGoalInput(ctx: ExtensionContext, preparation: GoalPreparation, di
 }
 
 export async function readGoalPreparation(ctx: ExtensionContext, id: string) {
-  const saved = readPreparation(rootForDirectory(ctx.sessionManager.getSessionDir()), preparationDirectory(ctx, id));
+  const root = rootForDirectory(ctx.sessionManager.getSessionDir());
+  recoverPublished(root, preparationDirectory(ctx, id));
+  const saved = readPreparation(root, preparationDirectory(ctx, id));
 
   if (saved === undefined) return;
   const preparation = Parse(preparationSchema, saved);
@@ -176,7 +204,7 @@ async function loadPreparedGoal(ctx: ExtensionContext, id: string) {
 
   if (!preparation) throw new Error("The queued goal preparation is unavailable. Restore the original submission from saved input recovery.");
   const directory = preparationDirectory(ctx, id);
-  await restoreGoalFiles(preparation, directory);
+  await restoreGoalDirectory(ctx, preparation, directory);
   claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile(), preparation.objective);
   await syncPreparation(ctx, directory);
 
@@ -201,8 +229,8 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
 
   if (previous) {
     if (previous.digest !== digest) throw new Error("The saved goal submission has different input. Edit the draft before sending a new goal.");
+    await restoreGoalDirectory(ctx, previous, directory);
     retainGoalInput(ctx, previous, directory, draft);
-    await restoreGoalFiles(previous, directory);
     claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile(), previous.objective);
     await syncPreparation(ctx, directory);
 
