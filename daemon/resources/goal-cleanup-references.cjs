@@ -53,7 +53,12 @@ function saved(root, directory) {
 }
 
 function collect(root, entries) {
-  const directories = seeds(root, entries);
+  return collectDirectories(root, seeds(root, entries));
+}
+
+function collectDirectories(root, initial) {
+  const directories = new Set(initial);
+  const texts = [];
   let incomplete = false;
 
   for (const directory of directories) {
@@ -66,11 +71,12 @@ function collect(root, entries) {
     if (!record) { incomplete = true; continue; }
 
     if (!Check(textsSchema, record.texts)) throw new Error('Invalid saved goal text; cleanup retained');
+    texts.push(...record.texts.map(entry => entry.text));
     addContract(root, record.contract, directories);
     assets.directReferences(record.texts, root).forEach(reference => directories.add(reference));
   }
 
-  return { directories, incomplete };
+  return { directories, incomplete, texts };
 }
 
-module.exports = { collect };
+module.exports = { collect, collectDirectories };

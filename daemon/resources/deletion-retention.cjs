@@ -170,6 +170,7 @@ function storedTranscriptReferences(root, file, candidates, found, inventory) {
     if (validSessionHeader(entries[0])) inventory.sessionIds.add(entries[0].id.toLowerCase());
     else inventory.uncertain = true;
     references(entries, candidates, found);
+    retainGoalReferences(require('./goal-cleanup-references.cjs').collect(root, entries), candidates, found, inventory);
   } catch { inventory.uncertain = true; }
 }
 
@@ -184,17 +185,17 @@ function survivingReferences(root, inventory, candidates, excluded) {
   return found;
 }
 
-function goalReferences(root, found, goals, candidates) {
-  const visited = new Set();
+function goalReferences(root, found, goals, candidates, inventory) {
+  const directories = [...found].filter(directory => goals.has(directory));
+  const result = require('./goal-cleanup-references.cjs').collectDirectories(root, directories);
+  retainGoalReferences(result, candidates, found, inventory);
+}
 
-  for (const directory of found) {
-    if (!goals.has(directory) || visited.has(directory)) continue;
-    visited.add(directory);
+function retainGoalReferences(result, candidates, found, inventory) {
+  inventory.uncertain ||= result.incomplete;
 
-    for (const entry of require('./session-broker/goal-dependencies.cjs').textContents(root, directory)) {
-      references(entry.text, candidates, found);
-    }
-  }
+  for (const directory of result.directories) if (candidates.has(directory)) found.add(directory);
+  references(result.texts, candidates, found);
 }
 
 function queuedReferences(root, excluded, candidates, found, inventory) {
@@ -208,6 +209,7 @@ function queuedReferences(root, excluded, candidates, found, inventory) {
     catch (error) { if (!(error instanceof SyntaxError)) throw error; inventory.uncertain = true; continue; }
 
     references(value, candidates, found);
+    retainGoalReferences(require('./goal-cleanup-references.cjs').collect(root, [value]), candidates, found, inventory);
   }
 }
 
@@ -287,13 +289,13 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
   const deleted = savedFiles.filter(saved => saved.sessionId);
 
   for (const saved of deleted) storedTranscriptReferences(root, saved.file, candidates, owned, ignored);
-  goalReferences(root, owned, inventory.goals, candidates);
+  goalReferences(root, owned, inventory.goals, candidates, ignored);
   const excluded = new Set([...sources, ...savedFiles.map(saved => saved.file)]);
   const retained = survivingReferences(root, inventory, candidates, excluded);
   retainPublications(root, candidates, retained, inventory);
   queuedReferences(root, excluded, candidates, retained, inventory);
   const pendingGoals = retainActiveGoals(root, inventory.goals, retained);
-  goalReferences(root, retained, inventory.goals, candidates);
+  goalReferences(root, retained, inventory.goals, candidates, inventory);
   const requestedIds = [...new Set([...deleted.map(saved => saved.sessionId), ...deferred.sessionIds])].filter(id => uuidPattern.test(id));
 
   return {
@@ -311,6 +313,8 @@ function retainPublications(root, candidates, retained, inventory) {
 
   for (const publication of publications) {
     references(publication.dependencies, candidates, retained);
+
+    if (publication.dependencies) retainGoalReferences(require('./goal-cleanup-references.cjs').collect(root, [publication.dependencies]), candidates, retained, inventory);
 
     for (const file of publication.transcriptPaths) storedTranscriptReferences(root, file, candidates, retained, inventory);
   }
