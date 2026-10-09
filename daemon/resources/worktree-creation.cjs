@@ -61,8 +61,7 @@ function newPlan(root, source, branch, revision, copy) {
   return plan;
 }
 
-function prepare(root, plan, fd) {
-  preserveBase(plan);
+function prepareAllocation(root, plan) {
   io.mkdir(path.dirname(plan.container));
 
   if (!database.worktreeMetadata(plan.container)) allocation.create(plan.container, plan.target, plan.branch, plan.parentBranch);
@@ -71,7 +70,11 @@ function prepare(root, plan, fd) {
   if (saved.creating || saved.containerIdentity !== io.identity(plan.container)) throw new Error('Worktree allocation changed; retained');
   plan.containerIdentity = saved.containerIdentity;
   save(root, plan);
+}
 
+function prepare(root, plan, fd) {
+  preserveBase(plan);
+  prepareAllocation(root, plan);
   createGitWorktree(root, plan, fd);
 
   const actual = git(plan.target, ['symbolic-ref', 'HEAD']).trim();
@@ -94,7 +97,7 @@ function createGitWorktree(root, plan, fd) {
     const existing = git(plan.source, ['for-each-ref', '--format=%(objectname)', `refs/heads/${plan.branch}`]).trim();
 
     if (existing && existing !== plan.base) throw new Error('Worktree branch changed; retained');
-    const args = ['worktree', 'add', '--no-checkout', ...(plan.base ? existing ? [] : ['-b', plan.branch] : ['--orphan', '-b', plan.branch]), '--', plan.target];
+    const args = ['worktree', 'add', ...(plan.base ? ['--no-checkout', ...(existing ? [] : ['-b', plan.branch])] : ['--orphan', '-b', plan.branch]), '--', plan.target];
 
     if (plan.base) args.push(existing ? plan.branch : plan.base);
     git(plan.source, args, { stdio: ['ignore', 'pipe', 'pipe', fd] });
@@ -162,7 +165,7 @@ function repairRegistration(root, plan, registration) {
   save(root, plan);
   completeRegistrationFile(path.join(registration, 'gitdir'), path.join(plan.target, '.git'));
   completeRegistrationFile(path.join(registration, 'commondir'), '../..');
-  completeRegistrationFile(path.join(registration, 'HEAD'), `ref: refs/heads/${plan.branch}`);
+  completeRegistrationFile(path.join(registration, 'HEAD'), `ref: refs/heads/${plan.branch}`, false);
   const locked = path.join(registration, 'locked');
 
   if (io.exists(locked)) {
@@ -174,13 +177,14 @@ function repairRegistration(root, plan, registration) {
   io.sync(path.dirname(registration));
 }
 
-function completeRegistrationFile(file, expected) {
+function completeRegistrationFile(file, expected, allowPrefix = true) {
   if (io.exists(file)) {
-    const actual = fs.readFileSync(file, 'utf8').trim();
+    const contents = fs.readFileSync(file, 'utf8');
+    const actual = contents.trim();
 
     if (actual === expected) return;
 
-    if (!expected.startsWith(actual)) throw new Error(`Worktree registration changed; retained: ${file}`);
+    if ((!allowPrefix && actual) || contents.endsWith('\n') || !expected.startsWith(actual)) throw new Error(`Worktree registration changed; retained: ${file}`);
   }
 
   io.write(file, expected + '\n');
@@ -222,6 +226,8 @@ function publishIndex(root, plan, lock) {
   const gitLock = destination + '.lock';
 
   if (plan.indexPublished) {
+    removeIndexLock(gitLock, plan.indexProof);
+
     if (io.matches(index, plan.indexProof)) { fs.unlinkSync(index); io.sync(path.dirname(index)); }
 
     return;
@@ -230,6 +236,7 @@ function publishIndex(root, plan, lock) {
   if (!io.exists(index) && plan.indexProof && io.matches(destination, plan.indexProof)) {
     plan.indexPublished = true;
     save(root, plan);
+    removeIndexLock(gitLock, plan.indexProof);
 
     return;
   }
@@ -248,8 +255,12 @@ function publishIndex(root, plan, lock) {
     fs.unlinkSync(index);
     io.sync(path.dirname(index));
   } finally {
-    if (io.matches(gitLock, plan.indexProof)) { fs.unlinkSync(gitLock); io.sync(path.dirname(gitLock)); }
+    removeIndexLock(gitLock, plan.indexProof);
   }
+}
+
+function removeIndexLock(lock, proof) {
+  if (io.matches(lock, proof)) { fs.unlinkSync(lock); io.sync(path.dirname(lock)); }
 }
 
 function acquireIndexLock(index, lock, proof) {
@@ -264,6 +275,7 @@ function acquireIndexLock(index, lock, proof) {
 function finish(root, plan, fd) {
   if (plan.phase === 'capturing') {
     preserveBase(plan);
+    prepareAllocation(root, plan);
     plan.files = fileContents.capture(plan, fd);
     plan.phase = 'planned';
     save(root, plan);

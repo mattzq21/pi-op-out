@@ -54,7 +54,7 @@ function baseFiles(plan) {
     const name = entry.subarray(tab + 1);
     parts(name);
 
-    return { name: name.toString('base64'), mode, object };
+    return { name: name.toString('base64'), mode, object, checkout: true };
   });
 }
 
@@ -67,7 +67,7 @@ function excluded(plan) {
 
     if (tag !== 'S' || stage !== '0') continue;
     const name = entry.subarray(tab + 1).toString('base64');
-    result.set(name, { name, mode, object });
+    result.set(name, { name, mode, object, checkout: true });
   }
 
   return result;
@@ -194,8 +194,40 @@ function capture(plan, lock) {
 
   const object = tree(plan, files, lock);
   git(plan, ['update-ref', `refs/piop-worktree-content/${plan.id}`, object], { stdio: ['ignore', 'pipe', 'pipe', lock] });
+  convertCheckout(plan, files, object, lock);
+  const converted = tree(plan, files, lock);
+  git(plan, ['update-ref', `refs/piop-worktree-content/${plan.id}`, converted], { stdio: ['ignore', 'pipe', 'pipe', lock] });
 
   return files;
+}
+
+function convertCheckout(plan, files, object, lock) {
+  const scratch = path.join(plan.container, 'checkout-conversion');
+  fs.rmSync(scratch, { recursive: true, force: true });
+  const convertedFiles = files.filter(file => file.checkout && ['100644', '100755'].includes(file.mode));
+
+  if (!convertedFiles.length) return;
+  fs.mkdirSync(scratch, { mode: 0o700 });
+  const env = { ...process.env, GIT_DIR: plan.common, GIT_WORK_TREE: scratch, GIT_INDEX_FILE: path.join(scratch, 'index'), GIT_ATTR_SOURCE: object };
+  const options = { env, stdio: ['pipe', 'pipe', 'pipe', lock] };
+  const context = { ...plan, source: scratch };
+  git(context, ['read-tree', object], options);
+
+  for (const file of convertedFiles) {
+    const name = Buffer.from(file.name, 'base64');
+    const output = git(context, ['checkout-index', '--temp', '--stdin', '-z'], { ...options, input: Buffer.concat([name, Buffer.from([0])]) });
+    const tab = output.indexOf(9);
+    const temporary = output.subarray(0, tab);
+
+    if (tab < 1 || temporary.includes(47) || !output.subarray(tab + 1).equals(Buffer.concat([name, Buffer.from([0])]))) throw new Error('Invalid Git checkout result');
+    const source = join(scratch, temporary);
+    file.object = blob(plan, source, fs.lstatSync(source), lock);
+    delete file.checkout;
+    fs.unlinkSync(source);
+  }
+
+  fs.rmSync(scratch, { recursive: true });
+  io.sync(plan.container);
 }
 
 function prepareParents(plan, name) {

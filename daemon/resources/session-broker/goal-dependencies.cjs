@@ -118,12 +118,13 @@ function saveTextFiles(root, directory, names, destination = directory) {
 }
 
 function savePreparedText(root, directory, names, preparation, destination = directory) {
-  JSON.parse(preparation);
+  const input = JSON.parse(preparation);
+  const ownership = { version: 1, kind: "goal-assets", owners: [{ sessionId: input.sessionId, sessionPath: input.sessionPath }] };
 
-  return publishText(root, directory, names, destination, preparation);
+  return publishText(root, directory, names, destination, preparation, ownership);
 }
 
-function publishText(root, directory, names, destination, preparation) {
+function publishText(root, directory, names, destination, preparation, ownership) {
   const expected = identity(directory);
   const contents = readContents(directory, names);
 
@@ -132,6 +133,8 @@ function publishText(root, directory, names, destination, preparation) {
     db.exec('BEGIN IMMEDIATE');
 
     if (preparation !== undefined) {
+      db.exec('CREATE TABLE IF NOT EXISTS goal_ownership (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity))');
+      db.prepare('INSERT INTO goal_ownership VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json').run(destination, expected, JSON.stringify(ownership));
       db.exec('CREATE TABLE IF NOT EXISTS goal_preparations (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity))');
       db.prepare('INSERT INTO goal_preparations VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json').run(destination, expected, preparation);
     }

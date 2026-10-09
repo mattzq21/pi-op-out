@@ -12,7 +12,7 @@ import { Type, type Static } from "typebox";
 import { Parse } from "typebox/value";
 import { read as readPreparation } from "./goal-prepared-files.cjs";
 import { save as savePreparation } from "./goal-preparations.cjs";
-import { save as saveOwnership, allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
+import { allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
 import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
 import { acquireWorktreePublicationLock as acquireReferencePublicationLock } from "../piop-diff-watch/git.ts";
 
@@ -275,7 +275,6 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
     const { objective, textFiles } = await saveObjective(staging, directory, draft);
     const preparation: GoalPreparation = { version: 1, submissionId: id, digest, objective, input: draft, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
     savedIdentity = savePreparedText(profile, staging, textFiles, JSON.stringify(preparation), directory);
-    saveOwnership(profile, staging, { version: 1, kind: "goal-assets", owners: [{ sessionId: preparation.sessionId, sessionPath: preparation.sessionPath }] }, directory);
     await syncDirectory(staging);
     await rename(staging, directory);
     published = true;
