@@ -12,29 +12,10 @@ pub(crate) fn recover_remote(host: &crate::RemoteHost) -> Result<(), String> {
     Ok(())
 }
 
-fn legacy_pending(root: &Path) -> Result<bool, String> {
-    if !root.exists() { return Ok(false); }
-    for area in ["sessions", "archived"] {
-        for entry in walkdir::WalkDir::new(root.join(area)).follow_links(false).into_iter().filter_map(Result::ok) {
-            if legacy_publication_temporary(&entry) { return Ok(true); }
-        }
-    }
-    Ok(false)
-}
-
-fn legacy_publication_temporary(entry: &walkdir::DirEntry) -> bool {
-    if !entry.file_type().is_file() { return false; }
-    let name = entry.file_name().to_string_lossy();
-    let Some((_, suffix)) = name.rsplit_once(".jsonl.") else { return false; };
-    suffix.strip_suffix(".tmp").is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
-}
-
 fn recovery_pending(root: &Path) -> Result<bool, String> {
     let database = crate::session_registry::open(root)?;
-    let publications: bool = database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM session_restore_receipts) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM legacy_archive_directories) OR EXISTS(SELECT 1 FROM legacy_deletion_locks) OR NOT EXISTS(SELECT 1 FROM storage_migrations WHERE name='legacy-deletion-locks-v1') OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
-        .map_err(|error| error.to_string())?;
-    if publications { return Ok(true); }
-    legacy_pending(root)
+    database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM session_restore_receipts) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM legacy_archive_directories) OR EXISTS(SELECT 1 FROM legacy_publication_residue) OR NOT EXISTS(SELECT 1 FROM storage_migrations WHERE name='legacy-publication-residue-v1') OR EXISTS(SELECT 1 FROM legacy_deletion_locks) OR NOT EXISTS(SELECT 1 FROM storage_migrations WHERE name='legacy-deletion-locks-v1') OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
+        .map_err(|error| error.to_string())
 }
 
 fn fork_transactions_pending(root: &Path) -> Result<bool, String> {

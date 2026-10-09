@@ -74,6 +74,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS legacy_queued_inputs (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS fork_preparations (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS archive_records (directory TEXT PRIMARY KEY, record_json TEXT);
+      CREATE TABLE IF NOT EXISTS legacy_publication_residue (path TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS legacy_deletion_locks (directory TEXT PRIMARY KEY, identity TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS legacy_archive_directories (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS legacy_committed_deletions (directory TEXT PRIMARY KEY);
@@ -745,6 +746,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot,
-  publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
   recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons, comparisonRetry, saveComparisonRetry, removeComparisonRetry, pendingDiffs, pendingDiff, savePendingDiff, ephemeralOwners, queuedInputs, queuedInput };

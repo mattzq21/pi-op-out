@@ -370,30 +370,9 @@ function legacyResidue(root, result) {
     catch (_error) { return ''; }
   }));
 
-  scanLegacy(root, path.join(root, 'sessions'), known, result);
-}
-
-function scanLegacy(root, directory, known, result) {
-  if (!io.exists(directory)) return;
-
-  if (!io.exists(directory).isDirectory() || !io.canonical(directory)) throw new Error('Legacy publication scan encountered ambiguous storage ancestry');
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) scanLegacy(root, file, known, result);
-    else if (entry.isFile() && /\.jsonl\.[a-f0-9-]{36}\.tmp$/.test(entry.name) && !known.has(file)) recordLegacy(root, file, result);
+  for (const record of require('./publication-residue.cjs').list(root, known)) {
+    result.quarantined.push({ path: record.path, reason: record.reason });
   }
-}
-
-function recordLegacy(root, file, result) {
-  const directory = path.join(root, 'session-publication-quarantine');
-  io.mkdir(directory);
-  const reason = 'Legacy temporary transcript has no writer-death or ownership proof; retained in place';
-
-  const record = { version: 1, kind: 'unowned-session-publication', path: file, identity: io.identity(file), reason };
-  io.write(path.join(directory, `legacy-${io.hash(file)}.json`), record);
-  result.quarantined.push({ path: file, reason });
 }
 
 function recover(root) {
