@@ -126,20 +126,77 @@ function savedMessageDetails(line: string) {
   catch { return undefined; }
 }
 
+const receiptCacheSchema = Type.Array(Type.Tuple([Type.String(), Type.String()]));
+
+function receiptDatabase(path: string) {
+  const db = openDatabase(storageRoot(path));
+
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS session_mailbox_receipt_cache (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+      session_path TEXT NOT NULL, fingerprint TEXT NOT NULL, deliveries_json TEXT NOT NULL)`);
+
+    return db;
+  } catch (error) { db.close(); throw error; }
+}
+
+function cachedReceipts(db: DatabaseSync, id: string, path: string, fingerprint: string | undefined) {
+  if (fingerprint === undefined) return undefined;
+  const row = db.prepare("SELECT deliveries_json FROM session_mailbox_receipt_cache WHERE session_id=? AND session_path=? AND fingerprint=?").get(id, path, fingerprint);
+
+  return row ? new Map<string, string>(Parse(receiptCacheSchema, JSON.parse(String(row.deliveries_json)))) : undefined;
+}
+
+function registeredFingerprint(db: DatabaseSync, id: string, path: string) {
+  const row = db.prepare(`SELECT modified_ns, size FROM session_file_metadata WHERE session_id=? AND session_path=?
+    AND NOT EXISTS (SELECT 1 FROM session_file_writes WHERE session_id=?)`).get(id, path, id);
+
+  return row ? `${row.modified_ns}:${row.size}` : undefined;
+}
+
+function saveReceipts(db: DatabaseSync, id: string, path: string, fingerprint: string, receipts: Map<string, string>) {
+  db.prepare(`INSERT INTO session_mailbox_receipt_cache SELECT session_id, session_path, ?, ? FROM sessions WHERE session_id=? AND session_path=?
+    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))
+    ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, fingerprint=excluded.fingerprint, deliveries_json=excluded.deliveries_json`)
+    .run(fingerprint, JSON.stringify([...receipts]), id, path, id);
+}
+
 async function savedDeliveries(ctx: ExtensionContext, required = false) {
   const path = ctx.sessionManager.getSessionFile();
 
   if (!path) throw new Error("Durable agent mail requires a saved conversation");
+  const id = ctx.sessionManager.getSessionId();
+  const db = receiptDatabase(path);
+
+  try {
+    const cached = cachedReceipts(db, id, path, registeredFingerprint(db, id, path));
+
+    return cached ?? await readSavedDeliveries(db, id, path, required);
+  } finally { db.close(); }
+}
+
+async function readSavedDeliveries(db: DatabaseSync, id: string, path: string, required: boolean) {
   let file;
 
   try { file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
   catch (error) { if (!required && error instanceof Error && missing(error)) return new Map<string, string>(); throw error; }
 
   try {
-    if (!(await file.stat()).isFile()) throw new Error("Agent mailbox transcript must be a regular file");
-    const saved = await readDeliveries(file, ctx.sessionManager.getSessionId());
+    const before = await file.stat({ bigint: true });
 
-    if (required || saved.size) { await file.sync(); await syncDirectory(dirname(path)); }
+    if (!before.isFile()) throw new Error("Agent mailbox transcript must be a regular file");
+    const fingerprint = `${before.mtimeNs}:${before.size}`;
+    const cached = cachedReceipts(db, id, path, fingerprint);
+
+    if (cached) return cached;
+    const saved = await readDeliveries(file, id);
+
+    await file.sync();
+    await syncDirectory(dirname(path));
+
+    const after = await file.stat({ bigint: true });
+
+    if (before.mtimeNs === after.mtimeNs && before.size === after.size) saveReceipts(db, id, path, fingerprint, saved);
 
     return saved;
   } finally { await file.close(); }
