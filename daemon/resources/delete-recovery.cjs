@@ -1,6 +1,7 @@
+const conversationStorage = require('./conversation-storage.cjs');
 const fs = require("node:fs");
 const path = require("node:path");
-const { createHash, randomUUID } = require("node:crypto");
+const { createHash } = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { isDeepStrictEqual } = require("node:util");
 const { cleanupRegistry } = require("./deletion-retention.cjs");
@@ -40,15 +41,6 @@ function rename(source, destination) {
   fs.renameSync(source, destination);
   sync(path.dirname(destination));
   sync(path.dirname(source));
-}
-
-function write(file, body, directory = path.dirname(file)) {
-  const temporary = path.join(directory, `.recovery-${randomUUID()}.tmp`);
-  const descriptor = fs.openSync(temporary, "wx", 0o600);
-
-  try { fs.writeFileSync(descriptor, body); fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
-
-  rename(temporary, file);
 }
 
 function git(repository, args, input) {
@@ -218,14 +210,14 @@ function removeLocks(root, directory, journal) {
   }
 }
 
-function reconcileOwnership(directory, journal) {
+function reconcileOwnership(journal) {
   for (const record of journal.ownership ?? []) {
-    const current = exists(record.path) ? fs.readFileSync(record.path, "utf8") : undefined;
+    const current = conversationStorage.read(record.path);
 
     if (current && isDeepStrictEqual(JSON.parse(current), JSON.parse(record.after))) continue;
 
     if (current !== record.before) throw new Error(`Conversation ownership changed during deletion recovery: ${record.path}`);
-    write(record.path, record.after, directory);
+    conversationStorage.write(record.path, record.after);
   }
 }
 
@@ -279,7 +271,7 @@ function cleanupCommitted(root) {
     sync(garbageRoot);
 
     for (const lock of journal.locks ?? inferredLocks(journal)) sync(path.dirname(lock.path));
-    reconcileOwnership(directory, journal);
+    reconcileOwnership(journal);
     cleanupCommittedRetention(root, journal);
     removeLocks(root, directory, journal);
 

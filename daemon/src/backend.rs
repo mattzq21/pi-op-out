@@ -26,6 +26,7 @@ mod platform;
 mod daemon_endpoint;
 mod provider_auth;
 mod conversation_ownership;
+mod conversation_storage;
 mod restore_recovery;
 mod session_groups;
 mod plugins;

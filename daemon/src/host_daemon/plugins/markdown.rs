@@ -140,12 +140,8 @@ fn note_path(session: &str) -> Result<PathBuf, String> {
 fn has_conversation(session: &str) -> Result<bool, String> {
     let storage = crate::home_dir()?.join(crate::STORAGE_DIRECTORY);
     let key = super::super::ownership::ConversationOwnership::key(session)?;
-    let bytes = match fs::read(storage.join("conversation-ownership").join(format!("{key}.json"))) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-        Err(error) => return Err(error.to_string()),
-    };
-    let record: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let Some(body) = crate::conversation_storage::read(&storage, &key)? else { return Ok(true); };
+    let record: Value = serde_json::from_str(&body).map_err(|error| error.to_string())?;
     let Some(path) = record["path"].as_str().map(Path::new) else { return Ok(true); };
     conversation_exists(&storage, session, path)
 }

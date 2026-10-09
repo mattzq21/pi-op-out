@@ -1,3 +1,4 @@
+const conversationStorage = require('./conversation-storage.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
@@ -25,8 +26,9 @@ function ownership(root, targets) {
 
     const file = path.join(root, 'conversation-ownership', `${key}.json`);
 
-    if (!io.exists(file)?.isFile()) return [];
-    const before = fs.readFileSync(file, 'utf8');
+    const before = conversationStorage.read(file);
+
+    if (before === null) return [];
 
     const record = JSON.parse(before);
 
@@ -259,13 +261,14 @@ function rollback(transaction) {
 
 function finishOwnership(transaction) {
   for (const owner of transaction.ownership) {
-    if (!io.exists(owner.file)?.isFile()) continue;
-    const current = fs.readFileSync(owner.file, 'utf8');
+    const current = conversationStorage.read(owner.file);
+
+    if (current === null) continue;
 
     if (current === owner.after || JSON.parse(current).deleted === true) continue;
 
     if (current !== owner.before) throw new Error(`Deletion ownership changed; retained: ${owner.file}`);
-    io.write(owner.file, owner.after);
+    conversationStorage.write(owner.file, owner.after);
   }
 }
 

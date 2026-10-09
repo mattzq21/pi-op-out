@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{File, OpenOptions},
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -176,32 +176,12 @@ impl ConversationOwnership {
     }
 
     fn read(&self, id: &str) -> Result<Option<Value>> {
-        match std::fs::read(self.directory.join(format!("{}.json", Self::key(id)?))) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| error.to_string()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error.to_string()),
-        }
+        crate::conversation_storage::read(&self.root, &Self::key(id)?)?
+            .map(|body| serde_json::from_str(&body).map_err(|error| error.to_string())).transpose()
     }
 
     fn write(&self, id: &str, record: &Value) -> Result<()> {
-        let path = self.directory.join(format!("{}.json", Self::key(id)?));
-        let temporary = path.with_extension(format!("json.{}.tmp", Uuid::new_v4()));
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let result = (|| {
-            let mut file = options.open(&temporary).map_err(|error| error.to_string())?;
-            file.write_all(record.to_string().as_bytes()).map_err(|error| error.to_string())?;
-            std::fs::rename(&temporary, &path).map_err(|error| error.to_string())
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(&temporary);
-        }
-        result
+        crate::conversation_storage::write(&self.root, &Self::key(id)?, &record.to_string())
     }
 
     pub fn locate(&self, id: &str, path: Option<&str>, archived: bool, metadata_only: bool) -> Result<Option<SavedConversation>> {

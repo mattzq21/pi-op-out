@@ -1,3 +1,4 @@
+const conversationStorage = require('./conversation-storage.cjs');
 const fs = require('node:fs');
 const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 const path = require('node:path');
@@ -40,8 +41,9 @@ function archiveOwnership(root, id) {
   const key = createHash('sha256').update(id.toLowerCase()).digest('hex').slice(0, 40);
   const file = path.join(root, 'conversation-ownership', key + '.json');
 
-  if (!io.exists(file)) return [];
-  const before = fs.readFileSync(file, 'utf8');
+  const before = conversationStorage.read(file);
+
+  if (before === null) return [];
   const record = JSON.parse(before);
 
   return [{ sessionId: id, file, before, after: JSON.stringify({ ...record, deleted: true, client: null }) }];
@@ -49,10 +51,10 @@ function archiveOwnership(root, id) {
 
 function finishOwnership(transaction) {
   for (const owner of transaction.ownerships ?? []) {
-    const current = fs.readFileSync(owner.file, 'utf8');
+    const current = conversationStorage.required(owner.file);
 
     if (current !== owner.before && current !== owner.after) throw new Error('Archived conversation ownership changed');
-    io.write(owner.file, owner.after);
+    conversationStorage.write(owner.file, owner.after);
   }
 }
 
@@ -686,10 +688,10 @@ function finishCommit(root, transaction, directory) {
   assertReferences(transaction.references);
 
   for (const owner of transaction.ownerships) {
-    const current = JSON.parse(fs.readFileSync(owner.path, 'utf8'));
+    const current = JSON.parse(conversationStorage.required(owner.path));
 
     if (!isDeepStrictEqual(current, owner.before) && !isDeepStrictEqual(current, owner.after)) throw new Error(`Archived conversation ownership changed: ${owner.path}`);
-    write(owner.path, owner.after);
+    conversationStorage.write(owner.path, JSON.stringify(owner.after));
   }
 
   for (const item of transaction.worktrees) removeRetiredWorktree(item);

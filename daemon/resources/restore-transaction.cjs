@@ -1,3 +1,4 @@
+const conversationStorage = require('./conversation-storage.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
@@ -37,17 +38,6 @@ function syncParents(directory) {
   const parent = path.dirname(directory);
 
   if (parent !== directory) syncParents(parent);
-}
-
-function write(file, body) {
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  const fd = fs.openSync(temporary, 'wx', 0o600);
-
-  try { fs.writeFileSync(fd, body); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-
-  fs.renameSync(temporary, file);
-  sync(path.dirname(file));
-  checkpointIndex.refresh(file);
 }
 
 function rename(source, destination) {
@@ -374,10 +364,10 @@ function rollback(root, transaction, journal) {
   for (const worktree of [...worktrees(transaction)].reverse()) undoWorktree(worktree);
 
   for (const ownership of ownerships(transaction)) {
-    const current = fs.readFileSync(ownership.path, 'utf8');
+    const current = conversationStorage.required(ownership.path);
 
     if (![ownership.initial, ownership.before, ownership.after].includes(current)) throw new Error('Session ownership changed during restoration');
-    write(ownership.path, ownership.before);
+    conversationStorage.write(ownership.path, ownership.before);
   }
 }
 
@@ -446,7 +436,7 @@ function prepareLegacyRollback(root, transaction, journal) {
 function sessionTransaction(root, { header, file, destination, result }) {
   const key = createHash('sha256').update(header.id.toLowerCase()).digest('hex').slice(0, 40);
   const ownershipPath = path.join(root, 'conversation-ownership', `${key}.json`);
-  const record = JSON.parse(fs.readFileSync(ownershipPath, 'utf8'));
+  const record = JSON.parse(conversationStorage.required(ownershipPath));
 
   return {
     result: { ...result, sessionId: header.id },
@@ -458,7 +448,7 @@ function sessionTransaction(root, { header, file, destination, result }) {
       [`${file}.loop-detection.json`, `${destination}.loop-detection.json`],
     ].flatMap(([source, target]) => exists(source) ? [move(source, target)] : []),
     ownership: {
-      initial: fs.readFileSync(ownershipPath, 'utf8'),
+      initial: conversationStorage.required(ownershipPath),
       path: ownershipPath,
       before: JSON.stringify({ ...record, path: file, deleted: true, client: null }),
       after: JSON.stringify({ ...record, path: destination, deleted: false, client: null }),
@@ -491,7 +481,7 @@ function publishRestoration(root, transaction, journal) {
 
   for (const item of transaction.moves) { syncTree(item.source); performMove(item); }
 
-  for (const ownership of transaction.ownerships) write(ownership.path, ownership.after);
+  for (const ownership of transaction.ownerships) conversationStorage.write(ownership.path, ownership.after);
   syncTree(transaction.trace.source);
   receipts.publish(root, transaction);
   performMove(transaction.trace);
@@ -549,7 +539,7 @@ function restoreGroupLocked(root, records, directoryPlans, worktreePlans, reused
   try {
     for (const record of records) goalAssets.retainHistory(root, record.entries, record.header.id, record.destination);
 
-    for (const ownership of transaction.ownerships) write(ownership.path, ownership.before);
+    for (const ownership of transaction.ownerships) conversationStorage.write(ownership.path, ownership.before);
     publishRestoration(root, transaction, journal);
   } catch (error) {
     if (!committed(transaction)) {
@@ -590,7 +580,7 @@ function retireMigrations(transaction, journal) {
 function restorePlan(root, header, file, destination, result, directory, worktree, resource) {
   const key = createHash('sha256').update(header.id.toLowerCase()).digest('hex').slice(0, 40);
   const ownershipPath = path.join(root, 'conversation-ownership', `${key}.json`);
-  const record = JSON.parse(fs.readFileSync(ownershipPath, 'utf8'));
+  const record = JSON.parse(conversationStorage.required(ownershipPath));
   const journalDirectory = path.join(root, 'restore-transactions');
   fs.mkdirSync(journalDirectory, { recursive: true, mode: 0o700 });
   sync(root);
@@ -610,7 +600,7 @@ function restorePlan(root, header, file, destination, result, directory, worktre
     ].flatMap(([source, target]) => exists(source) ? [move(source, target)] : []),
     ownership: {
       path: ownershipPath,
-      initial: fs.readFileSync(ownershipPath, 'utf8'),
+      initial: conversationStorage.required(ownershipPath),
       before: JSON.stringify({ ...record, path: file, deleted: true, client: null }),
       after: JSON.stringify({ ...record, path: destination, deleted: false, client: null }),
     },
@@ -638,7 +628,7 @@ function restoreLocked(root, header, file, destination, result, directory, workt
 
   try {
     goalAssets.retainHistory(root, entries, header.id, destination);
-    write(ownershipPath, transaction.ownership.before);
+    conversationStorage.write(ownershipPath, transaction.ownership.before);
     migration.preparePin(transaction, journal);
 
     if (worktree) prepareWorktree(worktree, transaction, journal);
@@ -648,7 +638,7 @@ function restoreLocked(root, header, file, destination, result, directory, workt
 
     for (const item of transaction.moves) { syncTree(item.source); performMove(item); }
 
-    write(ownershipPath, transaction.ownership.after);
+    conversationStorage.write(ownershipPath, transaction.ownership.after);
     shared.seal(root, transaction, journal);
     migration.seal(root, transaction, journal);
     syncTree(file);
