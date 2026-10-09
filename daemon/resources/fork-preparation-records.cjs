@@ -115,9 +115,11 @@ function remove(preparation) {
 
   try {
     db.exec('BEGIN IMMEDIATE');
+    require('./transcript-references.cjs').removeDirectory(db, preparation);
     db.prepare('DELETE FROM fork_preparation_checkpoints WHERE preparation=?').run(preparation);
     db.prepare('DELETE FROM fork_preparation_files WHERE preparation=?').run(preparation);
     db.prepare('DELETE FROM fork_preparations WHERE directory=?').run(preparation);
+    db.prepare('DELETE FROM storage_migrations WHERE name=?').run(`fork-checkpoints:${preparation}`);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   finally { db.close(); }
