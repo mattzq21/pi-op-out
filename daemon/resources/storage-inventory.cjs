@@ -35,36 +35,6 @@ async function regularFileSize(file) {
   }
 }
 
-async function scanDirectory(directory, countEntry, includeFile = () => true, recursive = true) {
-  let itemCount = 0;
-  const files = [];
-
-  async function visit(current, topLevel) {
-    let entries;
-
-    try { entries = await fs.readdir(current, { withFileTypes: true }); }
-
-    catch (error) { if (error.code === "ENOENT") return; throw error; }
-
-    for (const entry of entries) {
-      const target = path.join(current, entry.name);
-
-      if (countEntry(entry, topLevel)) itemCount += 1;
-
-      if (entry.isDirectory() && recursive) await visit(target, false);
-
-      else if (entry.isFile() && includeFile(entry, target)) {
-        files.push(target);
-      }
-    }
-  }
-
-  await visit(directory, true);
-
-  return { itemCount, files };
-
-}
-
 function messageText(message) {
   if (Check(Type.String(), message?.content)) return message.content;
 
@@ -409,8 +379,23 @@ async function collectSession(candidate, discovery, archives, referencedWorktree
   }
 }
 
-async function scanSessions(root, warnings) {
-  try { return await scanDirectory(root, entry => entry.isFile() && entry.name.endsWith('.jsonl'), entry => entry.name.endsWith('.jsonl')); }
+async function registeredSessions(root, warnings) {
+  try {
+    const files = require('./session-database.cjs').paths(path.dirname(root)).filter(file => {
+      const relative = path.relative(root, file);
+
+      return relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) && file.endsWith('.jsonl');
+    });
+
+    let itemCount = 0;
+
+    for (const file of files) {
+      try { if ((await fs.lstat(file)).isFile()) itemCount += 1; }
+      catch (error) { warnings.push(`${file}: conversation file unavailable: ${error.message}`); }
+    }
+
+    return { itemCount, files };
+  }
   catch (error) {
     warnings.push(`${root}: conversation discovery unavailable: ${error.message}`);
 
@@ -428,8 +413,8 @@ async function main() {
   discovery.goals = new Map();
   const activeRoot = path.join(profile, 'sessions');
   const archiveRoot = path.join(profile, 'archived');
-  const active = await scanSessions(activeRoot, discovery.warnings);
-  const archived = await scanSessions(archiveRoot, discovery.warnings);
+  const active = await registeredSessions(activeRoot, discovery.warnings);
+  const archived = await registeredSessions(archiveRoot, discovery.warnings);
   const candidates = new Map();
 
   for (const file of active.files) candidates.set(file, { file, archived: false, kind: 'active' });

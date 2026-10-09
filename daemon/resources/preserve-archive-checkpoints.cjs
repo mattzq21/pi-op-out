@@ -177,17 +177,9 @@ function preserve(file) {
   if (responseChanged || promptsChanged || rootsChanged) writePreservedArchive(file, entries, stat);
 }
 
-function visit(directory) {
-  let entries;
+for (const file of require('./session-database.cjs').paths(path.dirname(archive))) {
+  const relative = path.relative(archive, file);
 
-  try { entries = fs.readdirSync(directory, { withFileTypes: true }); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
-
-  for (const entry of entries) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isDirectory()) visit(file);
-    else if (entry.isFile() && entry.name.endsWith('.jsonl')) preserve(file);
-  }
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || !file.endsWith('.jsonl')) continue;
+  preserve(file);
 }
-
-visit(archive);

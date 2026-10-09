@@ -210,17 +210,14 @@ function sharedPlan(locations, header, entries) {
 function archivedRecoveryRecords(directory) {
   const records = [];
 
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
+  for (const file of require('./session-database.cjs').paths(root)) {
+    if (!containsDirectory(directory, file) || !file.endsWith('.jsonl')) continue;
 
-    if (entry.isDirectory()) records.push(...archivedRecoveryRecords(file));
-    else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-      try {
-        const record = readArchive(file);
+    try {
+      const record = readArchive(file);
 
-        if (record.header.worktreeRestore) records.push(record);
-      } catch { continue; }
-    }
+      if (record.header.worktreeRestore) records.push(record);
+    } catch { continue; }
   }
 
   return records;
