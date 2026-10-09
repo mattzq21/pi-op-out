@@ -309,6 +309,7 @@ function main() {
 }
 
 function executeArchive(transaction) {
+  archiveTransaction.prepare(transaction);
   Object.defineProperty(transaction, 'borrowedOwnerIds', { value: transaction.records.map(record => record.sessionId) });
 
   return checkpoints.preserve(transaction, transaction.borrowedOwnerIds, () => executeArchiveLocked(transaction));

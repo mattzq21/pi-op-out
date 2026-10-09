@@ -7,6 +7,7 @@ const allocation = require('./worktree-allocation.cjs');
 const io = require('./session-transactions.cjs');
 const fileContents = require('./worktree-files.cjs');
 const references = require('./worktree-references.cjs');
+const registration = require('./worktree-registration.cjs');
 
 function git(cwd, args, options = {}) {
   return execFileSync('git', ['-C', cwd, '-c', 'core.fsync=all', '-c', 'core.fsyncMethod=fsync', ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], ...options });
@@ -102,163 +103,13 @@ function prepareBranch(root, plan, fd) {
 
 function createGitWorktree(root, plan, fd) {
   prepareBranch(root, plan, fd);
-  repairEmptyWorktree(root, plan);
+  const existing = git(plan.source, ['for-each-ref', '--format=%(objectname)', `refs/heads/${plan.branch}`]).trim();
 
-  if (!io.exists(plan.target)) {
-    const existing = git(plan.source, ['for-each-ref', '--format=%(objectname)', `refs/heads/${plan.branch}`]).trim();
+  if ((plan.base && existing !== plan.base) || (!plan.base && existing)) throw new Error('Worktree branch changed; retained');
+  const records = git(plan.source, ['worktree', 'list', '--porcelain', '-z']).split('\0\0');
 
-    if ((plan.base && existing !== plan.base) || (!plan.base && existing)) throw new Error('Worktree branch changed; retained');
-    const args = ['worktree', 'add', '--lock', '--reason', `piop-creation:${plan.id}`, ...(plan.base ? ['--no-checkout'] : ['--orphan', '-b', plan.branch]), '--', plan.target];
-
-    if (plan.base) args.push(plan.branch);
-    git(plan.source, args, { stdio: ['ignore', 'pipe', 'pipe', fd] });
-    repairEmptyWorktree(root, plan);
-  }
-
-}
-
-function verifyEmptyWorktree(target) {
-  const info = fs.lstatSync(target);
-
-  if (!info.isDirectory() || process.getuid && info.uid !== process.getuid() || fs.readdirSync(target).some(name => name !== '.git')) throw new Error('Unexpected incomplete worktree contents; retained');
-}
-
-function restoreGitPointer(plan, registration) {
-  const temporary = path.join(plan.container, 'copy-gitdir');
-  const fd = fs.openSync(temporary, fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600);
-
-  try { fs.writeFileSync(fd, `gitdir: ${registration}\n`); fs.fsyncSync(fd); }
-  finally { fs.closeSync(fd); }
-
-  fs.renameSync(temporary, path.join(plan.target, '.git'));
-  fileContents.sync(plan.target);
-  io.sync(plan.container);
-}
-
-function repairEmptyWorktree(root, plan) {
-  if (!io.exists(plan.target)) return;
-  const pointer = path.join(plan.target, '.git');
-
-  const contents = io.exists(pointer) ? fs.readFileSync(pointer, 'utf8') : '';
-  const text = contents.trim();
-
-  if (text.startsWith('gitdir: ') && io.exists(path.resolve(plan.target, text.slice(8)))) {
-    repairRegistration(root, plan, path.resolve(plan.target, text.slice(8)));
-
-    return;
-  }
-
-  if (contents.endsWith('\n')) throw new Error('Worktree pointer changed; retained');
-
-  verifyEmptyWorktree(plan.target);
-
-  if (restoreRegistrationPointer(root, plan, text)) return;
-
-  if (io.exists(pointer)) throw new Error('Incomplete worktree registration is unavailable; retained');
-  fs.rmdirSync(plan.target);
-  io.sync(plan.container);
-}
-
-function restoreRegistrationPointer(root, plan, text) {
-  const registrations = path.join(plan.common, 'worktrees');
-  const candidates = io.exists(registrations) ? fs.readdirSync(registrations) : [];
-
-  for (const name of candidates) {
-    const registration = path.join(registrations, name);
-    const pointer = path.join(registration, 'gitdir');
-
-    const backlink = io.exists(pointer) ? fs.readFileSync(pointer, 'utf8').trim() : '';
-
-    if ((!backlink || path.resolve(registration, backlink) !== path.join(plan.target, '.git')) && plan.registration?.path !== registration) continue;
-    const expected = [`gitdir: ${registration}`, `gitdir: ${path.relative(plan.target, registration)}`];
-
-    if (text && !expected.some(value => value.startsWith(text))) throw new Error('Worktree pointer changed; retained');
-    repairRegistration(root, plan, registration);
-    restoreGitPointer(plan, registration);
-
-    return true;
-  }
-
-  return false;
-}
-
-function repairRegistration(root, plan, registration) {
-  if (path.dirname(registration) !== path.join(plan.common, 'worktrees') || fs.realpathSync(registration) !== registration) throw new Error('Invalid incomplete worktree registration');
-  const identity = io.identity(registration);
-
-  if (plan.registration && (plan.registration.path !== registration || plan.registration.identity !== identity)) throw new Error('Worktree registration was replaced; retained');
-  plan.registration = { path: registration, identity };
-  save(root, plan);
-  completeRegistrationPath(path.join(registration, 'gitdir'), path.join(plan.target, '.git'));
-  completeRegistrationPath(path.join(registration, 'commondir'), plan.common);
-  repairHead(root, plan, registration);
-  const locked = path.join(registration, 'locked');
-
-  if (io.exists(locked)) {
-    if (fs.readFileSync(locked, 'utf8').trim() !== `piop-creation:${plan.id}`) throw new Error('Worktree was locked by another operation; retained');
-    fs.unlinkSync(locked);
-  }
-
-  io.syncTree(registration);
-  io.sync(path.dirname(registration));
-}
-
-function repairHead(root, plan, registration) {
-  const lock = path.join(registration, 'HEAD.lock');
-  const seed = path.join(registration, `piop-head-${plan.id}`);
-
-  if (!plan.headLock) {
-    if (io.exists(lock)) throw new Error('Worktree HEAD is locked by an unverified operation; retained');
-    io.write(seed, '');
-    plan.headLock = io.describe(seed);
-    save(root, plan);
-  }
-
-  if (!io.matches(seed, plan.headLock)) throw new Error('Worktree HEAD lock preparation changed; retained');
-
-  try { fs.linkSync(seed, lock); }
-  catch (error) {
-    if (error.code !== 'EEXIST' || !io.matches(lock, plan.headLock)) throw new Error('Worktree HEAD is locked by another operation; retained');
-  }
-
-  io.sync(registration);
-
-  try { completeRegistrationFile(path.join(registration, 'HEAD'), `ref: refs/heads/${plan.branch}`, false); }
-  finally {
-    if (io.matches(lock, plan.headLock)) { fs.unlinkSync(lock); io.sync(registration); }
-  }
-}
-
-function cleanupHeadLock(plan) {
-  if (!plan.headLock || !plan.registration) return;
-  const seed = path.join(plan.registration.path, `piop-head-${plan.id}`);
-
-  if (!io.matches(seed, plan.headLock)) return;
-  fs.unlinkSync(seed);
-  io.sync(plan.registration.path);
-}
-
-function completeRegistrationPath(file, expected) {
-  if (io.exists(file)) {
-    const value = fs.readFileSync(file, 'utf8').trim();
-
-    if (value && path.resolve(path.dirname(file), value) === expected) return;
-  }
-
-  completeRegistrationFile(file, expected);
-}
-
-function completeRegistrationFile(file, expected, allowPrefix = true) {
-  if (io.exists(file)) {
-    const contents = fs.readFileSync(file, 'utf8');
-    const actual = contents.trim();
-
-    if (actual === expected) return;
-
-    if ((!allowPrefix && actual) || contents.endsWith('\n') || !expected.startsWith(actual)) throw new Error(`Worktree registration changed; retained: ${file}`);
-  }
-
-  io.write(file, expected + '\n');
+  if (records.some(record => record.split('\0').includes(`branch refs/heads/${plan.branch}`) && !record.split('\0').includes(`worktree ${plan.target}`))) throw new Error('Branch is already used by another worktree');
+  registration.create(plan, () => save(root, plan));
 }
 
 function preserveBase(plan, fd) {
@@ -380,7 +231,7 @@ function publishFiles(root, plan, fd) {
   fs.rmSync(path.join(plan.container, 'copy-gitdir'), { force: true });
   publishIndex(root, plan, fd);
   fileContents.sync(plan.target);
-  cleanupHeadLock(plan);
+  registration.unlock(plan);
 
 }
 

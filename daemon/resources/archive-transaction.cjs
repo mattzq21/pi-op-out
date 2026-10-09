@@ -175,7 +175,7 @@ function load(root, id) {
 function validateIdentity(transaction, root, id, container, file) {
   if (transaction.version !== 2 || transaction.kind !== 'archive' || transaction.id !== id || transaction.root !== root || transaction.container !== container || io.identity(container) !== transaction.containerIdentity) throw new Error(`Invalid archive journal: ${file}`);
 
-  if (fs.realpathSync(container) !== container || !['planned', 'pending', 'committed', 'rolled-back'].includes(transaction.state)) throw new Error(`Invalid archive transaction state: ${file}`);
+  if (fs.realpathSync(container) !== container || !['planned', 'preparing', 'pending', 'committed', 'rolled-back'].includes(transaction.state)) throw new Error(`Invalid archive transaction state: ${file}`);
   validateOwnership(transaction, root);
 }
 
@@ -187,8 +187,14 @@ function validateOwnership(transaction, root) {
   }
 }
 
+function prepare(transaction) {
+  if (transaction.state !== 'planned') throw new Error('Archive transaction is no longer awaiting preparation');
+  transaction.state = 'preparing';
+  save(transaction);
+}
+
 function begin(transaction) {
-  if (transaction.state !== 'planned') throw new Error('Archive transaction is no longer awaiting execution');
+  if (transaction.state !== 'preparing') throw new Error('Archive transaction is no longer awaiting execution');
 
   for (const record of transaction.records) {
     if (!io.matches(record.file, record.original)) throw new Error(`Conversation changed before archiving: ${record.file}`);
@@ -511,6 +517,12 @@ function replay(transaction) {
 
   if (transaction.state === 'planned') return;
 
+  if (transaction.state === 'preparing') {
+    checkpoints.recoverPreparation(transaction, () => cleanupCopies(transaction));
+
+    return;
+  }
+
   if (transaction.state === 'committed') {
     try { finish(transaction); }
     catch (error) { console.error(`Committed archive recovery retained: ${transaction.container}: ${error.message}`); }
@@ -565,4 +577,4 @@ function recover(root) {
 }
 
 
-module.exports = { plan, load, begin, save, moveGroup, publishRecord, commit, rollback, finish, recover };
+module.exports = { prepare, plan, load, begin, save, moveGroup, publishRecord, commit, rollback, finish, recover };

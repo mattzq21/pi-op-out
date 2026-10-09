@@ -171,6 +171,18 @@ function validate(transaction) {
   }
 }
 
+function recoverPreparation(transaction, operation) {
+  const mappings = transaction.checkpointMappings ?? [];
+
+  return owners.withOwners(transaction.root, mappings.map(mapping => mapping.sessionId), [], () => {
+    for (const mapping of mappings) {
+      if (io.exists(mapping.file)) checkpointIndex.refresh(mapping.file);
+    }
+
+    return operation();
+  });
+}
+
 function preserve(transaction, borrowedIds, operation) {
   const worktrees = targets(transaction).map(target => target.path);
   const initial = checkpointIndex.linked(transaction.root, worktrees);
@@ -194,4 +206,4 @@ function remapSelected(record, group) {
   remapHeader(record.header, group);
 }
 
-module.exports = { preserve, remapSelected, validate };
+module.exports = { recoverPreparation, preserve, remapSelected, validate };

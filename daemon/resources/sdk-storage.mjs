@@ -584,23 +584,14 @@ function sessionStorageAppend(manager, entry) {
 }
 
 function appendSessionStorage(manager, entry) {
-  const descriptor = storageFs.openSync(manager.sessionFile, storageFs.constants.O_WRONLY | storageFs.constants.O_APPEND | storageFs.constants.O_NOFOLLOW);
+  const path = manager.sessionFile;
+  const original = storageFs.lstatSync(path);
 
-  try {
-    const original = storageFs.fstatSync(descriptor);
+  if (!original.isFile() || original.size === 0) throw new Error("The saved session changed unexpectedly. Reopen the conversation before continuing.");
+  const entries = [...manager.fileEntries, entry];
 
-    if (!original.isFile() || original.size === 0) throw new Error("The saved session changed unexpectedly. Reopen the conversation before continuing.");
-
-    try {
-      storageFs.writeFileSync(descriptor, JSON.stringify(entry) + "\n", "utf8");
-      storageFs.fsyncSync(descriptor);
-    } catch (error) {
-      try { storageFs.ftruncateSync(descriptor, original.size); storageFs.fsyncSync(descriptor); }
-      catch { failedSessionStorage.add(manager); }
-
-      throw error;
-    }
-  } finally { try { storageFs.closeSync(descriptor); } catch {} }
+  try { storagePublish(path, sessionStorageTemporary(path), entries.map(value => JSON.stringify(value) + "\n").join(""), false); }
+  catch (error) { failedSessionStorage.add(manager); throw error; }
 }
 
 function persistSessionEntry(manager, entry) {
