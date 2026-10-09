@@ -137,7 +137,7 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   }
 
   function countWorkdirs(target, category, entries) {
-    if ([path.join(root, 'tmp'), path.join(root, 'archived-tmp')].includes(target)) addCount(category, entries.filter(entry => entry.isDirectory()).length);
+    if (target === path.join(root, 'archived-tmp')) addCount(category, entries.filter(entry => entry.isDirectory()).length);
     const relative = path.relative(path.join(root, 'worktrees'), target).split(path.sep);
 
     if (category === 'worktrees' && relative.length === 2 && !relative.includes('..') && entries.some(entry => entry.name === '.git')) worktrees.add(target);
@@ -213,6 +213,16 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     catch (error) { warnings.push(`${worktree}: Git administration storage unavailable: ${error.message}`); }
   }
 
+  function registerTemporaryChats() {
+    try {
+      for (const row of require('./temporary-chat-inventory.cjs').list(root)) {
+        if (!directories.has(row.original_path)) continue;
+        addCount('temporary-chats');
+        register('temporary-chats', { path: row.original_path, ownership: 'owned', provenance: ['Saved temporary chat creation: ' + row.session_id], owners: [], available: !unavailable.has(row.original_path), directory: true });
+      }
+    } catch (error) { warnings.push(`${root}: temporary chat records unavailable: ${error.message}`); }
+  }
+
   async function visitReferencedWorktree(record) {
     const canonical = await fs.realpath(record.path).catch(() => record.path);
 
@@ -261,6 +271,7 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   }
 
   await visit(root, 'other-storage');
+  registerTemporaryChats();
 
   for (const [name, category] of Object.entries(localCategories)) {
     const target = path.join(root, name);
