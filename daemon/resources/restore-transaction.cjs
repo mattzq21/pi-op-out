@@ -211,9 +211,14 @@ function undoCreatedDirectories(transaction) {
 }
 
 function prepareWorktree(plan, transaction, journal) {
-  transactionIO.mkdir(path.dirname(plan.staging));
+  const parent = path.dirname(plan.staging);
+  transactionIO.mkdir(parent);
+
+  if (fs.realpathSync(parent) !== parent || exists(plan.staging)) throw new Error(`Restoration staging location changed: ${plan.staging}`);
+  plan.stagingParentIdentity = identity(parent);
+  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
   fs.mkdirSync(plan.staging, { mode: 0o700 });
-  sync(path.dirname(plan.staging));
+  sync(parent);
   plan.stagingIdentity = identity(plan.staging);
   require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
   git(plan, ['update-ref', plan.reservation, plan.commit, '0'.repeat(plan.commit.length)]);
@@ -295,7 +300,7 @@ function hasReservation(plan) {
 function undoWorktree(plan) {
   if (!hasReservation(plan)) {
     if (exists(plan.staging)) {
-      if (!plan.stagingIdentity) throw new Error(`Restoration staging ownership is ambiguous; retained: ${plan.staging}`);
+      if (!plan.stagingIdentity) return removeUnrecordedStaging(plan);
 
       if (identity(plan.staging) !== plan.stagingIdentity) throw new Error(`Restoration staging ownership changed; retained: ${plan.staging}`);
       transactionIO.mkdir(plan.recovery);
@@ -315,6 +320,17 @@ function undoWorktree(plan) {
 
   if (commit) git(plan, ['update-ref', '-d', `refs/heads/${plan.branch}`, plan.commit]);
   syncTree(path.join(common, 'refs'));
+}
+
+function removeUnrecordedStaging(plan) {
+  const parent = path.dirname(plan.staging);
+  const metadata = fs.lstatSync(plan.staging);
+
+  if (!plan.stagingParentIdentity || !matches(parent, plan.stagingParentIdentity) || fs.realpathSync(parent) !== parent) throw new Error(`Restoration staging parent changed; retained: ${plan.staging}`);
+
+  if (!metadata.isDirectory() || (metadata.mode & 0o777) !== 0o700 || process.getuid && metadata.uid !== process.getuid() || fs.readdirSync(plan.staging).length) throw new Error(`Unexpected restoration staging contents or owner; retained: ${plan.staging}`);
+  fs.rmdirSync(plan.staging);
+  sync(parent);
 }
 
 function worktrees(transaction) { return transaction.worktrees ?? (transaction.worktree ? [transaction.worktree] : []); }
@@ -592,8 +608,13 @@ function validateDirectory(root, transaction) {
   const worktree = transaction.worktree;
 
   if (!worktree) return;
+  validateWorktree(root, worktree);
+}
 
+function validateWorktree(root, worktree) {
   if (!path.isAbsolute(worktree.path) || !path.isAbsolute(worktree.repositoryRoot) || !worktree.reservation.startsWith('refs/piop-restore-transactions/')) throw new Error('Invalid restore worktree ownership');
+
+  if (path.dirname(worktree.staging) !== path.dirname(worktree.path) || !/^\.piop-restore-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(path.basename(worktree.staging))) throw new Error('Invalid restore staging path');
 
   if (worktree.recovery && path.dirname(worktree.recovery) !== path.join(root, 'restore-recovery')) throw new Error('Invalid restore recovery directory');
 }
