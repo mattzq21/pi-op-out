@@ -96,8 +96,6 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   function countDirectory(target, category, entries) {
     if (category === 'other-storage') addCount(category, entries.filter(entry => entry.isFile() && !discovery.queuedInput?.has(path.join(target, entry.name))).length);
 
-    if (category === 'ephemeral-cleanup') addCount(category, entries.filter(entry => entry.isFile() && entry.name.endsWith('.json')).length);
-
     if (category === 'chatgpt-storage') {
       try { addCount(category, chatRecordCount(target, entries)); }
       catch (error) { discovery.warnings.push(target + ': ChatGPT chat count unavailable: ' + error.message); }
@@ -266,6 +264,7 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   await visitCandidates(discovery.ephemeral, 'ephemeral-storage');
 
   await visitKnownRecords(discovery.cleanup, 'ephemeral-cleanup');
+  counts.set('ephemeral-cleanup', discovery.cleanupRecordCount);
 
   await visitKnownRecords(discovery.pendingSnapshots, 'pending-diff-snapshots');
 

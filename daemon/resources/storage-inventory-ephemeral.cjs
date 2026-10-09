@@ -131,7 +131,10 @@ async function manifests(root, discovery) {
   const profile = path.dirname(root);
   const file = path.join(profile, 'sessions.sqlite');
 
-  for (const row of require('./ephemeral-cleanup-records.cjs').list(profile)) {
+  const records = require('./ephemeral-cleanup-records.cjs').list(profile);
+  discovery.cleanupRecordCount += records.length;
+
+  for (const row of records) {
     try {
       const manifest = JSON.parse(row.record_json);
 
@@ -146,7 +149,10 @@ async function manifests(root, discovery) {
 async function discoverEphemeral(profile, discovery) {
   const root = path.join(profile, 'ephemeral-cleanup');
 
-  for (const row of require('./session-database.cjs').ephemeralOwners(profile)) {
+  const owners = require('./session-database.cjs').ephemeralOwners(profile);
+  discovery.cleanupRecordCount += owners.length;
+
+  for (const row of owners) {
     await ownerRecord(path.join(profile, 'sessions.sqlite'), row, discovery);
   }
 
