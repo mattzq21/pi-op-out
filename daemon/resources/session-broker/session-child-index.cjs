@@ -113,14 +113,23 @@ function ensure(root, sessionId, sessionPath, complete = false) {
 }
 
 function add(root, parentSessionId, parentSessionPath, child) {
-  const value = read(root, parentSessionId) ?? { version: 1, sessionId: parentSessionId, sessionPath: parentSessionPath ?? '', complete: false, children: [] };
-  const previous = value.children.findIndex(item => item.sessionId === child.sessionId);
+  const value = { version: 1, sessionId: parentSessionId, sessionPath: parentSessionPath ?? '', complete: false, children: [child] };
 
-  if (previous >= 0 && JSON.stringify(value.children[previous]) === JSON.stringify(child)) return;
+  if (!Check(indexSchema, value)) throw new Error('Invalid conversation child index');
+  const db = database(root);
 
-  if (previous < 0) value.children.push(child);
-  else value.children[previous] = child;
-  store(root, value);
+  try {
+    db.exec('BEGIN IMMEDIATE');
+
+    if (identity(db, parentSessionId, value.sessionPath) && identity(db, child.sessionId, child.sessionPath)) {
+      db.prepare('INSERT INTO session_child_state VALUES (?, 0) ON CONFLICT(session_id) DO NOTHING').run(parentSessionId);
+      db.prepare(`INSERT INTO session_children SELECT ?, ?, ?, coalesce(max(position), -1) + 1 FROM session_children WHERE parent_id=?
+        ON CONFLICT(parent_id, child_id) DO UPDATE SET kind=excluded.kind`)
+        .run(parentSessionId, child.sessionId, child.kind, parentSessionId);
+    }
+
+    db.exec('COMMIT');
+  } finally { db.close(); }
 }
 
 function registerTranscript(root, sessionPath, body) {
