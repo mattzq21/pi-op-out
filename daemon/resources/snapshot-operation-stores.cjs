@@ -18,9 +18,18 @@ const legacyArchiveSchema = Type.Object({ records: Type.Array(Type.Object({
   file: Type.String({ pattern: '\\.jsonl$' }), destination: Type.String({ pattern: '\\.jsonl$' }),
 })) });
 
+const legacyDeletionSchema = Type.Object({ files: Type.Array(Type.Object({
+  path: Type.String(), staged: Type.String({ pattern: '^\\d+\\.staged$' }),
+})) });
+
 function add(stores, file) {
   if (!path.isAbsolute(file) || path.resolve(file) !== file) throw new Error('Invalid saved comparison location');
   stores.add(file);
+}
+
+function present(directory) {
+  try { return Boolean(fs.lstatSync(directory)); }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
 }
 
 function moves(stores, records) {
@@ -51,19 +60,47 @@ function deletions(root, stores) {
   for (const { record } of require('./deletion-records.cjs').list(root)) {
     if (!record) continue;
 
-    Parse(deletionSchema, record);
-
-    for (const file of record.files) {
-      if (!file.source.endsWith('.diffs.json')) continue;
-      add(stores, file.source);
-      add(stores, file.staged);
-
-      if (path.dirname(file.staged) !== record.container) throw new Error('Invalid staged comparison location');
-      add(stores, path.join(record.garbagePath, path.basename(file.staged)));
-    }
+    deletionStores(record, stores);
   }
 
-  for (const directory of require('./legacy-deletion-records.cjs').list(root)) legacyDirectory(directory, stores);
+  legacyDeletions(root, stores);
+}
+
+function deletionStores(record, stores) {
+  Parse(deletionSchema, record);
+
+  for (const file of record.files) {
+    if (!file.source.endsWith('.diffs.json')) continue;
+    add(stores, file.source);
+    add(stores, file.staged);
+
+    if (path.dirname(file.staged) !== record.container) throw new Error('Invalid staged comparison location');
+    add(stores, path.join(record.garbagePath, path.basename(file.staged)));
+  }
+}
+
+function legacyDeletions(root, stores) {
+  const records = require('./legacy-deletion-records.cjs');
+  const directories = new Set([...records.list(root), ...require('./legacy-deletion-locks.cjs').list(root)]);
+
+  for (const directory of directories) {
+    if (!present(directory)) continue;
+    const record = records.read(root, directory);
+
+    if (!record) throw new Error(`Deletion comparison ownership is unavailable: ${directory}`);
+
+    if (record.kind === 'delete') {
+      deletionStores(record, stores);
+    } else {
+      Parse(legacyDeletionSchema, record);
+
+      for (const file of record.files) {
+        if (!file.path.endsWith('.diffs.json')) continue;
+        add(stores, file.path);
+        add(stores, path.join(directory, file.staged));
+      }
+    }
+  }
 }
 
 function archives(root, stores) {
@@ -89,7 +126,7 @@ function legacyArchives(root, stores) {
     const record = records.read(root, directory);
 
     if (!record) {
-      if (fs.existsSync(directory)) throw new Error(`Archive comparison ownership is unavailable: ${directory}`);
+      if (present(directory)) throw new Error(`Archive comparison ownership is unavailable: ${directory}`);
       continue;
     }
 
