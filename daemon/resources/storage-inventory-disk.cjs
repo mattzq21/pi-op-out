@@ -70,7 +70,6 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   const seenQueuedInput = new Set();
   const directories = new Set();
   const roots = new Map();
-  const worktrees = new Set();
   const warnings = [];
   const unavailable = new Set();
   const root = await fs.realpath(profile).catch(() => profile);
@@ -113,7 +112,8 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     }
 
     countSnapshots(target, category, entries, metadata);
-    countWorkdirs(target, category, entries);
+
+    if (target === path.join(root, 'archived-tmp')) addCount(category, entries.filter(entry => entry.isDirectory()).length);
 
     if (['goal-attachments', 'unattributed-goal-attachments'].includes(category) && validGoalPath(target)) {
       addCount(category);
@@ -134,13 +134,6 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     if (discovery.pendingSnapshots.has(target)) addCount('pending-diff-snapshots');
 
     if (['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && target.endsWith('.snapshots')) register(category, { path: target, ownership: 'owned', provenance: ['Conversation diff snapshot sidecar'], owners: [], available: true, directory: true });
-  }
-
-  function countWorkdirs(target, category, entries) {
-    if (target === path.join(root, 'archived-tmp')) addCount(category, entries.filter(entry => entry.isDirectory()).length);
-    const relative = path.relative(path.join(root, 'worktrees'), target).split(path.sep);
-
-    if (category === 'worktrees' && relative.length === 2 && !relative.includes('..') && entries.some(entry => entry.name === '.git')) worktrees.add(target);
   }
 
   async function visit(target, category, required = false) {
@@ -206,11 +199,21 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   }
 
   async function visitManagedWorktree(worktree) {
-    const record = { path: worktree, ownership: 'owned', provenance: ['Worktree in Piop allocation namespace'], owners: [], available: true, directory: true };
+    const record = { path: worktree, ownership: 'owned', provenance: ['Saved Piop worktree allocation'], owners: [], available: !unavailable.has(worktree), directory: true };
     register('worktrees', record);
 
     try { await visit((await git(worktree, ['rev-parse', '--absolute-git-dir'])).trim(), 'worktrees', true); }
     catch (error) { warnings.push(`${worktree}: Git administration storage unavailable: ${error.message}`); }
+  }
+
+  async function visitManagedWorktrees() {
+    try {
+      const saved = new Set(require('./worktree-inventory.cjs').list(root));
+      const present = [...saved].filter(target => directories.has(target));
+      counts.set('worktrees', present.length);
+
+      for (const target of present) await visitManagedWorktree(target);
+    } catch (error) { warnings.push(`${root}: worktree records unavailable: ${error.message}`); }
   }
 
   function registerTemporaryChats() {
@@ -296,8 +299,7 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
 
   for (const record of discovery.goals.values()) await visitRecord(goalOwner(record) ? 'goal-attachments' : 'unattributed-goal-attachments', record);
 
-  for (const worktree of worktrees) await visitManagedWorktree(worktree);
-  counts.set('worktrees', worktrees.size);
+  await visitManagedWorktrees();
 
   for (const record of referencedWorktrees.values()) await visitReferencedWorktree(record);
 
