@@ -629,10 +629,56 @@ function persistSessionEntry(manager, entry) {
   manager.flushed = true;
 }
 
+function registeredSessionPath(id, directory) {
+  const root = sessionReferenceRoot();
+  const database = new StorageDatabase(storagePath.join(root, "sessions.sqlite"));
+
+  try {
+    database.exec("PRAGMA busy_timeout=10000;");
+
+    const row = database.prepare(`SELECT session_path FROM sessions WHERE session_id=?
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))`).get(id, id);
+
+    return row?.session_path && storageTarget(storagePath.dirname(row.session_path)) === directory ? row.session_path : undefined;
+  } finally { database.close(); }
+}
+
+function sessionHeaderMatches(file, id, cwd) {
+  let descriptor;
+
+  try {
+    descriptor = storageFs.openSync(file, storageFs.constants.O_RDONLY | storageFs.constants.O_NONBLOCK);
+
+    if (!storageFs.fstatSync(descriptor).isFile()) return false;
+    const buffer = Buffer.alloc(64 * 1024);
+    const length = storageFs.readSync(descriptor, buffer, 0, buffer.length, 0);
+    const header = JSON.parse(buffer.subarray(0, length).toString("utf8").split("\n")[0]);
+
+    return header.type === "session" && header.id === id && header.cwd?.constructor === String && header.cwd !== "" && storagePath.resolve(header.cwd) === storagePath.resolve(cwd);
+  } catch { return false; }
+  finally { if (descriptor !== undefined) storageFs.closeSync(descriptor); }
+}
+
+function installSessionLookup(SessionManager) {
+  requireStorageMethods(SessionManager, ["findById"]);
+  const find = SessionManager.findById;
+
+  SessionManager.findById = function (cwd, id, sessionDir) {
+    const directory = sessionDir && storageTarget(storagePath.resolve(sessionDir));
+    const root = storageTarget(sessionReferenceRoot());
+
+    if (!directory || !["sessions", "archived"].some(area => directory === storagePath.join(root, area) || directory.startsWith(storagePath.join(root, area) + storagePath.sep))) return find.call(this, cwd, id, sessionDir);
+    const file = registeredSessionPath(id, directory);
+
+    return file && sessionHeaderMatches(file, id, cwd) ? file : undefined;
+  };
+}
+
 export function installSessionStorage(SessionManager) {
   if (installedStorageClasses.has(SessionManager)) return;
   const prototype = SessionManager.prototype;
   requireStorageMethods(prototype, ["_appendEntry", "_persist", "_rewriteFile", "_hasConversation"]);
+  installSessionLookup(SessionManager);
 
   prototype._appendEntry = function (entry) {
     sessionStorageState(this);
