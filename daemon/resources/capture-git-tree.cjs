@@ -164,14 +164,16 @@ function readPending(retained) {
   if (!fs.existsSync(queue)) return [];
   checkedDirectory(queue);
 
-  for (const entry of fs.readdirSync(queue, { withFileTypes: true })) {
-    if (entry.isDirectory() && entry.name.startsWith('.acknowledged-')) cleanupAcknowledged(path.join(queue, entry.name));
+  const names = comparisonRecords.list(storageRoot(), queue, owner.sessionId);
+
+  for (const name of names) {
+    if (name.startsWith('.acknowledged-')) cleanupAcknowledged(path.join(queue, name));
   }
 
-  return fs.readdirSync(queue, { withFileTypes: true }).flatMap((entry) => {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) return [];
+  return names.flatMap(name => {
+    if (name.startsWith('.')) return [];
 
-    return [readPendingRecord(queue, entry.name)];
+    return [readPendingRecord(queue, name)];
   }).sort((left, right) => left.createdAt - right.createdAt || left.turnId.localeCompare(right.turnId));
 }
 
