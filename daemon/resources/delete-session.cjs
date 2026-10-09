@@ -163,8 +163,7 @@ function deletionStorageRoot(target) {
 
 
 
-async function main(root) {
-  const request = JSON.parse(process.argv[1]);
+async function main(root, request) {
   const targets = request.targets || [request];
   transactions.recover(root);
   recoverStorage(root);
@@ -376,6 +375,8 @@ function validateHeader(header, target) {
 async function start() {
   const request = JSON.parse(process.argv[1]);
 
+  if (request.blank) return deleteBlank(request.blank);
+
   if (request.retentionOnly === true) {
     const root = await fs.realpath(request.root);
 
@@ -397,7 +398,21 @@ async function start() {
 
   if (!lockStorage(roots[0])) return;
 
-  return withReferencePublicationLock(roots[0], () => main(roots[0]));
+  return withReferencePublicationLock(roots[0], () => main(roots[0], request));
+}
+
+async function deleteBlank(target) {
+  const blank = require('./blank-session-target.cjs');
+  const candidate = blank.prepare(target);
+
+  if (!candidate || !lockStorage(candidate.root, true)) return;
+
+  return withReferencePublicationLock(candidate.root, () => ownerLocks.withOwnersAsync(candidate.root, [candidate.id], async () => {
+    const current = blank.prepare(target);
+
+    if (!current || current.id !== candidate.id || current.target.path !== candidate.target.path) return;
+    await main(current.root, { targets: [current.target], activeSessionIds: [] });
+  }), true);
 }
 
 start().catch((error) => { console.error(error.message); process.exitCode = 1; });

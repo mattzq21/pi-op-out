@@ -67,4 +67,20 @@ function acquireOwner(root, id, borrowed, descriptors, acquired) {
   acquired.push(key);
 }
 
-module.exports = { withFile, withOwners };
+async function withOwnersAsync(root, ids, operation) {
+  profileLocked(root);
+  const descriptors = [];
+  const acquired = [];
+
+  try {
+    for (const id of [...new Set(ids.map(value => value.toLowerCase()))].sort()) acquireOwner(root, id, new Set(), descriptors, acquired);
+
+    return await operation();
+  } finally {
+    for (const descriptor of descriptors.reverse()) fs.closeSync(descriptor);
+
+    for (const key of acquired) held.delete(key);
+  }
+}
+
+module.exports = { withFile, withOwners, withOwnersAsync };
