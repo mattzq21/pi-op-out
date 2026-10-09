@@ -417,25 +417,6 @@ fn defined_agent_preparation_migrates_configuration_once_and_preserves_user_chan
 }
 
 #[test]
-fn temporary_startup_creates_one_fork_and_reuses_its_saved_identity() {
-    let home = TestDirectory::new(); let temporary = TestDirectory::new(); let runtime = PiRuntime::default();
-    let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&sessions).unwrap();
-    let source = sessions.join("original.jsonl"); let original = "{\"type\":\"session\",\"id\":\"source\"}\n{\"type\":\"message\",\"text\":\"history\"}\n";
-    fs::write(&source, original).unwrap();
-    let path = prepare_ephemeral_path(&runtime, "view", true, None, source.to_str(), |actual| {
-        assert_eq!(actual, source.to_str().unwrap()); create_local_ephemeral_fork(&home.0, &temporary.0, actual, None)
-    }).unwrap().unwrap();
-    let copied = fs::read_to_string(&path).unwrap();
-    let saved = runtime.ephemeral.test_sessions().lock().unwrap().get("view").cloned();
-    let reused = prepare_ephemeral_path(&runtime, "view", true, saved, Some("ignored-new-source"), |_| panic!("saved fork recreated")).unwrap();
-    assert_eq!(reused.as_deref(), Some(path.as_str()));
-    assert_eq!(fs::read_to_string(&path).unwrap(), copied); assert_eq!(fs::read_to_string(&source).unwrap(), original);
-    assert_eq!(fs::read_dir(&temporary.0).unwrap().count(), 1);
-    let session = runtime.ephemeral.test_sessions().lock().unwrap().remove("view").unwrap(); remove_ephemeral_session(session);
-    assert!(!Path::new(&path).exists());
-}
-
-#[test]
 fn temporary_snapshot_reconnects_to_the_latest_branch_and_cleans_every_owned_file() {
     let directory = TestDirectory::new(); let runtime = PiRuntime::default();
     let first = directory.0.join("first.jsonl"); let second = directory.0.join("second.jsonl");
@@ -450,32 +431,11 @@ fn temporary_snapshot_reconnects_to_the_latest_branch_and_cleans_every_owned_fil
 }
 
 #[test]
-fn rejected_temporary_startup_rolls_back_the_prepared_fork() {
-    let home = TestDirectory::new(); let _home = HomeOverride::take(&home.0);
-    let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&sessions).unwrap();
-    let source = sessions.join("source.jsonl");
-    fs::write(&source, format!("{}\n", json!({"type":"session","id":"source","cwd":home.0}))).unwrap();
-    let app = AppHandle::new();
-    let options = StartPiOptions { runtime_id: "view".into(), cwd: None, session_path: None, session_id: None, fork_path: Some(source.to_string_lossy().into_owned()), fork_leaf_id: None, no_session: Some(true), host_id: None, presence: Some(json!({"readOnly":true})), client_id: "client".into() };
-    let error = start_pi_for_owner(app.clone(), "owner".into(), app.state(), app.state(), options).unwrap_err();
-    assert!(error.contains("read-only view requires"));
-    let runtime = app.state::<PiRuntime>();
-    assert!(runtime.ephemeral.test_sessions().lock().unwrap().is_empty());
-    assert!(runtime.ephemeral.test_keys().lock().unwrap().is_empty());
-    assert!(source.exists());
-}
-
-#[test]
 fn temporary_startup_preserves_remote_cleanup_metadata_and_isolates_failures() {
     let runtime = PiRuntime::default();
     let host = RemoteHost { enabled: true, id: "remote".into(), name: "Server".into(), target: "user@example.com".into(), pi_path: "pi".into() };
     let saved = EphemeralSession::Remote { host, path: "/tmp/existing-fork.jsonl".into() };
-    assert_eq!(prepare_ephemeral_path(&runtime, "remote-view", true, Some(saved), None, |_| panic!("saved remote fork recreated")).unwrap().as_deref(), Some("/tmp/existing-fork.jsonl"));
-    for (ephemeral, source) in [(false, None), (false, Some("/source")), (true, None)] {
-        assert!(prepare_ephemeral_path(&runtime, "empty", ephemeral, None, source, |_| panic!("unneeded fork created")).unwrap().is_none());
-        assert!(!runtime.ephemeral.test_sessions().lock().unwrap().contains_key("empty"));
-    }
-    assert_eq!(prepare_ephemeral_path(&runtime, "failed", true, None, Some("/source"), |_| Err("fork failed".into())).unwrap_err(), "fork failed");
+    assert_eq!(prepare_ephemeral_path(&runtime, "remote-view", Some(saved)).unwrap().as_deref(), Some("/tmp/existing-fork.jsonl"));
     let sessions = runtime.ephemeral.test_sessions().lock().unwrap();
     assert_eq!(sessions.len(), 1);
     match &sessions["remote-view"] {

@@ -97,15 +97,6 @@ test('fork copies only retained response diffs without changing its parent', asy
   assert.deepEqual(JSON.parse(await readFile(f.sourcePath.replace(/\.jsonl$/, '.diffs.json'), 'utf8')), diffs);
 });
 
-test('temporary fork stops at the leaf captured when BTW was requested', async t => {
-  const f = await fixture(t);
-  const script = await readFile(new URL('../../daemon/resources/fork-session.cjs', import.meta.url), 'utf8');
-  const destination = join(f.dir, 'btw.jsonl');
-  await exec(process.execPath, ['-e', script, f.sourcePath, destination, 'btw', 'a1']);
-  assert.deepEqual((await readEntries(destination)).slice(1), f.entries.slice(0, 2));
-  await assert.rejects(exec(process.execPath, ['-e', script, f.sourcePath, join(f.dir, 'missing.jsonl'), 'btw', 'missing']));
-});
-
 test('non-Git fork retains completed history, unique identity, permissions, and untouched parent', async t => {
   const f = await fixture(t);
   const result = await f.forkConversation(f.ctx, {}, unexpectedWorktree);

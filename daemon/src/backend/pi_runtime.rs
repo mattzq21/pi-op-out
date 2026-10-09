@@ -12,13 +12,13 @@ use crate::platform::State;
 use uuid::Uuid;
 use crate::{AgentAddress, AppSettings, BlankSessionCleanup, BrokerRuntime, BusyAgent, RemoteHost, cleanup_blank_session, daemon};
 use crate::archives::{archived_session_file, desktop_session_file};
-use crate::pi_launch::{PiLaunch, build_pi_command, cleanup_runtime_ephemeral, create_ephemeral_fork, prepare_ephemeral_path, remote_host, session_identity};
+use crate::pi_launch::{PiLaunch, build_pi_command, cleanup_runtime_ephemeral, prepare_ephemeral_path, remote_host, session_identity};
 use crate::session_index::{validate_session_working_directory};
 use crate::settings::{load_app_settings};
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct StartPiOptions { pub(super) runtime_id: String, pub(super) cwd: Option<String>, pub(super) session_path: Option<String>, pub(super) session_id: Option<String>, pub(super) fork_path: Option<String>, pub(super) fork_leaf_id: Option<String>, pub(super) no_session: Option<bool>, pub(super) host_id: Option<String>, pub(super) presence: Option<Value>, pub(super) client_id: String }
+pub(super) struct StartPiOptions { pub(super) runtime_id: String, pub(super) cwd: Option<String>, pub(super) session_path: Option<String>, pub(super) session_id: Option<String>, pub(super) fork_path: Option<String>, pub(super) no_session: Option<bool>, pub(super) host_id: Option<String>, pub(super) presence: Option<Value>, pub(super) client_id: String }
 
 struct PreparedPiSession {
     host_id: String,
@@ -27,7 +27,6 @@ struct PreparedPiSession {
     fork_path: Option<String>,
     ephemeral_path: Option<String>,
     ephemeral: bool,
-    created_ephemeral: bool,
 }
 
 impl PreparedPiSession {
@@ -65,11 +64,9 @@ fn prepare_pi_session(runtime: &PiRuntime, settings: &AppSettings, host_id: Stri
     let ephemeral = options.no_session.unwrap_or(false) || saved_ephemeral.is_some();
     let session_path = if ephemeral { None } else { saved_pi_path(settings, &host_id, options)? };
     let fork_path = options.fork_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()?;
-    let reused_ephemeral = saved_ephemeral.is_some();
-    let ephemeral_path = prepare_ephemeral_path(runtime, &ephemeral_key, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(settings, &host_id, source_path, options.fork_leaf_id.as_deref()))?;
-    let created_ephemeral = !reused_ephemeral && ephemeral_path.is_some();
+    let ephemeral_path = prepare_ephemeral_path(runtime, &ephemeral_key, saved_ephemeral)?;
     if ephemeral_path.is_some() { runtime.ephemeral.attach(&options.runtime_id, ephemeral_key)?; }
-    Ok(PreparedPiSession { host_id, session_id, session_path, fork_path, ephemeral_path, ephemeral, created_ephemeral })
+    Ok(PreparedPiSession { host_id, session_id, session_path, fork_path, ephemeral_path, ephemeral })
 }
 
 fn reusable_ephemeral(runtime: &PiRuntime, options: &StartPiOptions, key: &str) -> Result<Option<crate::pi_launch::EphemeralSession>, String> {
@@ -110,15 +107,9 @@ pub(super) fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<P
     let settings = session_launch_settings(app.clone(), &host_id, options.cwd.as_deref(), read_only)?;
     if runtime_is_attached(&runtime, &options.runtime_id, &settings, &host_id)? { return Ok(json!({"attached":true})); }
     let session = prepare_pi_session(&runtime, &settings, host_id, &options)?;
-    let created_ephemeral = session.created_ephemeral;
-    let runtime_id = options.runtime_id.clone();
-    let result = (|| {
-        let claim_id = session.claim_id(&settings)?;
-        let _agent_claim = session.claim(&broker, claim_id.as_deref(), options.presence.as_ref())?;
-        attach_pi_session(&app, owner, &runtime, &broker, &settings, options, (session, claim_id))
-    })();
-    if result.is_err() && created_ephemeral { cleanup_runtime_ephemeral(&runtime, &runtime_id)?; }
-    result
+    let claim_id = session.claim_id(&settings)?;
+    let _agent_claim = session.claim(&broker, claim_id.as_deref(), options.presence.as_ref())?;
+    attach_pi_session(&app, owner, &runtime, &broker, &settings, options, (session, claim_id))
 }
 
 fn attach_pi_session(app: &AppHandle, owner: String, runtime: &PiRuntime, broker: &BrokerRuntime, settings: &AppSettings, options: StartPiOptions, prepared: (PreparedPiSession, Option<String>)) -> Result<Value, String> {

@@ -19,49 +19,6 @@ fn remote_session_header_reads_only_one_line_and_quotes_shell_paths() {
 }
 
 #[test]
-fn remote_ephemeral_fork_preserves_history_and_quotes_paths() {
-    let root = TestDirectory::new();
-    let source = root.0.join("source ' $(touch injected) 日本語.jsonl");
-    let destination = root.0.join("destination ' $(touch injected) 日本語.jsonl");
-    let body = format!("{{\"type\":\"message\",\"text\":\"{}\"}}\n", "history 🌍".repeat(10_000));
-    let original = format!("{{\"type\":\"session\",\"id\":\"original\",\"cwd\":\"/project\",\"timestamp\":\"old\"}}\n{body}");
-    fs::write(&source, &original).unwrap();
-    let path = create_remote_ephemeral_fork(source.to_str().unwrap(), destination.to_str().unwrap(), "fixture", None, |script| {
-        let mut command = Command::new("sh"); command.args(["-c", &script]).current_dir(&root.0); command
-    }).unwrap();
-    assert_eq!(Path::new(&path), destination);
-    let copied = fs::read_to_string(&path).unwrap(); let (header, history) = copied.split_once('\n').unwrap();
-    let header: Value = serde_json::from_str(header).unwrap();
-    assert!(Uuid::parse_str(header["id"].as_str().unwrap()).is_ok());
-    assert_eq!(header["parentSession"], source.to_str().unwrap());
-    assert_eq!(header["cwd"], "/project"); assert_ne!(header["timestamp"], "old");
-    assert_eq!(history, body); assert_eq!(fs::read_to_string(&source).unwrap(), original);
-    assert!(!root.0.join("injected").exists());
-    #[cfg(unix)] {
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
-    }
-}
-#[test]
-fn remote_ephemeral_fork_reports_failures_without_leaving_partial_files() {
-    let root = TestDirectory::new(); let source = root.0.join("source.jsonl"); let destination = root.0.join("copy.jsonl");
-    let shell = |script: String| { let mut command = Command::new("sh"); command.args(["-c", &script]); command };
-    for content in ["", "bad JSON\n", "{\"type\":\"message\"}\n", "{\"type\":\"session\"}"] {
-        fs::write(&source, content).unwrap();
-        assert!(create_remote_ephemeral_fork(source.to_str().unwrap(), destination.to_str().unwrap(), "fixture", None, shell).is_err());
-        assert!(!destination.exists()); assert_eq!(fs::read_to_string(&source).unwrap(), content);
-    }
-    fs::write(&source, "{\"type\":\"session\"}\n").unwrap(); fs::write(&destination, "existing").unwrap();
-    assert!(create_remote_ephemeral_fork(source.to_str().unwrap(), destination.to_str().unwrap(), "fixture", None, shell).unwrap_err().contains("EEXIST"));
-    assert_eq!(fs::read_to_string(&destination).unwrap(), "existing");
-    assert!(create_remote_ephemeral_fork("unused", "unused", "fixture", None, |_| Command::new("/missing/piop-test")).unwrap_err().contains("Could not create temporary side conversation on fixture"));
-    let error = create_remote_ephemeral_fork("unused", "unused", "fixture", None, |_| {
-        let mut command = Command::new("sh"); command.args(["-c", "printf '  '"]); command
-    }).unwrap_err();
-    assert_eq!(error, "Temporary side conversation path was unavailable");
-}
-
-#[test]
 fn remote_diff_lifecycle_discards_both_snapshots_after_success_or_patch_failure() {
     use std::cell::RefCell;
     let base = json!({"root":"/tmp/pi-desktop-diff-base", "tree":"a".repeat(40), "repository_root":"/project"}).to_string();

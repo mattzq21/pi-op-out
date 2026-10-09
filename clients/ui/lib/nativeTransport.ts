@@ -358,7 +358,7 @@ export class NativeTransport {
     if (sessionPath !== this.sessionPath) this.sessionId = undefined;
     this.sessionPath = sessionPath;
   }
-  async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false, forkLeafId?: string) {
+  async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false) {
     if (this.disposed) throw new Error("This conversation view has been closed");
     this.ephemeral ||= ephemeral;
 
@@ -372,7 +372,7 @@ export class NativeTransport {
 
     if (this.connectPromise) return this.connectPromise;
     this.connectionAttempted = true;
-    const pending = this.establishConnection(forkPath, ephemeral, forkLeafId); this.connectPromise = pending;
+    const pending = this.establishConnection(forkPath); this.connectPromise = pending;
 
     try { await pending; } finally { if (this.connectPromise === pending) this.connectPromise = undefined; }
   }
@@ -400,7 +400,7 @@ export class NativeTransport {
   private clearConnectionListeners() {
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
   }
-  private async establishConnection(forkPath?: string, _ephemeral = false, forkLeafId?: string) {
+  private async establishConnection(forkPath?: string) {
     const version = ++this.connectionVersion;
     await this.resolveSavedTarget(version, forkPath);
 
@@ -439,7 +439,7 @@ export class NativeTransport {
     return; }
 
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, forkLeafId, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }, z.object({ attached: z.boolean(), owned: z.boolean().optional(), daemonId: z.string().optional() })));
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }, z.object({ attached: z.boolean(), owned: z.boolean().optional(), daemonId: z.string().optional() })));
 
     if (version !== this.connectionVersion || !attached) throw new Error("The conversation disconnected while starting. Reconnect to try again.");
     this.daemonId = attached.daemonId;
