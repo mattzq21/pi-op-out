@@ -94,12 +94,10 @@ function transactionFiles(root, kind, observation) {
 }
 
 function recoveryFiles(transaction, kind) {
-  if (transaction.kind !== kind || transaction.version !== 2) throw new Error('Unrecognized session recovery prevents goal cleanup');
+  if (transaction.kind !== kind || transaction.version !== 3) throw new Error('Unrecognized session recovery prevents goal cleanup');
 
   if (kind === 'archive') {
-    if (transaction.resourcePeers !== undefined && !Array.isArray(transaction.resourcePeers)) throw new Error('Damaged archive peer mapping prevents goal cleanup');
-
-    return [...transaction.records, ...transaction.resourcePeers ?? []].flatMap(record => [record.backup, record.prepared, record.rollbackCopy ?? record.rollback]);
+    return transaction.records.flatMap(record => [record.backup, record.prepared, record.rollbackCopy]);
   }
 
   return transaction.files.filter(file => file.source.endsWith('.jsonl')).map(file => file.staged);

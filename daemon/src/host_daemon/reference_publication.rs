@@ -48,7 +48,7 @@ fn value_references(root: &Path, values: &[Value]) -> HashSet<PathBuf> {
 }
 
 fn text_references(root: &Path, text: &str, found: &mut HashSet<PathBuf>) {
-    for area in ["sessions", "archived", "fork-transactions", "fork-preparations"] {
+    for area in ["sessions", "archived"] {
         let prefix = format!("{}/{area}/", root.display());
         for (start, _) in text.match_indices(&prefix) {
             let remainder = &text[start..];
