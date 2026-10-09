@@ -123,6 +123,7 @@ function preparePeers(transaction, save) {
 function publishPeers(transaction) {
   for (const peer of transaction.resourcePeers ?? []) {
     if (!io.matches(peer.file, peer.original) || !io.matches(peer.backup, peer.backupIdentity) || !io.matches(peer.prepared, peer.preparedIdentity)) throw new Error('Shared archive publication changed; recovery retained');
+    require('./transcript-metadata.cjs').invalidate(peer.file);
     fs.renameSync(peer.prepared, peer.file);
     io.sync(path.dirname(peer.file));
     checkpointIndex.refresh(peer.file);
@@ -147,6 +148,7 @@ function rollbackPeers(transaction, save) {
     preparePeerRollback(transaction, peer, save);
 
     if (!io.matches(peer.rollback, peer.rollbackIdentity)) throw new Error('Shared archive rollback copy ownership changed');
+    require('./transcript-metadata.cjs').invalidate(peer.file);
     fs.renameSync(peer.rollback, peer.file);
     io.sync(path.dirname(peer.file));
     checkpointIndex.refresh(peer.file);

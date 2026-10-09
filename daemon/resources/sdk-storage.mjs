@@ -33,7 +33,7 @@ function registerExternalTranscript(root, transcript) {
   } finally { database.close(); }
 }
 
-function registerManagedTranscript(manager) {
+function registerManagedTranscript(manager, saved = false) {
   if (!manager.persist || !manager.sessionFile) return;
   const root = sessionReferenceRoot();
   const file = storagePath.resolve(manager.sessionFile);
@@ -52,10 +52,27 @@ function registerManagedTranscript(manager) {
     database.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT);
       CREATE TABLE IF NOT EXISTS session_deletion_tombstones (session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL, session_path TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL);
       BEGIN IMMEDIATE;`);
     registerManagedPath(database, header.id, file);
+    saveManagedMetadata(database, header.id, file, saved);
     database.exec("COMMIT");
   } finally { database.close(); }
+}
+
+function saveManagedMetadata(database, id, file, saved) {
+  database.prepare("DELETE FROM session_file_metadata WHERE session_id=?").run(id);
+
+  if (!saved) return;
+  const metadata = storageFs.lstatSync(file, { bigint: true });
+
+  if (!metadata.isFile()) throw new Error("Saved session is not a regular file");
+  database.prepare("INSERT INTO session_file_metadata VALUES (?, ?, ?, ?)").run(id, file, String(metadata.mtimeNs), metadata.size);
+}
+
+function finishManagedTranscript(manager) {
+  try { registerManagedTranscript(manager, true); }
+  catch (error) { failedSessionStorage.add(manager); throw error; }
 }
 
 function registerManagedPath(database, sessionId, file) {
@@ -331,6 +348,7 @@ function sessionStoragePublish(manager, entries, exclusive) {
       throw error;
     }
 
+    finishManagedTranscript(manager);
     sessionReferenceBaselines.set(manager, { path, entries: manager.fileEntries, references });
   } finally { release(); }
 }
@@ -345,6 +363,7 @@ function sessionStorageAppend(manager, entry) {
     const references = managedGoalReferences([entry]);
     validateNewGoalReferences(references, previous);
     appendSessionStorage(manager, entry);
+    finishManagedTranscript(manager);
     sessionReferenceBaselines.set(manager, { path: manager.sessionFile, entries: manager.fileEntries, references: new Set([...previous, ...references]) });
   }
   finally { release(); }
@@ -411,7 +430,7 @@ export function installSessionStorage(SessionManager) {
     try {
       const session = fork.apply(this, args);
       registerExternalTranscript(sessionReferenceRoot(), session.sessionFile);
-      registerManagedTranscript(session);
+      registerManagedTranscript(session, true);
 
       return session;
     } finally { release(); }

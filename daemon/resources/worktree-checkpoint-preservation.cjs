@@ -280,6 +280,7 @@ function publish(record, common) {
     fs.writeFileSync(fd, record.entries.map(entry => JSON.stringify(entry)).join('\n') + '\n');
     fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined;
     verifyTranscript(record);
+    require('./transcript-metadata.cjs').invalidate(record.file);
     fs.renameSync(temporary, record.file);
     syncDirectory(path.dirname(record.file));
     checkpointIndex.refresh(record.file);

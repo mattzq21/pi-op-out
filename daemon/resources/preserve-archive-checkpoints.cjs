@@ -151,6 +151,7 @@ function writePreservedArchive(file, entries, stat) {
     const current = fs.lstatSync(file);
 
     if (current.ino !== stat.ino || current.dev !== stat.dev || current.size !== stat.size || current.mtimeMs !== stat.mtimeMs || current.ctimeMs !== stat.ctimeMs) throw new Error('An archived conversation changed while preserving its checkpoints');
+    require('./transcript-metadata.cjs').invalidate(file);
     fs.renameSync(temporary, file);
   } finally {
     if (fd !== undefined) fs.closeSync(fd);

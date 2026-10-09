@@ -86,6 +86,7 @@ try {
   fs.writeFileSync(file, lines.join('\n'));
   fs.fsyncSync(file);
   fs.closeSync(file); file = undefined;
+  require('./transcript-metadata.cjs').invalidate(sessionPath);
   fs.renameSync(temporary, sessionPath);
   checkpointIndex.refresh(sessionPath);
 } finally {

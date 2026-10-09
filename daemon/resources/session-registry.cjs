@@ -120,21 +120,28 @@ function record(session) {
 }
 
 
+function registeredMetadata(row) {
+  if (row.modified_ns !== null && row.size !== null) return { mtimeNs: BigInt(row.modified_ns), size: row.size };
+  let stat;
+
+  try { stat = fs.lstatSync(row.session_path, { bigint: true }); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
+
+  return stat.isFile() ? stat : undefined;
+}
+
 function metadata() {
   sessionTables.importSessions(db, root);
   const directory = path.join(root, 'sessions') + path.sep;
 
-  const rows = db.prepare(`SELECT session_path FROM sessions WHERE session_path IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(sessions.session_id))`).all();
+  const rows = db.prepare(`SELECT s.session_path, m.modified_ns, m.size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE s.session_path IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(s.session_id))`).all();
 
   for (const row of rows) {
     if (!row.session_path.startsWith(directory)) continue;
-    let stat;
+    const stat = registeredMetadata(row);
 
-    try { stat = fs.lstatSync(row.session_path, { bigint: true }); }
-    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
-
-    if (!stat.isFile()) continue;
+    if (!stat) continue;
     const modified = `${stat.mtimeNs / 1000000000n}.${String(stat.mtimeNs % 1000000000n).padStart(9, '0')}`;
     process.stdout.write(`${row.session_path}\0${modified}\0${stat.size}\0`);
   }

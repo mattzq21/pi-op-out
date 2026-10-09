@@ -269,6 +269,7 @@ function moveGroup(transaction, group) {
 
 function publishRecord(transaction, record) {
   if (!io.matches(record.file, record.original) || !io.matches(record.backup, record.backupIdentity) || !io.matches(record.prepared, record.preparedIdentity)) throw new Error(`Archive publication files changed: ${record.file}`);
+  require('./transcript-metadata.cjs').invalidate(record.file);
   fs.renameSync(record.prepared, record.file);
   io.sync(path.dirname(record.file));
   record.trace = { source: record.file, destination: record.destination, identity: record.preparedIdentity };
@@ -336,6 +337,7 @@ function restoreRecord(transaction, record) {
   prepareRollbackCopy(transaction, record);
 
   if (!io.matches(record.rollbackCopy, record.rollbackIdentity)) throw new Error(`Archive rollback copy changed: ${record.rollbackCopy}`);
+  require('./transcript-metadata.cjs').invalidate(record.file);
   fs.renameSync(record.rollbackCopy, record.file);
   io.sync(path.dirname(record.file));
   checkpointIndex.refresh(record.file);
