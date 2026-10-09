@@ -689,10 +689,10 @@ function installSessionLookup(SessionManager) {
   const find = SessionManager.findById;
 
   SessionManager.findById = function (cwd, id, sessionDir) {
-    const directory = sessionDir && storageTarget(storagePath.resolve(sessionDir));
     const root = storageTarget(sessionReferenceRoot());
+    const directory = storageTarget(sessionDir ? storagePath.resolve(sessionDir) : storagePath.join(root, "sessions"));
 
-    if (!directory || !["sessions", "archived"].some(area => directory === storagePath.join(root, area) || directory.startsWith(storagePath.join(root, area) + storagePath.sep))) return find.call(this, cwd, id, sessionDir);
+    if (!["sessions", "archived"].some(area => directory === storagePath.join(root, area) || directory.startsWith(storagePath.join(root, area) + storagePath.sep))) return find.call(this, cwd, id, sessionDir);
     const file = registeredSessionPath(id, directory);
 
     return file && sessionHeaderMatches(file, id, cwd) ? file : undefined;
