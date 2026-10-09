@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use std::{collections::HashSet, path::{Path, PathBuf}, sync::{Mutex, OnceLock}, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 pub(crate) fn source() -> String {
-    with_database(include_str!("../resources/session-registry.cjs"))
+    include_str!("../resources/session-registry.bundle.mjs").to_owned()
 }
 
 pub(crate) fn with_database(script: &str) -> String {

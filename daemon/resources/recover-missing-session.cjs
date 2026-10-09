@@ -7,19 +7,13 @@ const request = JSON.parse(process.argv[1]);
 
 const relocate = process.argv[2];
 
-const recoveryModule = { exports: {} };
-
-if (!process.argv[4]) throw new Error('Piop recovery storage helper is unavailable');
-
-new Function('require', 'module', process.argv[4])(require, recoveryModule);
-
-const { createRecoveryStorage, existingLegacyDirectory, legacyDirectory, readSession } = recoveryModule.exports;
+const { createRecoveryStorage, existingLegacyDirectory, legacyDirectory, readSession } = require('./recovery-storage.cjs');
 
 const profileRoot = path.join(os.homedir(), request.storage || process.env.PIOP_STORAGE_DIRECTORY || '.piop');
 
 const storage = createRecoveryStorage(profileRoot);
 
-const header = readSession(request.sessionPath);
+const header = readSession(profileRoot, request.sessionPath);
 
 const git = (args) => execFileSync('git', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
@@ -114,14 +108,14 @@ function gitState(directory) {
 }
 
 function publish(record) {
-  const current = readSession(request.sessionPath);
+  const current = readSession(profileRoot, request.sessionPath);
 
   if (current.id !== header.id || current.cwd !== header.cwd) throw new Error('The conversation changed during recovery. The durable recovery files have been retained; refresh before retrying.');
 
   try {
     execFileSync(process.execPath, ['-e', relocate, request.sessionPath, record.directory], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
   } catch (error) {
-    if (readSession(request.sessionPath).cwd !== record.directory) throw error;
+    if (readSession(profileRoot, request.sessionPath).cwd !== record.directory) throw error;
   }
 
   storage.published(record, request.sessionPath);

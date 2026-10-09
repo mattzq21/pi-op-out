@@ -17,10 +17,8 @@ function writeRecord(container, record) {
   require('./session-database.cjs').saveRecoveryRecord(path.dirname(path.dirname(container)), record);
 }
 
-function readSession(sessionPath) {
-  const line = fs.readFileSync(sessionPath, 'utf8').split('\n').find(entry => entry.trim());
-
-  const header = JSON.parse(line);
+function readSession(profile, sessionPath) {
+  const header = require('./transcript-references.cjs').read(profile, sessionPath)[0];
 
   if (header.type !== 'session' || String(header.id) !== header.id || !header.id || !path.isAbsolute(header.cwd ?? '')) throw new Error('Invalid session directory');
 
@@ -290,7 +288,7 @@ function createRecoveryStorage(profileRoot) {
   }
 
   function published(record, sessionPath) {
-    const header = readSession(sessionPath);
+    const header = readSession(profile, sessionPath);
 
     if (header.cwd !== fs.realpathSync(record.directory)) throw new Error('The conversation does not point to the durable recovery directory');
 

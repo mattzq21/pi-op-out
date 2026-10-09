@@ -497,10 +497,10 @@ pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host
     let (path, archived) = recovery_session_location(&settings, &host_id, &session_path, &action)?;
     let mutation = recovery_mutation(&app, &host_id, &path, &client_id, archived, &action)?;
     let arguments = json!({"sessionPath":path,"action":action,"repository":repository,"branch":branch,"storage":STORAGE_DIRECTORY}).to_string();
-    let script = crate::session_registry::with_database(include_str!("../../resources/recover-missing-session.cjs"));
+    let script = include_str!("../../resources/recover-missing-session.bundle.mjs");
     let relocate = include_str!("../../resources/relocate-session.bundle.mjs");
     let registry = crate::session_registry::source();
-    let mut command = directory_recovery_command(&settings, &host_id, &script, &arguments, relocate, &registry)?;
+    let mut command = directory_recovery_command(&settings, &host_id, script, &arguments, relocate, &registry)?;
     let result = run_directory_recovery(&mut command)?;
     if let Some(mutation) = mutation {
         mutation.finish()?;
@@ -527,12 +527,11 @@ fn recovery_session_location(settings: &AppSettings, host_id: &str, session_path
 }
 
 fn directory_recovery_command(settings: &AppSettings, host_id: &str, script: &str, arguments: &str, relocate: &str, registry: &str) -> Result<Command, String> {
-    let recovery = crate::session_registry::with_database(include_str!("../../resources/recovery-storage.cjs"));
     let command = if host_id == "local" {
-        let mut command = node_command(); command.args(["-e", script, arguments, relocate, registry, &recovery]); command
+        let mut command = node_command(); command.args(["-e", script, arguments, relocate, registry]); command
     } else {
         let mut command = ssh(remote_host(settings, host_id)?);
-        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {} {} {} {}", shell_quote(script), shell_quote(arguments), shell_quote(relocate), shell_quote(registry), shell_quote(&recovery)))); command
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {} {} {}", shell_quote(script), shell_quote(arguments), shell_quote(relocate), shell_quote(registry)))); command
     };
     Ok(command)
 }
