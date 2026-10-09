@@ -22,6 +22,7 @@ export const agentSchema = Type.Object({
 
 export function subagentLimit(value: number | undefined, name: string, field: string) {
   if (value === undefined) return 8;
+
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Agent "${name}" ${field} must be a nonnegative integer`);
 
   return value;
@@ -32,6 +33,7 @@ export function registerSubagentLimits(pi: ExtensionAPI, currentAgent: () => Age
     request.max_subagents = currentAgent()?.max_subagents ?? 8;
     request.max_sub_subagents = currentAgent()?.max_sub_subagents ?? 8;
   });
+
   pi.on("session_shutdown", stop);
 }
 

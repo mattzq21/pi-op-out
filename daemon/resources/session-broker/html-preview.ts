@@ -1,11 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
+import { Type as Schema } from "typebox";
+import { Check } from "typebox/value";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const MAX_HTML_BYTES = 512_000;
 
-const previewSize = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 600;
+const previewSizeSchema = Schema.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 
 async function readHtml(path: string, cwd: string, signal?: AbortSignal) {
   const file = await open(resolve(cwd, path), "r");
@@ -48,7 +50,9 @@ async function previewHtml(params: { html?: string; path?: string }, cwd: string
 
 export function registerHtmlPreview(pi: ExtensionAPI) {
   const viewportKey = Symbol.for("piop.html-preview-size");
-  let size = previewSize(Object.getOwnPropertyDescriptor(globalThis, viewportKey)?.value);
+  const savedSize = Object.getOwnPropertyDescriptor(globalThis, viewportKey)?.value;
+  let size = Check(previewSizeSchema, savedSize) ? savedSize : 600;
+
   const defineTool = () => pi.registerTool({
     name: "render_html", label: "Render HTML",
     description: `Display self-contained HTML in the piop chat harness. Use a dark theme only. Supply exactly one of html or path (UTF-8 file on this agent's host, relative to the current working directory or absolute). The current client's desktop preview is a centered ${size}×${size} CSS-pixel viewport. Design the HTML to fit these exact dimensions. Mobile displays only a small placeholder. Inline CSS and JavaScript are supported in an isolated sandbox. Embed assets as data URLs; external resources, network requests, relative file assets, and access to the harness are unavailable. Maximum 512,000 UTF-8 bytes. The HTML is saved as a snapshot in the conversation.`,
@@ -72,7 +76,8 @@ export function registerHtmlPreview(pi: ExtensionAPI) {
   pi.events.on("piop:rpc", request => {
     if (request.command !== "html_preview_viewport") return;
     request.ready = Promise.resolve().then(() => {
-      const next = previewSize(request.payload?.size);
+      const value = request.payload?.size;
+      const next = Check(previewSizeSchema, value) ? value : 600;
       Object.defineProperty(globalThis, viewportKey, { value: next, configurable: true });
 
       if (next !== size) { size = next; defineTool(); }
