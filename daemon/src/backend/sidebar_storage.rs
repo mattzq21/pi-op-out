@@ -60,7 +60,10 @@ pub(super) fn prepare(database: &mut Option<(PathBuf, Connection)>, root: &Path,
     if database.as_ref().is_some_and(|(path, _)| path == root) { return false; }
     *database = None;
     match open(root).and_then(|connection| load(&connection).map(|saved| (connection, saved))) {
-        Ok((connection, saved)) => { cache.extend(saved); *database = Some((root.to_path_buf(), connection)); }
+        Ok((connection, saved)) => {
+            for (path, entry) in saved { cache.entry(path).or_insert(entry); }
+            *database = Some((root.to_path_buf(), connection));
+        }
         Err(error) => eprintln!("Could not load saved sidebar: {error}"),
     }
     true
