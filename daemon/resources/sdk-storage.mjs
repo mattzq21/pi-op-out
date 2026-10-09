@@ -103,7 +103,7 @@ function registerManagedPath(database, sessionId, file) {
 
 function textGoalReferences(text, root, found) {
   const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`^${escaped}/(?:sessions|archived|fork-transactions|fork-preparations)/(?:[^\\r\\n]*?/)?attachments/goal-[A-Za-z0-9]{6}(?![A-Za-z0-9])`);
+  const pattern = new RegExp(`^${escaped}/(?:sessions|archived|fork-transactions|fork-preparations)/(?:[^\\r\\n]*?/)?attachments/goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})(?![A-Za-z0-9_-])`);
   const prefix = root + "/";
   let start = text.indexOf(prefix);
 

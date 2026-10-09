@@ -65,14 +65,19 @@ fn managed_goal_path(text: &str) -> Option<PathBuf> {
     let marker = "/attachments/goal-";
     for (start, _) in text.match_indices(marker) {
         let suffix = &text[start + marker.len()..];
-        let Some(identity) = suffix.get(..6) else { continue; };
-        if !identity.bytes().all(|byte| byte.is_ascii_alphanumeric()) { continue; }
-        if suffix.as_bytes().get(6).is_some_and(u8::is_ascii_alphanumeric) { continue; }
-        let path = PathBuf::from(&text[..start + marker.len() + 6]);
+        let Some(length) = goal_identity_length(suffix) else { continue; };
+        let path = PathBuf::from(&text[..start + marker.len() + length]);
         if path.components().any(|part| part == Component::ParentDir) { continue; }
         if path.components().collect::<PathBuf>().as_os_str() == path.as_os_str() { return Some(path); }
     }
     None
+}
+
+fn goal_identity_length(suffix: &str) -> Option<usize> {
+    let length = suffix.bytes().take_while(u8::is_ascii_alphanumeric).count();
+    let valid = length == 6 || length == 64 && suffix[..length].bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    if !valid || suffix.as_bytes().get(length).is_some_and(|byte| matches!(byte, b'-' | b'_')) { return None; }
+    Some(length)
 }
 
 fn validate_goal_directory(directory: &Path) -> Result<()> {

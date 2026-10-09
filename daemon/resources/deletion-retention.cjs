@@ -27,7 +27,7 @@ function registeredGoals(root, inventory) {
     const area = path.relative(root, directory).split(path.sep)[0];
 
     if (!['sessions', 'archived', 'fork-transactions', 'fork-preparations'].includes(area)
-      || path.basename(path.dirname(directory)) !== 'attachments' || !/^goal-[A-Za-z0-9]{6}$/.test(path.basename(directory))) continue;
+      || path.basename(path.dirname(directory)) !== 'attachments' || !/^goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})$/.test(path.basename(directory))) continue;
     const info = metadata(directory);
 
     if (!info) continue;

@@ -35,7 +35,7 @@ function candidatePath(root, file) {
   const worktree = relative.length === 2 && relative[0] === 'worktrees' && /^[a-f0-9]{4}$/.test(relative[1]);
 
   const goal = ['sessions', 'archived', 'fork-transactions', 'fork-preparations'].includes(relative[0])
-    && relative.at(-2) === 'attachments' && /^goal-[A-Za-z0-9]{6}$/.test(relative.at(-1));
+    && relative.at(-2) === 'attachments' && /^goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})$/.test(relative.at(-1));
 
   return worktree || goal;
 }
