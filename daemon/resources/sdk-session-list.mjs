@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import database from "./session-database.cjs";
+import { sessionHeaderMatches } from "./sdk-storage.mjs";
 
 const cached = new Map();
 
@@ -169,13 +170,56 @@ function reportProgress(progress, loaded, total, values) {
   progress?.(loaded, total, publish ? sorted([...values]) : undefined);
 }
 
-async function list(directory, cwd, recursive, progress, signal) {
-  signal?.throwIfAborted();
+function openListDatabase() {
   const db = database.open(rootDirectory());
 
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS sdk_session_summaries (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
       session_path TEXT NOT NULL, fingerprint TEXT NOT NULL, body TEXT NOT NULL)`);
+
+    return db;
+  } catch (error) { db.close(); throw error; }
+}
+
+function recentTime(row) {
+  try { return row.modified_ns === null ? statSync(row.session_path, { bigint: true }).mtimeNs : BigInt(row.modified_ns); }
+  catch (error) {
+    if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
+
+    return undefined;
+  }
+}
+
+function recentSession(directory, cwd) {
+  const db = openListDatabase();
+
+  try {
+    const rows = candidates(db, directory, false).map(row => ({ row, time: recentTime(row) })).filter(value => value.time !== undefined);
+    rows.sort((a, b) => a.time === b.time ? 0 : a.time > b.time ? -1 : 1);
+
+    return rows.find(({ row }) => sessionHeaderMatches(row.session_path, row.session_id, cwd))?.row.session_path;
+  } finally { db.close(); }
+}
+
+function installRecentSession(SessionManager) {
+  const original = SessionManager.continueRecent;
+
+  if (!(original instanceof Function)) throw new Error("This Pi SDK does not support database session continuation");
+  SessionManager.continueRecent = function (cwd, sessionDir) {
+    const directory = managedDirectory(sessionDir, rootDirectory());
+
+    if (!directory) return original.call(this, cwd, sessionDir);
+    const file = recentSession(directory, cwd);
+
+    return file ? this.open(file, directory, cwd) : this.create(cwd, directory);
+  };
+}
+
+async function list(directory, cwd, recursive, progress, signal) {
+  signal?.throwIfAborted();
+  const db = openListDatabase();
+
+  try {
     const rows = candidates(db, directory, recursive);
     const values = [];
     let loaded = 0;
@@ -193,6 +237,7 @@ async function list(directory, cwd, recursive, progress, signal) {
 }
 
 export function installSessionLists(SessionManager) {
+  installRecentSession(SessionManager);
   const originalList = SessionManager.list;
   const originalAll = SessionManager.listAll;
 

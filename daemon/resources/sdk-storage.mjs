@@ -643,7 +643,7 @@ function registeredSessionPath(id, directory) {
   } finally { database.close(); }
 }
 
-function sessionHeaderMatches(file, id, cwd) {
+export function sessionHeaderMatches(file, id, cwd) {
   let descriptor;
 
   try {
