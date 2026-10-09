@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const database = require('./session-database.cjs');
+const { randomUUID } = require('node:crypto');
 
 function identity(directory) {
   const info = fs.lstatSync(directory, { bigint: true });
@@ -21,6 +22,10 @@ function withDatabase(root, operation) {
         queue_identity TEXT NOT NULL, name TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS snapshot_comparison_queue ON snapshot_comparison_locations(queue_identity);
       CREATE TABLE IF NOT EXISTS snapshot_comparison_imports (queue_identity TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS snapshot_preparations (
+        parent_identity TEXT NOT NULL, name TEXT NOT NULL, identity TEXT, session_id TEXT NOT NULL,
+        PRIMARY KEY(parent_identity, name));
+      CREATE TABLE IF NOT EXISTS snapshot_preparation_imports (parent_identity TEXT PRIMARY KEY);
       BEGIN IMMEDIATE;`);
     const result = operation(db);
     db.exec('COMMIT');
@@ -131,4 +136,83 @@ function remove(root, key) {
   withDatabase(root, db => db.prepare('DELETE FROM snapshot_comparison_records WHERE identity=?').run(key));
 }
 
-module.exports = { identity, read, write, remove, list };
+function preparationName(name) {
+  if (!/^\.preparing-[a-zA-Z0-9-]+$/.test(name)) throw new Error('Invalid snapshot preparation name');
+
+  return name;
+}
+
+function prepare(root, parent, sessionId) {
+  const key = identity(parent);
+  const name = `.preparing-${randomUUID()}`;
+  const directory = path.join(parent, name);
+  withDatabase(root, db => {
+    if (db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(sessionId)) throw new Error('Cannot prepare a snapshot for a deleted session');
+    db.prepare('INSERT INTO snapshot_preparations VALUES (?, ?, NULL, ?)').run(key, name, sessionId);
+  });
+
+  try { fs.mkdirSync(directory, { mode: 0o700 }); }
+  catch (error) { finishPreparation(root, directory); throw error; }
+
+  const created = identity(directory);
+
+  if (identity(parent) !== key) throw new Error('Snapshot preparation parent changed');
+  withDatabase(root, db => db.prepare('UPDATE snapshot_preparations SET identity=? WHERE parent_identity=? AND name=?').run(created, key, name));
+
+  return directory;
+}
+
+function importPreparations(db, parent, key, sessionId) {
+  if (db.prepare('SELECT 1 FROM snapshot_preparation_imports WHERE parent_identity=?').get(key)) return;
+
+  for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith('.preparing-')) continue;
+    const name = preparationName(entry.name);
+    db.prepare('INSERT INTO snapshot_preparations VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING')
+      .run(key, name, identity(path.join(parent, name)), sessionId);
+  }
+
+  if (identity(parent) !== key) throw new Error('Snapshot preparation parent changed during import');
+  db.prepare('INSERT INTO snapshot_preparation_imports VALUES (?)').run(key);
+}
+
+function preparationDirectory(db, parent, row) {
+  const directory = path.join(parent, preparationName(row.name));
+  let current;
+
+  try { current = identity(directory); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    db.prepare('DELETE FROM snapshot_preparations WHERE parent_identity=? AND name=?').run(row.parent_identity, row.name);
+
+    return [];
+  }
+
+  if (row.identity !== null && row.identity !== current) throw new Error('Snapshot preparation directory was replaced');
+
+  if (row.identity === null) db.prepare('UPDATE snapshot_preparations SET identity=? WHERE parent_identity=? AND name=?').run(current, row.parent_identity, row.name);
+
+  return [directory];
+}
+
+function preparations(root, parent, sessionId) {
+  const key = identity(parent);
+
+  return withDatabase(root, db => {
+    importPreparations(db, parent, key, sessionId);
+
+    return db.prepare('SELECT * FROM snapshot_preparations WHERE parent_identity=? ORDER BY name').all(key).flatMap(row => {
+      if (row.session_id !== sessionId) throw new Error('Snapshot preparation session identity changed');
+
+      return preparationDirectory(db, parent, row);
+    });
+  });
+}
+
+function finishPreparation(root, directory) {
+  const key = identity(path.dirname(directory));
+  const name = preparationName(path.basename(directory));
+  withDatabase(root, db => db.prepare('DELETE FROM snapshot_preparations WHERE parent_identity=? AND name=?').run(key, name));
+}
+
+module.exports = { identity, read, write, remove, list, prepare, preparations, finishPreparation };

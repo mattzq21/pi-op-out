@@ -132,20 +132,19 @@ function releaseReader() {
 }
 
 function discardPreparation(directory) {
-  if (!fs.existsSync(directory)) return;
+  if (!fs.existsSync(directory)) return comparisonRecords.finishPreparation(storageRoot(), directory);
   const identity = comparisonRecords.identity(directory);
   fs.rmSync(directory, { recursive: true });
   syncPath(path.dirname(directory));
   comparisonRecords.remove(storageRoot(), identity);
+  comparisonRecords.finishPreparation(storageRoot(), directory);
 }
 
 function clearPreparations(retained) {
   for (const directory of [retained, path.join(retained, 'pending')]) {
     if (!fs.existsSync(directory)) continue;
 
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name.startsWith('.preparing-')) discardPreparation(path.join(directory, entry.name));
-    }
+    for (const pending of comparisonRecords.preparations(storageRoot(), directory, owner.sessionId)) discardPreparation(pending);
   }
 }
 
@@ -246,7 +245,7 @@ function promoteBaseline(retained, source) {
   const existing = [latest, previous].flatMap((directory) => fs.existsSync(directory) ? [readSnapshot(directory)] : []);
 
   if (existing.some((baseline) => (baseline.capturedAt || 0) >= saved.capturedAt)) return;
-  preparing = fs.mkdtempSync(path.join(retained, '.preparing-'));
+  preparing = comparisonRecords.prepare(storageRoot(), retained, owner.sessionId);
   copySnapshot(source, preparing);
   syncTree(preparing);
   fs.rmSync(previous, { recursive: true, force: true });
@@ -256,8 +255,9 @@ function promoteBaseline(retained, source) {
   try { fs.renameSync(preparing, latest); }
   catch (error) { if (fs.existsSync(previous)) fs.renameSync(previous, latest); throw error; }
 
-  preparing = undefined;
   syncPath(retained);
+  comparisonRecords.finishPreparation(storageRoot(), preparing);
+  preparing = undefined;
   fs.rmSync(previous, { recursive: true, force: true });
 }
 
@@ -389,7 +389,7 @@ function retainComparison(retained, token, request) {
   fs.mkdirSync(queue, { recursive: true, mode: 0o700 });
   checkedDirectory(queue);
   syncPath(retained);
-  preparing = fs.mkdtempSync(path.join(queue, '.preparing-'));
+  preparing = comparisonRecords.prepare(storageRoot(), queue, owner.sessionId);
   copySnapshot(baseline, path.join(preparing, 'before'));
   copySnapshot(token.root, path.join(preparing, 'after'));
   const saved = readSnapshot(token.root);
@@ -398,8 +398,9 @@ function retainComparison(retained, token, request) {
   comparisonRecords.write(storageRoot(), preparing, record);
   syncTree(preparing);
   fs.renameSync(preparing, path.join(queue, request.turnId));
-  preparing = undefined;
   syncPath(queue);
+  comparisonRecords.finishPreparation(storageRoot(), preparing);
+  preparing = undefined;
 }
 
 function sealSnapshot(token, env, retained) {
