@@ -183,7 +183,7 @@ async fn serve_client<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(a
 }
 
 fn request_permit(jobs: &Arc<Semaphore>, controls: &Arc<Semaphore>, command: &str, args: &Value) -> Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::TryAcquireError> {
-    let control = matches!(command, "cancel_worktree_setup" | "stop_pi") || command == "pi_command" && args["command"]["type"] == "abort";
+    let control = command == "stop_pi" || command == "pi_command" && args["command"]["type"] == "abort";
     jobs.clone().try_acquire_owned().or_else(|error| if control { controls.clone().try_acquire_owned() } else { Err(error) })
 }
 
@@ -194,7 +194,6 @@ async fn detach_connection(app: AppHandle, owner: String, mut pending: tokio::ta
         while pending.join_next().await.is_some() {}
         let _ = tokio::task::spawn_blocking(move || {
             detach_owner(&app, &owner, false);
-            app.state::<PiRuntime>().setups.attach_owner(&owner);
         }).await;
     });
     Ok(())
@@ -229,9 +228,9 @@ mod tests {
     fn cancellation_remains_available_when_work_capacity_is_full() {
         let jobs = Arc::new(Semaphore::new(1));
         let controls = Arc::new(Semaphore::new(2));
-        let _work = request_permit(&jobs, &controls, "create_worktree", &json!({})).unwrap();
-        assert!(request_permit(&jobs, &controls, "create_worktree", &json!({})).is_err());
-        let _cancel = request_permit(&jobs, &controls, "cancel_worktree_setup", &json!({})).expect("cancellation must reach the running job");
+        let _work = request_permit(&jobs, &controls, "start_pi", &json!({})).unwrap();
+        assert!(request_permit(&jobs, &controls, "start_pi", &json!({})).is_err());
+        let _cancel = request_permit(&jobs, &controls, "stop_pi", &json!({})).expect("cancellation must reach the running job");
         let _stop = request_permit(&jobs, &controls, "pi_command", &json!({"command":{"type":"abort"}})).unwrap();
         assert!(request_permit(&jobs, &controls, "stop_pi", &json!({})).is_err(), "control capacity is bounded too");
     }

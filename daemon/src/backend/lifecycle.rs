@@ -1,7 +1,6 @@
 use crate::platform::AppHandle;
 use crate::{BrokerRuntime, PiRuntime, TerminalRuntime, daemon_clients, daemon_endpoint, daemon_stdio, dictation, mobile, peers, provider_auth};
 use crate::{pi_runtime, terminals};
-use crate::git_ops::worktree_setup;
 use crate::broker::start_session_broker;
 
 pub fn run_daemon() -> Result<(), String> {
@@ -61,7 +60,6 @@ pub(super) fn detach_owner(app: &AppHandle, owner: &str, discard_blank: bool) {
     peers::detach_owner(app, owner);
     let runtime = app.state::<PiRuntime>();
     provider_auth::cancel_owner(&runtime, owner);
-    worktree_setup::detach_worktree_setups(&runtime, owner);
     pi_runtime::detach_owner(&runtime, owner, discard_blank);
     terminals::detach_owner(&app.state::<TerminalRuntime>(), owner);
 }
@@ -71,6 +69,5 @@ fn shutdown_backend(app: &AppHandle) {
     app.state::<BrokerRuntime>().shutdown();
     terminals::shutdown(&app.state::<TerminalRuntime>());
     let runtime = app.state::<PiRuntime>();
-    worktree_setup::shutdown(&runtime);
     pi_runtime::shutdown(&runtime);
 }

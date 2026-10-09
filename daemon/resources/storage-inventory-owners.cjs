@@ -1,29 +1,14 @@
 const path = require('node:path');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { absolute, addRoot, legacyRecovery } = require('./storage-inventory-roots.cjs');
-const { snapshotCheckpoint, promptCheckpoint } = require('./checkpoint-schemas.cjs');
+const { addRoot, legacyRecovery } = require('./storage-inventory-roots.cjs');
 const { validGoalPath, observeGoalContract } = require('./storage-inventory-goals.cjs');
 
 const safeId = value => value.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
 
 function observeEntry(observation, entry) {
-  for (const root of [entry.checkpointRepositoryRoot, entry.worktreeRestore?.repositoryRoot, entry.data?.repositoryRoot]) {
-    if (absolute(root)) observation.repositories.add(root);
-  }
-
-  if (snapshotCheckpoint(entry.data)) observation.refs.set(entry.data.ref, entry.data.commit);
-
-  if (snapshotCheckpoint(entry.worktreeRestore)) observation.refs.set(entry.worktreeRestore.ref, entry.worktreeRestore.commit);
-
-  observePrompt(observation, entry);
   observeGoals(observation, entry);
   observeGoalContract(observation, entry);
-}
-
-function observePrompt(observation, entry) {
-  if (entry.customType !== 'pi-project-prompt-checkpoint' || !promptCheckpoint(entry.data)) return;
-  observation.refs.set(`refs/pi-session-snapshots/chats/${safeId(entry.data.owner)}/prompts/${entry.data.key}`, entry.data.commit);
 }
 
 function observeGoals(observation, entry) {
@@ -36,7 +21,7 @@ function observeGoals(observation, entry) {
   for (const match of text.matchAll(/(\/[^"\n]*?\/attachments\/goal-[a-zA-Z0-9_-]+)(?=\/)/g)) observation.goals.add(match[1]);
 }
 
-function createObservation() { return { repositories: new Set(), refs: new Map(), goals: new Set(), goalContracts: new Map(), goalWarnings: [] }; }
+function createObservation() { return { goals: new Set(), goalContracts: new Map(), goalWarnings: [] }; }
 
 function recordSession(discovery, details, candidate) {
   const id = details.sessionId;
@@ -47,10 +32,9 @@ function recordSession(discovery, details, candidate) {
   if (id && details.readable) {
     if (!discovery.sessions.has(id)) discovery.sessions.set(id, []);
     discovery.sessions.get(id).push(owner);
-    discovery.headers.set(candidate.file, { id, cwd: details.cwd, archivedDirectory: details.archivedDirectory });
+    discovery.headers.set(candidate.file, { id, cwd: details.cwd });
   }
 
-  recordRepositories(discovery, details, owner, source);
   addRoot(discovery.cwds, details.cwd, source, 'referenced', [owner]);
 
   if (legacyRecovery(details.cwd || '')) {
@@ -59,38 +43,6 @@ function recordSession(discovery, details, candidate) {
   }
 
   recordGoals(discovery, details, owner, candidate);
-}
-
-function recordRepositories(discovery, details, owner, source) {
-  if (absolute(details.cwd)) {
-    const existing = discovery.repositories.has(details.cwd);
-    const record = addRoot(discovery.repositories, details.cwd, `${source}; cwd repository candidate`, 'referenced', [owner]);
-
-    if (!existing) record.optionalRepository = true;
-  }
-
-  for (const root of details.observation.repositories) {
-    const record = addRoot(discovery.repositories, root, source, 'referenced', [owner]);
-    record.optionalRepository = false;
-
-    if (!record.recordedRefs) record.recordedRefs = new Map();
-
-    if (details.readable) recordRefs(record, details.observation.refs, owner);
-  }
-
-  if (details.readable && absolute(details.cwd)) {
-    const record = discovery.repositories.get(details.cwd);
-
-    if (!record.recordedRefs) record.recordedRefs = new Map();
-    recordRefs(record, details.observation.refs, owner);
-  }
-}
-
-function recordRefs(record, refs, owner) {
-  for (const [ref, commit] of refs) {
-    if (!record.recordedRefs.has(ref)) record.recordedRefs.set(ref, []);
-    record.recordedRefs.get(ref).push({ commit, owner });
-  }
 }
 
 function recordGoals(discovery, details, owner, candidate) {
@@ -138,31 +90,6 @@ function recoveryOwner(owner, record, discovery) {
   return { ...matching, kind: `${matching.kind}-${cwd === record.workdir ? 'current-directory' : 'retained-recovery'}` };
 }
 
-function checkpointOwners(ref, oid, records, sessions) {
-  const owners = [];
-
-  for (const record of records) {
-    for (const match of record.recordedRefs?.get(ref) || []) {
-      if (match.commit === oid) owners.push(match.owner);
-    }
-  }
-
-  const match = /^refs\/pi-session-snapshots\/chats\/([^/]+)\//.exec(ref)
-    || /^refs\/pi-session-snapshots\/([^/]+)$/.exec(ref);
-
-  if (match) owners.push(...sessions.get(match[1]) || []);
-
-  return owners;
-}
-
-function ownerCategory(owners) {
-  if (owners.some(owner => owner.kind === 'active')) return 'project-checkpoints';
-
-  if (owners.some(owner => owner.kind === 'archived')) return 'archived-project-checkpoints';
-
-  return 'unattributed-project-checkpoints';
-}
-
 function sessionKind(file, profile) {
   const relative = path.relative(profile, file).split(path.sep);
 
@@ -170,8 +97,7 @@ function sessionKind(file, profile) {
 
   if (relative[0] === 'archived') return 'archived';
 
-
   return 'referenced';
 }
 
-module.exports = { createObservation, observeEntry, recordSession, recordGoals, resolveOwners, checkpointOwners, ownerCategory, sessionKind, validGoalPath };
+module.exports = { createObservation, observeEntry, recordSession, recordGoals, resolveOwners, sessionKind, validGoalPath };

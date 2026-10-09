@@ -4,28 +4,14 @@ import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "./client.ts";
 import { writeSessionFile, publicationRetainsDependencies, type SessionPublication } from "./session-file.ts";
-import { Type, type Static } from "typebox";
+import { Type } from "typebox";
 import { Check } from "typebox/value";
-import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from "../piop-diff-watch/pin-checkpoints.ts";
-import { registerPreparedCheckpoints } from "../piop-diff-watch/fork-preparation.ts";
 import { existsSync } from "node:fs";
 import { releaseHistory, retainHistory, rootForDirectory } from "./goal-assets.cjs";
 
-export type ForkOptions = { cwd?: string; worktree?: string; entryId?: string; position?: "before" | "at" };
-
-export const createdWorktreeSchema = Type.Object({ path: Type.String(), branch: Type.String(), setupError: Type.Optional(Type.Union([Type.String(), Type.Null()])) });
-
-export type CreatedWorktree = Static<typeof createdWorktreeSchema>;
+export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at" };
 
 const fileErrorSchema = Type.Object({ code: Type.String() });
-
-const responseIdsSchema = Type.Object({ responseEntryIds: Type.Array(Type.String()) });
-
-function publicationWorkspace(cwd: string, options: ForkOptions, worktree?: CreatedWorktree) {
-  const kind = worktree ? "created-worktree" : options.cwd !== undefined ? "created-directory" : "existing";
-
-  return { path: cwd, kind, branch: worktree?.branch } satisfies NonNullable<import("./session-file.ts").PublicationOptions["dependencies"]>["workspace"];
-}
 
 function retainedFork(error: Error | undefined, publication?: SessionPublication) {
   return Boolean(publication) || error !== undefined && publicationRetainsDependencies(error);
@@ -37,55 +23,39 @@ function inheritGoal(ctx: ExtensionContext, retained: ReturnType<ExtensionContex
   if (goal?.type === "custom") retained.push({ ...structuredClone(goal), id: randomUUID().slice(0, 8), parentId: retained.at(-1)?.id ?? null, timestamp });
 }
 
-function forkHeader<T extends { cwd: string }>(header: T, source: string): T {
-  if (header.cwd !== source) {
-    Reflect.deleteProperty(header, "archiveResourceId");
-    Reflect.deleteProperty(header, "worktreeRestore");
-  }
-
-  return header;
-}
-
-export async function forkConversation(ctx: ExtensionContext, options: ForkOptions, createWorktree: (name: string) => Promise<CreatedWorktree>) {
+export async function forkConversation(ctx: ExtensionContext, options: ForkOptions) {
   const retained = structuredClone(options.position ? positionedHistory(ctx, options.entryId, options.position) : forkHistory(ctx, options.entryId));
   const header = ctx.sessionManager.getHeader();
   const source = ctx.sessionManager.getSessionFile();
 
   if (!header || !source) throw new Error("Save this conversation before forking it");
-  let cwd = await forkDirectory(ctx.cwd, options);
-  const worktree = options.worktree ? await createWorktree(options.worktree) : undefined;
+  const cwd = await forkDirectory(ctx.cwd, options);
 
-  if (worktree) cwd = worktree.path;
   const sessionId = randomUUID();
   const timestamp = new Date().toISOString();
   inheritGoal(ctx, retained, timestamp);
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let publication: SessionPublication | undefined;
-  let checkpoints: PinnedCheckpoint[] = [];
   let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
   try {
-    await registerPreparedCheckpoints(sessionId, header.cwd, retained, sessionPath);
-    checkpoints = await pinPromptHistory(header.cwd, sessionId, retained);
     goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source }, ...retained], sessionId, sessionPath);
-    publication = await writeSessionFile(sessionPath, [forkHeader({ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, header.cwd), ...retained], {
-      dependencies: { checkpoints, workspace: publicationWorkspace(cwd, options, worktree) },
+    publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...retained], {
+      dependencies: { workspace: { path: cwd, kind: options.cwd === undefined ? "existing" : "created-directory" } },
     });
   } catch (error) {
     if (retainedFork(error instanceof Error ? error : undefined, publication)) {
-      ctx.ui.notify(`Fork publication and its checkpoint, goal, and workspace dependencies are retained for recovery: ${sessionPath}`, "warning");
+      ctx.ui.notify(`Fork publication and its goal and directory dependencies are retained for recovery: ${sessionPath}`, "warning");
       throw new Error(`Fork recovery is pending at ${sessionPath}: ${String(error)}`, { cause: error });
     }
 
     releaseForkAssets(ctx, goalAssets, sessionId, sessionPath);
-    await removePinnedCheckpoints(checkpoints);
     await cleanupForkDirectory(cwd, options);
 
-    if (worktree) throw new Error(`Worktree kept at ${cwd}, but conversation fork failed: ${String(error)}`);
     throw error;
   }
 
-  return { hostId: currentHost(), sessionId, sessionPath, cwd, ...worktree };
+  return { hostId: currentHost(), sessionId, sessionPath, cwd };
 }
 
 function releaseForkAssets(ctx: ExtensionContext, goalAssets: ReturnType<typeof retainHistory> | undefined, sessionId: string, sessionPath: string) {
@@ -100,7 +70,6 @@ async function cleanupForkDirectory(cwd: string, options: ForkOptions) {
 }
 
 async function forkDirectory(cwd: string, options: ForkOptions) {
-  if (options.cwd !== undefined && options.worktree !== undefined) throw new Error("Choose cwd or worktree, not both");
 
   if (options.cwd === undefined) return realpath(cwd);
   const destination = resolve(cwd, options.cwd);
@@ -159,15 +128,6 @@ function forkHistory(ctx: ExtensionContext, entryId?: string) {
   if (!entry) return [];
   const end = responseBoundary(branch, branch.indexOf(entry));
   const retained = branch.slice(0, end + 1);
-  const ids = new Set(retained.map((item) => item.id));
-
-  const checkpoint = branch.slice(end + 1).find((item) => item.type === "custom" && item.customType === "pi-project-files-watch-snapshot"
-    && Check(responseIdsSchema, item.data) && item.data.responseEntryIds.includes(entry.id));
-
-  if (checkpoint?.type === "custom" && Check(responseIdsSchema, checkpoint.data)) {
-    const data = checkpoint.data;
-    retained.push({ ...checkpoint, parentId: retained.at(-1)?.id ?? null, data: { ...data, responseEntryIds: data.responseEntryIds.filter((id) => ids.has(id)) } });
-  }
 
   return retained;
 }

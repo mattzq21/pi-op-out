@@ -90,25 +90,6 @@ fn invalid_private_write_destinations_leave_existing_contents_intact() {
 }
 
 #[test]
-fn registered_cancellation_reaches_a_running_setup_process() {
-    let runtime = PiRuntime::default(); let directory = TestDirectory::new();
-    let id = register_worktree_setup(&runtime).unwrap();
-    let signal = runtime.setups.test_pending().lock().unwrap()[&id].clone();
-    let ready = directory.0.join("ready"); let received = directory.0.join("received");
-    let worker_ready = ready.clone(); let worker_received = received.clone();
-    let worker = thread::spawn(move || {
-        run_setup_process(Command::new("node").args(["-e", "const fs=require(\u{27}fs\u{27});fs.writeFileSync(process.argv[1],\u{27}ready\u{27});process.stdin.once(\u{27}data\u{27},data=>{fs.writeFileSync(process.argv[2],data);process.exit(0)});", worker_ready.to_str().unwrap(), worker_received.to_str().unwrap()]), &signal, "Setup", "DONE".into(), "User cancelled setup", Some(Duration::from_secs(10)))
-    });
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !ready.exists() && Instant::now() < deadline { thread::sleep(Duration::from_millis(10)); }
-    signal_worktree_setup_cancellation(&runtime, &id).unwrap();
-    let result = worker.join().unwrap();
-    assert!(ready.exists(), "setup process did not become ready");
-    assert_eq!(result.unwrap_err(), "User cancelled setup");
-    assert_eq!(fs::read_to_string(&received).unwrap(), "cancel\n");
-}
-
-#[test]
 fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
     type Installer = fn() -> Result<PathBuf, String>;
     let installers: [(Installer, &str, &str); 4] = [
@@ -147,39 +128,14 @@ fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
 }
 
 #[test]
-fn development_extensions_are_scoped_to_the_daemon_worktree() {
+fn development_extensions_are_scoped_to_the_daemon_directory() {
     if !DEVELOPMENT { return; }
     let home = TestDirectory::new(); let _home = HomeOverride::take(&home.0);
     let path = prepare_mcp_bridge().unwrap();
     assert!(path.starts_with(daemon_endpoint::directory().unwrap()));
     let expected = fs::read(&path).unwrap();
-    fs::write(home.0.join(STORAGE_DIRECTORY).join("piop-mcp-bridge.ts"), "other worktree build").unwrap();
+    fs::write(home.0.join(STORAGE_DIRECTORY).join("piop-mcp-bridge.ts"), "other development build").unwrap();
     assert_eq!(fs::read(path).unwrap(), expected);
-}
-
-#[test]
-fn diff_watch_preparation_replaces_legacy_assets_and_refreshes_all_bundled_files() {
-    let home = TestDirectory::new();
-    let _home = HomeOverride::take(&home.0);
-    let legacy = home.0.join(STORAGE_DIRECTORY).join("pi-git-change-context");
-    fs::create_dir_all(legacy.join("nested")).unwrap();
-    fs::write(legacy.join("nested/stale.ts"), "stale").unwrap();
-    let entry = prepare_diff_watch_extension().unwrap();
-    assert!(!legacy.exists());
-    assert_eq!(entry, generated_extension_root().unwrap().join("piop-diff-watch/index.ts"));
-    for _ in 0..2 {
-        assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../../extensions/piop-diff-watch/index.ts"));
-        for (name, source) in [
-            ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
-            ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
-            ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
-            ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
-        ] {
-            assert_eq!(fs::read_to_string(entry.parent().unwrap().join(name)).unwrap(), source);
-        }
-        prepare_diff_watch_extension().unwrap();
-    }
-    assert_eq!(fs::read_dir(entry.parent().unwrap()).unwrap().count(), 5, "no temporary files should remain");
 }
 
 #[test]
@@ -196,15 +152,6 @@ fn extension_preparation_reports_obstructions_without_removing_legacy_configurat
         assert!(prepare_defined_agents_extension().is_ok(), "development builds skip the legacy configuration import and legacy cleanup");
     }
     assert_eq!(fs::read_to_string(legacy.join("index.ts")).unwrap(), "original");
-    drop(_home);
-    let blocked = TestDirectory::new();
-    let _blocked = HomeOverride::take(&blocked.0);
-    fs::create_dir_all(blocked.0.join(STORAGE_DIRECTORY)).unwrap();
-    let legacy_diff = blocked.0.join(STORAGE_DIRECTORY).join("pi-git-change-context");
-    fs::write(&legacy_diff, "unexpected file").unwrap();
-    assert!(prepare_diff_watch_extension().unwrap_err().contains("Could not remove legacy diff watch extension"));
-    assert_eq!(fs::read_to_string(&legacy_diff).unwrap(), "unexpected file");
-    assert!(!blocked.0.join(STORAGE_DIRECTORY).join("piop-diff-watch").exists());
 }
 
 #[test]

@@ -10,17 +10,15 @@ export interface ReviewPublicationRecord {
 export interface PublicationOptions {
   review?: { record: ReviewPublicationRecord; parentSessionPath: string };
   dependencies?: {
-    workspace?: { path: string; kind: "existing" | "created-directory" | "created-worktree"; branch?: string };
-    checkpoints?: { root: string; ref: string; commit: string }[];
+    workspace?: { path: string; kind: "existing" | "created-directory" };
   };
   beforeWrite?: () => void | Promise<void>;
 }
 
 export interface PublicationDependencies {
   version: 1;
-  workspace: { path: string; kind: "existing" | "created-directory" | "created-worktree"; branch?: string; identity: string };
+  workspace: { path: string; kind: "existing" | "created-directory"; identity: string };
   goalAssets: { version: 1; policy: "shared-profile"; directories: { path: string; identity: string }[] };
-  checkpoints: { root: string; ref: string; commit: string; sourceRef?: string }[];
 }
 
 export interface DiagnosticPublication {

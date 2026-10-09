@@ -1,5 +1,5 @@
 import { createSignal, lazy, Show } from "solid-js";
-import { FolderGit2 } from "lucide-solid";
+import { Folder } from "lucide-solid";
 import type { NativeTransport } from "../lib/nativeTransport";
 import type { SessionGroup } from "../lib/sessionGroups";
 import type { AppSettings } from "../types";
@@ -28,7 +28,7 @@ export function GroupProjectPicker(props: Props) {
   };
 
   return <>
-    <div class="project-picker group-project-picker"><button type="button" class={name() ? "selected" : undefined} data-tooltip={props.project?.cwd ?? undefined} disabled={props.disabled} onClick={() => setOpen(true)}><FolderGit2 size={14} />{name() ?? "Choose project"}</button></div>
+    <div class="project-picker group-project-picker"><button type="button" class={name() ? "selected" : undefined} data-tooltip={props.project?.cwd ?? undefined} disabled={props.disabled} onClick={() => setOpen(true)}><Folder size={14} />{name() ?? "Choose project"}</button></div>
     <Show when={open()}><ProjectDialog localEnabled={props.settings.localEnabled} hosts={props.settings.hosts.filter(host => host.enabled !== false)} initialPath={props.project?.cwd ?? ""} initialHostId={props.project?.hostId ?? props.hostId} onHomeDirectory={hostId => props.transport.homeDirectory(hostId)} onChooseDirectory={(path, hostId) => props.transport.listDirectories(hostId, path || undefined)} onOpen={select} onCancel={() => { setOpen(false); props.onCancel(); }} /></Show>
   </>;
 }

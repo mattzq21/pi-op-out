@@ -146,7 +146,7 @@ export class RemoteClient {
 
     return new Promise<JSONType | undefined>((resolve, reject) => {
       const request: Pending = { resolve, reject, retries: 0, retry: () => { if (this.pending.get(id) === request) this.sendRequest(socket, packet, id, request); } };
-      request.timer = command === "run_worktree_setup" ? undefined : setTimeout(() => { clearTimeout(request.retryTimer); this.pending.delete(id); reject(new Error("Host request timed out; it may still complete. Refresh before trying again.")); }, 660000);
+      request.timer = setTimeout(() => { clearTimeout(request.retryTimer); this.pending.delete(id); reject(new Error("Host request timed out; it may still complete. Refresh before trying again.")); }, 660000);
       this.pending.set(id, request);
       request.retry();
     }).then(value => schema.parse(value));

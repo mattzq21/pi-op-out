@@ -5,7 +5,7 @@ import { createDependencyEffect, type Dispatch, type StateUpdate } from "./lib/s
 import { NativeTransport } from "./lib/nativeTransport";
 import { appendTerminalOutput as retainTerminalOutput } from "./lib/terminalOutput";
 import { isTemporaryChatCwd } from "./lib/sessionGroups";
-import type { AgentConfig, ChatMessage, CodexUsage, DefinedAgentsCapability, ExtensionUiRequest, OpencodeGoUsage, SessionSummary } from "./types";
+import type { AgentConfig, CodexUsage, DefinedAgentsCapability, ExtensionUiRequest, OpencodeGoUsage, SessionSummary } from "./types";
 
 const staleExtensionContext = "This extension ctx is stale after session replacement or reload.";
 
@@ -22,8 +22,6 @@ type SplitPaneState = { key: string; session: SessionSummary; review?: ReviewReq
 type OwnedExtensionDialog = { request: ExtensionUiRequest; transport: NativeTransport; owner: string; queueId: string };
 
 type RenameTarget = { session: SessionSummary; transport: NativeTransport };
-
-type WorktreeTarget = { transport: NativeTransport; cwd: string; hostId: string; message?: ChatMessage };
 
 type TerminalTarget = { sessionKey: string; cwd?: string; hostId: string };
 
@@ -135,4 +133,4 @@ function definedAgentSettings(capability?: DefinedAgentsCapability): AgentConfig
 
 export { appendTerminalOutputs,AppLoading,REVIEW_REQUEST_TITLE,definedAgentSettings,dialogOwnerName,formatCodexReset,goUsageBadge,initialTerminals,LimitBadge,MAX_TERMINALS,MCP_STATUS_KEY,normalizeCodexUsage,normalizeOpencodeGoUsage,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
 
-export type { ReviewRequest,OwnedExtensionDialog,QueuedTerminalOutput,RenameTarget,SessionTerminals,SplitPaneState,TerminalTabState,TerminalTarget,WorktreeTarget };
+export type { ReviewRequest,OwnedExtensionDialog,QueuedTerminalOutput,RenameTarget,SessionTerminals,SplitPaneState,TerminalTabState,TerminalTarget };

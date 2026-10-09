@@ -6,13 +6,9 @@ pub(crate) fn source() -> String {
 }
 
 pub(crate) fn with_database(script: &str) -> String {
-    let allocation = if script.contains("require('./worktree-allocation.cjs')") {
-        format!("const worktreeAllocation = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n",
-            include_str!("../resources/worktree-allocation.cjs").replace("require('./session-database.cjs')", "sessionDatabase"))
-    } else { String::new() };
-    format!("const sessionDatabase = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n{allocation}{}",
+    format!("const sessionDatabase = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n{}",
         include_str!("../resources/session-database.cjs"),
-        script.replace("require('./session-database.cjs')", "sessionDatabase").replace("require('./worktree-allocation.cjs')", "worktreeAllocation"))
+        script.replace("require('./session-database.cjs')", "sessionDatabase"))
 }
 
 fn run(mut request: Value) {

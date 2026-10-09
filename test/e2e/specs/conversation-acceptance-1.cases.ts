@@ -266,7 +266,7 @@ describe("Conversation acceptance", () => {
 
   it("archives an indexed conversation through its visible action", async () => {
     const indexed = { id: "acceptance-archive", path: "/tmp/acceptance-archive.jsonl", name: "Acceptance archive target", project: "Acceptance project", cwd: "/tmp", preview: "Archive preview", messageCount: 2, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], load_git_diffs: {}, stop_pi: false, archive_session: {} });
+    await mockBackend({ list_sessions: [indexed], stop_pi: false, archive_session: {} });
 
     try {
       await app.conversationSearch.setValue("Acceptance archive target");
@@ -284,7 +284,7 @@ describe("Conversation acceptance", () => {
 
   it("keeps a conversation available when archiving fails", async () => {
     const indexed = { id: "acceptance-archive-failure", path: "/tmp/acceptance-archive-failure.jsonl", name: "Acceptance archive failure", project: "Acceptance project", cwd: "/tmp", preview: "Archive failure preview", messageCount: 2, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], load_git_diffs: {}, stop_pi: false, archive_session: { error: "Archive destination is unavailable" } });
+    await mockBackend({ list_sessions: [indexed], stop_pi: false, archive_session: { error: "Archive destination is unavailable" } });
 
     try {
       await app.conversationSearch.setValue(indexed.name);

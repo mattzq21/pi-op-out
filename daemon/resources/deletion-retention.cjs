@@ -4,9 +4,8 @@ const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { validSessionHeader } = require('./checkpoint-schemas.cjs');
+const { validSessionHeader } = require('./session-header.cjs');
 const { describeCandidates } = require('./retention-candidates.cjs');
-const { containerContents } = require('./worktree-container.cjs');
 const transcriptRecords = require('./transcript-references.cjs');
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -27,7 +26,7 @@ function registeredGoals(root, inventory) {
   for (const directory of require('./session-broker/goal-ownership.cjs').directories(root)) {
     const area = path.relative(root, directory).split(path.sep)[0];
 
-    if (!['sessions', 'archived', 'fork-transactions', 'fork-preparations'].includes(area)
+    if (!['sessions', 'archived'].includes(area)
       || path.basename(path.dirname(directory)) !== 'attachments' || !/^goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})$/.test(path.basename(directory))) continue;
     const info = metadata(directory);
 
@@ -106,46 +105,6 @@ function externalTranscripts(root, inventory) {
 
     inventory.transcripts.push(file);
   }
-}
-
-function forkReferences(root, inventory) {
-  const groups = [
-    ['fork-transactions', require('./fork-transaction-records.cjs').list(root)],
-    ['fork-preparations', require('./fork-preparation-records.cjs').list(root)],
-  ];
-
-  for (const [area, directories] of groups) for (const directory of directories) {
-    if (path.dirname(directory) !== path.join(root, area)) throw new Error('Invalid registered fork directory');
-    const info = metadata(directory);
-
-    if (!info) continue;
-
-    if (!info.isDirectory() || fs.realpathSync(directory) !== directory) { inventory.uncertain = true; continue; }
-
-    if (area === 'fork-preparations') inventory.transcripts.push(...require('./fork-preparation-records.cjs').files(directory).filter(file => file.endsWith('.jsonl')));
-    else forkTranscript(directory, inventory);
-  }
-}
-
-function forkTranscript(directory, inventory) {
-  const file = path.join(directory, 'session.jsonl');
-  const transcript = metadata(file);
-
-  if (transcript?.isFile()) inventory.transcripts.push(file);
-  else if (transcript) inventory.uncertain = true;
-}
-
-function worktreeContainers(root) {
-  const storage = path.join(root, 'worktrees');
-
-  return require('./session-database.cjs').worktreeContainers(root).filter(directory => {
-    if (path.dirname(directory) !== storage || !/^[a-f0-9]{4}$/.test(path.basename(directory))) throw new Error('Invalid registered worktree directory');
-
-    if (require('./session-database.cjs').worktreeMetadata(directory)?.creating) return false;
-    const info = metadata(directory);
-
-    return Boolean(info?.isDirectory() && containerContents(directory));
-  });
 }
 
 function references(value, candidates, found) {
@@ -279,9 +238,8 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
 
   registeredGoals(root, inventory);
   registeredTranscripts(root, inventory);
-  forkReferences(root, inventory);
   externalTranscripts(root, inventory);
-  const candidates = new Set([...inventory.goals, ...worktreeContainers(root)]);
+  const candidates = new Set(inventory.goals);
   const owned = new Set(deferred.directories.filter(file => candidates.has(file)));
 
   if (unpublishedGoals) for (const directory of inventory.goals) owned.add(directory);
@@ -327,7 +285,7 @@ function cleanupRegistry(root, sessionIds) {
 
   if (!info) return [...sessionIds];
 
-  if (!info.isFile()) throw new Error('Invalid session repository registry');
+  if (!info.isFile()) throw new Error('Invalid session directory registry');
   const { DatabaseSync } = require('node:sqlite');
   const db = new DatabaseSync(database);
 
@@ -342,7 +300,6 @@ function cleanupRegistry(root, sessionIds) {
 }
 
 function removeRegistryRows(root, db, sessionIds) {
-  if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_repositories'").get()) return [...sessionIds];
   const remove = db.prepare('DELETE FROM sessions WHERE lower(session_id) = ?');
   const read = db.prepare('SELECT session_id, session_path FROM sessions WHERE lower(session_id) = ?');
   const completed = [];

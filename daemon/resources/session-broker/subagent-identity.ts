@@ -8,7 +8,7 @@ export const runSchema = Schema.Object({
   hostId: Schema.String(), name: Schema.String(), task: Schema.String(), status: Schema.Union([Schema.Literal("running"), Schema.Literal("completed"), Schema.Literal("failed"), Schema.Literal("cancelled")]),
   startedAt: Schema.Number(), endedAt: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.String()), apiCost: Schema.Optional(Schema.Number()),
   agent: Schema.Optional(Schema.String()), taskPath: Schema.Optional(Schema.String()),
-  cwd: Schema.Optional(Schema.String()), worktree: Schema.Optional(Schema.Union([Schema.Literal("same"), Schema.Literal("new")])), branch: Schema.Optional(Schema.String()),
+  cwd: Schema.Optional(Schema.String()),
   runId: Schema.Optional(Schema.String()), generation: Schema.Optional(counter), offset: Schema.Optional(counter), accountedTokens: Schema.Optional(counter), forwardedTokens: Schema.Optional(counter),
   offsetHeader: Schema.Optional(Schema.String()), usageBoundaryId: Schema.Optional(Schema.String()), usageNotificationId: Schema.Optional(Schema.String()),
   goalId: Schema.Optional(Schema.String()), goalTokens: Schema.Optional(counter),

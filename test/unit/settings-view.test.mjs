@@ -8,7 +8,7 @@ describe('settings editor', () => {
   let dom, view, props, saves, dirty;
   beforeEach(() => {
     dom = installDom(); saves = []; dirty = [];
-    props = { settings: { worktreeSetupScripts: [], defaultAgent: 'general', defaultModel: 'p/model', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 10000, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
+    props = { settings: { defaultAgent: 'general', defaultModel: 'p/model', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 10000, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
 
@@ -119,20 +119,6 @@ describe('settings editor', () => {
     await click(button('Add machine')); await enterText(control('Machine name'), 'Local'); assert.match(document.querySelector('[role=alert]').textContent, /reserved/);
     await enterText(control('Machine name'), 'Build'); await enterText(control('Build SSH target'), 'builder@host'); await enterText(control('Build Piop daemon executable'), '/opt/pi'); await click(save());
     assert.equal(saves[0][0].hosts[0].target, 'builder@host'); assert.equal(saves[0][0].hosts[0].piPath, '/opt/pi');
-  });
-
-  test('worktree scripts preserve execution order and use projects on the selected daemon', async () => {
-    props.settings.hosts = [{ id: 'remote', name: 'Remote', target: 'host', piPath: 'pi' }];
-    await render({ sessions: [{ cwd: '/repo', projectRoot: '/repo' }, { cwd: '/repo/sub', projectRoot: '/repo' }, { cwd: '/remote', hostId: 'remote' }, { cwd: '/skip', projectKind: 'no-repo' }] });
-    await section('Worktree scripts'); await click(button('Add script')); await enterText(control('Script 1 name'), 'Install'); await enterText(control('Script 1 project directory'), '/repo');
-    await enterText(control('Script 1 setup Bash code'), 'npm ci'); await enterText(control('Script 1 cleanup Bash code'), 'cleanup');
-    assert.deepEqual([...document.querySelectorAll('datalist option')].map(option => option.value), ['/repo']);
-    assert.equal(control('Script 1 machine'), null);
-    await click(button('Add script')); await enterText(control('Script 2 name'), 'Prepare');
-    await click([...document.querySelectorAll('.setup-script')][1].querySelectorAll('button')[1]);
-    assert.equal(control('Script 1 name').value, 'Prepare'); await click(save());
-    assert.deepEqual(saves[0][0].worktreeSetupScripts.map(script => script.name), ['Prepare', 'Install']); assert.equal(saves[0][0].worktreeSetupScripts[1].cleanupScript, 'cleanup');
-    await click(button('Remove')); await click(save()); assert.equal(saves[1][0].worktreeSetupScripts.length, 1);
   });
 
   test('shortcut recording detects collisions, allows clearing, and restores defaults', async () => {

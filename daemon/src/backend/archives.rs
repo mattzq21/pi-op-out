@@ -13,10 +13,10 @@ use crate::platform::AppHandle;
 use crate::platform::State;
 #[cfg(test)]
 use uuid::Uuid;
-use crate::{AppSettings, HostStorage, MAX_GIT_PATH_LIST_BYTES, MAX_REMOTE_HOSTS, MAX_SESSION_INDEX_BATCH_BYTES, PiRuntime, RemoteHost, STORAGE_DIRECTORY, StorageInventory, StorageReport, TerminalRuntime, conversation_ownership, node_command};
+use crate::{AppSettings, HostStorage, MAX_PATH_LIST_BYTES, MAX_REMOTE_HOSTS, MAX_SESSION_INDEX_BATCH_BYTES, PiRuntime, RemoteHost, STORAGE_DIRECTORY, StorageInventory, StorageReport, TerminalRuntime, conversation_ownership, node_command};
 use crate::terminals::{stop_terminals, terminal_lookup};
-use crate::git_ops::archive_worktrees::archive_conversations;
-use crate::git_ops::worktree_setup::{LimitedOutput, desktop_sessions_dir, run_limited, shell_quote};
+use crate::archive_sessions::archive_conversations;
+use crate::process_io::{LimitedOutput, desktop_sessions_dir, run_limited, shell_quote};
 use crate::pi_launch::{remote_host, remote_login_command, session_identity, ssh};
 use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
@@ -143,7 +143,7 @@ pub(super) fn remote_session_file(path: &str, archived: bool, command: impl FnOn
         ("sessions", "Could not locate Piop session", "Only session files in this Piop profile can be opened")
     };
     let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/{area}" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(path));
-    let output = run_limited(&mut command(script), MAX_GIT_PATH_LIST_BYTES, context)?;
+    let output = run_limited(&mut command(script), MAX_PATH_LIST_BYTES, context)?;
     if !output.status.success() { return Err(rejected.into()); }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
@@ -382,8 +382,8 @@ pub(super) fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>,
     delete_stored_sessions(app, &runtime, paths, host_id, true, client_id)
 }
 
-fn restore_worktree_command(settings: &AppSettings, host_id: &str, arguments: &[&str]) -> Result<Command, String> {
-    let script = include_str!("../../resources/restore-archived-worktree.bundle.mjs");
+fn restore_session_command(settings: &AppSettings, host_id: &str, arguments: &[&str]) -> Result<Command, String> {
+    let script = include_str!("../../resources/restore-session.bundle.mjs");
     let command = if host_id == "local" {
         let mut command = node_command();
         command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, "--"]).args(arguments);
@@ -396,12 +396,12 @@ fn restore_worktree_command(settings: &AppSettings, host_id: &str, arguments: &[
     Ok(command)
 }
 pub(super) fn restore_archived_session(app: AppHandle, session_path: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
-    restore_archived_worktree(app, session_path, host_id, client_id).map(|_| ())
+    restore_archived_session_result(app, session_path, host_id, client_id).map(|_| ())
 }
 
 fn restore_result(settings: &AppSettings, host_id: &str, path: &str) -> Result<serde_json::Value, String> {
-    let mut command = restore_worktree_command(settings, host_id, &["--result", path])?;
-    let result = run_worktree_restoration(&mut command)?;
+    let mut command = restore_session_command(settings, host_id, &["--result", path])?;
+    let result = run_session_restoration(&mut command)?;
     if result.is_null() { return Err("No committed restoration is available".into()); }
     Ok(result)
 }
@@ -443,12 +443,12 @@ fn perform_restore(app: &AppHandle, settings: &AppSettings, host_id: &str, sessi
     };
     let mutations = restore_mutations(app, host_id, &path, client_id, mutation)?;
     let paths = json!(mutations.iter().map(|(source, _)| source).collect::<Vec<_>>()).to_string();
-    let mut command = restore_worktree_command(settings, host_id, &["--group", &paths])?;
-    let result = run_worktree_restoration(&mut command).or_else(|error| restore_result(settings, host_id, &path).map_err(|_| error))?;
+    let mut command = restore_session_command(settings, host_id, &["--group", &paths])?;
+    let result = run_session_restoration(&mut command).or_else(|error| restore_result(settings, host_id, &path).map_err(|_| error))?;
     finish_restore_mutations(mutations, &result)?;
     Ok(result)
 }
-pub(super) fn restore_archived_worktree(app: AppHandle, session_path: String, host_id: Option<String>, client_id: String) -> Result<serde_json::Value, String> {
+pub(super) fn restore_archived_session_result(app: AppHandle, session_path: String, host_id: Option<String>, client_id: String) -> Result<serde_json::Value, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let runtime = app.state::<PiRuntime>();
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
@@ -461,10 +461,10 @@ pub(super) fn restore_archived_worktree(app: AppHandle, session_path: String, ho
     Ok(result)
 }
 
-fn run_worktree_restoration(command: &mut Command) -> Result<serde_json::Value, String> {
-    let output = run_limited(command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not restore archived worktree")?;
+fn run_session_restoration(command: &mut Command) -> Result<serde_json::Value, String> {
+    let output = run_limited(command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not restore archived chat")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid worktree restoration response: {error}"))
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid chat restoration response: {error}"))
 }
 pub(super) fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
     let runtime = app.state::<PiRuntime>();

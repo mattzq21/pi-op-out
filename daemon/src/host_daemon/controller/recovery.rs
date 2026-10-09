@@ -57,7 +57,7 @@ fn report(host: &Host, recovery: &Recovery, reported: &mut HashSet<String>) {
 }
 
 async fn replay_transactions(root: &Path) -> Result<()> {
-    run_recovery(root, include_str!("../../../resources/restore-archived-worktree.bundle.mjs"), &["--", "--recover"]).await
+    run_recovery(root, include_str!("../../../resources/restore-session.bundle.mjs"), &["--", "--recover"]).await
 }
 
 pub(super) async fn collect_retention(root: &Path) -> Result<()> {

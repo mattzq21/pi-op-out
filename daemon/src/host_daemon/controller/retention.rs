@@ -35,7 +35,7 @@ fn retention_pending(root: &Path) -> Result<bool> {
 }
 
 async fn retention_pass(root: &Path, initialize: bool) -> Result<()> {
-    if initialize { mark_retention_scan(root, "goal")?; mark_retention_scan(root, "worktree")?; }
+    if initialize { mark_retention_scan(root, "goal")?; }
     if !retention_pending(root)? { return Ok(()); }
     tokio::time::timeout(Duration::from_secs(30), super::recovery::collect_retention(root)).await
         .map_err(|_| "Deferred retention cleanup timed out; candidates remain available for retry".to_string())?

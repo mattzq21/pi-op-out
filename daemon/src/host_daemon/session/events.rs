@@ -172,7 +172,6 @@ impl Session {
         let parsed = || serde_json::from_str::<Value>(event["statusText"].as_str().unwrap_or_default());
         match event["statusKey"].as_str() {
             Some("piop-async-questions" | "piop-async-question-recovery") => self.receive_question_status(event, parsed()),
-            Some("pi-desktop-worktree-root") => self.receive_worktree_root(parsed()),
             Some("piop-input-rejected") => {
                 if let Ok(rejection) = parsed() {
                     self.state().input_rejection = rejection;
@@ -193,15 +192,6 @@ impl Session {
         }
     }
 
-    fn receive_worktree_root(&self, parsed: serde_json::Result<Value>) {
-        if let Ok(root) = parsed {
-            {
-                let mut state = self.state();
-                state.worktree = root;
-            }
-            self.publish_state();
-        }
-    }
 
     fn receive_questions(&self, requests: Value) {
         let Some(requests) = requests.as_array() else {

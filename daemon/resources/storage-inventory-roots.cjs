@@ -8,13 +8,13 @@ const absolute = value => Check(Type.String(), value) && path.isAbsolute(value);
 
 const ownerSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.String() });
 
-const recoverySchema = Type.Object({ version: Type.Literal(1), managedBy: Type.Literal('piop'), kind: Type.Literal('missing-directory-recovery'), id: Type.String({ pattern: '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$' }), state: Type.Union(['allocated', 'ready', 'published'].map(value => Type.Literal(value))), mode: Type.Union(['empty', 'remote-branch', 'legacy-copy'].map(value => Type.Literal(value))), directory: Type.String(), originalCwd: Type.String(), owners: Type.Array(ownerSchema, { minItems: 1 }) });
+const recoverySchema = Type.Object({ version: Type.Literal(1), managedBy: Type.Literal('piop'), kind: Type.Literal('missing-directory-recovery'), id: Type.String({ pattern: '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$' }), state: Type.Union(['allocated', 'ready', 'published'].map(value => Type.Literal(value))), mode: Type.Union(['empty', 'legacy-copy'].map(value => Type.Literal(value))), directory: Type.String(), originalCwd: Type.String(), owners: Type.Array(ownerSchema, { minItems: 1 }) });
 
 const packageSchema = Type.Object({ name: Type.String(), piConfig: Type.Optional(Type.Object({ name: Type.Optional(Type.String()), configDir: Type.Optional(Type.String()) })) });
 
 const nullableString = Type.Union([Type.String(), Type.Null()]);
 
-const registrySchema = Type.Object({ session_id: Type.String({ minLength: 1 }), session_path: nullableString, cwd: Type.String(), repository_root: nullableString });
+const registrySchema = Type.Object({ session_id: Type.String({ minLength: 1 }), session_path: nullableString, cwd: Type.String() });
 
 function addRoot(roots, target, provenance, ownership = 'referenced', owners = []) {
   if (!absolute(target)) return;
@@ -42,13 +42,12 @@ async function readRegistry(profile, discovery) {
     await fs.lstat(database);
     const { DatabaseSync } = require('node:sqlite');
     db = new DatabaseSync(database, { readOnly: true });
-    const rows = db.prepare(require('./session-database.cjs').repositoryQuery(db, ['session_id', 'session_path', 'cwd', 'repository_root'])).all();
+    const rows = db.prepare(require('./session-database.cjs').directoryQuery(db, ['session_id', 'session_path', 'cwd'])).all();
 
     for (const row of rows) {
       if (!Check(registrySchema, row)) { discovery.warnings.push(`${database}: invalid registry row; owner provenance is unresolved`); continue; }
 
       const owners = [{ sessionId: row.session_id, sessionPath: row.session_path || undefined, kind: 'registry-only' }];
-      addRoot(discovery.repositories, row.repository_root, `Session registry: ${row.session_id}`, 'referenced', owners);
       addRoot(discovery.cwds, row.cwd, `Session registry: ${row.session_id}`, 'referenced', owners);
 
       if (absolute(row.session_path)) discovery.sessionPaths.add(row.session_path);
@@ -202,7 +201,7 @@ async function chatGptRoots(profile, discovery) {
 }
 
 async function discoverRoots(profile) {
-  const discovery = { repositories: new Map(), cwds: new Map(), recovery: new Map(), legacy: new Map(), retainedArtifacts: new Map(), chatgpt: new Map(), sessionPaths: new Set(), warnings: [] };
+  const discovery = { cwds: new Map(), recovery: new Map(), legacy: new Map(), retainedArtifacts: new Map(), chatgpt: new Map(), sessionPaths: new Set(), warnings: [] };
   await readRegistry(profile, discovery);
   await recoveryRoots(profile, discovery);
   await chatGptRoots(profile, discovery);

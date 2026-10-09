@@ -24,7 +24,7 @@ const wrappedManagers = new WeakSet();
 
 const { installReloadLifecycle, afterReload, serializeConfiguration, runtimeRequest } = require("./runtime-configuration.cjs");
 
-const configurationCommands = new Set(["runtime_settings", "provider_auth_refresh", "get_agent_configuration", "configure_agents", "select_agent", "fork_after", "fork_and_forget", "prepare_fork", "branch_checkpoint"]);
+const configurationCommands = new Set(["runtime_settings", "provider_auth_refresh", "get_agent_configuration", "configure_agents", "select_agent", "fork_after", "fork_and_forget", "prepare_fork"]);
 
 let queueValidation;
 

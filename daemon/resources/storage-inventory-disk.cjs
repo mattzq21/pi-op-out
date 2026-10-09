@@ -4,7 +4,7 @@ const { validGoalPath } = require('./storage-inventory-owners.cjs');
 const { goalOwner } = require('./storage-inventory-goals.cjs');
 const { chatGptStoredCount } = require('./chatgpt-storage.mjs');
 
-const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', tmp: 'temporary-chats', worktrees: 'worktrees', 'archived-tmp': 'archived-worktrees', recovery: 'unattributed-recovery-storage' };
+const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', tmp: 'temporary-chats', recovery: 'unattributed-recovery-storage' };
 
 function specialCategory(target, category, metadata, discovery) {
   category = queuedCategory(target, category, metadata, discovery);
@@ -28,7 +28,7 @@ function goalCategory(target, discovery) {
   return goalOwner(discovery.goals.get(target)) ? 'goal-attachments' : 'unattributed-goal-attachments';
 }
 
-async function diskStorage(profile, discovery, referencedWorktrees, git) {
+async function diskStorage(profile, discovery) {
   const sizes = new Map();
   const counts = new Map();
   const seen = new Set();
@@ -141,26 +141,6 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     catch (error) { warnings.push(`${record.workdir}: ${record.state} recovery workdir unavailable: ${error.message}`); record.available = false; }
   }
 
-  async function visitManagedWorktree(worktree) {
-    const record = { path: worktree, ownership: 'owned', provenance: ['Saved Piop worktree allocation'], owners: [], available: !unavailable.has(worktree), directory: true };
-    register('worktrees', record);
-
-    try { await visit((await git(worktree, ['rev-parse', '--absolute-git-dir'])).trim(), 'worktrees', true); }
-    catch (error) { warnings.push(`${worktree}: Git administration storage unavailable: ${error.message}`); }
-  }
-
-  async function visitManagedWorktrees() {
-    try {
-      const records = require('./worktree-inventory.cjs').list(root);
-      warnings.push(...records.warnings);
-      const saved = new Set(records.paths);
-      const present = [...saved].filter(target => directories.has(target));
-      counts.set('worktrees', present.length);
-
-      for (const target of present) await visitManagedWorktree(target);
-    } catch (error) { warnings.push(`${root}: worktree records unavailable: ${error.message}`); }
-  }
-
   function registerTemporaryChats() {
     try {
       for (const row of require('./temporary-chat-inventory.cjs').list(root)) {
@@ -171,44 +151,14 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     } catch (error) { warnings.push(`${root}: temporary chat records unavailable: ${error.message}`); }
   }
 
-  async function visitReferencedWorktree(record) {
-    const canonical = await fs.realpath(record.path).catch(() => record.path);
-
-    if (directories.has(canonical)) return;
-    addCount('referenced-worktrees');
-    await visitRecord('referenced-worktrees', record);
-
-    try { await visit((await git(record.path, ['rev-parse', '--absolute-git-dir'])).trim(), 'referenced-worktrees', true); }
-    catch (error) { warnings.push(`${record.path}: referenced worktree metadata unavailable: ${error.message}`); }
-  }
-
   async function visitCandidates(records, category) {
     for (const record of records.values()) { addCount(category); await visitRecord(category, record); }
-  }
-
-  async function inspectResourcePins(record) {
-    for (const pin of record.pins || []) {
-      record.provenance.push('Shared resource Git pin: ' + pin.root + ' ' + pin.ref + ' -> ' + pin.commit);
-
-      try {
-        const metadata = await fs.lstat(pin.root, { bigint: true });
-
-        if (!metadata.isDirectory() || await fs.realpath(pin.root) !== pin.root || pin.identity !== metadata.dev + ':' + metadata.ino) throw new Error('Pinned repository directory identity changed');
-
-        if ((await git(pin.root, ['rev-parse', '--verify', pin.ref])).trim() !== pin.commit) throw new Error('Shared resource pin no longer matches its recorded commit');
-
-        if (directories.has(pin.root)) record.provenance.push('Shared resource pin object files already included in the allocated-block directory scan');
-        else warnings.push(`${pin.root}: retained shared resource pin ${pin.ref}; object bytes are outside measured directories and the session checkpoint estimate; shared archive Git coverage is incomplete`);
-      } catch (error) { warnings.push(`${pin.root}: shared resource pin unavailable: ${error.message}; retained`); }
-    }
   }
 
   async function visitRetainedArtifacts() {
     for (const record of discovery.retainedArtifacts.values()) {
       await visitRecord(record.category, record);
 
-      if (record.category === 'archived-worktrees' && record.available && record.directory) addCount(record.category);
-      await inspectResourcePins(record);
     }
   }
 
@@ -230,10 +180,6 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   await visitCandidates(discovery.legacy, 'legacy-recovery-storage');
 
   for (const record of discovery.goals.values()) await visitRecord(goalOwner(record) ? 'goal-attachments' : 'unattributed-goal-attachments', record);
-
-  await visitManagedWorktrees();
-
-  for (const record of referencedWorktrees.values()) await visitReferencedWorktree(record);
 
   await visitRetainedArtifacts();
 

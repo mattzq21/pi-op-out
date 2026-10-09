@@ -26,8 +26,6 @@ function read(file) {
       const row = db.prepare('SELECT record_json FROM conversation_ownership WHERE record_id=?').get(key);
       const body = row?.record_json ?? null;
 
-
-
       db.exec('COMMIT');
 
       return body;

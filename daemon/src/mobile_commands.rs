@@ -105,20 +105,9 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("validate_project_directory", handle_validate_project_directory),
     ("list_directories", handle_list_directories),
     ("read_image_file", handle_read_image_file),
-    ("is_git_repository", handle_is_git_repository),
-    ("git_branch", handle_git_branch),
-    ("git_project_kind", handle_git_project_kind),
-    ("project_branches", handle_project_branches),
-    ("create_project_worktree", handle_create_project_worktree),
-    ("create_git_worktree", handle_create_git_worktree),
-    ("remove_git_worktree", handle_remove_git_worktree),
-    ("prepare_worktree_setup", handle_prepare_worktree_setup),
-    ("cancel_worktree_setup", handle_cancel_worktree_setup),
-    ("run_worktree_setup", handle_run_worktree_setup),
     ("archive_session", handle_archive_session),
     ("delete_session", handle_delete_session),
     ("delete_archived_session", handle_delete_archived_session),
-    ("restore_archived_worktree", handle_restore_archived_worktree),
     ("restore_archived_session", handle_restore_archived_session),
     ("relocate_session", handle_relocate_session),
     ("recover_missing_session", handle_recover_missing_session),
@@ -327,70 +316,15 @@ fn handle_read_image_file(app: AppHandle, _owner: String, args: Value) -> Comman
     })
 }
 
-fn handle_is_git_repository(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(is_git_repository(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
-}
 
-fn handle_git_branch(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(git_branch(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
-}
 
-fn handle_git_project_kind(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(git_project_kind(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
-}
 
-fn handle_project_branches(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || project_branches(app, argument(&args, "cwd")?, argument(&args, "hostId")?, argument(&args, "branch")?)).await.map_err(|error| error.to_string())?
-    })
-}
 
-fn handle_create_project_worktree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(create_project_worktree(app.clone(), argument(&args, "cwd")?, argument(&args, "name")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
-}
 
-fn handle_create_git_worktree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(create_git_worktree(app.clone(), argument(&args, "cwd")?, argument(&args, "name")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
-}
 
-fn handle_remove_git_worktree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        serde_json::to_value(remove_git_worktree(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?, argument(&args, "deleteBranch")?).await?).map_err(|error| error.to_string())
-    })
-}
 
-fn handle_prepare_worktree_setup(app: AppHandle, owner: String, _args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || {
-            let runtime = app.state::<PiRuntime>();
-            Ok(json!(crate::git_ops::worktree_setup::prepare_for_owner(&runtime, owner)?))
-        }).await.map_err(|error| error.to_string())?
-    })
-}
 
-fn handle_cancel_worktree_setup(app: AppHandle, owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        verify_setup_owner(&app.state::<PiRuntime>(), &argument::<String>(&args, "setupId")?, &owner)?;
-        tokio::task::spawn_blocking(move || serde_json::to_value(cancel_worktree_setup(app.state(), argument(&args, "setupId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
-}
 
-fn handle_run_worktree_setup(app: AppHandle, owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        verify_setup_owner(&app.state::<PiRuntime>(), &argument::<String>(&args, "setupId")?, &owner)?;
-        serde_json::to_value(run_worktree_setup(app.clone(), argument(&args, "setupId")?, argument(&args, "cwd")?, argument(&args, "worktreePath")?, argument(&args, "hostId")?).await?).map_err(|error| error.to_string())
-    })
-}
 
 fn handle_archive_session(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
@@ -410,11 +344,6 @@ fn handle_delete_archived_session(app: AppHandle, _owner: String, args: Value) -
     })
 }
 
-fn handle_restore_archived_worktree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || restore_archived_worktree(app.clone(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "clientId")?)).await.map_err(|error| error.to_string())?
-    })
-}
 
 fn handle_restore_archived_session(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {

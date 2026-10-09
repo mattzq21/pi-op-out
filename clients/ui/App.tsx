@@ -3,7 +3,7 @@ import { createPluginWorkspace } from "./plugins/workspace";
 import { required } from "./lib/required";
 import { trackToastMessage, trackToastNotices } from "./lib/toastHistory";
 import { Key,Rerun } from "@solid-primitives/keyed";
-import { Archive,ArrowLeft,Bug,FolderPlus,GitBranch,MessageSquare,Server,Settings } from "lucide-solid";
+import { Archive,ArrowLeft,Bug,FolderPlus,MessageSquare,Server,Settings } from "lucide-solid";
 import { batch,createEffect,lazy,Show } from "solid-js";
 import { createAppConversations } from "./appConversations";
 import { AppLoading,LimitBadge,splitConversationKey } from "./appSupport";
@@ -16,17 +16,12 @@ import { SessionPanel } from "./components/SessionPanel";
 import { ArchivedSessionPanel } from "./components/ArchivedSessionPanel";
 import { MissingDirectoryDialog } from "./components/MissingDirectoryDialog";
 import { hasVisibleText } from "./lib/content";
-import { NativeTransport,resolveBranchGroup } from "./lib/nativeTransport";
+import { NativeTransport } from "./lib/nativeTransport";
 import { isMobile } from "./lib/platform";
-import { beginBranching, isBranching } from "./lib/branchActivity";
 import { SubagentNavigationContext } from "./lib/subagentNavigation";
-import type { ChatMessage, SessionSummary } from "./types";
+import type { SessionSummary } from "./types";
 
 export { formatCodexReset,normalizeCodexUsage,normalizeOpencodeGoUsage,usageWindowsDescription } from "./appSupport";
-
-declare const __PIOP_DEVELOPMENT_BRANCH__: string;
-
-declare const __PIOP_CUSTOM_DEVELOPMENT_LABEL__: boolean;
 
 const LocalSettingsView = lazy(() => import("./components/LocalSettingsView").then(module => ({ default: module.LocalSettingsView })));
 
@@ -42,27 +37,13 @@ const SplitChatPane = lazy(() => import("./components/SplitChatPane").then(modul
 
 const SubagentPane = lazy(() => import("./components/SubagentPane").then(module => ({ default: module.SubagentPane })));
 
-const WorktreeDialog = lazy(() => import("./components/WorktreeDialog").then(module => ({ default: module.WorktreeDialog })));
-
 export default function App(props: { suppressConnectionNotices?: boolean } = {}) {
- const { drafts, archiveReplacedSession, isArchiving, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, isGitRepository, codexUsage, usageClock, opencodeGoBadge, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, worktreeTarget, setWorktreeTarget, projectOpenRef, uploadsByTransport, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToReview, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, createWorktree, deleteWorktree, branch, forkAndForget, startNewSession, newSession, clearChatProject, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, questionContext, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); });
+ const { drafts, archiveReplacedSession, isArchiving, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, codexUsage, usageClock, opencodeGoBadge, setDialogs, notices, setNotices, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToReview, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, startNewSession, newSession, clearChatProject, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, questionContext, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); });
 
   const pluginPane = createPluginWorkspace(conversationSource(activeHostId, chatSession), () => view() === "chat", closeSplitPane);
   createEffect(() => { if (hasSidePane()) pluginPane.close(); });
 
   const renderMobileSidebarBackdrop = () => (panelOpen() && view() === "chat" && <button class="mobile-sidebar-backdrop" aria-label="Close conversations" onClick={() => setPanelOpen(false)} />);
-
-  const branchIntoWorktree = async (message: ChatMessage) => {
-    const cwd = projectCwd();
-
-    if (!cwd || isBranching()) return;
-    const target = { cwd, hostId: activeHostId(), message, transport: transport() };
-    const finish = beginBranching();
-
-    try { await createWorktree(target, crypto.randomUUID().slice(0, 8)); }
-    catch (reason) { addNotice({ title: "Could not branch conversation", message: String(reason) }); }
-    finally { finish(); }
-  };
 
   const renderMobileSidebarToggle = () => <button type="button" class="mobile-sidebar-toggle" aria-label="Toggle conversations" aria-expanded={mobileSidebarOpen()} onClick={() => { if (canLeaveSettings()) { const open = !mobileSidebarOpen(); setView("chat"); setPanelOpen(open); } }}>☰</button>;
 
@@ -82,15 +63,15 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
 
       if (canLeaveSettings()) setView("chat"); }}>{view() === "settings" ? <ArrowLeft size={19} /> : <Settings size={19} />}</IconButton>{isMobile && <IconButton label="Host" onClick={() => { window.dispatchEvent(new Event("piop-mobile-disconnect")); }}><Server size={18} /></IconButton>}{panelOpen() && view() === "chat" && renderMobileSidebarToggle()}</nav>);
 
-    const renderSessionPanel = () => (view() === "chat" && panelOpen() && <Show when={archivesOpen()} fallback={<SessionPanel transport={transport()} settings={required(settings())} isArchiving={isArchiving} debug={settings()?.debugMode} sidebar={sidebar} activeId={activeConversationKey().slice(activeHostId().length + 1)} activeHostId={activeHostId()} runningSessions={runningSessions()} unseenSessions={unseenSessions()} query={query()} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} onNewChat={(group) => { const owner = transport(); void resolveBranchGroup(group).then((target) => { if (transport() === owner) return startNewSession(false, target); }).catch((reason) => addNotice({ title: "Could not open branch", message: String(reason) })); }} onCreateWorktree={(cwd, hostId) => setWorktreeTarget({ cwd, hostId, transport: transport() })} onDeleteWorktree={deleteWorktree} createGroupRequest={createGroupRequest()} onCreateGroupHandled={handleCreateGroup} />}><ArchivedSessionPanel /></Show>);
+    const renderSessionPanel = () => (view() === "chat" && panelOpen() && <Show when={archivesOpen()} fallback={<SessionPanel transport={transport()} settings={required(settings())} isArchiving={isArchiving} debug={settings()?.debugMode} sidebar={sidebar} activeId={activeConversationKey().slice(activeHostId().length + 1)} activeHostId={activeHostId()} runningSessions={runningSessions()} unseenSessions={unseenSessions()} query={query()} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} onNewChat={(group) => void startNewSession(false, group)} createGroupRequest={createGroupRequest()} onCreateGroupHandled={handleCreateGroup} />}><ArchivedSessionPanel /></Show>);
     const renderUsageBadges = () => (<div class="rail-bottom">{opencodeGoBadge() && <LimitBadge clock={usageClock()} label="OpenCode Go" prefix="Go " go detail={required((opencodeGoBadge())).detail} remainingPercent={required((opencodeGoBadge())).window.remainingPercent} resetAt={required((opencodeGoBadge())).window.resetAt} />}{codexUsage() !== undefined && <LimitBadge clock={usageClock()} label="Codex" remainingPercent={required((codexUsage())).remainingPercent} resetAt={required((codexUsage())).resetAt} />}</div>);
 
-    return (<ResizableSidebar compact={view() === "settings" || !panelOpen()}><div class="rail-branch" classList={{ "custom-label": __PIOP_CUSTOM_DEVELOPMENT_LABEL__ }} data-tooltip={`piop development branch: ${__PIOP_DEVELOPMENT_BRANCH__}`}><GitBranch size={13} /><span>{__PIOP_DEVELOPMENT_BRANCH__}</span></div>{renderNavigation()}{renderSessionPanel()}{renderUsageBadges()}</ResizableSidebar>);
+    return (<ResizableSidebar compact={view() === "settings" || !panelOpen()}>{renderNavigation()}{renderSessionPanel()}{renderUsageBadges()}</ResizableSidebar>);
   };
 
   const renderChatWorkspace = () => {
     const renderChatPanes = () => {
-      const renderChatView = () => (<Rerun on={chatViewKey}>{(_key) => <ChatView transcriptActions={pluginPane.button()} agentHostLabel={activeHostId() === "local" ? "Local" : required(settings()).hosts.find(host => host.id === activeHostId())?.name ?? activeHostId()} transport={transport()}  state={composerControls.state(chatSession().state)} messages={chatSession().messages} debug={required((settings())).debugMode} {...chatAgentProps()} models={chatModels()} commands={chatCommands()} thinkingLevels={composerControls.thinkingLevels(chatSession().thinkingLevels)} widgets={chatWidgets()} statuses={composerControls.statuses(extensionStateIsCurrent() ? statuses() : {})} projectCwd={projectCwd()} controlsDisabled={!connected() || !drafts.loaded()} draft={composerState().composerDraft} onDraftChange={draftChangeFor(activeConversationKey(), transport())} focusRequest={mainComposerFocusRequest()} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={uploadsChangeFor(transport())} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => toggleComposerTerminal("main", { sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() })} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onProjectBranch={(cwd) => openProject(cwd, activeHostId(), true)} onBranch={branch} canRollback={sessions().some(session => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId() && session.projectKind === "worktree")} onForkAndForget={forkAndForget} onCreateWorktree={isGitRepository() && projectCwd() ? (message) => void branchIntoWorktree(message) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => transport().promptControls.toggle(composerControls.statuses(statuses()))} onThinking={setThinking} />}</Rerun>);
+      const renderChatView = () => (<Rerun on={chatViewKey}>{(_key) => <ChatView transcriptActions={pluginPane.button()} agentHostLabel={activeHostId() === "local" ? "Local" : required(settings()).hosts.find(host => host.id === activeHostId())?.name ?? activeHostId()} transport={transport()}  state={composerControls.state(chatSession().state)} messages={chatSession().messages} debug={required((settings())).debugMode} {...chatAgentProps()} models={chatModels()} commands={chatCommands()} thinkingLevels={composerControls.thinkingLevels(chatSession().thinkingLevels)} widgets={chatWidgets()} statuses={composerControls.statuses(extensionStateIsCurrent() ? statuses() : {})} projectCwd={projectCwd()} controlsDisabled={!connected() || !drafts.loaded()} draft={composerState().composerDraft} onDraftChange={draftChangeFor(activeConversationKey(), transport())} focusRequest={mainComposerFocusRequest()} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={uploadsChangeFor(transport())} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => toggleComposerTerminal("main", { sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() })} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onForkAndForget={forkAndForget} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => transport().promptControls.toggle(composerControls.statuses(statuses()))} onThinking={setThinking} />}</Rerun>);
 
       const renderSplitChatPane = () => (<Show when={splitPane()}><Rerun on={() => splitPane()?.key}>{(_key) => {
         const pane = required(splitPane());
@@ -158,12 +139,11 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
     {<Key each={notices()} by={(notice) => notice.id}>{(notice, _index) => <div class="error-toast" role="alert" ><strong>{notice().title}</strong><span>{notice().message}</span><button aria-label={`Dismiss ${notice().title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice().id))}>×</button></div>}</Key>}
   </div></Show>);
 
-  const renderExtensionDialog = () => (activeDialog() && !missingDirectoryDialog() && !projectOpen() && !renameSession() && !worktreeTarget() && <Rerun on={() => activeDialog()?.queueId}>{(_key) => <ExtensionDialog request={required(activeDialog()).request} owner={required(activeDialog()).owner} onRespond={async (response) => {
+  const renderExtensionDialog = () => (activeDialog() && !missingDirectoryDialog() && !projectOpen() && !renameSession() && <Rerun on={() => activeDialog()?.queueId}>{(_key) => <ExtensionDialog request={required(activeDialog()).request} owner={required(activeDialog()).owner} onRespond={async (response) => {
     const capturedActiveDialog = required(activeDialog());
     await capturedActiveDialog.transport.command({ type: "extension_ui_response", id: capturedActiveDialog.request.id, ...response }); setDialogs((current) => current.filter((item) => item !== capturedActiveDialog)); }} />}</Rerun>);
 
   const renderProjectDialog = () => (projectOpen() && <ProjectDialog localEnabled={settings()?.localEnabled} initialPath={projectCwd() ?? ""} hosts={required((settings())).hosts.filter((host) => host.enabled !== false)} initialHostId={activeHostId()} onHomeDirectory={resolveHomeDirectory} onChooseDirectory={(currentPath, hostId) => transport().listDirectories(hostId, currentPath || undefined)} onOpen={openProject} onCancel={() => { projectOpenRef.current = false; setProjectOpen(false); }} />);
-  const renderWorktreeDialog = () => (worktreeTarget() && <WorktreeDialog projectPath={required((worktreeTarget())).cwd} fromProject={!required((worktreeTarget())).message} beforePrompt={required((worktreeTarget())).message?.role === "user"} onCancel={() => setWorktreeTarget(undefined)} onCreate={(name, onSetup) => createWorktree(required((worktreeTarget())), name, onSetup)} />);
   const renderSubagentFind = () => subagentPane() && <FindInPage selector=".subagent-pane .chat-shell" scopeKey={`${required(subagentPane()).hostId}:${required(subagentPane()).sessionId}`} onActivate={() => setActivePane("split")} active={activePane() === "split"} enabled={view() === "chat"} />;
 
   const renderMissingDirectoryDialog = () => missingDirectoryDialog() && <Rerun on={() => missingDirectoryDialog()}>{() => <MissingDirectoryDialog request={required(missingDirectoryDialog())} />}</Rerun>;
@@ -195,7 +175,6 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
       if (response.value === undefined || !hasVisibleText(response.value)) throw new Error("Conversation name can't be empty"); const name = response.value.trim(); await required((capturedRenameSession)).transport.connect(); await required((capturedRenameSession)).transport.command({ type: "set_session_name", name });
 
       if (required((capturedRenameSession)).session.id === capturedSession.state.sessionId && (required((capturedRenameSession)).session.hostId ?? "local") === capturedActiveHostId) capturedSession.setState((current) => ({ ...current, sessionName: name })); await syncSessionIndex(); setRenameSession(undefined); }} />}</Rerun>}
-    {renderWorktreeDialog()}
     {renderMissingDirectoryDialog()}
   </div>)}</SubagentNavigationContext.Provider>;
 }

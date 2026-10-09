@@ -41,7 +41,7 @@ function polling(command: string) {
     || /^tail\s+.*(?:-f|--follow)\b/.test(command)
     || /^(?:rg|grep)\b.*\s(?:-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)(?:\s|$)/.test(command)
     || /^(?:curl|wget)\s+.*\/(?:healthz?|readyz?|status)(?:[/?\s"']|$)/.test(command)
-    || /^(?:git\s+(?:status|diff)|gh\s+(?:run|pr)\s+(?:view|watch|checks)|kubectl\s+(?:get|wait)|ps|pgrep)(?:\s|$)/.test(command);
+    || /^(?:gh\s+(?:run|pr)\s+(?:view|watch|checks)|kubectl\s+(?:get|wait)|ps|pgrep)(?:\s|$)/.test(command);
 }
 
 function shellSearch(command: string) {

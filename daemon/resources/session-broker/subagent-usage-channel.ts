@@ -100,7 +100,6 @@ async function updateChannel(path: string, sessionId: string, action: "claim" | 
   });
 }
 
-
 export async function claimUsageChannel(path: string, sessionId: string, port: number, token: string, scope?: { startedAt: number; offset?: number }) {
   const channel = { port, token, pid: process.pid, usageProtocol: 2, ...scope };
   let closed: Promise<void> | undefined;

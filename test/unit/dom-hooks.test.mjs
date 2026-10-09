@@ -168,11 +168,11 @@ describe('session group synchronization', () => {
   });
 
   test('session seeds are stable, sorted by host/id and omit temporary chats', async () => {
-    const sessions = [{ id: 'b', cwd: '/repo/worktree', projectRoot: '/repo', project: 'fallback', hostId: 'remote', hostName: 'Remote', projectKind: 'worktree', messageCount: 1 }, { id: 'a', cwd: '/local', project: 'Local', messageCount: 1, projectKind: 'main' }, { id: 'temp', cwd: '/.piop/tmp/12345678-1234-4123-8123-123456789abc' }];
+    const sessions = [{ id: 'b', cwd: '/repo/folder', project: 'folder', hostId: 'remote', hostName: 'Remote', messageCount: 1 }, { id: 'a', cwd: '/local', project: 'Local', messageCount: 1 }, { id: 'temp', cwd: '/.piop/tmp/12345678-1234-4123-8123-123456789abc' }];
     const hook = await mount(sessions);
     const seeds = calls[0].args.seeds;
     assert.deepEqual(seeds.map(seed => seed.sessionKey), ['local:a', 'remote:b']);
-    assert.equal(seeds[1].project.name, 'repo'); assert.equal(seeds[1].project.cwd, '/repo'); assert.equal(seeds[1].project.hostName, 'Remote');
+    assert.equal(seeds[1].project.name, 'folder'); assert.equal(seeds[1].project.cwd, '/repo/folder'); assert.equal(seeds[1].project.hostName, 'Remote');
     assert.equal(seeds[0].project.hostName, 'Local');
     await hook.rerender([...sessions].reverse()); assert.equal(calls.length, 1);
     assert.deepEqual(hook.current.state, empty);

@@ -125,7 +125,7 @@ describe('session runtime pool', () => {
 
   test('user prompts update retained session summaries while preserving project details', async () => {
     const client = pool.create({ cwd: '/repo' });
-    pool.setLiveSession(client, { ...session, projectKind: 'main', projectRoot: '/repo', cwdExists: true, apiCost: 2, messageCount: 4, name: 'Previous' });
+    pool.setLiveSession(client, { ...session, cwdExists: true, apiCost: 2, messageCount: 4, name: 'Previous' });
     const id = await connect(client);
     const text = 'a'.repeat(80);
     await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -133,7 +133,6 @@ describe('session runtime pool', () => {
     const current = pool.liveSessionSummaries()[0];
     assert.equal(current.name, text.slice(0, 60));
     assert.equal(current.preview, text);
-    assert.equal(current.projectKind, 'main');
     assert.equal(current.messageCount, 4);
     assert.equal(current.apiCost, 2);
     await pool.remove(session);

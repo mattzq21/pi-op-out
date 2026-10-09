@@ -21,7 +21,6 @@ fn requires_idle_source(session: &Session, command: &Value) -> bool {
 }
 
 pub(super) async fn switch(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: Value) -> Result<Value> {
-    if kind(&command) == "branch_checkpoint" { return session.raw(command).await; }
     switch_destination(host, session, runtime, command).await
 }
 

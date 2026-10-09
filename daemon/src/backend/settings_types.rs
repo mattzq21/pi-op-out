@@ -29,8 +29,6 @@ pub(super) struct AppSettings {
     pub(super) dictation_model_path: Option<String>,
     #[serde(default = "default_true")]
     pub(super) local_enabled: bool,
-    #[serde(default)]
-    pub(super) worktree_setup_scripts: Vec<WorktreeSetupScript>,
     #[serde(default = "default_agent")]
     pub(super) default_agent: String,
     pub(super) default_model: String,
@@ -57,18 +55,6 @@ pub(super) struct AppSettings {
     pub(super) hosts: Vec<RemoteHost>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct WorktreeSetupScript {
-    pub(super) id: String, pub(super) name: String, pub(super) script: String, pub(super) enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) cleanup_script: Option<String>,
-    #[serde(default)]
-    pub(super) project_path: Option<String>,
-    #[serde(default)]
-    pub(super) host_id: Option<String>,
-}
-
 pub(super) fn default_pi_path() -> String { "pi".into() }
 pub(super) fn default_context_window_cap() -> u64 { 300_000 }
 pub(super) fn default_context_window_cap_enabled() -> bool { true }
@@ -89,7 +75,6 @@ pub(super) fn default_settings() -> AppSettings {
         review_prompt: default_review_prompt(),
         dictation_model_path: None,
         local_enabled: true,
-        worktree_setup_scripts: vec![],
         default_agent: default_agent(),
         default_fast_mode: false,
          default_model: DEFAULT_MODEL.into(), hidden_models: vec![], known_models: None, default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), context_window_cap_enabled: default_context_window_cap_enabled(), auto_retry: true, debug_mode: false, keybindings: default_keybindings(),

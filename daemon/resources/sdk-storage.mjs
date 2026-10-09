@@ -33,7 +33,7 @@ function registerExternalTranscript(root, transcript, sessionId) {
   const file = storagePath.resolve(transcript);
   const relative = storagePath.relative(root, file);
 
-  if (["sessions", "archived", "fork-transactions", "fork-preparations"].some(area => relative.startsWith(area + storagePath.sep))) return;
+  if (["sessions", "archived"].some(area => relative.startsWith(area + storagePath.sep))) return;
   const databasePath = storagePath.join(root, "sessions.sqlite");
   storageFs.closeSync(storageFs.openSync(databasePath, "a", 0o600));
   const database = new StorageDatabase(databasePath);
@@ -109,7 +109,7 @@ function registerManagedPath(database, sessionId, file) {
 
 function textGoalReferences(text, root, found) {
   const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`^${escaped}/(?:sessions|archived|fork-transactions|fork-preparations)/(?:[^\\r\\n]*?/)?attachments/goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})(?![A-Za-z0-9_-])`);
+  const pattern = new RegExp(`^${escaped}/(?:sessions|archived)/(?:[^\\r\\n]*?/)?attachments/goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})(?![A-Za-z0-9_-])`);
   const prefix = root + "/";
   let start = text.indexOf(prefix);
 

@@ -7,7 +7,7 @@ import { changeSessionGroups, loadSessionGroups } from "./nativeTransport";
 import { listen } from "./platform";
 import { cacheSessionGroups, restoreSessionGroups } from "./sessionGroupsCache";
 
-export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; branch?: string; }
+export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; }
 
 export const DIRLESS_KEY = "__pi-desktop-dirless__";
 
@@ -15,9 +15,7 @@ export interface SessionGroups { groups: SessionGroup[]; assignments: Record<str
 
 export interface SessionGroupSeed { sessionKey: string; project: SessionGroup; }
 
-
-
-export type GroupChange = { type: "relocate"; project: SessionGroup; key: string } | { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "inspectProject"; id: string; projectKind: "no-repo" | "main" | "worktree" } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
+export type GroupChange = { type: "relocate"; project: SessionGroup; key: string } | { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
 
 export function isTemporaryChatCwd(cwd: string) {
   return /(?:^|[\\/])\.piop(?:-dev)?[\\/]tmp[\\/][0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}[\\/]?$/i.test(cwd);
@@ -61,40 +59,27 @@ function enqueue<T>(work: () => Promise<T>): Promise<T> {
   return result;
 }
 
-export function firstOrderBranch(session: SessionSummary) {
-  const branch = session.branch;
-
-  if (!branch || branch.startsWith("Detached at ")) return undefined;
-  const separator = branch.indexOf("|");
-
-  return separator === -1 ? branch : branch.slice(0, separator);
-}
-
-export function branchGroupId(session: SessionSummary) {
-  const project = `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`;
-  const branch = firstOrderBranch(session);
-
-  return branch ? `${project}#branch=${encodeURIComponent(branch)}` : project;
+export function projectGroupId(session: SessionSummary) {
+  return `${session.hostId ?? "local"}:${session.cwd}`;
 }
 
 function sessionGroupSeed(session: SessionSummary): SessionGroupSeed {
   const hostId = session.hostId ?? "local";
-  const cwd = session.projectRoot ?? session.cwd;
-  const projectKind = session.projectRoot && session.projectRoot !== session.cwd && session.projectKind === "worktree" ? "main" : session.projectKind;
+  const cwd = session.cwd;
 
   return {
     sessionKey: `${hostId}:${session.id}`,
-    project: { id: branchGroupId(session), name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd, hostId, hostName: session.hostName ?? session.hostId ?? "Local", projectKind, branch: firstOrderBranch(session) },
+    project: { id: projectGroupId(session), name: session.project, cwd, hostId, hostName: session.hostName ?? session.hostId ?? "Local" },
   };
 }
 
 function sessionGroupSeedInputs(session: SessionSummary) {
-  return [session.id, session.hostId, session.cwd, session.projectRoot, session.project, session.hostName, session.projectKind, session.branch];
+  return [session.id, session.hostId, session.cwd, session.project, session.hostName];
 }
 
 function sessionGroupSeeds(sessions: Accessor<SessionSummary[]>) {
   return createMemo((previous: { inputs: ReturnType<typeof sessionGroupSeedInputs>[]; json: string } | undefined) => {
-    const eligible = sessions().filter(session => !session.isDraft && session.messageCount > 0 && session.projectKind != null && !isTemporaryChatCwd(session.cwd));
+    const eligible = sessions().filter(session => !session.isDraft && session.messageCount > 0 && !isTemporaryChatCwd(session.cwd));
     const inputs = eligible.map(sessionGroupSeedInputs);
 
     if (previous && inputs.length === previous.inputs.length && inputs.every((input, index) => input.every((value, field) => value === previous.inputs[index][field]))) return previous;

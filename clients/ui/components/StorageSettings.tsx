@@ -5,36 +5,29 @@ import { Dynamic } from "solid-js/web";
 import { DeleteArchivesDialog } from "./DeleteArchivesDialog";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
-import { Archive, Database, FolderClock, GitBranch, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
-import { deleteArchivedConversations, loadStorageReport, openGroupDirectory, restoreArchivedWorktree } from "../lib/nativeTransport";
+import { Archive, Database, FolderClock, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
+import { deleteArchivedConversations, loadStorageReport, openGroupDirectory } from "../lib/nativeTransport";
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport, StorageRoot } from "../types";
 
 const categoryDetails: Record<StorageCategory["id"], { name: string; description: string; icon: typeof Archive; item: string }> = {
   "active-conversations": { name: "Conversations", description: "Saved chats", icon: MessageSquare, item: "conversation" },
   "archived-conversations": { name: "Conversations", description: "Saved chats", icon: MessageSquare, item: "conversation" },
-  "project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects with readable active or side conversation owners", icon: GitBranch, item: "ref" },
-  "archived-project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects retained only by archived session checkpoints", icon: GitBranch, item: "ref" },
   "temporary-chats": { name: "No-project workdirs", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
-  "worktrees": { name: "Managed worktrees", description: "Working copies in Piop’s allocation namespace", icon: GitBranch, item: "worktree" },
-  "archived-worktrees": { name: "No-project workdirs", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
   "other-storage": { name: "Other storage", description: "Settings, caches, logs, and other piop files", icon: HardDrive, item: "file" },
-  "referenced-worktrees": { name: "Referenced user worktrees", description: "Ownership unproven · excluded from Piop’s total", icon: GitBranch, item: "worktree" },
   "recovery-storage": { name: "Managed recovery", description: "Durable recovery containers with ownership records", icon: FolderClock, item: "recovery" },
   "unattributed-recovery-storage": { name: "Unresolved recovery storage", description: "Loose recovery files or unverified ownership records", icon: ShieldAlert, item: "recovery" },
   "legacy-recovery-storage": { name: "Legacy temporary recovery", description: "Temporary recovery candidates and retained migration sources", icon: FolderClock, item: "directory" },
   "chatgpt-storage": { name: "ChatGPT storage", description: "Stored chats and support files across auth-directory accounts", icon: MessageSquare, item: "chat" },
   "goal-attachments": { name: "Goal assets", description: "Objective files and attachments owned by surviving history and forks", icon: Archive, item: "asset directory" },
   "unattributed-goal-attachments": { name: "Unattributed goal assets", description: "No readable surviving owner found · ownership unresolved", icon: ShieldAlert, item: "asset directory" },
-  "unattributed-project-checkpoints": { name: "Unattributed checkpoints", description: "Refs without a readable active or archived conversation owner", icon: ShieldAlert, item: "ref" },
 };
 
 const storageSections: { title: string; categories: StorageCategory["id"][] }[] = [
   { title: "General and shared history", categories: ["other-storage", "chatgpt-storage", "goal-attachments"] },
-  { title: "Active sessions", categories: ["active-conversations", "project-checkpoints"] },
-  { title: "Archived sessions", categories: ["archived-conversations", "archived-project-checkpoints", "archived-worktrees"] },
-  { title: "Managed directories", categories: ["worktrees", "temporary-chats", "recovery-storage"] },
-  { title: "Unresolved and temporary storage", categories: ["unattributed-project-checkpoints", "unattributed-recovery-storage", "legacy-recovery-storage", "unattributed-goal-attachments"] },
-  { title: "Referenced user storage", categories: ["referenced-worktrees"] },
+  { title: "Active sessions", categories: ["active-conversations"] },
+  { title: "Archived sessions", categories: ["archived-conversations"] },
+  { title: "Managed directories", categories: ["temporary-chats", "recovery-storage"] },
+  { title: "Unresolved and temporary storage", categories: ["unattributed-recovery-storage", "legacy-recovery-storage", "unattributed-goal-attachments"] },
 ];
 
 function formatBytes(bytes: number) {
@@ -72,7 +65,7 @@ function countedBytes(category: StorageCategory) { return category.includedInTot
 function rootDetails(root: StorageRoot) {
   const owners = root.owners.map(owner => `${owner.sessionId} (${owner.kind})${owner.sessionPath ? ` — ${owner.sessionPath}` : ""}`).join("; ");
 
-  return <div><strong>{root.path}</strong><small>{root.ownership} · {root.available ? "Available" : "Unavailable; size incomplete"}{root.state ? ` · ${root.state}` : ""}</small><small>{root.provenance.join(" · ")}</small><small>{owners || "No verified conversation owners reported"}</small>{root.refs?.length && <small>{root.refs.join("; ")}</small>}</div>;
+  return <div><strong>{root.path}</strong><small>{root.ownership} · {root.available ? "Available" : "Unavailable; size incomplete"}{root.state ? ` · ${root.state}` : ""}</small><small>{root.provenance.join(" · ")}</small><small>{owners || "No verified conversation owners reported"}</small></div>;
 }
 
 function coverageDetails(category: StorageCategory) {
@@ -162,27 +155,9 @@ export function StorageSettings(componentProps: { hostId?: string }) {
   const deleteOne = (host: HostStorage, archive: ArchivedConversation) => {
     if (!archive.deletable) return;
 
-    if (!window.confirm(`Permanently delete “${archive.name}” and its attached reviews and subagents? Their project checkpoint refs, and any archived directory no other chat uses will also be removed. Forks and branch-offs will be kept.`)) return;
+    if (!window.confirm(`Permanently delete “${archive.name}” and its attached reviews and subagents? Any archived directory no other chat uses will also be removed. Forks will be kept.`)) return;
 
     void removeArchives(host, [archive]);
-  };
-
-  const changeWorktree = async (host: HostStorage, archive: ArchivedConversation) => {
-    const key = archiveKey(host, archive);
-    setDeleting((current) => new Set([...current, key]));
-    setError(undefined);
-    let failure: string | undefined;
-
-    try {
-      await restoreArchivedWorktree(archive.path, host.hostId);
-    } catch (reason) { failure = reason instanceof Error ? reason.message : String(reason); }
-    finally { setDeleting((current) => { const next = new Set(current); next.delete(key);
-
-        return next; }); }
-
-    await refresh();
-
-    if (failure) setError(failure);
   };
 
   const deleteAll = (host: HostStorage) => {
@@ -198,7 +173,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
       setArchiveDeletion(undefined);
       void removeArchives(selected.host, selected.archives);
     }} />}</Show>
-    <div class="section-title"><div><h2>Storage</h2><p>Measured storage and Git object estimates on each machine. Referenced user worktrees are excluded from totals. Discovery does not authorize cleanup; reclaimable space depends on surviving owners.</p></div><button class="storage-refresh" disabled={loading() || deleting().size > 0} onClick={() => void refresh()}><RefreshCw size={14} class={loading() ? "spinning" : ""} />{loading() ? "Scanning…" : "Refresh"}</button></div>
+    <div class="section-title"><div><h2>Storage</h2><p>Storage used on each machine.</p></div><button class="storage-refresh" disabled={loading() || deleting().size > 0} onClick={() => void refresh()}><RefreshCw size={14} class={loading() ? "spinning" : ""} />{loading() ? "Scanning…" : "Refresh"}</button></div>
     {error() && <div class="storage-error" role="alert">{(error())}</div>}
     {!report() && loading() && <div class="storage-loading" role="status"><HardDrive size={20} />Scanning storage…</div>}
     {<Key each={report()?.hosts} by={host => host.hostId}>{(host, _index) => {
@@ -243,7 +218,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
           const estimated = createMemo(() => categories().some((category) => category.estimated && category.byteSize > 0));
 
           return <section class="storage-group" aria-label={section.title}>
-            <div class="storage-group-heading"><h3>{section.title}</h3><code>{section.title === "Referenced user storage" ? "Excluded from total" : `${estimated() ? "~" : ""}${formatBytes(subtotal())}`}</code></div>
+            <div class="storage-group-heading"><h3>{section.title}</h3><code>{`${estimated() ? "~" : ""}${formatBytes(subtotal())}`}</code></div>
             {renderCategories(categories())}
             {section.title === "Archived sessions" && <>
               <div class="archive-heading"><span><strong>Archived conversations</strong><small>{host().archives.length ? `${host().archives.length} stored on ${host().hostName}` : `No archives on ${host().hostName}`}</small></span>{deletableArchives().length > 1 && <button class="storage-delete-all" disabled={deleting().size > 0 || loading()} onClick={() => deleteAll(host())}><Trash2 size={13} />{deletableArchives().length === host().archives.length ? "Delete all" : "Delete available"}</button>}</div>
@@ -254,13 +229,9 @@ export function StorageSettings(componentProps: { hostId?: string }) {
                 const renderArchiveDetails = () => (<span><strong>{name()}</strong><small>{archive().deletable ? `${z.string().catch("").parse(archive().cwd)} · ${formatDate(archive().modifiedAt)}` : `Cleanup unavailable · ${archive().deleteError}`}</small><small data-tooltip={archive().byteSizeCoverage ?? "Chat file size only; other saved files and shared assets are excluded. Freed disk space is unknown."}>Chat file only · logical size · freed space unknown</small></span>);
                 const renderArchiveDelete = () => (<button aria-label={archive().deletable ? `Permanently delete ${name()}` : `Cannot safely delete ${name()}: ${archive().deleteError}`} disabled={!archive().deletable || deleting().size > 0 || loading()} onClick={() => deleteOne(host(), archive())}>{!archive().deletable ? <ShieldAlert size={14} /> : pending() ? <RefreshCw size={14} class="spinning" /> : <Trash2 size={14} />}</button>);
 
-                const renderWorktreeAction = () => ((!archive().worktreePath && archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : "Restore conversation"}</button>);
-
                 return <div class={`archive-row${archive().deletable ? "" : " cleanup-unavailable"}`}  data-tooltip={archive().deleteError || archive().path}>
                   {renderArchiveDetails()}
                   <code>{formatBytes(Number(archive().byteSize) || 0)}</code>
-                  {renderWorktreeAction()}
-                  {archive().restoreError && <small role="status">{archive().restoreError}</small>}
                   {renderArchiveDelete()}
                 </div>;
               }}</Key>}</div>}

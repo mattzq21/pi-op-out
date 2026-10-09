@@ -29,5 +29,5 @@ export function agentEditsSnapshot(config?: AgentConfig) {
 }
 
 export const settingKeys: Array<keyof AppSettings> = [
-  "reviewAgent", "reviewPrompt", "dictationModelPath", "localEnabled", "worktreeSetupScripts", "defaultAgent", "defaultModel", "hiddenModels", "knownModels", "defaultThinking", "defaultFastMode", "contextWindowCap", "contextWindowCapEnabled", "autoRetry", "debugMode", "keybindings", "tools", "skills", "hosts",
+  "dictationModelPath", "localEnabled", "defaultAgent", "defaultModel", "hiddenModels", "knownModels", "defaultThinking", "defaultFastMode", "contextWindowCap", "contextWindowCapEnabled", "autoRetry", "debugMode", "keybindings", "tools", "skills", "hosts",
 ];

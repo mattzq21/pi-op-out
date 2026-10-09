@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 #[path = "broker_output.rs"]
 mod output;
 use output::MessageOutput;
-use crate::{change_session_groups, stop_message_worker};
+use crate::stop_message_worker;
 use serde_json::json;
 use serde_json::Value;
 use std::fs;
@@ -26,9 +26,8 @@ use std::time::Instant;
 use std::time::SystemTime;
 use crate::platform::AppHandle;
 use uuid::Uuid;
-use crate::{AgentAddress, AppSettings, BROKER_BODY_BYTES, BROKER_HEADER_BYTES, BROKER_QUEUE_DEPTH, BROKER_WORKERS, MAX_AGENT_OUTPUT_BYTES, PiRuntime, ProjectKind, SessionIndexRuntime, SessionSummary, TerminalRuntime, conversation_ownership, peers, session_groups, terminal_lookup};
-use crate::git_ops::worktrees::{create_git_worktree, remove_git_worktree_cancellable};
-use crate::git_ops::worktree_setup::{WorktreeScriptPhase, ensure_desktop_sessions_dir, run_worktree_scripts, shell_quote};
+use crate::{AgentAddress, AppSettings, BROKER_BODY_BYTES, BROKER_HEADER_BYTES, BROKER_QUEUE_DEPTH, BROKER_WORKERS, MAX_AGENT_OUTPUT_BYTES, PiRuntime, SessionIndexRuntime, SessionSummary, TerminalRuntime, conversation_ownership, peers, terminal_lookup};
+use crate::process_io::{ensure_desktop_sessions_dir, shell_quote};
 use crate::pi_launch::{PiLaunch, build_pi_command};
 use crate::session_index::{collect_sessions, list_local_sessions};
 use crate::environment::home_dir;
@@ -68,31 +67,6 @@ pub(super) fn read_broker_line(reader: &mut BufReader<TcpStream>, remaining: &mu
     Ok(line)
 }
 
-fn broker_worktree_operation(broker: &BrokerRuntime, value: &Value, work: impl FnOnce(&AtomicBool) -> Result<Value, String>) -> Result<Value, String> {
-    let id = value["requestId"].as_str().filter(|id| Uuid::parse_str(id).is_ok()).ok_or("requestId is required")?;
-    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-    let deadline = value["deadline"].as_u64().unwrap_or(now).min(now + 120_000);
-    let cancelled = Arc::new(AtomicBool::new(deadline <= now));
-    {
-        let mut operations = broker.operations.lock().map_err(|_| "Broker operations unavailable")?;
-        if operations.contains_key(id) { return Err("Worktree operation already running".into()); }
-        operations.insert(id.into(), cancelled.clone());
-    }
-    if broker.cancelled.lock().map_err(|_| "Broker cancellation unavailable")?.contains(id) { cancelled.store(true, Ordering::SeqCst); }
-    let done = Arc::new(AtomicBool::new(false));
-    let finished = done.clone(); let flag = cancelled.clone(); let closing = broker.closing.clone();
-    thread::spawn(move || {
-        while !finished.load(Ordering::SeqCst) {
-            if closing.load(Ordering::SeqCst) || SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64 >= deadline { flag.store(true, Ordering::SeqCst); break; }
-            thread::sleep(Duration::from_millis(50));
-        }
-    });
-    let result = if cancelled.load(Ordering::SeqCst) { Err("Worktree operation cancelled".into()) } else { work(&cancelled) };
-    done.store(true, Ordering::SeqCst);
-    if let Ok(mut operations) = broker.operations.lock() { operations.remove(id); }
-    if let Ok(mut cancelled) = broker.cancelled.lock() { cancelled.remove(id); }
-    result
-}
 
 pub(super) fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream) -> Result<(), String> {
     let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
@@ -194,38 +168,12 @@ fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
         ("GET", "/agents") => {
             broker_agents(&app, &broker)
         },
-        ("POST", "/worktrees/create") => (|| {
-            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
-            let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
-            if host_id != "local" { return peers::forward_broker(&app, host_id, "/worktrees/create", value.clone()); }
-            let cwd = value["cwd"].as_str().ok_or("cwd is required")?;
-            let name = value["name"].as_str().ok_or("name is required")?;
-            broker_worktree_operation(&broker, &value, |cancelled| {
-            let settings = load_app_settings(app.clone())?;
-            let created = create_git_worktree(app.clone(), cwd.into(), name.into(), Some(host_id.into()))?;
-            let group = session_groups::SessionGroup { id: format!("{host_id}:{}", created.path), name: created.branch.clone(), cwd: Some(created.path.clone()), host_id: Some(host_id.into()), host_name: Some(settings.hosts.iter().find(|host| host.id == host_id).map(|host| host.name.clone()).unwrap_or_else(|| host_id.into())), project_kind: Some(ProjectKind::Worktree), branch: None };
-            let group_error = change_session_groups(app.clone(), session_groups::GroupChange::Project { project: group, key: None }).err();
-            let setup = run_worktree_scripts(&settings, cwd, &created.path, host_id, cancelled, WorktreeScriptPhase::Setup);
-            Ok(json!({"path":created.path,"branch":created.branch,"setupError":setup.err(),"groupError":group_error}))
-            })
-        })(),
-        ("POST", "/worktrees/remove") => (|| {
-            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
-            let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
-            if host_id != "local" { return peers::forward_broker(&app, host_id, "/worktrees/remove", value.clone()); }
-            let cwd = value["cwd"].as_str().ok_or("cwd is required")?;
-            broker_worktree_operation(&broker, &value, |cancelled| {
-            let removed = remove_git_worktree_cancellable(app.clone(), cwd.into(), Some(host_id.into()), value["deleteBranch"].as_bool().unwrap_or(false), cancelled)?;
-            serde_json::to_value(removed).map_err(|error| error.to_string())
-            })
-        })(),
         ("POST", "/cancel") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid cancellation request".to_string())?;
             let request_id = value.get("requestId").and_then(Value::as_str).filter(|value| Uuid::parse_str(value).is_ok()).ok_or("requestId is required")?;
             let mut cancelled = broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?;
             if cancelled.len() >= BROKER_QUEUE_DEPTH * 2 { cancelled.clear(); }
             cancelled.insert(request_id.to_string()); drop(cancelled);
-            if let Some(operation) = broker.operations.lock().map_err(|_| "Broker operations unavailable")?.get(request_id) { operation.store(true, Ordering::SeqCst); }
             peers::cancel_message(&app, request_id)?;
             let job = broker.jobs.lock().map_err(|_| "Broker job lock was poisoned")?.get(request_id).cloned();
             if let Some(job) = job { stop_locked_message(&job.child); }
@@ -437,7 +385,6 @@ pub(super) struct BrokerRuntime {
     pub(super) busy: Arc<Mutex<HashSet<String>>>,
     jobs: Arc<Mutex<HashMap<String, Arc<MessageJob>>>>,
     cancelled: Arc<Mutex<HashSet<String>>>,
-    operations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl Default for BrokerRuntime {
@@ -449,7 +396,6 @@ impl Default for BrokerRuntime {
             busy: Arc::new(Mutex::new(HashSet::new())),
             jobs: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
-            operations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -513,7 +459,6 @@ impl BrokerRuntime {
     pub(super) fn ensure_idle(&self) -> Result<(), String> {
         let active = *self.message_count.lock().map_err(|_| "Broker job count unavailable")? > 0
             || !self.jobs.lock().map_err(|_| "Broker jobs unavailable")?.is_empty()
-            || !self.operations.lock().map_err(|_| "Broker operations unavailable")?.is_empty()
             || !self.deliveries.lock().map_err(|_| "Broker deliveries unavailable")?.is_empty();
         if active { return Err("Wait for active broker requests to finish before restarting the daemon".into()); }
         Ok(())

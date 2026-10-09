@@ -5,8 +5,7 @@ import { Parse } from "typebox/value";
 import { resolveAgentProfile } from "./agent-profiles.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { currentHost, request } from "./client.ts";
-import { createdWorktreeSchema } from "./fork.ts";
+import { currentHost } from "./client.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { activeConversation } from "./conversation-location.ts";
 import { registerSubagentUsage } from "./subagent-usage.ts";
@@ -48,9 +47,7 @@ function requireDelegation(ctx: ExtensionContext) {
   return scope;
 }
 
-const worktreeChoice = Type.Union([Type.Literal("same"), Type.Literal("new")], { description: "Required for spawning: same shares the caller's working directory; new creates a separate Git worktree with the caller's current changes. Resumed children retain their original choice." });
-
-type SubagentTask = { task: string; name: string; agent?: string; sessionId?: string; fork_turns?: string; worktree?: "same" | "new" };
+type SubagentTask = { task: string; name: string; agent?: string; sessionId?: string; fork_turns?: string };
 
 function validateFork(task: SubagentTask) {
   const forkTurns = task.fork_turns ?? "none";
@@ -90,29 +87,15 @@ function inheritedHistory(ctx: ExtensionContext, task: SubagentTask) {
   return retained;
 }
 
-async function subagentWorkspace(ctx: ExtensionContext, task: SubagentTask, sessionId: string, signal?: AbortSignal) {
-  if (task.worktree === "same") return { cwd: ctx.cwd, worktree: task.worktree };
-
-  if (task.worktree !== "new") throw new Error("Choose worktree explicitly: same or new");
-  const name = `agent-${sessionId}`;
-  const created = Parse(createdWorktreeSchema, await request("/worktrees/create", { cwd: ctx.cwd, name, hostId: currentHost() }, signal, 600_000));
-
-  if (created.setupError) throw new Error(`Worktree retained at ${created.path} (${created.branch}), but setup failed: ${created.setupError}`);
-
-  return { cwd: created.path, worktree: task.worktree, branch: created.branch };
-}
-
 function resumeSubagent(runs: SubagentRun[], parentSessionId: string, task: SubagentTask, toolCallId: string): SubagentRun {
   if (task.agent) throw new Error("A resumed subagent keeps its original agent profile");
   const previous = runs.find(run => run.parentSessionId === parentSessionId && run.sessionId === task.sessionId && run.hostId === currentHost() && run.sessionPath);
 
   if (!previous) throw new Error("Only a child created by this conversation can be resumed");
 
-  if (task.worktree && task.worktree !== (previous.worktree ?? "same")) throw new Error("A resumed subagent keeps its original worktree choice; use followup_task or spawn a new child");
-
   return { version: 1, toolCallId, parentSessionId, sessionId: previous.sessionId, sessionPath: previous.sessionPath, hostId: previous.hostId,
     name: task.name, task: task.task, status: "running", startedAt: Date.now(), runId: randomUUID(), generation: (previous.generation ?? 0) + 1, submission: "prepared",
-    agent: previous.agent, taskPath: previous.taskPath, cwd: previous.cwd, worktree: previous.worktree, branch: previous.branch };
+    agent: previous.agent, taskPath: previous.taskPath, cwd: previous.cwd };
 }
 
 async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: SubagentTask, toolCallId: string, signal?: AbortSignal): Promise<SubagentRun> {
@@ -135,7 +118,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let retained = inheritedHistory(ctx, task);
-  const workspace = await subagentWorkspace(ctx, task, sessionId, signal);
+  const workspace = { cwd: ctx.cwd };
   const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, taskPath: `${scope.taskPath}/${task.name}`, agent: profile.active, status: "running", startedAt: Date.now(), runId: randomUUID(), submission: "prepared", ...workspace };
   let parentId: string | null = null;
   retained = retained.map(item => { const next = { ...item, parentId }; parentId = next.id;
@@ -152,8 +135,8 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
     entry({ type: "session_info", name: `Subagent: ${task.name}` }),
     entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath, max_subagents: subagentLimits(pi, ctx).max_sub_subagents } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
-  ], { dependencies: { workspace: { path: workspace.cwd, kind: workspace.worktree === "new" ? "created-worktree" : "existing", branch: workspace.branch } } }); }
-  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; publication dependencies and any created worktree are retained: ${String(error)}`, { cause: error }); }
+  ], { dependencies: { workspace: { path: workspace.cwd, kind: "existing" } } }); }
+  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; chat assets are retained: ${String(error)}`, { cause: error }); }
 
   return run;
 }
@@ -331,9 +314,9 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   pi.on("session_shutdown", unsubscribeTools);
   pi.registerTool({
     name: "spawn_agent", label: "Spawn agent", exposure: "model-only",
-    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. Profile choice is independent of fork_turns: none (default), all, or a positive number of recent user turns. Concurrent children are limited by the caller's max_subagents (default eight). A child is also capped by its parent's max_sub_subagents (default eight); zero disables delegation at that level. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. worktree is required: same shares files with the caller; new creates a separate Git worktree, copies current changes and runs configured setup. Created worktrees are retained. Final results start a new parent turn immediately if idle, or after the parent agent settles. Use followup_task for more work and send_message for updates. Finish your current run when waiting for mailbox delivery. Children are cancelled on parent close/switch and time out after ten minutes.",
-    parameters: Type.Object({ task_name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), message: Type.String({ minLength: 1, maxLength: 100_000 }), worktree: worktreeChoice, agent: Type.Optional(Type.String({ minLength: 1, description: "Exact configured profile name from list_agent_profiles; omit to inherit the caller" })), fork_turns: Type.Optional(Type.String()) }),
-    async execute(id, params, signal, _update, ctx) { return start({ name: params.task_name, task: params.message, agent: params.agent, fork_turns: params.fork_turns, worktree: params.worktree }, id, ctx, signal); },
+    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. Profile choice is independent of fork_turns: none (default), all, or a positive number of recent user turns. Concurrent children are limited by the caller's max_subagents (default eight). A child is also capped by its parent's max_sub_subagents (default eight); zero disables delegation at that level. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Children share the caller's working directory. Final results start a new parent turn immediately if idle, or after the parent agent settles. Use followup_task for more work and send_message for updates. Finish your current run when waiting for mailbox delivery. Children are cancelled on parent close/switch and time out after ten minutes.",
+    parameters: Type.Object({ task_name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), message: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1, description: "Exact configured profile name from list_agent_profiles; omit to inherit the caller" })), fork_turns: Type.Optional(Type.String()) }),
+    async execute(id, params, signal, _update, ctx) { return start({ name: params.task_name, task: params.message, agent: params.agent, fork_turns: params.fork_turns }, id, ctx, signal); },
   });
   pi.registerTool({
     name: "list_agents", label: "List child agents", exposure: "model-only", description: "List this parent's saved child sessions, task paths and current status. Returned paths (such as /root/child/grandchild), local task names and session IDs address children. Independent chats are listed by list_threads.",
@@ -344,8 +327,8 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
         const latest = latestRuns(ctx).find(item => item.sessionId === run.sessionId) ?? run;
         const status = snapshotStatus(snapshot);
 
-        return { sessionId: run.sessionId, task_name: taskPath(ctx, run), agent: run.agent, cwd: run.cwd, worktree: run.worktree, branch: run.branch, status: latest.status === "running" && status === "idle" ? "observing" : status, lastRunStatus: latest.status }; }
-        catch (error) { return { sessionId: run.sessionId, task_name: taskPath(ctx, run), cwd: run.cwd, worktree: run.worktree, branch: run.branch, status: "unavailable", error: String(error) }; }
+        return { sessionId: run.sessionId, task_name: taskPath(ctx, run), agent: run.agent, cwd: run.cwd, status: latest.status === "running" && status === "idle" ? "observing" : status, lastRunStatus: latest.status }; }
+        catch (error) { return { sessionId: run.sessionId, task_name: taskPath(ctx, run), cwd: run.cwd, status: "unavailable", error: String(error) }; }
       }));
 
       return { content: [{ type: "text", text: JSON.stringify(agents) }], details: { agents } };
@@ -365,7 +348,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     },
   });
   pi.registerTool({
-    name: "followup_task", label: "Follow up with agent", exposure: "model-only", description: "Give an existing child more work. Starts an idle child or steers a running child. Preserves the child's worktree, profile and history. Its final response is delivered through the parent mailbox.",
+    name: "followup_task", label: "Follow up with agent", exposure: "model-only", description: "Give an existing child more work. Starts an idle child or steers a running child. Preserves the child's directory, profile and history. Its final response is delivered through the parent mailbox.",
     parameters: Type.Object({ target: Type.String(), message: Type.String({ minLength: 1, maxLength: 100_000 }) }),
     async execute(id, params, signal, _update, ctx) {
       const run = targetRun(ctx, params.target);
@@ -553,8 +536,8 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   pi.registerTool({
     name: "subagent", label: "Subagents",
     exposure: "model-only",
-    description: "Delegate 1–8 independent tasks per call in the background, subject to the caller's max_subagents and the parent's max_sub_subagents concurrency limits (both default eight; zero disables delegation). Returns child session IDs once created, without waiting for results. Completion or failure starts a new parent turn immediately if idle, or after the parent agent settles. Continue independent work while children run; finish your current run when waiting for mailbox delivery. Call await_subagents to wait until all children finish. Each child has a fresh context, a saved transcript visible in piop, and an explicit worktree choice: same shares files with the caller; new creates a separate Git worktree, copies current changes and runs configured setup. Created worktrees are retained. Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
-    parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1, maxLength: 120 }), task: Type.String({ minLength: 1, maxLength: 100_000 }), worktree: worktreeChoice, agent: Type.Optional(Type.String({ minLength: 1 })), sessionId: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 8 }) }),
+    description: "Delegate 1–8 independent tasks per call in the background, subject to the caller's max_subagents and the parent's max_sub_subagents concurrency limits (both default eight; zero disables delegation). Returns child session IDs once created, without waiting for results. Completion or failure starts a new parent turn immediately if idle, or after the parent agent settles. Continue independent work while children run; finish your current run when waiting for mailbox delivery. Call await_subagents to wait until all children finish. Each child has a fresh context, a saved transcript visible in piop, and shares the caller's working directory. Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
+    parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1, maxLength: 120 }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })), sessionId: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 8 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
 

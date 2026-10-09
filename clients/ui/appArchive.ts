@@ -101,7 +101,7 @@ export function createConversationArchive(context: ArchiveContext) {
     };
 
     const connectArchiveReplacement = async (hostId: string, conversationKey: string) => {
-      let replacementCwd = session.projectRoot || ownerTransport.currentCwd();
+      let replacementCwd = session.cwd || ownerTransport.currentCwd();
       const temporary = temporaryConversation(ownerTransport, session);
 
       if (replacementCwd && !temporary) {

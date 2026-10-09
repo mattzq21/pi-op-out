@@ -16,17 +16,17 @@ export type ContentPart = ImageAttachment | { type: "text"; text: string } | { t
 
 export interface ChatMessage { deliveryBehavior?: "steer" | "followUp"; id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred"; errorMessage?: string; toolName?: string; toolInput?: unknown; toolStatus?: "running" | "done" | "error"; promptContext?: PromptContextInfo; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
 
-export interface SessionSummary { id: string; isDraft?: boolean; subagentParentId?: string; daemonId?: string; isRunning?: boolean; groupId?: string | null; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; projectRoot?: string | null; branch?: string | null; worktreeRoot?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; preview: string; messageCount: number; lastMessageAt: number; apiCost: number; hostId?: string; hostName?: string; }
+export interface SessionSummary { id: string; isDraft?: boolean; subagentParentId?: string; daemonId?: string; isRunning?: boolean; groupId?: string | null; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; preview: string; messageCount: number; lastMessageAt: number; apiCost: number; hostId?: string; hostName?: string; }
 
 export type StorageOwnership = "owned" | "referenced" | "shared" | "unattributed";
 
 export interface StorageOwner { sessionId: string; sessionPath?: string; kind: string; }
 
-export interface StorageRoot { path: string; ownership: StorageOwnership; provenance: string[]; available: boolean; owners: StorageOwner[]; state?: string; refs?: string[]; }
+export interface StorageRoot { path: string; ownership: StorageOwnership; provenance: string[]; available: boolean; owners: StorageOwner[]; state?: string; }
 
-export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "archived-project-checkpoints" | "project-checkpoints" | "temporary-chats" | "worktrees" | "archived-worktrees" | "other-storage" | "referenced-worktrees" | "recovery-storage" | "unattributed-recovery-storage" | "legacy-recovery-storage" | "chatgpt-storage" | "goal-attachments" | "unattributed-goal-attachments" | "unattributed-project-checkpoints"; byteSize: number; itemCount: number; estimated?: boolean; directories?: string[]; countUnit?: string; coverage?: string; ownership?: StorageOwnership; reclaimability?: "retained" | "requires-owner-check" | "unknown"; measurement?: "allocated-blocks" | "git-object-estimate"; includedInTotal?: boolean; roots?: StorageRoot[]; }
+export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "temporary-chats" | "other-storage" | "recovery-storage" | "unattributed-recovery-storage" | "legacy-recovery-storage" | "chatgpt-storage" | "goal-attachments" | "unattributed-goal-attachments"; byteSize: number; itemCount: number; estimated?: boolean; directories?: string[]; countUnit?: string; coverage?: string; ownership?: StorageOwnership; reclaimability?: "retained" | "requires-owner-check" | "unknown"; measurement?: "allocated-blocks"; includedInTotal?: boolean; roots?: StorageRoot[]; }
 
-export interface ArchivedConversation { id: string; path: string; name: string; cwd: string; modifiedAt: number; byteSize: number; deletable: boolean; deleteError?: string; worktreePath?: string; restorable?: boolean; restoreError?: string; byteSizeCoverage?: string; }
+export interface ArchivedConversation { id: string; path: string; name: string; cwd: string; modifiedAt: number; byteSize: number; deletable: boolean; deleteError?: string; byteSizeCoverage?: string; }
 
 export interface HostStorage { hostId: string; hostName: string; categories: StorageCategory[]; archives: ArchivedConversation[]; warnings: string[]; error?: string; }
 
@@ -90,9 +90,7 @@ export interface ImageAttachment { type: "image"; data: string; mimeType: string
 
 export interface ComposerUpload { id: string; name: string; kind: "image" | "text"; byteSize: number; image?: ImageAttachment; text?: string; }
 
-export interface WorktreeSetupScript { id: string; name: string; script: string; cleanupScript?: string; enabled: boolean; projectPath?: string; hostId?: string; }
-
- export interface AppSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; reviewAgent?: string; reviewPrompt?: string; dictationModelPath?: string; localEnabled?: boolean; worktreeSetupScripts: WorktreeSetupScript[]; defaultAgent?: string; defaultModel: string; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
+ export interface AppSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; dictationModelPath?: string; localEnabled?: boolean; defaultAgent?: string; defaultModel: string; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
 
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 

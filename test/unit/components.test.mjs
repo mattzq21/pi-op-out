@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
 import { ExtensionDialog } from '../../clients/ui/components/ExtensionDialog.tsx';
-import { WorktreeDialog } from '../../clients/ui/components/WorktreeDialog.tsx';
 import { RemoveGroupDialog } from '../../clients/ui/components/RemoveGroupDialog.tsx';
 import { ResizableSidebar } from '../../clients/ui/components/ResizableSidebar.tsx';
 import { Toggle } from '../../clients/ui/components/Toggle.tsx';
@@ -57,32 +56,6 @@ describe('rendered controls and dialogs', () => {
     await act(async () => document.querySelector('dialog').dispatchEvent(new Event('cancel', { cancelable: true })));
     assert.deepEqual(responses.pop(), { cancelled: true });
     await click(button('Cancel')); assert.deepEqual(responses.pop(), { cancelled: true });
-  });
-
-  test('worktree creation validates names and recovers from a failed request', async () => {
-    const names = []; const view = await render(WorktreeDialog, { projectPath: '/repo', fromProject: true, onCancel() {}, onCreate: async name => { names.push(name); throw new Error('creation failed'); } });
-    await click(button('Create worktree')); assert.equal(document.querySelector('[role=alert]').textContent, "Branch name can't be empty");
-    const input = document.querySelector('input'); await enterText(input, ' feature ');
-    assert.equal(document.querySelector('[role=alert]'), null); assert.equal(document.querySelector('.worktree-preview code').textContent, 'parent|feature');
-    await key(input, 'Enter'); assert.deepEqual(names, ['feature']); assert.equal(document.querySelector('[role=alert]').textContent, 'creation failed'); assert.equal(input.disabled, false);
-    await view.rerender({ projectPath: '/repo', beforePrompt: true, onCancel() {}, onCreate: async () => {} });
-    assert.match(document.body.textContent, /before this response’s prompt/);
-  });
-
-  test('worktree setup cancellation can fail and retry without closing or creating twice', async () => {
-    const creation = Promise.withResolvers(); const cancellation = Promise.withResolvers(); let created = 0, cancelled = 0, closed = 0;
-    await render(WorktreeDialog, { projectPath: '/repo', onCancel: () => closed++, onCreate: (_name, setup) => { created++; setup(() => { cancelled++;
-
-    return cancellation.promise; });
-
-    return creation.promise; } });
-    const input = document.querySelector('input'); await enterText(input, 'feature'); await key(input, 'Enter'); await key(input, 'Enter');
-    assert.equal(created, 1); assert.equal(input.disabled, true); assert.match(document.querySelector('[role=status]').textContent, /Running environment setup/);
-    await click(button('Cancel setup')); assert.equal(cancelled, 1); assert.match(document.querySelector('[role=status]').textContent, /Stopping/);
-    await act(async () => { cancellation.reject(new Error('cancel failed')); });
-    assert.equal(document.querySelector('[role=alert]').textContent, 'cancel failed'); assert.equal(button('Cancel setup').disabled, false); assert.equal(closed, 0);
-    await act(async () => { creation.reject(new Error('setup stopped')); });
-    assert.equal(input.disabled, false); await click(button('Cancel')); assert.equal(closed, 1);
   });
 
   test('group removal disables cancellation while pending and makes failed operations retryable', async () => {

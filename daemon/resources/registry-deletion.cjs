@@ -36,21 +36,7 @@ function forget(root, targets) {
 
     removeSessionRecords(db, targets);
 
-    const registry = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_repositories'").get();
-
-    if (registry) {
-      const remove = db.prepare('DELETE FROM sessions WHERE lower(session_id) = ?');
-
-      for (const target of targets) remove.run(target.sessionId.toLowerCase());
-    }
-
-    const checkpoints = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='checkpoint_owner_links'").get();
-
-    if (checkpoints) {
-      const remove = db.prepare('DELETE FROM checkpoint_owner_links WHERE lower(session_id) = ?');
-
-      for (const target of targets) remove.run(target.sessionId.toLowerCase());
-    }
+    for (const target of targets) db.prepare('DELETE FROM sessions WHERE lower(session_id) = ?').run(target.sessionId.toLowerCase());
 
     db.exec('COMMIT');
   } finally { db.close(); }

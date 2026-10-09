@@ -1,4 +1,4 @@
-import { sessionGroupsSchema, voidResultSchema, projectBranchesSchema, storageReportSchema, gitWorktreeSchema, gitWorktreeRemovalSchema, rpcEventSchema, sessionSummarySchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
+import { sessionGroupsSchema, voidResultSchema, storageReportSchema, rpcEventSchema, sessionSummarySchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
 import { z } from "zod";
 import { jsonResultSchema } from "./transportSchemas";
 import { commandSessionSchema, runtimeEventSchema, runtimeStderrSchema, type CommandSession } from "./rpcSchemas";
@@ -12,8 +12,8 @@ import { ConversationCommands } from "./conversationCommands";
 import { commandListingSchema } from "./fastModeCommands";
 import { htmlPreviewSize, listen, type UnlistenFn } from "./platform";
 import { restoredSessionTarget, targetedWindowSession } from "./sessionResume";
-import { inspectRecoveryDirectory, recoverSessionDirectory } from "./sessionRecovery";
-import type { GroupChange, SessionGroup, SessionGroupSeed } from "./sessionGroups";
+import { recoverSessionDirectory } from "./sessionRecovery";
+import type { GroupChange, SessionGroupSeed } from "./sessionGroups";
 import type { AppSettings, RpcCommand, RpcEvent, StorageReport } from "../types";
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call("new_window", { target }, z.string());
@@ -34,25 +34,6 @@ export const changeSessionGroups = (change: GroupChange) => call("change_session
 export const openGroupDirectory = (cwd: string, hostId: string) => call("open_project_directory", { cwd, hostId }, voidResultSchema);
 
 export const openRolloutFile = (path: string, hostId: string) => call("open_rollout_file", { path, hostId }, voidResultSchema);
-
-export const gitProjectKind = (cwd: string, hostId: string) => call("git_project_kind", { cwd, hostId }, z.union([z.literal("no-repo"), z.literal("main"), z.literal("worktree")]));
-
-export interface ProjectBranches { branches: string[]; current: string | null; path: string; mainPath: string; }
-
-export const projectBranches = (cwd: string, hostId: string, branch?: string) => call("project_branches", { cwd, hostId, branch }, z.union([projectBranchesSchema, z.null()]));
-
-export async function resolveBranchGroup(group: SessionGroup) {
-  if (!group.branch || !group.cwd) return group;
-  const selected = await projectBranches(group.cwd, group.hostId ?? "local", group.branch);
-
-  if (!selected) throw new Error("Project is not a Git repository");
-
-  return { ...group, cwd: selected.path };
-}
-
-export interface GitWorktree { branch: string; path: string; }
-
-export interface GitWorktreeRemoval { branch?: string; branchDeleted: boolean; warning?: string; }
 
 export const openExternalUrl = (url: string) => call("open_external_url", { url }, voidResultSchema);
 
@@ -79,10 +60,6 @@ export const deleteArchivedConversation = (sessionPath: string, hostId = "local"
 export const deleteArchivedConversations = (sessionPaths: string[], hostId = "local") => call("delete_archived_session", { sessionPath: sessionPaths[0], sessionPaths, hostId }, z.array(z.string()));
 
 export const restoreArchivedConversation = (sessionPath: string, hostId = "local") => call("restore_archived_session", { sessionPath, hostId }, voidResultSchema);
-
-export const restoreArchivedWorktree = (sessionPath: string, hostId = "local") => call("restore_archived_worktree", { sessionPath, hostId }, gitWorktreeSchema.extend({ branch: z.string().nullable() }));
-
-export const removeArchivedWorktree = (cwd: string, hostId = "local") => call("remove_git_worktree", { cwd, hostId, deleteBranch: false }, gitWorktreeRemovalSchema);
 
 export class NativeTransport {
   readonly promptControls = new PromptControls();
@@ -509,24 +486,8 @@ export class NativeTransport {
   listSessions() { return call("list_sessions", undefined, z.array(sessionSummarySchema)); }
   archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionPath, hostId, terminalIds }, voidResultSchema); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call("relocate_session", { sessionPath, cwd, hostId }, voidResultSchema); }
-  inspectMissingSession(sessionPath: string, hostId = "local") { return inspectRecoveryDirectory(sessionPath, hostId); }
-  recoverMissingSession(sessionPath: string, action: "remote" | "empty", repository: string, branch: string, hostId = "local") { return recoverSessionDirectory(sessionPath, action, repository, branch, hostId); }
+  recoverMissingSession(sessionPath: string, hostId = "local") { return recoverSessionDirectory(sessionPath, hostId); }
   openProjectDirectory(cwd: string, hostId = "local") { return call("open_project_directory", { cwd, hostId }, voidResultSchema); }
-  createProjectWorktree(cwd: string, name: string, hostId = "local") { return call("create_project_worktree", { cwd, name, hostId }, gitWorktreeSchema); }
-  removeGitWorktree(cwd: string, hostId = "local", deleteBranch = false) { return call("remove_git_worktree", { cwd, hostId, deleteBranch }, gitWorktreeRemovalSchema); }
-  async runWorktreeSetup(cwd: string, worktreePath: string, hostId = "local", onSetup?: (cancel: (() => Promise<void>) | undefined) => void) {
-    const setupId = await call("prepare_worktree_setup", { hostId }, z.string());
-    onSetup?.(() => call("cancel_worktree_setup", { setupId }, voidResultSchema));
-
-    try { await call("run_worktree_setup", { setupId, cwd, worktreePath, hostId }, voidResultSchema); }
-    finally { onSetup?.(undefined); }
-  }
-  async isGitRepository() { if (!this.cwd) return false;
-
-  return call("is_git_repository", { cwd: this.cwd, hostId: this.hostId }, z.boolean()); }
-  async gitBranch() { if (!this.cwd) return null; const branch = await call("git_branch", { cwd: this.cwd, hostId: this.hostId });
-
-  return z.string().nullable().catch(null).parse(branch); }
   loadSettings() { return this.settings.load(); }
   loadSettingsChange() { return this.settings.loadChange(); }
   loadHostSettings() { return this.settings.loadHost(); }

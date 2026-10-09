@@ -6,7 +6,7 @@ mod headless {
     use std::{any::{Any, TypeId}, collections::HashMap, ops::Deref, sync::{Arc, Mutex}};
 
     pub mod async_runtime {
-        pub use tokio::{spawn, task::spawn_blocking};
+        pub use tokio::spawn;
 
         #[cfg(test)]
         pub fn block_on<F: std::future::Future>(future: F) -> F::Output {

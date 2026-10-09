@@ -1,20 +1,16 @@
 import { createEffect, createRoot, createSignal, onCleanup, type Accessor } from "solid-js";
-import type { NativeTransport, ProjectBranches } from "./nativeTransport";
+import type { NativeTransport } from "./nativeTransport";
 import type { ChatMessage, ImageAttachment } from "../types";
 import { ownDraftSubmission, releaseDraftSubmission, type DraftSubmissionHandle } from "./draftSubmission";
-import { discardSubmittedMessage, moveSubmittedMessage, retainSubmittedMessage } from "./sessionMemory";
+import { discardSubmittedMessage, retainSubmittedMessage } from "./sessionMemory";
 
-type Submission = { owner: NativeTransport; message: ChatMessage; status: string; durable: DraftSubmissionHandle; selection?: { listing: ProjectBranches; createNew: boolean } };
+type Submission = { owner: NativeTransport; message: ChatMessage; status: string; durable: DraftSubmissionHandle };
 
 const [submissions, setSubmissions] = createSignal<Submission[]>([]);
 
 export const chatSubmission = (owner?: NativeTransport) => submissions().find(submission => submission.owner === owner);
 
 export const isChatSubmissionActive = (id: string) => submissions().some(submission => submission.durable.id === id);
-
-export function preserveChatSelection(owner: NativeTransport, listing: ProjectBranches, createNew: boolean) {
-  setSubmissions(current => current.map(item => item.owner === owner ? { ...item, selection: { listing, createNew } } : item));
-}
 
 export function updateChatPreparation(owner: NativeTransport, status: string) {
   if (chatSubmission(owner)?.status === status) return;
@@ -56,20 +52,6 @@ export async function trackChatSubmission<T>(owner: NativeTransport, text: strin
   }
 }
 
-const preparations = new WeakMap<NativeTransport, () => Promise<string | undefined>>();
-
-export function registeredWorktreePreparation(owner: NativeTransport, exclude?: () => Promise<string | undefined>) {
-  const prepare = preparations.get(owner);
-
-  return prepare !== exclude ? prepare?.() : undefined;
-}
-
-export function registerWorktreePreparation(owner: NativeTransport, prepare: () => Promise<string | undefined>) {
-  preparations.set(owner, prepare);
-
-  return () => { if (preparations.get(owner) === prepare) preparations.delete(owner); };
-}
-
 export function waitForConversationReady(owner: NativeTransport, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
   if (!ready()) updateChatPreparation(owner, "Getting ready...");
 
@@ -88,39 +70,3 @@ export function waitForConversationReady(owner: NativeTransport, active: Accesso
   }));
 }
 
-export async function prepareChatWorktree(owner: NativeTransport, select: (path: string, host: string, onActivate: (destination: NativeTransport) => Promise<void>) => Promise<void>, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
-  await waitForConversationReady(owner, active, ready, error);
-  updateChatPreparation(owner, "Getting ready...");
-  const preparation = registeredWorktreePreparation(owner);
-  const path = preparation ? await preparation : undefined;
-
-  if (active() !== owner) throw new Error("Conversation changed");
-
-  if (!path) { updateChatPreparation(owner, "Sending message…");
-
-  return owner; }
-
-  updateChatPreparation(owner, "Getting ready...");
-  let selected: NativeTransport | undefined;
-  await select(path, owner.currentHostId(), async (destination) => {
-    const current = chatSubmission(owner);
-
-    if (current) {
-      try { await current.durable.move(destination); }
-      finally { ownDraftSubmission(current.durable, owner); }
-
-      moveSubmittedMessage(owner, destination, current.durable.id);
-      setSubmissions(submissions => submissions.map(item => item.durable.id === current.durable.id ? { ...item, owner: destination } : item));
-    }
-
-    selected = destination;
-  });
-  const destination = selected;
-
-  if (!destination || active() !== destination) throw new Error("Conversation changed");
-  await waitForConversationReady(destination, active, ready, error);
-  owner.promptControls.copyTo(destination.promptControls);
-  updateChatPreparation(destination, "Sending message…");
-
-  return destination;
-}

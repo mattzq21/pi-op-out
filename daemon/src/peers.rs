@@ -38,8 +38,7 @@ impl Connection {
             serde_json::to_writer(&mut *stdin, &piop_protocol::Request { id, command: command.into(), args }).map_err(|error| error.to_string())?;
             stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
         })().and_then(|_| {
-            if command == "run_worktree_setup" { receiver.recv().map_err(|_| "Peer request interrupted; reconnect before retrying.".to_string())? }
-            else { receiver.recv_timeout(Duration::from_secs(660)).map_err(|_| "Peer request timed out; it may have completed. Reconnect and refresh before retrying.".to_string())? }
+            receiver.recv_timeout(Duration::from_secs(660)).map_err(|_| "Peer request timed out; it may have completed. Reconnect and refresh before retrying.".to_string())?
         });
         if let Ok(mut pending) = self.pending.lock() { pending.remove(&id); }
         result
@@ -208,7 +207,7 @@ pub(crate) fn detach_owner(app: &AppHandle, owner: &str) {
     }).unwrap_or_default();
     for ((kind, id), route) in routes {
         if kind == "flowId" { let _ = route.connection.invoke("provider_auth", json!({"hostId":"local","request":{"action":"cancel","flowId":id}})); continue; }
-        let command = match kind.as_str() { "runtimeId" => "stop_pi", "terminalId" => "close_terminal", "setupId" => "cancel_worktree_setup", _ => continue };
+        let command = match kind.as_str() { "runtimeId" => "stop_pi", "terminalId" => "close_terminal", _ => continue };
         let id = if matches!(kind.as_str(), "runtimeId" | "terminalId") { format!("{}{id}", route.connection.prefix) } else { id };
         let mut args = json!({"discardBlank":false,"preserveRunning":true}); args[&kind] = json!(id);
         let _ = route.connection.invoke(command, args);
@@ -249,7 +248,7 @@ pub(crate) fn ensure_restart_safe(app: &AppHandle) -> Result<(), String> {
 pub(crate) fn forward_broker(app: &AppHandle, host_id: &str, path: &str, mut body: Value) -> Result<Value, String> {
     let connection = connect(app, host_id)?;
     body["hostId"] = json!("local");
-    let request_id = matches!(path, "/message" | "/worktrees/create" | "/worktrees/remove").then(|| body["requestId"].as_str().map(str::to_owned)).flatten();
+    let request_id = matches!(path, "/message").then(|| body["requestId"].as_str().map(str::to_owned)).flatten();
     if let Some(id) = &request_id {
         let broker = app.state::<BrokerRuntime>();
         broker.with_uncancelled_request(id, || {
@@ -272,7 +271,7 @@ pub(crate) fn cancel_message(app: &AppHandle, request_id: &str) -> Result<(), St
 }
 
 pub(crate) fn local_broker_request(app: &AppHandle, path: &str, body: &Value) -> Result<Value, String> {
-    if !matches!(path, "/message" | "/cancel" | "/orchestration" | "/worktrees/create" | "/worktrees/remove" | "/terminals") || body["hostId"].as_str().is_some_and(|id| id != "local") { return Err("Peer broker requests must target this machine".into()); }
+    if !matches!(path, "/message" | "/cancel" | "/orchestration" | "/terminals") || body["hostId"].as_str().is_some_and(|id| id != "local") { return Err("Peer broker requests must target this machine".into()); }
     let broker = app.state::<BrokerRuntime>();
     let (port, token) = broker_environment(&broker)?;
     let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|error| error.to_string())?;
@@ -319,7 +318,7 @@ fn route_list_sessions(app: &AppHandle) -> Result<Option<Value>, String> {
 fn existing_route(state: &PeerRuntime, owner: &str, args: &Value) -> Result<Option<Route>, String> {
         let routes = state.routes.lock().map_err(|_| "Peer routes unavailable")?;
         let mut existing: Option<Route> = None;
-        for kind in ["runtimeId", "terminalId", "setupId", "flowId"] {
+        for kind in ["runtimeId", "terminalId", "flowId"] {
             if let Some(route) = args[kind].as_str().and_then(|id| routes.get(&(kind.into(), id.into()))) {
                 if route.owner != owner { return Err("Resource belongs to another connection".into()); }
                 if existing.as_ref().is_some_and(|previous| !Arc::ptr_eq(&previous.connection, &route.connection)) { return Err("Resources belong to different daemons".into()); }
@@ -343,7 +342,7 @@ fn check_route_resources(state: &PeerRuntime, owner: &str, command: &str, args: 
     let stale_terminals;
     {
         let routes = state.routes.lock().map_err(|_| "Peer routes unavailable")?;
-        for kind in ["runtimeId", "terminalId", "setupId"] {
+        for kind in ["runtimeId", "terminalId"] {
             let creating = matches!((command, kind), ("start_pi", "runtimeId") | ("start_terminal", "terminalId"));
             if let Some(id) = args[kind].as_str() {
                 if !creating && !routes.get(&(kind.into(), id.into())).is_some_and(|saved| saved.owner == owner && Arc::ptr_eq(&saved.connection, &route.connection)) { return Err("Reconnect to the resource on its owning daemon".into()); }
@@ -382,13 +381,12 @@ fn forwarded_arguments(args: &Value, route: &Route, stale_terminals: &HashSet<St
 fn invoke_route(state: &PeerRuntime, command: &str, args: &Value, route: Route, forwarded: Value) -> Result<Option<Value>, String> {
     let result = if !route.connection.alive.load(Ordering::SeqCst) && matches!(command, "stop_pi" | "close_terminal") { Ok(json!(false)) } else { route.connection.invoke(command, forwarded) };
     remove_closed_route(state, command, args, &result)?;
-    if command == "prepare_worktree_setup" { if let Ok(Value::String(id)) = &result { register(state, "setupId", id, route.clone())?; } }
     update_auth_route(state, command, route, &result)?;
     result.map(Some)
 }
 
 fn remove_closed_route(state: &PeerRuntime, command: &str, args: &Value, result: &Result<Value, String>) -> Result<(), String> {
-    let closing = match command { "stop_pi" => Some("runtimeId"), "close_terminal" => Some("terminalId"), "cancel_worktree_setup" | "run_worktree_setup" => Some("setupId"), _ => None };
+    let closing = match command { "stop_pi" => Some("runtimeId"), "close_terminal" => Some("terminalId"), _ => None };
     if result.is_ok() { if let Some(kind) = closing { if let Some(id) = args[kind].as_str() { state.routes.lock().map_err(|_| "Peer routes unavailable")?.remove(&(kind.into(), id.into())); } } }
     Ok(())
 }

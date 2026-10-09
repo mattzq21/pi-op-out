@@ -1,7 +1,6 @@
 const database = require('./session-database.cjs');
 const { randomUUID } = require('node:crypto');
 const { collectRetention, cleanupRegistry } = require('./deletion-retention.cjs');
-const { collectWorktreeAllocations } = require('./worktree-retention.cjs');
 const { pendingRetentions, cleanupStages, matches, removeCandidate, finishRecord, describeCandidates, recordRetention } = require('./retention-candidates.cjs');
 
 function collectDeferredRetention(root) {
@@ -9,7 +8,6 @@ function collectDeferredRetention(root) {
 }
 
 function collectDeferredLocked(root) {
-  collectWorktreeAllocations(root);
   collectGoalAllocations(root);
   const { records, errors } = pendingRetentions(root);
   const ready = [];

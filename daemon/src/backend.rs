@@ -14,7 +14,6 @@ mod settings_types;
 mod skill_discovery;
 use crate::settings_types::RemoteHost;
 use crate::settings_types::AppSettings;
-use crate::settings_types::WorktreeSetupScript;
 use crate::settings_types::MAX_REMOTE_HOSTS;
 mod mobile;
 mod mobile_commands;
@@ -53,8 +52,6 @@ use std::{
 };
 use crate::platform::AppHandle;
 use uuid::Uuid;
-#[cfg(test)]
-use std::time::SystemTime;
 #[cfg(test)]
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 #[cfg(test)]
@@ -98,7 +95,6 @@ struct CachedSession { fingerprint: String, summary: SessionSummary }
 struct SessionIndexRuntime {
     local: Mutex<HashMap<PathBuf, CachedSession>>,
     local_database: Mutex<Option<(PathBuf, rusqlite::Connection)>>,
-    remote: Mutex<HashMap<String, HashMap<String, CachedSession>>>,
     projects: project_metadata::ProjectMetadataCache,
 }
 
@@ -109,12 +105,11 @@ const BROKER_HEADER_BYTES: usize = 16 * 1024;
 const BROKER_BODY_BYTES: usize = 1024 * 1024;
 const MAX_AGENT_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_SESSION_INDEX_BATCH_BYTES: usize = 64 * 1024 * 1024;
-const WORKTREE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 use pi_runtime::PiRuntime;
 
 #[derive(Clone)]
-struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String>, worktree: Option<String>, working: bool, messageable: bool }
+struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String>, working: bool, messageable: bool }
 
 fn claims_dir() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY).join("session-claims");
@@ -203,12 +198,6 @@ struct SessionSummary {
     project: String,
     cwd: String,
     cwd_exists: bool,
-    project_kind: Option<ProjectKind>,
-    project_root: Option<String>,
-    #[serde(default)]
-    branch: Option<String>,
-    #[serde(default)]
-    worktree_root: Option<String>,
     #[serde(skip)]
     modified_at: u64,
     preview: String,
@@ -295,8 +284,6 @@ struct ArchivedConversation {
     deletable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     delete_error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    worktree_path: Option<String>,
     #[serde(default)]
     restorable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -330,7 +317,6 @@ struct HostStorage {
 #[serde(rename_all = "camelCase")]
 struct StorageReport { hosts: Vec<HostStorage> }
 
-use git_ops::{ProjectKind, MAX_GIT_PATH_LIST_BYTES};
 
 #[cfg(test)]
 mod tests;
@@ -366,15 +352,9 @@ use terminals::{StartTerminalOptions, close_terminal, resize_terminal, start_ter
 use pi_runtime::open_project_directory_with;
 #[cfg(test)]
 use terminals::{TerminalLaunch, decode_terminal_bytes, resize_terminal_pty, start_terminal_with, stop_terminals, stream_terminal_output, write_terminal_input, write_terminal_queue};
-use archives::{archive_session, archived_session_file, delete_archived_session, delete_session, desktop_session_file, failed_storage, inspect_storage, relocate_session, restore_archived_worktree, restore_archived_session, storage_report};
+use archives::{archive_session, archived_session_file, delete_archived_session, delete_session, desktop_session_file, failed_storage, inspect_storage, relocate_session, restore_archived_session, storage_report};
 #[cfg(test)]
 use archives::{archive_local_session, archive_remote_session, collect_storage_report, delete_session_files, local_archived_session_file_at, local_desktop_session_file_at, parse_storage_inventory, query_storage_inventory, relocate_local_session, relocate_remote_session, remote_session_file, run_session_deletion};
-use git_ops::worktrees::{create_git_worktree, create_project_worktree, git_branch, git_project_kind, is_git_repository, remove_git_worktree, sessions_on_host};
-#[cfg(test)]
-use git_ops::worktrees::{canonical_worktree_roots, copy_untracked_file, create_local_git_worktree, create_project_worktree_at, git_branch_at, git_relative_path, inspect_git_project_kind, inspect_worktree_removal, local_branch_exists, local_worktree_is_registered, parse_worktree_output, remove_created_worktree, remove_worktree_target, validate_worktree_unused, worktree_branch_name, worktree_suffix, write_worktree_patch};
-use git_ops::worktree_setup::{cancel_worktree_setup, ensure_desktop_sessions_dir, run_limited, run_worktree_setup, shell_quote, verify_setup_owner};
-#[cfg(test)]
-use git_ops::worktree_setup::{LimitedOutput, WorktreeScriptPhase, execute_worktree_setup, register_worktree_setup, run_setup_process, run_worktree_scripts, signal_worktree_setup_cancellation};
 use pi_launch::{ remote_host, remote_login_command, session_identity, ssh, ssh_base};
 #[cfg(test)]
 use pi_launch::{ read_remote_session_header, remote_directory_path, remote_pi_path, stage_extension_script, validate_remote_host};
@@ -382,7 +362,7 @@ use pi_launch::{ read_remote_session_header, remote_directory_path, remote_pi_pa
 use broker::{agent_is_active, broker_response, read_broker_line, resolve_agent};
 use session_index::{collect_host_sessions, create_temporary_chat, home_directory, list_directories, list_local_sessions, list_sessions, remove_temporary_chat, validate_project_directory};
 #[cfg(test)]
-use session_index::{create_local_temporary_chat, create_remote_temporary_chat, inspect_session_projects_with, list_local_directories, parse_remote_directories, parse_remote_session_metadata, query_remote_directories, query_remote_session_metadata, read_session_summaries, read_session_summaries_with, remote_directory_listing_script, remove_local_temporary_chat, remove_remote_temporary_chat, temporary_chat_id, update_remote_session_index, validate_local_project_directory, validate_remote_project_directory};
+use session_index::{create_local_temporary_chat, create_remote_temporary_chat, list_local_directories, parse_remote_directories, query_remote_directories, read_session_summaries, read_session_summaries_with, remote_directory_listing_script, remove_local_temporary_chat, remove_remote_temporary_chat, temporary_chat_id, validate_local_project_directory, validate_remote_project_directory};
 use crate::provider_codex::codex_usage;
 #[cfg(test)]
 use crate::keybindings::default_keybindings;
@@ -402,13 +382,12 @@ use settings::{load_app_settings, load_settings_change, save_app_settings};
 use settings::{codex_disables_implicit_invocation, default_settings, discover_skills_in, expand_skill_path, frontmatter_value, merge_discovered_skills_at, read_settings_at, save_settings_with, skill_path_is_within, validate_settings_for_save};
 use extensions::{runtime_settings};
 #[cfg(test)]
-use extensions::{generated_extension_root, prepare_codex_web_search_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_diff_watch_extension, prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_runtime_settings, prepare_session_broker, prepare_trace_reader};
+use extensions::{generated_extension_root, prepare_codex_web_search_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_runtime_settings, prepare_session_broker, prepare_trace_reader};
 #[cfg(test)]
 use settings_storage::atomic_write_private;
 use settings_storage::{ensure_private_dir, set_private_file_permissions};
 #[cfg(test)]
 use settings_storage::{canonical_shortcut, migrate_keybindings, settings_path_at, validate_keybindings};
-use git_ops::project_branches::{project_branches};
 
 use broker::{BrokerRuntime, BusyAgent, broker_environment};
 #[cfg(test)]
@@ -419,3 +398,8 @@ mod terminals;
 use terminals::TerminalRuntime;
 #[cfg(test)]
 use terminals::TerminalProcess;
+
+use process_io::{ensure_desktop_sessions_dir, run_limited, shell_quote};
+#[cfg(test)]
+use process_io::LimitedOutput;
+const MAX_PATH_LIST_BYTES: usize = 1024 * 1024;

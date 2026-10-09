@@ -5,20 +5,19 @@ import { stringsSchema, validItems } from "../lib/messageSchemas";
 import { required } from "../lib/required";
 import { GoalBar } from "./GoalBar";
 import { ReviewNavigationContext } from "./ReviewLink";
-import { chatSubmission, trackChatSubmission } from "../lib/newChatWorktree";
+import { chatSubmission, trackChatSubmission } from "../lib/chatSubmission";
 import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandle, type DraftSubmissionPayload } from "../lib/draftSubmission";
-import { Key, Rerun } from "@solid-primitives/keyed";
+import { Key } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, onCleanup, Show, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
 
-import { ChevronRight, FolderGit2, LoaderCircle, X } from "lucide-solid";
+import { ChevronRight, Folder, LoaderCircle, X } from "lucide-solid";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { markStoppedPrompt, wasPromptStopped } from "../lib/stoppedPrompt";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, isContextInjection } from "../lib/messages";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, ImageAttachment, Model, PromptContextInfo, SlashCommand } from "../types";
-import { NewChatBranchPicker } from "./NewChatBranchPicker";
 import { Composer } from "./Composer";
 import { ConversationQuestions } from "./ConversationQuestions";
 import { DeferredTurn } from "./DeferredTurn";
@@ -30,7 +29,7 @@ import { toolFailureStats } from "../lib/toolFailureStats";
 import { PromptContextBar } from "./PromptContextBar";
 import { ConversationHostContext } from "../lib/subagentNavigation";
 
-interface Props { transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onProjectBranch?: (path: string) => Promise<void>; onBranch: (message: ChatMessage) => void; canRollback?: boolean; onForkAndForget?: (message: ChatMessage, restoreWorktree?: boolean) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
+interface Props { transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
 function canRetry(props: Props, ownsConversation: boolean) {
   return ownsConversation && !props.readOnly && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
@@ -135,8 +134,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…");
   };
 
-  const actions = createRef({ onSend: send, onBranch: props.onBranch, onForkAndForget: props.onForkAndForget, onCreateWorktree: props.onCreateWorktree });
-  createComputed(() => { actions.current = { onSend: send, onBranch: props.onBranch, onForkAndForget: props.onForkAndForget, onCreateWorktree: props.onCreateWorktree }; });
+  const actions = createRef({ onSend: send, onBranch: props.onBranch, onForkAndForget: props.onForkAndForget });
+  createComputed(() => { actions.current = { onSend: send, onBranch: props.onBranch, onForkAndForget: props.onForkAndForget }; });
 
   const onRetry: Props["onSend"] = async (...args) => {
     const result = await actions.current.onSend(...args);
@@ -147,8 +146,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   };
 
   const onBranch: Props["onBranch"] = (message) => actions.current.onBranch(message);
-  const onForkAndForget: NonNullable<Props["onForkAndForget"]> = (message, restoreWorktree) => actions.current.onForkAndForget?.(message, restoreWorktree);
-  const onCreateWorktree: NonNullable<Props["onCreateWorktree"]> = (message) => actions.current.onCreateWorktree?.(message);
+  const onForkAndForget: NonNullable<Props["onForkAndForget"]> = (message) => actions.current.onForkAndForget?.(message);
   const fastModeStatus = createMemo(() => (props.statuses["pi-desktop-fast-mode"]));
   const mcpLoading = createMemo(() => (props.statuses["pi-desktop-mcp-loading"]));
 
@@ -163,7 +161,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   });
 
   const activity = createMemo(() => (mcpLoading() ? undefined : props.state.activity));
-  const displayedProjectCwd = () => pendingSubmission()?.selection?.listing.path ?? props.projectCwd;
+  const displayedProjectCwd = () => props.projectCwd;
   const projectName = createMemo(() => (displayedProjectCwd()?.split(/[\\/]/).filter(Boolean).at(-1)));
   const retryable = createMemo(() => (canRetry(props, ownsConversation())));
 
@@ -248,7 +246,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
         scrollToLatest();
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>πop</span></div>}
-        {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn messages={turn().messages} promptContexts={turn().promptContexts} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={onBranch} canRollback={props.canRollback} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} /></DeferredTurn>}</Key>}
+        {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn messages={turn().messages} promptContexts={turn().promptContexts} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={onBranch} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} /></DeferredTurn>}</Key>}
         {pendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(pendingSubmission()).status}</span></div></section>}
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
           <div class="mcp-loading-list" role="status">{props.debug ? <Key each={loadingServers()} by={(server) => server.id}>{(server, _index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
@@ -257,8 +255,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     const ComposerStack = () => {
       const selectionDisabled = () => props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission());
-      const renderNewChatBranch = () => <Show when={Boolean(props.projectCwd && props.onProjectBranch)}><Rerun on={() => props.transport}>{(_owner) => <NewChatBranchPicker transport={props.transport} cwd={required(props.projectCwd)} hostId={props.transport?.currentHostId() ?? "local"} disabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} onSelect={required(props.onProjectBranch)} />}</Rerun></Show>;
-      const renderNewChatProject = () => (<Show when={!messages().length && props.state.messageCount === 0}><div class="new-chat-project"><div class="project-picker"><button type="button" class={projectName() ? "selected" : undefined} aria-label={projectName() ? `Selected project: ${required((projectName()))}` : "Choose project"} data-tooltip={displayedProjectCwd()} disabled={selectionDisabled()} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName() ?? "Choose project"}</button>{projectName() && props.onClearProject && <button type="button" class="clear-project" aria-label="Clear project" data-tooltip="Clear project" disabled={selectionDisabled()} onClick={props.onClearProject}><X size={14} /></button>}</div>{renderNewChatBranch()}</div></Show>);
+      const renderNewChatProject = () => (<Show when={!messages().length && props.state.messageCount === 0}><div class="new-chat-project"><div class="project-picker"><button type="button" class={projectName() ? "selected" : undefined} aria-label={projectName() ? `Selected project: ${required((projectName()))}` : "Choose project"} data-tooltip={displayedProjectCwd()} disabled={selectionDisabled()} onClick={props.onOpenProject}><Folder size={14} />{projectName() ?? "Choose project"}</button>{projectName() && props.onClearProject && <button type="button" class="clear-project" aria-label="Clear project" data-tooltip="Clear project" disabled={selectionDisabled()} onClick={props.onClearProject}><X size={14} /></button>}</div></div></Show>);
       const renderConversationOwnershipBanner = () => ((takingOwnership() || ownershipError()) && <div class="conversation-ownership-banner"><div>{takingOwnership() && <p role="status">Taking ownership…</p>}{ownershipError() && <p role="alert">{ownershipError()}</p>}</div></div>);
       const ComposerInteraction = () => (<div class="composer-interaction"><Composer recentPrompts={() => props.messages.filter(message => message.role === "user").map(message => textOf(message.content))} submissionDisabled={!ownsConversation() || Boolean(pendingSubmission())} ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache() : undefined} toolFailures={sessionToolFailures()} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn() ? { id: `${required((abortedTurn())).assistant.timestamp ?? required((abortedTurn())).assistant.id}:${required((abortedTurn())).prompt}`, value: required((abortedTurn())).prompt } : undefined} onStageSubmission={stageSubmission} onSend={send} onAbort={stopResponse} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} agentHostLabel={agentDefinitionHost()} agentReloadScope={agentReloadScope()} onReloadAgents={props.transport ? reloadAgentDefinitions : undefined} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
 
@@ -437,10 +434,6 @@ function retryAttachments(retryTurn: ReturnType<typeof findReplaceableAbortedTur
   return Array.isArray(retryTurn?.user.content) ? retryTurn.user.content.filter((part) => part.type === "image") : [];
 }
 
-function worktreeAction(onCreateWorktree: Props['onCreateWorktree'], finalMessage: ChatMessage | undefined) {
-  return onCreateWorktree && finalMessage && finalMessage.stopReason !== "toolUse" ? () => onCreateWorktree(finalMessage) : undefined;
-}
-
 function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compact?: boolean; debug?: boolean; paused?: boolean; showActions?: boolean }) {
   const entries = createMemo<Array<{ message: ChatMessage; count: number }>>(previous => {
     const retained = new Map(previous.map(entry => [entry.message, entry]));
@@ -455,7 +448,7 @@ function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compac
   return <Key each={entries()} by={entry => entry.message.id}>{entry => <Message message={entry().message} toolCount={entry().count} showActions={props.showActions ?? true} expanded={props.expanded} debug={props.debug} paused={props.paused} />}</Key>;
 }
 
-type ConversationTurnProps = { messages: ChatMessage[]; promptContexts: PromptContextInfo[]; cwd?: string; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; canRollback?: boolean; onForkAndForget?: Props["onForkAndForget"]; onCreateWorktree?: Props["onCreateWorktree"] };
+type ConversationTurnProps = { messages: ChatMessage[]; promptContexts: PromptContextInfo[]; cwd?: string; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onForkAndForget?: Props["onForkAndForget"]; };
 
 function ConversationTurn(componentProps: ConversationTurnProps) {
   const [retryError, setRetryError] = createSignal<string>();
@@ -493,7 +486,6 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
   const turnToolFailures = createMemo(() => componentProps.debug ? toolFailureStats(componentProps.messages) : undefined);
 
-  const worktreeResponse = createMemo(() => (worktreeAction(componentProps.onCreateWorktree, finalMessage())));
   const workedFor = createMemo(() => (turnTiming(componentProps.messages, userIndex(), finalMessage())));
   const retryTurn = createMemo(() => (componentProps.retryable ? findReplaceableAbortedTurn(componentProps.messages) : undefined));
   const retryPrompt = createMemo(() => (retryTurn()?.prompt));
@@ -513,7 +505,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
   const renderActiveWorkContent = () => (<Show when={componentProps.active || componentProps.paused} fallback={required(<>
     {renderWorkGroup()}
-    {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} toolFailures={turnToolFailures()} debug={componentProps.debug} paused={componentProps.paused} onBranch={componentProps.onBranch} canRollback={componentProps.canRollback} onForkAndForget={componentProps.onForkAndForget} onCreateWorktree={worktreeResponse()} retrying={retrying()} onRetry={retryPrompt() ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(componentProps.onRetry(required((retryPrompt())), undefined, retryImages())).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
+    {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} toolFailures={turnToolFailures()} debug={componentProps.debug} paused={componentProps.paused} onBranch={componentProps.onBranch} onForkAndForget={componentProps.onForkAndForget} retrying={retrying()} onRetry={retryPrompt() ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(componentProps.onRetry(required((retryPrompt())), undefined, retryImages())).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
     <MessageList messages={componentProps.messages.filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />
   </>)}>

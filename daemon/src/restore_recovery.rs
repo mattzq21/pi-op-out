@@ -2,8 +2,8 @@ use std::path::Path;
 
 pub(crate) fn recover_remote(host: &crate::RemoteHost) -> Result<(), String> {
     use crate::pi_launch::{remote_login_command, ssh};
-    use crate::git_ops::worktree_setup::{run_limited, shell_quote};
-    let script = include_str!("../resources/restore-archived-worktree.bundle.mjs");
+    use crate::process_io::{run_limited, shell_quote};
+    let script = include_str!("../resources/restore-session.bundle.mjs");
     let storage = crate::STORAGE_DIRECTORY;
     let command = format!("PIOP_STORAGE_DIRECTORY={storage} node -e {} -- --recover", shell_quote(script));
     let output = run_limited(ssh(host).arg(remote_login_command(&command)), 256 * 1024, "Could not recover session transactions")?;
@@ -18,25 +18,11 @@ fn recovery_pending(root: &Path) -> Result<bool, String> {
         .map_err(|error| error.to_string())
 }
 
-fn fork_transactions_pending(root: &Path) -> Result<bool, String> {
-    let db = crate::session_registry::open(root)?;
-    db.query_row("SELECT EXISTS(SELECT 1 FROM fork_transactions)", [], |row| row.get(0)).map_err(|error| error.to_string())
-}
-
-fn fork_preparation_pending(root: &Path) -> Result<bool, String> {
-    let db = crate::session_registry::open(root)?;
-    db.query_row("SELECT EXISTS(SELECT 1 FROM fork_preparations)", [], |row| row.get(0)).map_err(|error| error.to_string())
-}
-
-fn transaction_directories_pending(root: &Path) -> Result<bool, String> {
-    Ok(fork_transactions_pending(root)? || fork_preparation_pending(root)?)
-}
-
 pub(crate) fn recover(root: &Path) -> Result<(), String> {
-    if !recovery_pending(root)? && !transaction_directories_pending(root)? { return Ok(()); }
+    if !recovery_pending(root)? { return Ok(()); }
     let output = crate::node_command()
         .env("PIOP_RESTORE_ROOT", root)
-        .args(["-e", include_str!("../resources/restore-archived-worktree.bundle.mjs"), "--", "--recover"])
+        .args(["-e", include_str!("../resources/restore-session.bundle.mjs"), "--", "--recover"])
         .output().map_err(|error| error.to_string())?;
     if !output.status.success() { return Err(format!("Session transaction recovery is pending: {}", String::from_utf8_lossy(&output.stderr).trim())); }
     if !output.stderr.is_empty() { eprintln!("{}", String::from_utf8_lossy(&output.stderr).trim()); }

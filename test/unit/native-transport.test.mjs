@@ -300,30 +300,11 @@ test('queued settings wait for an active command and migrate removed hosts to lo
   assert.equal(client.hasPendingSettings(), false);
 });
 
-test('worktree setup exposes cancellation and always clears the callback on failure', async () => {
-  const client = transport();
-  responses.set('prepare_worktree_setup', 'setup');
-  responses.set('run_worktree_setup', new Error('setup failed'));
-  const callbacks = [];
-  await assert.rejects(client.runWorktreeSetup('/repo', '/tree', 'remote', cancel => { callbacks.push(cancel); }), /setup failed/);
-  assert.ok(callbacks[0] instanceof Function);
-  assert.equal(callbacks[1], undefined);
-  await callbacks[0]();
-  assert.deepEqual(commands('cancel_worktree_setup')[0].args, { setupId: 'setup' });
-});
-
 test('native file and directory helpers normalize nullable results and image types', async () => {
   const client = transport({});
-  assert.equal(await client.isGitRepository(), false);
-  assert.equal(await client.gitBranch(), null);
   await client.prepareTemporaryChat('remote');
   assert.equal(client.currentHostId(), 'remote');
-  responses.set('is_git_repository', true);
-  assert.equal(await client.isGitRepository(), true);
-  responses.set('git_branch', 42);
-  assert.equal(await client.gitBranch(), null);
-  responses.set('git_branch', 'main');
-  assert.equal(await client.gitBranch(), 'main');
+
   for (const [name, type] of [['picture.PNG', 'image/png'], ['a.jpeg', 'image/jpeg'], ['a.txt', '']]) {
     responses.set('read_dropped_file', { name, data: [65, 66] });
     const file = await native.readDroppedFile('/file');

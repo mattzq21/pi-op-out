@@ -1,64 +1,26 @@
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import type { RecoveryInspection } from "../lib/sessionRecovery";
+import { createSignal, onCleanup, onMount } from "solid-js";
 import type { SessionSummary } from "../types";
 
 export interface MissingDirectoryRequest {
   session: SessionSummary;
-  inspect: () => Promise<{ canRecoverRemote: boolean; retainedDirectories?: RecoveryInspection["retainedDirectories"] }>;
-  recover: (action: "remote" | "empty", repository: string, branch: string) => Promise<void | { missingFields: string[] }>;
+  recover: () => Promise<void>;
   cancel: () => void;
 }
 
 export function MissingDirectoryDialog(props: { request: MissingDirectoryRequest }) {
   let dialog!: HTMLDialogElement;
-  const [repository, setRepository] = createSignal("");
-  const [branch, setBranch] = createSignal("");
-  const [fields, setFields] = createSignal<string[]>([]);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
-  const [canRecoverRemote, setCanRecoverRemote] = createSignal(false);
-  const [retainedDirectories, setRetainedDirectories] = createSignal<RecoveryInspection["retainedDirectories"]>([]);
   let active = true;
-  let inspection = 0;
-  onCleanup(() => { active = false; inspection += 1; });
+  onCleanup(() => { active = false; });
+  onMount(() => dialog.showModal());
 
-  const inspect = async () => {
-    const request = ++inspection;
-
-    try {
-      const result = await props.request.inspect();
-
-      if (!active || request !== inspection) return;
-      setCanRecoverRemote(result.canRecoverRemote);
-      setRetainedDirectories(result.retainedDirectories ?? []);
-
-      if (!result.canRecoverRemote) setFields(["repository", "branch"]);
-    } catch (reason) { if (active && request === inspection) throw reason; }
-  };
-
-  onMount(() => {
-    dialog.showModal();
-    void inspect().catch(reason => { setFields(["repository", "branch"]); setError(reason instanceof Error ? reason.message : String(reason)); });
-  });
-
-  const recover = async (action: "remote" | "empty") => {
+  const recover = async () => {
     if (busy()) return;
-    inspection += 1;
     setBusy(true); setError("");
 
-    try {
-      const result = await props.request.recover(action, repository(), branch());
-
-      if (active && result) {
-        setFields(current => [...new Set([...current, ...result.missingFields])]);
-        setError("Saved recovery details are incomplete. Enter the missing information below and try again.");
-      }
-    }
-    catch (reason) {
-      if (!active) return;
-      setError(reason instanceof Error ? reason.message : String(reason));
-      await inspect().catch(() => {});
-    }
+    try { await props.request.recover(); }
+    catch (reason) { if (active) setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { if (active) setBusy(false); }
   };
 
@@ -66,20 +28,11 @@ export function MissingDirectoryDialog(props: { request: MissingDirectoryRequest
 
     if (!busy()) props.request.cancel(); }}>
     <h2 id="missing-directory-title">Working directory is missing</h2>
-    <p>“{props.request.session.name}” has not been loaded. Choose how to recover its working directory.</p>
+    <p>“{props.request.session.name}” has not been loaded.</p>
     <code class="missing-directory-path">{props.request.session.cwd}</code>
-    <p>The new working directory will be kept in Piop’s managed recovery storage on this session’s machine.</p>
-    <p>Clone the latest version of a remote branch, or continue in a new empty directory. Unpushed commits, uncommitted changes, and other missing local files will not be restored by either option.</p>
-    {fields().length > 0 && <p>{canRecoverRemote() ? "Leave a field blank to use the available saved recovery details." : "Enter a repository and branch to clone, or choose an empty workdir."}</p>}
-    <Show when={retainedDirectories().some(directory => directory.state === "allocated")}>
-      <p>Earlier recovery attempts have retained directories below. They may contain incomplete files and are not verified recovery copies.</p>
-      <For each={retainedDirectories().filter(directory => directory.state === "allocated")}>{directory => <code class="missing-directory-path">{directory.directory}</code>}</For>
-    </Show>
-    {fields().includes("repository") && <label class="field"><span>Remote repository URL or existing local checkout</span><input value={repository()} disabled={busy()} onInput={(event) => setRepository(event.currentTarget.value)} /></label>}
-    {fields().includes("branch") && <label class="field"><span>Branch</span><input value={branch()} disabled={busy()} onInput={(event) => setBranch(event.currentTarget.value)} /></label>}
+    <p>Continue the chat in a new empty folder on this session’s machine. This keeps the chat history. Missing files will not be restored.</p>
     {error() && <p class="dialog-error" role="alert">{error()}</p>}
-    {fields().length < 2 && <button disabled={busy()} onClick={() => setFields(["repository", "branch"])}>Edit recovery details</button>}
-    {busy() && <p role="status">Recovering working directory…</p>}
-    <div class="dialog-actions"><button disabled={busy()} onClick={props.request.cancel}>Cancel</button><button disabled={busy()} onClick={() => void recover("empty")}>Create empty workdir</button><button class="primary-button" disabled={busy()} onClick={() => void recover("remote")}>Clone latest remote branch</button></div>
+    {busy() && <p role="status">Creating folder…</p>}
+    <div class="dialog-actions"><button disabled={busy()} onClick={props.request.cancel}>Cancel</button><button class="primary-button" disabled={busy()} onClick={() => void recover()}>Create empty folder</button></div>
   </dialog>;
 }

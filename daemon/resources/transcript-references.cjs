@@ -34,7 +34,7 @@ function fingerprint(info) {
 }
 
 function relevant(entry, root) {
-  return entry?.goalAssets !== undefined || ['pi-project-prompt-checkpoint', 'pi-project-files-watch-snapshot'].includes(entry?.customType) || JSON.stringify(entry)?.includes(JSON.stringify(root).slice(1, -1));
+  return entry?.goalAssets !== undefined || JSON.stringify(entry)?.includes(JSON.stringify(root).slice(1, -1));
 }
 
 function summarize(entries, root) {

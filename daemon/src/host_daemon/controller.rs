@@ -520,7 +520,7 @@ impl Host {
                 return Err(error);
             }
         }
-        if matches!(kind(&command), "fork" | "fork_after" | "branch_checkpoint" | "clone" | "new_session" | "switch_session") {
+        if matches!(kind(&command), "fork" | "fork_after" | "clone" | "new_session" | "switch_session") {
             return super::branching::switch(self, &session, runtime, command).await;
         }
         if command["clientHtmlPreviewSize"].is_number() {

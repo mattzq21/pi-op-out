@@ -1,12 +1,9 @@
 const conversationStorage = require('./conversation-storage.cjs');
 const fs = require('node:fs');
-const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
 const { canonicalTranscriptBasename } = require('./transcript-identity.cjs');
-const shared = require('./archive-resource-transactions.cjs');
-const checkpoints = require('./archive-checkpoints.cjs');
 const records = require('./archive-records.cjs');
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -57,7 +54,7 @@ function finishOwnership(transaction) {
   }
 }
 
-function plan(root, groups, records) {
+function plan(root, records) {
   const destinations = archiveDestinations(root, records);
   const id = randomUUID();
 
@@ -70,28 +67,14 @@ function plan(root, groups, records) {
     const destination = destinations[index];
 
     return {
-      file: record.file, sessionId: record.header.id, group: groups.findIndex(group => group.records.includes(record)),
+      file: record.file, sessionId: record.header.id,
       original: io.describe(record.file), mode: fs.statSync(record.file).mode & 0o777, destination,
       backup: path.join(container, `${index}.original`), prepared: path.join(container, `${index}.prepared`),
       rollbackCopy: path.join(container, `${index}.rollback`), moves: sidecars(record.file, destination),
     };
   });
 
-  const plannedGroups = groups.map((group, index) => {
-    const { records: owners, ...location } = group;
-
-    return {
-      ...location, storedPath: path.join(root, 'archived-tmp', randomUUID()),
-      identity: ['directory', 'git'].includes(group.kind) ? io.describe(group.path) : undefined,
-      repositoryIdentity: group.common ? io.identity(group.common) : undefined,
-      registrationIdentity: group.own ? io.identity(group.own) : undefined,
-      metadata: path.join(container, `${index}.git`), dataBackup: path.join(container, `${index}.directory`), index: path.join(container, `${index}.index`),
-      refs: ['git', 'main'].includes(group.kind) ? owners.map(record => `refs/pi-session-snapshots/chats/${record.header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session'}/archive/${randomUUID()}`) : [],
-    };
-  });
-
-  const transaction = { version: 2, kind: 'archive', id, root, container, containerIdentity: io.identity(container), state: 'planned', groups: plannedGroups, records: plannedRecords, ownerships: records.flatMap(record => archiveOwnership(root, record.header.id)) };
-  shared.archivePlans(transaction);
+  const transaction = { version: 3, kind: 'archive', id, root, container, containerIdentity: io.identity(container), state: 'planned', records: plannedRecords, ownerships: records.flatMap(record => archiveOwnership(root, record.header.id)) };
   save(transaction);
 
   return transaction;
@@ -122,35 +105,6 @@ function sidecarPaths(file, destination) {
   ];
 }
 
-function validateGroup(transaction, group) {
-  if (!path.isAbsolute(group.path) || path.resolve(group.path) !== group.path || path.dirname(group.storedPath) !== path.join(transaction.root, 'archived-tmp')) throw new Error('Invalid archive directory mapping');
-
-  for (const file of [group.metadata, group.dataBackup, group.index]) {
-    if (path.dirname(file) !== transaction.container) throw new Error('Invalid archive Git backup');
-  }
-
-  if (group.kind === 'git' && (!path.isAbsolute(group.common) || !path.isAbsolute(group.own))) throw new Error('Invalid archive repository');
-  validateRefs(transaction, group);
-}
-
-function validateRefs(transaction, group) {
-  if (group.commit && !/^[a-f0-9]{40,64}$/.test(group.commit)) throw new Error('Invalid archive commit ownership');
-
-  if (group.branchRef && !group.branchRef.startsWith('refs/heads/')) throw new Error('Invalid archive branch ownership');
-  const owners = transaction.records.filter(record => transaction.groups[record.group] === group);
-
-  for (const ref of group.refs) {
-    if (group.resource?.ref === ref) continue;
-
-    if (!owners.some(record => {
-      const id = record.sessionId.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
-      const prefix = `refs/pi-session-snapshots/chats/${id}/archive/`;
-
-      return ref.startsWith(prefix) && uuid.test(ref.slice(prefix.length));
-    })) throw new Error('Invalid archive ref ownership');
-  }
-}
-
 function load(root, id) {
   if (!uuid.test(id)) throw new Error('Invalid archive transaction identity');
   const container = path.join(root, 'archive-transactions', id);
@@ -162,16 +116,12 @@ function load(root, id) {
 
   validateIdentity(transaction, root, id, container, file);
   transaction.records.forEach(record => validateRecord(transaction, record));
-  transaction.groups.forEach(group => validateGroup(transaction, group));
-  shared.validateChanges(transaction, transaction.groups.flatMap(group => group.resource ? [group.resource.change] : []));
-  shared.validateArchive(transaction);
-  checkpoints.validate(transaction);
 
   return transaction;
 }
 
 function validateIdentity(transaction, root, id, container, file) {
-  if (transaction.version !== 2 || transaction.kind !== 'archive' || transaction.id !== id || transaction.root !== root || transaction.container !== container || io.identity(container) !== transaction.containerIdentity) throw new Error(`Invalid archive journal: ${file}`);
+  if (transaction.version !== 3 || transaction.kind !== 'archive' || transaction.id !== id || transaction.root !== root || transaction.container !== container || io.identity(container) !== transaction.containerIdentity) throw new Error(`Invalid archive journal: ${file}`);
 
   if (fs.realpathSync(container) !== container || !['planned', 'preparing', 'pending', 'committed', 'rolled-back'].includes(transaction.state)) throw new Error(`Invalid archive transaction state: ${file}`);
   validateOwnership(transaction, root);
@@ -198,76 +148,9 @@ function begin(transaction) {
     if (!io.matches(record.file, record.original)) throw new Error(`Conversation changed before archiving: ${record.file}`);
   }
 
-  for (const group of transaction.groups.filter(group => group.identity)) {
-    if (!io.matches(group.path, group.identity, false)) throw new Error(`Working directory changed before archiving: ${group.path}`);
-    group.identity = io.describe(group.path);
-
-    if (group.kind === 'git') {
-      registration(group, group.path);
-      const pointer = path.join(group.path, '.git');
-      group.pointer = { text: fs.readFileSync(pointer, 'utf8'), identity: io.identity(pointer), mode: fs.statSync(pointer).mode & 0o777 };
-      group.contents = io.describe(group.path, ['.git']);
-    }
-  }
-
   transaction.state = 'pending';
   save(transaction);
   io.mkdir(path.join(transaction.root, 'archived'));
-  io.mkdir(path.join(transaction.root, 'archived-tmp'));
-}
-
-function repository(group) {
-  if (io.identity(group.common) !== group.repositoryIdentity) throw new Error(`Archive repository was replaced: ${group.common}`);
-
-  return group.common;
-}
-
-function registration(group, directory) {
-  repository(group);
-
-  if (io.identity(group.own) !== group.registrationIdentity) throw new Error(`Archive worktree registration was replaced: ${group.own}`);
-  const pointer = path.join(directory, '.git');
-
-  if (!io.exists(pointer)?.isFile()) throw new Error(`Archive worktree pointer is unavailable: ${directory}`);
-  const value = fs.readFileSync(pointer, 'utf8').trim();
-
-  if (value.startsWith('gitdir: ') && path.resolve(directory, value.slice(8)) === group.own) return;
-
-  if (io.identity(pointer) !== group.pointer?.identity || ![group.pointer.text.trim(), ''].includes(value)) throw new Error(`Archive worktree identity changed: ${directory}`);
-}
-
-function repairDirectory(group, directory) {
-  registration(group, directory);
-  const pointer = path.join(directory, '.git');
-  fs.writeFileSync(pointer, `gitdir: ${group.own}\n`);
-  fs.chmodSync(pointer, group.pointer.mode);
-  io.sync(pointer);
-  io.git(group.common, ['worktree', 'repair', directory]);
-
-  if (directory === group.path) {
-    fs.writeFileSync(pointer, group.pointer.text);
-    fs.chmodSync(pointer, group.pointer.mode);
-    io.sync(pointer);
-  }
-
-  io.syncTree(pointer);
-  io.sync(directory);
-  io.syncTree(group.own);
-  io.sync(path.dirname(group.own));
-}
-
-function moveGroup(transaction, group) {
-  io.syncTree(group.path);
-
-  if (group.kind === 'git') registration(group, group.path);
-  io.move({ source: group.path, destination: group.storedPath, identity: group.identity });
-
-  if (group.kind === 'git') {
-    repairDirectory(group, group.storedPath);
-  }
-
-  group.moved = true;
-  save(transaction);
 }
 
 function publishRecord(transaction, record) {
@@ -286,7 +169,6 @@ function publishRecord(transaction, record) {
 }
 
 function commit(transaction) {
-  shared.verifyPeers(transaction);
 
   for (const record of transaction.records) {
     if (!io.matches(record.destination, record.preparedIdentity) || io.exists(record.file)) throw new Error(`Archive commit could not be verified: ${record.file}`);
@@ -300,28 +182,6 @@ function commit(transaction) {
   save(transaction);
 }
 
-function restoreGroup(group) {
-  if (!group.identity) return;
-
-  if (io.matches(group.path, group.identity, false) && !io.exists(group.storedPath)) {
-    if (group.kind === 'git') repairGroup(group);
-
-    return;
-  }
-
-  if (io.exists(group.path) || !io.matches(group.storedPath, group.identity, false)) throw new Error(`Archive directory recovery is ambiguous: ${group.path}`);
-
-  if (group.kind === 'git') registration(group, group.storedPath);
-  const identity = io.describe(group.storedPath);
-  io.move({ source: group.storedPath, destination: group.path, identity });
-
-  if (group.kind === 'git') repairGroup(group);
-}
-
-function repairGroup(group) {
-  repairDirectory(group, group.path);
-}
-
 function restoreRecord(transaction, record) {
   const trace = { source: record.file, destination: record.destination, identity: record.preparedIdentity };
 
@@ -330,7 +190,6 @@ function restoreRecord(transaction, record) {
   for (const move of [...record.moves].reverse()) io.undo(move);
 
   if (io.matches(record.file, record.original) || io.matches(record.file, record.rollbackIdentity)) {
-    checkpointIndex.refresh(record.file);
     require('./transcript-metadata.cjs').remember(record.file);
 
     return;
@@ -344,7 +203,6 @@ function restoreRecord(transaction, record) {
   require('./transcript-metadata.cjs').invalidate(record.file);
   fs.renameSync(record.rollbackCopy, record.file);
   io.sync(path.dirname(record.file));
-  checkpointIndex.refresh(record.file);
   require('./transcript-metadata.cjs').remember(record.file);
 }
 
@@ -378,10 +236,6 @@ function complete(transaction) {
 }
 
 function verifyRollback(transaction) {
-  for (const group of transaction.groups.filter(group => group.identity)) {
-    if (!io.matches(group.path, group.identity) || io.exists(group.storedPath)) throw new Error(`Archive directory rollback could not be verified: ${group.path}`);
-  }
-
   for (const record of transaction.records) {
     if (!io.sameContents(record.file, record.original) || io.exists(record.destination)) throw new Error(`Archive transcript rollback could not be verified: ${record.file}`);
 
@@ -392,9 +246,6 @@ function verifyRollback(transaction) {
 }
 
 function rollbackData(transaction) {
-  shared.rollbackPeers(transaction, save);
-
-  for (const group of [...transaction.groups].reverse()) restoreGroup(group);
 
   for (const record of [...transaction.records].reverse()) restoreRecord(transaction, record);
   verifyRollback(transaction);
@@ -405,9 +256,6 @@ function rollbackData(transaction) {
 function cleanupCopies(transaction) {
   if (!transaction.cleanup) {
     const files = transaction.records.flatMap(record => [record.backup, record.prepared, record.rollbackCopy]);
-    files.push(...transaction.groups.flatMap(group => [group.metadata, group.dataBackup, group.index]));
-    files.push(...(transaction.resourcePeers ?? []).flatMap(peer => [peer.backup, peer.prepared, peer.rollback]));
-    files.push(...(transaction.checkpointMappings ?? []).map(mapping => mapping.prepared));
     transaction.cleanup = files.flatMap(file => io.exists(file) ? [{ file, entries: io.removalPlan(file) }] : []);
     save(transaction);
   }
@@ -434,73 +282,15 @@ function cleanupCopies(transaction) {
 function rollback(transaction) {
   if (transaction.state !== 'rolled-back') rollbackData(transaction);
 
-  for (const group of transaction.groups.filter(group => group.commit)) {
-    for (const ref of group.refs) io.removeRef(repository(group), ref, group.commit);
-  }
-
   cleanupCopies(transaction);
 }
 
-function symbolicBranch(common, ref) {
-  try {
-    io.git(common, ['symbolic-ref', '--quiet', ref]);
-
-    return true;
-  }
-  catch (error) { if (error.status === 1) return false; throw error; }
-}
-
-function removeBranch(group) {
-  if (!group.branchRef) return;
-  const common = repository(group);
-
-  const current = io.refValue(common, group.branchRef);
-
-  if (current === null) return;
-
-  if (symbolicBranch(common, group.branchRef) || current !== group.head || io.git(common, ['worktree', 'list', '--porcelain', '-z']).split('\0').includes(`branch ${group.branchRef}`)) {
-    console.error(`Archived successfully; branch with a surviving owner retained: ${group.branchRef}`);
-
-    return;
-  }
-
-  io.git(common, ['update-ref', '--no-deref', '-d', group.branchRef, group.head]);
-}
-
-function finishGroup(transaction, group) {
-  if (!group.removal) {
-    if (!io.matches(group.storedPath, group.contents) || !io.matches(group.dataBackup, group.dataBackupIdentity) || !io.matches(group.metadata, group.metadataIdentity)) throw new Error(`Archive recovery data changed; retained: ${group.storedPath}`);
-    registration(group, group.storedPath);
-
-    if (path.dirname(group.own) !== path.join(group.common, 'worktrees') || io.identity(group.own) !== group.registrationIdentity) throw new Error('Archive Git registration changed; retained');
-    group.removal = { checkout: io.removalPlan(group.storedPath), registration: io.removalPlan(group.own) };
-    save(transaction);
-  }
-
-  io.removeOwned(group.storedPath, group.removal.checkout);
-  io.removeOwned(group.own, group.removal.registration);
-
-  removeBranch(group);
-  group.removed = true;
-  save(transaction);
-}
-
 function finish(transaction) {
-  return checkpoints.preserve(transaction, transaction.borrowedOwnerIds ?? [], () => finishLocked(transaction));
-}
-
-function finishLocked(transaction) {
   require('./session-database.cjs').movePaths(transaction.root, transaction.records.map(record => ({ source: record.file, destination: record.destination })));
 
   for (const record of transaction.records) require('./transcript-metadata.cjs').remember(record.destination);
-
-  for (const group of transaction.groups.filter(group => group.kind === 'git' && !group.removed)) finishGroup(transaction, group);
-  shared.finishArchive(transaction);
   finishOwnership(transaction);
   complete(transaction);
-
-  try { require('./restore-receipts.cjs').prune(transaction.root); }
-  catch (error) { console.error(`Archive committed; restore receipt pruning will retry: ${error.message}`); }
 }
 
 function replay(transaction) {
@@ -516,7 +306,7 @@ function replay(transaction) {
   if (transaction.state === 'planned') return;
 
   if (transaction.state === 'preparing') {
-    checkpoints.recoverPreparation(transaction, () => cleanupCopies(transaction));
+    cleanupCopies(transaction);
 
     return;
   }
@@ -574,4 +364,4 @@ function recover(root) {
   if (failures.length) throw new Error(failures.join('\n'));
 }
 
-module.exports = { prepare, plan, load, begin, save, moveGroup, publishRecord, commit, rollback, finish, recover };
+module.exports = { prepare, plan, load, begin, save, publishRecord, commit, rollback, finish, recover };

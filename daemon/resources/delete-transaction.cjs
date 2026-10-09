@@ -4,7 +4,6 @@ const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
 const goalAssets = require('./goal-asset-cleanup.cjs');
-const shared = require('./archive-resource-transactions.cjs');
 
 const records = require('./deletion-records.cjs');
 
@@ -34,7 +33,7 @@ function ownership(root, targets) {
   });
 }
 
-function create(root, files, repositories, sources) {
+function create(root, files, sources) {
   const id = randomUUID();
 
   const container = path.join(root, 'delete-transactions', id);
@@ -45,17 +44,12 @@ function create(root, files, repositories, sources) {
   const targets = sources.map(file => ({ path: file, sessionId: require('./transcript-references.cjs').read(root, file)[0].id }));
 
   const transaction = {
-    version: 2, kind: 'delete', id, root, container, containerIdentity: io.identity(container), state: 'pending',
+    version: 3, kind: 'delete', id, root, container, containerIdentity: io.identity(container), state: 'pending',
     garbagePath: path.join(root, 'deleted-sessions', id), targets, ownership: ownership(root, targets),
     goalAssets: goalAssets.plan(root, targets),
     files: files.flatMap((saved, index) => plannedFile(saved, index, container)),
-    repositories: repositories.map((repository, index) => ({
-      cwd: repository.cwd, identity: io.identity(repository.cwd),
-      refs: repository.refs.map((ref, refIndex) => ({ ...ref, reservation: `refs/piop-delete-transactions/${id}/${index}/${refIndex}` })),
-    })),
   };
 
-  shared.deletePlans(transaction);
   validate(transaction, root, container);
   save(transaction);
 
@@ -77,19 +71,11 @@ function plannedFile(saved, index, container) {
 }
 
 function validSource(root, source) {
-  return ['sessions', 'archived', path.join('notes', 'chats'), 'archived-tmp', 'queued-input'].some(name => io.inside(path.join(root, name), source) && source !== path.join(root, name));
-}
-
-function validRef(transaction, ref) {
-  return transaction.targets.some(target => {
-    const id = target.sessionId.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
-
-    return ref === `refs/pi-session-snapshots/${id}` || ref.startsWith(`refs/pi-session-snapshots/chats/${id}/`);
-  });
+  return ['sessions', 'archived', path.join('notes', 'chats'), 'queued-input'].some(name => io.inside(path.join(root, name), source) && source !== path.join(root, name));
 }
 
 function validateIdentity(transaction, root, directory) {
-  if (transaction.version !== 2 || transaction.kind !== 'delete' || !uuid.test(transaction.id ?? '') || transaction.root !== root) throw new Error('Unsupported deletion recovery journal');
+  if (transaction.version !== 3 || transaction.kind !== 'delete' || !uuid.test(transaction.id ?? '') || transaction.root !== root) throw new Error('Unsupported deletion recovery journal');
   validateLocation(transaction, root, directory);
 }
 
@@ -105,32 +91,16 @@ function validateFile(transaction, file) {
   if (!validSource(transaction.root, file.source) || path.dirname(file.staged) !== transaction.container || !/^\d+\.staged$/.test(path.basename(file.staged))) throw new Error('Invalid deletion recovery file mapping');
 }
 
-function validateRepository(transaction, repository) {
-  if (!path.isAbsolute(repository.cwd)) throw new Error('Invalid deletion recovery repository');
-
-  for (const ref of repository.refs) {
-    if (!validRef(transaction, ref.ref) || !/^[a-f0-9]{40,64}$/.test(ref.oid) || !ref.reservation.startsWith(`refs/piop-delete-transactions/${transaction.id}/`)) throw new Error('Invalid deletion recovery ref ownership');
-  }
-}
-
 function validate(transaction, root, directory) {
   validateIdentity(transaction, root, directory);
   transaction.files.forEach(file => validateFile(transaction, file));
-  transaction.repositories.forEach(repository => validateRepository(transaction, repository));
   goalAssets.validate(root, transaction.goalAssets ?? []);
-  shared.validateDelete(transaction);
 
   for (const owner of transaction.ownership) {
     const key = createHash('sha256').update(owner.sessionId.toLowerCase()).digest('hex').slice(0, 40);
 
     if (owner.file !== path.join(root, 'conversation-ownership', `${key}.json`)) throw new Error('Invalid deletion ownership mapping');
   }
-}
-
-function repositoryDirectory(repository) {
-  if (io.identity(repository.cwd) !== repository.identity) throw new Error(`Deletion repository was replaced: ${repository.cwd}`);
-
-  return repository.cwd;
 }
 
 function stagedPath(transaction, file) {
@@ -152,22 +122,9 @@ function stageFile(transaction, file) {
   save(transaction);
 }
 
-function stageRepository(transaction, repository) {
-  const cwd = repositoryDirectory(repository);
-  repository.attempted = true;
-  save(transaction);
-  const reserve = ['start', ...repository.refs.map(ref => `create ${ref.reservation} ${ref.oid}`), 'prepare', 'commit', ''].join('\n');
-  io.git(cwd, ['update-ref', '--stdin'], reserve);
-  const remove = ['start', ...repository.refs.map(ref => `delete ${ref.ref} ${ref.oid}`), 'prepare', 'commit', ''].join('\n');
-  io.git(cwd, ['update-ref', '--stdin'], remove);
-  repository.removed = true;
-  save(transaction);
-}
-
 function stage(transaction) {
   for (const file of transaction.files) stageFile(transaction, file);
 
-  for (const repository of transaction.repositories) stageRepository(transaction, repository);
 }
 
 function commit(transaction) {
@@ -181,26 +138,6 @@ function commit(transaction) {
 
 function committed(transaction) {
   return Boolean(io.exists(transaction.garbagePath)) && io.identity(transaction.garbagePath) === transaction.containerIdentity;
-}
-
-function restoreRepository(repository) {
-  if (!repository.attempted) return;
-  const cwd = repositoryDirectory(repository);
-
-  for (const ref of repository.refs) {
-    const current = io.refValue(cwd, ref.ref);
-
-    if (current === ref.oid) continue;
-
-    if (current !== null || io.refValue(cwd, ref.reservation) !== ref.oid) throw new Error(`Checkpoint recovery is ambiguous; retained: ${ref.ref}`);
-    io.git(cwd, ['update-ref', ref.ref, ref.oid, '0'.repeat(ref.oid.length)]);
-  }
-}
-
-function releaseReservations(transaction) {
-  for (const repository of transaction.repositories.filter(repository => repository.attempted)) {
-    for (const ref of repository.refs) io.removeRef(repositoryDirectory(repository), ref.reservation, ref.oid);
-  }
 }
 
 function restoreFile(transaction, file) {
@@ -228,18 +165,12 @@ function retire(transaction) {
 
 function rollback(transaction) {
   if (transaction.state === 'rolled-back') {
-    releaseReservations(transaction);
     retire(transaction);
 
     return;
   }
 
   const failures = [];
-
-  for (const repository of transaction.repositories) {
-    try { restoreRepository(repository); }
-    catch (error) { failures.push(error.message); }
-  }
 
   for (const file of [...transaction.files].reverse()) {
     try { restoreFile(transaction, file); }
@@ -249,7 +180,6 @@ function rollback(transaction) {
   if (failures.length) throw new Error(failures.join('\n'));
   transaction.state = 'rolled-back';
   save(transaction);
-  releaseReservations(transaction);
   retire(transaction);
 }
 
@@ -271,7 +201,6 @@ function finish(transaction) {
   save(transaction);
   finishOwnership(transaction);
   require('./registry-deletion.cjs').forget(transaction.root, transaction.targets);
-  shared.finishDelete(transaction);
   goalAssets.finish(transaction, save);
 
   for (const file of transaction.files.filter(file => !file.skipped)) {
@@ -288,7 +217,6 @@ function finish(transaction) {
     io.removeOwned(staged, file.cleanup);
   }
 
-  releaseReservations(transaction);
   retire(transaction);
 
   try { require('./restore-receipts.cjs').prune(transaction.root); }

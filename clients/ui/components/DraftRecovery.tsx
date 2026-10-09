@@ -1,7 +1,7 @@
 import { For, Show, createSignal } from "solid-js";
 import type { createConversationDrafts } from "../appDrafts";
 import type { DraftDestination, DurableDraft } from "../lib/draftStorage";
-import { isChatSubmissionActive } from "../lib/newChatWorktree";
+import { isChatSubmissionActive } from "../lib/chatSubmission";
 import type { SessionSummary } from "../types";
 import { goalPreparationSchema } from "../lib/draftSubmission";
 import type { z } from "zod";

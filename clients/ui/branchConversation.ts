@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { agentStateSchema, entrySchema } from "./lib/responseSchemas";
-import type { TerminalTarget } from "./appSupport";
 import { beginBranching } from "./lib/branchActivity";
 import { type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
@@ -22,8 +21,6 @@ type Context = {
   rekeyConversationUi: (previousKey: string, nextKey: string, ownerTransport: NativeTransport, moveTerminals?: boolean, copyDraft?: boolean) => void;
   activeTransportRef: RefObject<NativeTransport>;
   setActiveCwd: Dispatch<StateUpdate<string | undefined>>;
-  setTerminalOpen: Dispatch<StateUpdate<boolean>>;
-  setTerminalTarget: Dispatch<StateUpdate<TerminalTarget | undefined>>;
   setState: Dispatch<StateUpdate<AgentState>>;
   setMessages: Dispatch<StateUpdate<ChatMessage[]>>;
   updateConnected: (value: boolean) => void;
@@ -34,8 +31,8 @@ type Context = {
   syncSessionIndex: () => Promise<void>;
 };
 
-export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setTerminalOpen, setTerminalTarget, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, syncSessionIndex }: Context) {
-  return async (message: ChatMessage, destinationCwd?: string) => {
+export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, syncSessionIndex }: Context) {
+  return async (message: ChatMessage) => {
     const ownerTransport = transport; const previousKey = activeConversationKeyRef.current;
     const entryId = await resolveMessageEntry(ownerTransport, message);
     const pendingKey = `${previousKey}:${entryId}`;
@@ -59,15 +56,13 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     };
 
     const publishBranch = (nextState: AgentState, history: { entries: PiEntry[]; leafId: string | null }, nextKey: string) => {
-      if (!destinationCwd && parentSession) {
+      if (parentSession) {
         runtimePool.setLiveSession(ownerTransport, { ...parentSession, id: nextState.sessionId, path: nextState.sessionFile ?? "", name: nextState.sessionName || parentSession.name, messageCount: nextState.messageCount });
       }
 
-      rekeyConversationUi(previousKey, nextKey, ownerTransport, !destinationCwd);
+      rekeyConversationUi(previousKey, nextKey, ownerTransport, true);
 
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === nextKey) {
-        if (destinationCwd) { setActiveCwd(destinationCwd); setTerminalOpen(false); setTerminalTarget(undefined); }
-
         setState(nextState); setMessages(branchMessages(history.entries, history.leafId)); updateConnected(true);
       }
 
@@ -88,17 +83,6 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       if (activeTransportRef.current === ownerTransport) { activateConversationKey(previousKey); setState(restoredState); setMessages(branchMessages(restoredHistory.entries, restoredHistory.leafId)); updateConnected(true); }
     };
 
-    const relocateBranch = async (nextState: AgentState, destinationCwd: string) => {
-      if (!nextState.sessionFile) throw new Error("The branched conversation has no session file");
-      await ownerTransport.relocateSession(nextState.sessionFile, destinationCwd, sourceHostId);
-
-      if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === previousKey) updateConnected(false);
-      await ownerTransport.disconnect(); await ownerTransport.connect(destinationCwd, nextState.sessionFile, sourceHostId);
-      const nextSettings = await ownerTransport.loadSettings(); await configureRuntime(nextSettings); nextState = await ownerTransport.command({ type: "get_state" }, agentStateSchema); const history = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
-
-      return { nextState, history };
-    };
-
     const rollbackBranch = async (cause: unknown) => {
       try {
         await restoreBranchSource();
@@ -116,19 +100,15 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     try {
       if (!await forkSource()) return false;
       forked = true;
-      let nextState = await ownerTransport.command({ type: "get_state" }, agentStateSchema);
-      let history = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
-
-      if (destinationCwd) {
-        ({ nextState, history } = await relocateBranch(nextState, destinationCwd));
-      }
+      const nextState = await ownerTransport.command({ type: "get_state" }, agentStateSchema);
+      const history = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
 
       const nextKey = `${sourceHostId}:${nextState.sessionId}`;
       await inheritSessionGroup(`${sourceHostId}:${state.sessionId}`, nextKey, parentSession);
       runtimePool.bind(sourceHostId, nextState.sessionId, ownerTransport);
       publishBranch(nextState, history, nextKey);
 
-      if (destinationCwd) void syncSessionIndex();
+      void syncSessionIndex();
 
       return true;
     } catch (reason) {

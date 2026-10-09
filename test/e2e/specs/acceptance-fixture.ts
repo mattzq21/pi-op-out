@@ -236,7 +236,7 @@ export const pressShortcut = (shortcut: string) => browser.execute((value) => {
 export const connectedSessionResponses = (sessionId: string) => ({
   start_pi: { attached: false, owned: true }, stop_pi: false,
   "shared_terminal:list": {},
-  load_git_diffs: {}, save_git_diffs: {},
+
   "pi_command:get_state": { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 },
   "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:get_available_models": { models: [{ provider: "e2e", id: "acceptance", name: "Acceptance model", reasoning: true }, { provider: "e2e", id: "alternate", name: "Alternate model", reasoning: true }] },
   "pi_command:get_available_thinking_levels": { levels: ["off", "high"] }, "pi_command:get_commands": { commands: [{ name: "fast", source: "extension", sourceInfo: { source: "npm:pi-openai-fast-mode-piop" } }] }, "pi_command:get_session_stats": {},

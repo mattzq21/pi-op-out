@@ -1,10 +1,9 @@
-import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { Parse } from "typebox/value";
 
 interface BrokerRequest {
   action?: string; sourceSessionId?: string; sourceHostId?: string; wake?: boolean;
-  hostId?: string; sessionId?: string; id?: string; cwd?: string; name?: string; deleteBranch?: boolean;
+  hostId?: string; sessionId?: string; id?: string; cwd?: string; name?: string;
   message?: string; requestId?: string; deadline?: number; deliveryId?: string;
   recoveryDepth?: number;
   terminalId?: string; generation?: string; offset?: number; maxBytes?: number;
@@ -49,13 +48,9 @@ export async function request(path: string, body?: BrokerRequest, signal?: Abort
   signal?.throwIfAborted();
   assertBrokerAvailable();
   const controller = new AbortController();
-  const operationId = path.startsWith("/worktrees/") ? randomUUID() : undefined;
 
-  if (operationId) body = { ...body, requestId: operationId, deadline: Date.now() + timeoutMs };
   const timeout = setTimeout(() => controller.abort(new Error("Session broker request timed out")), timeoutMs);
-  const cancelOperation = () => { if (operationId) void cancelRequest(operationId); };
 
-  controller.signal.addEventListener("abort", cancelOperation, { once: true });
   const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
 
   try {
@@ -63,11 +58,10 @@ export async function request(path: string, body?: BrokerRequest, signal?: Abort
 
     return await brokerResponse(response);
   } catch (error) {
-    if (operationId) await cancelRequest(operationId);
     requestError(String(error), controller.signal.aborted || error instanceof TypeError, signal);
     throw error;
   }
-  finally { clearTimeout(timeout); controller.signal.removeEventListener("abort", cancelOperation); signal?.removeEventListener("abort", abort); }
+  finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); }
 }
 
 function assertBrokerAvailable() {

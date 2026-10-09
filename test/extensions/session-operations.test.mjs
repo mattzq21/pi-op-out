@@ -1,14 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, mkdir, readFile, writeFile, rm, stat, readdir } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 
-const exec = promisify(execFile);
 
 async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'piop-session-operations-'));
@@ -58,39 +55,13 @@ async function fixture(t) {
   return { ...module, ctx, dir, entries, sourcePath, sourceText, notices, operations, rpc };
 }
 
-const unexpectedWorktree = async () => { throw Error('Git must not be required'); };
 
 const readEntries = async path => (await readFile(path, 'utf8')).trim().split('\n').map(JSON.parse);
 
-test('archived child-owned checkpoints recover missing refs from retained commits', async t => {
-  const f = await fixture(t);
-  const git = async (...args) => (await exec('git', ['-C', f.dir, ...args])).stdout.trim();
-  await git('init');
-  await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial');
-  const inheritedCommit = await git('rev-parse', 'HEAD');
-  await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'child response');
-  const commit = await git('rev-parse', 'HEAD');
-  const current = 'refs/pi-session-snapshots/chats/child/current';
-  await git('update-ref', current, commit);
-  const archive = join(f.dir, '.piop', 'archived');
-  await mkdir(archive, { recursive: true });
-  const file = join(archive, 'child.jsonl');
-  await writeFile(file, [
-    { type: 'session', id: 'child', cwd: f.dir },
-    { type: 'custom', id: 'old', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: f.dir, ref: 'refs/pi-session-snapshots/chats/child/deleted', commit: inheritedCommit } },
-    { type: 'message', id: 'response', parentId: 'old', message: { role: 'assistant' } },
-    { type: 'custom', id: 'last', parentId: 'response', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: f.dir, ref: current, commit, responseEntryIds: ['response'] } },
-  ].map(JSON.stringify).join('\n') + '\n');
-  const script = await readFile(new URL('../../daemon/resources/preserve-archive-checkpoints.bundle.mjs', import.meta.url), 'utf8');
-  await exec(process.execPath, ['-e', `require('node:os').homedir = () => ${JSON.stringify(f.dir)};\n${script}`, f.dir], { env: { ...process.env, PIOP_STORAGE_DIRECTORY: '.piop' } });
-  const entries = await readEntries(file);
-  assert.match(entries[1].data.ref, /^refs\/pi-session-snapshots\/chats\/child\//);
-  assert.equal(await git('rev-parse', entries[1].data.ref), inheritedCommit);
-});
 
-test('non-Git fork retains completed history, unique identity, permissions, and untouched parent', async t => {
+test('fork retains completed history, unique identity, permissions, and untouched parent', async t => {
   const f = await fixture(t);
-  const result = await f.forkConversation(f.ctx, {}, unexpectedWorktree);
+  const result = await f.forkConversation(f.ctx, {});
   const entries = await readEntries(result.sessionPath);
   assert.equal(entries[0].parentSession, f.sourcePath);
   assert.notEqual(entries[0].id, 'source');
@@ -102,37 +73,25 @@ test('non-Git fork retains completed history, unique identity, permissions, and 
 
 test('fork to another directory creates it without copying project files', async t => {
   const f = await fixture(t);
-  const result = await f.forkConversation(f.ctx, { cwd: 'other', entryId: 'a1' }, unexpectedWorktree);
+  const result = await f.forkConversation(f.ctx, { cwd: 'other', entryId: 'a1' });
   assert.equal(result.cwd, join(f.dir, 'other'));
   assert.deepEqual(await readdir(result.cwd), []);
   assert.equal((await readEntries(result.sessionPath))[0].cwd, result.cwd);
 });
 
-test('invalid fork targets and unfinished history fail before creating a worktree', async t => {
+test('invalid fork targets and unfinished history fail before creating a chat', async t => {
   const f = await fixture(t);
 
-  for (const options of [{ entryId: 'missing' }, { entryId: 'tool' }, { entryId: 'u1' }, { cwd: '.', worktree: 'branch' }, { cwd: 'missing/child' }, { cwd: '.' }]) {
-    await assert.rejects(f.forkConversation(f.ctx, options, unexpectedWorktree));
+  for (const options of [{ entryId: 'missing' }, { entryId: 'tool' }, { entryId: 'u1' }, { cwd: 'missing/child' }, { cwd: '.' }]) {
+    await assert.rejects(f.forkConversation(f.ctx, options));
   }
 
   f.entries[3].message.stopReason = 'aborted';
-  await assert.rejects(f.forkConversation(f.ctx, { entryId: 'tool' }, unexpectedWorktree), /unfinished tool calls/);
+  await assert.rejects(f.forkConversation(f.ctx, { entryId: 'tool' }), /unfinished tool calls/);
   f.entries.length = 1;
-  assert.equal((await readEntries((await f.forkConversation(f.ctx, {}, unexpectedWorktree)).sessionPath)).length, 1);
+  assert.equal((await readEntries((await f.forkConversation(f.ctx, {})).sessionPath)).length, 1);
 });
 
-test('worktree fork returns setup failures with the created path and session', async t => {
-  const f = await fixture(t);
-
-  const result = await f.forkConversation(f.ctx, { worktree: 'experiment' }, async name => {
-    assert.equal(name, 'experiment');
-
-    return { path: join(f.dir, 'new-tree'), branch: 'project-experiment', setupError: 'setup failed' };
-  });
-
-  assert.equal(result.setupError, 'setup failed');
-  assert.equal((await readEntries(result.sessionPath))[0].cwd, result.path);
-});
 
 test('fork RPC switches to a completed response without changing the parent', async t => {
   const f = await fixture(t);
@@ -149,40 +108,7 @@ test('fork RPC switches to a completed response without changing the parent', as
   assert.deepEqual(await readdir(f.dir), before);
 });
 
-test('Git sessions fork in place and into an independent real worktree', async t => {
-  const f = await fixture(t);
-  const git = (...args) => exec('git', ['-C', f.dir, ...args]);
-  await git('init');
-  await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial');
-  const sourceHead = (await git('rev-parse', 'HEAD')).stdout;
-  const same = await f.forkConversation(f.ctx, {}, unexpectedWorktree);
-  assert.equal(same.cwd, f.dir);
-  const destination = join(f.dir, 'worktree');
 
-  const fork = await f.forkConversation(f.ctx, { worktree: 'experiment' }, async branch => {
-    await git('worktree', 'add', '-b', branch, destination);
-
-    return { path: destination, branch };
-  });
-
-  assert.equal((await exec('git', ['-C', fork.cwd, 'branch', '--show-current'])).stdout.trim(), 'experiment');
-  assert.equal((await git('rev-parse', 'HEAD')).stdout, sourceHead);
-  assert.deepEqual((await readEntries(fork.sessionPath)).slice(1), f.entries.slice(0, 2));
-});
-
-test('an unopened fork owns inherited prompt checkpoints before its parent is deleted', async t => {
-  const f = await fixture(t);
-  const git = (...args) => exec('git', ['-C', f.dir, ...args]);
-  await git('init');
-  await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial');
-  const commit = (await git('rev-parse', 'HEAD')).stdout.trim();
-  const sourceRef = 'refs/pi-session-snapshots/chats/source/prompts/before';
-  await git('update-ref', sourceRef, commit);
-  f.entries.splice(1, 0, { type: 'custom', id: 'checkpoint', parentId: 'u1', customType: 'pi-project-prompt-checkpoint', data: { key: 'before', owner: 'source', commit, base: commit } });
-  const child = await f.forkConversation(f.ctx, {}, unexpectedWorktree);
-  await git('update-ref', '-d', sourceRef, commit);
-  assert.equal((await git('rev-parse', '--verify', `refs/pi-session-snapshots/chats/${child.sessionId}/prompts/before`)).stdout.trim(), commit);
-});
 
 test('forget RPC records successful navigation and preserves cancelled or invalid requests', async t => {
   const f = await fixture(t);

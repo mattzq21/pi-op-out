@@ -6,15 +6,13 @@ export { z, rpcEventSchema, rpcCommandSchema, entrySchema, pendingMessageSchema 
 
 export const voidResultSchema = z.unknown().transform(() => undefined);
 
-export const worktreeSetupScriptSchema = z.object({ id: z.string(), name: z.string(), script: z.string(), cleanupScript: z.string().optional(), enabled: z.boolean(), projectPath: z.string().optional(), hostId: z.string().optional() });
-
 export const toolConfigSchema = z.object({ name: z.string(), description: z.string(), enabled: z.boolean(), builtin: z.boolean().optional() });
 
 export const skillConfigSchema = z.object({ name: z.string(), path: z.string(), description: z.string(), enabled: z.boolean(), userInvokedOnly: z.boolean().optional() });
 
 export const remoteHostSchema = z.object({ enabled: z.boolean().optional(), id: z.string(), name: z.string(), target: z.string(), piPath: z.string() });
 
-export const appSettingsSchema = z.object({ settingsRevision: z.string().optional(), clientSettingsRevision: z.string().optional(), settingsDurabilityError: z.string().optional(), clientSettingsDurabilityError: z.string().optional(), reviewAgent: z.string().optional(), reviewPrompt: z.string().optional(), dictationModelPath: z.string().optional(), localEnabled: z.boolean().optional(), worktreeSetupScripts: z.array(worktreeSetupScriptSchema), defaultAgent: z.string().optional(), defaultModel: z.string(), hiddenModels: z.array(z.string()), knownModels: z.array(z.string()).optional(), defaultThinking: z.string(), defaultFastMode: z.boolean(), contextWindowCap: z.number(), contextWindowCapEnabled: z.boolean(), autoRetry: z.boolean(), debugMode: z.boolean(), keybindings: z.object({ newConversation: z.string(), toggleConversations: z.string(), toggleTerminal: z.string(), toggleDebugMode: z.string(), focusComposer: z.string(), openSettings: z.string() }), tools: z.array(toolConfigSchema), skills: z.array(skillConfigSchema), hosts: z.array(remoteHostSchema) });
+export const appSettingsSchema = z.object({ settingsRevision: z.string().optional(), clientSettingsRevision: z.string().optional(), settingsDurabilityError: z.string().optional(), clientSettingsDurabilityError: z.string().optional(), dictationModelPath: z.string().optional(), localEnabled: z.boolean().optional(), defaultAgent: z.string().optional(), defaultModel: z.string(), hiddenModels: z.array(z.string()), knownModels: z.array(z.string()).optional(), defaultThinking: z.string(), defaultFastMode: z.boolean(), contextWindowCap: z.number(), contextWindowCapEnabled: z.boolean(), autoRetry: z.boolean(), debugMode: z.boolean(), keybindings: z.object({ newConversation: z.string(), toggleConversations: z.string(), toggleTerminal: z.string(), toggleDebugMode: z.string(), focusComposer: z.string(), openSettings: z.string() }), tools: z.array(toolConfigSchema), skills: z.array(skillConfigSchema), hosts: z.array(remoteHostSchema) });
 
 export const clientSettingsSchema = appSettingsSchema.pick({ "keybindings": true, "hiddenModels": true, "knownModels": true, "debugMode": true });
 
@@ -24,31 +22,25 @@ export const settingsPublicationSchema = z.object({ committed: z.literal(true), 
 
 export const settingsChangeSchema = z.object({ settings: appSettingsSchema, publication: settingsPublicationSchema.optional(), agentConfigChange: agentConfigChangeSchema.optional(), committed: z.boolean().optional(), warnings: z.array(z.string()).optional(), revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), committedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), synchronizationPending: z.boolean().optional(), source: z.string().optional(), phaseRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() });
 
-export const sessionSummarySchema = z.object({ id: z.string(), isDraft: z.boolean().optional(), subagentParentId: z.string().optional(), daemonId: z.string().optional(), isRunning: z.boolean().optional(), groupId: z.union([z.string(), z.null()]).optional(), path: z.string(), name: z.string(), project: z.string(), cwd: z.string(), cwdExists: z.boolean().optional(), projectRoot: z.union([z.string(), z.null()]).optional(), branch: z.union([z.string(), z.null()]).optional(), worktreeRoot: z.union([z.string(), z.null()]).optional(), projectKind: z.union([z.literal("no-repo"), z.literal("main"), z.literal("worktree"), z.null()]).optional(), preview: z.string(), messageCount: z.number(), lastMessageAt: z.number(), apiCost: z.number(), hostId: z.string().optional(), hostName: z.string().optional() });
+export const sessionSummarySchema = z.object({ id: z.string(), isDraft: z.boolean().optional(), subagentParentId: z.string().optional(), daemonId: z.string().optional(), isRunning: z.boolean().optional(), groupId: z.union([z.string(), z.null()]).optional(), path: z.string(), name: z.string(), project: z.string(), cwd: z.string(), cwdExists: z.boolean().optional(), preview: z.string(), messageCount: z.number(), lastMessageAt: z.number(), apiCost: z.number(), hostId: z.string().optional(), hostName: z.string().optional() });
 
-export const sessionGroupSchema = z.object({ id: z.string(), name: z.string(), cwd: z.union([z.string(), z.null()]).optional(), hostId: z.union([z.string(), z.null()]).optional(), hostName: z.union([z.string(), z.null()]).optional(), projectKind: z.union([z.literal("no-repo"), z.literal("main"), z.literal("worktree"), z.null()]).optional(), branch: z.string().optional() });
+export const sessionGroupSchema = z.object({ id: z.string(), name: z.string(), cwd: z.union([z.string(), z.null()]).optional(), hostId: z.union([z.string(), z.null()]).optional(), hostName: z.union([z.string(), z.null()]).optional() });
 
 export const sessionGroupsSchema = z.object({ groups: z.array(sessionGroupSchema), assignments: z.record(z.string(), z.union([z.string(), z.null()])), removedProjects: z.array(z.string()) });
-
-export const projectBranchesSchema = z.object({ branches: z.array(z.string()), current: z.union([z.string(), z.null()]), path: z.string(), mainPath: z.string() });
 
 export const storageOwnershipSchema = z.enum(["owned", "referenced", "shared", "unattributed"]);
 
 export const storageOwnerSchema = z.object({ sessionId: z.string(), sessionPath: z.string().optional(), kind: z.string() });
 
-export const storageRootSchema = z.object({ path: z.string(), ownership: storageOwnershipSchema, provenance: z.array(z.string()), available: z.boolean(), owners: z.array(storageOwnerSchema), state: z.string().optional(), refs: z.array(z.string()).optional() });
+export const storageRootSchema = z.object({ path: z.string(), ownership: storageOwnershipSchema, provenance: z.array(z.string()), available: z.boolean(), owners: z.array(storageOwnerSchema), state: z.string().optional() });
 
-export const storageCategorySchema = z.object({ id: z.enum(["active-conversations", "archived-conversations", "archived-project-checkpoints", "project-checkpoints", "temporary-chats", "worktrees", "archived-worktrees", "other-storage", "referenced-worktrees", "recovery-storage", "unattributed-recovery-storage", "legacy-recovery-storage", "chatgpt-storage", "goal-attachments", "unattributed-goal-attachments", "unattributed-project-checkpoints"]), byteSize: z.number(), itemCount: z.number(), estimated: z.boolean().optional(), directories: z.array(z.string()).optional(), countUnit: z.string().optional(), coverage: z.string().optional(), ownership: storageOwnershipSchema.optional(), reclaimability: z.enum(["retained", "requires-owner-check", "unknown"]).optional(), measurement: z.enum(["allocated-blocks", "git-object-estimate"]).optional(), includedInTotal: z.boolean().optional(), roots: z.array(storageRootSchema).optional() });
+export const storageCategorySchema = z.object({ id: z.enum(["active-conversations", "archived-conversations", "temporary-chats", "other-storage", "recovery-storage", "unattributed-recovery-storage", "legacy-recovery-storage", "chatgpt-storage", "goal-attachments", "unattributed-goal-attachments"]), byteSize: z.number(), itemCount: z.number(), estimated: z.boolean().optional(), directories: z.array(z.string()).optional(), countUnit: z.string().optional(), coverage: z.string().optional(), ownership: storageOwnershipSchema.optional(), reclaimability: z.enum(["retained", "requires-owner-check", "unknown"]).optional(), measurement: z.enum(["allocated-blocks"]).optional(), includedInTotal: z.boolean().optional(), roots: z.array(storageRootSchema).optional() });
 
-export const archivedConversationSchema = z.object({ id: z.string(), path: z.string(), name: z.string(), cwd: z.string(), modifiedAt: z.number(), byteSize: z.number(), deletable: z.boolean(), deleteError: z.string().optional(), worktreePath: z.string().optional(), restorable: z.boolean().optional(), restoreError: z.string().optional(), byteSizeCoverage: z.string().optional() });
+export const archivedConversationSchema = z.object({ id: z.string(), path: z.string(), name: z.string(), cwd: z.string(), modifiedAt: z.number(), byteSize: z.number(), deletable: z.boolean(), deleteError: z.string().optional(), byteSizeCoverage: z.string().optional() });
 
-export const hostStorageSchema = z.object({ hostId: z.string(), hostName: z.string(), categories: z.array(storageCategorySchema), archives: z.array(archivedConversationSchema), warnings: z.array(z.string()), error: z.string().optional() });
+export const hostStorageSchema = z.object({ hostId: z.string(), hostName: z.string(), categories: z.array(z.unknown()).transform(categories => categories.filter(category => storageCategorySchema.shape.id.safeParse(z.object({ id: z.string() }).parse(category).id).success).map(category => storageCategorySchema.parse(category))), archives: z.array(archivedConversationSchema), warnings: z.array(z.string()), error: z.string().optional() });
 
 export const storageReportSchema = z.object({ hosts: z.array(hostStorageSchema) });
-
-export const gitWorktreeSchema = z.object({ branch: z.string(), path: z.string() });
-
-export const gitWorktreeRemovalSchema = z.object({ branch: z.string().optional(), branchDeleted: z.boolean(), warning: z.string().optional() });
 
 export const codexUsageSchema = z.object({ remainingPercent: z.number(), resetAt: z.number().optional() });
 

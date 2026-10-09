@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const database = require('./session-database.cjs');
-const { validSessionHeader } = require('./checkpoint-schemas.cjs');
+const { validSessionHeader } = require('./session-header.cjs');
 
 function prepare(target) {
   const directory = target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop', 'sessions');

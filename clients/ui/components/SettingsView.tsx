@@ -11,7 +11,7 @@ import { Dynamic } from "solid-js/web";
 import { accountModelNameLookup } from "../lib/providerAccounts";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { Bot, Check, CircleGauge, CirclePlus, ClipboardCheck, Cpu, HardDrive, Keyboard, Mic, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-solid";
+import { Bot, Check, CircleGauge, CirclePlus, ClipboardCheck, Cpu, HardDrive, Keyboard, Mic, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -19,13 +19,12 @@ import type { AgentConfig, AgentProfile, AppSettings, Model, RemoteHost, Session
 import { IconButton } from "./IconButton";
 import { ProviderSettings } from "./ProviderSettings";
 import { StorageSettings } from "./StorageSettings";
-import { ReviewSettings } from "./ReviewSettings";
 import { PluginSettings } from "./PluginSettings";
 import { ToastHistory } from "./ToastHistory";
 import { Toggle } from "./Toggle";
 import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
-export type Section = "providers" | "general" | "dictation" | "review" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
+export type Section = "providers" | "general" | "dictation" | "models" | "storage" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
 
 type SettingsSection = { id: Section; label: string; icon: typeof Settings2 };
 
@@ -34,11 +33,9 @@ const mobileSections: SettingsSection[] = isMobile ? [{ id: "connections", label
 export const sections: SettingsSection[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "dictation", label: "Dictation", icon: Mic },
-  { id: "review", label: "Review", icon: ClipboardCheck },
   { id: "models", label: "Models", icon: Cpu },
   { id: "providers", label: "Providers", icon: ShieldCheck },
   { id: "storage", label: "Storage", icon: HardDrive },
-  { id: "environment", label: "Worktree scripts", icon: Wrench },
   { id: "keybinds", label: "Keybinds", icon: Keyboard },
   { id: "toasts", label: "Toast history", icon: ClipboardCheck },
   { id: "plugins", label: "Plugins", icon: PlugZap },
@@ -404,24 +401,6 @@ export function SettingsView(props: SettingsViewProps) {
 
   const renderSettingsLayout = () => {
     const renderSettingsContent = () => {
-      const renderWorktreeScripts = () => (formValidation().visibleSection === "environment" && <SettingsSection title="Worktree scripts" description="Assign setup and cleanup scripts to a project and machine. Setup runs in order after creation; cleanup runs in reverse order before deletion. A failure stops the operation and keeps the worktree." headerAction={<button class="secondary-button" onClick={() => patch({ worktreeSetupScripts: [...(draft().worktreeSetupScripts ?? []), { id: uid("setup"), name: "Worktree script", script: "", cleanupScript: "", enabled: true, projectPath: "", hostId: "local" }] })}><CirclePlus size={15} />Add script</button>}>
-        <p>Source workspace: <code>PIOP_SOURCE_TREE_PATH</code><br />Worktree: <code>PIOP_WORKTREE_PATH</code><br />Branch: <code>PIOP_WORKTREE_BRANCH</code></p>
-        {<Key each={(draft().worktreeSetupScripts ?? [])} by={(script) => script.id}>{(script, index) => {
-          const update = (value: Partial<ReturnType<typeof script>>) => patch({ worktreeSetupScripts: (draft().worktreeSetupScripts ?? []).map((item) => item.id === script().id ? { ...item, ...value } : item) });
-
-          return <div class="setup-script" >
-            <p>Runs on {settingsProps().daemonLabel}.{script().hostId && script().hostId !== "local" && <> This older script targets another machine. <button onClick={() => update({ hostId: "local", projectPath: "" })}>Assign to this daemon</button></>}</p>
-            <div class="section-actions"><strong>Script {index() + 1}</strong><Toggle label={`Enable ${script().name}`} checked={script().enabled} onChange={(enabled) => update({ enabled })} /><button disabled={index() === 0} onClick={() => { const reordered = [...(draft().worktreeSetupScripts ?? [])];[reordered[index() - 1], reordered[index()]] = [reordered[index()], reordered[index() - 1]]; patch({ worktreeSetupScripts: reordered }); }}>Move up</button><button onClick={() => patch({ worktreeSetupScripts: (draft().worktreeSetupScripts ?? []).filter((item) => item.id !== script().id) })}>Remove</button></div>
-            <label class="field"><span>Name</span><input aria-label={`Script ${index() + 1} name`} value={script().name} onInput={(event) => update({ name: event.target.value })} /></label>
-            <label class="field"><span>Project directory</span><input aria-label={`Script ${index() + 1} project directory`} list={`setup-projects-${script().id}`} placeholder="Absolute path to the repository" value={script().projectPath ?? ""} onInput={(event) => update({ projectPath: event.target.value })} /></label>
-            <datalist id={`setup-projects-${script().id}`}>{<Key each={[...new Set(settingsProps().sessions.filter((session) => (session.hostId ?? "local") === (script().hostId ?? "local") && session.projectKind !== "no-repo").map((session) => session.projectRoot ?? session.cwd))]} by={(path) => path}>{(path, _index) => <option  value={path()} />}</Key>}</datalist>
-            {!script().projectPath?.trim() && <p class="empty-small">Choose a project directory to run this script. Unassigned scripts are kept but do not run.</p>}
-            <label class="field"><span>Setup Bash script</span><textarea class="setup-script-code" aria-label={`Script ${index() + 1} setup Bash code`} rows={8} spellcheck={false} placeholder={'npm ci\n# Or copy files from "$PIOP_SOURCE_TREE_PATH"'} value={script().script} onInput={(event) => update({ script: event.target.value })} /></label>
-            <label class="field"><span>Cleanup Bash script</span><textarea class="setup-script-code" aria-label={`Script ${index() + 1} cleanup Bash code`} rows={8} spellcheck={false} placeholder={'# Remove resources created for "$PIOP_WORKTREE_BRANCH"'} value={script().cleanupScript ?? ""} onInput={(event) => update({ cleanupScript: event.target.value })} /></label>
-          </div>;
-        }}</Key>}
-        {!draft().worktreeSetupScripts?.length && <div class="empty-small">Add scripts to prepare new worktrees and clean up their external resources before deletion.</div>}
-      </SettingsSection>);
 
       const renderDictation = () => (formValidation().visibleSection === "dictation" && <SettingsSection title="Dictation" description="Choose the speech model used by this daemon."><label class="field"><span>Model file path</span><input aria-label="Dictation model file path" placeholder="~/Models/speech-model.gguf" value={draft().dictationModelPath ?? ""} onInput={event => patch({ dictationModelPath: event.currentTarget.value })} /></label></SettingsSection>);
 
@@ -481,9 +460,7 @@ export function SettingsView(props: SettingsViewProps) {
         {formValidation().visibleSection === "plugins" && <PluginSettings hostId={providerHostId()} onBusyChange={settingsProps().onSavingChange} />}
         {!formValidation().matchingSections.length && <div class="empty-small" role="status">No settings match your search.</div>}
         {formValidation().visibleSection === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
-        {renderWorktreeScripts()}
         {renderGeneral()}
-        <Show when={formValidation().visibleSection === "review"}><SettingsSection title="Review" description="Agent and prompt used when starting /review on this machine. Existing reviews keep their agent and conversation."><ReviewSettings settings={draft()} agents={agentDrafts()} onChange={patch} /></SettingsSection></Show>
         {renderDictation()}
         {renderModels()}
         {formValidation().visibleSection === "connections" && <SettingsSection title="Hosts" description="Saved daemon connections are stored on this device."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Manage saved hosts</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}

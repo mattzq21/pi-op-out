@@ -29,13 +29,9 @@ pub(super) fn read(path: &Path) -> Result<Option<SessionGroups>, String> {
 }
 
 fn load_groups(database: &Connection) -> rusqlite::Result<Vec<SessionGroup>> {
-    let mut statement = database.prepare("SELECT group_id, name, cwd, host_id, host_name, project_kind, branch FROM session_groups ORDER BY position, group_id")?;
+    let mut statement = database.prepare("SELECT group_id, name, cwd, host_id, host_name FROM session_groups ORDER BY position, group_id")?;
     let rows = statement.query_map([], |row| {
-        let project_kind: Option<String> = row.get(5)?;
-        let project_kind = project_kind.map(|value| serde_json::from_value(serde_json::Value::String(value))).transpose()
-            .map_err(|error| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error)))?;
-        Ok(SessionGroup { id: row.get(0)?, name: row.get(1)?, cwd: row.get(2)?, host_id: row.get(3)?, host_name: row.get(4)?,
-            project_kind, branch: row.get(6)? })
+        Ok(SessionGroup { id: row.get(0)?, name: row.get(1)?, cwd: row.get(2)?, host_id: row.get(3)?, host_name: row.get(4)? })
     })?;
     rows.collect()
 }
@@ -52,11 +48,8 @@ fn save_groups(transaction: &Transaction<'_>, groups: &SessionGroups) -> Result<
     transaction.execute_batch("DELETE FROM session_groups; DELETE FROM session_group_assignments; DELETE FROM session_group_removed_projects;")
         .map_err(|error| error.to_string())?;
     for (position, group) in groups.groups.iter().enumerate() {
-        let kind = group.project_kind.map(|kind| match kind {
-            crate::git_ops::ProjectKind::NoRepo => "no-repo", crate::git_ops::ProjectKind::Main => "main", crate::git_ops::ProjectKind::Worktree => "worktree",
-        });
-        transaction.execute("INSERT INTO session_groups VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            params![group.id, position as u64, group.name, group.cwd, group.host_id, group.host_name, kind, group.branch])
+        transaction.execute("INSERT INTO session_groups (group_id, position, name, cwd, host_id, host_name) VALUES (?, ?, ?, ?, ?, ?)",
+            params![group.id, position as u64, group.name, group.cwd, group.host_id, group.host_name])
             .map_err(|error| error.to_string())?;
     }
     for (key, group) in &groups.assignments {

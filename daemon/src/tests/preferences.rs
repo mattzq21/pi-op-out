@@ -40,14 +40,6 @@ fn frontmatter_respects_the_header_boundary_and_quoted_values() {
     assert!(!skill_path_is_within(Path::new("/skills-other/a"), Path::new("/skills")));
 }
 
-#[test]
-fn worktree_names_validate_user_input_and_keep_the_root_branch() {
-    assert_eq!(worktree_suffix(" feature-1_test.v2 ").unwrap(), "feature-1_test.v2");
-    for name in ["", " ", "feature/name", "a b", "é", "$(touch x)"] { assert!(worktree_suffix(name).is_err()); }
-    assert_eq!(worktree_branch_name("main", "feature"), "main|feature");
-    assert_eq!(worktree_branch_name("main|parent", "feature"), "main|feature");
-    assert_eq!(worktree_branch_name("feature/project", "child"), "feature/project|child");
-}
 include!("../test_directory.rs");
 
 struct HomeOverride { _guard: std::sync::MutexGuard<'static, ()>, previous: Option<std::ffi::OsString> }
@@ -82,7 +74,7 @@ fn local_session_index_discovers_refreshes_and_evicts_files() {
     fs::write(sessions_dir.join("ignored.txt"), format!("{header}\n")).unwrap();
     let first = list_local_sessions(&index, &sessions_dir).unwrap();
     assert_eq!(first.len(), 1); assert_eq!(first[0].name, "Untitled session");
-    assert!(first[0].cwd_exists); assert!(matches!(first[0].project_kind, Some(ProjectKind::NoRepo)));
+    assert!(first[0].cwd_exists);
     let fingerprint = index.local.lock().unwrap()[&path].fingerprint.clone();
     let unchanged = list_local_sessions(&index, &sessions_dir).unwrap();
     assert_eq!(unchanged[0].id, "chat"); assert_eq!(index.local.lock().unwrap()[&path].fingerprint, fingerprint);
@@ -94,11 +86,4 @@ fn local_session_index_discovers_refreshes_and_evicts_files() {
     fs::remove_file(&path).unwrap();
     assert!(list_local_sessions(&index, &sessions_dir).unwrap().is_empty());
     assert!(index.local.lock().unwrap().is_empty());
-}
-
-fn test_git(cwd: &Path, arguments: &[&str]) {
-    let output = Command::new("git").current_dir(cwd)
-        .args(["-c", "user.name=Piop Test", "-c", "user.email=piop-test@example.invalid", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false"])
-        .args(arguments).output().unwrap();
-    assert!(output.status.success(), "git {arguments:?}: {}", String::from_utf8_lossy(&output.stderr));
 }

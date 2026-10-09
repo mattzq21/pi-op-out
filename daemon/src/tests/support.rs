@@ -1,24 +1,4 @@
 #[test]
-fn git_project_detection_distinguishes_main_worktrees_and_plain_directories() {
-    let root = TestDirectory::new(); let settings = default_settings();
-    let repository = root.0.join("main project"); fs::create_dir(&repository).unwrap();
-    assert!(matches!(inspect_git_project_kind(&settings, repository.to_str().unwrap(), "local").unwrap(), ProjectKind::NoRepo));
-    test_git(&repository, &["init", "--initial-branch=main"]);
-    test_git(&repository, &["commit", "--allow-empty", "-m", "Initial test commit"]);
-    assert!(matches!(inspect_git_project_kind(&settings, repository.to_str().unwrap(), "local").unwrap(), ProjectKind::Main));
-    let worktree = root.0.join("linked project");
-    test_git(&repository, &["worktree", "add", "-b", "test-linked", worktree.to_str().unwrap()]);
-    assert!(matches!(inspect_git_project_kind(&settings, worktree.to_str().unwrap(), "local").unwrap(), ProjectKind::Worktree));
-    let nested = worktree.join("nested"); fs::create_dir(&nested).unwrap();
-    assert!(matches!(inspect_git_project_kind(&settings, nested.to_str().unwrap(), "local").unwrap(), ProjectKind::Worktree));
-    assert!(inspect_git_project_kind(&settings, root.0.join("missing").to_str().unwrap(), "local").unwrap_err().contains("Project directory does not exist"));
-    let bare = root.0.join("bare"); fs::create_dir(&bare).unwrap(); test_git(&bare, &["init", "--bare"]);
-    assert!(matches!(inspect_git_project_kind(&settings, bare.to_str().unwrap(), "local").unwrap(), ProjectKind::Main));
-    let file = root.0.join("file"); fs::write(&file, "not a directory").unwrap();
-    assert!(inspect_git_project_kind(&settings, file.to_str().unwrap(), "local").unwrap_err().contains("Project directory does not exist"));
-}
-
-#[test]
 fn limited_process_output_accepts_exact_limits_and_preserves_failure_status() {
     let output = run_limited(Command::new("node").args(["-e", "process.stdout.write(Buffer.from([0,255,10,65]));process.stderr.write('diagnostic');process.exitCode=7"]), 4, "test command").unwrap();
     assert_eq!(output.stdout, [0, 255, 10, 65]);
@@ -29,92 +9,14 @@ fn limited_process_output_accepts_exact_limits_and_preserves_failure_status() {
 
 #[test]
 fn limited_process_output_rejects_overflow_and_retains_bounded_diagnostics() {
-    let error = run_limited(Command::new("node").args(["-e", "process.stdout.write('12345')"]), 4, "Git capture").err().unwrap();
-    assert!(error.starts_with("Git capture: output exceeded"));
+    let error = run_limited(Command::new("node").args(["-e", "process.stdout.write('12345')"]), 4, "Process capture").err().unwrap();
+    assert!(error.starts_with("Process capture: output exceeded"));
     let output = run_limited(Command::new("node").args(["-e", "process.stderr.write('prefix'+ 'x'.repeat(200000));process.stdout.write('done')"]), 4, "large diagnostics").unwrap();
     assert!(output.status.success()); assert_eq!(output.stdout, b"done");
     assert_eq!(output.stderr.len(), 64 * 1024); assert!(output.stderr.starts_with(b"prefix"));
     let root = TestDirectory::new();
     let missing = run_limited(&mut Command::new(root.0.join("missing-executable")), 4, "Start helper").err().unwrap();
     assert!(missing.starts_with("Start helper:"));
-}
-
-#[test]
-fn setup_process_uses_completion_protocol_and_ignores_login_noise() {
-    let script = "const fs=require('fs');fs.writeSync(2,'setup details');fs.writeSync(1,'login banner\\n'+ 'x'.repeat(400)+'\\nDONE invalid\\nOTHER 99\\nDONE 7\\n');";
-    let (status, stderr) = run_setup_process(Command::new("node").args(["-e", script]), &AtomicBool::new(false), "Setup", "DONE".into(), "Cancelled", None).unwrap();
-    assert_eq!(status, 7); assert_eq!(stderr, b"setup details");
-    let (status, stderr) = run_setup_process(Command::new("node").args(["-e", "process.stderr.write('failed');process.exitCode=3"]), &AtomicBool::new(false), "Setup", "DONE".into(), "Cancelled", None).unwrap();
-    assert_eq!(status, 3); assert_eq!(stderr, b"failed");
-}
-
-#[test]
-fn setup_cancellation_and_timeout_send_the_stop_request_and_report_the_reason() {
-    let script = "process.stdin.once('data', chunk=>{process.exitCode=chunk.toString()==='cancel\\n'?0:2;process.stdin.destroy()});";
-    for (cancelled, timeout, expected) in [
-        (true, None, "Environment setup cancelled"),
-        (false, Some(Duration::ZERO), "Environment setup timed out after 5 minutes"),
-    ] {
-        let error = run_setup_process(Command::new("node").args(["-e", script]), &AtomicBool::new(cancelled), "Environment setup", "DONE".into(), "Environment setup cancelled", timeout).unwrap_err();
-        assert_eq!(error, expected);
-    }
-}
-
-#[test]
-fn setup_process_bounds_diagnostics_and_reports_spawn_failures() {
-    let (status, stderr) = run_setup_process(Command::new("node").args(["-e", "process.stderr.write('prefix'+'x'.repeat(200000))"]), &AtomicBool::new(false), "Setup", "DONE".into(), "Cancelled", None).unwrap();
-    assert_eq!(status, 0); assert_eq!(stderr.len(), 64 * 1024); assert!(stderr.starts_with(b"prefix"));
-    let root = TestDirectory::new();
-    let error = run_setup_process(&mut Command::new(root.0.join("missing")), &AtomicBool::new(false), "Start setup", "DONE".into(), "Cancelled", None).unwrap_err();
-    assert!(error.starts_with("Start setup:"));
-}
-
-#[test]
-fn untracked_copy_preserves_nested_files_without_copying_repository_metadata() {
-    let source = TestDirectory::new(); let target = TestDirectory::new();
-    fs::create_dir_all(source.0.join("nested/deeper")).unwrap();
-    fs::write(source.0.join("nested/deeper/binary"), [0, 255, 128]).unwrap();
-    fs::create_dir(source.0.join("nested/.git")).unwrap();
-    fs::write(source.0.join("nested/.git/config"), "source-only metadata").unwrap();
-    copy_untracked_file(&source.0, &target.0, Path::new("nested")).unwrap();
-    assert_eq!(fs::read(target.0.join("nested/deeper/binary")).unwrap(), [0, 255, 128]);
-    assert!(!target.0.join("nested/.git").exists());
-    assert_eq!(fs::read_to_string(source.0.join("nested/.git/config")).unwrap(), "source-only metadata");
-    for invalid in ["../escape", "/absolute", "nested/../../escape"] {
-        assert_eq!(copy_untracked_file(&source.0, &target.0, Path::new(invalid)).unwrap_err(), "Git returned an invalid untracked path");
-    }
-    assert!(copy_untracked_file(&source.0, &target.0, Path::new("missing")).unwrap_err().contains("Could not inspect untracked file"));
-}
-
-#[cfg(unix)]
-#[test]
-fn untracked_copy_preserves_symlinks_and_non_utf8_path_bytes() {
-    use std::os::unix::{fs::symlink, ffi::OsStrExt};
-    let source = TestDirectory::new(); let target = TestDirectory::new();
-    symlink("../outside", source.0.join("link")).unwrap();
-    copy_untracked_file(&source.0, &target.0, Path::new("link")).unwrap();
-    assert_eq!(fs::read_link(target.0.join("link")).unwrap(), PathBuf::from("../outside"));
-    assert!(fs::symlink_metadata(target.0.join("link")).unwrap().file_type().is_symlink());
-    let relative = git_relative_path(b"name-\xff");
-    assert_eq!(relative.as_os_str().as_bytes(), b"name-\xff");
-    fs::write(source.0.join(&relative), b"payload").unwrap();
-    copy_untracked_file(&source.0, &target.0, &relative).unwrap();
-    assert_eq!(fs::read(target.0.join(relative)).unwrap(), b"payload");
-}
-
-#[test]
-fn created_worktree_cleanup_removes_its_registration_and_branch_only() {
-    let root = TestDirectory::new(); let source = root.0.join("source"); fs::create_dir(&source).unwrap();
-    test_git(&source, &["init", "--initial-branch=main"]); test_git(&source, &["commit", "--allow-empty", "-m", "Initial"]);
-    let target = root.0.join("linked worktree");
-    assert!(!local_branch_exists(&source, "feature").unwrap()); assert!(!local_worktree_is_registered(&source, &target).unwrap());
-    test_git(&source, &["worktree", "add", "-b", "feature", target.to_str().unwrap()]);
-    assert!(local_branch_exists(&source, "feature").unwrap()); assert!(local_worktree_is_registered(&source, &target).unwrap());
-    fs::write(target.join("partial-setup"), "temporary").unwrap();
-    remove_created_worktree(&source, &target, "feature");
-    assert!(!target.exists()); assert!(!local_branch_exists(&source, "feature").unwrap());
-    assert!(!local_worktree_is_registered(&source, &target).unwrap());
-    assert!(local_branch_exists(&source, "main").unwrap()); assert!(local_worktree_is_registered(&source, &source).unwrap());
 }
 
 #[test]
@@ -239,48 +141,6 @@ fn broker_environment_requires_a_ready_listener_and_returns_its_credentials() {
     assert!(broker_environment(&broker).is_err());
 }
 
-#[test]
-fn worktree_removal_inspection_rejects_main_dirty_and_locked_checkouts() {
-    let root = TestDirectory::new(); let source = root.0.join("source"); fs::create_dir(&source).unwrap();
-    test_git(&source, &["init", "--initial-branch=main"]); test_git(&source, &["commit", "--allow-empty", "-m", "Initial"]);
-    let settings = default_settings();
-    assert!(inspect_worktree_removal(&settings, source.to_str().unwrap(), "local").err().unwrap().contains("main checkout cannot be deleted"));
-    assert!(inspect_worktree_removal(&settings, root.0.to_str().unwrap(), "local").err().unwrap().contains("not a Git repository"));
-    let target = root.0.join("linked"); test_git(&source, &["worktree", "add", "-b", "feature", target.to_str().unwrap()]);
-    let inspect = || inspect_worktree_removal(&settings, target.to_str().unwrap(), "local");
-    let details = inspect().unwrap();
-    assert_eq!(details.path, target.canonicalize().unwrap().to_string_lossy());
-    assert_eq!(details.source, source.canonicalize().unwrap().to_string_lossy()); assert_eq!(details.branch.as_deref(), Some("feature"));
-    fs::write(target.join("unsaved"), "keep me").unwrap();
-    assert!(inspect().err().unwrap().contains("uncommitted or untracked changes"));
-    assert_eq!(fs::read_to_string(target.join("unsaved")).unwrap(), "keep me");
-    fs::remove_file(target.join("unsaved")).unwrap();
-    test_git(&source, &["worktree", "lock", "--reason", "Important work", target.to_str().unwrap()]);
-    assert!(inspect().err().unwrap().contains("Worktree is locked: Important work"));
-    test_git(&source, &["worktree", "unlock", target.to_str().unwrap()]);
-    test_git(&target, &["checkout", "--detach"]);
-    assert!(inspect().unwrap().branch.is_none());
-}
-
-#[test]
-fn canonical_worktree_roots_preserve_input_order_across_batches_and_missing_paths() {
-    let root = TestDirectory::new(); let source = root.0.join("repo"); fs::create_dir(&source).unwrap();
-    test_git(&source, &["init", "--initial-branch=main"]);
-    let nested = source.join("nested"); fs::create_dir(&nested).unwrap();
-    let settings = default_settings();
-    let mut paths = vec![nested.to_string_lossy().into_owned(); 129];
-    paths.insert(1, root.0.join("missing").to_string_lossy().into_owned());
-    paths.push(root.0.to_string_lossy().into_owned());
-    let resolved = canonical_worktree_roots(&settings, "local", &paths).unwrap();
-    assert_eq!(resolved.len(), paths.len());
-    let expected = source.canonicalize().unwrap().to_string_lossy().into_owned();
-    for (index, value) in resolved.iter().enumerate() {
-        if index == 1 || index == paths.len() - 1 { assert_eq!(value, &None); }
-        else { assert_eq!(value.as_deref(), Some(expected.as_str())); }
-    }
-    assert!(canonical_worktree_roots(&settings, "local", &[]).unwrap().is_empty());
-}
-
 fn test_tcp_pair() -> (TcpStream, TcpStream) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
@@ -336,7 +196,7 @@ pub(super) fn test_session(host: &str, id: &str, path: &str) -> SessionSummary {
     SessionSummary {
         id: id.into(), group_id: None, subagent_parent_id: None, path: path.into(), name: "Conversation".into(),
         project: "Project".into(), cwd: "/project".into(), cwd_exists: true,
-        project_kind: None, project_root: None, branch: None, worktree_root: None, modified_at: 0, preview: String::new(),
+        modified_at: 0, preview: String::new(),
         message_count: 0, last_message_at: 0, api_cost: 0.0, host_id: host.into(), host_name: host.into(),
     }
 }
@@ -365,37 +225,7 @@ fn active_agent_matching_accepts_id_or_path_but_excludes_other_hosts_and_message
         ("local", Some("other"), Some("/other.jsonl"), false, false),
         ("local", None, None, false, false),
     ] {
-        let agent = AgentAddress { host_id: host.into(), session_id: id.map(str::to_owned), session_path: path.map(str::to_owned), worktree: None, working: false, messageable };
+        let agent = AgentAddress { host_id: host.into(), session_id: id.map(str::to_owned), session_path: path.map(str::to_owned), working: false, messageable };
         assert_eq!(agent_is_active(&session, &agent), expected, "host={host} id={id:?} path={path:?} messageable={messageable}");
     }
-}
-
-#[test]
-fn worktree_output_requires_complete_success_data_and_preserves_git_errors() {
-    use std::os::unix::process::ExitStatusExt;
-    let output = |code, stdout: &str, stderr: &str| LimitedOutput {
-        status: ExitStatus::from_raw(code << 8), stdout: stdout.as_bytes().to_vec(), stderr: stderr.as_bytes().to_vec(),
-    };
-    let worktree = parse_worktree_output(output(0, "feature\n/project with spaces\n", "warning"), "Create worktree").unwrap();
-    assert_eq!(worktree.branch, "feature"); assert_eq!(worktree.path, "/project with spaces");
-    for stdout in ["", "feature\n", "\n/project\n", "feature\n\n"] {
-        assert_eq!(parse_worktree_output(output(0, stdout, ""), "Create worktree").err().unwrap(), "Create worktree: Git returned an incomplete result");
-    }
-    assert_eq!(parse_worktree_output(output(1, "feature\n/project\n", "  branch already exists\n"), "Create worktree").err().unwrap(), "branch already exists");
-    assert_eq!(parse_worktree_output(output(1, "", " \n"), "Create worktree").err().unwrap(), "Create worktree");
-}
-
-fn setup_script(name: &str, path: &Path, code: &str, cleanup: &str) -> WorktreeSetupScript {
-    WorktreeSetupScript { id: name.into(), name: name.into(), script: code.into(), enabled: true, cleanup_script: Some(cleanup.into()), project_path: Some(path.to_string_lossy().into_owned()), host_id: None }
-}
-#[test]
-#[cfg(unix)]
-fn worktree_patch_is_private_and_never_overwrites_an_existing_file() {
-    use std::os::unix::fs::PermissionsExt;
-    let root = TestDirectory::new();
-    let path = root.0.join("changes.patch");
-    write_worktree_patch(&path, b"private changes").unwrap();
-    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o077, 0);
-    assert!(write_worktree_patch(&path, b"replacement").is_err());
-    assert_eq!(fs::read(&path).unwrap(), b"private changes");
 }

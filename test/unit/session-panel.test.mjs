@@ -22,12 +22,12 @@ describe('conversation sidebar', () => {
 
   return result; }
 
-  const session = (id, name, extra = {}) => ({ id, name, path: `/sessions/${id}.jsonl`, cwd: '/repo', project: 'repo', projectRoot: '/repo', projectKind: 'main', ...extra });
+  const session = (id, name, extra = {}) => ({ id, name, path: `/sessions/${id}.jsonl`, cwd: '/repo', project: 'repo', ...extra });
   beforeEach(() => {
     dom = installDom(); HTMLElement.prototype.scrollTo = () => {};
 
     nativeCalls = []; responses = new Map();
-    groups = { groups: [{ id: 'local:/repo', name: 'repo', cwd: '/repo', projectKind: 'main' }], assignments: { 'local:a': 'local:/repo', 'local:b': 'local:/repo' }, removedProjects: [] }; changes = [];
+    groups = { groups: [{ id: 'local:/repo', name: 'repo', cwd: '/repo' }], assignments: { 'local:a': 'local:/repo', 'local:b': 'local:/repo' }, removedProjects: [] }; changes = [];
     mockIPC(async (command, args) => {
       nativeCalls.push({ command, args });
 
@@ -53,7 +53,7 @@ describe('conversation sidebar', () => {
 
       throw new Error(`Unexpected command: ${command}`);
     }, { shouldMockEvents: true });
-    props = { sessions: [session('b', 'Chat 10'), session('a', 'Chat 2')], query: '', isArchiving: () => false, onQuery: () => {}, onSelect: () => {}, onAction: () => {}, onNewChat: () => {}, onCreateWorktree: () => {}, onDeleteWorktree: async () => {} };
+    props = { sessions: [session('b', 'Chat 10'), session('a', 'Chat 2')], query: '', isArchiving: () => false, onQuery: () => {}, onSelect: () => {}, onAction: () => {}, onNewChat: () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; clearMocks(); dom.restore(); });
 
@@ -197,18 +197,17 @@ describe('conversation sidebar', () => {
     await render();
     await click(control('Group actions for repo')); await click(menuAction('Open directory')); assert.match(document.querySelector('[role=alert]').textContent, /directory missing/);
     assert.deepEqual(nativeCalls.find(call => call.command === 'open_project_directory').args, { cwd: '/repo', hostId: 'local' });
-    await click(control('Group actions for repo')); assert.equal(menuAction('Create worktree'), undefined); assert.ok(menuAction('Forget group'));
+    await click(control('Group actions for repo')); assert.ok(menuAction('Forget group'));
   });
 
   test('forgetting a group requires confirmation and leaves chats and directories intact', async () => {
-    const deleted = [];
-    await render({ onDeleteWorktree: async (...args) => deleted.push(args) });
+    await render();
     await click(control('Group actions for repo')); await click(menuAction('Forget group'));
     assert.match(document.querySelector('dialog').textContent, /No chats or directories will be deleted/);
     await click(document.querySelector('dialog button')); assert.equal(document.querySelector('dialog'), null);
     await click(control('Group actions for repo')); await click(menuAction('Forget group')); await click(document.querySelector('dialog .primary-button'));
     assert.equal(document.querySelector('dialog'), null); assert.ok(row('a')); assert.ok(row('b'));
-    assert.deepEqual(deleted, []); assert.deepEqual(changes.at(-1), { type: 'remove', id: 'local:/repo' });
+    assert.deepEqual(changes.at(-1), { type: 'remove', id: 'local:/repo' });
   });
 
   test('failed group removal preserves the group and allows retry', async () => {

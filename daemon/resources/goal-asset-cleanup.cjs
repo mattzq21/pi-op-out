@@ -6,7 +6,7 @@ const { Check } = require('typebox/value');
 const assets = require('./session-broker/goal-assets.cjs');
 const { retainedDependencies } = require('./session-broker/session-publication.cjs');
 const io = require('./session-transactions.cjs');
-const { validSessionHeader } = require('./checkpoint-schemas.cjs');
+const { validSessionHeader } = require('./session-header.cjs');
 const goalReferences = require('./goal-cleanup-references.cjs');
 
 const registrySchema = Type.Object({ session_id: Type.String(), session_path: Type.Union([Type.String(), Type.Null()]) });
@@ -14,7 +14,6 @@ const registrySchema = Type.Object({ session_id: Type.String(), session_path: Ty
 const queuedSchema = Type.Object({ version: Type.Literal(1), items: Type.Array(Type.Object({}, { additionalProperties: true })) });
 
 const receiptSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.String() });
-
 
 function managedPath(root, directory) {
   return assets.validPath(root, directory) && io.inside(path.join(root, 'sessions'), directory);
@@ -79,7 +78,6 @@ function deletionFiles(root, observation) {
 
 function transactionFiles(root, kind, observation) {
   if (kind === 'delete') return deletionFiles(root, observation);
-
 
   for (const directory of records.list(root)) {
     const transaction = records.read(directory);

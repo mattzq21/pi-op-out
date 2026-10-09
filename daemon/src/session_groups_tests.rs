@@ -6,7 +6,7 @@ use serde_json::json;
 fn concurrent_group_changes_persist_every_update_before_notifying() {
     use std::sync::{Arc, Barrier};
     let directory = TestDirectory::new(); let path = directory.0.join("groups.json");
-    load_at(&path, vec![], SessionGroups::default()).unwrap();
+    load_at(&path, vec![]).unwrap();
     let barrier = Arc::new(Barrier::new(12));
     let notifications = Arc::new(Mutex::new(Vec::new()));
     std::thread::scope(|scope| {
@@ -41,7 +41,7 @@ fn failed_group_changes_do_not_notify_and_release_the_storage_lock() {
     fs::write(&path, "corrupt").unwrap();
     assert!(change_with(change(), || Ok(path.clone()), |_| panic!("corrupt storage notified")).is_err());
     assert_eq!(fs::read_to_string(&path).unwrap(), "corrupt");
-    fs::remove_file(&path).unwrap(); load_at(&path, vec![], SessionGroups::default()).unwrap();
+    fs::remove_file(&path).unwrap(); load_at(&path, vec![]).unwrap();
     let before = fs::read(&path).unwrap();
     assert!(change_with(GroupChange::Create { name: " ".into() }, || Ok(path.clone()), |_| panic!("invalid change notified")).is_err());
     assert_eq!(fs::read(&path).unwrap(), before);
@@ -94,42 +94,39 @@ fn assignment_lookup_handles_absent_and_unreadable_storage_without_mutating_sess
 }
 
 fn project(id: &str, name: &str, cwd: Option<&str>) -> SessionGroup {
-    SessionGroup { id: id.into(), name: name.into(), cwd: cwd.map(str::to_owned), host_id: Some("local".into()), host_name: None, project_kind: None, branch: None }
+    SessionGroup { id: id.into(), name: name.into(), cwd: cwd.map(str::to_owned), host_id: Some("local".into()), host_name: None }
 }
 
 #[test]
 fn removing_projects_ungroups_existing_sessions_but_allows_new_discovery() {
     let directory = TestDirectory::new(); let path = directory.0.join("groups.json");
-    load_at(&path, vec![], SessionGroups::default()).unwrap();
+    load_at(&path, vec![]).unwrap();
     let make_project = || project("local:/repo", "Repository", Some("/repo"));
     change_at(&path, GroupChange::Project { project: make_project(), key: Some("local:first".into()) }).unwrap();
     let removed = change_at(&path, GroupChange::Remove { id: "local:/repo".into() }).unwrap();
     assert!(removed.groups.is_empty()); assert!(removed.removed_projects.is_empty());
     assert_eq!(removed.assignments["local:first"], None);
-    let discovered = load_at(&path, vec![SessionSeed { session_key: "local:second".into(), project: make_project() }], SessionGroups::default()).unwrap();
+    let discovered = load_at(&path, vec![SessionSeed { session_key: "local:second".into(), project: make_project() }]).unwrap();
     assert_eq!(discovered.groups.len(), 1); assert_eq!(discovered.assignments["local:second"].as_deref(), Some("local:/repo"));
     let restored = change_at(&path, GroupChange::Project { project: make_project(), key: Some("local:first".into()) }).unwrap();
     assert_eq!(restored.groups.len(), 1); assert!(restored.removed_projects.is_empty());
     assert_eq!(restored.assignments["local:first"].as_deref(), Some("local:/repo"));
     assert_eq!(restored.assignments["local:second"].as_deref(), Some("local:/repo"));
     change_at(&path, GroupChange::Assign { key: "local:first".into(), group: None }).unwrap();
-    let reloaded = load_at(&path, vec![SessionSeed { session_key: "local:first".into(), project: make_project() }], SessionGroups::default()).unwrap();
+    let reloaded = load_at(&path, vec![SessionSeed { session_key: "local:first".into(), project: make_project() }]).unwrap();
     assert_eq!(reloaded.assignments["local:first"], None, "discovery must preserve explicit ungrouping");
 }
 
 #[test]
 fn project_metadata_updates_keep_user_names_and_do_not_duplicate_groups() {
     let directory = TestDirectory::new(); let path = directory.0.join("groups.json");
-    load_at(&path, vec![], SessionGroups::default()).unwrap();
+    load_at(&path, vec![]).unwrap();
     change_at(&path, GroupChange::Project { project: project("local:/repo", "My name", Some("/repo")), key: None }).unwrap();
-    let mut updated = project("local:/repo", "Discovered name", Some("/repo"));
-    updated.project_kind = Some(crate::ProjectKind::Worktree);
+    let updated = project("local:/repo", "Discovered name", Some("/repo"));
     let state = change_at(&path, GroupChange::Project { project: updated, key: None }).unwrap();
     assert_eq!(state.groups.len(), 1); assert_eq!(state.groups[0].name, "My name");
-    assert!(matches!(state.groups[0].project_kind, Some(crate::ProjectKind::Worktree)));
-    let state = change_at(&path, GroupChange::Project { project: project("local:/repo", "Other", Some("/repo")), key: None }).unwrap();
-    assert!(matches!(state.groups[0].project_kind, Some(crate::ProjectKind::Worktree)));
-    let state = load_at(&path, vec![SessionSeed { session_key: "local:new".into(), project: project("local:/repo", "Other", Some("/repo")) }], SessionGroups::default()).unwrap();
+    change_at(&path, GroupChange::Project { project: project("local:/repo", "Other", Some("/repo")), key: None }).unwrap();
+    let state = load_at(&path, vec![SessionSeed { session_key: "local:new".into(), project: project("local:/repo", "Other", Some("/repo")) }]).unwrap();
     assert_eq!(state.groups.len(), 1); assert_eq!(state.assignments["local:new"].as_deref(), Some("local:/repo"));
     let other = change_at(&path, GroupChange::Create { name: "Other".into() }).unwrap().groups[0].id.clone();
     let before = fs::read(&path).unwrap();
@@ -151,13 +148,14 @@ fn loading_migrates_legacy_groups_and_preserves_explicit_assignments() {
         SessionSeed { session_key: "local:new".into(), project: project("local:/new", "New", Some("/new")) },
         SessionSeed { session_key: "local:forgotten".into(), project: project("local:/forgotten", "Forgotten", Some("/forgotten")) },
     ];
-    let state = load_at(&path, seeds, legacy).unwrap();
+    write(&path, &legacy).unwrap();
+    let state = load_at(&path, seeds).unwrap();
     assert_eq!(state.groups.len(), 3); assert_eq!(state.groups[0].name, "Forgotten"); assert_eq!(state.groups[1].name, "New"); assert_eq!(state.groups[2].name, "repo");
     assert_eq!(state.assignments["local:new"].as_deref(), Some("local:/new"));
     for key in ["local:ungrouped", "local:stale"] { assert_eq!(state.assignments[key], None); }
     assert_eq!(state.assignments["local:forgotten"].as_deref(), Some("local:/forgotten"));
     assert!(state.removed_projects.is_empty());
-    let reloaded = load_at(&path, vec![], SessionGroups::default()).unwrap();
+    let reloaded = load_at(&path, vec![]).unwrap();
     assert_eq!(serde_json::to_value(reloaded).unwrap(), serde_json::to_value(state).unwrap());
 }
 
@@ -165,7 +163,7 @@ fn loading_migrates_legacy_groups_and_preserves_explicit_assignments() {
 fn group_changes_persist_creation_renaming_assignment_and_removal() {
     let directory = TestDirectory::new(); let path = directory.0.join("groups.json");
     assert!(change_at(&path, GroupChange::Create { name: "First".into() }).err().unwrap().contains("not loaded"));
-    load_at(&path, vec![], SessionGroups::default()).unwrap();
+    load_at(&path, vec![]).unwrap();
     let state = change_at(&path, GroupChange::Create { name: " First ".into() }).unwrap();
     let id = state.groups[0].id.clone(); assert_eq!(state.groups[0].name, "First");
     assert!(id.starts_with("__pi-desktop-custom-group__:"));
@@ -180,7 +178,7 @@ fn group_changes_persist_creation_renaming_assignment_and_removal() {
 #[test]
 fn invalid_group_changes_leave_persisted_state_untouched() {
     let directory = TestDirectory::new(); let path = directory.0.join("groups.json");
-    load_at(&path, vec![], SessionGroups::default()).unwrap();
+    load_at(&path, vec![]).unwrap();
     let state = change_at(&path, GroupChange::Create { name: "Existing".into() }).unwrap();
     let id = state.groups[0].id.clone();
     let before = fs::read(&path).unwrap();
@@ -200,7 +198,7 @@ fn persisted_groups_round_trip_project_metadata_and_explicit_ungrouping() {
     let path = directory.0.join("nested/groups.json");
     assert!(read(&path).unwrap().is_none());
     let value = json!({
-        "groups": [{"id":"remote:/repo","name":"Project α","cwd":"/repo","hostId":"remote","hostName":"Server","projectKind":"worktree"}],
+        "groups": [{"id":"remote:/repo","name":"Project α","cwd":"/repo","hostId":"remote","hostName":"Server"}],
         "assignments": {"remote:one":"remote:/repo","local:two":null},
         "removedProjects": ["local:/forgotten"]
     });

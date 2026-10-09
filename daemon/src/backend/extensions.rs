@@ -51,7 +51,7 @@ fn save_runtime_settings(dir: &std::path::Path, settings: &AppSettings) -> Resul
     Ok(())
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 48] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 47] = [
     ("goal-directory-recovery.cjs", include_str!("../../resources/session-broker/goal-directory-recovery.cjs")),
     ("subagent-usage-storage.cjs", include_str!("../../resources/session-broker/subagent-usage-storage.cjs")),
     ("app-settings.cjs", include_str!("../../resources/session-broker/app-settings.cjs")),
@@ -63,8 +63,6 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 48] = [
     ("session-file.ts", include_str!("../../resources/session-broker/session-file.ts")),
     ("session-child-index.cjs", include_str!("../../resources/session-broker/session-child-index.cjs")),
     ("session-child-index.d.cts", include_str!("../../resources/session-broker/session-child-index.d.cts")),
-    ("checkpoint-owner-index.cjs", include_str!("../../resources/session-broker/checkpoint-owner-index.cjs")),
-    ("checkpoint-owner-index.d.cts", include_str!("../../resources/session-broker/checkpoint-owner-index.d.cts")),
     ("session-publication.cjs", include_str!("../../resources/session-broker/session-publication.cjs")),
     ("session-publication-io.cjs", include_str!("../../resources/session-broker/session-publication-io.cjs")),
     ("session-publication-dependencies.cjs", include_str!("../../resources/session-broker/session-publication-dependencies.cjs")),
@@ -93,6 +91,7 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 48] = [
     ("goal-legacy-usage.ts", include_str!("../../resources/session-broker/goal-legacy-usage.ts")),
     ("goal-controls.ts", include_str!("../../resources/session-broker/goal-controls.ts")),
     ("goal-coordination.ts", include_str!("../../resources/session-broker/goal-coordination.ts")),
+    ("reference-publication-lock.ts", include_str!("../../resources/session-broker/reference-publication-lock.ts")),
     ("goal-files.ts", include_str!("../../resources/session-broker/goal-files.ts")),
     ("goal-dependencies.cjs", include_str!("../../resources/session-broker/goal-dependencies.cjs")),
     ("goal-prepared-files.cjs", include_str!("../../resources/session-broker/goal-prepared-files.cjs")),
@@ -205,47 +204,9 @@ pub(super) fn prepare_loop_detection_extension() -> Result<PathBuf, String> {
     Ok(dir.join("index.ts"))
 }
 
-pub(super) const LEGACY_FILE_CHANGE_ASSETS: [&str; 3] = ["file-changes.ts", "sitecustomize.py", "node_fs.cjs"];
 
-fn remove_legacy_diff_assets(dir: &Path) -> Result<(), String> {
-    for name in LEGACY_FILE_CHANGE_ASSETS {
-        if let Err(error) = fs::remove_file(dir.join(name)) {
-            if error.kind() != std::io::ErrorKind::NotFound { return Err(format!("Could not remove legacy diff observer: {error}")); }
-        }
-    }
-    Ok(())
-}
 
-fn prepare_diff_storage(dir: &Path) -> Result<(), String> {
-    ensure_private_dir(dir)?;
-    atomic_write_private(&dir.join("../worktree-allocation.cjs"), include_str!("../../resources/worktree-allocation.cjs").as_bytes())?;
-    atomic_write_private(&dir.join("../worktree-creation.cjs"), include_str!("../../resources/worktree-creation.bundle.mjs").as_bytes())?;
-    atomic_write_private(&dir.join("../session-database.cjs"), include_str!("../../resources/session-database.cjs").as_bytes())
-}
 
-pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
-    let config_dir = home_dir()?.join(STORAGE_DIRECTORY);
-    let legacy_dir = config_dir.join("pi-git-change-context");
-    if legacy_dir.exists() { fs::remove_dir_all(&legacy_dir).map_err(|error| format!("Could not remove legacy diff watch extension: {error}"))?; }
-    let dir = generated_extension_root()?.join("piop-diff-watch");
-    prepare_diff_storage(&dir)?;
-    let extension_path = dir.join("index.ts");
-    for (name, content) in [
-        ("index.ts", include_str!("../../../extensions/piop-diff-watch/index.ts")),
-        ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
-        ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
-        ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
-        ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),
-        ("fork-publication.ts", include_str!("../../../extensions/piop-diff-watch/fork-publication.ts")),
-        ("fork-preparation.ts", include_str!("../../../extensions/piop-diff-watch/fork-preparation.ts")),
-        ("publish-fork.bundle.mjs", include_str!("../../resources/publish-fork.bundle.mjs")),
-        ("snapshot-baseline.ts", include_str!("../../../extensions/piop-diff-watch/snapshot-baseline.ts")),
-    ] {
-        atomic_write_private(&dir.join(name), content.as_bytes())?;
-    }
-    remove_legacy_diff_assets(&dir)?;
-    Ok(extension_path)
-}
 
 pub(super) const EXCALIDRAW_ASSETS: [(&str, &str); 2] = [
     ("SKILL.md", include_str!("../../../extensions/piop-excalidraw/SKILL.md")),

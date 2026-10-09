@@ -109,17 +109,17 @@ describe('message rendering', () => {
   });
 
   test('assistant actions serialize branching and forgetting and receive the original message', async () => {
-    const pending = Promise.withResolvers(); const branches = [], forgotten = [], worktrees = [];
+    const pending = Promise.withResolvers(); const branches = [], forgotten = [];
     const message = { id: 'assistant-id', role: 'assistant', content: 'answer' };
 
     const extra = { onBranch: value => { branches.push(value);
 
-    return pending.promise; }, onForkAndForget: async value => forgotten.push(value), onCreateWorktree: value => worktrees.push(value) };
+    return pending.promise; }, onForkAndForget: async value => forgotten.push(value) };
 
     await render(message, extra); await click(control('Fork'));
     assert.equal(document.querySelector('.fork-and-forget-button').disabled, true); assert.equal(branches.length, 1);
-    await act(async () => pending.resolve()); await click(document.querySelector('.fork-and-forget-button')); await click(control('Branch'));
-    assert.deepEqual(forgotten, [message]); assert.deepEqual(worktrees, [message]);
+    await act(async () => pending.resolve()); await click(document.querySelector('.fork-and-forget-button'));
+    assert.deepEqual(forgotten, [message]);
     await view.rerender({ message: { ...message, streaming: true }, ...extra }); assert.equal(document.querySelector('.message-actions'), null); assert.ok(document.querySelector('.stream-caret'));
     await view.rerender({ message, showActions: false }); assert.equal(document.querySelector('.message-actions'), null);
   });

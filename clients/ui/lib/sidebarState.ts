@@ -1,7 +1,7 @@
 import { createMemo,type Accessor } from "solid-js";
 import type { SessionSummary } from "../types";
 import { hasVisibleText } from "./content";
-import { DIRLESS_KEY,branchGroupId,firstOrderBranch,isTemporaryChatCwd,useSessionGroups, type SessionGroup } from "./sessionGroups";
+import { DIRLESS_KEY,projectGroupId,isTemporaryChatCwd,useSessionGroups, type SessionGroup } from "./sessionGroups";
 import { useSessionProjects } from "./sessionProjects";
 import { createDependencyEffect } from "./solid";
 import { createSidebarPersistence, moveSidebarToken, validateSidebarParents } from "./sidebarPersistence";
@@ -32,7 +32,7 @@ function validSessionOrders(orders: Record<string, string[] | undefined>) {
 
 export function sessionKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.id}`; }
 
-function projectName(session: SessionSummary) { return session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project; }
+function projectName(session: SessionSummary) { return session.project; }
 
 export function sessionLayoutToken(key: string) { return `session:${key}`; }
 
@@ -212,29 +212,11 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     setSidebarOrder(current => moveSidebarToken(current, token, beforeToken ?? groupLayoutToken(RECENT_KEY), currentEntries));
   };
 
-  const branchGroupDetails = createMemo(() => {
-    const details = new Map<string, SessionSummary>();
-
-    for (const session of sessions()) {
-      if (!firstOrderBranch(session)) continue;
-      const key = branchGroupId(session);
-
-      if (!details.has(key) || session.branch === firstOrderBranch(session)) details.set(key, session);
-    }
-
-    return details;
-  });
-
-  const groupDestination = (id: string) => {
-    const group = savedGroupsById().get(id);
-    const session = branchGroupDetails().get(id);
-
-    return group && session && !group.branch ? { ...group, cwd: session.worktreeRoot ?? session.cwd, projectKind: session.projectKind } : group;
-  };
+  const groupDestination = (id: string) => savedGroupsById().get(id);
 
   const projectDetails = createMemo(() => {
     const details = new Map<string, SessionSummary>();
-    sessions().forEach(session => { const key = branchGroupId(session);
+    sessions().forEach(session => { const key = projectGroupId(session);
 
     if (!details.has(key)) details.set(key, session); });
 

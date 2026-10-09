@@ -14,8 +14,10 @@ use crate::platform::AppHandle;
 use crate::platform::State;
 use uuid::Uuid;
 use crate::{AppSettings, CachedSession, DirectoryListing, MAX_REMOTE_HOSTS, MAX_SESSION_INDEX_BATCH_BYTES, RemoteHost, STORAGE_DIRECTORY, SessionIndexRuntime, SessionSummary, TemporaryChat, node_command, peers};
-use crate::git_ops::worktree_setup::{run_limited, shell_quote};
-pub(crate) use crate::git_ops::project_inspection::inspect_session_projects_with;
+use crate::process_io::{run_limited, shell_quote};
+#[path = "../folder_inspection.rs"]
+mod folder_inspection;
+pub(crate) use folder_inspection::inspect_session_projects_with;
 use crate::pi_launch::{local_launch_directory, remote_directory_path, remote_host, remote_login_command, ssh};
 use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
@@ -68,7 +70,7 @@ pub(super) fn read_session_summaries_with(candidates: &[(String, String, u64, u6
             let Some((_, fingerprint, modified_at, _)) = batch.iter().find(|item| item.0 == path) else { continue };
             let string = |key| value.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
             let cwd = string("cwd"); let project = Path::new(&cwd).file_name().and_then(|name| name.to_str()).unwrap_or("Workspace").to_owned();
-            let summary = SessionSummary { group_id: None, subagent_parent_id: value.get("subagentParentId").and_then(Value::as_str).map(str::to_owned), id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, branch: None, worktree_root: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, last_message_at: value.get("lastMessageAt").and_then(Value::as_u64).unwrap_or(0), api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
+            let summary = SessionSummary { group_id: None, subagent_parent_id: value.get("subagentParentId").and_then(Value::as_str).map(str::to_owned), id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, last_message_at: value.get("lastMessageAt").and_then(Value::as_u64).unwrap_or(0), api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
             result.insert(path.to_owned(), CachedSession { fingerprint: fingerprint.clone(), summary });
         }
         cursor = end;
@@ -159,49 +161,6 @@ fn local_candidate(path: &Path) -> Result<Option<SessionCandidate>, String> {
     Ok(Some((path.to_string_lossy().into_owned(), fingerprint, unix_timestamp(modified), metadata.len())))
 }
 
-pub(super) fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
-    crate::restore_recovery::recover_remote(host)?;
-    let metadata = query_remote_session_metadata(|script| { let mut command = ssh(host); command.arg(script); command })?;
-    update_remote_session_index(index, host, &metadata,
-        |changed| read_session_summaries(changed, Some(host)),
-        |sessions| inspect_session_projects(index, sessions, Some(host)))
-}
-
-pub(super) fn query_remote_session_metadata(command: impl FnOnce(&str) -> Command) -> Result<Vec<u8>, String> {
-    let script = format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}",
-        shell_quote(&crate::session_registry::source()), shell_quote(r#"{"action":"metadata"}"#));
-    let mut command = command(&remote_login_command(&script));
-    let output = run_limited(&mut command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not list remote sessions")?;
-    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
-    Ok(output.stdout)
-}
-
-pub(super) fn update_remote_session_index(
-    index: &SessionIndexRuntime, host: &RemoteHost, metadata: &[u8],
-    read: impl FnOnce(&[(String, String, u64, u64)]) -> Result<HashMap<String, CachedSession>, String>,
-    inspect: impl FnOnce(&mut [SessionSummary]) -> Result<(), String>,
-) -> Result<Vec<SessionSummary>, String> {
-    let metadata = parse_remote_session_metadata(metadata);
-    let previous = index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.get(&host.id).cloned().unwrap_or_default();
-    let changed = metadata.iter().filter(|(path, fingerprint, _, _)| previous.get(path).is_none_or(|cached| cached.fingerprint != *fingerprint)).cloned().collect::<Vec<_>>();
-    let mut parsed = read(&changed)?;
-
-    let mut next = HashMap::new(); let mut sessions = Vec::new();
-    for (path, _, _, _) in metadata {
-        let Some(mut cached) = parsed.remove(&path).or_else(|| previous.get(&path).cloned()) else { continue };
-        cached.summary.host_name = host.name.clone(); sessions.push(cached.summary.clone()); next.insert(path, cached);
-    }
-    inspect(&mut sessions)?;
-    index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.insert(host.id.clone(), next); Ok(sessions)
-}
-
-pub(super) fn parse_remote_session_metadata(output: &[u8]) -> Vec<(String, String, u64, u64)> {
-    let fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
-    fields.chunks_exact(3).filter_map(|frame| {
-        let path = String::from_utf8_lossy(frame[0]).into_owned(); let modified = String::from_utf8_lossy(frame[1]); let size = String::from_utf8_lossy(frame[2]).parse().ok()?;
-        Some((path, format!("{modified}:{size}"), modified.split('.').next()?.parse().ok()?, size))
-    }).collect()
-}
 pub(super) fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
     if host_id == "local" { let home = home_dir()?; return Ok(home.canonicalize().unwrap_or(home).to_string_lossy().into_owned()); }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;

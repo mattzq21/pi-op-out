@@ -19,18 +19,17 @@ const operationIdSchema = Type.String({ pattern: '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3
 
 const publishedSchema = Type.Object({
   version: Type.Literal(1), operationId: operationIdSchema, trace: traceSchema,
-  result: Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.String(), path: Type.String(), branch: Type.Union([Type.String(), Type.Null()]) }),
+  result: Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.String(), path: Type.String() }),
 });
 
-const transactionSchema = Type.Object({ version: Type.Union([Type.Literal(1), Type.Literal(2)]), committed: Type.Optional(Type.Boolean()) });
+const transactionSchema = Type.Object({ version: Type.Literal(3), committed: Type.Optional(Type.Boolean()) });
 
 const headerSchema = Type.Object({ type: Type.Literal('session'), id: Type.String({ minLength: 1 }) });
 
 const finishedArchiveSchema = Type.Object({
-  version: Type.Literal(2), kind: Type.Literal('archive'), id: operationIdSchema, root: Type.String(),
+  version: Type.Literal(3), kind: Type.Literal('archive'), id: operationIdSchema, root: Type.String(),
   container: Type.String(), containerIdentity: Type.String({ pattern: '^\\d+:\\d+$' }), state: Type.Literal('committed'), finished: Type.Literal(true),
 });
-
 
 function receiptPath(root, source) {
   return path.join(root, 'restore-receipts', `${createHash('sha256').update(source).digest('hex')}.json`);
@@ -216,8 +215,6 @@ function pending(root, ignoredJournal) {
   if (require('./restore-records.cjs').list(root).some(file => file !== ignoredJournal)) return true;
 
   if (archivePending(root) || require('./deletion-records.cjs').list(root).length) return true;
-
-
 
   return false;
 }

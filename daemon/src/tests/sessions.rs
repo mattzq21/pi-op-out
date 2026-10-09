@@ -1,43 +1,4 @@
 #[test]
-fn worktree_scripts_run_in_order_with_context_and_cleanup_in_reverse() {
-    let root = TestDirectory::new(); let source = root.0.join("source"); fs::create_dir(&source).unwrap();
-    test_git(&source, &["init", "--initial-branch=main"]); test_git(&source, &["commit", "--allow-empty", "-m", "Initial"]);
-    let target = root.0.join("target"); test_git(&source, &["worktree", "add", "-b", "feature", target.to_str().unwrap()]);
-    let mut settings = default_settings();
-    settings.worktree_setup_scripts = vec![
-        setup_script("first", &source, "printf 'first\\n' >> order; printf '%s\\n' \"$PIOP_SOURCE_TREE_PATH\" \"$PIOP_WORKTREE_PATH\" \"$PIOP_WORKTREE_BRANCH\" > context", "printf 'undo-first\\n' >> order"),
-        setup_script("second", &source, "printf 'second\\n' >> order", "printf 'undo-second\\n' >> order"),
-    ];
-    let mut disabled = setup_script("disabled", &source, "exit 99", "exit 99"); disabled.enabled = false;
-    let mut remote = setup_script("remote", &source, "exit 99", "exit 99"); remote.host_id = Some("remote".into());
-    let mut unassigned = setup_script("unassigned", &source, "exit 99", "exit 99"); unassigned.project_path = None;
-    settings.worktree_setup_scripts.extend([disabled, remote, unassigned, setup_script("empty", &source, " ", " ")]);
-    for phase in [WorktreeScriptPhase::Setup, WorktreeScriptPhase::Cleanup] {
-        run_worktree_scripts(&settings, source.to_str().unwrap(), target.to_str().unwrap(), "local", &AtomicBool::new(false), phase).unwrap();
-    }
-    assert_eq!(fs::read_to_string(target.join("order")).unwrap(), "first\nsecond\nundo-second\nundo-first\n");
-    assert_eq!(fs::read_to_string(target.join("context")).unwrap(), format!("{}\n{}\nfeature\n", source.canonicalize().unwrap().display(), target.canonicalize().unwrap().display()));
-}
-
-#[test]
-fn worktree_script_failure_stops_later_scripts_and_includes_diagnostics() {
-    let root = TestDirectory::new(); test_git(&root.0, &["init", "--initial-branch=main"]);
-    let mut settings = default_settings();
-    settings.worktree_setup_scripts = vec![
-        setup_script("dependencies", &root.0, "echo 'installation refused' >&2; exit 7", ""),
-        setup_script("later", &root.0, "touch should-not-exist", ""),
-    ];
-    let error = run_worktree_scripts(&settings, root.0.to_str().unwrap(), root.0.to_str().unwrap(), "local", &AtomicBool::new(false), WorktreeScriptPhase::Setup).unwrap_err();
-    assert!(error.contains("Setup script 'dependencies' failed (exit status 7)"), "{error}"); assert!(error.contains("installation refused"), "{error}");
-    assert!(!root.0.join("should-not-exist").exists());
-    settings.worktree_setup_scripts[0].script = "x".repeat(32 * 1024 + 1);
-    assert!(run_worktree_scripts(&settings, "unused", "unused", "local", &AtomicBool::new(false), WorktreeScriptPhase::Setup).unwrap_err().contains("script exceeds 32 KiB"));
-    assert_eq!(run_worktree_scripts(&settings, "unused", "unused", "local", &AtomicBool::new(true), WorktreeScriptPhase::Setup).unwrap_err(), "Environment setup cancelled");
-    settings.worktree_setup_scripts[0].cleanup_script = Some("echo cleanup".into());
-    assert_eq!(run_worktree_scripts(&settings, "unused", "unused", "local", &AtomicBool::new(true), WorktreeScriptPhase::Cleanup).unwrap_err(), "Worktree cleanup cancelled");
-}
-
-#[test]
 fn session_file_validation_restricts_access_to_the_correct_store() {
     let home = TestDirectory::new();
     for (store, validate) in [
@@ -309,47 +270,6 @@ fn storage_report_limits_parallel_inspections_and_processes_every_host_once() {
 }
 
 #[test]
-fn deletion_removes_recorded_git_checkpoints_but_preserves_unrelated_refs_and_files() {
-    for mismatched_ref in [false, true] {
-        let home = TestDirectory::new(); let repository = TestDirectory::new();
-        test_git(&repository.0, &["init", "--initial-branch=main"]);
-        fs::write(repository.0.join("tracked.txt"), "original\n").unwrap();
-        test_git(&repository.0, &["add", "."]); test_git(&repository.0, &["commit", "-m", "Initial"]);
-        let output = Command::new("git").arg("-C").arg(&repository.0).args(["rev-parse", "HEAD"]).output().unwrap();
-        assert!(output.status.success()); let commit = String::from_utf8(output.stdout).unwrap().trim().to_owned();
-        let owned_ref = "refs/pi-session-snapshots/chats/one/checkpoint";
-        let unrelated_ref = "refs/pi-session-snapshots/chats/other/checkpoint";
-        test_git(&repository.0, &["update-ref", owned_ref, &commit]);
-        test_git(&repository.0, &["update-ref", unrelated_ref, &commit]);
-        if mismatched_ref {
-            test_git(&repository.0, &["commit", "--allow-empty", "-m", "Different checkpoint"]);
-            test_git(&repository.0, &["update-ref", owned_ref, "HEAD"]);
-        }
-        fs::write(repository.0.join("tracked.txt"), "uncommitted work\n").unwrap();
-        let root = home.0.join(".piop/sessions"); fs::create_dir_all(&root).unwrap();
-        let session = root.join("one.jsonl");
-        let header = json!({"type":"session","id":"one","cwd":repository.0});
-        let checkpoint = json!({"type":"custom","customType":"pi-project-files-watch-snapshot","data":{"repositoryRoot":repository.0,"ref":owned_ref,"commit":commit}});
-        let content = format!("{header}\n{checkpoint}\n"); fs::write(&session, &content).unwrap();
-        let result = delete_session_files(&PiRuntime::default(), session.to_str().unwrap(), "local", None, &root, false);
-        let owned = Command::new("git").arg("-C").arg(&repository.0).args(["show-ref", "--verify", owned_ref]).output().unwrap();
-        if mismatched_ref {
-            assert!(result.unwrap_err().contains("no longer points to its recorded commit"));
-            assert!(owned.status.success());
-            assert_eq!(fs::read_to_string(&session).unwrap(), content);
-            assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
-        } else {
-            result.unwrap(); assert!(!owned.status.success());
-            assert!(!session.exists());
-            assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
-        }
-        let other = Command::new("git").arg("-C").arg(&repository.0).args(["rev-parse", unrelated_ref]).output().unwrap();
-        assert!(other.status.success()); assert_eq!(String::from_utf8(other.stdout).unwrap().trim(), commit);
-        assert_eq!(fs::read_to_string(repository.0.join("tracked.txt")).unwrap(), "uncommitted work\n");
-    }
-}
-
-#[test]
 fn remote_session_path_resolution_confines_each_storage_area_and_preserves_literal_names() {
     let home = TestDirectory::new();
     let shell = |script: String| { let mut command = Command::new("sh"); command.args(["-c", &script]).env("HOME", &home.0).current_dir(&home.0); command };
@@ -384,7 +304,7 @@ fn remote_session_path_resolution_reports_launch_errors_and_enforces_output_limi
         assert!(remote_session_file("unused", archived, |_| Command::new("/missing/piop-session-path-test")).is_err());
         let context = if archived { "Could not locate archived Piop conversation" } else { "Could not locate Piop session" };
         assert!(remote_session_file("unused", archived, |_| {
-            let mut command = Command::new("node"); command.args(["-e", &format!("process.stdout.write('x'.repeat({}))", MAX_GIT_PATH_LIST_BYTES + 1)]); command
+            let mut command = Command::new("node"); command.args(["-e", &format!("process.stdout.write('x'.repeat({}))", MAX_PATH_LIST_BYTES + 1)]); command
         }).unwrap_err().contains(context));
     }
 }

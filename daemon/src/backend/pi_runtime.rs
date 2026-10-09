@@ -107,7 +107,7 @@ fn attach_pi_session(app: &AppHandle, owner: String, runtime: &PiRuntime, broker
     let result = daemon.request(json!({"type":"attach","clientId":client_id,"runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":630_000,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
     let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(settings, &host_id)?.clone()) }, submitted: false };
     runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: owner, blank_cleanup });
-    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: cwd, working: false, messageable: result["owned"].as_bool() == Some(false) });
+    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, working: false, messageable: result["owned"].as_bool() == Some(false) });
     Ok(result)
 }
 
@@ -234,7 +234,6 @@ struct PiProcess {
 
 #[derive(Default)]
 pub(super) struct PiRuntime {
-    pub(super) setups: crate::git_ops::worktree_setup::WorktreeSetups,
     pub(super) connections: daemon::DaemonRegistry,
     processes: Arc<Mutex<HashMap<String, PiProcess>>>,
     pub(super) lifecycle: Mutex<()>,

@@ -2,7 +2,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
-const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 
 const inside = (parent, child) => path.isAbsolute(child) && path.resolve(child) === child && (child === parent || child.startsWith(parent + path.sep));
 
@@ -49,7 +48,6 @@ function write(file, body) {
 
   fs.renameSync(temporary, file);
   sync(path.dirname(file));
-  checkpointIndex.refresh(file);
 }
 
 function identity(file) {
@@ -122,7 +120,6 @@ function sameContents(file, expected) {
 
 function move(item) {
   if (matches(item.destination, item.identity) && !exists(item.source)) {
-    checkpointIndex.relocate(item.source, item.destination);
 
     return;
   }
@@ -133,7 +130,6 @@ function move(item) {
     if (!item.identity.directory && matches(item.destination, item.identity)) {
       fs.unlinkSync(item.source);
       sync(path.dirname(item.source));
-      checkpointIndex.relocate(item.source, item.destination);
 
       return;
     }
@@ -152,7 +148,6 @@ function move(item) {
   sync(path.dirname(item.source));
 
   if (!matches(item.destination, item.identity) || exists(item.source)) throw new Error(`Transaction move could not be verified: ${item.source}`);
-  checkpointIndex.relocate(item.source, item.destination);
 }
 
 function undo(item) {
@@ -201,27 +196,6 @@ function removeOwned(root, entries) {
   }
 }
 
-function git(cwd, args, input) {
-  return execFileSync('git', ['-C', cwd, '-c', 'core.fsmonitor=false', '-c', 'core.fsync=all', '-c', 'core.fsyncMethod=fsync', ...args], {
-    encoding: 'utf8', timeout: 120000, maxBuffer: 64 * 1024 * 1024,
-    stdio: ['pipe', 'pipe', 'pipe', 3, 4, 5, 6], input,
-  }).trim();
-}
-
-function refValue(cwd, ref) {
-  try { return git(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', ref]); }
-  catch (error) { if (error.status === 1) return null; throw error; }
-}
-
-function removeRef(cwd, ref, oid) {
-  const actual = refValue(cwd, ref);
-
-  if (actual === null) return;
-
-  if (actual !== oid) throw new Error(`Transaction ref changed; retained: ${ref}`);
-  git(cwd, ['update-ref', '-d', ref, oid]);
-}
-
 function lock(root) { return require('./storage-transaction-lock.cjs').lockStorage(root); }
 
 function recover(root) {
@@ -243,4 +217,4 @@ function recoverPublications(root) {
   for (const retained of result.quarantined) console.error(`Session publication retained: ${retained.path}: ${retained.reason}`);
 }
 
-module.exports = { inside, exists, sync, syncTree, mkdir, write, identity, describe, matches, sameContents, move, undo, removalPlan, removeOwned, git, refValue, removeRef, lock, recover };
+module.exports = { inside, exists, sync, syncTree, mkdir, write, identity, describe, matches, sameContents, move, undo, removalPlan, removeOwned, lock, recover };

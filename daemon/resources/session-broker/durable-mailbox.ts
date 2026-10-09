@@ -23,7 +23,6 @@ const messageSchema = Type.Object({
 
 const recordSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.String(), deliveryId: Type.String(), sequence: Type.Integer({ minimum: 0 }), message: messageSchema });
 
-
 const headerSchema = Type.Object({ type: Type.Literal("session"), id: Type.String() });
 
 const storedMessageSchema = Type.Object({ type: Type.Literal("message"), message: Type.Object({ details: detailsSchema }) });

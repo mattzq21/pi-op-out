@@ -11,7 +11,7 @@ pub fn run_daemon_log_sink() -> Option<Result<(), String>> {
     Some(daemon_log::run_sink())
 }
 
-#[path = "git-ops/mod.rs"]
-mod git_ops;
+mod process_io;
+mod archive_sessions;
 
 include!("backend.rs");

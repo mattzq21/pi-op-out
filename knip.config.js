@@ -31,7 +31,7 @@ export default {
     "extensions/piop-define-agents/{daemon-loader,mcp-schema}.ts",
     "extensions/piop-runtime-settings/provider-accounts.mjs",
     "daemon/resources/mcp-bridge.ts",
-    "daemon/resources/{cleanup-ephemeral-session,session-descendants,archive-conversations,archive-worktree,restore-archived-worktree,relocate-session,index-sessions,storage-inventory,delete-session,preserve-archive-checkpoints,publish-fork,remove-worktree}.cjs",
+    "daemon/resources/{session-descendants,archive-conversations,restore-session,relocate-session,index-sessions,storage-inventory,delete-session}.cjs",
     "scripts/{mutation-node-runner,oxlint-local}.mjs",
     "tools/oxlint/anti-slop/index.ts",
     "test/**/*.test.mjs",

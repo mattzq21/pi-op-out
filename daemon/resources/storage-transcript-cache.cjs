@@ -35,7 +35,7 @@ function saved(db, file, stamp) {
   try {
     const stored = deserialize(row.body);
 
-    if (stored?.version === 1) return stored.value;
+    if (stored?.version === 2) return stored.value;
   } catch { }
 }
 
@@ -44,7 +44,7 @@ function save(db, file, stamp, value) {
 
   try {
     if (fingerprint(file) === stamp) db.prepare('INSERT INTO storage_transcript_summaries VALUES (?, ?, ?) ON CONFLICT(session_path) DO UPDATE SET fingerprint=excluded.fingerprint, body=excluded.body')
-      .run(file, stamp, serialize({ version: 1, value }));
+      .run(file, stamp, serialize({ version: 2, value }));
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }

@@ -108,7 +108,7 @@ function createRecoveryStorage(profileRoot) {
   function validRecord(record, id) {
     return record.version === 1 && record.managedBy === 'piop' && record.kind === kind
       && record.id === id && states.has(record.state) && validOwners(record.owners)
-      && path.isAbsolute(record.originalCwd ?? '') && ['empty', 'remote-branch'].includes(record.mode);
+      && path.isAbsolute(record.originalCwd ?? '') && record.mode === 'empty';
   }
 
   function validOwners(owners) {

@@ -8,11 +8,7 @@ function initialize(db) {
     db.exec(`CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
       CREATE TABLE IF NOT EXISTS session_deletion_tombstones (session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL, session_path TEXT NOT NULL); CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE); CREATE TRIGGER IF NOT EXISTS session_file_metadata_moved AFTER UPDATE ON sessions WHEN OLD.session_path IS NOT NEW.session_path BEGIN DELETE FROM session_file_metadata WHERE session_id=OLD.session_id; END;`);
 
-    db.exec(`CREATE TABLE IF NOT EXISTS session_repositories (
-      session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, cwd TEXT NOT NULL,
-      repository_root TEXT, remote_name TEXT, remote_url TEXT, branch TEXT, upstream_branch TEXT,
-      head_commit TEXT, checked_at INTEGER NOT NULL, observed_at INTEGER, directory_exists INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS session_sidebar (
+    db.exec(`      CREATE TABLE IF NOT EXISTS session_sidebar (
         session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
         fingerprint TEXT NOT NULL, modified_at INTEGER NOT NULL, summary_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_child_state (
@@ -42,7 +38,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS session_group_state (id INTEGER PRIMARY KEY CHECK(id=1), initialized INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS session_groups (
         group_id TEXT PRIMARY KEY, position INTEGER NOT NULL, name TEXT NOT NULL, cwd TEXT,
-        host_id TEXT, host_name TEXT, project_kind TEXT, branch TEXT);
+        host_id TEXT, host_name TEXT);
       CREATE TABLE IF NOT EXISTS session_group_assignments (session_key TEXT PRIMARY KEY, group_id TEXT);
       CREATE TABLE IF NOT EXISTS session_group_removed_projects (project_id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS session_group_deletions (session_key TEXT PRIMARY KEY);
@@ -52,27 +48,25 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS retention_candidates (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, retry_at REAL NOT NULL);
       CREATE INDEX IF NOT EXISTS retention_retry_order ON retention_candidates(retry_at, record_id);
       CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS worktree_allocations (container TEXT PRIMARY KEY, metadata_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS recovery_directories (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 
       CREATE TABLE IF NOT EXISTS goal_asset_dependencies (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity));
       CREATE TABLE IF NOT EXISTS goal_asset_reclamations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS queued_inputs (session_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS fork_preparations (directory TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS session_directories (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, cwd TEXT NOT NULL, checked_at INTEGER NOT NULL, directory_exists INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS archive_records (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS deletion_records (directory TEXT PRIMARY KEY, record_json TEXT);
-      CREATE TABLE IF NOT EXISTS fork_transactions (directory TEXT PRIMARY KEY, record_json TEXT);
-      CREATE TABLE IF NOT EXISTS fork_preparation_checkpoints (preparation TEXT NOT NULL, session_id TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(preparation, session_id));`);
+`);
 
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-function repositoryQuery(_db, columns, suffix = '') {
+function directoryQuery(_db, columns, suffix = '') {
   const fields = columns.map(column => `${column === 'session_path' ? 's' : 'r'}.${column}`).join(', ');
 
-  return `SELECT ${fields} FROM session_repositories r JOIN sessions s USING(session_id)${suffix}`;
+  return `SELECT ${fields} FROM session_directories r JOIN sessions s USING(session_id)${suffix}`;
 }
 
 function movePaths(root, moves) {
@@ -151,18 +145,6 @@ function saveRecoveryRecord(root, record, reserve = false) {
       .run(record.id, JSON.stringify(record));
   } finally { db.close(); }
 }
-
-function worktreeMetadata(container) {
-  const db = open(require('node:path').dirname(require('node:path').dirname(container)));
-
-  try {
-    const row = db.prepare('SELECT metadata_json FROM worktree_allocations WHERE container=?').get(container);
-
-    return row ? JSON.parse(row.metadata_json) : undefined;
-  } finally { db.close(); }
-}
-
-function worktreeContainers(root) { return rows(root, 'SELECT container FROM worktree_allocations ORDER BY container').map(row => row.container); }
 
 function markCleanup(root, kind) {
   const db = open(root);
@@ -246,5 +228,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
-  worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };
+module.exports = { initialize, directoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+  recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };

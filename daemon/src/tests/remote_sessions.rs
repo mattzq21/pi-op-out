@@ -20,52 +20,6 @@ fn remote_session_header_reads_only_one_line_and_quotes_shell_paths() {
 
 #[cfg(unix)]
 #[test]
-fn remote_session_scan_creates_storage_and_reports_only_real_session_files() {
-    use std::os::unix::fs::symlink;
-    let home = TestDirectory::new();
-    let scan = || query_remote_session_metadata(|script| {
-        let mut command = Command::new("sh"); command.args(["-c", script]).env("HOME", &home.0); command
-    });
-    assert!(scan().unwrap().is_empty());
-    let root = home.0.join(STORAGE_DIRECTORY).join("sessions"); assert!(root.is_dir());
-    let nested = root.join("project ' λ"); fs::create_dir(&nested).unwrap();
-    let first = root.join("empty.jsonl"); let second = nested.join("line\nbreak.jsonl");
-    fs::write(&first, "").unwrap(); fs::write(&second, "hello λ\n").unwrap();
-    fs::write(nested.join("not-session.json"), "ignored").unwrap();
-    fs::create_dir(nested.join("directory.jsonl")).unwrap();
-    let outside = home.0.join("outside.jsonl"); fs::write(&outside, "outside").unwrap();
-    symlink(&outside, nested.join("linked.jsonl")).unwrap();
-    symlink(&nested, root.join("linked-directory")).unwrap();
-    let mut metadata = parse_remote_session_metadata(&scan().unwrap()); metadata.sort_by(|left, right| left.0.cmp(&right.0));
-    assert_eq!(metadata.len(), 2);
-    for (path, fingerprint, modified, size) in metadata {
-        let expected = fs::metadata(&path).unwrap();
-        assert!([first.to_str().unwrap(), second.to_str().unwrap()].contains(&path.as_str()));
-        assert_eq!(size, expected.len());
-        assert_eq!(modified, expected.modified().unwrap().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs());
-        assert!(fingerprint.ends_with(&format!(":{size}")));
-    }
-    fs::remove_file(&first).unwrap();
-    let metadata = parse_remote_session_metadata(&scan().unwrap());
-    assert_eq!(metadata.len(), 1); assert_eq!(metadata[0].0, second.to_str().unwrap());
-}
-
-#[test]
-fn remote_session_scan_propagates_launch_exit_and_output_limit_errors() {
-    let directory = TestDirectory::new();
-    assert!(query_remote_session_metadata(|_| Command::new(directory.0.join("missing"))).is_err());
-    let query = |script: &str| query_remote_session_metadata(|_| { let mut command = Command::new("sh"); command.args(["-c", script]); command });
-    assert_eq!(query("printf 'permission denied\\n' >&2; exit 7").unwrap_err(), "permission denied\n");
-    assert!(query(&format!("head -c {} /dev/zero", MAX_SESSION_INDEX_BATCH_BYTES + 1)).unwrap_err().contains("Could not list remote sessions"));
-    fs::write(directory.0.join(STORAGE_DIRECTORY), "preserve").unwrap();
-    assert!(query_remote_session_metadata(|script| {
-        let mut command = Command::new("sh"); command.args(["-c", script]).env("HOME", &directory.0); command
-    }).is_err());
-    assert_eq!(fs::read_to_string(directory.0.join(STORAGE_DIRECTORY)).unwrap(), "preserve");
-}
-
-#[cfg(unix)]
-#[test]
 fn remote_temporary_chat_removal_preserves_contents_and_rejects_symlinks() {
     use std::os::unix::fs::symlink;
     let directory = TestDirectory::new(); let home = directory.0.join("home ' $(false)");

@@ -10,7 +10,7 @@ const { discoverPublicationDiagnostics } = require('./storage-inventory-publicat
 
 const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
 
-const journalSchema = Type.Object({ version: Type.Literal(2), kind: Type.Union([Type.Literal('archive'), Type.Literal('delete')]), id: Type.String({ pattern: '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$' }), root: Type.String(), container: Type.String(), containerIdentity: identitySchema, state: Type.String() });
+const journalSchema = Type.Object({ version: Type.Union([Type.Literal(2), Type.Literal(3)]), kind: Type.Union([Type.Literal('archive'), Type.Literal('delete')]), id: Type.String({ pattern: '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$' }), root: Type.String(), container: Type.String(), containerIdentity: identitySchema, state: Type.String() });
 
 const archiveSchema = Type.Object({ sessionId: Type.String(), backup: Type.String(), prepared: Type.String(), backupIdentity: Type.Optional(Type.Object({ identity: identitySchema })), preparedIdentity: Type.Optional(Type.Object({ identity: identitySchema })) });
 
@@ -21,8 +21,7 @@ const headerSchema = Type.Object({ type: Type.Literal('session'), id: Type.Strin
 function archiveSources(journal) {
   if (!Check(Type.Array(archiveSchema), journal.records)) throw new Error('Invalid archive diagnostic transcript mapping');
 
-  if (journal.resourcePeers !== undefined && !Check(Type.Array(archiveSchema), journal.resourcePeers)) throw new Error('Invalid archived peer diagnostic mapping');
-  const records = [...journal.records, ...journal.resourcePeers ?? []];
+  const records = journal.records;
 
   return records.flatMap(record => [
     { file: record.backup, sessionId: record.sessionId, identity: record.backupIdentity?.identity },
@@ -127,7 +126,6 @@ async function discoverGoalDiagnostics(profile, discovery) {
     try { await inspectDirectory(profile, path.basename(path.dirname(directory)), directory, discovery, record); }
     catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(directory + ': diagnostic goal ownership unavailable: ' + error.message); }
   }
-
 
   const archives = require('./archive-records.cjs');
 

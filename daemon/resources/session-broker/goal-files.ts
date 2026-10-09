@@ -14,7 +14,7 @@ import { read as readPreparation } from "./goal-prepared-files.cjs";
 import { save as savePreparation } from "./goal-preparations.cjs";
 import { allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
 import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
-import { acquireWorktreePublicationLock as acquireReferencePublicationLock } from "../piop-diff-watch/git.ts";
+import { acquireReferencePublicationLock } from "./reference-publication-lock.ts";
 
 const imageSchema = Type.Object({ data: Type.String(), mimeType: Type.Union([Type.Literal("image/png"), Type.Literal("image/jpeg"), Type.Literal("image/gif"), Type.Literal("image/webp")]) });
 

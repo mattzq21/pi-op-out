@@ -4,8 +4,6 @@ import { join } from "node:path";
 import { open, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { writeSessionFile } from "./session-file.ts";
 import type { SessionAgentState, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type as Schema, type Static } from "typebox";
@@ -31,8 +29,6 @@ const feedbackSchema = Schema.Object({ sessionId: Schema.String(), message: Sche
 
 const feedbackDetailsSchema = Schema.Object({ toolCallId: Schema.String() });
 
-const runFile = promisify(execFile);
-
 async function requireSavedReviewParent(ctx: ExtensionContext) {
   const path = ctx.sessionManager.getSessionFile();
   const message = "Send a message in the main conversation before starting a review";
@@ -53,17 +49,6 @@ async function requireSavedReviewParent(ctx: ExtensionContext) {
 
     if (!Check(sessionHeaderSchema, header) || header.id !== ctx.sessionManager.getSessionId()) throw new Error("The saved main conversation does not match this session");
   } finally { await file.close(); }
-}
-
-async function requireReviewRepository(cwd: string, signal?: AbortSignal) {
-  try {
-    const { stdout } = await runFile("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], { timeout: 5000, signal });
-
-    if (stdout.trim() === "true") return;
-  } catch { }
-
-  signal?.throwIfAborted();
-  throw new Error("/review is only available in Git repository projects");
 }
 
 async function createReview(ctx: ExtensionContext, agentState: SessionAgentState, signal?: AbortSignal) {
@@ -155,7 +140,7 @@ async function reviewSettings() {
 function reviewSubagentCount(args: string, command: string, ctx: ExtensionContext) {
   if (command === "review") {
     if (!args.trim()) return 0;
-    ctx.ui.notify("Usage: /review — reviews the current branch", "warning");
+    ctx.ui.notify("Usage: /review — reviews files in the current directory", "warning");
 
     return;
   }
@@ -183,7 +168,7 @@ function subagentReviewTask(state: SessionAgentState, count: number | null, prom
     ? "First assess the size, complexity, and risk of the changes, then choose a proportionate number of review subagents. Use only as many subagents as the task warrants, avoiding redundant work."
     : `You must spawn exactly ${count} review subagents.`;
 
-  return `${prompt}\n\nFor this review: ${delegation} Spawn them using spawn_agent with worktree: "same" and unique task names. Omit agent to inherit your reviewer profile. Divide the review into complementary scopes and give each child the review instructions above, including the base and committed-change scope. Children must not delegate further, modify files, or run tests. Launch children concurrently, with at most ${limit} active at once; for larger counts, launch the remaining children as slots become available. Collect every subagent's results before giving your final review. Verify and deduplicate their findings, then report one consolidated review.`;
+  return `${prompt}\n\nFor this review: ${delegation} Spawn them using spawn_agent with unique task names. Omit agent to inherit your reviewer profile. Divide the review into complementary scopes and give each child the review instructions above, including the files and behavior to inspect. Children must not delegate further, modify files, or run tests. Launch children concurrently, with at most ${limit} active at once; for larger counts, launch the remaining children as slots become available. Collect every subagent's results before giving your final review. Verify and deduplicate their findings, then report one consolidated review.`;
 }
 
 async function reviewProfile(pi: ExtensionAPI, agent: string) {
@@ -227,7 +212,6 @@ export function registerReview(pi: ExtensionAPI) {
 
     if (count === undefined) return;
 
-    await requireReviewRepository(ctx.cwd, signal);
     signal?.throwIfAborted();
     const settings = await reviewSettings();
     signal?.throwIfAborted();
@@ -242,7 +226,7 @@ export function registerReview(pi: ExtensionAPI) {
   };
 
   pi.registerCommand("review", {
-    description: "Review this branch against its base in a side pane",
+    description: "Review files in the current directory in a side pane",
     handler: (args, ctx) => startReview(args, ctx),
   });
   pi.registerCommand("rs", {

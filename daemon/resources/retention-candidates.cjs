@@ -3,8 +3,6 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { directoryInUse } = require('./directory-liveness.cjs');
-const { containerContents } = require('./worktree-container.cjs');
 const tables = require('./session-database.cjs');
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,12 +30,11 @@ function sync(file) {
 function candidatePath(root, file) {
   if (path.resolve(file) !== file) return false;
   const relative = path.relative(root, file).split(path.sep);
-  const worktree = relative.length === 2 && relative[0] === 'worktrees' && /^[a-f0-9]{4}$/.test(relative[1]);
 
-  const goal = ['sessions', 'archived', 'fork-transactions', 'fork-preparations'].includes(relative[0])
+  const goal = ['sessions', 'archived'].includes(relative[0])
     && relative.at(-2) === 'attachments' && /^goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})$/.test(relative.at(-1));
 
-  return worktree || goal;
+  return goal;
 }
 
 function validateRetention(root, value) {
@@ -138,29 +135,9 @@ function cleanupStages(record) {
 
     if (goalStorageProtected(record, candidate, staged)) throw new Error('Deferred goal assets have retained ownership or publication dependencies');
 
-    if (!worktreeRemovalReady(candidate, staged)) throw new Error('Deferred worktree storage remains in use or contains files');
-    removeStage(candidate, staged);
+    fs.rmSync(staged, { recursive: true });
     sync(path.dirname(staged));
   }
-}
-
-function removeStage(candidate, file) {
-  if (path.basename(path.dirname(candidate.path)) !== 'worktrees') { fs.rmSync(file, { recursive: true });
-
-    return; }
-
-  const contents = containerContents(file);
-
-  if (!contents) throw new Error('Deferred worktree storage contains files');
-
-  for (const name of contents.files) fs.unlinkSync(path.join(file, name));
-  fs.rmdirSync(file);
-}
-
-function worktreeRemovalReady(candidate, file) {
-  if (path.basename(path.dirname(candidate.path)) !== 'worktrees') return true;
-
-  return Boolean(containerContents(file)) && !directoryInUse(file);
 }
 
 function removeCandidate(record, index) {
@@ -170,7 +147,6 @@ function removeCandidate(record, index) {
 
   if (goalStorageProtected(record, candidate, candidate.path)) return;
 
-  if (!worktreeRemovalReady(candidate, candidate.path)) return;
   const parent = path.dirname(candidate.path);
 
   if (fs.realpathSync(parent) !== parent) throw new Error('Deferred retention parent changed');
@@ -200,23 +176,11 @@ function goalStorageProtected(record, candidate, file) {
     || publication.transcriptPaths.some(transcript => JSON.stringify(require('./transcript-references.cjs').read(root, transcript)).includes(JSON.stringify(candidate.path).slice(1, -1))));
 }
 
-function forgetRemovedAllocations(database, record) {
-  const remove = database.prepare("DELETE FROM worktree_allocations WHERE container=? AND json_extract(metadata_json, '$.containerIdentity')=?");
-
-  for (const [index, candidate] of record.pending.directories.entries()) {
-    if (path.basename(path.dirname(candidate.path)) !== 'worktrees') continue;
-
-    if (metadata(candidate.path) || metadata(stagePath(record, index))) continue;
-    remove.run(candidate.path, candidate.identity);
-  }
-}
-
 function finishRecord(record, done) {
   const root = path.dirname(path.dirname(record.file));
   const database = tables.open(root);
 
   try {
-    forgetRemovedAllocations(database, record);
 
     if (done) database.prepare('DELETE FROM retention_candidates WHERE record_id=?').run(record.id);
     else database.prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), record.id);
