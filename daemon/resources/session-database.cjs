@@ -74,6 +74,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS legacy_queued_inputs (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS fork_preparations (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS archive_records (directory TEXT PRIMARY KEY, record_json TEXT);
+      CREATE TABLE IF NOT EXISTS legacy_committed_deletions (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS deletion_records (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS fork_transactions (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS fork_preparation_checkpoints (preparation TEXT NOT NULL, session_id TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(preparation, session_id));
@@ -194,6 +195,7 @@ function importSessions(db, root) {
     importDirectories(db, root, 'fork-transactions', 'fork_transactions', 'fork-transactions-v1');
     importDirectories(db, root, 'delete-transactions', 'deletion_records', 'deletion-records-pending-v1');
     importDirectories(db, root, 'deleted-sessions', 'deletion_records', 'deletion-records-committed-v1');
+    importDirectories(db, root, 'deleted-sessions', 'legacy_committed_deletions', 'legacy-committed-deletions-v1');
     importDirectories(db, root, 'archive-transactions', 'archive_records', 'archive-records-v1');
     importRecoveryDirectories(db, root);
     importReaderReleases(db, root);
@@ -246,10 +248,10 @@ function importJsonRecords(db, root, area, table, migration) {
   db.prepare('INSERT INTO storage_migrations VALUES (?)').run(migration);
 }
 
-function rows(root, sql) {
+function rows(root, sql, ...parameters) {
   const db = open(root);
 
-  try { return db.prepare(sql).all(); }
+  try { return db.prepare(sql).all(...parameters); }
   finally { db.close(); }
 }
 
@@ -679,13 +681,9 @@ function importPublications(db, root) {
 }
 
 function publication(root, id) {
-  const db = open(root);
+  const row = rows(root, 'SELECT record_json FROM session_publications WHERE publication_id=?', id)[0];
 
-  try {
-    const row = db.prepare('SELECT record_json FROM session_publications WHERE publication_id=?').get(id);
-
-    return row ? JSON.parse(row.record_json) : undefined;
-  } finally { db.close(); }
+  return row ? JSON.parse(row.record_json) : undefined;
 }
 
 function savePublication(root, id, record) {

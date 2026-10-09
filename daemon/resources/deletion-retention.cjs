@@ -264,7 +264,8 @@ function pruneReceipts(root) {
 function recoveryPending(root) {
   return require('./restore-records.cjs').list(root).length > 0
     || entries(root).some(entry => entry.isDirectory() && entry.name.startsWith('archive-transaction-'))
-    || entries(path.join(root, 'deleted-sessions')).length > 0;
+    || require('./deletion-records.cjs').list(root).length > 0
+    || require('./legacy-deletion-records.cjs').list(root).length > 0;
 }
 
 function collectRetention(root, sources, savedFiles, deferred = { directories: [], sessionIds: [] }, unpublishedGoals = false) {

@@ -206,16 +206,6 @@ function legacyPending(directory) {
   return false;
 }
 
-function pendingDirectory(directory, ignoredJournal) {
-  const metadata = io.exists(directory);
-
-  if (!metadata) return false;
-
-  if (!metadata.isDirectory() || fs.realpathSync(directory) !== directory) return true;
-
-  return fs.readdirSync(directory).some(name => path.join(directory, name) !== ignoredJournal);
-}
-
 function finishedArchive(root, directory, transaction) {
   if (!Check(finishedArchiveSchema, transaction)) return false;
 
@@ -239,9 +229,7 @@ function pending(root, ignoredJournal) {
 
   if (archivePending(root) || require('./deletion-records.cjs').list(root).length) return true;
 
-  for (const name of ['delete-transactions', 'deleted-sessions']) {
-    if (pendingDirectory(path.join(root, name))) return true;
-  }
+  if (require('./legacy-deletion-records.cjs').list(root).length) return true;
 
   if (fs.readdirSync(root).some(name => name.startsWith('archive-transaction-'))) return true;
 

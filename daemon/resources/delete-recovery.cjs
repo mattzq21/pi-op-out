@@ -240,28 +240,42 @@ function rollback(root, directory, journal) {
   sync(path.dirname(directory));
 }
 
+function legacyDirectory(root, directory, registered) {
+  const records = require('./legacy-deletion-records.cjs');
+
+  if (path.dirname(directory) !== path.join(root, 'deleted-sessions')) throw new Error('Invalid registered legacy deletion location');
+
+  if (!uuidPattern.test(path.basename(directory)) || registered.has(directory) || !exists(directory)) {
+    records.remove(root, directory);
+
+    return false;
+  }
+
+  if (!fs.lstatSync(directory).isDirectory() || fs.realpathSync(directory) !== directory) throw new Error('Legacy deletion directory was replaced');
+
+  return true;
+}
+
 function cleanupCommitted(root) {
   const registered = new Set(require('./deletion-records.cjs').list(root).flatMap(({ record }) => record ? [record.garbagePath] : []));
   const garbageRoot = path.join(root, "deleted-sessions");
 
-  if (!exists(garbageRoot)) return;
+  const records = require('./legacy-deletion-records.cjs');
 
-  const entries = fs.readdirSync(garbageRoot, { withFileTypes: true }).filter(entry => entry.isDirectory() && uuidPattern.test(entry.name));
-
-  for (const entry of entries) {
-    const directory = path.join(garbageRoot, entry.name);
-
-    if (registered.has(directory)) continue;
+  for (const directory of records.list(root)) {
+    if (!legacyDirectory(root, directory, registered)) continue;
 
     if (!exists(path.join(directory, "recovery.json"))) {
       fs.rmSync(directory, { recursive: true }); sync(garbageRoot);
+      records.remove(root, directory);
 
       continue;
     }
 
     const journal = readJournal(root, directory);
 
-    if (!journal) continue;
+    if (!journal) { records.remove(root, directory); continue; }
+
     sync(garbageRoot);
 
     for (const lock of journal.locks ?? inferredLocks(journal)) sync(path.dirname(lock.path));
@@ -272,6 +286,7 @@ function cleanupCommitted(root) {
     for (const repository of journal.repositories) releaseReservations(repository);
     fs.rmSync(directory, { recursive: true });
     sync(garbageRoot);
+    records.remove(root, directory);
   }
 }
 

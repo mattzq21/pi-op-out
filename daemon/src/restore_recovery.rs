@@ -39,7 +39,7 @@ fn legacy_publication_temporary(entry: &walkdir::DirEntry) -> bool {
 
 fn recovery_pending(root: &Path) -> Result<bool, String> {
     let database = crate::session_registry::open(root)?;
-    let publications: bool = database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM session_restore_receipts) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
+    let publications: bool = database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM session_restore_receipts) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
         .map_err(|error| error.to_string())?;
     if publications { return Ok(true); }
     legacy_pending(root)
@@ -67,7 +67,7 @@ fn deletion_pending(root: &Path, area: &str) -> Result<bool, String> {
         let entry = entry.map_err(|error| error.to_string())?;
         if !entry.file_type().is_dir() { continue; }
         let name = entry.file_name().to_string_lossy();
-        if area == "deleted-sessions" || (name.starts_with(".delete-") && name.ends_with(".lock")) { return Ok(true); }
+        if name.starts_with(".delete-") && name.ends_with(".lock") { return Ok(true); }
     }
     Ok(false)
 }
@@ -84,7 +84,7 @@ fn fork_preparation_pending(root: &Path) -> Result<bool, String> {
 
 fn transaction_directories_pending(root: &Path) -> Result<bool, String> {
     if archive_pending(root)? || fork_transactions_pending(root)? || fork_preparation_pending(root)? { return Ok(true); }
-    for area in ["sessions", "archived", "deleted-sessions"] {
+    for area in ["sessions", "archived"] {
         if deletion_pending(root, area)? { return Ok(true); }
     }
     Ok(false)
