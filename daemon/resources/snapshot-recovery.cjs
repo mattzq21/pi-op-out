@@ -119,23 +119,12 @@ function protectedSources(root, directories, warnings) {
     for (const session of require('./session-database.cjs').paths(root)) sources.stores.add(session.replace(/\.jsonl$/, '.diffs.json'));
   } catch (error) { sources.unknown = true; warn(warnings, root, error); }
 
-  for (const area of ['deleted-sessions', 'archive-transactions', 'restore-transactions', 'fork-transactions', 'fork-preparations']) {
-    try { comparisonStores(path.join(root, area), sources.stores); }
-    catch (error) { sources.unknown = true; warn(warnings, path.join(root, area), error); }
-  }
+  try { require('./snapshot-operation-stores.cjs').collect(root, sources.stores); }
+  catch (error) { sources.unknown = true; warn(warnings, root, error); }
 
   for (const file of sources.stores) protectStore(file, sources, warnings);
 
   return sources;
-}
-
-function comparisonStores(directory, stores) {
-  for (const entry of entries(directory)) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) comparisonStores(file, stores);
-    else if (entry.name.endsWith('.diffs.json')) stores.add(file);
-  }
 }
 
 function protectStore(file, sources, warnings) {
