@@ -141,10 +141,15 @@ fn location(path: &Path) -> Result<(PathBuf, &str), String> {
     Ok((directory, name))
 }
 
+fn record_database(directory: &Path, name: &str) -> Result<Connection, String> {
+    let mut db = open(directory)?;
+    if name == "plugins.json" { import_plugins(&mut db, directory)?; }
+    Ok(db)
+}
+
 pub(crate) fn read(path: &Path) -> Result<Option<Value>, String> {
     let (directory, name) = location(path)?;
-    let mut db = open(&directory)?;
-    if name == "plugins.json" { import_plugins(&mut db, &directory)?; }
+    let db = record_database(&directory, name)?;
     let body: Option<String> = db.query_row("SELECT record_json FROM daemon_restart_records WHERE directory=? AND name=?",
         rusqlite::params![directory.to_string_lossy(), name], |row| row.get(0)).optional().map_err(|error| error.to_string())?;
     body.map(|body| serde_json::from_str(&body).map_err(|error| error.to_string())).transpose()
@@ -152,7 +157,7 @@ pub(crate) fn read(path: &Path) -> Result<Option<Value>, String> {
 
 pub(crate) fn write(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let (directory, name) = location(path)?;
-    let db = open(&directory)?;
+    let db = record_database(&directory, name)?;
     let body = serde_json::to_string(value).map_err(|error| error.to_string())?;
     db.execute("INSERT INTO daemon_restart_records VALUES (?, ?, ?) ON CONFLICT(directory, name) DO UPDATE SET record_json=excluded.record_json",
         rusqlite::params![directory.to_string_lossy(), name, body]).map_err(|error| error.to_string())?;
@@ -161,7 +166,7 @@ pub(crate) fn write(path: &Path, value: &impl Serialize) -> Result<(), String> {
 
 pub(crate) fn remove(path: &Path) -> Result<(), String> {
     let (directory, name) = location(path)?;
-    let db = open(&directory)?;
+    let db = record_database(&directory, name)?;
     db.execute("DELETE FROM daemon_restart_records WHERE directory=? AND name=?", rusqlite::params![directory.to_string_lossy(), name]).map_err(|error| error.to_string())?;
     Ok(())
 }
