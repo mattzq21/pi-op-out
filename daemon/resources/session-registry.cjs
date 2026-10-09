@@ -153,9 +153,20 @@ function metadata() {
   }
 }
 
+function identity() {
+  sessionTables.importSessions(db, root);
+  const id = db.prepare(`SELECT session_id FROM sessions WHERE session_path=?
+    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`).get(request.path)?.session_id;
+  const managed = ['sessions', 'archived'].some(area => request.path.startsWith(path.join(fs.realpathSync(root), area) + path.sep));
+
+  if (!id && managed) throw new Error('Session path is not registered');
+  process.stdout.write(JSON.stringify(id ?? null));
+}
+
 try {
   if (request.action === 'initialize') sessionTables.importSessions(db, root);
   else if (request.action === 'metadata') metadata();
+  else if (request.action === 'identity') identity();
   else if (request.action === 'get') process.stdout.write(JSON.stringify(db.prepare('SELECT r.*, s.session_path FROM session_repositories r JOIN sessions s USING(session_id) WHERE r.session_id = ?').get(request.sessionId) || null));
   else if (request.action === 'deleted') process.stdout.write(JSON.stringify(db.prepare('SELECT session_id FROM session_deletion_tombstones').all().map(record => record.session_id)));
   else if (request.action === 'scan') sessionTables.importSessions(db, root);

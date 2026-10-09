@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Mutex};
 use crate::broker::broker_environment;
 use serde_json::json;
 use serde_json::Value;
+use rusqlite::OptionalExtension;
 use std::fs;
 use std::thread;
 use std::io::BufRead;
@@ -182,6 +183,8 @@ pub(super) fn enabled_tool_names(settings: &AppSettings) -> Vec<&str> {
 }
 
 pub(super) fn session_identity(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
+    let registered = if host_id == "local" { local_registered_identity(path)? } else { remote_registered_identity(remote_host(settings, host_id)?, path)? };
+    if let Some(id) = registered { return Ok(id); }
     let header = if host_id == "local" {
         let mut line = String::new();
         BufReader::new(fs::File::open(path).map_err(|error| error.to_string())?).take(64 * 1024).read_line(&mut line).map_err(|error| error.to_string())?;
@@ -191,6 +194,27 @@ pub(super) fn session_identity(settings: &AppSettings, host_id: &str, path: &str
         read_remote_session_header(path, |script| { let mut command = ssh(host); command.arg(script); command })?
     };
     serde_json::from_str::<Value>(&header).map_err(|error| error.to_string())?.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()).map(str::to_owned).ok_or("Missing session identity".into())
+}
+
+fn local_registered_identity(path: &str) -> Result<Option<String>, String> {
+    let root = home_dir()?.join(STORAGE_DIRECTORY);
+    let db = crate::session_registry::open(&root)?;
+    let id: Option<String> = db.query_row("SELECT session_id FROM sessions WHERE session_path=?
+        AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))", [path], |row| row.get(0))
+        .optional().map_err(|error| error.to_string())?;
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    if id.is_none() && ["sessions", "archived"].iter().any(|area| Path::new(path).starts_with(root.join(area))) { return Err("Session path is not registered".into()); }
+    Ok(id)
+}
+
+fn remote_registered_identity(host: &RemoteHost, path: &str) -> Result<Option<String>, String> {
+    let request = json!({"action":"identity","path":path}).to_string();
+    let script = format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(&crate::session_registry::source()), shell_quote(&request));
+    let mut command = ssh(host);
+    command.arg(remote_login_command(&script));
+    let output = run_limited(&mut command, 64 * 1024, "Could not read registered session identity")?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned()); }
+    serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
 }
 
 pub(super) fn read_remote_session_header(path: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
