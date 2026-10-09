@@ -5,6 +5,7 @@ const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('./session-transactions.cjs');
 const ownership = require('./archive-resource-owners.cjs');
+const records = require('./archive-resource-records.cjs');
 
 const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
 
@@ -47,18 +48,6 @@ function resourcePath(root, id) {
   if (!Check(ownership.resourceIdSchema, id)) throw new Error('Invalid shared archive resource identity');
 
   return path.join(rootDirectory(root), id + '.json');
-}
-
-function readText(file) {
-  if (!io.exists(file)) return null;
-  ownership.canonical(file);
-  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-
-  try {
-    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Shared resource record is not a regular file: ' + file);
-
-    return fs.readFileSync(descriptor, 'utf8');
-  } finally { fs.closeSync(descriptor); }
 }
 
 function normalized(file) { return path.isAbsolute(file) && path.resolve(file) === file; }
@@ -136,7 +125,7 @@ function validateRecoveryPin(record) {
 
 function load(root, id) {
   const file = resourcePath(root, id);
-  const body = readText(file);
+  const body = records.read(file);
 
   if (body === null) throw new Error('Shared resource record is unavailable: ' + file);
   const record = JSON.parse(body);
@@ -149,20 +138,9 @@ function load(root, id) {
 }
 
 function list(root) {
-  const directory = rootDirectory(root);
+  rootDirectory(root);
 
-  if (!io.exists(directory)) return [];
-  ownership.canonical(directory);
-  const records = [];
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.name.endsWith('.json')) continue;
-
-    if (!entry.isFile()) throw new Error('Ambiguous shared resource record retained');
-    records.push(load(root, entry.name.slice(0, -5)));
-  }
-
-  return records;
+  return records.list(root).map(id => load(root, id));
 }
 
 function captureBinding(location) {
@@ -529,7 +507,7 @@ function cleanupPlan(root, change) {
 
 function apply(root, change) {
   const record = changedRecord(root, change);
-  const current = readText(change.file);
+  const current = records.read(change.file);
 
   if (current === change.after) return;
 
@@ -540,23 +518,18 @@ function apply(root, change) {
     verifyRecovery(record);
   }
 
-  const directory = path.dirname(change.file);
-
-  io.mkdir(directory);
-  ownership.canonical(directory);
-  io.write(change.file, change.after);
+  records.change(change.file, change.before, change.after);
 }
 
 function rollback(root, change) {
   changedRecord(root, change);
-  const current = readText(change.file);
+  const current = records.read(change.file);
 
   if (current === change.before) return;
 
   if (current !== change.after) throw new Error('Shared resource rollback has conflicting ownership; retained');
 
-  if (change.before === null) { fs.unlinkSync(change.file); io.sync(path.dirname(change.file)); }
-  else io.write(change.file, change.before);
+  records.change(change.file, change.after, change.before);
 }
 
 module.exports = { load, list, validate: changedRecord, planArchive, assertArchiveOwners, refreshArchive, sealArchive, headerUpdates, planRestore, sealRestore, adoptRestore, planDelete, cleanupPlan, apply, rollback };

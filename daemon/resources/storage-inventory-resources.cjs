@@ -56,11 +56,11 @@ async function discoverArchiveResources(profile, discovery) {
   }
 
   for (const loaded of resources) {
-    const provenance = 'Shared archive resource ' + loaded.record.id + '; ledger: ' + loaded.file;
-    const record = addRoot(discovery.retainedArtifacts, loaded.file, provenance + '; durable owners are provenance, not live counts', 'owned', owners(loaded.record));
+    const provenance = 'Shared archive resource ' + loaded.record.id + '; state: ' + loaded.record.state + '; stored in SQLite';
+    const record = addRoot(discovery.retainedArtifacts, path.join(profile, 'sessions.sqlite'), provenance + '; durable owners are provenance, not live counts', 'owned', owners(loaded.record));
     record.category = 'other-storage';
-    record.state = loaded.record.state;
-    record.pins = loaded.record.pins;
+    record.state = 'shared-archive-records';
+    record.pins = [...record.pins ?? [], ...loaded.record.pins];
     storedCopies(loaded, discovery, provenance);
   }
 }
