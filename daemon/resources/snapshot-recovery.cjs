@@ -325,7 +325,7 @@ function discard(directory) {
 
   if (destination !== directory) { fs.renameSync(directory, destination); sync(parent); }
 
-  fs.rmSync(destination, { recursive: true });
+  require('./snapshot-metadata.cjs').remove(destination);
   sync(parent);
   const original = path.join(parent, path.basename(directory).replace(/^\.cleanup-/, ''));
   recoveryRecords.remove(original);

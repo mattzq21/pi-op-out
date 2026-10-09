@@ -128,7 +128,7 @@ function releaseReader() {
 function discardPreparation(directory) {
   if (!fs.existsSync(directory)) return comparisonRecords.finishPreparation(storageRoot(), directory);
   const identity = comparisonRecords.identity(directory);
-  fs.rmSync(directory, { recursive: true });
+  snapshotRecords.remove(directory);
   syncPath(path.dirname(directory));
   comparisonRecords.remove(storageRoot(), identity);
   comparisonRecords.finishPreparation(storageRoot(), directory);
@@ -198,7 +198,7 @@ function retainedBaselines(retained) {
 }
 
 function removeTemporary(directory) {
-  fs.rmSync(directory, { recursive: true, force: true });
+  snapshotRecords.remove(directory);
   require('./session-database.cjs').removeSnapshotDirectory(directory);
 }
 
@@ -244,7 +244,7 @@ function promoteBaseline(retained, source) {
   preparing = comparisonRecords.prepare(storageRoot(), retained, owner.sessionId);
   copySnapshot(source, preparing);
   syncTree(preparing);
-  fs.rmSync(previous, { recursive: true, force: true });
+  snapshotRecords.remove(previous);
 
   if (fs.existsSync(latest)) fs.renameSync(latest, previous);
 
@@ -254,7 +254,7 @@ function promoteBaseline(retained, source) {
   syncPath(retained);
   comparisonRecords.finishPreparation(storageRoot(), preparing);
   preparing = undefined;
-  fs.rmSync(previous, { recursive: true, force: true });
+  snapshotRecords.remove(previous);
 }
 
 function nextComparison(retained) {
@@ -312,20 +312,26 @@ function cleanupAcknowledged(directory) {
 
     for (const [index, token] of (record.sources || []).entries()) {
       const source = JSON.parse(token);
+      const destination = path.join(directory, `source-${index}`);
 
-      if (!fs.existsSync(source.root)) continue;
+      if (!fs.existsSync(source.root)) {
+        if (fs.existsSync(destination)) snapshotRecords.moved(destination);
+        continue;
+      }
+
       validateToken(source);
       const saved = readSnapshot(source.root);
 
       if (saved.tree !== source.tree) throw new Error('Acknowledged comparison snapshot changed');
-      fs.renameSync(source.root, path.join(directory, `source-${index}`));
+      fs.renameSync(source.root, destination);
+      snapshotRecords.moved(destination);
       syncPath(path.dirname(source.root));
       syncPath(directory);
       require('./session-database.cjs').removeSnapshotDirectory(source.root);
     }
   }
 
-  fs.rmSync(directory, { recursive: true });
+  snapshotRecords.remove(directory);
   syncPath(path.dirname(directory));
   comparisonRecords.remove(storageRoot(), identity);
 }
@@ -520,7 +526,7 @@ function storeFallback(token, retained) {
     require('./session-database.cjs').saveComparisonRetry(token.root, record);
     syncPath(path.dirname(token.root));
   } catch (error) {
-    if (!require('./session-database.cjs').comparisonRetry(token.root)) fs.rmSync(baseline.root, { recursive: true, force: true });
+    if (!require('./session-database.cjs').comparisonRetry(token.root)) snapshotRecords.remove(baseline.root);
     throw error;
   }
 }

@@ -102,11 +102,9 @@ pub(crate) fn capture_local_git_tree(root: &Path, repository_objects: &Path, sna
 pub(crate) fn remove_local_snapshot(root: &Path) -> Result<(), String> {
     let profile = root.parent().and_then(Path::parent).ok_or("Snapshot storage has no profile")?;
     let mut db = crate::session_registry::open(profile)?;
-    match fs::remove_dir_all(root) {
-        Ok(()) => {},
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
-        Err(error) => return Err(format!("Could not discard Git snapshot: {error}")),
-    }
+    let script = crate::session_registry::with_database("require('./snapshot-metadata.cjs').remove(process.argv[1]);");
+    let output = run_limited(node_command().args(["-e", &script]).arg(root), 64 * 1024, "Could not discard Git snapshot")?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let transaction = db.transaction().map_err(|error| error.to_string())?;
     transaction.execute("DELETE FROM snapshot_directories WHERE directory=?", [root.to_string_lossy()]).map_err(|error| error.to_string())?;
     transaction.execute("DELETE FROM snapshot_recovery WHERE directory=?", [root.to_string_lossy()]).map_err(|error| error.to_string())?;
