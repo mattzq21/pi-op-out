@@ -134,7 +134,7 @@ function savedDependencies(root, directory) {
 function textDependencies(root, directory) {
   const texts = [];
 
-  for (const entry of fs.readdirSync(directory)) {
+  for (const entry of goalDependencies.textFiles(root, directory)) {
     if (entry === 'goal-objective.md' || /^attachment-\d+\.txt$/.test(entry)) texts.push(assetText(path.join(directory, entry)));
   }
 

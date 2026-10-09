@@ -1,3 +1,4 @@
+import { saveTextFiles, removeTextFiles } from "./goal-dependencies.cjs";
 import { markCleanup } from "../session-database.cjs";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -161,9 +162,10 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
 
   try {
     release = ownGoalDirectory(staging);
-    const objective = await saveObjective(staging, directory, draft);
+    const { objective, textFiles } = await saveObjective(staging, directory, draft);
     const preparation: GoalPreparation = { version: 1, submissionId: id, digest, objective, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
     savedIdentity = savePreparation(profile, staging, preparation, directory);
+    saveTextFiles(profile, staging, textFiles, directory);
     saveOwnership(profile, staging, { version: 1, kind: "goal-assets", owners: [{ sessionId: preparation.sessionId, sessionPath: preparation.sessionPath }] }, directory);
     await syncDirectory(staging);
     await rename(staging, directory);
@@ -178,6 +180,7 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
     removeOwnership(profile, staging, allocation.identity);
 
     if (!published && savedIdentity) {
+      removeTextFiles(profile, directory, savedIdentity);
       removePreparation(profile, directory, savedIdentity);
       removeOwnership(profile, directory, savedIdentity);
     }
@@ -185,12 +188,15 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
 }
 
 async function saveObjective(staging: string, directory: string, draft: Static<typeof draftSchema>) {
-  if (!draft.attachments.length && [...draft.objective.trim()].length <= 4000) return validateObjective(draft.objective);
+  if (!draft.attachments.length && [...draft.objective.trim()].length <= 4000) return { objective: validateObjective(draft.objective), textFiles: [] };
   const references = await Promise.all(draft.attachments.map((attachment, index) => saveAttachment(staging, directory, attachment, index)));
   const path = join(directory, "goal-objective.md");
   await writeContent(join(staging, "goal-objective.md"), [draft.objective, ...references].join("\n\n"));
 
-  return validateObjective(`Read the goal objective file at ${path} before continuing.`);
+  return {
+    objective: validateObjective(`Read the goal objective file at ${path} before continuing.`),
+    textFiles: ["goal-objective.md", ...draft.attachments.flatMap((attachment, index) => attachment.image ? [] : [`attachment-${index + 1}.txt`])],
+  };
 }
 
 async function saveAttachment(staging: string, directory: string, attachment: Attachment, index: number) {

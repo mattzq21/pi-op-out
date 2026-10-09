@@ -92,14 +92,49 @@ function managedGoalReferences(value, root = sessionReferenceRoot()) {
   return found;
 }
 
+function goalTextFiles(directory) {
+  const info = storageFs.lstatSync(directory, { bigint: true });
+  const identity = `${info.dev}:${info.ino}`;
+  const file = storagePath.join(sessionReferenceRoot(), 'sessions.sqlite');
+  const db = new StorageDatabase(file);
+
+  try {
+    storageFs.chmodSync(file, 0o600);
+    db.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+      CREATE TABLE IF NOT EXISTS goal_text_files (directory TEXT NOT NULL, identity TEXT NOT NULL, names_json TEXT NOT NULL, PRIMARY KEY(directory, identity));`);
+    const query = db.prepare('SELECT names_json FROM goal_text_files WHERE directory=? AND identity=?');
+    let row = query.get(directory, identity);
+
+    if (!row) {
+      const names = storageFs.readdirSync(directory, { withFileTypes: true }).filter(entry => entry.isFile() && /\.(md|txt)$/.test(entry.name)).map(entry => entry.name);
+      const after = storageFs.lstatSync(directory, { bigint: true });
+
+      if (`${after.dev}:${after.ino}` !== identity) throw new Error('Goal text directory changed during import');
+      db.prepare('INSERT INTO goal_text_files VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(directory, identity, JSON.stringify(names));
+      row = query.get(directory, identity);
+    }
+
+    const names = JSON.parse(row.names_json);
+
+    if (!Array.isArray(names) || names.some(name => !/^[^/\\]+\.(md|txt)$/.test(name) || storagePath.basename(name) !== name)) throw new Error('Invalid goal text file list');
+
+    return names;
+  } finally { db.close(); }
+}
+
 function validateGoalDirectory(directory) {
   const objective = storagePath.join(directory, "goal-objective.md");
 
   try {
     if (!storageFs.lstatSync(directory).isDirectory() || !storageFs.lstatSync(objective).isFile()) throw new Error("Invalid goal attachment");
 
-    return storageFs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isFile() && /\.(md|txt)$/.test(entry.name)
-      ? [...managedGoalReferences(storageFs.readFileSync(storagePath.join(directory, entry.name), "utf8"))] : []);
+    return goalTextFiles(directory).flatMap(name => {
+      const file = storagePath.join(directory, name);
+
+      if (!storageFs.lstatSync(file).isFile()) throw new Error('Goal text is not a regular file');
+
+      return [...managedGoalReferences(storageFs.readFileSync(file, "utf8"))];
+    });
   } catch (error) { throw new Error(`Managed goal attachment is unavailable: ${directory}. Reattach it before saving. ${error.message}`); }
 }
 

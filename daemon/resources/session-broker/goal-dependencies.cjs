@@ -5,7 +5,11 @@ const database = require('../session-database.cjs');
 function withDatabase(root, operation) {
   const db = database.open(root);
 
-  try { return operation(db); }
+  try {
+    db.exec('CREATE TABLE IF NOT EXISTS goal_text_files (directory TEXT NOT NULL, identity TEXT NOT NULL, names_json TEXT NOT NULL, PRIMARY KEY(directory, identity))');
+
+    return operation(db);
+  }
   finally { db.close(); }
 }
 
@@ -62,7 +66,43 @@ function retained(root, directory, expected) {
 }
 
 function remove(root, directory, expected) {
+  removeTextFiles(root, directory, expected);
   withDatabase(root, db => db.prepare('DELETE FROM goal_asset_dependencies WHERE directory=? AND identity=?').run(directory, expected));
 }
 
-module.exports = { read, save, retained, remove };
+function validNames(names) {
+  if (!Array.isArray(names) || names.some(name => !/^[^/\\]+\.(md|txt)$/.test(name) || path.basename(name) !== name)) throw new Error('Invalid goal text file list');
+
+  return names;
+}
+
+function textFiles(root, directory) {
+  const expected = identity(directory);
+
+  return withDatabase(root, db => {
+    const query = db.prepare('SELECT names_json FROM goal_text_files WHERE directory=? AND identity=?');
+    let row = query.get(directory, expected);
+
+    if (!row) {
+      const names = fs.readdirSync(directory, { withFileTypes: true }).filter(entry => entry.isFile() && /\.(md|txt)$/.test(entry.name)).map(entry => entry.name);
+
+      if (identity(directory) !== expected) throw new Error('Goal text directory changed during import');
+      db.prepare('INSERT INTO goal_text_files VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(directory, expected, JSON.stringify(validNames(names)));
+      row = query.get(directory, expected);
+    }
+
+    return validNames(JSON.parse(row.names_json));
+  });
+}
+
+function saveTextFiles(root, directory, names, destination = directory) {
+  const expected = identity(directory);
+  withDatabase(root, db => db.prepare(`INSERT INTO goal_text_files VALUES (?, ?, ?)
+    ON CONFLICT(directory, identity) DO UPDATE SET names_json=excluded.names_json`).run(destination, expected, JSON.stringify(validNames(names))));
+}
+
+function removeTextFiles(root, directory, expected) {
+  withDatabase(root, db => db.prepare('DELETE FROM goal_text_files WHERE directory=? AND identity=?').run(directory, expected));
+}
+
+module.exports = { read, save, retained, remove, textFiles, saveTextFiles, removeTextFiles };
