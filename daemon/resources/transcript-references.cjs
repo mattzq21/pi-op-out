@@ -166,11 +166,10 @@ function read(root, file, connection) {
   } finally { if (!connection) db.close(); }
 }
 
-function remove(root, file) {
-  const db = open(root);
-
-  try { db.prepare('DELETE FROM transcript_references WHERE session_path=?').run(file); }
-  finally { db.close(); }
+function removeDirectory(db, directory) {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='transcript_references'").get()) return;
+  const prefix = directory + require('node:path').sep;
+  db.prepare('DELETE FROM transcript_references WHERE substr(session_path, 1, length(?))=?').run(prefix, prefix);
 }
 
-module.exports = { read, publish, remove };
+module.exports = { read, publish, removeDirectory };

@@ -46,7 +46,12 @@ function read(directory) {
 function remove(directory) {
   const db = open(directory);
 
-  try { db.prepare('DELETE FROM fork_transactions WHERE directory=?').run(directory); }
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    require('./transcript-references.cjs').removeDirectory(db, directory);
+    db.prepare('DELETE FROM fork_transactions WHERE directory=?').run(directory);
+    db.exec('COMMIT');
+  }
   finally { db.close(); }
 }
 

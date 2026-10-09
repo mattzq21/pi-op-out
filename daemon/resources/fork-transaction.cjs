@@ -73,8 +73,6 @@ function cleanup(directory) {
 
   if (exists(parent)) sync(parent);
   const original = path.join(parent, path.basename(directory).replace(/^\.cleanup-/, ''));
-  transcriptRecords.remove(path.dirname(parent), path.join(original, 'session.jsonl'));
-  transcriptRecords.remove(path.dirname(parent), path.join(removing, 'session.jsonl'));
   records.remove(original);
   records.remove(removing);
 }

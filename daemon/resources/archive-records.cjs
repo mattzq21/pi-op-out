@@ -51,7 +51,12 @@ function read(directory) {
 function remove(directory) {
   const db = open(directory);
 
-  try { db.prepare('DELETE FROM archive_records WHERE directory=?').run(directory); }
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    require('./transcript-references.cjs').removeDirectory(db, directory);
+    db.prepare('DELETE FROM archive_records WHERE directory=?').run(directory);
+    db.exec('COMMIT');
+  }
   finally { db.close(); }
 }
 

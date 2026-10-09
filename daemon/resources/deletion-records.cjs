@@ -22,7 +22,13 @@ function save(record) {
 function remove(root, directory) {
   const db = database.open(root);
 
-  try { db.prepare('DELETE FROM deletion_records WHERE directory=?').run(directory); }
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    require('./transcript-references.cjs').removeDirectory(db, directory);
+    require('./transcript-references.cjs').removeDirectory(db, path.join(root, 'deleted-sessions', path.basename(directory)));
+    db.prepare('DELETE FROM deletion_records WHERE directory=?').run(directory);
+    db.exec('COMMIT');
+  }
   finally { db.close(); }
 }
 
