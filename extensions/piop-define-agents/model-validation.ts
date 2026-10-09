@@ -7,7 +7,7 @@ import type { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agen
 import { loadAccountProviders } from "../piop-runtime-settings/provider-accounts.mjs";
 import { createFastModeDiscovery } from "../piop-openai-fast-mode/src/discovery.ts";
 import { piDirectory } from "./validation-runtime.ts";
-import { installAuthStorage, installModelsStorage } from "../../daemon/resources/sdk-storage.mjs";
+import { installRuntimeStorage } from "../../daemon/resources/sdk-storage.mjs";
 import type { FastModeConfig } from "../piop-openai-fast-mode/src/types.ts";
 import type { Agent } from "./contracts.ts";
 
@@ -43,11 +43,7 @@ function configuredModel(registry: ModelRegistry, agent: Agent, name: string) {
 
 export async function modelValidator() {
   const directory = await piDirectory();
-  const { FileAuthStorageBackend, AuthStorage } = await import(pathToFileURL(join(directory, "dist/core/auth-storage.js")).href);
-  installAuthStorage(FileAuthStorageBackend, AuthStorage);
-  const { FileModelsStore } = await import(pathToFileURL(join(directory, "dist/core/models-store.js")).href);
-  const { ModelConfig } = await import(pathToFileURL(join(directory, "dist/core/model-config.js")).href);
-  installModelsStorage(FileModelsStore, ModelConfig);
+  await installRuntimeStorage(directory);
   const { ModelRuntime: Runtime } = await import(pathToFileURL(join(directory, "dist/core/model-runtime.js")).href);
   const { ModelRegistry: Registry } = await import(pathToFileURL(join(directory, "dist/core/model-registry.js")).href);
   const { getAgentDir } = await import(pathToFileURL(join(directory, "dist/config.js")).href);

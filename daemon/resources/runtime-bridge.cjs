@@ -672,16 +672,10 @@ function installGoalPendingMessages(AgentSession) {
 async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const root = runtimeRoot(executable);
-  const { installAuthStorage, installModelsStorage, installSessionStorage, installSettingsStorage } = await import("./sdk-storage.mjs");
-  const { FileAuthStorageBackend, AuthStorage } = await import(pathToFileURL(join(root, "dist/core/auth-storage.js")).href);
+  const { installRuntimeStorage, installSessionStorage } = await import("./sdk-storage.mjs");
+  await installRuntimeStorage(root);
   const { SessionManager } = await import(pathToFileURL(join(root, "dist/core/session-manager.js")).href);
-  installAuthStorage(FileAuthStorageBackend, AuthStorage);
-  const { FileModelsStore } = await import(pathToFileURL(join(root, "dist/core/models-store.js")).href);
-  const { ModelConfig } = await import(pathToFileURL(join(root, "dist/core/model-config.js")).href);
-  installModelsStorage(FileModelsStore, ModelConfig);
   installSessionStorage(SessionManager);
-  const { FileSettingsStorage } = await import(pathToFileURL(join(root, "dist/core/settings-manager.js")).href);
-  installSettingsStorage(FileSettingsStorage);
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
 
   if (args.includes("--print")) return import(pathToFileURL(join(root, "dist/cli.js")).href);

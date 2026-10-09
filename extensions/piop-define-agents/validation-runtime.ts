@@ -2,7 +2,7 @@ import { readFile, realpath } from "node:fs/promises";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
-import { installSettingsStorage } from "../../daemon/resources/sdk-storage.mjs";
+import { installRuntimeStorage } from "../../daemon/resources/sdk-storage.mjs";
 import { agentExtensions } from "./extension-loader.ts";
 import type { ExtensionAPI, ExtensionRuntime, ModelRegistry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -39,6 +39,7 @@ export async function piDirectory() {
 
 export async function extensionValidator(registeredToolNames: string[]) {
   const directory = await piDirectory();
+  await installRuntimeStorage(directory);
   const loaderUrl = pathToFileURL(join(directory, "dist/core/extensions/jiti-static-loader.js")).href;
   const { createJiti } = await import(loaderUrl);
   const { VIRTUAL_MODULES } = await import(pathToFileURL(join(directory, "dist/core/extensions/virtual-modules.js")).href);
@@ -47,9 +48,7 @@ export async function extensionValidator(registeredToolNames: string[]) {
   const { createEventBus } = await import(pathToFileURL(join(directory, "dist/core/event-bus.js")).href);
   const { ExtensionRunner } = await import(pathToFileURL(join(directory, "dist/core/extensions/runner.js")).href);
   const { SessionManager } = await import(pathToFileURL(join(directory, "dist/core/session-manager.js")).href);
-  const { SettingsManager, FileSettingsStorage } = await import(pathToFileURL(join(directory, "dist/core/settings-manager.js")).href);
-
-  installSettingsStorage(FileSettingsStorage);
+  const { SettingsManager } = await import(pathToFileURL(join(directory, "dist/core/settings-manager.js")).href);
 
   return async (paths: string[], base: string, registry: ModelRegistry, agent: Agent, validate: () => Promise<void>) => {
     const runtime: ExtensionRuntime = createExtensionRuntime();

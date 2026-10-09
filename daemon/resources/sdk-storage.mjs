@@ -5,12 +5,22 @@ import { homedir as storageHome, tmpdir as storageTemporaryDirectory } from "nod
 import { spawnSync as storageSpawn } from "node:child_process";
 import { createHash as storageHash } from "node:crypto";
 import { isDeepStrictEqual as sameStorageValue } from "node:util";
+import { pathToFileURL as storageFileUrl } from "node:url";
 
 const installedStorageClasses = new WeakSet();
 
 const failedSessionStorage = new WeakSet();
 
 const sessionReferenceBaselines = new WeakMap();
+
+export async function installRuntimeStorage(directory) {
+  const modules = ["core/auth-storage.js", "core/models-store.js", "core/model-config.js", "core/settings-manager.js", "core/trust-manager.js", "utils/paths.js"];
+  const [auth, models, config, settings, trust, paths] = await Promise.all(modules.map(file => import(storageFileUrl(storagePath.join(directory, "dist", file)).href)));
+  installAuthStorage(auth.FileAuthStorageBackend, auth.AuthStorage);
+  installModelsStorage(models.FileModelsStore, config.ModelConfig);
+  installSettingsStorage(settings.FileSettingsStorage);
+  installTrustStorage(trust.ProjectTrustStore, path => paths.canonicalizePath(paths.resolvePath(path)));
+}
 
 function sessionReferenceRoot() {
   return storagePath.join(storageHome(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
@@ -409,6 +419,56 @@ export function installSettingsStorage(FileSettingsStorage) {
   };
 
   installedStorageClasses.add(FileSettingsStorage);
+}
+
+function trustDecisions(body) {
+  const data = JSON.parse((body ?? "{}").replace(/^\uFEFF/, ""));
+
+  if (!data || Object.getPrototypeOf(data) !== Object.prototype || Object.values(data).some(value => ![true, false, null].includes(value))) throw new Error("Invalid saved project trust decisions");
+
+  return data;
+}
+
+function nearestTrustDecision(data, path) {
+  for (let current = path; ; current = storagePath.dirname(current)) {
+    const decision = data[current];
+
+    if (decision === true || decision === false) return { path: current, decision };
+
+    if (current === storagePath.dirname(current)) return null;
+  }
+}
+
+function installTrustStorage(ProjectTrustStore, normalize) {
+  if (installedStorageClasses.has(ProjectTrustStore)) return;
+  requireStorageMethods(ProjectTrustStore.prototype, ["getEntry", "setMany"]);
+
+  ProjectTrustStore.prototype.getEntry = function (cwd) {
+    let entry;
+    withStoredSettings(this.trustPath, body => {
+      entry = nearestTrustDecision(trustDecisions(body), normalize(cwd));
+    });
+
+    return entry;
+  };
+
+  ProjectTrustStore.prototype.setMany = function (decisions) {
+    withStoredSettings(this.trustPath, body => {
+      const data = trustDecisions(body);
+
+      for (const { path, decision } of decisions) {
+        if (![true, false, null].includes(decision)) throw new Error("Invalid project trust decision");
+        const key = normalize(path);
+
+        if (decision === null) delete data[key];
+        else data[key] = decision;
+      }
+
+      return JSON.stringify(data);
+    });
+  };
+
+  installedStorageClasses.add(ProjectTrustStore);
 }
 
 function withStoredSettings(path, operation) {
