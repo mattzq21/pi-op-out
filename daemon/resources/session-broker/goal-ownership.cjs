@@ -62,12 +62,20 @@ function assertSavedIdentity(db, directory, expected) {
 }
 
 function missingDirectoryRecord(root, directory) {
+  const row = missingDirectoryRow(root, directory);
+
+  return row ? JSON.parse(row.record_json) : undefined;
+}
+
+function savedIdentity(root, directory) { return missingDirectoryRow(root, directory)?.identity; }
+
+function missingDirectoryRow(root, directory) {
   return withDatabase(root, db => {
-    const rows = db.prepare('SELECT record_json FROM goal_ownership WHERE directory=? AND record_json IS NOT NULL').all(directory);
+    const rows = db.prepare('SELECT identity, record_json FROM goal_ownership WHERE directory=? AND record_json IS NOT NULL').all(directory);
 
     if (rows.length > 1) throw new Error('More than one saved goal owner record refers to the missing directory');
 
-    return rows.length ? JSON.parse(rows[0].record_json) : undefined;
+    return rows[0];
   });
 }
 
@@ -166,4 +174,4 @@ function directories(root, sessionId) {
   });
 }
 
-module.exports = { read, save, retained, remove, directories, allocate };
+module.exports = { read, save, retained, remove, directories, allocate, savedIdentity };

@@ -38,6 +38,7 @@ function observe(root, file, observation, live = true) {
 
   if (live) observation.sessions.add(entries[0].id);
   assets.references(entries, root).forEach(directory => observation.directories.add(directory));
+  assets.directReferences(entries, root).forEach(directory => observation.directories.add(directory));
 }
 
 function registered(root, observation, deleted) {
@@ -158,10 +159,12 @@ function candidate(root, directory, candidates, ownerIds) {
     return;
   }
 
-  if (!assets.exists(directory)) return;
+  const identity = assets.exists(directory) ? assets.identity(directory) : require('./session-broker/goal-ownership.cjs').savedIdentity(root, directory);
+
+  if (identity === undefined) return;
   const previous = candidates.get(directory);
   const owners = [...new Set([...(previous?.owners ?? []), ...ownerIds])];
-  candidates.set(directory, { path: directory, identity: assets.identity(directory), owners });
+  candidates.set(directory, { path: directory, identity, owners });
 }
 
 function ownedCandidate(root, directory, deleted, candidates) {
@@ -237,7 +240,7 @@ function finishCandidate(transaction, candidate, observation, deleted, save) {
   }
 
   if (!assets.exists(candidate.path)) {
-    completeCandidate(transaction, candidate, save);
+    finishMissingCandidate(transaction, candidate, observation, deleted, save);
 
     return;
   }
@@ -262,6 +265,27 @@ function finishCandidate(transaction, candidate, observation, deleted, save) {
 
   io.removeOwned(candidate.path, candidate.cleanup);
   completeCandidate(transaction, candidate, save);
+}
+
+function finishMissingCandidate(transaction, candidate, observation, deleted, save) {
+  const identity = require('./session-broker/goal-ownership.cjs').savedIdentity(transaction.root, candidate.path);
+
+  if (identity !== undefined && identity !== candidate.identity) throw new Error(`Saved goal ownership changed; retained: ${candidate.path}`);
+  const record = assets.readOwners(transaction.root, candidate.path);
+  const retained = missingReferences(observation) || observation.directories.has(candidate.path) || record.owners.some(owner => !deleted.has(owner.sessionId) || observation.sessions.has(owner.sessionId));
+
+  if (retained && candidate.cleanup) throw new Error(`Goal assets gained a reference during interrupted reclamation; retained: ${candidate.path}`);
+
+  if (!retained) {
+    assets.beginReclamation(transaction.root, candidate.path, candidate.identity);
+    candidate.cleanup ??= [];
+  }
+
+  completeCandidate(transaction, candidate, save);
+}
+
+function missingReferences(observation) {
+  return [...observation.directories].some(directory => !assets.exists(directory));
 }
 
 function completeCandidate(transaction, candidate, save) {
