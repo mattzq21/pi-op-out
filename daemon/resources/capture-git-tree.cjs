@@ -235,7 +235,14 @@ function removeTemporary(directory) {
 function temporarySnapshot() {
   const parent = path.join(storageRoot(), 'git-snapshots');
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
-  const directory = fs.mkdtempSync(path.join(parent, 'pi-desktop-diff-'));
+  const directory = path.join(parent, 'pi-desktop-diff-' + require('node:crypto').randomUUID());
+  ownTemporary(directory, 'creating', true);
+
+  try { fs.mkdirSync(directory, { mode: 0o700 }); }
+  catch (error) {
+    if (error.code === 'EEXIST') require('./session-database.cjs').removeSnapshotDirectory(directory);
+    throw error;
+  }
 
   try { ownTemporary(directory, owner?.phase === 'end' ? 'recoverable' : owner?.sessionId ? 'reader' : 'external'); }
   catch (error) { removeTemporary(directory); throw error; }
@@ -243,11 +250,12 @@ function temporarySnapshot() {
   return directory;
 }
 
-function ownTemporary(directory, state) {
-  const pids = [process.pid, process.ppid, Number(process.env.PIOP_GIT_CAPTURE_READER_PID)].filter((pid) => Number.isSafeInteger(pid) && pid > 1);
+function ownTemporary(directory, state, reserve = false) {
+  const candidates = state === 'creating' ? [process.pid] : [process.pid, process.ppid, Number(process.env.PIOP_GIT_CAPTURE_READER_PID)];
+  const pids = candidates.filter((pid) => Number.isSafeInteger(pid) && pid > 1);
   const processes = [...new Set(pids)].map((pid) => ({ pid, identity: processIdentity(pid) }));
   const boot = fs.existsSync('/proc/sys/kernel/random/boot_id') ? fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() : null;
-  require('./session-database.cjs').saveSnapshotOwner(directory, { version: 1, state, boot, processes, readerPid: Number(process.env.PIOP_GIT_CAPTURE_READER_PID) || null, scope: process.env.PIOP_GIT_CAPTURE_READER_SCOPE, sessionId: owner?.sessionId, turnId: owner?.turnId, sessionPath: owner?.sessionPath, messageId: owner?.messageId, baseline: owner?.baseline });
+  require('./session-database.cjs').saveSnapshotOwner(directory, { version: 1, state, boot, processes, readerPid: Number(process.env.PIOP_GIT_CAPTURE_READER_PID) || null, scope: process.env.PIOP_GIT_CAPTURE_READER_SCOPE, sessionId: owner?.sessionId, turnId: owner?.turnId, sessionPath: owner?.sessionPath, messageId: owner?.messageId, baseline: owner?.baseline }, reserve);
   syncPath(path.dirname(directory));
 }
 

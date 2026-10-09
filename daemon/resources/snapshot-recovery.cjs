@@ -219,6 +219,8 @@ function releasedReader(owner, state) {
 }
 
 function readerEnded(owner, state, released) {
+  if (owner.state === 'creating') return true;
+
   if (!['building', 'reader'].includes(owner.state)) return false;
 
   return released || Boolean(owner.boot && state.boot && owner.boot !== state.boot);
@@ -448,6 +450,9 @@ function snapshotChildren(root, parent) {
     const directory = snapshotDirectoryExists(row.directory) ? row.directory : renamed;
 
     if (!snapshotDirectoryExists(directory)) {
+      const owner = row.owner_json && JSON.parse(row.owner_json);
+
+      if (owner?.state === 'creating' && active(owner, bootIdentity())) return [];
       database.removeSnapshotDirectory(row.directory);
       recoveryRecords.remove(row.directory);
 

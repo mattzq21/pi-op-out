@@ -421,11 +421,11 @@ function importSnapshotDirectories(db, root) {
   db.prepare('INSERT INTO storage_migrations VALUES (?)').run('snapshot-directories-v1');
 }
 
-function saveSnapshotOwner(directory, owner) {
+function saveSnapshotOwner(directory, owner, reserve = false) {
   const db = open(path.dirname(path.dirname(directory)));
 
   try {
-    db.prepare('INSERT INTO snapshot_directories VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET owner_json=excluded.owner_json')
+    db.prepare('INSERT INTO snapshot_directories VALUES (?, ?)' + (reserve ? '' : ' ON CONFLICT(directory) DO UPDATE SET owner_json=excluded.owner_json'))
       .run(directory, JSON.stringify(owner));
   } finally { db.close(); }
 }

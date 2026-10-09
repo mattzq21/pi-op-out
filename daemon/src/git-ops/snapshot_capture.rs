@@ -80,9 +80,9 @@ pub(crate) fn capture_local_git_tree(root: &Path, repository_objects: &Path, sna
     let seed = run_limited(Command::new("git").args(["-C", cwd, "write-tree"]), 64 * 1024, "Could not read project index")?;
     if !seed.status.success() { return Err(String::from_utf8_lossy(&seed.stderr).into_owned()); }
     let seed = String::from_utf8_lossy(&seed.stdout).trim().to_owned();
-    fs::create_dir_all(&objects).map_err(|error| format!("Could not create Git snapshot: {error}"))?;
+    reserve_local_snapshot(&snapshot_root)?;
     let result = (|| {
-        own_local_snapshot(&snapshot_root)?;
+        initialize_local_snapshot(&snapshot_root)?;
         let configure = |command: &mut Command| { command.env("GIT_INDEX_FILE", &index).env("GIT_OBJECT_DIRECTORY", &objects).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", repository_objects); };
         let mut read_tree = Command::new("git"); read_tree.args(["-C", cwd, "read-tree", &seed]); configure(&mut read_tree);
         let output = run_limited(&mut read_tree, 64 * 1024, "Could not prepare Git snapshot")?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
@@ -111,14 +111,30 @@ pub(crate) fn remove_local_snapshot(root: &Path) -> Result<(), String> {
     transaction.commit().map_err(|error| error.to_string())
 }
 
-fn own_local_snapshot(root: &Path) -> Result<(), String> {
+fn initialize_local_snapshot(root: &Path) -> Result<(), String> {
+    fs::create_dir(root.join("objects")).map_err(|error| format!("Could not create Git snapshot: {error}"))?;
+    own_local_snapshot(root, false)
+}
+
+fn reserve_local_snapshot(root: &Path) -> Result<(), String> {
+    own_local_snapshot(root, true)?;
+    if let Err(error) = fs::create_dir(root) {
+        let profile = root.parent().and_then(Path::parent).ok_or("Snapshot storage has no profile")?;
+        crate::session_registry::open(profile)?.execute("DELETE FROM snapshot_directories WHERE directory=?", [root.to_string_lossy()]).map_err(|error| error.to_string())?;
+        return Err(format!("Could not create Git snapshot: {error}"));
+    }
+    Ok(())
+}
+
+fn own_local_snapshot(root: &Path, reserve: bool) -> Result<(), String> {
     let pid = std::process::id();
     let identity = fs::read_to_string(format!("/proc/{pid}/stat")).ok().and_then(|stat| stat.rsplit_once(") ").and_then(|(_, fields)| fields.split_whitespace().nth(19).map(str::to_owned)));
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").ok().map(|value| value.trim().to_owned());
-    let owner = serde_json::json!({"version":1,"state":"external","boot":boot,"processes":[{"pid":pid,"identity":identity}]});
+    let owner = serde_json::json!({"version":1,"state":if reserve { "creating" } else { "external" },"boot":boot,"processes":[{"pid":pid,"identity":identity}]});
     let profile = root.parent().and_then(Path::parent).ok_or("Snapshot storage has no profile")?;
     let db = crate::session_registry::open(profile)?;
-    db.execute("INSERT INTO snapshot_directories VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET owner_json=excluded.owner_json",
+    let query = if reserve { "INSERT INTO snapshot_directories VALUES (?, ?)" } else { "INSERT INTO snapshot_directories VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET owner_json=excluded.owner_json" };
+    db.execute(query,
         rusqlite::params![root.to_string_lossy(), owner.to_string()]).map_err(|error| error.to_string())?;
     Ok(())
 }
