@@ -71,7 +71,7 @@ fn transactions_pending(root: &Path) -> Result<bool> {
 
 fn restoration_pending(root: &Path) -> Result<bool> {
     let database = crate::session_registry::open(root)?;
-    database.query_row("SELECT EXISTS(SELECT 1 FROM session_restorations)", [], |row| row.get(0))
+    database.query_row("SELECT EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM fork_transactions)", [], |row| row.get(0))
         .map_err(|error| error.to_string())
 }
 
@@ -80,7 +80,7 @@ fn files_pending(root: &Path) -> Result<bool> {
         let entry = entry.map_err(|error| error.to_string())?;
         if entry.file_name().to_string_lossy().starts_with("archive-transaction-") { return Ok(true); }
     }
-    for area in ["fork-transactions", "deleted-sessions"] {
+    for area in ["deleted-sessions"] {
         if directory_has_entries(&root.join(area))? { return Ok(true); }
     }
     deletion_pending(&root.join("sessions")).and_then(|active| {

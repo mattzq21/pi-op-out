@@ -70,6 +70,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS queued_inputs (session_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS legacy_queued_inputs (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS fork_preparations (directory TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS fork_transactions (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS fork_preparation_checkpoints (preparation TEXT NOT NULL, session_id TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(preparation, session_id));
       CREATE TABLE IF NOT EXISTS session_comparison_state (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_completed_comparisons (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, turn_id TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY(session_id, turn_id));`);
@@ -184,7 +185,8 @@ function importSessions(db, root) {
     importRetention(db, root);
     importCleanupRequests(db, root);
     importWorktrees(db, root);
-    importForkPreparations(db, root);
+    importDirectories(db, root, 'fork-preparations', 'fork_preparations', 'fork-preparations-v1');
+    importDirectories(db, root, 'fork-transactions', 'fork_transactions', 'fork-transactions-v1');
     importRecoveryDirectories(db, root);
     importReaderReleases(db, root);
     importSnapshotDirectories(db, root);
@@ -197,20 +199,20 @@ function importSessions(db, root) {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-function importForkPreparations(db, root) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('fork-preparations-v1')) return;
-  const directory = path.join(root, 'fork-preparations');
+function importDirectories(db, root, area, table, migration) {
+  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get(migration)) return;
+  const directory = path.join(root, area);
   let entries;
 
   try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
   catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
 
   for (const entry of entries) {
-    if (!entry.isDirectory()) throw new Error('Invalid fork preparation storage');
-    db.prepare('INSERT INTO fork_preparations VALUES (?)').run(path.join(directory, entry.name));
+    if (!entry.isDirectory()) throw new Error(`Invalid ${area} storage`);
+    db.prepare(`INSERT INTO ${table} (directory) VALUES (?)`).run(path.join(directory, entry.name));
   }
 
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('fork-preparations-v1');
+  db.prepare('INSERT INTO storage_migrations VALUES (?)').run(migration);
 }
 
 function importJsonRecords(db, root, area, table, migration) {
@@ -552,12 +554,7 @@ function worktreeMetadata(container) {
   } finally { db.close(); }
 }
 
-function worktreeContainers(root) {
-  const db = open(root);
-
-  try { return db.prepare('SELECT container FROM worktree_allocations ORDER BY container').all().map(row => row.container); }
-  finally { db.close(); }
-}
+function worktreeContainers(root) { return rows(root, 'SELECT container FROM worktree_allocations ORDER BY container').map(row => row.container); }
 
 function importCleanupRequests(db, root) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('cleanup-requests-v1')) return;

@@ -87,12 +87,9 @@ fn deletion_pending(root: &Path, area: &str) -> Result<bool, String> {
     Ok(false)
 }
 
-fn fork_publication_pending(root: &Path, area: &str) -> Result<bool, String> {
-    match std::fs::read_dir(root.join(area)) {
-        Ok(mut entries) => entries.next().transpose().map(|entry| entry.is_some()).map_err(|error| error.to_string()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.to_string()),
-    }
+fn fork_transactions_pending(root: &Path) -> Result<bool, String> {
+    let db = crate::session_registry::open(root)?;
+    db.query_row("SELECT EXISTS(SELECT 1 FROM fork_transactions)", [], |row| row.get(0)).map_err(|error| error.to_string())
 }
 
 fn fork_preparation_pending(root: &Path) -> Result<bool, String> {
@@ -101,7 +98,7 @@ fn fork_preparation_pending(root: &Path) -> Result<bool, String> {
 }
 
 fn transaction_directories_pending(root: &Path) -> Result<bool, String> {
-    if archive_pending(root)? || fork_publication_pending(root, "fork-transactions")? || fork_preparation_pending(root)? { return Ok(true); }
+    if archive_pending(root)? || fork_transactions_pending(root)? || fork_preparation_pending(root)? { return Ok(true); }
     for area in ["sessions", "archived", "deleted-sessions"] {
         if deletion_pending(root, area)? { return Ok(true); }
     }

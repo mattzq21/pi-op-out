@@ -4,6 +4,7 @@ const { randomUUID } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { loadDiffs } = require('./session-diff-store.cjs');
+const records = require('./fork-transaction-records.cjs');
 
 const diffsSchema = Type.Record(Type.String(), Type.Union([Type.String(), Type.Object({ patch: Type.String(), toolPaths: Type.Optional(Type.Array(Type.Unknown())) })]));
 
@@ -72,14 +73,19 @@ function cleanup(directory) {
   const parent = path.dirname(directory);
   const removing = path.basename(directory).startsWith('.cleanup-') ? directory : path.join(parent, `.cleanup-${path.basename(directory)}`);
 
-  if (removing !== directory) { fs.renameSync(directory, removing); sync(parent); }
+  if (removing !== directory && exists(directory)) { fs.renameSync(directory, removing); sync(parent); }
 
-  fs.rmSync(removing, { recursive: true });
-  sync(parent);
+  fs.rmSync(removing, { recursive: true, force: true });
+
+  if (exists(parent)) sync(parent);
+  records.remove(path.join(parent, path.basename(directory).replace(/^\.cleanup-/, '')));
+  records.remove(removing);
 }
 
 function readTransaction(root, directory) {
-  const transaction = JSON.parse(fs.readFileSync(path.join(directory, 'transaction.json'), 'utf8'));
+  const transaction = records.read(directory);
+
+  if (transaction === undefined) return undefined;
 
   if (transaction.version !== 1 || transaction.destination !== destinationPath(root, transaction.destination)) throw new Error('Invalid fork publication transaction');
 
@@ -89,11 +95,14 @@ function readTransaction(root, directory) {
 }
 
 function recoverTransaction(root, directory) {
-  if (!exists(path.join(directory, 'transaction.json'))) { cleanup(directory);
-
-    return; }
-
   const transaction = readTransaction(root, directory);
+
+  if (transaction === undefined) {
+    cleanup(directory);
+
+    return;
+  }
+
   const destination = transaction.destination;
   const sidecar = destination.replace(/\.jsonl$/, '.diffs.json');
 
@@ -145,14 +154,14 @@ function forgetPublished(root, destination) {
 function recover(root) {
   const directory = path.join(root, 'fork-transactions');
 
-  if (!exists(directory)) return;
+  for (const journal of records.list(root)) {
+    if (path.dirname(journal) !== directory) throw new Error('Invalid fork publication location');
 
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.isDirectory()) throw new Error('Invalid fork publication journal');
-    const journal = path.join(directory, entry.name);
-
-    if (entry.name.startsWith('.cleanup-')) cleanup(journal);
-    else recoverTransaction(root, journal);
+    if (!exists(journal) || path.basename(journal).startsWith('.cleanup-')) cleanup(journal);
+    else {
+      if (!exists(journal).isDirectory()) throw new Error('Invalid fork publication journal');
+      recoverTransaction(root, journal);
+    }
   }
 }
 
@@ -173,6 +182,7 @@ function prepare(root, request) {
   fs.mkdirSync(journals, { recursive: true, mode: 0o700 });
   sync(root);
   const directory = path.join(journals, randomUUID());
+  records.allocate(directory);
   fs.mkdirSync(directory, { mode: 0o700 });
   sync(journals);
 
@@ -180,9 +190,8 @@ function prepare(root, request) {
     write(path.join(directory, 'session.jsonl'), [JSON.stringify(header), ...lines.slice(1), ''].join('\n'));
     write(path.join(directory, 'diffs.json'), diffs);
     const transaction = { version: 1, destination, transcript: identity(path.join(directory, 'session.jsonl')), diffs: identity(path.join(directory, 'diffs.json')) };
-    write(path.join(directory, 'transaction.tmp'), JSON.stringify(transaction));
-    fs.renameSync(path.join(directory, 'transaction.tmp'), path.join(directory, 'transaction.json'));
     sync(directory);
+    records.save(directory, transaction);
 
     return { directory, transaction };
   } catch (error) { cleanup(directory); throw error; }
@@ -216,6 +225,7 @@ function remove(root, request) {
   fs.mkdirSync(journals, { recursive: true, mode: 0o700 });
   sync(root);
   const directory = path.join(journals, randomUUID());
+  records.allocate(directory);
   fs.mkdirSync(directory, { mode: 0o700 });
   sync(journals);
 
@@ -226,9 +236,8 @@ function remove(root, request) {
     if (exists(sidecar)) fs.linkSync(sidecar, path.join(directory, 'diffs.json'));
     else write(path.join(directory, 'diffs.json'), '{}');
     const transaction = { version: 1, removing: true, destination, transcript: identity(path.join(directory, 'session.jsonl')), diffs: identity(path.join(directory, 'diffs.json')) };
-    write(path.join(directory, 'transaction.tmp'), JSON.stringify(transaction));
-    fs.renameSync(path.join(directory, 'transaction.tmp'), path.join(directory, 'transaction.json'));
     sync(directory);
+    records.save(directory, transaction);
   } catch (error) { cleanup(directory); throw error; }
 
   recoverTransaction(root, directory);
