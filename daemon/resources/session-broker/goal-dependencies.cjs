@@ -104,18 +104,36 @@ function textContents(root, directory) {
 }
 
 function saveTextFiles(root, directory, names, destination = directory) {
+  return publishText(root, directory, names, destination);
+}
+
+function savePreparedText(root, directory, names, preparation, destination = directory) {
+  JSON.parse(preparation);
+
+  return publishText(root, directory, names, destination, preparation);
+}
+
+function publishText(root, directory, names, destination, preparation) {
   const expected = identity(directory);
   const contents = readContents(directory, names);
 
   if (identity(directory) !== expected) throw new Error('Goal text directory changed during publication');
   withDatabase(root, db => {
     db.exec('BEGIN IMMEDIATE');
+
+    if (preparation !== undefined) {
+      db.exec('CREATE TABLE IF NOT EXISTS goal_preparations (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity))');
+      db.prepare('INSERT INTO goal_preparations VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json').run(destination, expected, preparation);
+    }
+
     db.prepare('INSERT INTO goal_text_files VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET names_json=excluded.names_json')
       .run(destination, expected, JSON.stringify(names));
     db.prepare('INSERT INTO goal_text_contents VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET contents_json=excluded.contents_json')
       .run(destination, expected, JSON.stringify(contents));
     db.exec('COMMIT');
   });
+
+  return expected;
 }
 
 function removeTextFiles(root, directory, expected) {
@@ -139,4 +157,4 @@ function matchesDirectory(root, directory, previous, current) {
   });
 }
 
-module.exports = { read, save, retained, remove, textFiles, textContents, saveTextFiles, removeTextFiles, matchesDirectory };
+module.exports = { read, save, retained, remove, textFiles, textContents, saveTextFiles, savePreparedText, removeTextFiles, matchesDirectory };

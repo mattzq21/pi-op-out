@@ -1,5 +1,5 @@
 import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "./goal-directory-recovery.cjs";
-import { read as readDependencies, textContents, saveTextFiles, removeTextFiles } from "./goal-dependencies.cjs";
+import { read as readDependencies, textContents, savePreparedText, removeTextFiles } from "./goal-dependencies.cjs";
 import { markCleanup } from "../session-database.cjs";
 import { link, mkdir, open, rename, rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
@@ -274,8 +274,7 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
     release = ownGoalDirectory(staging);
     const { objective, textFiles } = await saveObjective(staging, directory, draft);
     const preparation: GoalPreparation = { version: 1, submissionId: id, digest, objective, input: draft, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
-    savedIdentity = savePreparation(profile, staging, preparation, directory);
-    saveTextFiles(profile, staging, textFiles, directory);
+    savedIdentity = savePreparedText(profile, staging, textFiles, JSON.stringify(preparation), directory);
     saveOwnership(profile, staging, { version: 1, kind: "goal-assets", owners: [{ sessionId: preparation.sessionId, sessionPath: preparation.sessionPath }] }, directory);
     await syncDirectory(staging);
     await rename(staging, directory);

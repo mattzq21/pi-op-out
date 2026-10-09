@@ -83,8 +83,34 @@ function baseFiles(source, base) {
 
     if (kind === 'commit') return { name, mode, body: null };
 
-    return { name, mode, body: git(source, ['cat-file', 'blob', object], { encoding: 'buffer' }).toString('base64') };
+    return { name, mode, object };
   });
+}
+
+function excludedFiles(source) {
+  const files = new Map();
+
+  for (const entry of git(source, ['ls-files', '--stage', '-t', '-z']).split('\0').filter(Boolean)) {
+    const tab = entry.indexOf('\t');
+    const [tag, mode, object, stage] = entry.slice(0, tab).split(' ');
+
+    if (tag !== 'S' || stage !== '0') continue;
+    const name = validPath(entry.slice(tab + 1));
+    files.set(name, { name, mode, object });
+  }
+
+  return files;
+}
+
+function unchangedContents(source, file) {
+  const destination = path.join(source, file.name);
+
+  if (!io.exists(destination)) return true;
+  const info = fs.lstatSync(destination);
+
+  if (file.mode === '120000') return info.isSymbolicLink() && git(source, ['hash-object', '--stdin'], { input: fs.readlinkSync(destination, { encoding: 'buffer' }) }).trim() === file.object;
+
+  return info.isFile() && git(source, ['hash-object', '--no-filters', '--', destination]).trim() === file.object;
 }
 
 function capture(source, base, copy) {
@@ -92,12 +118,20 @@ function capture(source, base, copy) {
 
   if (!copy) return baseline;
   const names = git(source, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean);
-  const submodules = new Set(baseline.filter(file => file.mode === '160000').map(file => file.name));
+  const committed = new Map(baseline.map(file => [file.name, file]));
+  const excluded = excludedFiles(source);
+  const changed = new Set(base ? git(source, ['diff', '--no-renames', '--name-only', '-z', base, '--']).split('\0').filter(Boolean) : names);
 
   const files = [...new Set(names)].flatMap(name => {
-    if (submodules.has(name)) return baseline.filter(file => file.name === name);
+    const original = committed.get(name);
 
-    return sourceFiles(source, name);
+    if (original && original.mode === '160000') return [original];
+
+    if (original && !changed.has(name) && unchangedContents(source, original)) return [original];
+
+    const files = sourceFiles(source, name);
+
+    return files.length || !excluded.has(name) ? files : [excluded.get(name)];
   });
 
   return files;
@@ -244,16 +278,50 @@ function createSubdirectory(destination) {
   if (!fs.lstatSync(destination).isDirectory()) throw new Error(`Worktree directory changed: ${destination}`);
 }
 
-function writeFile(plan, file, index) {
+function matchesFile(plan, file, destination) {
+  if (!file.object) {
+    const current = sourceFile(plan.target, file.name);
+
+    return current?.body === file.body && current?.mode === file.mode;
+  }
+
+  const info = fs.lstatSync(destination);
+
+  if (file.mode === '120000') return info.isSymbolicLink() && git(plan.common, ['hash-object', '--stdin'], { input: fs.readlinkSync(destination, { encoding: 'buffer' }) }).trim() === file.object;
+
+  if (!info.isFile() || (info.mode & 0o111 ? '100755' : '100644') !== file.mode) return false;
+
+  return git(plan.common, ['hash-object', '--no-filters', '--', destination]).trim() === file.object;
+}
+
+function writeContents(plan, file, temporary, lock) {
+  if (file.mode === '120000') {
+    const body = file.object ? git(plan.common, ['cat-file', 'blob', file.object], { encoding: 'buffer' }) : Buffer.from(file.body, 'base64');
+    fs.symlinkSync(body, temporary);
+
+    return;
+  }
+
+  const mode = file.mode === '100755' ? 0o755 : 0o644;
+  const descriptor = fs.openSync(temporary, 'wx', mode);
+
+  try {
+    fs.fchmodSync(descriptor, mode);
+
+    if (file.object) git(plan.common, ['cat-file', 'blob', file.object], { stdio: ['ignore', descriptor, 'pipe', lock] });
+    else fs.writeFileSync(descriptor, Buffer.from(file.body, 'base64'));
+    fs.fsyncSync(descriptor);
+  } finally { fs.closeSync(descriptor); }
+}
+
+function writeFile(plan, file, index, lock) {
   parents(plan, file.name);
   const destination = path.join(plan.target, validPath(file.name));
 
   if (file.mode === '160000') return createSubdirectory(destination);
 
-  const current = sourceFile(plan.target, file.name);
-
-  if (current) {
-    if (current.body !== file.body || current.mode !== file.mode) throw new Error(`Worktree file changed; preserved: ${destination}`);
+  if (io.exists(destination)) {
+    if (!matchesFile(plan, file, destination)) throw new Error(`Worktree file changed; preserved: ${destination}`);
 
     return;
   }
@@ -261,15 +329,7 @@ function writeFile(plan, file, index) {
   const temporary = path.join(plan.container, `copy-${index}`);
 
   if (io.exists(temporary)) fs.unlinkSync(temporary);
-  const body = Buffer.from(file.body, 'base64');
-
-  if (file.mode === '120000') fs.symlinkSync(body, temporary);
-  else {
-    const descriptor = fs.openSync(temporary, 'wx', file.mode === '100755' ? 0o755 : 0o644);
-
-    try { fs.fchmodSync(descriptor, file.mode === '100755' ? 0o755 : 0o644); fs.writeFileSync(descriptor, body); fs.fsyncSync(descriptor); }
-    finally { fs.closeSync(descriptor); }
-  }
+  writeContents(plan, file, temporary, lock);
 
   fs.linkSync(temporary, destination);
   fs.unlinkSync(temporary);
@@ -282,16 +342,16 @@ function finish(root, plan, fd) {
 
   verifyTarget(plan);
 
-  for (const [index, file] of plan.files.entries()) writeFile(plan, file, index);
+  for (const [index, file] of plan.files.entries()) writeFile(plan, file, index, fd);
 
   for (const index of plan.files.keys()) fs.rmSync(path.join(plan.container, `copy-${index}`), { force: true });
   fs.rmSync(path.join(plan.container, 'copy-gitdir'), { force: true });
-  const index = path.join(plan.container, 'copy-index');
+  const destination = git(plan.target, ['rev-parse', '--path-format=absolute', '--git-path', 'index']).trim();
+  const index = path.join(path.dirname(destination), `piop-copy-index-${plan.id}`);
   fs.rmSync(index, { force: true });
   fs.rmSync(index + '.lock', { force: true });
   git(plan.source, ['read-tree', ...(plan.base ? [plan.base] : ['--empty'])], { env: { ...process.env, GIT_INDEX_FILE: index }, stdio: ['ignore', 'pipe', 'pipe', fd] });
   io.sync(index);
-  const destination = git(plan.target, ['rev-parse', '--path-format=absolute', '--git-path', 'index']).trim();
 
   if (io.exists(destination + '.lock')) throw new Error('Worktree index is locked; retained');
 
