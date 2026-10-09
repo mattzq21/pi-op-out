@@ -81,6 +81,11 @@ export function chatGptStoredDevice(directory) {
   return database.prepare("SELECT value FROM chat_metadata WHERE key='device'").get().value;
 }
 
+export function chatGptStoredCount(directory) {
+  return chatGptDatabase(directory).prepare('SELECT chat_id FROM chat_records').all()
+    .filter(row => chatGptRecordId(row.chat_id)).length;
+}
+
 function chatGptDatabaseData(database, id) {
   const row = database.prepare('SELECT record_json, import_error FROM chat_records WHERE chat_id=?').get(chatGptId(id));
 

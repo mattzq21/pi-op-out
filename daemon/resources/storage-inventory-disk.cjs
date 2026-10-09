@@ -4,27 +4,25 @@ const { validGoalPath } = require('./storage-inventory-owners.cjs');
 const { goalOwner } = require('./storage-inventory-goals.cjs');
 const { stageCategory, observeStage } = require('./storage-inventory-transfers.cjs');
 const snapshotMetadata = require('./snapshot-metadata.cjs');
+const { chatGptStoredCount } = require('./chatgpt-storage.mjs');
 
 const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', 'git-snapshots': 'git-diff-snapshots', 'git-diff-transfers': 'diff-transfer-staging', tmp: 'temporary-chats', worktrees: 'worktrees', 'archived-tmp': 'archived-worktrees', recovery: 'unattributed-recovery-storage', 'ephemeral-cleanup': 'ephemeral-cleanup' };
-
-function chatRecordCount(directory, entries) {
-  const legacy = () => entries.filter(entry => entry.isFile() && /^[a-zA-Z0-9-]{1,100}\.json$/.test(entry.name)).length;
-
-  if (!entries.some(entry => entry.isFile() && entry.name === 'chats.sqlite')) return legacy();
-  const db = new (require('node:sqlite').DatabaseSync)(path.join(directory, 'chats.sqlite'), { readOnly: true });
-
-  try {
-    const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_metadata'").get();
-
-    if (!table || !db.prepare("SELECT 1 FROM chat_metadata WHERE key='records-imported-v1'").get()) return legacy();
-
-    return db.prepare('SELECT chat_id FROM chat_records').all().filter(row => /^[a-zA-Z0-9-]{1,100}$/.test(row.chat_id)).length;
-  } finally { db.close(); }
-}
 
 function savedSnapshotIdentities(profile, warnings) {
   try { return new Set(snapshotMetadata.identities(profile)); }
   catch (error) { warnings.push(`${profile}: snapshot record count unavailable: ${error.message}`);
+
+  return new Set(); }
+}
+
+function savedSnapshotDirectories(profile, warnings) {
+  try {
+    return new Set(require('./session-database.cjs').snapshotDirectories(profile).map(row => {
+      if (path.dirname(row.directory) !== path.join(profile, 'git-snapshots')) throw new Error('Invalid saved snapshot directory');
+
+      return row.directory;
+    }));
+  } catch (error) { warnings.push(`${profile}: snapshot directories unavailable: ${error.message}`);
 
   return new Set(); }
 }
@@ -73,8 +71,10 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   const warnings = [];
   const unavailable = new Set();
   const root = await fs.realpath(profile).catch(() => profile);
+  const chatRoots = new Set(await Promise.all([...discovery.chatgpt.keys()].map(directory => fs.realpath(directory).catch(() => directory))));
 
   const savedSnapshots = savedSnapshotIdentities(root, warnings);
+  const snapshotDirectories = savedSnapshotDirectories(root, warnings);
   const savedSnapshotFiles = new Set([...savedSnapshots].map(key => key.split(':').slice(0, 2).map(Number).join(':')));
 
   function addCount(category, amount = 1) { counts.set(category, (counts.get(category) || 0) + amount); }
@@ -97,6 +97,17 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     if (metadata.isFile() && discovery.queuedInput?.has(target)) seenQueuedInput.add(target);
   }
 
+  async function countChats() {
+    for (const directory of chatRoots) {
+      try {
+        if (!(await fs.lstat(directory)).isDirectory()) throw new Error('ChatGPT storage is not a directory');
+        addCount('chatgpt-storage', chatGptStoredCount(directory));
+      } catch (error) {
+        if (error.code !== 'ENOENT') warnings.push(directory + ': ChatGPT chat count unavailable: ' + error.message);
+      }
+    }
+  }
+
   function registerQueuedInputs() {
     for (const [file, queued] of discovery.queuedInput ?? []) {
       register(queued.category, { path: file, ownership: 'owned', provenance: ['Conversation queued input'], owners: queued.owners, available: seenQueuedInput.has(file), directory: false });
@@ -105,11 +116,6 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
 
   function countDirectory(target, category, entries, metadata) {
     if (category === 'other-storage') addCount(category, entries.filter(entry => entry.isFile() && !discovery.queuedInput?.has(path.join(target, entry.name))).length);
-
-    if (category === 'chatgpt-storage') {
-      try { addCount(category, chatRecordCount(target, entries)); }
-      catch (error) { discovery.warnings.push(target + ': ChatGPT chat count unavailable: ' + error.message); }
-    }
 
     countSnapshots(target, category, entries, metadata);
 
@@ -126,12 +132,11 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
 
   function countSnapshots(target, category, entries, metadata) {
     const saved = savedSnapshotFiles.has(`${metadata.dev}:${metadata.ino}`) && savedSnapshots.has(snapshotMetadata.identity(target));
+    const pending = discovery.pendingSnapshots.has(target);
 
-    if (['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && (saved || entries.some(entry => entry.name === 'snapshot.json'))) addCount(category);
+    if (!pending && ['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && (saved || snapshotDirectories.has(target) || entries.some(entry => entry.name === 'snapshot.json'))) addCount(category);
 
-    if (target === path.join(root, 'git-snapshots')) addCount(category, entries.filter(entry => entry.isDirectory() && entry.name.startsWith('pi-desktop-diff-') && !discovery.pendingSnapshots.has(path.join(target, entry.name))).length);
-
-    if (discovery.pendingSnapshots.has(target)) addCount('pending-diff-snapshots');
+    if (pending) addCount('pending-diff-snapshots');
 
     if (['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && target.endsWith('.snapshots')) register(category, { path: target, ownership: 'owned', provenance: ['Conversation diff snapshot sidecar'], owners: [], available: true, directory: true });
   }
@@ -273,6 +278,7 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     }
   }
 
+  await countChats();
   await visit(root, 'other-storage');
   registerTemporaryChats();
 
