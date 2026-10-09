@@ -1,35 +1,69 @@
 import { createEffect, createSignal, untrack, type Accessor } from "solid-js";
-import { z } from "zod";
+import { mergeToastHistory, syncToastHistory, toastEntriesSchema, type ToastHistoryEntry } from "./toastHistoryStorage";
+
+export type { ToastHistoryEntry } from "./toastHistoryStorage";
 
 const storageKey = "piop.toast-history";
 
-const entriesSchema = z.array(z.object({
-  id: z.string(), timestamp: z.number().min(0).max(8.64e15), source: z.string(), title: z.string(), message: z.string(),
-}));
-
-export type ToastHistoryEntry = z.infer<typeof entriesSchema>[number];
-
 type Notice = { id: string; title: string; message: string };
 
-function readHistory(fallback: ToastHistoryEntry[] = []): ToastHistoryEntry[] {
-  try { return entriesSchema.parse(JSON.parse(localStorage.getItem(storageKey) ?? "[]")).slice(-10); }
-  catch { return fallback; }
+let legacyBody: string | null = null;
+
+function readHistory(): ToastHistoryEntry[] {
+  try { legacyBody = localStorage.getItem(storageKey);
+
+  return toastEntriesSchema.parse(JSON.parse(legacyBody ?? "[]")).slice(-10); }
+  catch { return []; }
 }
 
-const [toastHistory, setToastHistory] = createSignal(readHistory());
+const legacy = readHistory();
+
+const [toastHistory, setToastHistory] = createSignal(legacy);
 
 export { toastHistory };
 
-window.addEventListener("storage", event => {
-  if (event.key === storageKey) setToastHistory(readHistory());
-});
+const pending = new Map<string, ToastHistoryEntry>();
+
+const channel = "BroadcastChannel" in globalThis ? new BroadcastChannel("piop-notification-history") : undefined;
+
+let saving = false;
+
+let refreshPending = false;
+
+function refreshHistory() {
+  if (saving) { refreshPending = true;
+
+  return; }
+
+  saving = true; refreshPending = false;
+  const sent = [...pending.values()];
+  let succeeded = false;
+  void syncToastHistory(legacy, sent).then(saved => {
+    sent.forEach(entry => pending.delete(entry.id));
+    setToastHistory(mergeToastHistory(saved, [...pending.values()]));
+    succeeded = true;
+
+    try { if (localStorage.getItem(storageKey) === legacyBody) localStorage.removeItem(storageKey); } catch { }
+
+    if (sent.length) channel?.postMessage(null);
+  }).catch(error => { console.error("Could not save notification history", error); }).finally(() => {
+    saving = false;
+
+    if (succeeded && (pending.size || refreshPending)) refreshHistory();
+  });
+}
+
+if (channel) channel.onmessage = refreshHistory;
+
+window.addEventListener("focus", refreshHistory);
+
+refreshHistory();
 
 function recordToast(source: string, notice: { title: string; message: string }) {
-  const previous = readHistory(untrack(toastHistory));
-  const next = [...previous.slice(-9), { ...notice, source, id: crypto.randomUUID(), timestamp: Date.now() }];
-  setToastHistory(next);
-
-  try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { }
+  const entry = { ...notice, source, id: crypto.randomUUID(), timestamp: Date.now() };
+  pending.set(entry.id, entry);
+  setToastHistory(mergeToastHistory(untrack(toastHistory), [entry]));
+  refreshHistory();
 }
 
 export function trackToastNotices(source: string, notices: Accessor<Notice[]>) {
