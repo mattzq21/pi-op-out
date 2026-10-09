@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { createHash, randomUUID } = require('node:crypto');
+const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 const { Type } = require('typebox');
@@ -53,18 +53,6 @@ function mkdir(directory) {
   mkdir(path.dirname(directory));
   fs.mkdirSync(directory, { mode: 0o700 });
   sync(path.dirname(directory));
-}
-
-function write(file, value) {
-  const temporary = `${file}.${randomUUID()}.tmp`;
-
-  const descriptor = fs.openSync(temporary, 'wx', 0o600);
-
-  try { fs.writeFileSync(descriptor, JSON.stringify(value)); fs.fsyncSync(descriptor); }
-  finally { fs.closeSync(descriptor); }
-
-  fs.renameSync(temporary, file);
-  sync(path.dirname(file));
 }
 
 function read(file) {
@@ -330,4 +318,4 @@ function deleted(root, id) {
   } finally { database.close(); }
 }
 
-module.exports = { uuid, headerSchema, writerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, write, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, writer, writerDead, lockPath, journalPath, matches, verified, locate, deleted };
+module.exports = { uuid, headerSchema, writerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, writer, writerDead, lockPath, journalPath, matches, verified, locate, deleted };
