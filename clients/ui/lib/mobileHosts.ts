@@ -96,9 +96,62 @@ export function saveMobileHost(address: string, name: string): Promise<SavedMobi
 
 export async function removeMobileHost(url: string): Promise<SavedMobileHost[]> {
   const next = await storedHosts(hosts => hosts.filter(host => host.url !== url));
-  const last = localStorage.getItem("piop-mobile-host");
-
-  if (last && validateHost({ url: last }) === url) localStorage.removeItem("piop-mobile-host");
+  await connectionSettings(saved => saved.lastHost && validateHost({ url: saved.lastHost }) === url ? { ...saved, lastHost: "" } : saved);
 
   return next;
+}
+
+const connectionSchema = z.object({ lastHost: z.string(), autoReconnect: z.boolean() });
+
+type MobileConnection = z.infer<typeof connectionSchema>;
+
+function legacyConnection(): MobileConnection {
+  try { return { lastHost: localStorage.getItem("piop-mobile-host") ?? "", autoReconnect: localStorage.getItem("piop-mobile-auto-reconnect") === "true" }; }
+  catch { return { lastHost: "", autoReconnect: false }; }
+}
+
+let connectionCache = legacyConnection();
+
+export function cachedMobileHost() { return connectionCache.lastHost; }
+
+async function connectionSettings(change?: (saved: MobileConnection) => MobileConnection): Promise<MobileConnection> {
+  const database = await openDatabase();
+
+  try {
+    const saved = await connectionTransaction(database, change);
+    connectionCache = saved;
+
+    try {
+      if (saved.lastHost) localStorage.setItem("piop-mobile-host", saved.lastHost);
+      else localStorage.removeItem("piop-mobile-host");
+      localStorage.removeItem("piop-mobile-auto-reconnect");
+    } catch { }
+
+    return saved;
+  } finally { database.close(); }
+}
+
+function connectionTransaction(database: IDBDatabase, change?: (saved: MobileConnection) => MobileConnection): Promise<MobileConnection> {
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction("state", "readwrite");
+    const state = transaction.objectStore("state");
+    const request = state.get("connection");
+    let result: MobileConnection;
+    request.onsuccess = () => {
+      try {
+        const saved = request.result === undefined ? legacyConnection() : connectionSchema.parse(request.result);
+        result = change ? change(saved) : saved;
+        state.put(result, "connection");
+      } catch (error) { transaction.abort(); reject(error); }
+    };
+
+    transaction.oncomplete = () => resolve(result);
+    transaction.onabort = () => reject(transaction.error ?? new Error("Could not save mobile connection settings"));
+  });
+}
+
+export function readMobileConnection() { return connectionSettings(); }
+
+export function saveMobileConnection(change: Partial<MobileConnection>) {
+  return connectionSettings(saved => ({ ...saved, ...change }));
 }

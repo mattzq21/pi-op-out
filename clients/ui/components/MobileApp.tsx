@@ -5,19 +5,20 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { App as AndroidApp } from "@capacitor/app";
 import App from "../App";
-import { readMobileHosts, removeMobileHost, saveMobileHost, type SavedMobileHost } from "../lib/mobileHosts";
+import { cachedMobileHost, readMobileConnection, saveMobileConnection, readMobileHosts, removeMobileHost, saveMobileHost, type SavedMobileHost } from "../lib/mobileHosts";
 import { remoteClient, validateHost } from "../lib/remoteClient";
 import { loadMobileDebugConnection } from "../lib/mobileDebug";
 import { MobileTailscaleStatus } from "./MobileTailscaleStatus";
 
 export function MobileApp() {
-  const [url, setUrl] = createSignal((() => localStorage.getItem("piop-mobile-host") ?? "")());
+  const [url, setUrl] = createSignal(cachedMobileHost());
   const [hosts, setHosts] = createSignal<SavedMobileHost[]>([]);
   let hostsChanged = false;
   const applyHosts = (saved: SavedMobileHost[]) => { hostsChanged = true; setHosts(saved); };
 
   const [name, setName] = createSignal("");
-  const [autoReconnect, setAutoReconnect] = createSignal((() => localStorage.getItem("piop-mobile-auto-reconnect") === "true")());
+  const [autoReconnect, setAutoReconnect] = createSignal(false);
+  let reconnectChanged = false;
   const [connected, setConnected] = createSignal(false);
   const [workspaceOpen, setWorkspaceOpen] = createSignal(false);
   const [connecting, setConnecting] = createSignal(false);
@@ -41,7 +42,7 @@ export function MobileApp() {
 
   const scheduleReconnect = () => {
     clearTimeout(retry.current);
-    const last = activeDebugAddress.current ?? localStorage.getItem("piop-mobile-host");
+    const last = activeDebugAddress.current ?? cachedMobileHost();
 
     if ((!reconnectEnabled.current && Date.now() >= restartUntil.current) || intentionalDisconnect.current || !last) return;
     retry.current = setTimeout(() => { void connectRef.current(last); }, retryDelay.current);
@@ -71,7 +72,9 @@ export function MobileApp() {
     const savedHosts = await saveMobileHost(cleanUrl, label);
 
     if (attempt !== generation.current) return;
-    localStorage.setItem("piop-mobile-host", cleanUrl);
+    await saveMobileConnection({ lastHost: cleanUrl });
+
+    if (attempt !== generation.current) return;
     applyHosts(savedHosts); setUrl(cleanUrl); setConnected(true); setWorkspaceOpen(true); retryDelay.current = 2000; restartUntil.current = 0;
   };
 
@@ -90,7 +93,7 @@ export function MobileApp() {
       if (attempt !== generation.current) return;
       remoteClient.close(); setError(reason instanceof Error ? reason.message : String(reason));
 
-      if (address === activeDebugAddress.current || address === localStorage.getItem("piop-mobile-host")) scheduleReconnect();
+      if (address === activeDebugAddress.current || address === cachedMobileHost()) scheduleReconnect();
     } finally { if (attempt === generation.current) setConnecting(false); }
   };
 
@@ -111,15 +114,20 @@ export function MobileApp() {
     window.addEventListener("piop-daemon-restarting", restarting);
 
     const startupGeneration = generation.current;
-    void loadMobileDebugConnection().then((debugUrl) => {
+    const startupUrl = url();
+    void Promise.all([loadMobileDebugConnection(), readMobileConnection()]).then(([debugUrl, saved]) => {
       if (generation.current !== startupGeneration) return;
+
+      if (!reconnectChanged) { reconnectEnabled.current = saved.autoReconnect; setAutoReconnect(saved.autoReconnect); }
+
+      if (url() === startupUrl) setUrl(saved.lastHost);
 
       if (debugUrl) {
         activeDebugAddress.current = debugUrl;
         setAutoReconnect(true); setUrl(debugUrl);
         void connectRef.current(debugUrl);
       } else {
-        const last = localStorage.getItem("piop-mobile-host");
+        const last = cachedMobileHost();
 
         if (reconnectEnabled.current && last) retry.current = setTimeout(() => { void connectRef.current(last); }, 0);
       }
@@ -172,10 +180,10 @@ export function MobileApp() {
     <p class="eyebrow">piop · Android</p><h1>Your workspace,<br />wherever you are.</h1>
     <p>Connect to your Piop daemon. Your projects, agents, and tools stay on that host, even when the desktop app is closed.</p>
     {hosts().length > 0 && <label>Saved hosts<select disabled={connecting()} value={savedHostValue()} onChange={(event) => { disconnect(); const host = hosts().find((item) => item.url === event.target.value); setUrl(host?.url ?? ""); setName(host?.name ?? ""); }}><option value="">New host</option>{<Key each={hosts()} by={(host) => host.url}>{(host, _index) => <option  value={host().url}>{host().name}</option>}</Key>}</select></label>}
-    <label>Host address<input type="url" required disabled={connecting()} placeholder="wss://your-host.your-tailnet.ts.net" autoCapitalize="none" autocorrect="off" spellcheck={false} value={url()} onInput={(event) => { clearTimeout(retry.current); intentionalDisconnect.current = true; setUrl(event.target.value); }} /></label>
+    <label>Host address<input type="url" required disabled={connecting()} placeholder="wss://your-host.your-tailnet.ts.net" autoCapitalize="none" autocorrect="off" spellcheck={false} value={url()} onInput={(event) => { generation.current++; clearTimeout(retry.current); intentionalDisconnect.current = true; setUrl(event.target.value); }} /></label>
     <label>Host name (optional)<input disabled={connecting()} value={name()} placeholder="My PC" onInput={(event) => setName(event.target.value)} /></label>
     <div class="mobile-host-actions"><button type="button" disabled={saveDisabled()} onClick={saveHost}>Save host</button>{hosts().some((host) => host.url === url()) && <button type="button" disabled={connecting()} onClick={forgetHost}>Remove host</button>}</div>
-    <label class="mobile-auto-reconnect"><input type="checkbox" checked={autoReconnect()} onInput={(event) => { const enabled = event.target.checked; localStorage.setItem("piop-mobile-auto-reconnect", String(enabled)); reconnectEnabled.current = enabled; setAutoReconnect(enabled);
+    <label class="mobile-auto-reconnect"><input type="checkbox" checked={autoReconnect()} onInput={(event) => { const enabled = event.target.checked; reconnectChanged = true; void saveMobileConnection({ autoReconnect: enabled }).catch(reason => setError(String(reason))); reconnectEnabled.current = enabled; setAutoReconnect(enabled);
 
     if (!enabled) clearTimeout(retry.current); }} />Automatically reconnect to last host</label>
     <p class="mobile-connect-hint">Connect this device and the host to the same Tailscale account, then enter the host’s Tailscale Serve wss:// address.</p>
