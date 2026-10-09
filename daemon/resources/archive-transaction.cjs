@@ -362,6 +362,7 @@ function complete(transaction) {
 
   if (io.exists(pending)) fs.unlinkSync(pending);
   io.sync(transaction.container);
+  cleanupCopies(transaction);
 }
 
 function verifyRollback(transaction) {
@@ -389,7 +390,7 @@ function rollbackData(transaction) {
   save(transaction);
 }
 
-function cleanupRollback(transaction) {
+function cleanupCopies(transaction) {
   if (!transaction.cleanup) {
     const files = transaction.records.flatMap(record => [record.backup, record.prepared, record.rollbackCopy]);
     files.push(...transaction.groups.flatMap(group => [group.metadata, group.dataBackup, group.index]));
@@ -425,7 +426,7 @@ function rollback(transaction) {
     for (const ref of group.refs) io.removeRef(repository(group), ref, group.commit);
   }
 
-  cleanupRollback(transaction);
+  cleanupCopies(transaction);
 }
 
 function removeBranch(group) {
@@ -478,7 +479,16 @@ function finishLocked(transaction) {
 }
 
 function replay(transaction) {
-  if (transaction.finished || transaction.state === 'planned') return;
+  if (transaction.finished) {
+    if (transaction.state !== 'committed') throw new Error('Invalid completed archive state');
+
+    try { cleanupCopies(transaction); }
+    catch (error) { console.error(`Completed archive cleanup retained: ${transaction.container}: ${error.message}`); }
+
+    return;
+  }
+
+  if (transaction.state === 'planned') return;
 
   if (transaction.state === 'committed') {
     try { finish(transaction); }
