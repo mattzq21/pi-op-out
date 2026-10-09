@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const legacyRecords = require('./legacy-archive-records.cjs');
 const { execFileSync } = require('node:child_process');
 
 function exists(file) {
@@ -132,17 +133,15 @@ function cleanup(directory) {
   }
 
   sync(directory);
-  fs.unlinkSync(path.join(directory, 'recovery.json'));
+
+  if (exists(path.join(directory, 'recovery.json'))) fs.unlinkSync(path.join(directory, 'recovery.json'));
   sync(directory);
   fs.rmdirSync(directory);
   sync(path.dirname(directory));
 }
 
-function complete(directory, transaction) {
-  const temporary = path.join(directory, `${randomUUID()}.recovered`);
-  fs.writeFileSync(temporary, JSON.stringify({ ...transaction, legacyRecovered: true }), { flag: 'wx', mode: 0o600 });
-  sync(temporary);
-  rename(temporary, path.join(directory, 'recovery.json'));
+function complete(root, directory, transaction) {
+  legacyRecords.save(root, directory, { ...transaction, legacyRecovered: true });
   cleanup(directory);
 }
 
@@ -160,7 +159,8 @@ function recoverLegacy(root, directory, transaction) {
   for (const record of [...transaction.records].reverse()) restoreRecord(record);
   releaseReferences(transaction.groups);
   retainDirectoryBackups(root, directory, transaction.groups);
-  complete(directory, transaction);
+  require('./session-database.cjs').movePaths(root, transaction.records.map(record => ({ source: record.destination, destination: record.file })));
+  complete(root, directory, transaction);
 }
 
 module.exports = { recoverLegacy };

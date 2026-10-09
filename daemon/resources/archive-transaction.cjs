@@ -539,7 +539,7 @@ const legacyRecovery = (() => {
   const exists = io.exists, identity = io.identity, sync = io.sync, syncTree = io.syncTree;
   const rename = (source, destination) => { fs.renameSync(source, destination); sync(path.dirname(destination)); sync(path.dirname(source)); };
 
-  const write = (file, value) => io.write(file, JSON.stringify(value));
+  const legacyRecords = require('./legacy-archive-records.cjs');
   const git = (common, args) => io.git(common, args);
   const { pruneReceipts } = require('./deletion-retention.cjs');
   const { recoverLegacy } = require('./archive-legacy-recovery.cjs');
@@ -624,17 +624,18 @@ function removeRetiredWorktree(item) {
   if (!active.includes(`branch ${item.branchRef}`)) git(item.common, ['update-ref', '-d', item.branchRef, item.head]);
 }
 
-function referencedDirectories(directory, previous) {
-  if (!exists(directory)) return;
+function referencedDirectories(root, previous) {
+  for (const file of require('./session-database.cjs').paths(root)) {
+    const relative = path.relative(root, file);
 
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
+    if (!['sessions', 'archived'].some(area => relative.startsWith(area + path.sep))) continue;
+    const metadata = exists(file);
 
-    if (entry.isDirectory()) referencedDirectories(file, previous);
-    else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-      const header = JSON.parse(fs.readFileSync(file, 'utf8').split('\n')[0]);
-      previous.delete(header.worktreeRestore?.storedPath);
-    }
+    if (!metadata) throw new Error(`Registered archive reference is unavailable: ${file}`);
+
+    if (!metadata.isFile() || fs.realpathSync(file) !== file) throw new Error(`Registered archive reference changed: ${file}`);
+    const header = JSON.parse(fs.readFileSync(file, 'utf8').split('\n')[0]);
+    previous.delete(header.worktreeRestore?.storedPath);
   }
 }
 
@@ -642,8 +643,7 @@ function cleanupPreviousDirectories(root, directories) {
   const previous = new Set(directories);
 
   if (!previous.size) return;
-  referencedDirectories(path.join(root, 'sessions'), previous);
-  referencedDirectories(path.join(root, 'archived'), previous);
+  referencedDirectories(root, previous);
   const storage = fs.realpathSync(path.join(root, 'archived-tmp'));
 
   for (const directory of previous) {
@@ -682,7 +682,6 @@ function rollback(transaction) {
 }
 
 function finishCommit(root, transaction, directory) {
-  sync(path.join(directory, 'recovery.json'));
   sync(directory);
   sync(root);
   assertReferences(transaction.references);
@@ -704,6 +703,7 @@ function finishCommit(root, transaction, directory) {
     sync(path.dirname(item.destination));
   }
 
+  require('./session-database.cjs').movePaths(root, transaction.moves);
   cleanupPreviousDirectories(root, transaction.previousDirectories);
   pruneReceipts(root);
   cleanup(directory);
@@ -711,8 +711,9 @@ function finishCommit(root, transaction, directory) {
 
 function recoverDirectory(root, directory) {
   const journal = path.join(directory, 'recovery.json');
+  const transaction = legacyRecords.read(root, directory);
 
-  if (!exists(journal)) {
+  if (transaction === undefined) {
     const unstarted = fs.readdirSync(directory).every(name => /^recovery\.json\.[a-f0-9-]{36}\.tmp$/.test(name));
 
     if (!unstarted) throw new Error(`Archive recovery data has no journal and needs inspection: ${directory}`);
@@ -721,8 +722,6 @@ function recoverDirectory(root, directory) {
     return;
   }
 
-  const transaction = JSON.parse(fs.readFileSync(journal, 'utf8'));
-
   if (transaction.version === undefined) return recoverLegacy(root, directory, transaction);
 
   if (transaction.version !== 2) throw new Error(`Unsupported archive transaction: ${journal}`);
@@ -730,7 +729,11 @@ function recoverDirectory(root, directory) {
   if (transaction.preparing || transaction.rolledBack) return cleanup(directory);
 
   if (transaction.committed) finishCommit(root, transaction, directory);
-  else { rollback(transaction); write(journal, { ...transaction, rolledBack: true }); cleanup(directory); }
+  else {
+    rollback(transaction);
+    require('./session-database.cjs').movePaths(root, transaction.moves.map(item => ({ source: item.destination, destination: item.source })));
+    legacyRecords.save(root, directory, { ...transaction, rolledBack: true }); cleanup(directory);
+  }
 }
 
 return recoverDirectory;
