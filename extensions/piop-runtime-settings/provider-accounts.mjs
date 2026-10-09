@@ -1,4 +1,4 @@
-import { readFile as accountRead } from 'node:fs/promises';
+import { storedModelText } from '../../daemon/resources/sdk-storage.mjs';
 import * as accountFs from 'node:fs';
 import { DatabaseSync as AccountDatabase } from 'node:sqlite';
 import { dirname as accountDirname, join as accountJoin, basename as accountBasename } from 'node:path';
@@ -122,10 +122,7 @@ const accountConfigurations = new WeakMap();
 export async function loadAccountProviders(authPath, createRuntime, existing = new Map()) {
   const records = await readProviderAccounts(authPath);
 
-  const configuration = await accountRead(accountJoin(accountDirname(authPath), 'models.json'), 'utf8').catch((error) => {
-    if (error.code === 'ENOENT') return '';
-    throw error;
-  });
+  const configuration = storedModelText(accountJoin(accountDirname(authPath), 'models.json')) ?? '';
 
   for (const record of records) {
     if (existing.has(record.id) && accountConfigurations.get(existing.get(record.id)) === configuration) continue;

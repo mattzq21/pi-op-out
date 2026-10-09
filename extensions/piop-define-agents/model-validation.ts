@@ -46,7 +46,8 @@ export async function modelValidator() {
   const { FileAuthStorageBackend, AuthStorage } = await import(pathToFileURL(join(directory, "dist/core/auth-storage.js")).href);
   installAuthStorage(FileAuthStorageBackend, AuthStorage);
   const { FileModelsStore } = await import(pathToFileURL(join(directory, "dist/core/models-store.js")).href);
-  installModelsStorage(FileModelsStore);
+  const { ModelConfig } = await import(pathToFileURL(join(directory, "dist/core/model-config.js")).href);
+  installModelsStorage(FileModelsStore, ModelConfig);
   const { ModelRuntime: Runtime } = await import(pathToFileURL(join(directory, "dist/core/model-runtime.js")).href);
   const { ModelRegistry: Registry } = await import(pathToFileURL(join(directory, "dist/core/model-registry.js")).href);
   const { getAgentDir } = await import(pathToFileURL(join(directory, "dist/config.js")).href);

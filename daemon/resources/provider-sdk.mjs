@@ -48,14 +48,16 @@ async function loadRuntime() {
       const { FileAuthStorageBackend, AuthStorage } = await import(pathToFileURL(join(directory, 'dist/core/auth-storage.js')).href);
       installAuthStorage(FileAuthStorageBackend, AuthStorage);
       const { FileModelsStore } = await import(pathToFileURL(join(directory, 'dist/core/models-store.js')).href);
-      installModelsStorage(FileModelsStore);
+      const { ModelConfig } = await import(pathToFileURL(join(directory, 'dist/core/model-config.js')).href);
+      installModelsStorage(FileModelsStore, ModelConfig);
       const config = await import(pathToFileURL(join(directory, 'dist/config.js')).href);
+      const { stripJsonComments } = await import(pathToFileURL(join(directory, 'dist/utils/json.js')).href);
       const { SettingsManager } = await import(pathToFileURL(join(directory, 'dist/core/settings-manager.js')).href);
       const settings = SettingsManager.create(process.cwd(), config.getAgentDir());
       const builtin = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
       const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
 
-      return { runtime, settings, authPath: config.getAuthPath(), builtinIds: builtin.getProviders().map((provider) => provider.id), createRuntime: () => sdk.ModelRuntime.create({ allowModelNetwork: false, refreshOnCreate: false }) };
+      return { runtime, settings, authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id), createRuntime: () => sdk.ModelRuntime.create({ allowModelNetwork: false, refreshOnCreate: false }) };
     }
 
     directory = dirname(directory);
@@ -284,11 +286,23 @@ async function handle(packet) {
 
   if (packet.method === 'initialize') return { authPath: loaded.authPath, builtinIds: loaded.builtinIds };
 
-  if (packet.method === 'auth_revision') return storedAuthRevision(loaded.authPath);
+  if (['auth_revision', 'model_revision', 'model_config', 'save_model_provider'].includes(packet.method)) return storedProviderRequest(loaded, packet);
 
   await syncAccounts(loaded);
 
   return handleProviderRequest(loaded, packet);
+}
+
+function storedProviderRequest(loaded, packet) {
+  if (packet.method === 'auth_revision') return storedAuthRevision(loaded.authPath);
+
+  if (packet.method === 'model_revision') return storedAuthRevision(loaded.modelsPath);
+
+  if (packet.method === 'model_config') return loaded.parseModels(storedModelText(loaded.modelsPath) ?? '{"providers":{}}');
+
+  if (packet.method === 'save_model_provider') return saveStoredModelProvider(loaded.modelsPath, packet.providerId, packet.config, packet.previous ?? undefined, loaded.parseModels);
+
+  throw new Error('Unknown provider storage request');
 }
 
 async function handleProviderRequest(loaded, packet) {

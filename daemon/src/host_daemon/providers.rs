@@ -184,9 +184,8 @@ impl ProviderService {
         let _checking = self.checking.lock().await;
         let info = self.runtime().await?;
         self.refresh_catalogs(false).await?;
-        let parent = info.auth_path.parent().ok_or("Invalid Pi authentication path")?;
         let credentials = self.sdk.request(json!({"method":"auth_revision"})).await?;
-        let models = file_revision(&parent.join("models.json"))?;
+        let models = self.sdk.request(json!({"method":"model_revision"})).await?;
         let accounts = serde_json::to_string(&catalogs::read_accounts(&info.auth_path)?).map_err(|error| error.to_string())?;
         let revision = format!("{credentials}|{models}|{accounts}");
         let changed = {
@@ -459,15 +458,13 @@ impl ProviderService {
     async fn create_provider(&self, request: Value) -> Result<Value> {
         let mut config = catalogs::custom_config(&request)?;
         let key = custom_key(&request)?;
-        let info = self.runtime().await?;
         let snapshot = self.sdk.request(json!({"method":"inspect"})).await?;
         let id = text(&request, "providerId");
         if array(&snapshot, "providers").iter().any(|provider| provider["id"] == id) {
             return Err("That provider ID already exists. Choose another ID.".into());
         }
         config["models"] = json!(catalogs::discover(&config, key, &array(&snapshot, "models"), &Value::Null).await?);
-        let path = info.auth_path.parent().ok_or("Invalid Pi authentication path")?.join("models.json");
-        catalogs::save_provider(&path, &id, &config, None).await?;
+        self.sdk.request(json!({"method":"save_model_provider","providerId":id,"config":config})).await?;
         let result = self.login_created_provider(&id, key).await;
         self.changed();
         let mut result_value = json!({"created":true});
@@ -503,17 +500,13 @@ impl ProviderService {
         }
         let info = self.runtime().await?;
         let snapshot = self.sdk.request(json!({"method":"inspect"})).await?;
-        let path = info.auth_path.parent().ok_or("Invalid Pi authentication path")?.join("models.json");
-        let data: Value = match std::fs::read(&path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()) {
-            Some(data) => data,
-            None => return Ok(()),
-        };
+        let data = self.sdk.request(json!({"method":"model_config"})).await?;
         let models = array(&snapshot, "models");
         let catalogs = data["providers"].as_object().into_iter().flatten().filter(|(id, config)| {
             !info.builtin_ids.contains(*id) && auth_url(&config["baseUrl"]).is_some() && catalogs::supported_api(config)
         });
         let failures: Vec<_> = futures_util::future::join_all(
-            catalogs.map(|(id, config)| async { self.refresh_catalog(&path, id, config, &models).await.err().map(|_| id.clone()) }),
+            catalogs.map(|(id, config)| async { self.refresh_catalog(id, config, &models).await.err().map(|_| id.clone()) }),
         )
         .await
         .into_iter()
@@ -528,7 +521,7 @@ impl ProviderService {
         Ok(())
     }
 
-    async fn refresh_catalog(&self, path: &Path, id: &str, config: &Value, models: &[Value]) -> Result<()> {
+    async fn refresh_catalog(&self, id: &str, config: &Value, models: &[Value]) -> Result<()> {
         let auth = self.sdk.request(json!({"method":"auth","providerId":id})).await?;
         if auth.is_null() {
             return Err("Provider login is missing".into());
@@ -536,7 +529,7 @@ impl ProviderService {
         let discovered = catalogs::discover(config, auth["apiKey"].as_str(), models, &auth["headers"]).await?;
         let mut next = config.clone();
         next["models"] = json!(catalogs::merge_models(config, discovered));
-        catalogs::save_provider(path, id, &next, Some(config)).await
+        self.sdk.request(json!({"method":"save_model_provider","providerId":id,"config":next,"previous":config})).await.map(|_| ())
     }
 
     fn receive(&self, packet: Value) {
@@ -670,28 +663,4 @@ fn prompt(packet: &Value) -> Result<Value> {
         prompt["options"]=json!(array(request,"options").iter().map(|option|json!({"id":auth_text(&option["id"]),"label":auth_text(&option["label"]),"description":auth_text(&option["description"])})).collect::<Vec<_>>());
     }
     Ok(prompt)
-}
-
-fn file_revision(path: &Path) -> Result<String> {
-    let metadata = match std::fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok("missing".into()),
-        Err(_) => return Err("Could not check provider credentials on this host".into()),
-    };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Ok(format!(
-            "{}:{}:{}:{}:{}",
-            metadata.dev(),
-            metadata.ino(),
-            metadata.len(),
-            metadata.mtime() as i128 * 1_000_000_000 + metadata.mtime_nsec() as i128,
-            metadata.ctime() as i128 * 1_000_000_000 + metadata.ctime_nsec() as i128
-        ))
-    }
-    #[cfg(not(unix))]
-    {
-        Ok(format!("{}:{:?}:{:?}", metadata.len(), metadata.modified(), metadata.created()))
-    }
 }

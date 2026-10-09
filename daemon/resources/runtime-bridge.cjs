@@ -677,7 +677,8 @@ async function main() {
   const { SessionManager } = await import(pathToFileURL(join(root, "dist/core/session-manager.js")).href);
   installAuthStorage(FileAuthStorageBackend, AuthStorage);
   const { FileModelsStore } = await import(pathToFileURL(join(root, "dist/core/models-store.js")).href);
-  installModelsStorage(FileModelsStore);
+  const { ModelConfig } = await import(pathToFileURL(join(root, "dist/core/model-config.js")).href);
+  installModelsStorage(FileModelsStore, ModelConfig);
   installSessionStorage(SessionManager);
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
 

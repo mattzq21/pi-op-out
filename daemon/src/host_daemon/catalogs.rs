@@ -6,12 +6,9 @@ use reqwest::{
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashSet},
-    fs::{File, OpenOptions},
-    io::Write,
     path::{Path, PathBuf},
     time::Duration,
 };
-use uuid::Uuid;
 
 #[path = "catalog_accounts.rs"]
 mod accounts;
@@ -230,92 +227,6 @@ fn discovered_model(entry: &Value, known: &[Value]) -> Result<Value> {
         }
     }
     Ok(model)
-}
-
-pub(super) async fn file_lock(path: &Path) -> Result<File> {
-    if let Some(parent) = path.parent() {
-        crate::ensure_private_dir(parent)?;
-    }
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let file = options.open(path).map_err(|error| error.to_string())?;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        match file.try_lock() {
-            Ok(()) => return Ok(file),
-            Err(std::fs::TryLockError::WouldBlock) if tokio::time::Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(20)).await
-            }
-            Err(_) => return Err("Could not lock provider configuration on this host".into()),
-        }
-    }
-}
-
-pub(super) fn write_atomic(path: &Path, data: &Value) -> Result<()> {
-    let temporary = PathBuf::from(format!("{}.{}", path.to_string_lossy(), Uuid::new_v4()));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let result = (|| {
-        let mut file = options.open(&temporary).map_err(|error| error.to_string())?;
-        writeln!(file, "{}", serde_json::to_string_pretty(data).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
-        file.sync_all().map_err(|error| error.to_string())?;
-        std::fs::rename(&temporary, path).map_err(|error| error.to_string())?;
-        sync_catalog_parent(path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result
-}
-
-fn sync_catalog_parent(path: &Path) -> Result<()> {
-    let parent = path.parent().ok_or("Provider configuration has no parent directory")?;
-    crate::private_fs::sync_directory_ancestors(parent)
-}
-
-fn sync_existing_catalog(path: &Path) -> Result<()> {
-    File::open(path).and_then(|file| file.sync_all()).map_err(|error| format!("Could not sync provider configuration: {error}"))?;
-    sync_catalog_parent(path)
-}
-
-pub(super) async fn save_provider(path: &Path, id: &str, config: &Value, previous: Option<&Value>) -> Result<()> {
-    let _lock = file_lock(&PathBuf::from(format!("{}.lock", path.to_string_lossy()))).await?;
-    let mut data = read_provider_file(path)?;
-    let providers = data["providers"]
-        .as_object_mut()
-        .ok_or("Could not save the provider. Check models.json and host file permissions.")?;
-    if let Some(previous) = previous {
-        if providers.get(id) != Some(previous) {
-            return Err("Could not save the provider. Check models.json and host file permissions.".into());
-        }
-        if previous == config {
-            return sync_existing_catalog(path);
-        }
-    } else if providers.contains_key(id) {
-        return Err("That provider ID already exists. Choose another ID.".into());
-    }
-    providers.insert(id.into(), config.clone());
-    write_atomic(path, &data)
-}
-
-fn read_provider_file(path: &Path) -> Result<Value> {
-    match std::fs::read(path) {
-        Ok(data) => {
-            serde_json::from_slice(&data).map_err(|_| "Could not save the provider. Check models.json and host file permissions.".into())
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(json!({"providers":{}})),
-        Err(_) => Err("Could not save the provider. Check models.json and host file permissions.".into()),
-    }
 }
 
 pub(super) fn read_accounts(auth: &Path) -> Result<Vec<Value>> { accounts::read(auth) }

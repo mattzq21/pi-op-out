@@ -1,9 +1,10 @@
 import { DatabaseSync as StorageDatabase } from "node:sqlite";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
-import { homedir as storageHome } from "node:os";
+import { homedir as storageHome, tmpdir as storageTemporaryDirectory } from "node:os";
 import { spawnSync as storageSpawn } from "node:child_process";
 import { createHash as storageHash } from "node:crypto";
+import { isDeepStrictEqual as sameStorageValue } from "node:util";
 
 const installedStorageClasses = new WeakSet();
 
@@ -308,7 +309,67 @@ export function storedAuthRevision(path) {
   return withStoredAuth(path, (database, key) => database.prepare("SELECT revision FROM provider_credentials WHERE auth_file=?").get(key).revision);
 }
 
-export function installModelsStorage(FileModelsStore) {
+export function storedModelText(path) {
+  return storageReadAuth(path);
+}
+
+export function saveStoredModelProvider(path, id, config, previous, parse) {
+  return withStoredAuth(path, (database, key) => {
+    const body = database.prepare("SELECT body FROM provider_credentials WHERE auth_file=?").get(key).body;
+    const data = body ? parse(body) : { providers: {} };
+
+    if (!data.providers || Object.getPrototypeOf(data.providers) !== Object.prototype) throw new Error("Invalid saved provider settings");
+    const current = data.providers[id];
+
+    if (previous === undefined && Object.hasOwn(data.providers, id)) throw new Error("That provider ID already exists");
+
+    if (previous !== undefined && !sameStorageValue(current, previous)) throw new Error("Provider settings changed. Refresh before saving.");
+
+    if (sameStorageValue(current, config)) return true;
+    Object.defineProperty(data.providers, id, { value: config, enumerable: true, writable: true, configurable: true });
+    database.prepare("UPDATE provider_credentials SET body=?, revision=revision+1 WHERE auth_file=?").run(JSON.stringify(data), key);
+
+    return true;
+  });
+}
+
+function installModelConfiguration(ModelConfig) {
+  if (installedStorageClasses.has(ModelConfig)) return;
+  requireStorageMethods(ModelConfig, ["load"]);
+  const load = ModelConfig.load.bind(ModelConfig);
+  let cached;
+
+  ModelConfig.load = async (path) => {
+    if (!path) return load(path);
+    const body = storedModelText(path);
+
+    if (cached?.path === path && cached.body === body) return cached.value;
+    const value = body === undefined ? await load(undefined) : await loadModelCopy(load, path, body);
+    cached = { path, body, value };
+
+    return value;
+  };
+
+  installedStorageClasses.add(ModelConfig);
+}
+
+async function loadModelCopy(load, path, body) {
+  const directory = storageFs.mkdtempSync(storagePath.join(storageTemporaryDirectory(), "piop-model-config-"));
+  const file = storagePath.join(directory, "models.json");
+
+  try {
+    storageFs.writeFileSync(file, body, { mode: 0o600 });
+    const result = await load(file);
+
+    if (result.error) result.error = result.error.replaceAll(file, path);
+
+    return result;
+  } finally { storageFs.rmSync(directory, { recursive: true, force: true }); }
+}
+
+export function installModelsStorage(FileModelsStore, ModelConfig) {
+  installModelConfiguration(ModelConfig);
+
   if (installedStorageClasses.has(FileModelsStore)) return;
   const prototype = FileModelsStore.prototype;
   requireStorageMethods(prototype, ["readLatest", "reloadFromStorage", "parse", "updateReadState"]);
