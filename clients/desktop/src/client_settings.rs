@@ -89,3 +89,52 @@ pub(crate) fn save_client_settings(app: AppHandle, settings: ClientSettings, bas
     for window in app.webview_windows().values() { let _ = window.emit("pi://client-settings-changed", ()); }
     Ok(json!({"settings":settings,"revision":settings_revision(Some(&body)),"publication":publication}))
 }
+
+#[derive(Deserialize)]
+pub(crate) struct PromptHistoryEntry {
+    id: String,
+    prompt: String,
+}
+
+fn append_prompt_history(db: &rusqlite::Connection, entries: &[PromptHistoryEntry]) -> Result<(), String> {
+    for entry in entries {
+        if entry.prompt.trim().is_empty() { continue; }
+        db.execute("INSERT OR IGNORE INTO desktop_prompt_history (event_id, prompt) VALUES (?, ?)",
+            rusqlite::params![entry.id, entry.prompt]).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn sync_prompt_history(entries: Vec<PromptHistoryEntry>, legacy: Vec<String>) -> Result<Vec<String>, String> {
+    let path = storage_path()?;
+    let mut db = records::open(&path)?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS desktop_prompt_history (sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE, prompt TEXT NOT NULL);")
+        .map_err(|error| error.to_string())?;
+    let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+    import_prompt_history(&transaction, legacy)?;
+    append_prompt_history(&transaction, &entries)?;
+    transaction.execute("DELETE FROM desktop_prompt_history WHERE sequence NOT IN (SELECT sequence FROM desktop_prompt_history ORDER BY sequence DESC LIMIT 100)", [])
+        .map_err(|error| error.to_string())?;
+    let history = read_prompt_history(&transaction)?;
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(history)
+}
+
+fn read_prompt_history(db: &rusqlite::Connection) -> Result<Vec<String>, String> {
+    let mut statement = db.prepare("SELECT prompt FROM desktop_prompt_history ORDER BY sequence").map_err(|error| error.to_string())?;
+    let mut entries = statement.query_map([], |row| row.get(0)).map_err(|error| error.to_string())?
+        .collect::<Result<Vec<String>, _>>().map_err(|error| error.to_string())?;
+    entries.dedup();
+    Ok(entries)
+}
+
+fn import_prompt_history(db: &rusqlite::Connection, legacy: Vec<String>) -> Result<(), String> {
+    let empty: bool = db.query_row("SELECT NOT EXISTS(SELECT 1 FROM desktop_prompt_history)", [], |row| row.get(0)).map_err(|error| error.to_string())?;
+    if empty {
+        let imported: Vec<_> = legacy.into_iter().rev().take(100).collect::<Vec<_>>().into_iter().rev().enumerate()
+            .map(|(index, prompt)| PromptHistoryEntry { id: format!("legacy-{index}"), prompt }).collect();
+        append_prompt_history(db, &imported)?;
+    }
+    Ok(())
+}

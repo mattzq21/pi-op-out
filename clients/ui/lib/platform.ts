@@ -60,7 +60,7 @@ export async function invoke(command: string, args?: NativeArguments, schema: z.
   args = nativeArgumentsSchema.parse({ ...args, clientId: conversationClientId });
 
   if (!isMobile) {
-    const local = ["load_client_settings", "save_client_settings", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file"];
+    const local = ["load_client_settings", "save_client_settings", "sync_prompt_history", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file"];
 
     const response = await (local.includes(command) ? nativeInvoke(command, args) : invokeWithBackpressure(() => nativeInvoke("daemon_invoke", { command, args })));
 

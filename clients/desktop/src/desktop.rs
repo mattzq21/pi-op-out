@@ -9,7 +9,7 @@ mod private_fs;
 use private_fs::ensure_private_dir;
 mod clipboard_image;
 use clipboard_image::{configure_image_copy, read_clipboard_image};
-use client_settings::{load_client_settings, save_client_settings};
+use client_settings::{load_client_settings, save_client_settings, sync_prompt_history};
 use desktop_daemon::daemon_invoke;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -213,7 +213,7 @@ pub fn run() {
             window.show()?;
         }
         Ok(())
-    }).invoke_handler(tauri::generate_handler![daemon_invoke, reload_development_window, load_client_settings, save_client_settings, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![daemon_invoke, reload_development_window, load_client_settings, save_client_settings, sync_prompt_history, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
             let app = app.clone(); let label = label.clone();
             tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&app, &label).await; });
