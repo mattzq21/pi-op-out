@@ -55,6 +55,62 @@ function previousAppend(root, file, entries, entry) {
   return previous?.root === root && previous.file === file && previous.count === entries.length ? previous : undefined;
 }
 
+function messageDetails(entry) {
+  if (entry?.type === 'custom_message') return entry.details;
+
+  return entry?.type === 'message' ? entry.message?.details : undefined;
+}
+
+function delivery(entry, sessionId) {
+  const details = messageDetails(entry);
+
+  if (!details || details.mailboxSessionId !== sessionId) return;
+
+  if (![details.notificationId, details.mailboxFingerprint].every(value => value?.constructor === String)) return;
+
+  return [details.notificationId, details.mailboxFingerprint];
+}
+
+function receiptFingerprint(stamp) {
+  const parts = stamp.split(':');
+
+  return `${parts[3]}:${parts[2]}`;
+}
+
+function publishReceipts(db, file, stamp, previous, entries, entry) {
+  db.exec(`CREATE TABLE IF NOT EXISTS session_mailbox_receipt_cache (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+    session_path TEXT NOT NULL, fingerprint TEXT NOT NULL, deliveries_json TEXT NOT NULL)`);
+  const id = entries[0]?.id;
+  const fingerprint = receiptFingerprint(stamp);
+  const addition = delivery(entry, id);
+
+  if (previous && appendReceipts(db, file, id, receiptFingerprint(previous), fingerprint, addition)) return;
+  const saved = new Map();
+
+  for (const current of entries) {
+    const receipt = delivery(current, id);
+
+    if (receipt) saved.set(...receipt);
+  }
+
+  if (addition) saved.set(...addition);
+  db.prepare(`INSERT INTO session_mailbox_receipt_cache
+    SELECT session_id, session_path, ?, ? FROM sessions WHERE session_id=? AND session_path=?
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))
+    ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path,
+      fingerprint=excluded.fingerprint, deliveries_json=excluded.deliveries_json`)
+    .run(fingerprint, JSON.stringify([...saved]), id, file, id);
+}
+
+function appendReceipts(db, file, id, previous, fingerprint, addition) {
+  const update = addition ? "json_insert(deliveries_json, '$[#]', json(?))" : 'deliveries_json';
+  const values = addition ? [fingerprint, JSON.stringify(addition)] : [fingerprint];
+
+  return Boolean(db.prepare(`UPDATE session_mailbox_receipt_cache SET fingerprint=?, deliveries_json=${update}
+    WHERE session_id=? AND session_path=? AND fingerprint=?`).run(...values, id, file, previous).changes);
+}
+
 function publish(root, file, entries, entry) {
   root = fs.realpathSync(root);
   const previous = previousAppend(root, file, entries, entry);
@@ -66,7 +122,11 @@ function publish(root, file, entries, entry) {
   const db = open(root);
 
   try {
+    db.exec('BEGIN IMMEDIATE');
+
     if (!appendSaved(db, file, previous?.stamp, stamp, addition)) save(db, file, stamp, record);
+    publishReceipts(db, file, stamp, previous?.stamp, entries, entry);
+    db.exec('COMMIT');
   } finally { db.close(); }
 
   cache.set(entries, { root, file, count: entries.length + (entry ? 1 : 0), record, stamp });
