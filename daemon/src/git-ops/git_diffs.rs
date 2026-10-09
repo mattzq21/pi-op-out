@@ -314,24 +314,21 @@ fn storage_helper() -> String {
 }
 
 pub(crate) fn embedded_diff_store() -> String {
-    format!(r#"const sessionDatabase = ((require) => {{ const module = {{exports: {{}}}}; {}
-return module.exports; }})(require);
-const diffStore = ((builtinRequire) => {{
-const modules = {{}};
-modules['../session-database.cjs'] = sessionDatabase;
-modules['./checkpoint-owner-index.cjs'] = ((require) => {{ const module = {{exports: {{}}}}; {}
-return module.exports; }})(builtinRequire);
-modules['./git-diff-pages.cjs'] = ((require) => {{ const module = {{exports: {{}}}}; {}
-return module.exports; }})(builtinRequire);
-modules['./git-diff-transfer.cjs'] = ((require) => {{ const module = {{exports: {{}}}}; {}
-return module.exports; }})(builtinRequire);
-modules['./git-diff-migration.cjs'] = ((require) => {{ const module = {{exports: {{}}}}; {}
-return module.exports; }})(builtinRequire);
-const require = name => modules[name] ?? builtinRequire(name);
-const module = {{exports: {{}}}};
-{}
-return module.exports;
-}})(require);"#, include_str!("../../resources/session-database.cjs"), include_str!("../../resources/session-broker/checkpoint-owner-index.cjs"), include_str!("../../resources/session-broker/git-diff-pages.cjs"), include_str!("../../resources/session-broker/git-diff-transfer.cjs"), include_str!("../../resources/session-broker/git-diff-migration.cjs"), include_str!("../../resources/session-broker/git-diff-store.cjs"))
+    let modules = [
+        ("../session-database.cjs", include_str!("../../resources/session-database.cjs")),
+        ("./checkpoint-owner-index.cjs", include_str!("../../resources/session-broker/checkpoint-owner-index.cjs")),
+        ("./git-diff-pages.cjs", include_str!("../../resources/session-broker/git-diff-pages.cjs")),
+        ("./git-diff-transfer-storage.cjs", include_str!("../../resources/session-broker/git-diff-transfer-storage.cjs")),
+        ("./git-diff-transfer.cjs", include_str!("../../resources/session-broker/git-diff-transfer.cjs")),
+        ("./git-diff-migration.cjs", include_str!("../../resources/session-broker/git-diff-migration.cjs")),
+        ("./git-diff-store.cjs", include_str!("../../resources/session-broker/git-diff-store.cjs")),
+    ];
+    let mut source = String::from("const diffStore = ((builtinRequire) => { const modules = {}; const require = name => modules[name] ?? builtinRequire(name);\n");
+    for (name, body) in modules {
+        source.push_str(&format!("modules['{name}'] = (() => {{ const module = {{exports: {{}}}}; {body}\nreturn module.exports; }})();\n"));
+    }
+    source.push_str("return { ...modules['./git-diff-store.cjs'], sessionDatabase: modules['../session-database.cjs'] }; })(require);\nconst sessionDatabase = diffStore.sessionDatabase;");
+    source
 }
 
 fn read_command(command: &mut Command, request: Option<&serde_json::Value>) -> Result<serde_json::Value, String> {
