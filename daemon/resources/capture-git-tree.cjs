@@ -25,12 +25,42 @@ function sessionStorage(session) {
   const storage = fs.realpathSync(storageRoot());
 
   if (!['sessions', 'archived'].some((area) => session.startsWith(path.join(storage, area) + path.sep)) || !session.endsWith('.jsonl')) return undefined;
-  const header = JSON.parse(fs.readFileSync(session, 'utf8').split('\n').find((line) => line.trim()));
+  const id = registeredSessionId(storage, session);
+  const header = sessionHeader(session);
 
-  if (header.type !== 'session' || !header.id || (owner.sessionId && header.id !== owner.sessionId)) throw new Error('Snapshot session identity changed');
-  owner.sessionId = header.id;
+  if (header.type !== 'session' || header.id !== id || (owner.sessionId && id !== owner.sessionId)) throw new Error('Snapshot session identity changed');
+  owner.sessionId = id;
 
   return session.replace(/\.jsonl$/, '.snapshots');
+}
+
+function registeredSessionId(root, file) {
+  const db = require('./session-database.cjs').open(root);
+
+  try {
+    const rows = db.prepare(`SELECT session_id FROM sessions WHERE session_path IN (?, ?)
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`)
+      .all(file, path.resolve(owner.sessionPath));
+
+    if (rows.length !== 1) throw new Error('Snapshot session must have one registered identity');
+
+    return rows[0].session_id;
+  } finally { db.close(); }
+}
+
+function sessionHeader(file) {
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Snapshot transcript is not a regular file');
+    const buffer = Buffer.alloc(64 * 1024);
+    const size = fs.readSync(descriptor, buffer, 0, buffer.length, 0);
+    const body = buffer.subarray(0, size).toString('utf8');
+
+    if (size === buffer.length && !body.includes('\n')) throw new Error('Snapshot transcript header is too large');
+
+    return JSON.parse(body.split('\n').find(line => line.trim()));
+  } finally { fs.closeSync(descriptor); }
 }
 
 function snapshotStorage() {
