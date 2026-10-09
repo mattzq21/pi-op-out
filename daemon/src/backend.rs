@@ -415,7 +415,9 @@ use settings::{codex_disables_implicit_invocation, default_settings, discover_sk
 use extensions::{runtime_settings};
 #[cfg(test)]
 use extensions::{generated_extension_root, prepare_codex_web_search_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_diff_watch_extension, prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_runtime_settings, prepare_session_broker, prepare_trace_reader};
-use settings_storage::{atomic_write_private, ensure_private_dir, set_private_file_permissions};
+#[cfg(test)]
+use settings_storage::atomic_write_private;
+use settings_storage::{ensure_private_dir, set_private_file_permissions};
 #[cfg(test)]
 use settings_storage::{canonical_shortcut, migrate_keybindings, settings_path_at, validate_keybindings};
 use git_ops::project_branches::{project_branches};

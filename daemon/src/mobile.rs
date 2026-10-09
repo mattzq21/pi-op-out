@@ -50,7 +50,7 @@ fn start_debug(app: AppHandle, events: broadcast::Sender<Value>, connections: Ar
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
     let address = listener.local_addr().map_err(|error| error.to_string())?;
     let endpoint = json!({"url":format!("ws://{address}"), "protocol":1});
-    atomic_write_private(&daemon_endpoint::directory()?.join("debug-mobile.json"), &serde_json::to_vec(&endpoint).map_err(|error| error.to_string())?)?;
+    crate::settings_storage::records::publish(&daemon_endpoint::directory()?.join("debug-mobile.json"), &serde_json::to_vec(&endpoint).map_err(|error| error.to_string())?)?;
     crate::platform::async_runtime::spawn(async move {
         let Ok(listener) = tokio::net::TcpListener::from_std(listener) else { return; };
         while let Ok((stream, _)) = listener.accept().await {

@@ -14,7 +14,8 @@ pub(crate) fn directory() -> Result<PathBuf, String> {
 pub(crate) fn path() -> Result<PathBuf, String> { Ok(directory()?.join("daemon.json")) }
 
 pub(crate) fn read() -> Result<Endpoint, String> {
-    serde_json::from_slice(&fs::read(path()?).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+    let body = crate::client_settings::records::read(&path()?)?.ok_or("Daemon connection is not available")?;
+    serde_json::from_slice(&body).map_err(|error| error.to_string())
 }
 
 pub(crate) fn restart_active() -> bool {

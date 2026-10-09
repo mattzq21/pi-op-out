@@ -99,7 +99,7 @@ fn validate_restart_bind(bind: &str) -> Result<(), String> {
 }
 
 fn debug_restart_bind() -> Result<Option<String>, String> {
-    let bind = fs::read(path("debug-mobile.json")?).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    let bind = crate::settings_storage::records::read(&path("debug-mobile.json")?)?.and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
         .and_then(|endpoint| endpoint["url"].as_str().map(|url| url.trim_start_matches("ws://").to_owned()));
     if let Some(bind) = &bind { validate_restart_bind(bind)?; }
     Ok(bind)

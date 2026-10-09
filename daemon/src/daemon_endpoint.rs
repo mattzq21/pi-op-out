@@ -51,7 +51,8 @@ fn debug_binary_identity(path: &Path) -> Result<String, String> {
 }
 
 pub(crate) fn read() -> Result<Endpoint, String> {
-    serde_json::from_slice(&fs::read(path()?).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+    let body = crate::settings_storage::records::read(&path()?)?.ok_or("Daemon connection is not available")?;
+    serde_json::from_slice(&body).map_err(|error| error.to_string())
 }
 
 pub(crate) fn restart_active() -> bool {
@@ -86,5 +87,5 @@ pub(crate) fn publish(address: std::net::SocketAddr, token: String) -> Result<()
         ip => ip,
     };
     let endpoint = Endpoint { url: format!("ws://{}", std::net::SocketAddr::new(ip, address.port())), token, protocol: piop_protocol::PROTOCOL_VERSION };
-    atomic_write_private(&path()?, &serde_json::to_vec(&endpoint).map_err(|error| error.to_string())?)
+    crate::settings_storage::records::publish(&path()?, &serde_json::to_vec(&endpoint).map_err(|error| error.to_string())?).map(|_| ())
 }

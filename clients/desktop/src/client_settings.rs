@@ -2,7 +2,7 @@ use super::*;
 use crate::settings_concurrency::{lock_settings, settings_revision};
 
 #[path = "../../../shared/rust/settings_records.rs"]
-mod records;
+pub(crate) mod records;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

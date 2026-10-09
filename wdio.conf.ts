@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readDaemonEndpoint } from "./scripts/daemon-endpoint.mjs";
 import { z } from "zod";
 import { createServer } from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -125,7 +126,7 @@ const startFixtureDaemon = async () => {
 
     if (fixtureDaemon.exitCode !== null) throw new Error(`Test daemon exited with code ${fixtureDaemon.exitCode}`);
 
-    if (existsSync(path.join(fixtureHome, ".piop", "daemon.json"))) return;
+    if (readDaemonEndpoint(path.join(fixtureHome, ".piop"))) return;
     await delay(100);
   }
 

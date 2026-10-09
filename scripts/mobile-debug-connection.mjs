@@ -1,3 +1,4 @@
+import { readDaemonEndpoint } from "./daemon-endpoint.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
@@ -14,7 +15,7 @@ let key = 0xcbf29ce484222325n;
 
 for (const byte of Buffer.from(legacyEndpointIdentity)) key = BigInt.asUintN(64, (key ^ BigInt(byte)) * 0x100000001b3n);
 
-const endpointFile = join(homedir(), ".piop-dev", "daemons", key.toString(16).padStart(16, "0"), "debug-mobile.json");
+const endpointDirectory = join(homedir(), ".piop-dev", "daemons", key.toString(16).padStart(16, "0"));
 
 const daemon = join(project, "target", "debug", "piopd");
 
@@ -53,7 +54,7 @@ const deadline = Date.now() + 10000;
 
 while (Date.now() < deadline) {
   try {
-    const endpoint = JSON.parse(readFileSync(endpointFile, "utf8"));
+    const endpoint = readDaemonEndpoint(endpointDirectory, "debug-mobile.json");
     const url = new URL(endpoint.url);
 
     if (endpoint.protocol === 1 && url.protocol === "ws:" && url.hostname === "127.0.0.1" && url.port) {
