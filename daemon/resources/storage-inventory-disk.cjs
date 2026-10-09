@@ -119,8 +119,6 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
 
     countSnapshots(target, category, entries, metadata);
 
-    if (target === path.join(root, 'archived-tmp')) addCount(category, entries.filter(entry => entry.isDirectory()).length);
-
     if (['goal-attachments', 'unattributed-goal-attachments'].includes(category) && validGoalPath(target)) {
       addCount(category);
       const record = discovery.goals.get(target) || { path: target, ownership: 'unattributed', provenance: ['Goal asset directory without a readable surviving reference'], owners: [] };
@@ -130,11 +128,23 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     }
   }
 
+  function savedSnapshot(target, entries, metadata) {
+    if (snapshotDirectories.has(target)) return true;
+
+    if (savedSnapshotFiles.has(`${metadata.dev}:${metadata.ino}`) && savedSnapshots.has(snapshotMetadata.identity(target))) return true;
+
+    if (!entries.some(entry => entry.name === 'snapshot.json')) return false;
+
+    try { return snapshotMetadata.read(target) !== undefined; }
+    catch (error) { warnings.push(`${target}: snapshot record unavailable: ${error.message}`);
+
+    return false; }
+  }
+
   function countSnapshots(target, category, entries, metadata) {
-    const saved = savedSnapshotFiles.has(`${metadata.dev}:${metadata.ino}`) && savedSnapshots.has(snapshotMetadata.identity(target));
     const pending = discovery.pendingSnapshots.has(target);
 
-    if (!pending && ['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && (saved || snapshotDirectories.has(target) || entries.some(entry => entry.name === 'snapshot.json'))) addCount(category);
+    if (!pending && ['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && savedSnapshot(target, entries, metadata)) addCount(category);
 
     if (pending) addCount('pending-diff-snapshots');
 
@@ -274,6 +284,8 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   async function visitRetainedArtifacts() {
     for (const record of discovery.retainedArtifacts.values()) {
       await visitRecord(record.category, record);
+
+      if (record.category === 'archived-worktrees' && record.available && record.directory) addCount(record.category);
       await inspectResourcePins(record);
     }
   }

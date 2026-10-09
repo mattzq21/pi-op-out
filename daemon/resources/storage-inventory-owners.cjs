@@ -47,7 +47,7 @@ function recordSession(discovery, details, candidate) {
   if (id && details.readable) {
     if (!discovery.sessions.has(id)) discovery.sessions.set(id, []);
     discovery.sessions.get(id).push(owner);
-    discovery.headers.set(candidate.file, { id, cwd: details.cwd });
+    discovery.headers.set(candidate.file, { id, cwd: details.cwd, archivedDirectory: details.archivedDirectory });
   }
 
   recordRepositories(discovery, details, owner, source);

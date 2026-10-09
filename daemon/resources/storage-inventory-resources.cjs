@@ -45,6 +45,7 @@ async function resourceNamespace(profile, discovery) {
 }
 
 async function discoverArchiveResources(profile, discovery) {
+  legacyStoredCopies(profile, discovery);
   await resourceNamespace(profile, discovery);
   let resources;
 
@@ -62,6 +63,22 @@ async function discoverArchiveResources(profile, discovery) {
     record.state = 'shared-archive-records';
     record.pins = [...record.pins ?? [], ...loaded.record.pins];
     storedCopies(loaded, discovery, provenance);
+  }
+}
+
+function legacyStoredCopies(profile, discovery) {
+  for (const [file, header] of discovery.headers) {
+    const directory = header.archivedDirectory;
+
+    if (!directory) continue;
+
+    if (path.dirname(directory) !== path.join(profile, 'archived-tmp') || path.normalize(directory) !== directory) {
+      discovery.warnings.push(`${file}: saved archive directory is outside archive storage`);
+      continue;
+    }
+
+    const record = addRoot(discovery.retainedArtifacts, directory, 'Saved conversation archive location', 'referenced', [{ sessionId: header.id, sessionPath: file, kind: 'archive-directory-reference' }]);
+    record.category = 'archived-worktrees';
   }
 }
 

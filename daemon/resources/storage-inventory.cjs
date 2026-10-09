@@ -55,10 +55,11 @@ function checkpointRepositoryRecord(repositories, root) {
 
 async function inspectSession(file, includeArchiveDetails, read) {
   const { header, explicitName, firstPrompt, malformed, checkpointError, result } = await read(file, () => inspectTranscript(file));
+  const observed = { ...result, archivedDirectory: validSessionHeader(header) && hasArchivedDirectory(header.worktreeRestore) ? header.worktreeRestore.storedPath : undefined };
 
-  if (!includeArchiveDetails) return result;
+  if (!includeArchiveDetails) return observed;
 
-  return archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result);
+  return archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, observed);
 }
 
 async function inspectTranscript(file) {
