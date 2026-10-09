@@ -1,3 +1,4 @@
+import { initializeSessionResume } from "./lib/sessionResume";
 import { required } from "./lib/required";
 import { render } from "solid-js/web";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -20,7 +21,23 @@ const removeTextEditingShortcuts = installTextEditingShortcuts();
 
 const removeTooltips = installTooltips();
 
-const dispose = render(() => isMobile ? <MobileApp /> : <App />, required(document.getElementById("root")));
+const root = required(document.getElementById("root"));
+
+let stopped = false;
+
+let dispose = render(() => <p role="status">Restoring workspace…</p>, root);
+
+void initializeSessionResume().then(() => {
+  if (stopped) return;
+  dispose();
+  dispose = render(() => isMobile ? <MobileApp /> : <App />, root);
+}, error => {
+  console.error("Could not restore saved conversations", error);
+
+  if (stopped) return;
+  dispose();
+  dispose = render(() => <main><p role="alert">Could not restore the last conversation.</p><button onClick={() => window.location.reload()}>Retry</button></main>, root);
+});
 
 if (import.meta.hot) {
   const reloadDaemon = () => {
@@ -31,6 +48,6 @@ if (import.meta.hot) {
   import.meta.hot.on("piop:daemon-restarted", reloadDaemon);
   import.meta.hot.dispose(() => {
     import.meta.hot?.off("piop:daemon-restarted", reloadDaemon);
-    dispose(); removeTextEditingShortcuts(); removeTooltips();
+    stopped = true; dispose(); removeTextEditingShortcuts(); removeTooltips();
   });
 }
