@@ -1,9 +1,10 @@
-import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { Type as Schema, type Static } from "typebox";
-import { Check } from "typebox/value";
+import { Check, Parse } from "typebox/value";
+import { open as openDatabase } from "./session-database.cjs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const entrySchema = Schema.Object({
@@ -25,10 +26,39 @@ type TraceFile = { path: string; modified: number };
 
 type CleanMessage = { role: "user" | "assistant"; text: string };
 
-const traceRoots = () => [join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "sessions"), join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "archived")];
+const profile = () => join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
+
+const traceRoots = () => [join(profile(), "sessions"), join(profile(), "archived")];
+
+const registeredTraceSchema = Schema.Object({ session_id: Schema.String(), session_path: Schema.String() });
+
+function registeredTraces(needle: string) {
+  const db = openDatabase(profile());
+
+  try {
+    return db.prepare(`SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL
+      AND (instr(lower(session_path), ?)>0 OR instr(lower(session_id), ?)>0)
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`)
+      .all(needle, needle).map(row => Parse(registeredTraceSchema, row));
+  } finally { db.close(); }
+}
+
+function registeredIdentity(path: string) {
+  const db = openDatabase(profile());
+
+  try {
+    const row = db.prepare(`SELECT session_id, session_path FROM sessions WHERE session_path=?
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`).get(path);
+
+    if (!row) throw new Error("This conversation is not registered or was deleted");
+
+    return Parse(registeredTraceSchema, row).session_id;
+  } finally { db.close(); }
+}
 
 async function piopTracePath(path: string): Promise<string> {
   const canonical = await realpath(path);
+  registeredIdentity(canonical);
 
   for (const root of traceRoots()) {
     let canonicalRoot: string;
@@ -44,25 +74,22 @@ async function piopTracePath(path: string): Promise<string> {
   throw new Error("Only Piop traces in the current Piop profile’s sessions or archives can be read");
 }
 
-async function traceFiles(root: string): Promise<TraceFile[]> {
+async function traceFiles(needle: string): Promise<TraceFile[]> {
   const files: TraceFile[] = [];
 
-  const visit = async (directory: string) => {
-    let entries;
+  for (const row of registeredTraces(needle)) {
+    if (!traceRoots().some(root => {
+      const child = relative(root, row.session_path);
 
-    try { entries = await readdir(directory, { withFileTypes: true }); } catch { return; }
+      return child && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
+    })) continue;
 
-    await Promise.all(entries.map(async (entry) => {
-      const path = join(directory, entry.name);
+    try {
+      const metadata = await stat(row.session_path);
 
-      if (entry.isDirectory()) await visit(path);
-      else if (entry.isFile() && extname(entry.name).toLowerCase() === ".jsonl") {
-        try { files.push({ path, modified: (await stat(path)).mtimeMs }); } catch { }
-      }
-    }));
-  };
-
-  await visit(root);
+      if (metadata.isFile() && extname(row.session_path).toLowerCase() === ".jsonl") files.push({ path: row.session_path, modified: metadata.mtimeMs });
+    } catch { }
+  }
 
   return files;
 }
@@ -82,14 +109,20 @@ async function findTrace(query: string, cwd: string): Promise<{ selected?: strin
     return { selected: await piopTracePath(direct), matches: [] };
   }
 
-  const files = (await Promise.all(traceRoots().map(traceFiles))).flat().sort((left, right) => right.modified - left.modified);
+  const needle = requested.toLowerCase().replace(/\.jsonl$/, "");
+  const files = await matchingTraceFiles(requested, needle);
 
   if (requested.toLowerCase() === "latest") return { selected: files[0]?.path, matches: files.slice(0, 1) };
-  const needle = requested.toLowerCase().replace(/\.jsonl$/, "");
-  const matches = files.filter(({ path }) => path.toLowerCase().includes(needle));
+  const matches = files;
   const exact = matches.filter(({ path }) => basename(path).toLowerCase() === requested.toLowerCase() || basename(path, ".jsonl").toLowerCase() === needle);
 
   return { selected: exact.length === 1 ? exact[0].path : matches.length === 1 ? matches[0].path : undefined, matches };
+}
+
+async function matchingTraceFiles(requested: string, needle: string) {
+  const files = await traceFiles(requested.toLowerCase() === "latest" ? "" : needle);
+
+  return files.sort((left, right) => right.modified - left.modified);
 }
 
 function textContent(content: Static<typeof contentSchema> | undefined): string {
@@ -175,7 +208,13 @@ export default function traceReader(pi: ExtensionAPI) {
         return { content: [{ type: "text", text: `More than one trace matched. Call read_trace again with one exact path:\n${choices.join("\n")}` }], details: { matches: choices } };
       }
 
-      const messages = cleanTrace(await readFile(await piopTracePath(found.selected), "utf8"));
+      const selected = await piopTracePath(found.selected);
+      const sessionId = registeredIdentity(selected);
+      const body = await readFile(selected, "utf8");
+      const header = Schema.Object({ type: Schema.Literal("session"), id: Schema.Literal(sessionId) });
+
+      if (!Check(header, JSON.parse(body.split(/\r?\n/, 1)[0]))) throw new Error("The conversation file no longer matches its registered session");
+      const messages = cleanTrace(body);
 
       if (!messages.length) throw new Error("The trace contains no user prompts or completed assistant messages on its active branch");
       const text = transcript(messages); const offset = params.offset ?? 0; const end = Math.min(text.length, offset + (params.limit ?? 16000));

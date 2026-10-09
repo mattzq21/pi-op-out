@@ -143,6 +143,7 @@ fn remove_obsolete_side_chat_extensions(dir: &Path) -> Result<(), String> {
 pub(super) fn prepare_trace_reader() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
+    atomic_write_private(&dir.join("session-database.cjs"), include_str!("../../resources/session-database.cjs").as_bytes())?;
     let path = dir.join("piop-trace-reader.ts");
     atomic_write_private(&path, include_str!("../../resources/trace-reader.ts").as_bytes())?;
     Ok(path)
