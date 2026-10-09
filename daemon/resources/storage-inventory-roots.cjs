@@ -159,7 +159,7 @@ async function selectedPiPath(profile, warnings) {
   if (hint) return hint;
 
   try {
-    const settings = await readJson(path.join(profile, 'settings.json'));
+    const settings = require('./session-broker/app-settings.cjs').read(profile) ?? {};
 
     if (Check(Type.String({ minLength: 1 }), settings.piPath)) return settings.piPath;
   } catch (error) {

@@ -83,11 +83,7 @@ fn migrate_builtin_tools(settings: &mut AppSettings) {
 }
 
 pub(super) fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
-    let body = match fs::read(path) {
-        Ok(body) => Some(body),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.to_string()),
-    };
+    let body = crate::settings_storage::records::read(path)?;
     let mut settings = match &body { Some(body) => serde_json::from_slice(body).map_err(|error| error.to_string())?, None => default_settings() };
     settings.settings_revision = Some(settings_revision(body.as_deref()));
     migrate_question_tool(&mut settings);

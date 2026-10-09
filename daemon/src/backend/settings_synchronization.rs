@@ -1,10 +1,10 @@
 use super::{ensure_private_dir, set_private_file_permissions, settings_path};
-use crate::private_fs::{publish_private, Publication as SettingsPublication};
+use super::records::{publish as publish_settings, Publication as SettingsPublication};
 use crate::{AppSettings, PiRuntime, daemon, daemon_endpoint, platform::AppHandle, settings};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, fs::{self, File, OpenOptions}, path::{Path, PathBuf}, sync::{TryLockError, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
+use std::{collections::BTreeMap, fs::{File, OpenOptions}, path::{Path, PathBuf}, sync::{TryLockError, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
 
 const MAX_REVISION: u64 = 9_007_199_254_740_991;
 static STARTED: AtomicBool = AtomicBool::new(false);
@@ -45,11 +45,7 @@ pub(crate) struct Save {
 fn digest(body: &[u8]) -> String { format!("{:x}", Sha256::digest(body)) }
 
 fn current_digest(path: &Path) -> Result<String, String> {
-    match fs::read(path) {
-        Ok(body) => Ok(digest(&body)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(digest(&[])),
-        Err(error) => Err(error.to_string()),
-    }
+    Ok(digest(&super::records::read(path)?.unwrap_or_default()))
 }
 
 fn journal_path(path: &Path) -> PathBuf { path.with_extension("synchronization.json") }
@@ -135,7 +131,7 @@ impl Save {
     }
 
     pub(crate) fn publish(&mut self, body: &[u8], warnings: &mut Vec<String>) -> Result<SettingsPublication, String> {
-        let result = publish_private(&self.path, body)?;
+        let result = publish_settings(&self.path, body)?;
         if let Some(error) = &result.error {
             warnings.push(format!("Settings were published, but disk durability is unconfirmed: {error}. Retry saving to confirm them."));
         }

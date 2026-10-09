@@ -44,7 +44,8 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 50] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 51] = [
+    ("app-settings.cjs", include_str!("../../resources/session-broker/app-settings.cjs")),
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
     ("conversation-location.ts", include_str!("../../resources/session-broker/conversation-location.ts")),

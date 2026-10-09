@@ -13,6 +13,7 @@ import { Check, Parse } from "typebox/value";
 import { currentHost } from "./client.ts";
 import { locateConversation } from "./conversation-location.ts";
 import { acknowledge, pendingReviews, release, type SessionPublication } from "./session-publication.cjs";
+import { read as readAppSettings } from "./app-settings.cjs";
 
 const reviewSchema = Schema.Object({ sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String(), hostId: Schema.Optional(Schema.String()), publicationId: Schema.Optional(Schema.String()) });
 
@@ -141,10 +142,7 @@ async function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: st
 }
 
 async function reviewSettings() {
-  let settings: Static<typeof settingsSchema> = {};
-
-  try { settings = Parse(settingsSchema, JSON.parse(await readFile(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "settings.json"), "utf8"))); }
-  catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error; }
+  const settings = Parse(settingsSchema, readAppSettings(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop")) ?? {});
 
   const agent = settings.reviewAgent?.trim() || "general";
   const prompt = settings.reviewPrompt ?? await readFile(new URL("./review-prompt.txt", import.meta.url), "utf8");
