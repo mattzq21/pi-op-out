@@ -2,10 +2,6 @@ import { execFile } from "node:child_process";
 import { lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
-
-const fileErrorSchema = Type.Object({ code: Type.String() });
 
 type Channel = { port: number; token: string; usageProtocol: number; startedAt?: number; offset?: number };
 
@@ -71,19 +67,11 @@ async function prepareChannelDirectory(path: string, directory: string) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
 }
 
-async function channelDirectory(path: string, action: "claim" | "close") {
-  if (!path.endsWith(".jsonl")) throw new Error("Subagent usage requires a saved session");
-
+async function channelDirectory(path: string) {
   const directory = path.replace(/\.jsonl$/, ".snapshots");
 
-  if (action === "claim") await prepareChannelDirectory(path, directory);
-
-  const info = await lstat(directory).catch(error => {
-    if (action === "close" && Check(fileErrorSchema, error) && error.code === "ENOENT") return;
-    throw error;
-  });
-
-  if (!info) return;
+  await prepareChannelDirectory(path, directory);
+  const info = await lstat(directory);
 
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Subagent usage storage must be a directory");
 
@@ -91,12 +79,18 @@ async function channelDirectory(path: string, action: "claim" | "close") {
 }
 
 async function updateChannel(path: string, sessionId: string, action: "claim" | "close", channel: Channel & { pid: number }) {
-  const directory = await channelDirectory(path, action);
+  if (!path.endsWith(".jsonl")) throw new Error("Subagent usage requires a saved session");
+  let command = process.execPath;
+  let args = ["-e", channelUpdateScript, storageModule, path, sessionId, action];
 
-  if (!directory) return;
+  if (action === "claim") {
+    const directory = await channelDirectory(path);
+    args = ["--exclusive", "--wait", "10", "--no-fork", join(directory, "subagent-usage.lock"), command, ...args];
+    command = "flock";
+  }
 
   return new Promise<void>((resolve, reject) => {
-    const child = execFile("flock", ["--exclusive", "--wait", "10", "--no-fork", join(directory, "subagent-usage.lock"), process.execPath, "-e", channelUpdateScript, storageModule, path, sessionId, action], { timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 16_384, encoding: "utf8" }, (error, _output, stderr) => {
+    const child = execFile(command, args, { timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 16_384, encoding: "utf8" }, (error, _output, stderr) => {
       if (error) reject(new Error(`Could not ${action} subagent usage channel: ${stderr.trim() || error.message}`));
       else resolve();
     });

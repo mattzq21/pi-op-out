@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const database = require('../session-database.cjs');
 
-function withDatabase(file, sessionId, operation) {
+function withDatabase(file, sessionId, operation, registerMissing = true) {
   const db = database.open(database.storageRoot(file));
 
   try {
@@ -10,7 +10,7 @@ function withDatabase(file, sessionId, operation) {
       record_json TEXT); BEGIN IMMEDIATE;`);
     const deleted = Boolean(db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(sessionId));
 
-    if (!deleted && !db.prepare('SELECT 1 FROM sessions WHERE session_id=?').get(sessionId)) database.register(db, sessionId, file);
+    if (registerMissing && !deleted && !db.prepare('SELECT 1 FROM sessions WHERE session_id=?').get(sessionId)) database.register(db, sessionId, file);
     const result = operation(db, deleted);
     db.exec('COMMIT');
 
@@ -56,7 +56,7 @@ function close(file, sessionId, token) {
     if (deleted) return;
     db.prepare("UPDATE session_usage_channels SET record_json=NULL WHERE session_id=? AND CASE WHEN json_valid(record_json) THEN json_extract(record_json, '$.token') END=?")
       .run(sessionId, token);
-  });
+  }, false);
 }
 
 module.exports = { read, write, close };
