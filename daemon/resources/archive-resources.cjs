@@ -473,7 +473,7 @@ function planDelete(root, targets, operationId) {
     record.owners = ownership.discover(root, record.binding, record.id, record.owners);
     const selected = selectedOwners(record, targets);
 
-    if (!selected.size) continue;
+    if (!selected.size && JSON.stringify(record.owners) === JSON.stringify(loaded.record.owners)) continue;
     record.owners = record.owners.filter(owner => !selected.has(owner.sessionId));
     record.revision += 1;
 

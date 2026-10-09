@@ -130,19 +130,11 @@ function captureEntry(plan, name, files, submodules, excludedFiles, lock) {
   if (metadata.isDirectory()) {
     files.set(key, { name: key, mode: '040000', object: null });
 
-    captureChildren(plan, name, file, files, submodules, excludedFiles, lock);
-
     return;
   }
 
   const mode = metadata.isSymbolicLink() ? '120000' : metadata.mode & 0o111 ? '100755' : '100644';
   files.set(key, { name: key, mode, object: blob(plan, file, metadata, lock) });
-}
-
-function captureChildren(plan, name, file, files, submodules, excludedFiles, lock) {
-  for (const child of fs.readdirSync(file, { encoding: 'buffer' })) {
-    if (!child.equals(Buffer.from('.git'))) captureEntry(plan, Buffer.concat([name, Buffer.from('/'), child]), files, submodules, excludedFiles, lock);
-  }
 }
 
 function tree(plan, files, lock) {

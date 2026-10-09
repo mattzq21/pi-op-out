@@ -128,9 +128,19 @@ function pendingTranscripts(root, binding, resourceId, found) {
 
 }
 
-function relocatedOwner(owner, binding, resourceId) {
-  if (owner.area !== 'active' || !io.exists(owner.sessionPath)) return false;
-  const { header } = headerAt(owner.sessionPath, owner.sessionId);
+function relocatedOwner(root, owner, binding, resourceId) {
+  const database = require('./session-database.cjs').open(root);
+  let current;
+
+  try {
+    if (database.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(owner.sessionId)) return true;
+    current = database.prepare('SELECT session_path FROM sessions WHERE session_id=lower(?)').get(owner.sessionId)?.session_path;
+  } finally { database.close(); }
+
+  const file = current ?? owner.sessionPath;
+
+  if (!file || !io.exists(file)) return false;
+  const { header } = headerAt(file, owner.sessionId);
 
   return header.archiveResourceId !== resourceId && relativeCwd(binding, header.cwd) === null;
 }
@@ -142,7 +152,7 @@ function discover(root, binding, resourceId, recorded) {
   pendingTranscripts(root, binding, resourceId, found);
 
   for (const owner of recorded) {
-    if (!found.has(owner.sessionId) && !relocatedOwner(owner, binding, resourceId)) found.set(owner.sessionId, { ...owner, area: 'unresolved', identity: null });
+    if (!found.has(owner.sessionId) && !relocatedOwner(root, owner, binding, resourceId)) found.set(owner.sessionId, { ...owner, area: 'unresolved', identity: null });
   }
 
   return [...found.values()].sort((left, right) => left.sessionId.localeCompare(right.sessionId));

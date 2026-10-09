@@ -91,16 +91,26 @@ function prepare(root, plan, fd) {
   save(root, plan);
 }
 
+function prepareBranch(root, plan, fd) {
+  if (plan.base && !plan.existingBranch && !plan.branchPublished) {
+    references.update(plan, 'branch', plan.base, fd);
+    plan.branchPublished = true;
+    save(root, plan);
+  }
+
+}
+
 function createGitWorktree(root, plan, fd) {
+  prepareBranch(root, plan, fd);
   repairEmptyWorktree(root, plan);
 
   if (!io.exists(plan.target)) {
     const existing = git(plan.source, ['for-each-ref', '--format=%(objectname)', `refs/heads/${plan.branch}`]).trim();
 
-    if (existing && existing !== plan.base) throw new Error('Worktree branch changed; retained');
-    const args = ['worktree', 'add', '--lock', '--reason', `piop-creation:${plan.id}`, ...(plan.base ? ['--no-checkout', ...(existing ? [] : ['-b', plan.branch])] : ['--orphan', '-b', plan.branch]), '--', plan.target];
+    if ((plan.base && existing !== plan.base) || (!plan.base && existing)) throw new Error('Worktree branch changed; retained');
+    const args = ['worktree', 'add', '--lock', '--reason', `piop-creation:${plan.id}`, ...(plan.base ? ['--no-checkout'] : ['--orphan', '-b', plan.branch]), '--', plan.target];
 
-    if (plan.base) args.push(existing ? plan.branch : plan.base);
+    if (plan.base) args.push(plan.branch);
     git(plan.source, args, { stdio: ['ignore', 'pipe', 'pipe', fd] });
     repairEmptyWorktree(root, plan);
   }
@@ -335,6 +345,7 @@ function finish(root, plan, fd) {
 
   if (plan.base) references.update(plan, 'creations', null, fd);
   references.update(plan, 'content', null, fd);
+  references.releaseBranch(plan);
   const db = open(root);
 
   try { db.prepare('DELETE FROM worktree_creations WHERE target=?').run(plan.target); }
@@ -369,6 +380,13 @@ function create(root, source, branch, revision, copy, existingBranch = false) {
   return locked(root, fd => {
     allocation.recover(root);
     const previous = pending(root).find(plan => plan.source === source && plan.branch === branch);
+
+    if (previous) {
+      const base = revision === '--orphan' ? null : git(source, ['rev-parse', '--verify', `${revision}^{commit}`]).trim();
+
+      if (previous.base !== base || previous.copy !== copy || previous.existingBranch !== existingBranch) throw new Error('This name has unfinished creation from different input; choose another name or resume the original request');
+    }
+
     const plan = previous ?? newPlan(root, source, branch, revision, copy, existingBranch);
     validate(root, plan);
     finish(root, plan, fd);

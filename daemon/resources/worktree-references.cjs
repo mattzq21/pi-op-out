@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const database = require('./session-database.cjs');
 const io = require('./session-transactions.cjs');
 
@@ -94,6 +95,11 @@ function finish(plan, record) {
   const lock = destination + '.lock';
   acquire(lock, record.loose);
 
+  if (record.branch) {
+    try { verifyBranch(plan, record, destination); }
+    catch (error) { release(lock, record.loose); throw error; }
+  }
+
   if (record.object) {
     if (!owned(destination, record.loose)) write(record.loose, record.object + '\n');
     fs.renameSync(lock, destination);
@@ -109,18 +115,32 @@ function finish(plan, record) {
   release(lock, record.loose);
 }
 
+function verifyBranch(plan, record, destination) {
+  let current;
+
+  try { current = execFileSync('git', ['-C', plan.common, 'rev-parse', '--verify', '--quiet', record.ref], { encoding: 'utf8' }).trim(); }
+  catch (error) { if (error.status !== 1) throw error; }
+
+  if (!current) return;
+  const written = fs.readFileSync(record.loose.file, 'utf8') === record.object + '\n';
+
+  if (current !== record.object || (!owned(destination, record.loose) && !written)) throw new Error('Worktree branch already exists or changed; retained');
+}
+
 function prepare(plan, kind, object) {
-  const ref = `refs/piop-worktree-${kind}/${plan.id}`;
+  const ref = kind === 'branch' ? `refs/heads/${plan.branch}` : `refs/piop-worktree-${kind}/${plan.id}`;
   io.mkdir(path.dirname(path.join(plan.common, ref)));
   const directory = path.join(plan.common, 'piop-reference-updates');
   io.mkdir(directory);
   const prefix = path.join(directory, `${plan.id}-${kind}`);
 
-  return { ref, object, loose: seed(prefix + '.ref'), packed: object ? null : seed(prefix + '.packed') };
+  return { ref, object, branch: kind === 'branch', loose: seed(prefix + '.ref'), packed: object ? null : seed(prefix + '.packed') };
 }
 
 function complete(db, plan, kind, record) {
   finish(plan, record);
+
+  if (record.branch) return;
   db.prepare('DELETE FROM worktree_reference_updates WHERE owner=? AND kind=?').run(plan.id, kind);
   release(record.loose.file, record.loose);
 
@@ -128,17 +148,37 @@ function complete(db, plan, kind, record) {
 }
 
 function update(plan, kind, object, descriptor) {
-  if (!['creations', 'content'].includes(kind) || !/^[a-f0-9-]{36}$/.test(plan.id) || !Number.isInteger(descriptor)) throw new Error('Invalid worktree reference owner');
+  if (!['creations', 'content', 'branch'].includes(kind) || !/^[a-f0-9-]{36}$/.test(plan.id) || !Number.isInteger(descriptor)) throw new Error('Invalid worktree reference owner');
   const db = open(plan);
 
   try {
     const previous = db.prepare('SELECT record_json FROM worktree_reference_updates WHERE owner=? AND kind=?').get(plan.id, kind);
 
-    if (previous) complete(db, plan, kind, JSON.parse(previous.record_json));
+    if (previous) {
+      const record = JSON.parse(previous.record_json);
+      complete(db, plan, kind, record);
+
+      if (record.object === object) return;
+    }
+
     const record = prepare(plan, kind, object);
     db.prepare('INSERT INTO worktree_reference_updates VALUES (?, ?, ?)').run(plan.id, kind, JSON.stringify(record));
     complete(db, plan, kind, record);
   } finally { db.close(); }
 }
 
-module.exports = { update };
+function releaseBranch(plan) {
+  const db = open(plan);
+
+  try {
+    const row = db.prepare("SELECT record_json FROM worktree_reference_updates WHERE owner=? AND kind='branch'").get(plan.id);
+
+    if (!row) return;
+    const record = JSON.parse(row.record_json);
+    release(path.join(plan.common, record.ref + '.lock'), record.loose);
+    db.prepare("DELETE FROM worktree_reference_updates WHERE owner=? AND kind='branch'").run(plan.id);
+    release(record.loose.file, record.loose);
+  } finally { db.close(); }
+}
+
+module.exports = { update, releaseBranch };
