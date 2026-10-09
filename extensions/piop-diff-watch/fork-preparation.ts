@@ -32,7 +32,6 @@ export async function registerPreparedCheckpoints(sessionId: string, cwd: string
   const repositories = await commonRepositories(roots);
   const destinationDirectory = process.env.PIOP_FORK_DESTINATION_DIRECTORY;
   const destination = sessionPath && destinationDirectory ? join(destinationDirectory, basename(sessionPath)) : undefined;
-  await mkdir(preparation, { recursive: true, mode: 0o700 });
   const database = open(dirname(dirname(preparation)));
 
   try {
@@ -43,4 +42,6 @@ export async function registerPreparedCheckpoints(sessionId: string, cwd: string
     database.exec("COMMIT");
   } catch (error) { database.exec("ROLLBACK"); throw error; }
   finally { database.close(); }
+
+  await mkdir(preparation, { recursive: true, mode: 0o700 });
 }
