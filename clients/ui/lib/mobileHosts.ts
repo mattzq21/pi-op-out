@@ -51,7 +51,7 @@ async function storedHosts(change?: (hosts: SavedMobileHost[]) => SavedMobileHos
 
 function hostTransaction(database: IDBDatabase, legacy: string | null, change?: (hosts: SavedMobileHost[]) => SavedMobileHost[], forgotten?: string): Promise<{ hosts: SavedMobileHost[]; connection?: MobileConnection }> {
   return new Promise((resolve, reject) => {
-    const transaction = database.transaction(["hosts", "state"], "readwrite");
+    const transaction = database.transaction(["hosts", "state"], "readwrite", { durability: "strict" });
     const hosts = transaction.objectStore("hosts");
     const state = transaction.objectStore("state");
     let result: SavedMobileHost[] = [];
@@ -151,7 +151,7 @@ function rememberConnection(saved: MobileConnection) {
 
 function connectionTransaction(database: IDBDatabase, change?: (saved: MobileConnection) => MobileConnection): Promise<MobileConnection> {
   return new Promise((resolve, reject) => {
-    const transaction = database.transaction("state", "readwrite");
+    const transaction = database.transaction("state", "readwrite", { durability: "strict" });
     const state = transaction.objectStore("state");
     const request = state.get("connection");
     let result: MobileConnection;
