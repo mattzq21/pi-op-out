@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const database = require('../session-database.cjs');
 
-function withDatabase(file, sessionId, operation, registerMissing = true) {
+function withDatabase(file, sessionId, operation) {
   const db = database.open(database.storageRoot(file));
 
   try {
@@ -10,8 +10,8 @@ function withDatabase(file, sessionId, operation, registerMissing = true) {
       record_json TEXT); BEGIN IMMEDIATE;`);
     const deleted = Boolean(db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(sessionId));
 
-    if (registerMissing && !deleted && !db.prepare('SELECT 1 FROM sessions WHERE session_id=?').get(sessionId)) database.register(db, sessionId, file);
-    const result = operation(db, deleted);
+    const session = db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId);
+    const result = operation(db, deleted, session?.session_path);
     db.exec('COMMIT');
 
     return result;
@@ -26,12 +26,12 @@ function legacy(file) {
 }
 
 function read(file, sessionId) {
-  return withDatabase(file, sessionId, (db, deleted) => {
-    if (deleted) return;
+  return withDatabase(file, sessionId, (db, deleted, registeredPath) => {
+    if (deleted || !registeredPath) return;
     let row = db.prepare('SELECT record_json FROM session_usage_channels WHERE session_id=?').get(sessionId);
 
     if (!row) {
-      const body = legacy(file);
+      const body = legacy(registeredPath);
       db.prepare('INSERT INTO session_usage_channels VALUES (?, ?)').run(sessionId, body);
       row = { record_json: body };
     }
@@ -44,8 +44,10 @@ function read(file, sessionId) {
 }
 
 function write(file, sessionId, record) {
-  withDatabase(file, sessionId, (db, deleted) => {
+  withDatabase(file, sessionId, (db, deleted, registeredPath) => {
     if (deleted) throw new Error('Cannot open a usage connection for a deleted session');
+
+    if (!registeredPath) throw new Error('Usage connections require a registered session');
     db.prepare('INSERT INTO session_usage_channels VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET record_json=excluded.record_json')
       .run(sessionId, JSON.stringify(record));
   });
@@ -56,7 +58,7 @@ function close(file, sessionId, token) {
     if (deleted) return;
     db.prepare("UPDATE session_usage_channels SET record_json=NULL WHERE session_id=? AND CASE WHEN json_valid(record_json) THEN json_extract(record_json, '$.token') END=?")
       .run(sessionId, token);
-  }, false);
+  });
 }
 
 module.exports = { read, write, close };
