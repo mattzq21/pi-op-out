@@ -70,7 +70,11 @@ function read(root, directory) {
   const record = preparations.read(root, directory);
 
   if (!record || record.version !== 1 || record.input || Object.hasOwn(record, 'files')) return record;
-  const expected = identity(directory);
+  let expected;
+
+  try { expected = identity(directory); }
+  catch (error) { if (error.code === 'ENOENT') return record; throw error; }
+
   const db = database.open(root);
 
   try {

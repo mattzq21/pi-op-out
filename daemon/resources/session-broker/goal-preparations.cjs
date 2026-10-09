@@ -37,13 +37,14 @@ function read(root, directory) {
   let expected;
 
   try { expected = identity(directory); }
-  catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
+  catch (error) { if (error.code === 'ENOENT') return missingDirectoryRecord(root, directory); throw error; }
 
   return withDatabase(root, db => {
     const query = db.prepare('SELECT record_json FROM goal_preparations WHERE directory=? AND identity=?');
     let row = query.get(directory, expected);
 
     if (!row) {
+      if (db.prepare('SELECT 1 FROM goal_preparations WHERE directory=? AND identity<>? AND record_json IS NOT NULL').get(directory, expected)) throw new Error('Saved goal preparation directory was replaced');
       const body = legacy(directory);
 
       if (identity(directory) !== expected) throw new Error('Goal preparation changed during import');
@@ -52,6 +53,16 @@ function read(root, directory) {
     }
 
     return row.record_json === null ? undefined : JSON.parse(row.record_json);
+  });
+}
+
+function missingDirectoryRecord(root, directory) {
+  return withDatabase(root, db => {
+    const rows = db.prepare('SELECT record_json FROM goal_preparations WHERE directory=? AND record_json IS NOT NULL').all(directory);
+
+    if (rows.length > 1) throw new Error('More than one saved goal preparation refers to the missing directory');
+
+    return rows.length ? JSON.parse(rows[0].record_json) : undefined;
   });
 }
 
