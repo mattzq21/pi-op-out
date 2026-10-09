@@ -102,6 +102,7 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
       try { addCount(category, chatRecordCount(target, entries)); }
       catch (error) { discovery.warnings.push(target + ': ChatGPT chat count unavailable: ' + error.message); }
     }
+
     countSnapshots(target, category, entries);
     countWorkdirs(target, category, entries);
 

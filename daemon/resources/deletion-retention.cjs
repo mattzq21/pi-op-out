@@ -111,6 +111,24 @@ function externalTranscripts(root, inventory) {
   }
 }
 
+function forkReferences(root, inventory) {
+  const groups = [
+    ['fork-transactions', require('./fork-transaction-records.cjs').list(root)],
+    ['fork-preparations', require('./fork-preparation-records.cjs').list(root)],
+  ];
+
+  for (const [area, directories] of groups) for (const directory of directories) {
+    if (path.dirname(directory) !== path.join(root, area)) throw new Error('Invalid registered fork directory');
+    const info = metadata(directory);
+
+    if (!info) continue;
+
+    if (!info.isDirectory() || fs.realpathSync(directory) !== directory) { inventory.uncertain = true; continue; }
+
+    sessionFiles(directory, inventory);
+  }
+}
+
 function worktreeContainers(root) {
   const storage = path.join(root, 'worktrees');
 
@@ -271,7 +289,8 @@ function recoveryPending(root) {
 function collectRetention(root, sources, savedFiles, deferred = { directories: [], sessionIds: [] }, unpublishedGoals = false) {
   const inventory = { goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: recoveryPending(root) };
 
-  for (const area of ['sessions', 'archived', 'fork-transactions', 'fork-preparations']) sessionFiles(path.join(root, area), inventory);
+  for (const area of ['sessions', 'archived']) sessionFiles(path.join(root, area), inventory);
+  forkReferences(root, inventory);
   externalTranscripts(root, inventory);
   const candidates = new Set([...inventory.goals, ...worktreeContainers(root)]);
   const owned = new Set(deferred.directories.filter(file => candidates.has(file)));
