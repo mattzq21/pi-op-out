@@ -66,6 +66,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS snapshot_comparison_retries (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS snapshot_pending_diffs (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ephemeral_cleanup_records (token TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS goal_asset_reclamations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ephemeral_cleanup_owners (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS queued_inputs (session_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
@@ -200,6 +201,7 @@ function importSessions(db, root) {
     importPendingDiffs(db);
     importJsonRecords(db, root, 'ephemeral-cleanup/owners', 'ephemeral_cleanup_owners', 'ephemeral-cleanup-owners-v1');
     importJsonRecords(db, root, 'queued-input', 'queued_inputs', 'queued-inputs-v1');
+    importJsonRecords(db, root, 'goal-asset-reclamations', 'goal_asset_reclamations', 'goal-asset-reclamations-v1');
     importJsonRecords(db, root, 'external-transcripts', 'external_transcripts', 'external-transcripts-v1');
     importJsonRecords(db, root, 'conversation-queues', 'legacy_queued_inputs', 'legacy-queued-inputs-v1');
     db.exec('COMMIT');

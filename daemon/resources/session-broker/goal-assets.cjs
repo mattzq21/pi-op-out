@@ -213,7 +213,7 @@ function claimDirectory(root, directory, sessionId, sessionPath, expectedIdentit
 function claimableDirectory(root, directory) {
   if (!validPath(root, directory)) throw new Error(`Goal assets are outside their shared storage: ${directory}`);
 
-  if (exists(reclamationPath(root, directory))) throw new Error(`Goal asset deletion is pending; cannot publish a new owner: ${directory}`);
+  if (reclamationPending(root, directory)) throw new Error(`Goal asset deletion is pending; cannot publish a new owner: ${directory}`);
 
   return identity(directory);
 }
@@ -355,37 +355,38 @@ function discardPreparation(root, directory, sessionId) {
   });
 }
 
-function reclamationPath(root, directory) {
-  const key = createHash('sha256').update(directory).digest('hex');
+function reclamationKey(directory) { return createHash('sha256').update(directory).digest('hex'); }
 
-  return path.join(root, 'goal-asset-reclamations', `${key}.json`);
+function reclamationPending(root, directory) {
+  const database = require('../session-database.cjs').open(root);
+
+  try { return Boolean(database.prepare('SELECT 1 FROM goal_asset_reclamations WHERE record_id=?').get(reclamationKey(directory))); }
+  finally { database.close(); }
 }
 
-function beginReclamation(root, directory, expected) {
-  const file = reclamationPath(root, directory);
+function updateReclamation(root, directory, expected, removing) {
+  const database = require('../session-database.cjs').open(root);
+  const key = reclamationKey(directory);
+  database.exec('BEGIN IMMEDIATE');
 
-  if (exists(file)) {
-    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+  try {
+    const row = database.prepare('SELECT record_json FROM goal_asset_reclamations WHERE record_id=?').get(key);
 
-    if (record.path !== directory || record.identity !== expected) throw new Error(`Ambiguous goal reclamation retained: ${file}`);
+    if (row) {
+      const record = JSON.parse(row.record_json);
 
-    return;
-  }
+      if (record.path !== directory || record.identity !== expected) throw new Error(`Ambiguous goal reclamation retained: ${directory}`);
+    }
 
-  if (!exists(path.dirname(file))) { fs.mkdirSync(path.dirname(file), { mode: 0o700 }); sync(root); }
-
-  write(file, { path: directory, identity: expected });
+    if (removing) database.prepare('DELETE FROM goal_asset_reclamations WHERE record_id=?').run(key);
+    else if (!row) database.prepare('INSERT INTO goal_asset_reclamations VALUES (?, ?)').run(key, JSON.stringify({ path: directory, identity: expected }));
+    database.exec('COMMIT');
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+  finally { database.close(); }
 }
 
-function endReclamation(root, directory, expected) {
-  const file = reclamationPath(root, directory);
+function beginReclamation(root, directory, expected) { updateReclamation(root, directory, expected, false); }
 
-  if (!exists(file)) return;
-  const record = JSON.parse(fs.readFileSync(file, 'utf8'));
-
-  if (record.path !== directory || record.identity !== expected) throw new Error(`Ambiguous goal reclamation retained: ${file}`);
-  fs.unlinkSync(file);
-  sync(path.dirname(file));
-}
+function endReclamation(root, directory, expected) { updateReclamation(root, directory, expected, true); }
 
 module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, write, references, claim, retainHistory, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };
