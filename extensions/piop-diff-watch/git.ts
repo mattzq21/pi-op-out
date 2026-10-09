@@ -1,4 +1,7 @@
-import { markCleanup, recordWorktree } from "../session-database.cjs";
+import { markCleanup } from "../session-database.cjs";
+
+export { create as createWorktreeAllocation, cleanup as cleanupCheckpointContainer } from "../worktree-allocation.cjs";
+
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { mkdir, open } from "node:fs/promises";
@@ -9,17 +12,6 @@ const MAX_GIT_OUTPUT = 4 * 1024 * 1024;
 
 export async function markWorktreeAllocation(storage: string) {
   markCleanup(dirname(storage), "worktree");
-}
-
-export async function recordWorktreeAllocation(container: string, target: string, branch: string, parentBranch: string | null) {
-  recordWorktree(container, target, branch, parentBranch);
-
-  for (const directory of [container, dirname(container), dirname(dirname(container))]) {
-    const handle = await open(directory, "r");
-
-    try { await handle.sync(); }
-    finally { await handle.close(); }
-  }
 }
 
 export async function acquireWorktreePublicationLock() {

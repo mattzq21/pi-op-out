@@ -1,4 +1,4 @@
-import { GitError, runGit, acquireWorktreePublicationLock, markWorktreeAllocation, recordWorktreeAllocation } from "./git.ts";
+import { GitError, runGit, acquireWorktreePublicationLock, markWorktreeAllocation, createWorktreeAllocation, cleanupCheckpointContainer } from "./git.ts";
 import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from "./pin-checkpoints.ts";
 import { currentSnapshot } from "./snapshot-baseline.ts";
 import { registerPreparedCheckpoints } from "./fork-preparation.ts";
@@ -10,10 +10,10 @@ import { retainHistory, releaseHistory, rootForDirectory } from "../session-brok
 import { drainForkCaptures } from "../session-broker/turn-capture.ts";
 import { Check } from "typebox/value";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, realpath, rm, rmdir } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const REF_ROOT = "refs/pi-session-snapshots";
@@ -277,11 +277,7 @@ async function checkpointWorktreeTarget(root: string, branch: string) {
 
   if (worktrees.includes(target)) throw new Error(`Git worktree is already registered: ${target}`);
 
-  try { await mkdir(container, { mode: 0o700 }); }
-  catch (error) { if (Check(fileErrorSchema, error) && error.code === "EEXIST") throw new Error(`Worktree directory already exists: ${container}`); throw error; }
-
-  try { await recordWorktreeAllocation(container, target, branch, parentBranch); }
-  catch (error) { await rmdir(container).catch(() => undefined); throw error; }
+  createWorktreeAllocation(container, target, branch, parentBranch);
 
   return target;
 }
@@ -374,15 +370,6 @@ async function removeCheckpointWorktree(root: string, target: string, branch: st
   if (!created) return;
   await runGit(root, ["worktree", "remove", "--force", target])
     .then(() => runGit(root, ["branch", "-D", branch])).catch(() => undefined);
-}
-
-async function cleanupCheckpointContainer(target: string) {
-  try { await lstat(target);
-
-  return; } catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") return; }
-
-  await rm(join(dirname(target), "parent.json"), { force: true });
-  await rmdir(dirname(target)).catch(() => undefined);
 }
 
 async function checkpointRefValid(root: string, owner: string, checkpoint: PromptCheckpoint, afterResponse: boolean) {

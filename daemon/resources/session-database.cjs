@@ -515,11 +515,11 @@ function importRecoveryDirectories(db, root) {
 
 function recoveryRecords(root) { return rows(root, 'SELECT record_id, record_json FROM recovery_directories ORDER BY record_id'); }
 
-function saveRecoveryRecord(root, record) {
+function saveRecoveryRecord(root, record, reserve = false) {
   const db = open(root);
 
   try {
-    db.prepare('INSERT INTO recovery_directories VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json')
+    db.prepare('INSERT INTO recovery_directories VALUES (?, ?)' + (reserve ? '' : ' ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json'))
       .run(record.id, JSON.stringify(record));
   } finally { db.close(); }
 }

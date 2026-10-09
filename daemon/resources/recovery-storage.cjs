@@ -13,8 +13,8 @@ function syncDirectory(directory) {
   finally { fs.closeSync(descriptor); }
 }
 
-function writeRecord(container, record) {
-  require('./session-database.cjs').saveRecoveryRecord(path.dirname(path.dirname(container)), record);
+function writeRecord(container, record, reserve = false) {
+  require('./session-database.cjs').saveRecoveryRecord(path.dirname(path.dirname(container)), record, reserve);
 }
 
 function readSession(profile, sessionPath) {
@@ -200,7 +200,7 @@ function createRecoveryStorage(profileRoot) {
 
     if (record.directory !== path.join(container, 'workdir')) throw new Error('Invalid recovery ownership directory');
 
-    if (!realDirectory(root) || !realDirectory(container)) throw new Error('Recovery ownership directory is missing');
+    if (!realDirectory(root) || !realDirectory(container) && record.state !== 'allocated') throw new Error('Recovery ownership directory is missing');
 
     return container;
   }
@@ -241,8 +241,6 @@ function createRecoveryStorage(profileRoot) {
 
     const container = path.join(root, id);
 
-    fs.mkdirSync(container, { mode: 0o700 });
-
     const record = {
       version: 1, managedBy: 'piop', kind, id, state: 'allocated', mode,
       directory: path.join(container, 'workdir'), originalCwd: header.cwd,
@@ -250,7 +248,8 @@ function createRecoveryStorage(profileRoot) {
       originalContentsRestored: false,
     };
 
-    writeRecord(container, record);
+    writeRecord(container, record, true);
+    fs.mkdirSync(container, { mode: 0o700 });
 
     syncDirectory(root);
 

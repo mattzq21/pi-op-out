@@ -22,7 +22,7 @@ export function storageSchemaImports() {
         .replace("const fs = require('node:fs');", "import fs from 'node:fs';")
         .replace("const path = require('node:path');", "import path from 'node:path';")
         .replace("const { DatabaseSync } = require('node:sqlite');", "import { DatabaseSync } from 'node:sqlite';")
-        .replace('module.exports = { read, readFile, readText, write };', 'export { read, readFile, readText, write };'), loader: 'js' };
+        .replace('module.exports = { read, readFile, readText, write, importMissing };', 'export { read, readFile, readText, write, importMissing };'), loader: 'js' };
 
       const values = /const \{ ([A-Z]\w*(?:, [A-Z]\w*)*) \} = require\(["']typebox\/value["']\);/g;
       const contents = lazyImports(canonicalImports(schemaImports(source), path), path).replace(values, (_declaration, names) => `import { ${names} } from "typebox/value";`);
