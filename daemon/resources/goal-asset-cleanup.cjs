@@ -143,20 +143,6 @@ function external(root, observation) {
   }
 }
 
-function walkAssets(directory, visit) {
-  if (!assets.exists(directory)) return;
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.endsWith('.snapshots')) continue;
-    const file = path.join(directory, entry.name);
-
-    if (entry.name !== 'attachments') walkAssets(file, visit);
-    else for (const goal of fs.readdirSync(file, { withFileTypes: true })) {
-      if (goal.isDirectory()) visit(path.join(file, goal.name));
-    }
-  }
-}
-
 function preparedOwner(root, directory) {
   const receipt = require('./session-broker/goal-preparations.cjs').read(root, directory);
 
@@ -184,7 +170,7 @@ function ownedCandidate(root, directory, deleted, candidates) {
   if (!managedPath(root, directory)) return;
 
   try {
-    const record = assets.readOwners(directory);
+    const record = assets.readOwners(root, directory);
     const ids = [...record.owners.map(owner => owner.sessionId), ...record.retiredOwners ?? [], preparedOwner(root, directory)].filter(id => deleted.has(id));
 
     if (ids.length) candidate(root, directory, candidates, ids);
@@ -198,7 +184,8 @@ function plan(root, targets) {
     targets.forEach(target => deleted.add(target.sessionId));
 
     for (const target of targets) assets.references(readTranscript(target.path), root).forEach(directory => candidate(root, directory, candidates, [target.sessionId]));
-    walkAssets(path.join(root, 'sessions'), directory => ownedCandidate(root, directory, deleted, candidates));
+
+    for (const directory of require('./session-broker/goal-ownership.cjs').directories(root)) ownedCandidate(root, directory, deleted, candidates);
 
     return [...candidates.values()];
   });
@@ -233,13 +220,13 @@ function validate(root, candidates) {
   }
 }
 
-function retireOwners(directory, deleted, observation, origins) {
-  const record = assets.readOwners(directory);
+function retireOwners(root, directory, deleted, observation, origins) {
+  const record = assets.readOwners(root, directory);
   const owners = record.owners.filter(owner => !deleted.has(owner.sessionId) || observation.sessions.has(owner.sessionId));
   const retiredOwners = new Set(record.retiredOwners ?? []);
   origins.filter(id => deleted.has(id) && !observation.sessions.has(id)).forEach(id => retiredOwners.add(id));
 
-  if (owners.length !== record.owners.length || retiredOwners.size !== (record.retiredOwners?.length ?? 0)) assets.write(path.join(directory, 'owners.json'), { ...record, owners, retiredOwners: [...retiredOwners] });
+  if (owners.length !== record.owners.length || retiredOwners.size !== (record.retiredOwners?.length ?? 0)) require('./session-broker/goal-ownership.cjs').save(root, directory, { ...record, owners, retiredOwners: [...retiredOwners] });
 
   return owners;
 }
@@ -262,7 +249,7 @@ function finishCandidate(transaction, candidate, observation, deleted, save) {
   if (candidate.cleanup && observation.directories.has(candidate.path)) throw new Error(`Goal assets gained a reference during interrupted reclamation; retained: ${candidate.path}`);
 
   if (!candidate.cleanup) {
-    const owners = retireOwners(candidate.path, deleted, observation, candidate.owners ?? [...deleted]);
+    const owners = retireOwners(transaction.root, candidate.path, deleted, observation, candidate.owners ?? [...deleted]);
 
     if (owners.length || observation.directories.has(candidate.path)) {
       completeCandidate(transaction, candidate, save);

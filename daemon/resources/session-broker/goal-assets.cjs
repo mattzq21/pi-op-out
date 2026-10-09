@@ -1,11 +1,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash, randomUUID } = require('node:crypto');
+const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const goalDependencies = require('./goal-dependencies.cjs');
 const goalPreparations = require('./goal-preparations.cjs');
+const goalOwnership = require('./goal-ownership.cjs');
 
 const ownerSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.Optional(Type.String()) });
 
@@ -27,20 +28,6 @@ function sync(file) {
 
   try { fs.fsyncSync(descriptor); }
   finally { fs.closeSync(descriptor); }
-}
-
-function write(file, value) {
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  const descriptor = fs.openSync(temporary, 'wx', 0o600);
-
-  try {
-    try { fs.writeFileSync(descriptor, JSON.stringify(value)); fs.fsyncSync(descriptor); }
-    finally { fs.closeSync(descriptor); }
-
-    fs.renameSync(temporary, file);
-    sync(path.dirname(file));
-  }
-  finally { if (exists(temporary)) fs.unlinkSync(temporary); }
 }
 
 function rootForDirectory(directory) {
@@ -92,16 +79,12 @@ function validPath(root, directory) {
     && /^goal-[a-zA-Z0-9_-]+$/.test(path.basename(directory)) && !/-pending-[a-zA-Z0-9]+$/.test(directory);
 }
 
-function readOwners(directory) {
-  const file = path.join(directory, 'owners.json');
-  const metadata = exists(file);
+function readOwners(root, directory) {
+  const record = goalOwnership.read(root, directory);
 
-  if (!metadata) return { version: 1, kind: 'goal-assets', owners: [] };
+  if (record === undefined) return { version: 1, kind: 'goal-assets', owners: [] };
 
-  if (!metadata.isFile()) throw new Error(`Goal ownership is not a regular file: ${file}`);
-  const record = JSON.parse(fs.readFileSync(file, 'utf8'));
-
-  if (!Check(ownershipSchema, record)) throw new Error(`Damaged goal ownership retained: ${file}`);
+  if (!Check(ownershipSchema, record)) throw new Error(`Damaged goal ownership retained: ${directory}`);
 
   return record;
 }
@@ -198,15 +181,15 @@ function inheritedReferences(entries, root) {
 }
 
 function claimSnapshots(root, directories) {
-  return [...directories].map(directory => ({ directory, identity: claimableDirectory(root, directory), record: readOwners(directory), existed: Boolean(exists(path.join(directory, 'owners.json'))) }));
+  return [...directories].map(directory => ({ directory, identity: claimableDirectory(root, directory), record: readOwners(root, directory), existed: goalOwnership.read(root, directory) !== undefined }));
 }
 
 function claimDirectory(root, directory, sessionId, sessionPath, expectedIdentity) {
   const expected = claimableDirectory(root, directory);
 
   if (expectedIdentity !== undefined && expected !== expectedIdentity) throw new Error(`Goal dependency changed before publication: ${directory}`);
-  const record = readOwners(directory);
-  write(path.join(directory, 'owners.json'), claimedRecord(record, sessionId, sessionPath));
+  const record = readOwners(root, directory);
+  goalOwnership.save(root, directory, claimedRecord(record, sessionId, sessionPath));
 
   return { path: directory, identity: expected };
 }
@@ -264,7 +247,7 @@ function publishClaims(root, snapshots, sessionId, sessionPath) {
     const failures = [];
 
     for (const snapshot of attempted.reverse()) {
-      try { undoClaim(snapshot, sessionId, sessionPath); }
+      try { undoClaim(root, snapshot, sessionId, sessionPath); }
       catch (failure) { failures.push(String(failure)); }
     }
 
@@ -273,51 +256,25 @@ function publishClaims(root, snapshots, sessionId, sessionPath) {
   }
 }
 
-function undoClaim(snapshot, sessionId, sessionPath) {
+function undoClaim(root, snapshot, sessionId, sessionPath) {
   if (identity(snapshot.directory) !== snapshot.identity) throw new Error(`Goal claim directory changed: ${snapshot.directory}`);
-  const file = path.join(snapshot.directory, 'owners.json');
-
-  if (!exists(file) && !snapshot.existed) return;
-  const current = JSON.stringify(readOwners(snapshot.directory));
+  const current = JSON.stringify(readOwners(root, snapshot.directory));
 
   if (current === JSON.stringify(snapshot.record)) return;
 
   if (current !== JSON.stringify(claimedRecord(snapshot.record, sessionId, sessionPath))) throw new Error(`Goal claim ownership changed: ${snapshot.directory}`);
 
-  if (snapshot.existed) write(file, snapshot.record);
-  else { fs.unlinkSync(file); sync(snapshot.directory); }
-}
-
-function walkDirectories(directory, visit) {
-  if (!exists(directory)) return;
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.endsWith('.snapshots')) continue;
-    const file = path.join(directory, entry.name);
-
-    if (entry.name !== 'attachments') walkDirectories(file, visit);
-    else for (const goal of fs.readdirSync(file, { withFileTypes: true })) {
-      if (goal.isDirectory()) visit(path.join(file, goal.name));
-    }
-  }
+  goalOwnership.save(root, snapshot.directory, snapshot.existed ? snapshot.record : undefined);
 }
 
 function ownedDirectories(root, sessionId) {
   const directories = [];
 
-  const visit = directory => {
-    if (!validPath(root, directory)) return;
+  for (const directory of goalOwnership.directories(root)) {
+    if (!validPath(root, directory)) continue;
 
-    try { if (readOwners(directory).owners.some(owner => owner.sessionId === sessionId)) directories.push(directory); }
+    try { if (readOwners(root, directory).owners.some(owner => owner.sessionId === sessionId)) directories.push(directory); }
     catch (error) { console.error(`${directory}: damaged goal ownership retained: ${error.message}`); }
-  };
-
-  walkDirectories(path.join(root, 'sessions'), visit);
-
-  if (path.basename(root) !== 'sessions' && exists(path.join(root, 'attachments'))) {
-    for (const entry of fs.readdirSync(path.join(root, 'attachments'), { withFileTypes: true })) {
-      if (entry.isDirectory()) visit(path.join(root, 'attachments', entry.name));
-    }
   }
 
   return directories;
@@ -338,8 +295,8 @@ function releaseHistory(root, contract, sessionId) {
     verifyContract(root, contract);
 
     for (const directory of contract.directories) {
-      const record = readOwners(directory.path);
-      write(path.join(directory.path, 'owners.json'), { ...record, owners: record.owners.filter(owner => owner.sessionId !== sessionId) });
+      const record = readOwners(root, directory.path);
+      goalOwnership.save(root, directory.path, { ...record, owners: record.owners.filter(owner => owner.sessionId !== sessionId) });
     }
   });
 }
@@ -348,13 +305,14 @@ function discardPreparation(root, directory, sessionId) {
   return locked(root, () => {
     if (!validPath(root, directory)) throw new Error('Invalid unpublished goal asset directory');
     const expected = identity(directory);
-    const record = readOwners(directory);
+    const record = readOwners(root, directory);
 
     if (record.owners.some(owner => owner.sessionId !== sessionId)) return;
     fs.rmSync(directory, { recursive: true });
     sync(path.dirname(directory));
     goalDependencies.remove(root, directory, expected);
     goalPreparations.remove(root, directory, expected);
+    goalOwnership.remove(root, directory, expected);
   });
 }
 
@@ -394,9 +352,10 @@ function endReclamation(root, directory, expected) {
   if (!exists(directory)) {
     goalDependencies.remove(root, directory, expected);
     goalPreparations.remove(root, directory, expected);
+    goalOwnership.remove(root, directory, expected);
   }
 
   updateReclamation(root, directory, expected, true);
 }
 
-module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, write, references, claim, retainHistory, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };
+module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, references, claim, retainHistory, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };

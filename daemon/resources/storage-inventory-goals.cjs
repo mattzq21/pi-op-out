@@ -1,5 +1,4 @@
 const fs = require('node:fs/promises');
-const { constants } = require('node:fs');
 const path = require('node:path');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
@@ -36,16 +35,6 @@ function observeGoalContract(observation, entry) {
 
 function goalOwner(record) { return Boolean(record?.owners.some(owner => ['fork-history', 'fork-dependency-history'].includes(owner.kind) || /^(active|archived|ephemeral|referenced)-goal-(history|contract|dependency)$/.test(owner.kind))); }
 
-async function json(file) {
-  const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-
-  try {
-    if (!(await handle.stat()).isFile()) throw new Error('Goal asset metadata is not a regular file');
-
-    return JSON.parse(await handle.readFile('utf8'));
-  } finally { await handle.close(); }
-}
-
 async function directoryIdentity(directory) {
   const metadata = await fs.lstat(directory, { bigint: true });
 
@@ -76,14 +65,16 @@ async function reconcileContract(profile, record, discovery) {
   }
 }
 
-async function recordClaims(record, discovery) {
+async function recordClaims(profile, record, discovery) {
   record.identity = undefined;
   record.claims = undefined;
 
   try {
     record.identity = await directoryIdentity(record.path);
-    const file = path.join(record.path, 'owners.json');
-    const claims = await json(file);
+    const file = path.join(profile, 'sessions.sqlite');
+    const claims = require('./session-broker/goal-ownership.cjs').read(profile, record.path);
+
+    if (claims === undefined) return;
 
     if (!Check(claimsSchema, claims)) throw new Error('Invalid goal asset ownership claims');
     record.claims = claims;
@@ -122,7 +113,7 @@ async function dependencyRecord(profile, record, dependency, owners, discovery) 
   const source = record.path + ' (saved goal dependencies)';
   const target = addRoot(discovery.goals, dependency.path, 'Durable transitive goal dependency in ' + source + '; expected directory identity: ' + dependency.identity, 'unattributed');
 
-  await recordClaims(target, discovery);
+  await recordClaims(profile, target, discovery);
   const verified = dependency.identity === target.identity;
 
   for (const owner of owners) {
@@ -165,14 +156,14 @@ async function dependencies(profile, record, discovery) {
 
 async function reconcileGoalAssets(profile, discovery) {
   for (const record of discovery.goals.values()) {
-    await recordClaims(record, discovery);
+    await recordClaims(profile, record, discovery);
     await reconcileContract(profile, record, discovery);
   }
 
   for (const record of discovery.goals.values()) await dependencies(profile, record, discovery);
 
   for (const record of discovery.goals.values()) {
-    await recordClaims(record, discovery);
+    await recordClaims(profile, record, discovery);
     await reconcileContract(profile, record, discovery);
     record.ownership = goalOwner(record) ? 'shared' : 'unattributed';
 

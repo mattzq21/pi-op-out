@@ -62,7 +62,7 @@ function retainActiveGoals(root, goals, retained) {
   let pending = false;
 
   for (const directory of goals) {
-    const managed = Boolean(metadata(path.join(directory, 'owners.json')))
+    const managed = require('./session-broker/goal-ownership.cjs').read(root, directory) !== undefined
       || require('./session-broker/goal-preparations.cjs').read(root, directory) !== undefined
       || require('./session-broker/goal-dependencies.cjs').read(root, directory) !== undefined;
 

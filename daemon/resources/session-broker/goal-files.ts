@@ -9,6 +9,7 @@ import { validateObjective } from "./goal-state.ts";
 import { Type, type Static } from "typebox";
 import { Parse } from "typebox/value";
 import { read as readPreparation, save as savePreparation, remove as removePreparation } from "./goal-preparations.cjs";
+import { save as saveOwnership, remove as removeOwnership } from "./goal-ownership.cjs";
 import { claim, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
 import { acquireWorktreePublicationLock as acquireReferencePublicationLock } from "../piop-diff-watch/git.ts";
 
@@ -162,7 +163,7 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
     const objective = await saveObjective(staging, directory, draft);
     const preparation: GoalPreparation = { version: 1, submissionId: id, digest, objective, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
     savedIdentity = savePreparation(profile, staging, preparation, directory);
-    await writeContent(join(staging, "owners.json"), JSON.stringify({ version: 1, kind: "goal-assets", owners: [{ sessionId: preparation.sessionId, sessionPath: preparation.sessionPath }] }));
+    saveOwnership(profile, staging, { version: 1, kind: "goal-assets", owners: [{ sessionId: preparation.sessionId, sessionPath: preparation.sessionPath }] }, directory);
     await syncDirectory(staging);
     await rename(staging, directory);
     published = true;
@@ -174,7 +175,10 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
     release?.();
     await rm(staging, { recursive: true, force: true });
 
-    if (!published && savedIdentity) removePreparation(profile, directory, savedIdentity);
+    if (!published && savedIdentity) {
+      removePreparation(profile, directory, savedIdentity);
+      removeOwnership(profile, directory, savedIdentity);
+    }
   }
 }
 
