@@ -316,6 +316,16 @@ function reclamationPending(root, directory) {
   finally { database.close(); }
 }
 
+function removeRecoveryRecords(database, directory, expected) {
+  if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_recoveries'").get()) return;
+  const rows = database.prepare("SELECT directory, record_json FROM goal_directory_recoveries WHERE json_extract(record_json, '$.staging')=? AND json_extract(record_json, '$.current')=?").all(directory, expected);
+
+  for (const row of rows) {
+    if (exists(row.directory)) continue;
+    database.prepare('DELETE FROM goal_directory_recoveries WHERE directory=? AND record_json=?').run(row.directory, row.record_json);
+  }
+}
+
 function removeDirectoryRecords(database, directory, expected) {
   if (exists(directory)) return;
 
@@ -325,6 +335,7 @@ function removeDirectoryRecords(database, directory, expected) {
   }
 
   if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_history'").get()) database.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
+  removeRecoveryRecords(database, directory, expected);
 }
 
 function updateReclamation(root, directory, expected, removing) {
