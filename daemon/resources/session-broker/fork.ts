@@ -39,6 +39,15 @@ function inheritGoal(ctx: ExtensionContext, retained: ReturnType<ExtensionContex
   if (goal?.type === "custom") retained.push({ ...structuredClone(goal), id: randomUUID().slice(0, 8), parentId: retained.at(-1)?.id ?? null, timestamp });
 }
 
+function forkHeader<T extends { cwd: string }>(header: T, source: string): T {
+  if (header.cwd !== source) {
+    Reflect.deleteProperty(header, "archiveResourceId");
+    Reflect.deleteProperty(header, "worktreeRestore");
+  }
+
+  return header;
+}
+
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions, createWorktree: (name: string) => Promise<CreatedWorktree>) {
   const retained = structuredClone(options.position ? positionedHistory(ctx, options.entryId, options.position) : forkHistory(ctx, options.entryId));
   const header = ctx.sessionManager.getHeader();
@@ -62,7 +71,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
     await registerPreparedCheckpoints(sessionId, header.cwd, retained, sessionPath);
     checkpoints = await pinPromptHistory(header.cwd, sessionId, retained);
     goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source }, ...retained], sessionId, sessionPath);
-    publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...retained], {
+    publication = await writeSessionFile(sessionPath, [forkHeader({ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, header.cwd), ...retained], {
       dependencies: { checkpoints, workspace: publicationWorkspace(cwd, options, worktree) },
       sidecars: [],
       databaseDiffs: true,

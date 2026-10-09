@@ -419,6 +419,9 @@ async function branchSessionEntries(ctx: ExtensionContext, root: string, id: str
 
   const header = { ...ctx.sessionManager.getHeader(), type: "session", id, timestamp, cwd: target, parentSession: ctx.sessionManager.getSessionFile() };
 
+  Reflect.deleteProperty(header, "archiveResourceId");
+  Reflect.deleteProperty(header, "worktreeRestore");
+
   return [header, ...retained, savedBaseline];
 }
 

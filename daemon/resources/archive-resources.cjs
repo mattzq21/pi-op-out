@@ -246,6 +246,27 @@ function planArchive(root, location, moves, operationId) {
   return { change, removable, ref: 'refs/piop-archive-resources/' + record.id + '/' + operationId };
 }
 
+function planMissingArchive(root, location, moves, operationId) {
+  const ids = new Set(moves.map(move => ownership.headerAt(move.source, move.sessionId).header.archiveResourceId).filter(Boolean));
+
+  if (!ids.size) return null;
+
+  if (ids.size !== 1 || io.exists(location.path)) throw new Error('Missing archive directory ownership is ambiguous');
+  const previous = load(root, [...ids][0]);
+  const record = structuredClone(previous.record);
+
+  if (record.binding.path !== location.path || record.state === 'retired') throw new Error('Missing directory does not match saved archive ownership');
+  verifyRecovery(record);
+  record.owners = ownership.discover(root, record.binding, record.id, record.owners);
+
+  for (const move of moves) archiveOwner(root, record, move);
+  record.revision += 1;
+  record.state = record.owners.every(owner => owner.area === 'archived') ? 'archived' : 'retained';
+  record.restored = null;
+
+  return { change: packageChange(root, previous.body, record, operationId), removable: false, ref: 'refs/piop-archive-resources/' + record.id + '/' + operationId };
+}
+
 function archiveOwner(root, record, move) {
   const owner = record.owners.find(saved => saved.sessionId === move.sessionId && saved.sessionPath === move.source);
 
@@ -532,4 +553,4 @@ function rollback(root, change) {
   records.change(change.file, change.after, change.before);
 }
 
-module.exports = { load, list, validate: changedRecord, planArchive, assertArchiveOwners, refreshArchive, sealArchive, headerUpdates, planRestore, sealRestore, adoptRestore, planDelete, cleanupPlan, apply, rollback };
+module.exports = { load, list, validate: changedRecord, planArchive, planMissingArchive, assertArchiveOwners, refreshArchive, sealArchive, headerUpdates, planRestore, sealRestore, adoptRestore, planDelete, cleanupPlan, apply, rollback };

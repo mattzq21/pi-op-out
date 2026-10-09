@@ -134,7 +134,7 @@ function captureEntry(plan, name, files, submodules, excludedFiles, lock, nested
   }
 
   const mode = metadata.isSymbolicLink() ? '120000' : metadata.mode & 0o111 ? '100755' : '100644';
-  files.set(key, { name: key, mode, object: blob(plan, file, metadata, lock) });
+  files.set(key, { name: key, mode, permissions: metadata.mode & 0o777, object: blob(plan, file, metadata, lock) });
 }
 
 function captureDirectory(plan, name, files, submodules, excludedFiles, lock, nested) {
@@ -224,7 +224,6 @@ function capture(plan, lock) {
   const converted = tree(plan, files, lock);
   references.update(plan, 'content', converted, lock);
   plan.contentObject = converted;
-  plan.contentObjects = [...new Set([object, converted])];
 
   return files;
 }
@@ -276,7 +275,7 @@ function matches(plan, file, destination, lock) {
   const metadata = info(destination);
   const mode = metadata?.isSymbolicLink() ? '120000' : metadata?.isFile() ? metadata.mode & 0o111 ? '100755' : '100644' : '';
 
-  return mode === file.mode && blob(plan, destination, metadata, lock) === file.object;
+  return mode === file.mode && (file.mode === '120000' || file.permissions === undefined || (metadata.mode & 0o777) === file.permissions) && blob(plan, destination, metadata, lock) === file.object;
 }
 
 function write(plan, file, index, lock) {
@@ -314,7 +313,7 @@ function writeBlob(plan, file, temporary, lock) {
     return;
   }
 
-  const mode = file.mode === '100755' ? 0o755 : 0o644;
+  const mode = file.permissions ?? (file.mode === '100755' ? 0o755 : 0o644);
   const fd = fs.openSync(temporary, 'wx', mode);
 
   try {

@@ -33,8 +33,14 @@ function archivePlans(transaction) {
   for (const group of transaction.groups) {
     const kind = group.resourceKind ?? group.kind;
 
-    if (!['git', 'directory'].includes(kind)) continue;
+    if (!['git', 'directory', 'missing'].includes(kind)) continue;
     const moves = transaction.records.filter(record => transaction.groups[record.group] === group).map(record => ({ source: record.file, destination: record.destination, sessionId: record.sessionId }));
+
+    if (kind === 'missing') {
+      group.resource = resources.planMissingArchive(transaction.root, { path: group.path }, moves, transaction.id);
+      continue;
+    }
+
     group.resource = resources.planArchive(transaction.root, { kind, path: group.path }, moves, transaction.id);
 
     if (!group.resource.removable) {
@@ -50,6 +56,8 @@ function sealArchive(transaction, group) {
   if (!group.resource) return;
   const moves = transaction.records.filter(record => transaction.groups[record.group] === group).map(record => ({ source: record.file, destination: record.destination, sessionId: record.sessionId }));
   group.resource.change = resources.refreshArchive(transaction.root, group.resource.change, moves);
+
+  if (group.kind === 'missing') return;
   let recovery = null;
 
   if (group.kind === 'directory') recovery = { kind: 'directory', path: group.path, storedPath: group.storedPath, storedIdentity: group.identity.identity, digest: group.identity.digest };

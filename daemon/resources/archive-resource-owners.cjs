@@ -137,7 +137,24 @@ function registered(root, binding, resourceId, found) {
       WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(s.session_id))`;
 
     for (const row of database.prepare(query).all()) registeredOwner(root, row, binding, resourceId, found);
+    externalOwners(database, binding, resourceId, found);
   } finally { database.close(); }
+}
+
+function externalOwners(database, binding, resourceId, found) {
+  const records = database.prepare('SELECT record_json FROM external_transcripts').all().map(row => JSON.parse(row.record_json));
+
+  for (const row of database.prepare('SELECT record_json FROM ephemeral_cleanup_owners').all()) {
+    const record = JSON.parse(row.record_json);
+
+    if (record.location?.kind === 'local') records.push({ path: record.location.path, sessionId: record.sessionId });
+  }
+
+  for (const record of records) {
+    if (!Check(Type.Object({ path: Type.String(), sessionId: Type.Optional(Type.String({ minLength: 1 })) }), record) || !path.isAbsolute(record.path)) throw new Error('Invalid external transcript ownership');
+
+    if (io.exists(record.path)) observe(record.path, 'unresolved', binding, resourceId, found, record.sessionId);
+  }
 }
 
 function pendingTranscripts(root, binding, resourceId, found) {

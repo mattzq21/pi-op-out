@@ -8,6 +8,8 @@ function open(plan) {
   const db = database.open(path.dirname(path.dirname(plan.container)));
   db.exec('CREATE TABLE IF NOT EXISTS worktree_reference_updates (owner TEXT NOT NULL, kind TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(owner, kind))');
 
+  db.exec('CREATE TABLE IF NOT EXISTS worktree_reference_objects (owner TEXT NOT NULL, object TEXT NOT NULL, PRIMARY KEY(owner, object))');
+
   return db;
 }
 
@@ -158,10 +160,11 @@ function prepare(plan, kind, object) {
 
   if (!object && !expected) throw new Error('Worktree reference deletion has no saved value');
 
-  return { ref, object, expected, expectedObjects: kind === 'content' ? plan.contentObjects : [expected], branch: kind === 'branch', loose: seed(prefix + '.ref'), packed: object ? null : seed(prefix + '.packed') };
+  return { ref, object, expected, expectedObjects: [expected], branch: kind === 'branch', loose: seed(prefix + '.ref'), packed: object ? null : seed(prefix + '.packed') };
 }
 
 function complete(db, plan, kind, record) {
+  if (kind === 'content' && record.object) db.prepare('INSERT OR IGNORE INTO worktree_reference_objects VALUES (?, ?)').run(plan.id, record.object);
   finish(plan, record);
 
   if (record.branch) return;
@@ -169,6 +172,8 @@ function complete(db, plan, kind, record) {
   release(record.loose.file, record.loose);
 
   if (record.packed) release(record.packed.file, record.packed);
+
+  if (kind === 'content' && !record.object) db.prepare('DELETE FROM worktree_reference_objects WHERE owner=?').run(plan.id);
 }
 
 function update(plan, kind, object, descriptor) {
@@ -186,6 +191,8 @@ function update(plan, kind, object, descriptor) {
     }
 
     const record = prepare(plan, kind, object);
+
+    if (kind === 'content' && !object) record.expectedObjects = db.prepare('SELECT object FROM worktree_reference_objects WHERE owner=?').all(plan.id).map(row => row.object);
     db.prepare('INSERT INTO worktree_reference_updates VALUES (?, ?, ?)').run(plan.id, kind, JSON.stringify(record));
     complete(db, plan, kind, record);
   } finally { db.close(); }
