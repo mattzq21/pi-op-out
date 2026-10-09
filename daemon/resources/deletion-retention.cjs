@@ -32,9 +32,29 @@ function entries(directory) {
   return fs.readdirSync(directory, { withFileTypes: true });
 }
 
-function goalDirectories(directory, goals) {
-  for (const entry of entries(directory)) {
-    if (entry.isDirectory() && /^goal-[A-Za-z0-9]{6}$/.test(entry.name)) goals.add(path.join(directory, entry.name));
+function registeredGoals(root, inventory) {
+  for (const directory of require('./session-broker/goal-ownership.cjs').directories(root)) {
+    const area = path.relative(root, directory).split(path.sep)[0];
+
+    if (!['sessions', 'archived', 'fork-transactions', 'fork-preparations'].includes(area)
+      || path.basename(path.dirname(directory)) !== 'attachments' || !/^goal-[A-Za-z0-9]{6}$/.test(path.basename(directory))) continue;
+    const info = metadata(directory);
+
+    if (!info) continue;
+
+    if (!info.isDirectory() || fs.realpathSync(directory) !== directory) { inventory.uncertain = true; continue; }
+
+    inventory.goals.add(directory);
+  }
+}
+
+function registeredTranscripts(root, inventory) {
+  for (const file of require('./session-database.cjs').paths(root)) {
+    const info = metadata(file);
+
+    if (!info?.isFile() || fs.realpathSync(file) !== file) { inventory.uncertain = true; continue; }
+
+    inventory.transcripts.push(file);
   }
 }
 
@@ -78,17 +98,15 @@ function retainActiveGoals(root, goals, retained) {
   return pending;
 }
 
-function sessionFiles(directory, inventory) {
+function legacySessionFiles(directory, inventory) {
   for (const entry of entries(directory)) {
     const file = path.join(directory, entry.name);
 
     if (entry.isSymbolicLink()) { inventory.uncertain = true; continue; }
 
     if (entry.isDirectory()) {
-      if (entry.name.endsWith('.snapshots') || entry.name.startsWith('.delete-')) continue;
-
-      if (entry.name === 'attachments') goalDirectories(file, inventory.goals);
-      else sessionFiles(file, inventory);
+      if (entry.name.endsWith('.snapshots') || entry.name.startsWith('.delete-') || entry.name === 'attachments') continue;
+      legacySessionFiles(file, inventory);
     } else if (entry.isFile() && entry.name.endsWith('.jsonl')) inventory.transcripts.push(file);
   }
 }
@@ -126,8 +144,17 @@ function forkReferences(root, inventory) {
 
     if (!info.isDirectory() || fs.realpathSync(directory) !== directory) { inventory.uncertain = true; continue; }
 
-    sessionFiles(directory, inventory);
+    if (area === 'fork-preparations') legacySessionFiles(directory, inventory);
+    else forkTranscript(directory, inventory);
   }
+}
+
+function forkTranscript(directory, inventory) {
+  const file = path.join(directory, 'session.jsonl');
+  const transcript = metadata(file);
+
+  if (transcript?.isFile()) inventory.transcripts.push(file);
+  else if (transcript) inventory.uncertain = true;
 }
 
 function worktreeContainers(root) {
@@ -290,7 +317,8 @@ function recoveryPending(root) {
 function collectRetention(root, sources, savedFiles, deferred = { directories: [], sessionIds: [] }, unpublishedGoals = false) {
   const inventory = { goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: recoveryPending(root) };
 
-  for (const area of ['sessions', 'archived']) sessionFiles(path.join(root, area), inventory);
+  registeredGoals(root, inventory);
+  registeredTranscripts(root, inventory);
   forkReferences(root, inventory);
   externalTranscripts(root, inventory);
   const candidates = new Set([...inventory.goals, ...worktreeContainers(root)]);

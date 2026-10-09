@@ -1,5 +1,5 @@
 import { markCleanup } from "../session-database.cjs";
-import { mkdir, mkdtemp, open, rename, rm } from "node:fs/promises";
+import { mkdir, open, rename, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -9,7 +9,7 @@ import { validateObjective } from "./goal-state.ts";
 import { Type, type Static } from "typebox";
 import { Parse } from "typebox/value";
 import { read as readPreparation, save as savePreparation, remove as removePreparation } from "./goal-preparations.cjs";
-import { save as saveOwnership, remove as removeOwnership } from "./goal-ownership.cjs";
+import { save as saveOwnership, remove as removeOwnership, allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
 import { claim, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
 import { acquireWorktreePublicationLock as acquireReferencePublicationLock } from "../piop-diff-watch/git.ts";
 
@@ -152,8 +152,9 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
   const root = join(ctx.sessionManager.getSessionDir(), "attachments");
   await markGoalAllocation(ctx);
   await mkdir(root, { recursive: true, mode: 0o700 });
-  const staging = await mkdtemp(join(root, "goal-"));
   const profile = rootForDirectory(ctx.sessionManager.getSessionDir());
+  const allocation = allocateGoalDirectory(profile, root);
+  const staging = allocation.directory;
   let savedIdentity: string | undefined;
   let published = false;
   let release: (() => void) | undefined;
@@ -174,6 +175,7 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
   } finally {
     release?.();
     await rm(staging, { recursive: true, force: true });
+    removeOwnership(profile, staging, allocation.identity);
 
     if (!published && savedIdentity) {
       removePreparation(profile, directory, savedIdentity);

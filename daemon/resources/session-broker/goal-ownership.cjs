@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const database = require('../session-database.cjs');
+const { randomBytes } = require('node:crypto');
 
 function withDatabase(root, operation) {
   const db = database.open(root);
@@ -71,6 +72,30 @@ function remove(root, directory, expected) {
   withDatabase(root, db => db.prepare('DELETE FROM goal_ownership WHERE directory=? AND identity=?').run(directory, expected));
 }
 
+function allocate(root, parent) {
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const directory = path.join(parent, `goal-${randomBytes(3).toString('hex')}`);
+    const reserved = withDatabase(root, db => db.prepare('INSERT INTO goal_ownership VALUES (?, ?, NULL) ON CONFLICT DO NOTHING').run(directory, '').changes);
+
+    if (!reserved) continue;
+
+    try { fs.mkdirSync(directory, { mode: 0o700 }); }
+    catch (error) {
+      remove(root, directory, '');
+
+      if (error.code === 'EEXIST') continue;
+      throw error;
+    }
+
+    const expected = save(root, directory, undefined);
+    remove(root, directory, '');
+
+    return { directory, identity: expected };
+  }
+
+  throw new Error('Could not allocate goal attachment storage');
+}
+
 function importDirectory(db, directory) {
   const expected = identity(directory);
   const body = legacy(directory);
@@ -106,6 +131,11 @@ function directories(root) {
         db.prepare("INSERT INTO storage_migrations VALUES ('goal-ownership-v1')").run();
       }
 
+      if (!db.prepare("SELECT 1 FROM storage_migrations WHERE name='goal-ownership-all-areas-v1'").get()) {
+        for (const area of ['archived', 'fork-transactions', 'fork-preparations']) importTree(db, path.join(root, area));
+        db.prepare("INSERT INTO storage_migrations VALUES ('goal-ownership-all-areas-v1')").run();
+      }
+
       const result = db.prepare('SELECT DISTINCT directory FROM goal_ownership').all().map(row => row.directory);
       db.exec('COMMIT');
 
@@ -114,4 +144,4 @@ function directories(root) {
   });
 }
 
-module.exports = { read, save, retained, remove, directories };
+module.exports = { read, save, retained, remove, directories, allocate };

@@ -33,6 +33,39 @@ function registerExternalTranscript(root, transcript) {
   } finally { database.close(); }
 }
 
+function registerManagedTranscript(manager) {
+  if (!manager.persist || !manager.sessionFile) return;
+  const root = sessionReferenceRoot();
+  const file = storagePath.resolve(manager.sessionFile);
+  const area = storagePath.relative(root, file).split(storagePath.sep)[0];
+
+  if (!["sessions", "archived"].includes(area)) return;
+  const header = manager.fileEntries[0];
+
+  if (header?.type !== "session" || !header.id || header.id !== String(header.id)) throw new Error("Cannot register a session without its saved identity");
+  const databasePath = storagePath.join(root, "sessions.sqlite");
+  storageFs.closeSync(storageFs.openSync(databasePath, "a", 0o600));
+  const database = new StorageDatabase(databasePath);
+
+  try {
+    storageFs.chmodSync(databasePath, 0o600);
+    database.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+      CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT);
+      CREATE TABLE IF NOT EXISTS session_deletion_tombstones (session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL, session_path TEXT NOT NULL);
+      BEGIN IMMEDIATE;`);
+    registerManagedPath(database, header.id, file);
+    database.exec("COMMIT");
+  } finally { database.close(); }
+}
+
+function registerManagedPath(database, sessionId, file) {
+  if (database.prepare("SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)").get(sessionId)) throw new Error("Cannot save a deleted session");
+  const previous = database.prepare("SELECT session_path FROM sessions WHERE session_id=?").get(sessionId);
+
+  if (previous?.session_path && previous.session_path !== file && storageFs.existsSync(previous.session_path)) throw new Error("Session identity has more than one transcript");
+  database.prepare("INSERT INTO sessions VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path").run(sessionId, file);
+}
+
 function textGoalReferences(text, root, found) {
   const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(`^${escaped}/(?:sessions|archived|fork-transactions|fork-preparations)/(?:[^\\r\\n]*?/)?attachments/goal-[A-Za-z0-9]{6}(?![A-Za-z0-9])`);
@@ -254,6 +287,7 @@ function sessionStoragePublish(manager, entries, exclusive) {
   const release = acquireSessionReferencePublication(path);
 
   try {
+    registerManagedTranscript(manager);
     const references = validateSessionReferencePublication(entries, exclusive ? undefined : storedSessionEntries(path));
 
     try { storagePublish(path, sessionStorageTemporary(path), entries.map(entry => JSON.stringify(entry) + "\n").join(""), exclusive); }
@@ -270,6 +304,7 @@ function sessionStorageAppend(manager, entry) {
   const release = acquireSessionReferencePublication(manager.sessionFile);
 
   try {
+    registerManagedTranscript(manager);
     const baseline = sessionReferenceBaselines.get(manager);
     const previous = baseline?.path === manager.sessionFile && baseline.entries === manager.fileEntries ? baseline.references : managedGoalReferences(manager.fileEntries);
     const references = managedGoalReferences([entry]);
@@ -341,6 +376,7 @@ export function installSessionStorage(SessionManager) {
     try {
       const session = fork.apply(this, args);
       registerExternalTranscript(sessionReferenceRoot(), session.sessionFile);
+      registerManagedTranscript(session);
 
       return session;
     } finally { release(); }
