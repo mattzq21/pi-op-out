@@ -212,9 +212,8 @@ async function archivedDirectoryMetadata(directory) {
   return { file: directory, metadata, directory: true, stagedPath: "", staged: false };
 }
 
-async function referencesDirectory(file, storedPath) {
-  const first = (await fs.readFile(file, "utf8")).split("\n").find((line) => line.trim());
-  const header = JSON.parse(first);
+function referencesDirectory(root, file, storedPath) {
+  const header = require('./transcript-references.cjs').read(root, file)[0];
 
   return header.worktreeRestore?.kind === "directory" && header.worktreeRestore.storedPath === storedPath;
 }
@@ -231,7 +230,7 @@ async function directoryReferenced(location, storedPath, selected) {
 
     if (metadata.isSymbolicLink()) throw new Error("Session database path must not be a symbolic link");
 
-    if (metadata.isFile() && await referencesDirectory(file, storedPath)) return true;
+    if (metadata.isFile() && referencesDirectory(path.dirname(location), file, storedPath)) return true;
   }
 
   return false;
