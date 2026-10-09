@@ -231,7 +231,7 @@ function pending(root, ignoredJournal) {
 
   if (require('./legacy-deletion-records.cjs').list(root).length) return true;
 
-  if (fs.readdirSync(root).some(name => name.startsWith('archive-transaction-'))) return true;
+  if (require('./legacy-archive-records.cjs').list(root).length) return true;
 
   return legacyPending(path.join(root, 'sessions')) || legacyPending(path.join(root, 'archived'));
 }

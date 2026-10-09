@@ -74,6 +74,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS legacy_queued_inputs (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS fork_preparations (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS archive_records (directory TEXT PRIMARY KEY, record_json TEXT);
+      CREATE TABLE IF NOT EXISTS legacy_archive_directories (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS legacy_committed_deletions (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS deletion_records (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS fork_transactions (directory TEXT PRIMARY KEY, record_json TEXT);
@@ -197,6 +198,7 @@ function importSessions(db, root) {
     importDirectories(db, root, 'deleted-sessions', 'deletion_records', 'deletion-records-committed-v1');
     importDirectories(db, root, 'deleted-sessions', 'legacy_committed_deletions', 'legacy-committed-deletions-v1');
     importDirectories(db, root, 'archive-transactions', 'archive_records', 'archive-records-v1');
+    importDirectories(db, root, '', 'legacy_archive_directories', 'legacy-archive-directories-v1', entry => entry.name.startsWith('archive-transaction-'));
     importRecoveryDirectories(db, root);
     importReaderReleases(db, root);
     importSnapshotDirectories(db, root);
@@ -211,7 +213,7 @@ function importSessions(db, root) {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-function importDirectories(db, root, area, table, migration) {
+function importDirectories(db, root, area, table, migration, select = () => true) {
   if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get(migration)) return;
   const directory = path.join(root, area);
   let entries;
@@ -219,7 +221,7 @@ function importDirectories(db, root, area, table, migration) {
   try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
   catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
 
-  for (const entry of entries) {
+  for (const entry of entries.filter(select)) {
     if (['archive_records', 'deletion_records'].includes(table) && !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(entry.name)) continue;
 
     if (!entry.isDirectory()) throw new Error(`Invalid ${area} storage`);

@@ -263,7 +263,7 @@ function pruneReceipts(root) {
 
 function recoveryPending(root) {
   return require('./restore-records.cjs').list(root).length > 0
-    || entries(root).some(entry => entry.isDirectory() && entry.name.startsWith('archive-transaction-'))
+    || require('./legacy-archive-records.cjs').list(root).length > 0
     || require('./deletion-records.cjs').list(root).length > 0
     || require('./legacy-deletion-records.cjs').list(root).length > 0;
 }

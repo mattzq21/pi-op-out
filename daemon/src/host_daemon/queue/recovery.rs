@@ -71,15 +71,11 @@ fn transactions_pending(root: &Path) -> Result<bool> {
 
 fn restoration_pending(root: &Path) -> Result<bool> {
     let database = crate::session_registry::open(root)?;
-    database.query_row("SELECT EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM fork_transactions) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
+    database.query_row("SELECT EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM fork_transactions) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM legacy_archive_directories) OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
         .map_err(|error| error.to_string())
 }
 
 fn files_pending(root: &Path) -> Result<bool> {
-    for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        if entry.file_name().to_string_lossy().starts_with("archive-transaction-") { return Ok(true); }
-    }
     deletion_pending(&root.join("sessions")).and_then(|active| {
         if active { Ok(true) } else { deletion_pending(&root.join("archived")) }
     })

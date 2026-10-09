@@ -523,9 +523,11 @@ function recover(root) {
     catch (error) { failures.push(`${container}: ${error.message}`); }
   }
 
-  for (const name of fs.readdirSync(root).filter(name => /^archive-transaction-[a-zA-Z0-9]{6}$/.test(name))) {
-    try { legacyRecovery(root, path.join(root, name)); }
-    catch (error) { failures.push(`${path.join(root, name)}: ${error.message}`); }
+  const legacy = require('./legacy-archive-records.cjs');
+
+  for (const directory of legacy.list(root)) {
+    try { legacy.recover(root, directory, legacyRecovery); }
+    catch (error) { failures.push(`${directory}: ${error.message}`); }
   }
 
   if (failures.length) throw new Error(failures.join('\n'));

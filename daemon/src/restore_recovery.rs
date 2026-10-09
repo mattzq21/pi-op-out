@@ -14,9 +14,6 @@ pub(crate) fn recover_remote(host: &crate::RemoteHost) -> Result<(), String> {
 
 fn legacy_pending(root: &Path) -> Result<bool, String> {
     if !root.exists() { return Ok(false); }
-    for entry in std::fs::read_dir(root).map_err(|error| error.to_string())? {
-        if entry.map_err(|error| error.to_string())?.file_name().to_string_lossy().starts_with("archive-transaction-") { return Ok(true); }
-    }
     for area in ["sessions", "archived"] {
         for entry in walkdir::WalkDir::new(root.join(area)).follow_links(false).into_iter().filter_map(Result::ok) {
             if legacy_deletion_lock(&entry) || legacy_publication_temporary(&entry) { return Ok(true); }
@@ -39,23 +36,10 @@ fn legacy_publication_temporary(entry: &walkdir::DirEntry) -> bool {
 
 fn recovery_pending(root: &Path) -> Result<bool, String> {
     let database = crate::session_registry::open(root)?;
-    let publications: bool = database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM session_restore_receipts) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
+    let publications: bool = database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM session_restore_receipts) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM legacy_archive_directories) OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
         .map_err(|error| error.to_string())?;
     if publications { return Ok(true); }
     legacy_pending(root)
-}
-
-fn archive_pending(root: &Path) -> Result<bool, String> {
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error.to_string()),
-    };
-    for entry in entries {
-        let entry = entry.map_err(|error| error.to_string())?;
-        if entry.file_type().map_err(|error| error.to_string())?.is_dir() && entry.file_name().to_string_lossy().starts_with("archive-transaction-") { return Ok(true); }
-    }
-    Ok(false)
 }
 
 fn deletion_pending(root: &Path, area: &str) -> Result<bool, String> {
@@ -83,7 +67,7 @@ fn fork_preparation_pending(root: &Path) -> Result<bool, String> {
 }
 
 fn transaction_directories_pending(root: &Path) -> Result<bool, String> {
-    if archive_pending(root)? || fork_transactions_pending(root)? || fork_preparation_pending(root)? { return Ok(true); }
+    if fork_transactions_pending(root)? || fork_preparation_pending(root)? { return Ok(true); }
     for area in ["sessions", "archived"] {
         if deletion_pending(root, area)? { return Ok(true); }
     }
