@@ -51,6 +51,9 @@ function write(root, record) {
       for (const table of ['session_diff_state', 'session_diff_transfers']) {
         if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) db.prepare(`DELETE FROM ${table} WHERE session_id=lower(?)`).run(record.sessionId);
       }
+
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='transcript_references'").get()) db.prepare('DELETE FROM transcript_references WHERE session_id=lower(?) AND session_path=?').run(record.sessionId, record.path);
+      db.prepare('DELETE FROM sessions WHERE session_id=lower(?) AND session_path=?').run(record.sessionId, record.path);
     }
 
     db.prepare('INSERT INTO ephemeral_cleanup_records VALUES (?, ?) ON CONFLICT(token) DO UPDATE SET record_json=excluded.record_json')

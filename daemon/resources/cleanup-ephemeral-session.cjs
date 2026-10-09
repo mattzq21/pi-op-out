@@ -203,6 +203,7 @@ async function cleanup(request, profile) {
       if (artifacts(request.path).some(file => files.exists(file))) throw new Error('Ephemeral artifacts reappeared after cleanup; retained');
 
       if (pending.inspect(request.path, request.sessionId, profile).length) throw new Error('Pending comparisons or transfers appeared after cleanup; retained');
+      records.write(profile, manifest);
 
       return { complete: true };
     }

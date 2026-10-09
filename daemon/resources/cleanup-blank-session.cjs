@@ -51,7 +51,8 @@ for (const candidate of candidates) {
       if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) database.prepare(`DELETE FROM ${table} WHERE session_id=lower(?)`).run(header.id);
     }
 
-    database.prepare('DELETE FROM sessions WHERE session_id=? AND session_path=?').run(header.id, file);
+    if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='transcript_references'").get()) database.prepare('DELETE FROM transcript_references WHERE session_id=lower(?) AND session_path=?').run(header.id, file);
+    database.prepare('DELETE FROM sessions WHERE session_id=lower(?) AND session_path=?').run(header.id, file);
     database.exec('COMMIT');
   } finally { database.close(); }
 }
