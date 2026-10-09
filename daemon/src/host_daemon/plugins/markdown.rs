@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{fs::{self, File, OpenOptions}, io::{Read, Write}, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs::{self, File, OpenOptions}, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 use uuid::Uuid;
 
-const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
 #[derive(Clone, Deserialize, PartialEq, Serialize)]
 struct Lease { client: String, editor: String, token: String, expires: u64 }
 
@@ -118,14 +117,14 @@ fn field<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
 }
 
 fn note_path(session: &str) -> Result<PathBuf, String> {
-    let root = notes_root()?.join("chats");
-    crate::ensure_private_dir(&root)?;
-    let path = fs::canonicalize(root).map_err(|error| error.to_string())?.join(format!("{session}.md"));
-    validate_path(path)
+    Ok(notes_root()?.join("chats").join(format!("{session}.md")))
 }
 
 fn has_conversation(session: &str) -> Result<bool, String> {
     let storage = crate::home_dir()?.join(crate::STORAGE_DIRECTORY);
+    let db = crate::session_registry::open(&storage)?;
+    let deleted: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM session_deletion_tombstones WHERE session_id=?)", [session], |row| row.get(0)).map_err(|error| error.to_string())?;
+    if deleted { return Ok(false); }
     let key = super::super::ownership::ConversationOwnership::key(session)?;
     let Some(body) = crate::conversation_storage::read(&storage, &key)? else { return Ok(true); };
     let record: Value = serde_json::from_str(&body).map_err(|error| error.to_string())?;
@@ -150,17 +149,7 @@ fn validate_path(path: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
-fn read(path: &Path) -> Result<String, String> {
-    let file = match fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
-        Err(error) => return Err(format!("Could not read note: {error}")),
-    };
-    let mut body = String::new();
-    file.take(MAX_NOTE_BYTES + 1).read_to_string(&mut body).map_err(|error| error.to_string())?;
-    if body.len() as u64 > MAX_NOTE_BYTES { return Err("This note is larger than 4 MB".into()); }
-    Ok(body)
-}
+fn read(path: &Path) -> Result<String, String> { super::markdown_storage::read(path) }
 
 fn version(body: &str) -> String { format!("{:x}", Sha256::digest(body.as_bytes())) }
 
@@ -168,38 +157,8 @@ fn document(body: &str) -> Value {
     json!({ "content": body, "version": version(body) })
 }
 
-fn check_version(path: &Path, args: &Value) -> Result<(), String> {
-    if version(&read(path)?) != field(args, "version")? {
-        return Err("This chat’s note changed on disk.".into());
-    }
-    Ok(())
-}
-
 fn write_note(path: &Path, body: &str, args: &Value) -> Result<(), String> {
-    if body.len() as u64 > MAX_NOTE_BYTES { return Err("Notes must be smaller than 4 MB".into()); }
-    check_version(path, args)?;
-    let create = !path.exists();
-    let temporary = path.with_file_name(format!(".piop-note-{}.tmp", Uuid::new_v4()));
-    let result: Result<(), String> = (|| {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
-        let mut file = options.open(&temporary).map_err(|error| error.to_string())?;
-        if !create { file.set_permissions(fs::metadata(path).map_err(|error| error.to_string())?.permissions()).map_err(|error| error.to_string())?; }
-        file.write_all(body.as_bytes()).and_then(|_| file.sync_all()).map_err(|error| error.to_string())?;
-        if create {
-            fs::hard_link(&temporary, path).map_err(|error| format!("Could not create chat note: {error}"))?;
-        } else {
-            check_version(path, args)?;
-            fs::rename(&temporary, path).map_err(|error| format!("Could not save note: {error}"))?;
-        }
-        Ok(())
-    })();
-    let _ = fs::remove_file(&temporary);
-    result?;
-    let parent = path.parent().ok_or("Note file has no parent directory")?;
-    crate::private_fs::sync_directory_ancestors(parent)
+    super::markdown_storage::write(path, body, field(args, "version")?)
 }
 
 pub(super) fn dispatch(args: Value, enabled: bool) -> Result<Value, String> {

@@ -31,7 +31,7 @@ fn import_file(db: &Connection, path: &Path) -> Result<(), String> {
     if path.extension().is_none_or(|extension| extension != "json") { return Ok(()); }
     let id = identity(path)?;
     let body = legacy(path)?;
-    db.execute("INSERT INTO note_editor_leases VALUES (?, ?) ON CONFLICT(session_id) DO NOTHING", [id, body]).map_err(|error| error.to_string())?;
+    db.execute("INSERT INTO note_editor_leases SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=?) ON CONFLICT(session_id) DO NOTHING", [&id, &body, &id]).map_err(|error| error.to_string())?;
     Ok(())
 }
 

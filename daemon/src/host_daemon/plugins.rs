@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 mod markdown;
 mod markdown_leases;
+mod markdown_storage;
 
 pub(crate) use markdown::preserve_leases_for_restart;
 

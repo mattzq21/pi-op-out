@@ -6,6 +6,15 @@ const { Check } = require('typebox/value');
 
 const targetsSchema = Type.Array(Type.Object({ sessionId: Type.String({ minLength: 1 }), path: Type.String() }));
 
+function removeNotes(db, targets) {
+  for (const table of ['chat_notes', 'note_editor_leases']) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
+    const remove = db.prepare(`DELETE FROM ${table} WHERE session_id=lower(?)`);
+
+    for (const target of targets) remove.run(target.sessionId);
+  }
+}
+
 function forget(root, targets) {
   if (!Check(targetsSchema, targets) || !targets.every(target => path.isAbsolute(target.path))) throw new Error('Invalid committed deletion identities');
 
@@ -26,6 +35,8 @@ function forget(root, targets) {
       const key = require('node:crypto').createHash('sha256').update(target.sessionId.toLowerCase()).digest('hex').slice(0, 40);
       db.prepare('DELETE FROM legacy_queued_inputs WHERE owner_key=?').run(key);
     }
+
+    removeNotes(db, targets);
 
     const registry = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_repositories'").get();
 
