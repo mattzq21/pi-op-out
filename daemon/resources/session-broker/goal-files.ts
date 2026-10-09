@@ -9,7 +9,8 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { validateObjective } from "./goal-state.ts";
 import { Type, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import { read as readPreparation, save as savePreparation, remove as removePreparation } from "./goal-preparations.cjs";
+import { read as readPreparation } from "./goal-prepared-files.cjs";
+import { save as savePreparation, remove as removePreparation } from "./goal-preparations.cjs";
 import { save as saveOwnership, remove as removeOwnership, allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
 import { claim, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
 import { acquireWorktreePublicationLock as acquireReferencePublicationLock } from "../piop-diff-watch/git.ts";
@@ -20,9 +21,11 @@ const attachmentSchema = Type.Object({ name: Type.String(), text: Type.Optional(
 
 const draftSchema = Type.Object({ objective: Type.String(), attachments: Type.Array(attachmentSchema) });
 
+const savedFileSchema = Type.Object({ name: Type.String({ pattern: "^(?:goal-objective\\.md|attachment-[1-9][0-9]*\\.(?:txt|png|jpg|gif|webp))$" }), data: Type.String(), digest: Type.String({ pattern: "^[a-f0-9]{64}$" }) });
+
 export const goalImagesSchema = Type.Array(Type.Object({ data: Type.String(), mimeType: Type.String(), name: Type.Optional(Type.String()) }));
 
-const preparationSchema = Type.Object({ version: Type.Literal(1), submissionId: Type.String(), digest: Type.String(), objective: Type.String(), sessionId: Type.String(), sessionPath: Type.Optional(Type.String()), cwd: Type.String(), goalId: Type.Optional(Type.String()), expectedState: Type.Optional(Type.String()), input: Type.Optional(draftSchema) });
+const preparationSchema = Type.Object({ version: Type.Literal(1), submissionId: Type.String(), digest: Type.String(), objective: Type.String(), sessionId: Type.String(), sessionPath: Type.Optional(Type.String()), cwd: Type.String(), goalId: Type.Optional(Type.String()), expectedState: Type.Optional(Type.String()), input: Type.Optional(draftSchema), files: Type.Optional(Type.Array(savedFileSchema)) });
 
 export type GoalPreparation = Static<typeof preparationSchema>;
 
@@ -94,7 +97,7 @@ async function existingContent(path: string, content: string | Buffer) {
 }
 
 async function restoreGoalFiles(preparation: GoalPreparation, directory: string) {
-  if (!preparation.input) return;
+  if (!preparation.input) return restoreSavedFiles(preparation, directory);
 
   if (hash(JSON.stringify(preparation.input)) !== preparation.digest) throw new Error("Saved goal input changed");
   const release = ownGoalDirectory(directory);
@@ -103,6 +106,20 @@ async function restoreGoalFiles(preparation: GoalPreparation, directory: string)
     const saved = await saveObjective(directory, directory, preparation.input, true);
 
     if (saved.objective !== preparation.objective) throw new Error("Saved goal objective does not match its input");
+  } finally { release(); }
+}
+
+async function restoreSavedFiles(preparation: GoalPreparation, directory: string) {
+  if (!preparation.files) return;
+  const release = ownGoalDirectory(directory);
+
+  try {
+    for (const file of preparation.files) {
+      const content = Buffer.from(file.data, "base64");
+
+      if (createHash("sha256").update(content).digest("hex") !== file.digest) throw new Error("Saved goal attachment contents changed");
+      await writeContent(join(directory, file.name), content, true);
+    }
   } finally { release(); }
 }
 
@@ -129,7 +146,7 @@ export async function goalPreparationView(ctx: ExtensionContext, id: string) {
 
   if (!preparation) return null;
 
-  const { input: _input, ...view } = preparation;
+  const { input: _input, files: _files, ...view } = preparation;
 
   return { ...view, sessionSaved: Boolean(preparation.sessionPath && existsSync(preparation.sessionPath)) };
 }

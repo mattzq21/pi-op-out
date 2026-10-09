@@ -51,7 +51,7 @@ fn save_runtime_settings(dir: &std::path::Path, settings: &AppSettings) -> Resul
     Ok(())
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 53] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 54] = [
     ("subagent-usage-storage.cjs", include_str!("../../resources/session-broker/subagent-usage-storage.cjs")),
     ("app-settings.cjs", include_str!("../../resources/session-broker/app-settings.cjs")),
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
@@ -101,6 +101,7 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 53] = [
     ("goal-files.ts", include_str!("../../resources/session-broker/goal-files.ts")),
     ("publication-residue.cjs", include_str!("../../resources/session-broker/publication-residue.cjs")),
     ("goal-dependencies.cjs", include_str!("../../resources/session-broker/goal-dependencies.cjs")),
+    ("goal-prepared-files.cjs", include_str!("../../resources/session-broker/goal-prepared-files.cjs")),
     ("goal-preparations.cjs", include_str!("../../resources/session-broker/goal-preparations.cjs")),
     ("goal-ownership.cjs", include_str!("../../resources/session-broker/goal-ownership.cjs")),
     ("goal-assets.cjs", include_str!("../../resources/session-broker/goal-assets.cjs")),
