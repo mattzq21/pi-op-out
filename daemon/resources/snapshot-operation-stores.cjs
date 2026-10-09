@@ -14,6 +14,10 @@ const restorationSchema = Type.Object({ moves: Type.Array(moveSchema) });
 
 const forkSchema = Type.Object({ destination: Type.String({ pattern: '\\.jsonl$' }) });
 
+const legacyArchiveSchema = Type.Object({ records: Type.Array(Type.Object({
+  file: Type.String({ pattern: '\\.jsonl$' }), destination: Type.String({ pattern: '\\.jsonl$' }),
+})) });
+
 function add(stores, file) {
   if (!path.isAbsolute(file) || path.resolve(file) !== file) throw new Error('Invalid saved comparison location');
   stores.add(file);
@@ -75,7 +79,33 @@ function archives(root, stores) {
     for (const session of record.records) moves(stores, session.moves);
   }
 
-  for (const directory of require('./legacy-archive-records.cjs').list(root)) legacyDirectory(directory, stores);
+  legacyArchives(root, stores);
+}
+
+function legacyArchives(root, stores) {
+  const records = require('./legacy-archive-records.cjs');
+
+  for (const directory of records.list(root)) {
+    const record = records.read(root, directory);
+
+    if (!record) {
+      if (fs.existsSync(directory)) throw new Error(`Archive comparison ownership is unavailable: ${directory}`);
+      continue;
+    }
+
+    if (record.version === undefined) {
+      Parse(legacyArchiveSchema, record);
+
+      for (const session of record.records) {
+        add(stores, session.file.replace(/\.jsonl$/, '.diffs.json'));
+        add(stores, session.destination.replace(/\.jsonl$/, '.diffs.json'));
+      }
+    } else if (record.version === 2) {
+      if (record.preparing && record.moves === undefined) continue;
+      Parse(restorationSchema, record);
+      moves(stores, record.moves);
+    } else throw new Error('Unsupported archived comparison record');
+  }
 }
 
 function restorations(root, stores) {
