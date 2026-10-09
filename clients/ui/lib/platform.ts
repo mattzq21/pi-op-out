@@ -46,6 +46,7 @@ export function captureDaemonTransport() {
 export function invoke<S extends z.ZodType>(command: string, args: NativeArguments | undefined, schema: S): Promise<z.output<S>>;
 export function invoke(command: string, args?: NativeArguments): Promise<JSONType | undefined>;
 export async function invoke(command: string, args?: NativeArguments, schema: z.ZodType = jsonResultSchema) {
+  const destination = isMobile ? remoteClient.connectionIdentity() : undefined;
   args = nativeArgumentsSchema.parse({ ...args, clientId: await clientIdentity(isMobile ? "mobile" : "desktop") });
 
   if (!isMobile) {
@@ -56,6 +57,10 @@ export async function invoke(command: string, args?: NativeArguments, schema: z.
     return schema.parse(response);
   }
 
+  return invokeMobile(command, args, schema, destination);
+}
+
+function invokeMobile(command: string, args: NativeArguments, schema: z.ZodType, destination: string | undefined) {
   if (command === "load_client_settings") return clientPreferences.load().then(result => schema.parse(result));
 
   if (command === "save_client_settings") return clientPreferences.save({ settings: args.settings, baseline: args.baseline, initialize: z.boolean().default(false).parse(args.initialize) }).then(result => schema.parse(result));
@@ -67,6 +72,8 @@ export async function invoke(command: string, args?: NativeArguments, schema: z.
 
     return Browser.open({ url }).then(() => schema.parse(undefined));
   }
+
+  if (destination !== remoteClient.connectionIdentity()) throw new Error("The host connection changed before this request could be sent. Retry on the selected host.");
 
   return remoteClient.invoke(command, args, schema);
 }

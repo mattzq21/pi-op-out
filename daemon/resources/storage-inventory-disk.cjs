@@ -223,7 +223,9 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
 
   async function visitManagedWorktrees() {
     try {
-      const saved = new Set(require('./worktree-inventory.cjs').list(root));
+      const records = require('./worktree-inventory.cjs').list(root);
+      warnings.push(...records.warnings);
+      const saved = new Set(records.paths);
       const present = [...saved].filter(target => directories.has(target));
       counts.set('worktrees', present.length);
 

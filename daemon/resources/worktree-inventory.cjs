@@ -53,8 +53,12 @@ function list(root) {
   try {
     db.exec('BEGIN IMMEDIATE');
 
-    const result = db.prepare('SELECT container, metadata_json FROM worktree_allocations ORDER BY container').all()
-      .flatMap(row => targets(db, root, row));
+    const result = { paths: [], warnings: [] };
+
+    for (const row of db.prepare('SELECT container, metadata_json FROM worktree_allocations ORDER BY container').all()) {
+      try { result.paths.push(...targets(db, root, row)); }
+      catch (error) { result.warnings.push(`${row.container}: worktree record unavailable: ${error.message}`); }
+    }
 
     db.exec('COMMIT');
 
