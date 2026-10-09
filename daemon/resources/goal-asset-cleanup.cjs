@@ -7,6 +7,7 @@ const assets = require('./session-broker/goal-assets.cjs');
 const { retainedDependencies } = require('./session-broker/session-publication.cjs');
 const io = require('./session-transactions.cjs');
 const { validSessionHeader } = require('./checkpoint-schemas.cjs');
+const goalReferences = require('./goal-cleanup-references.cjs');
 
 const registrySchema = Type.Object({ session_id: Type.String(), session_path: Type.Union([Type.String(), Type.Null()]) });
 
@@ -37,8 +38,13 @@ function observe(root, file, observation, live = true) {
   observation.files.set(file, entries[0].id);
 
   if (live) observation.sessions.add(entries[0].id);
-  assets.references(entries, root).forEach(directory => observation.directories.add(directory));
-  assets.directReferences(entries, root).forEach(directory => observation.directories.add(directory));
+  observeReferences(root, entries, observation);
+}
+
+function observeReferences(root, entries, observation) {
+  const references = goalReferences.collect(root, entries);
+  references.directories.forEach(directory => observation.directories.add(directory));
+  observation.missingGoalReferences ||= references.incomplete;
 }
 
 function registered(root, observation, deleted) {
@@ -115,7 +121,7 @@ function surviving(root, deleted) {
 function publicationDiagnostics(root, observation) {
   for (const diagnostic of retainedDependencies(root)) {
     if (diagnostic.dependencies) {
-      assets.references([{ goalAssets: diagnostic.dependencies.goalAssets }], root).forEach(directory => observation.directories.add(directory));
+      observeReferences(root, [{ goalAssets: diagnostic.dependencies.goalAssets }], observation);
     }
 
     for (const file of diagnostic.transcriptPaths) observe(root, file, observation, false);
@@ -184,7 +190,7 @@ function plan(root, targets) {
     const deleted = confirmedDeletions(root);
     targets.forEach(target => deleted.add(target.sessionId));
 
-    for (const target of targets) assets.references(readTranscript(root, target.path), root).forEach(directory => candidate(root, directory, candidates, [target.sessionId]));
+    for (const target of targets) goalReferences.collect(root, readTranscript(root, target.path)).directories.forEach(directory => candidate(root, directory, candidates, [target.sessionId]));
 
     for (const directory of require('./session-broker/goal-ownership.cjs').directories(root)) ownedCandidate(root, directory, deleted, candidates);
 
@@ -247,12 +253,12 @@ function finishCandidate(transaction, candidate, observation, deleted, save) {
 
   if (assets.identity(candidate.path) !== candidate.identity) throw new Error(`Goal asset directory was replaced; retained: ${candidate.path}`);
 
-  if (candidate.cleanup && observation.directories.has(candidate.path)) throw new Error(`Goal assets gained a reference during interrupted reclamation; retained: ${candidate.path}`);
+  if (candidate.cleanup && referencedCandidate(observation, candidate)) throw new Error(`Goal assets gained a reference during interrupted reclamation; retained: ${candidate.path}`);
 
   if (!candidate.cleanup) {
     const owners = retireOwners(transaction.root, candidate.path, deleted, observation, candidate.owners ?? [...deleted]);
 
-    if (owners.length || observation.directories.has(candidate.path)) {
+    if (owners.length || referencedCandidate(observation, candidate)) {
       completeCandidate(transaction, candidate, save);
 
       return;
@@ -272,7 +278,7 @@ function finishMissingCandidate(transaction, candidate, observation, deleted, sa
 
   if (identity !== undefined && identity !== candidate.identity) throw new Error(`Saved goal ownership changed; retained: ${candidate.path}`);
   const record = assets.readOwners(transaction.root, candidate.path);
-  const retained = missingReferences(observation) || observation.directories.has(candidate.path) || record.owners.some(owner => !deleted.has(owner.sessionId) || observation.sessions.has(owner.sessionId));
+  const retained = referencedCandidate(observation, candidate) || record.owners.some(owner => !deleted.has(owner.sessionId) || observation.sessions.has(owner.sessionId));
 
   if (retained && candidate.cleanup) throw new Error(`Goal assets gained a reference during interrupted reclamation; retained: ${candidate.path}`);
 
@@ -284,8 +290,8 @@ function finishMissingCandidate(transaction, candidate, observation, deleted, sa
   completeCandidate(transaction, candidate, save);
 }
 
-function missingReferences(observation) {
-  return [...observation.directories].some(directory => !assets.exists(directory));
+function referencedCandidate(observation, candidate) {
+  return observation.directories.has(candidate.path) || Boolean(observation.missingGoalReferences);
 }
 
 function completeCandidate(transaction, candidate, save) {
