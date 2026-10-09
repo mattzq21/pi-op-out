@@ -1,7 +1,5 @@
 import { z } from "zod";
-import { promises as fs } from "node:fs";
-import { existsSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { readText } from "../../../daemon/resources/session-broker/app-settings.cjs";
 import { dirname, join, resolve, sep } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
@@ -127,7 +125,7 @@ export function selectConfigPath({
   cwd,
   extensionDir,
   agentDir,
-  exists = existsSync,
+  exists = path => readConfigText(path) !== undefined,
 }: SelectConfigPathOptions): ResolvedConfigPath {
   const projectPath = getProjectConfigPath(cwd);
 
@@ -154,65 +152,20 @@ export async function loadConfigFromPath(
   configPath: string,
   fallback: FastModeConfig = DEFAULT_CONFIG,
 ): Promise<FastModeConfig> {
-  try {
-    const json = await fs.readFile(configPath, "utf8");
+  const json = readConfigText(configPath);
 
-    return parseConfigJson(json, fallback);
-  } catch {
-    return cloneConfig(fallback);
-  }
+  return json === undefined ? cloneConfig(fallback) : parseConfigJson(json, fallback);
 }
 
-async function migrationConfig(path: string): Promise<string | undefined> {
-  try {
-    const contents = await fs.readFile(path, "utf8");
-
-    return configSchema.safeParse(JSON.parse(contents)).success ? contents : undefined;
-  } catch (error) {
-    if (error instanceof SyntaxError || z.object({ code: z.literal("ENOENT") }).safeParse(error).success) return;
-    throw error;
-  }
-}
-
-async function publishMigration(path: string, temporary: string) {
-  try { await fs.link(temporary, path); }
-  catch (error) {
-    if (!z.object({ code: z.literal("EEXIST") }).safeParse(error).success) throw error;
-
-    if (await migrationConfig(path) !== undefined) return;
-    await fs.rename(temporary, path);
-  }
-
-  const directory = await fs.open(dirname(path), "r");
-
-  try { await directory.sync(); }
-  finally { await directory.close(); }
-}
-
-async function migrateConfigPath(path: string): Promise<void> {
-  if (await migrationConfig(path) !== undefined) return;
+function readConfigText(path: string): string | undefined {
   const legacy = join(dirname(dirname(path)), "pi-openai-fast-mode-piop", "config.json");
-  const contents = await migrationConfig(legacy);
 
-  if (contents === undefined) return;
-  await fs.mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${randomUUID()}.migration.tmp`;
-
-  try {
-    const file = await fs.open(temporary, "wx", 0o600);
-
-    try { await file.writeFile(contents, "utf8"); await file.sync(); }
-    finally { await file.close(); }
-
-    await publishMigration(path, temporary);
-  } finally { await fs.rm(temporary, { force: true }); }
+  return readText(path, legacy, (value: Partial<FastModeConfig>) => configSchema.safeParse(value).success);
 }
 
 export async function loadConfigForScope(
   options: LoadConfigOptions,
 ): Promise<LoadedConfig> {
-  await migrateConfigPath(getProjectConfigPath(options.cwd));
-  await migrateConfigPath(getUserConfigPath(options.agentDir));
   const selected = selectConfigPath(options);
 
   const config = await loadConfigFromPath(

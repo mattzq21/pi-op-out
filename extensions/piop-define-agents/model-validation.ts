@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readText } from "../app-settings.cjs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Type } from "typebox";
@@ -7,6 +7,7 @@ import type { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agen
 import { loadAccountProviders } from "../piop-runtime-settings/provider-accounts.mjs";
 import { createFastModeDiscovery } from "../piop-openai-fast-mode/src/discovery.ts";
 import { piDirectory } from "./validation-runtime.ts";
+import type { FastModeConfig } from "../piop-openai-fast-mode/src/types.ts";
 import type { Agent } from "./contracts.ts";
 
 async function configuredFastTargets(agentDir: string) {
@@ -15,7 +16,9 @@ async function configuredFastTargets(agentDir: string) {
   const targets: Array<{ provider: string; model: string }> = [];
 
   try {
-    const text = await readFile(path, "utf8").catch(() => readFile(legacy, "utf8"));
+    const text = readText(path, legacy, (value: Partial<FastModeConfig>) => Check(Type.Object({}), value));
+
+    if (text === undefined) return targets;
     const value = JSON.parse(text);
 
     if (!Array.isArray(value.targets)) return targets;

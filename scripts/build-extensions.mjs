@@ -13,6 +13,7 @@ async function fastMode() {
   });
 
   await buildBundle({
+    plugins: [storageSchemaImports()],
     entryPoints: ["extensions/piop-openai-fast-mode/src/index.ts"],
     outfile: "daemon/resources/fast-mode.bundle.mjs",
     bundle: true,
@@ -22,7 +23,7 @@ async function fastMode() {
     minify: true,
     banner: { js: `/*! piop-openai-fast-mode 0.3.0-piop.1.${license ? `\n${license}` : ""}*/` },
     external: ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"],
-  }, "daemon/resources/fast-mode.bundle.mjs", { script: import.meta.url });
+  }, "daemon/resources/fast-mode.bundle.mjs", { script: import.meta.url, inputs: ["scripts/storage-schema-plugin.mjs"] });
 }
 
 async function mcpBridge() {

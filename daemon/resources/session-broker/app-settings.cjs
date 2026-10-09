@@ -17,21 +17,48 @@ function open(root) {
   } catch (error) { db.close(); throw error; }
 }
 
-function readText(file) {
+function oldBody(file) {
+  try { return fs.readFileSync(file); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+
+  return null;
+}
+
+function accepted(body, accept) {
+  if (body === null) return false;
+
+  try { return accept(JSON.parse(Buffer.from(body).toString('utf8'))); }
+  catch (error) { if (error instanceof SyntaxError) return false; throw error; }
+}
+
+function importLegacy(db, name, body, legacy, accept) {
+  if (!accepted(body, accept)) {
+    const previous = oldBody(legacy);
+
+    if (accepted(previous, accept)) body = previous;
+  }
+
+  db.prepare('UPDATE application_settings SET body=?, legacy_imported=1 WHERE name=?').run(body, name);
+
+  return body;
+}
+
+function readText(file, legacy, accept = () => true) {
   const db = open(path.dirname(file));
   const name = path.basename(file);
 
   try {
     db.exec('BEGIN IMMEDIATE');
-    const row = db.prepare('SELECT body FROM application_settings WHERE name=?').get(name);
+    const row = db.prepare('SELECT body, legacy_imported FROM application_settings WHERE name=?').get(name);
     let body = row?.body ?? null;
 
     if (!row) {
-      try { body = fs.readFileSync(file); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      body = oldBody(file);
 
       db.prepare('INSERT INTO application_settings (name, body) VALUES (?, ?)').run(name, body);
     }
+
+    if (legacy && !row?.legacy_imported) body = importLegacy(db, name, body, legacy, accept);
 
     db.exec('COMMIT');
 
