@@ -208,21 +208,14 @@ impl ConversationOwnership {
         let Some(root) = optional_path(&self.root.join(if archived { "archived" } else { "sessions" }))? else {
             return Ok(None);
         };
-        let candidates = if let Some(path) = path.filter(|path| !path.is_empty()) {
-            vec![PathBuf::from(path)]
+        let candidate = if let Some(path) = path.filter(|path| !path.is_empty()) {
+            PathBuf::from(path)
         } else {
-            std::fs::read_dir(&root)
-                .map_err(|error| error.to_string())?
-                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-                .filter(|path| path.extension().is_some_and(|extension| extension == "jsonl"))
-                .collect()
+            let Some(path) = conversation_lookup::registered_path(&self.root, id)? else { return Ok(None); };
+            if !path.starts_with(&root) { return Ok(None); }
+            path
         };
-        for path in candidates {
-            if let Some(saved) = read_candidate(id, &path, &root, metadata_only)? {
-                return Ok(Some(saved));
-            }
-        }
-        Ok(None)
+        read_candidate(id, &candidate, &root, metadata_only)
     }
 
     async fn release_previous(&self, id: &str, record: &Value, intent: &str) -> Result<()> {
@@ -447,12 +440,10 @@ fn validate_saved_path(path: &Path, root: &Path) -> Result<()> {
 
 pub(super) fn saved_conversation_in(root: &Path, id: &str) -> Result<bool> {
     let Some(root) = optional_path(root)? else { return Ok(false); };
-    for entry in std::fs::read_dir(&root).map_err(|error| error.to_string())? {
-        let path = entry.map_err(|error| error.to_string())?.path();
-        if path.extension().is_none_or(|extension| extension != "jsonl") { continue; }
-        if read_candidate(id, &path, &root, true)?.is_some() { return Ok(true); }
-    }
-    Ok(false)
+    let profile = root.parent().ok_or("Session storage root missing")?;
+    let Some(path) = conversation_lookup::registered_path(profile, id)? else { return Ok(false); };
+    if !path.starts_with(&root) { return Ok(false); }
+    Ok(read_candidate(id, &path, &root, true)?.is_some())
 }
 
 fn read_candidate(id: &str, path: &Path, root: &Path, metadata_only: bool) -> Result<Option<SavedConversation>> {

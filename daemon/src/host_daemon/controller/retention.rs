@@ -29,28 +29,9 @@ impl Host {
 }
 
 fn retention_pending(root: &Path) -> Result<bool> {
-    if pending_entry(&root.join("deleted-sessions"), committed_deletion)? { return Ok(true); }
     let database = crate::session_registry::open(root)?;
-    database.query_row("SELECT EXISTS(SELECT 1 FROM retention_candidates) OR EXISTS(SELECT 1 FROM cleanup_requests)", [], |row| row.get(0)).map_err(|error| error.to_string())
-}
-
-fn committed_deletion(entry: &std::fs::DirEntry) -> Result<bool> {
-    let name = entry.file_name();
-    let name = name.to_string_lossy();
-    Ok(name.len() == 36 && Uuid::parse_str(&name).is_ok()
-        && entry.file_type().map_err(|error| error.to_string())?.is_dir())
-}
-
-fn pending_entry(directory: &Path, matches: impl Fn(&std::fs::DirEntry) -> Result<bool>) -> Result<bool> {
-    let entries = match std::fs::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error.to_string()),
-    };
-    for entry in entries {
-        if matches(&entry.map_err(|error| error.to_string())?)? { return Ok(true); }
-    }
-    Ok(false)
+    database.query_row("SELECT EXISTS(SELECT 1 FROM retention_candidates) OR EXISTS(SELECT 1 FROM cleanup_requests)
+        OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions)", [], |row| row.get(0)).map_err(|error| error.to_string())
 }
 
 async fn retention_pass(root: &Path, initialize: bool) -> Result<()> {
