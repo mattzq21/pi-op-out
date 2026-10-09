@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 
@@ -8,20 +9,15 @@ const fileErrorSchema = Type.Object({ code: Type.String() });
 
 type Channel = { port: number; token: string; usageProtocol: number; startedAt?: number; offset?: number };
 
-const channelPath = (path: string) => `${path}.goal-usage.json`;
+const storageModule = fileURLToPath(new URL("./subagent-usage-storage.cjs", import.meta.url));
 
 const channelUpdateScript = `
   const fs = require("node:fs");
   const http = require("node:http");
-  const [path, temporary, action] = process.argv.slice(1);
+  const [modulePath, path, sessionId, action] = process.argv.slice(1);
+  const storage = require(modulePath);
   const next = JSON.parse(fs.readFileSync(0, "utf8"));
-  function readOwner() {
-    let content;
-    try { content = fs.readFileSync(path, "utf8"); }
-    catch (error) { if (error.code === "ENOENT") return; throw error; }
-    try { return JSON.parse(content); }
-    catch (error) { if (error instanceof SyntaxError) return; throw error; }
-  }
+  function readOwner() { return storage.read(path, sessionId); }
   function identity(pid) {
     if (process.platform !== "linux") return;
     const stat = fs.readFileSync("/proc/" + pid + "/stat", "utf8");
@@ -58,17 +54,12 @@ const channelUpdateScript = `
     process.kill(next.pid, 0);
     next.identity = identity(next.pid);
     next.protocol = 1;
-    fs.rmSync(temporary, { force: true });
-    try {
-      const file = fs.openSync(temporary, "wx", 0o600);
-      try { fs.writeFileSync(file, JSON.stringify(next)); fs.fsyncSync(file); }
-      finally { fs.closeSync(file); }
-      fs.renameSync(temporary, path);
-    } finally { fs.rmSync(temporary, { force: true }); }
+    storage.write(path, sessionId, next);
   }
+
   async function update() {
     if (action === "claim") await claim();
-    else if (readOwner()?.token === next.token) fs.rmSync(path, { force: true });
+    else storage.close(path, sessionId, next.token);
   }
   update().catch(error => { process.stderr.write(error.message); process.exitCode = 1; });
 `;
@@ -99,13 +90,13 @@ async function channelDirectory(path: string, action: "claim" | "close") {
   return directory;
 }
 
-async function updateChannel(path: string, action: "claim" | "close", channel: Channel & { pid: number }) {
+async function updateChannel(path: string, sessionId: string, action: "claim" | "close", channel: Channel & { pid: number }) {
   const directory = await channelDirectory(path, action);
 
   if (!directory) return;
 
   return new Promise<void>((resolve, reject) => {
-    const child = execFile("flock", ["--exclusive", "--wait", "10", "--no-fork", join(directory, "subagent-usage.lock"), process.execPath, "-e", channelUpdateScript, channelPath(path), join(directory, "subagent-usage.pending"), action], { timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 16_384, encoding: "utf8" }, (error, _output, stderr) => {
+    const child = execFile("flock", ["--exclusive", "--wait", "10", "--no-fork", join(directory, "subagent-usage.lock"), process.execPath, "-e", channelUpdateScript, storageModule, path, sessionId, action], { timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 16_384, encoding: "utf8" }, (error, _output, stderr) => {
       if (error) reject(new Error(`Could not ${action} subagent usage channel: ${stderr.trim() || error.message}`));
       else resolve();
     });
@@ -116,13 +107,13 @@ async function updateChannel(path: string, action: "claim" | "close", channel: C
 }
 
 
-export async function claimUsageChannel(path: string, port: number, token: string, scope?: { startedAt: number; offset?: number }) {
+export async function claimUsageChannel(path: string, sessionId: string, port: number, token: string, scope?: { startedAt: number; offset?: number }) {
   const channel = { port, token, pid: process.pid, usageProtocol: 2, ...scope };
   let closed: Promise<void> | undefined;
 
-  const close = () => closed ??= updateChannel(path, "close", channel).then(() => {});
+  const close = () => closed ??= updateChannel(path, sessionId, "close", channel).then(() => {});
 
-  try { await updateChannel(path, "claim", channel);
+  try { await updateChannel(path, sessionId, "claim", channel);
 
   return close; }
   catch (error) { await close(); throw error; }

@@ -314,7 +314,7 @@ class SubagentObserver {
     await this.closeUsage?.();
     this.closeUsage = undefined;
     this.channelPath = undefined;
-    this.closeUsage = await listenSubagentUsage(this.run.sessionPath, (total, sourceId) => this.account(false, sourceId ? { sourceId, total } : undefined), error => this.interrupted(String(error)), this.run);
+    this.closeUsage = await listenSubagentUsage(this.run.sessionPath, this.run.sessionId, (total, sourceId) => this.account(false, sourceId ? { sourceId, total } : undefined), error => this.interrupted(String(error)), this.run);
     this.channelPath = this.run.sessionPath;
   }
 

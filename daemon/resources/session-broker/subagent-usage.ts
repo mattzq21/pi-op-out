@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
+import { read as readUsageChannel } from "./subagent-usage-storage.cjs";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -16,15 +16,11 @@ const usageSchema = Type.Object({ total: Type.Integer({ minimum: 0, maximum: Num
 
 export type UsageCheckpoint = { sourceId: string; total: number };
 
-const fileErrorSchema = Type.Object({ code: Type.String() });
-
 const addressSchema = Type.Object({ port: Type.Number() });
 
 type Channel = Static<typeof channelSchema>;
 
 const usageReceipt = (checkpoint: UsageCheckpoint) => createHash("sha256").update(JSON.stringify([checkpoint.sourceId, checkpoint.total])).digest("hex");
-
-const channelPath = (path: string) => `${path}.goal-usage.json`;
 
 function ownsChannel(request: IncomingMessage, token: string) {
   return request.method === "GET" && request.url === "/owner" && request.headers.authorization === `Bearer ${token}`;
@@ -65,7 +61,7 @@ async function receiveUsage(request: IncomingMessage, response: ServerResponse, 
   response.writeHead(204).end();
 }
 
-export async function listenSubagentUsage(path: string, report: (total: number, sourceId?: string) => void | Promise<void>, failed: (cause: unknown) => void, scope?: { startedAt: number; offset?: number }) {
+export async function listenSubagentUsage(path: string, sessionId: string, report: (total: number, sourceId?: string) => void | Promise<void>, failed: (cause: unknown) => void, scope?: { startedAt: number; offset?: number }) {
   const token = randomUUID();
 
   const server = createServer((request, response) => {
@@ -89,7 +85,7 @@ export async function listenSubagentUsage(path: string, report: (total: number, 
 
     if (!Check(addressSchema, address)) throw new Error("Subagent usage server did not bind a TCP port");
     const port = address.port;
-    releaseChannel = await claimUsageChannel(path, port, token, scope);
+    releaseChannel = await claimUsageChannel(path, sessionId, port, token, scope);
 
     return close;
   } catch (error) { await close(); throw error; }
@@ -100,11 +96,9 @@ async function loadChannel(ctx: ExtensionContext): Promise<Channel | undefined> 
 
   if (!path || !subagentParent(ctx)) return;
 
-  try {
-    const channel = JSON.parse(await readFile(channelPath(path), "utf8"));
+  const channel = readUsageChannel(path, ctx.sessionManager.getSessionId());
 
-    if (Check(channelSchema, channel)) return channel;
-  } catch (error) { if (!(error instanceof SyntaxError) && (!Check(fileErrorSchema, error) || error.code !== "ENOENT")) throw error; }
+  if (Check(channelSchema, channel)) return channel;
 }
 
 async function usableChannel(ctx: ExtensionContext, checkpoint?: UsageCheckpoint) {

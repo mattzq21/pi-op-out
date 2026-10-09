@@ -51,7 +51,8 @@ fn save_runtime_settings(dir: &std::path::Path, settings: &AppSettings) -> Resul
     Ok(())
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 51] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 52] = [
+    ("subagent-usage-storage.cjs", include_str!("../../resources/session-broker/subagent-usage-storage.cjs")),
     ("app-settings.cjs", include_str!("../../resources/session-broker/app-settings.cjs")),
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
