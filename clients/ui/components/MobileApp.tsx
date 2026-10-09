@@ -99,6 +99,7 @@ export function MobileApp() {
 
   createComputed(() => { connectRef.current = connect; });
   createDependencyEffect(() => {
+    let disposed = false;
     remoteClient.onDisconnect = (reason) => { setConnected(false); setError(reason); scheduleReconnect(); };
 
     const restarting = () => {
@@ -116,9 +117,11 @@ export function MobileApp() {
     const startupGeneration = generation.current;
     const startupUrl = url();
     void Promise.all([loadMobileDebugConnection(), readMobileConnection()]).then(([debugUrl, saved]) => {
-      if (generation.current !== startupGeneration) return;
+      if (disposed) return;
 
       if (!reconnectChanged) { reconnectEnabled.current = saved.autoReconnect; setAutoReconnect(saved.autoReconnect); }
+
+      if (generation.current !== startupGeneration) return;
 
       if (url() === startupUrl) setUrl(saved.lastHost);
 
@@ -147,7 +150,7 @@ export function MobileApp() {
     const viewport = () => document.documentElement.style.setProperty("--mobile-height", `${window.visualViewport?.height ?? window.innerHeight}px`);
     viewport(); window.visualViewport?.addEventListener("resize", viewport);
 
-    return () => { generation.current++; clearTimeout(retry.current); clearTimeout(restartGraceTimer.current); remoteClient.close(); window.removeEventListener("piop-mobile-disconnect", disconnect); window.removeEventListener("piop-daemon-restarting", restarting); void restartListener.then(stop => stop()); remoteClient.onDisconnect = undefined; void back.then((handle) => handle.remove()); window.visualViewport?.removeEventListener("resize", viewport); };
+    return () => { disposed = true; generation.current++; clearTimeout(retry.current); clearTimeout(restartGraceTimer.current); remoteClient.close(); window.removeEventListener("piop-mobile-disconnect", disconnect); window.removeEventListener("piop-daemon-restarting", restarting); void restartListener.then(stop => stop()); remoteClient.onDisconnect = undefined; void back.then((handle) => handle.remove()); window.visualViewport?.removeEventListener("resize", viewport); };
   }, () => [disconnect, scheduleReconnect]);
 
   const saveHost = async () => {

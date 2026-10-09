@@ -32,27 +32,41 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
-async function storedHosts(change?: (hosts: SavedMobileHost[]) => SavedMobileHost[]): Promise<SavedMobileHost[]> {
+async function storedHosts(change?: (hosts: SavedMobileHost[]) => SavedMobileHost[], forgotten?: string): Promise<SavedMobileHost[]> {
   const database = await openDatabase();
   let legacy: string | null = null;
 
   try { legacy = localStorage.getItem(key); } catch { }
 
   try {
-    const result = await hostTransaction(database, legacy, change);
+    const result = await hostTransaction(database, legacy, change, forgotten);
+
+    if (result.connection) rememberConnection(result.connection);
 
     try { if (localStorage.getItem(key) === legacy) localStorage.removeItem(key); } catch { }
 
-    return result;
+    return result.hosts;
   } finally { database.close(); }
 }
 
-function hostTransaction(database: IDBDatabase, legacy: string | null, change?: (hosts: SavedMobileHost[]) => SavedMobileHost[]): Promise<SavedMobileHost[]> {
+function hostTransaction(database: IDBDatabase, legacy: string | null, change?: (hosts: SavedMobileHost[]) => SavedMobileHost[], forgotten?: string): Promise<{ hosts: SavedMobileHost[]; connection?: MobileConnection }> {
   return new Promise((resolve, reject) => {
     const transaction = database.transaction(["hosts", "state"], "readwrite");
     const hosts = transaction.objectStore("hosts");
     const state = transaction.objectStore("state");
     let result: SavedMobileHost[] = [];
+    let connection: MobileConnection | undefined;
+
+    if (forgotten !== undefined) {
+      const request = state.get("connection");
+      request.onsuccess = () => {
+        try {
+          connection = withoutHost(request.result === undefined ? legacyConnection() : connectionSchema.parse(request.result), forgotten);
+          state.put(connection, "connection");
+        } catch (error) { transaction.abort(); reject(error); }
+      };
+    }
+
     const imported = state.get("imported");
     imported.onsuccess = () => {
       if (!imported.result) {
@@ -72,7 +86,7 @@ function hostTransaction(database: IDBDatabase, legacy: string | null, change?: 
       };
     };
 
-    transaction.oncomplete = () => resolve(result);
+    transaction.oncomplete = () => resolve({ hosts: result, connection });
     transaction.onabort = () => reject(transaction.error ?? new Error("Could not save mobile hosts"));
   });
 }
@@ -94,11 +108,12 @@ export function saveMobileHost(address: string, name: string): Promise<SavedMobi
   });
 }
 
-export async function removeMobileHost(url: string): Promise<SavedMobileHost[]> {
-  const next = await storedHosts(hosts => hosts.filter(host => host.url !== url));
-  await connectionSettings(saved => saved.lastHost && validateHost({ url: saved.lastHost }) === url ? { ...saved, lastHost: "" } : saved);
+export function removeMobileHost(url: string): Promise<SavedMobileHost[]> {
+  return storedHosts(hosts => hosts.filter(host => host.url !== url), url);
+}
 
-  return next;
+function withoutHost(saved: MobileConnection, url: string): MobileConnection {
+  return saved.lastHost && validateHost({ url: saved.lastHost }) === url ? { ...saved, lastHost: "" } : saved;
 }
 
 const connectionSchema = z.object({ lastHost: z.string(), autoReconnect: z.boolean() });
@@ -119,15 +134,19 @@ async function connectionSettings(change?: (saved: MobileConnection) => MobileCo
 
   try {
     const saved = await connectionTransaction(database, change);
-    connectionCache = saved;
-
-    try {
-      localStorage.removeItem("piop-mobile-host");
-      localStorage.removeItem("piop-mobile-auto-reconnect");
-    } catch { }
+    rememberConnection(saved);
 
     return saved;
   } finally { database.close(); }
+}
+
+function rememberConnection(saved: MobileConnection) {
+  connectionCache = saved;
+
+  try {
+    localStorage.removeItem("piop-mobile-host");
+    localStorage.removeItem("piop-mobile-auto-reconnect");
+  } catch { }
 }
 
 function connectionTransaction(database: IDBDatabase, change?: (saved: MobileConnection) => MobileConnection): Promise<MobileConnection> {
