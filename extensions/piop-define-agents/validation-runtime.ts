@@ -2,6 +2,7 @@ import { readFile, realpath } from "node:fs/promises";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
+import { installSettingsStorage } from "../../daemon/resources/sdk-storage.mjs";
 import { agentExtensions } from "./extension-loader.ts";
 import type { ExtensionAPI, ExtensionRuntime, ModelRegistry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -46,7 +47,9 @@ export async function extensionValidator(registeredToolNames: string[]) {
   const { createEventBus } = await import(pathToFileURL(join(directory, "dist/core/event-bus.js")).href);
   const { ExtensionRunner } = await import(pathToFileURL(join(directory, "dist/core/extensions/runner.js")).href);
   const { SessionManager } = await import(pathToFileURL(join(directory, "dist/core/session-manager.js")).href);
-  const { SettingsManager } = await import(pathToFileURL(join(directory, "dist/core/settings-manager.js")).href);
+  const { SettingsManager, FileSettingsStorage } = await import(pathToFileURL(join(directory, "dist/core/settings-manager.js")).href);
+
+  installSettingsStorage(FileSettingsStorage);
 
   return async (paths: string[], base: string, registry: ModelRegistry, agent: Agent, validate: () => Promise<void>) => {
     const runtime: ExtensionRuntime = createExtensionRuntime();

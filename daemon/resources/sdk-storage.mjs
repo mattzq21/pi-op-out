@@ -397,6 +397,46 @@ function requireStorageMethods(prototype, names) {
   if (names.some(name => !(prototype[name] instanceof Function))) throw new Error("This Pi SDK does not support Piop's storage protection. Update Piop before using this SDK.");
 }
 
+export function installSettingsStorage(FileSettingsStorage) {
+  if (installedStorageClasses.has(FileSettingsStorage)) return;
+  requireStorageMethods(FileSettingsStorage.prototype, ["withLock"]);
+
+  FileSettingsStorage.prototype.withLock = function (scope, operation) {
+    if (!["global", "project"].includes(scope)) throw new Error("Invalid settings scope");
+    const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
+
+    return withStoredSettings(path, operation);
+  };
+
+  installedStorageClasses.add(FileSettingsStorage);
+}
+
+function withStoredSettings(path, operation) {
+  const root = sessionReferenceRoot();
+  storageFs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const file = storagePath.join(root, "sessions.sqlite");
+  storageFs.closeSync(storageFs.openSync(file, storageFs.constants.O_CREAT | storageFs.constants.O_RDWR | storageFs.constants.O_NOFOLLOW, 0o600));
+  storageFs.chmodSync(file, 0o600);
+  const database = new StorageDatabase(file);
+  const key = storagePath.resolve(path);
+
+  try {
+    database.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+      CREATE TABLE IF NOT EXISTS sdk_settings (path TEXT PRIMARY KEY, body TEXT);
+      BEGIN IMMEDIATE;`);
+
+    if (!database.prepare("SELECT 1 FROM sdk_settings WHERE path=?").get(key)) {
+      database.prepare("INSERT INTO sdk_settings VALUES (?, ?)").run(key, storageReadOptional(key) ?? null);
+    }
+
+    const current = database.prepare("SELECT body FROM sdk_settings WHERE path=?").get(key).body;
+    const next = operation(current ?? undefined);
+
+    if (next !== undefined) database.prepare("UPDATE sdk_settings SET body=? WHERE path=?").run(next, key);
+    database.exec("COMMIT");
+  } finally { database.close(); }
+}
+
 export function installAuthStorage(FileAuthStorageBackend, AuthStorage) {
   if (installedStorageClasses.has(FileAuthStorageBackend)) return;
   const prototype = FileAuthStorageBackend.prototype;

@@ -52,7 +52,8 @@ async function loadRuntime() {
       installModelsStorage(FileModelsStore, ModelConfig);
       const config = await import(pathToFileURL(join(directory, 'dist/config.js')).href);
       const { stripJsonComments } = await import(pathToFileURL(join(directory, 'dist/utils/json.js')).href);
-      const { SettingsManager } = await import(pathToFileURL(join(directory, 'dist/core/settings-manager.js')).href);
+      const { SettingsManager, FileSettingsStorage } = await import(pathToFileURL(join(directory, 'dist/core/settings-manager.js')).href);
+      installSettingsStorage(FileSettingsStorage);
       const settings = SettingsManager.create(process.cwd(), config.getAgentDir());
       const builtin = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
       const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
