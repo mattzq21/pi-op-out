@@ -314,23 +314,7 @@ fn storage_helper() -> String {
 }
 
 pub(crate) fn embedded_diff_store() -> String {
-    let references = include_str!("../../resources/transcript-references.cjs").replace("require('./session-database.cjs')", "require('../session-database.cjs')");
-    let modules = [
-        ("../session-database.cjs", include_str!("../../resources/session-database.cjs")),
-        ("../transcript-references.cjs", references.as_str()),
-        ("./checkpoint-owner-index.cjs", include_str!("../../resources/session-broker/checkpoint-owner-index.cjs")),
-        ("./git-diff-database.cjs", include_str!("../../resources/session-broker/git-diff-database.cjs")),
-        ("./git-diff-pages.cjs", include_str!("../../resources/session-broker/git-diff-pages.cjs")),
-        ("./git-diff-transfer-storage.cjs", include_str!("../../resources/session-broker/git-diff-transfer-storage.cjs")),
-        ("./git-diff-transfer.cjs", include_str!("../../resources/session-broker/git-diff-transfer.cjs")),
-        ("./git-diff-store.cjs", include_str!("../../resources/session-broker/git-diff-store.cjs")),
-    ];
-    let mut source = String::from("const diffStore = ((builtinRequire) => { const modules = {}; const require = name => modules[name] ?? builtinRequire(name);\n");
-    for (name, body) in modules {
-        source.push_str(&format!("modules['{name}'] = (() => {{ const module = {{exports: {{}}}}; {body}\nreturn module.exports; }})();\n"));
-    }
-    source.push_str("return { ...modules['./git-diff-store.cjs'], sessionDatabase: modules['../session-database.cjs'], transcriptReferences: modules['../transcript-references.cjs'] }; })(require);\nconst sessionDatabase = diffStore.sessionDatabase;");
-    source
+    format!("const diffStore = (() => {{ const module = {{exports: {{}}}}; {} return module.exports; }})();\nconst sessionDatabase = diffStore.sessionDatabase;", include_str!("../../resources/embedded-diff-store.bundle.mjs"))
 }
 
 fn read_command(command: &mut Command, request: Option<&serde_json::Value>) -> Result<serde_json::Value, String> {

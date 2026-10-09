@@ -62,7 +62,7 @@ async function mcpBridge() {
 }
 
 async function backendScripts() {
-  const scripts = ["cleanup-ephemeral-session", "session-descendants", "archive-conversations", "archive-worktree", "restore-archived-worktree", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "preserve-archive-checkpoints", "capture-git-diff", "publish-fork"];
+  const scripts = ["cleanup-ephemeral-session", "session-descendants", "archive-conversations", "archive-worktree", "restore-archived-worktree", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "preserve-archive-checkpoints", "capture-git-diff", "publish-fork", "embedded-diff-store"];
 
   const commandInputs = await agentCommandInputs();
 
@@ -72,7 +72,7 @@ async function backendScripts() {
         entryPoints: [`daemon/resources/${name}.${name === "capture-git-diff" ? "ts" : "cjs"}`],
         bundle: true,
         platform: "node",
-        format: "iife",
+        format: name === "embedded-diff-store" ? "cjs" : "iife",
         target: "node22",
         charset: "utf8",
         minify: true,
