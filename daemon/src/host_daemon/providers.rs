@@ -187,10 +187,11 @@ impl ProviderService {
         let parent = info.auth_path.parent().ok_or("Invalid Pi authentication path")?;
         let paths = [
             info.auth_path.clone(),
-            catalogs::accounts_path(&info.auth_path),
             parent.join("models.json"),
         ];
-        let revision = paths.iter().map(|path| file_revision(path)).collect::<Result<Vec<_>>>()?.join("|");
+        let files = paths.iter().map(|path| file_revision(path)).collect::<Result<Vec<_>>>()?.join("|");
+        let accounts = serde_json::to_string(&catalogs::read_accounts(&info.auth_path)?).map_err(|error| error.to_string())?;
+        let revision = format!("{files}|{accounts}");
         let changed = {
             let mut state = self.state();
             let changed = state.credential_revision.as_ref() != Some(&revision);

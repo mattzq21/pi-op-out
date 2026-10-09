@@ -13,6 +13,9 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "catalog_accounts.rs"]
+mod accounts;
+
 pub(super) fn auth_url(value: &Value) -> Option<String> {
     Url::parse(value.as_str()?)
         .ok()
@@ -315,12 +318,11 @@ fn read_provider_file(path: &Path) -> Result<Value> {
     }
 }
 
-pub(super) fn accounts_path(auth: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.piop-accounts.json", auth.to_string_lossy()))
-}
+pub(super) fn read_accounts(auth: &Path) -> Result<Vec<Value>> { accounts::read(auth) }
 
-pub(super) fn read_accounts(auth: &Path) -> Result<Vec<Value>> {
-    let records: Value = match std::fs::read(accounts_path(auth)) {
+fn legacy_accounts(auth: &Path) -> Result<Vec<Value>> {
+    let path = PathBuf::from(format!("{}.piop-accounts.json", auth.to_string_lossy()));
+    let records: Value = match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| "Invalid provider account registry")?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.to_string()),
@@ -338,23 +340,7 @@ pub(super) fn read_accounts(auth: &Path) -> Result<Vec<Value>> {
 }
 
 pub(super) async fn allocate_account(auth: &Path, id: &str, occupied: HashSet<String>) -> Result<Value> {
-    let path = accounts_path(auth);
-    let _lock = file_lock(&PathBuf::from(format!("{}.lock", path.to_string_lossy()))).await?;
-    let mut records = read_accounts(auth)?;
-    let mut number = records
-        .iter()
-        .filter(|record| record["providerId"] == id)
-        .filter_map(|record| record["number"].as_u64())
-        .max()
-        .unwrap_or(1)
-        + 1;
-    while occupied.contains(&format!("{id}--piop-account-{number}")) {
-        number += 1;
-    }
-    let record = json!({"providerId":id,"number":number,"id":format!("{id}--piop-account-{number}")});
-    records.push(record.clone());
-    write_atomic(&path, &json!(records))?;
-    Ok(record)
+    accounts::allocate(auth, id, occupied)
 }
 
 pub(super) fn merge_models(config: &Value, discovered: Vec<Value>) -> Vec<Value> {

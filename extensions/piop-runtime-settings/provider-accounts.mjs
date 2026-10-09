@@ -1,6 +1,7 @@
-import { readFile as accountRead, mkdir as accountMkdir } from 'node:fs/promises';
-import { spawn as accountSpawn } from 'node:child_process';
-import { dirname as accountDirname, join as accountJoin } from 'node:path';
+import { readFile as accountRead } from 'node:fs/promises';
+import * as accountFs from 'node:fs';
+import { DatabaseSync as AccountDatabase } from 'node:sqlite';
+import { dirname as accountDirname, join as accountJoin, basename as accountBasename } from 'node:path';
 import { Type } from 'typebox';
 import { Check } from 'typebox/value';
 
@@ -10,61 +11,67 @@ const messageSchema = Type.Object({ role: Type.Literal('assistant') });
 
 export const providerAccountsPath = (authPath) => `${authPath}.piop-accounts.json`;
 
-export async function readProviderAccounts(authPath) {
-  try {
-    const records = JSON.parse(await accountRead(providerAccountsPath(authPath), 'utf8'));
-
-    if (!Array.isArray(records) || records.some((record) => !validProviderAccount(record))) throw new Error('Invalid provider account registry');
-
-    return records;
-  } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
-}
-
 function validProviderAccount(record) {
   return Check(accountSchema, record) && record.id === `${record.providerId}--piop-account-${record.number}`;
 }
 
+function importProviderAccounts(db, authPath, key) {
+  if (db.prepare('SELECT 1 FROM account_imports WHERE auth_file=?').get(key)) return;
+  let records = [];
+
+  try { records = JSON.parse(accountFs.readFileSync(providerAccountsPath(authPath), 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+
+  if (!Array.isArray(records) || records.some(record => !validProviderAccount(record))) throw new Error('Invalid provider account registry');
+  const insert = db.prepare('INSERT INTO provider_accounts VALUES (?, ?, ?, ?)');
+
+  for (const record of records) insert.run(key, record.providerId, record.number, record.id);
+  db.prepare('INSERT INTO account_imports VALUES (?)').run(key);
+}
+
+function withAccountDatabase(authPath, operation) {
+  const directory = accountDirname(authPath);
+  accountFs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const file = accountJoin(directory, 'piop-accounts.sqlite');
+  accountFs.closeSync(accountFs.openSync(file, accountFs.constants.O_CREAT | accountFs.constants.O_RDWR | accountFs.constants.O_NOFOLLOW, 0o600));
+  accountFs.chmodSync(file, 0o600);
+  const db = new AccountDatabase(file);
+  const key = accountBasename(authPath);
+
+  try {
+    db.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+      CREATE TABLE IF NOT EXISTS provider_accounts (
+        auth_file TEXT NOT NULL, provider_id TEXT NOT NULL, account_number INTEGER NOT NULL, id TEXT NOT NULL,
+        PRIMARY KEY(auth_file, id), UNIQUE(auth_file, provider_id, account_number));
+      CREATE TABLE IF NOT EXISTS account_imports (auth_file TEXT PRIMARY KEY);
+      BEGIN IMMEDIATE;`);
+    importProviderAccounts(db, authPath, key);
+    const result = operation(db, key);
+    db.exec('COMMIT');
+
+    return result;
+  } finally { db.close(); }
+}
+
+export async function readProviderAccounts(authPath) {
+  return withAccountDatabase(authPath, (db, key) => db.prepare('SELECT provider_id AS providerId, account_number AS number, id FROM provider_accounts WHERE auth_file=? ORDER BY rowid').all(key));
+}
+
 export async function allocateProviderAccount(authPath, providerId, occupied) {
-  await accountMkdir(accountDirname(authPath), { recursive: true, mode: 0o700 });
-  await readProviderAccounts(authPath);
+  return withAccountDatabase(authPath, (db, key) => {
+    const maximum = db.prepare('SELECT COALESCE(MAX(account_number), 1) AS number FROM provider_accounts WHERE auth_file=? AND provider_id=?').get(key, providerId).number;
+    const unavailable = new Set(occupied);
+    let number = maximum + 1;
 
-  const script = `
-    const fs = require('node:fs');
-    const [path, providerId, occupiedJson] = process.argv.slice(1);
-    let records = [];
-    try { records = JSON.parse(fs.readFileSync(path, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    const occupied = new Set(JSON.parse(occupiedJson));
-    let number = Math.max(1, ...records.filter(item => item.providerId === providerId).map(item => item.number)) + 1;
-    while (occupied.has(providerId + '--piop-account-' + number)) number++;
-    const record = { providerId, number, id: providerId + '--piop-account-' + number };
-    records.push(record);
-    const temporary = path + '.' + require('node:crypto').randomUUID();
-    const file = fs.openSync(temporary, 'wx', 0o600);
-    try {
-      try { fs.writeFileSync(file, JSON.stringify(records)); fs.fsyncSync(file); }
-      finally { fs.closeSync(file); }
-      fs.renameSync(temporary, path);
-    } finally { fs.rmSync(temporary, { force: true }); }
-    const directory = fs.openSync(require('node:path').dirname(path), 'r');
-    try { fs.fsyncSync(directory); }
-    finally { fs.closeSync(directory); }
-    process.stdout.write(JSON.stringify(record));
-  `;
+    while (Number.isSafeInteger(number) && unavailable.has(`${providerId}--piop-account-${number}`)) number++;
 
-  const path = providerAccountsPath(authPath);
+    if (!Number.isSafeInteger(number)) throw new Error('Provider account numbers are exhausted');
+    const record = { providerId, number, id: `${providerId}--piop-account-${number}` };
 
-  return new Promise((resolve, reject) => {
-    const child = accountSpawn('flock', ['--exclusive', '--wait', '10', `${path}.lock`, process.execPath, '-e', script, path, providerId, JSON.stringify(occupied)], { stdio: ['ignore', 'pipe', 'ignore'] });
-    let output = '';
-    child.stdout.on('data', (chunk) => { output += chunk; });
-    child.once('error', () => reject(new Error('Could not allocate a provider account. The host requires flock.')));
-    child.once('close', (code) => {
-      if (code !== 0) { reject(new Error('Could not save the provider account on this host'));
+    if (!validProviderAccount(record)) throw new Error('Invalid provider account allocation');
+    db.prepare('INSERT INTO provider_accounts VALUES (?, ?, ?, ?)').run(key, providerId, number, record.id);
 
-      return; }
-
-      try { resolve(JSON.parse(output)); } catch { reject(new Error('Invalid provider account allocation')); }
-    });
+    return record;
   });
 }
 
