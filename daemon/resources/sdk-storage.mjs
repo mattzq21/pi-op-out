@@ -16,7 +16,7 @@ function sessionReferenceRoot() {
   return storagePath.join(storageHome(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
 }
 
-function registerExternalTranscript(root, transcript) {
+function registerExternalTranscript(root, transcript, sessionId) {
   if (!transcript) return;
   const file = storagePath.resolve(transcript);
   const relative = storagePath.relative(root, file);
@@ -29,8 +29,8 @@ function registerExternalTranscript(root, transcript) {
   try {
     storageFs.chmodSync(databasePath, 0o600);
     database.exec("PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL)");
-    database.prepare("INSERT INTO external_transcripts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json")
-      .run(storageHash("sha256").update(file).digest("hex"), JSON.stringify({ path: file }));
+    database.prepare("INSERT INTO external_transcripts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=json_patch(external_transcripts.record_json, excluded.record_json)")
+      .run(storageHash("sha256").update(file).digest("hex"), JSON.stringify({ path: file, sessionId }));
   } finally { database.close(); }
 }
 
@@ -200,7 +200,7 @@ function inheritedSessionEntries(entries) {
   return [...new Set(parents)].flatMap(storedSessionEntries);
 }
 
-export function acquireSessionReferencePublication(transcript) {
+export function acquireSessionReferencePublication(transcript, sessionId) {
   const root = sessionReferenceRoot();
   storageFs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const descriptor = storageFs.openSync(storagePath.join(root, "reference-publication.lock"), storageFs.constants.O_CREAT | storageFs.constants.O_RDWR | storageFs.constants.O_NOFOLLOW, 0o600);
@@ -212,7 +212,7 @@ export function acquireSessionReferencePublication(transcript) {
     if (locked.error) throw locked.error;
 
     if (locked.status !== 0) throw new Error(locked.stderr.toString().trim() || "Could not lock reference publication");
-    registerExternalTranscript(root, transcript);
+    registerExternalTranscript(root, transcript, sessionId);
 
     return () => storageFs.closeSync(descriptor);
   } catch (error) { storageFs.closeSync(descriptor); throw error; }
@@ -502,7 +502,7 @@ function sessionStorageTemporary(path) {
 
 function sessionStoragePublish(manager, entries, exclusive) {
   const path = manager.sessionFile;
-  const release = acquireSessionReferencePublication(path);
+  const release = acquireSessionReferencePublication(path, entries[0]?.id);
 
   try {
     registerManagedTranscript(manager);
@@ -520,7 +520,7 @@ function sessionStoragePublish(manager, entries, exclusive) {
 }
 
 function sessionStorageAppend(manager, entry) {
-  const release = acquireSessionReferencePublication(manager.sessionFile);
+  const release = acquireSessionReferencePublication(manager.sessionFile, manager.fileEntries[0]?.id);
 
   try {
     registerManagedTranscript(manager);
@@ -595,7 +595,7 @@ export function installSessionStorage(SessionManager) {
 
     try {
       const session = fork.apply(this, args);
-      registerExternalTranscript(sessionReferenceRoot(), session.sessionFile);
+      registerExternalTranscript(sessionReferenceRoot(), session.sessionFile, session.getSessionId());
       registerManagedTranscript(session, true);
 
       return session;

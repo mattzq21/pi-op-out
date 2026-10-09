@@ -4,6 +4,7 @@ use crate::broker::broker_environment;
 use serde_json::json;
 use serde_json::Value;
 use rusqlite::OptionalExtension;
+use sha2::Digest;
 use std::fs;
 use std::thread;
 use std::io::BufRead;
@@ -210,7 +211,10 @@ fn local_registered_identity(path: &str) -> Result<Option<String>, String> {
     if id.is_none() && [&root, &canonical_root].iter().any(|directory| ["sessions", "archived"].iter().any(|area| Path::new(path).starts_with(directory.join(area)))) {
         return Err("Session path is not registered".into());
     }
-    Ok(id)
+    if id.is_some() { return Ok(id); }
+    db.query_row("SELECT json_extract(record_json, '$.sessionId') FROM external_transcripts
+        WHERE record_id=? AND json_extract(record_json, '$.path')=?", rusqlite::params![format!("{:x}", sha2::Sha256::digest(path.as_bytes())), path], |row| row.get(0))
+        .optional().map(|id: Option<Option<String>>| id.flatten()).map_err(|error| error.to_string())
 }
 
 fn remote_registered_identity(host: &RemoteHost, path: &str) -> Result<Option<String>, String> {

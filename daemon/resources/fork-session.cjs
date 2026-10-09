@@ -5,7 +5,7 @@ const { homedir } = require('node:os');
 const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
-function referencePublication(destination) {
+function referencePublication(destination, sessionId) {
   const root = path.join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop');
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const descriptor = fs.openSync(path.join(root, 'reference-publication.lock'), fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
@@ -17,13 +17,13 @@ function referencePublication(destination) {
     if (locked.error) throw locked.error;
 
     if (locked.status !== 0) throw new Error(locked.stderr.toString().trim() || 'Could not lock reference publication');
-    registerTranscript(root, path.resolve(destination));
+    registerTranscript(root, path.resolve(destination), sessionId);
 
     return () => fs.closeSync(descriptor);
   } catch (error) { fs.closeSync(descriptor); throw error; }
 }
 
-function registerTranscript(root, destination) {
+function registerTranscript(root, destination, sessionId) {
   const file = path.join(root, 'sessions.sqlite');
   fs.closeSync(fs.openSync(file, 'a', 0o600));
   const database = new (require('node:sqlite').DatabaseSync)(file);
@@ -32,7 +32,7 @@ function registerTranscript(root, destination) {
     fs.chmodSync(file, 0o600);
     database.exec('PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL)');
     database.prepare('INSERT INTO external_transcripts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json')
-      .run(createHash('sha256').update(destination).digest('hex'), JSON.stringify({ path: destination }));
+      .run(createHash('sha256').update(destination).digest('hex'), JSON.stringify({ path: destination, sessionId }));
   } finally { database.close(); }
 }
 
@@ -66,7 +66,7 @@ async function copyThroughLeaf(source, output, id, leafId) {
 
 (async () => {
   const [source, destination, id, leafId] = process.argv.slice(1);
-  const release = referencePublication(destination);
+  const release = referencePublication(destination, id);
 
   try { await copySession(source, destination, id, leafId); }
   finally { release(); }

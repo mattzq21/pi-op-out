@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 const sessionTables = require('./session-database.cjs');
@@ -164,7 +165,10 @@ function identity() {
 
   if (!id && managed) throw new Error('Session path is not registered');
 
-  process.stdout.write(JSON.stringify(id ?? null));
+  const external = id ? undefined : db.prepare("SELECT json_extract(record_json, '$.sessionId') AS id FROM external_transcripts WHERE record_id=? AND json_extract(record_json, '$.path')=?")
+    .get(createHash('sha256').update(request.path).digest('hex'), request.path)?.id;
+
+  process.stdout.write(JSON.stringify(id ?? external ?? null));
 }
 
 try {
