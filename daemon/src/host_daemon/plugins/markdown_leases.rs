@@ -66,8 +66,9 @@ pub(super) fn write(path: &Path, body: Option<&str>) -> Result<(), String> {
     let db = open(root(path)?)?;
     let id = identity(path)?;
     if let Some(body) = body {
-        db.execute("INSERT INTO note_editor_leases VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET record_json=excluded.record_json", [id.as_str(), body])
+        let written = db.execute("INSERT INTO note_editor_leases SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=?1) ON CONFLICT(session_id) DO UPDATE SET record_json=excluded.record_json", [id.as_str(), body])
             .map_err(|error| error.to_string())?;
+        if written == 0 { return Err("Cannot assign a note editor to a deleted session".into()); }
     } else {
         db.execute("DELETE FROM note_editor_leases WHERE session_id=?", [id]).map_err(|error| error.to_string())?;
     }
