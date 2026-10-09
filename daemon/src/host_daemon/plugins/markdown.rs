@@ -27,30 +27,18 @@ fn lock_notes() -> Result<File, String> {
 }
 
 fn lease_path(session: &str) -> Result<PathBuf, String> {
-    let root = notes_root()?.join("leases");
-    crate::ensure_private_dir(&root)?;
-    validate_path(root.join(format!("{session}.json")))
+    Ok(notes_root()?.join("leases").join(format!("{session}.json")))
 }
 
 fn read_lease(path: &Path) -> Result<Option<Lease>, String> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    let lease: Lease = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let Some(body) = super::markdown_leases::read(path)? else { return Ok(None); };
+    let lease: Lease = serde_json::from_str(&body).map_err(|error| error.to_string())?;
     Ok((lease.expires > now()).then_some(lease))
 }
 
 fn write_lease(path: &Path, lease: Option<&Lease>) -> Result<(), String> {
-    if let Some(lease) = lease {
-        return crate::atomic_write_private(path, &serde_json::to_vec(lease).map_err(|error| error.to_string())?);
-    }
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
+    let body = lease.map(serde_json::to_string).transpose().map_err(|error| error.to_string())?;
+    super::markdown_leases::write(path, body.as_deref())
 }
 
 pub(crate) struct RestartLeases { preserved: Vec<(PathBuf, Lease, Lease)> }
@@ -77,17 +65,16 @@ impl Drop for RestartLeases {
 pub(crate) fn preserve_leases_for_restart() -> Result<RestartLeases, String> {
     let mut leases = RestartLeases { preserved: Vec::new() };
     let _guard = lock_notes()?;
-    let root = notes_root()?.join("leases");
-    crate::ensure_private_dir(&root)?;
-    for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
-        preserve_lease(&entry.map_err(|error| error.to_string())?.path(), &mut leases)?;
+    let root = crate::home_dir()?.join(crate::STORAGE_DIRECTORY);
+    for path in super::markdown_leases::list(&root)? {
+        preserve_lease(&path, &mut leases)?;
     }
     Ok(leases)
 }
 
 fn preserve_lease(path: &Path, leases: &mut RestartLeases) -> Result<(), String> {
     if path.extension().is_none_or(|extension| extension != "json") { return Ok(()); }
-    if let Some(mut lease) = read_lease(&validate_path(path.into())?)? {
+    if let Some(mut lease) = read_lease(path)? {
         let original = lease.clone();
         lease.expires = lease.expires.max(now() + 300);
         leases.preserved.push((path.into(), original, lease.clone()));
