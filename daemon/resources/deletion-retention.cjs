@@ -211,7 +211,7 @@ function queuedReferences(root, excluded, candidates, found, inventory) {
   }
 }
 
-function survivingSession(root, file, id, excluded) {
+function survivingSession(root, file, id, excluded, connection) {
   if (excluded.has(file)) return false;
   let info;
 
@@ -221,7 +221,7 @@ function survivingSession(root, file, id, excluded) {
   if (!info.isFile()) return false;
   let header;
 
-  try { header = transcriptRecords.read(root, file)[0]; }
+  try { header = transcriptRecords.read(root, file, connection)[0]; }
   catch (error) { if (error instanceof SyntaxError) return false; throw error; }
 
   return validSessionHeader(header) && header.id === id;
@@ -330,14 +330,14 @@ function cleanupRegistry(root, sessionIds) {
   try {
     require('./session-database.cjs').initialize(db);
     db.exec('BEGIN IMMEDIATE');
-    const completed = removeRegistryRows(db, sessionIds);
+    const completed = removeRegistryRows(root, db, sessionIds);
     db.exec('COMMIT');
 
     return completed;
   } finally { db.close(); }
 }
 
-function removeRegistryRows(db, sessionIds) {
+function removeRegistryRows(root, db, sessionIds) {
   if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_repositories'").get()) return [...sessionIds];
   const remove = db.prepare('DELETE FROM sessions WHERE lower(session_id) = ?');
   const read = db.prepare('SELECT session_id, session_path FROM sessions WHERE lower(session_id) = ?');
@@ -346,7 +346,7 @@ function removeRegistryRows(db, sessionIds) {
   for (const id of sessionIds) {
     const record = read.get(id.toLowerCase());
 
-    if (record?.session_path && survivingSession(record.session_path, record.session_id, new Set())) continue;
+    if (record?.session_path && survivingSession(root, record.session_path, record.session_id, new Set(), db)) continue;
     remove.run(id.toLowerCase());
     completed.push(id);
   }

@@ -181,7 +181,7 @@ function plan(root, targets) {
     const deleted = confirmedDeletions(root);
     targets.forEach(target => deleted.add(target.sessionId));
 
-    for (const target of targets) assets.references(readTranscript(target.path), root).forEach(directory => candidate(root, directory, candidates, [target.sessionId]));
+    for (const target of targets) assets.references(readTranscript(root, target.path), root).forEach(directory => candidate(root, directory, candidates, [target.sessionId]));
 
     for (const directory of require('./session-broker/goal-ownership.cjs').directories(root)) ownedCandidate(root, directory, deleted, candidates);
 

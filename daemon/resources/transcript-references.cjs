@@ -7,13 +7,18 @@ function open(root) {
   const db = database.open(root);
 
   try {
-    db.exec('BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS transcript_references (session_path TEXT PRIMARY KEY, session_id TEXT, fingerprint TEXT NOT NULL, entries_json TEXT NOT NULL, format_version INTEGER NOT NULL DEFAULT 1)');
-
-    if (!db.prepare('PRAGMA table_info(transcript_references)').all().some(column => column.name === 'format_version')) db.exec('ALTER TABLE transcript_references ADD COLUMN format_version INTEGER NOT NULL DEFAULT 1');
+    db.exec('BEGIN IMMEDIATE');
+    initialize(db);
     db.exec('COMMIT');
 
     return db;
   } catch (error) { db.close(); throw error; }
+}
+
+function initialize(db) {
+  db.exec('CREATE TABLE IF NOT EXISTS transcript_references (session_path TEXT PRIMARY KEY, session_id TEXT, fingerprint TEXT NOT NULL, entries_json TEXT NOT NULL, format_version INTEGER NOT NULL DEFAULT 1)');
+
+  if (!db.prepare('PRAGMA table_info(transcript_references)').all().some(column => column.name === 'format_version')) db.exec('ALTER TABLE transcript_references ADD COLUMN format_version INTEGER NOT NULL DEFAULT 1');
 }
 
 function fingerprint(info) {
@@ -67,14 +72,15 @@ function publish(root, file, entries, entry) {
   cache.set(entries, { root, file, count: entries.length + (entry ? 1 : 0), record, stamp });
 }
 
-function read(root, file) {
+function read(root, file, connection) {
   root = fs.realpathSync(root);
 
   if (fs.realpathSync(file) !== file) throw new Error('Transcript reference source has ambiguous ownership');
   const before = fingerprint(fs.lstatSync(file, { bigint: true }));
-  const db = open(root);
+  const db = connection ?? open(root);
 
   try {
+    if (connection) initialize(db);
     const row = db.prepare('SELECT entries_json FROM transcript_references WHERE session_path=? AND fingerprint=? AND format_version=2').get(file, before);
 
     if (row) {
@@ -97,7 +103,7 @@ function read(root, file) {
     save(db, file, before, saved);
 
     return saved;
-  } finally { db.close(); }
+  } finally { if (!connection) db.close(); }
 }
 
 module.exports = { read, publish };
