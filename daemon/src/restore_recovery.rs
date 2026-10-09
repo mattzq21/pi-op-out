@@ -16,15 +16,10 @@ fn legacy_pending(root: &Path) -> Result<bool, String> {
     if !root.exists() { return Ok(false); }
     for area in ["sessions", "archived"] {
         for entry in walkdir::WalkDir::new(root.join(area)).follow_links(false).into_iter().filter_map(Result::ok) {
-            if legacy_deletion_lock(&entry) || legacy_publication_temporary(&entry) { return Ok(true); }
+            if legacy_publication_temporary(&entry) { return Ok(true); }
         }
     }
     Ok(false)
-}
-
-fn legacy_deletion_lock(entry: &walkdir::DirEntry) -> bool {
-    let name = entry.file_name().to_string_lossy();
-    entry.file_type().is_dir() && name.starts_with(".delete-") && name.ends_with(".lock")
 }
 
 fn legacy_publication_temporary(entry: &walkdir::DirEntry) -> bool {
@@ -36,24 +31,10 @@ fn legacy_publication_temporary(entry: &walkdir::DirEntry) -> bool {
 
 fn recovery_pending(root: &Path) -> Result<bool, String> {
     let database = crate::session_registry::open(root)?;
-    let publications: bool = database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM session_restore_receipts) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM legacy_archive_directories) OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
+    let publications: bool = database.query_row("SELECT EXISTS(SELECT 1 FROM session_publications) OR EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM session_restore_receipts) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM legacy_archive_directories) OR EXISTS(SELECT 1 FROM legacy_deletion_locks) OR NOT EXISTS(SELECT 1 FROM storage_migrations WHERE name='legacy-deletion-locks-v1') OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
         .map_err(|error| error.to_string())?;
     if publications { return Ok(true); }
     legacy_pending(root)
-}
-
-fn deletion_pending(root: &Path, area: &str) -> Result<bool, String> {
-    let directory = root.join(area);
-    if !directory.try_exists().map_err(|error| error.to_string())? { return Ok(false); }
-    let entries = walkdir::WalkDir::new(directory).min_depth(1).follow_links(false).into_iter()
-        .filter_entry(|entry| !entry.file_name().to_string_lossy().ends_with(".snapshots"));
-    for entry in entries {
-        let entry = entry.map_err(|error| error.to_string())?;
-        if !entry.file_type().is_dir() { continue; }
-        let name = entry.file_name().to_string_lossy();
-        if name.starts_with(".delete-") && name.ends_with(".lock") { return Ok(true); }
-    }
-    Ok(false)
 }
 
 fn fork_transactions_pending(root: &Path) -> Result<bool, String> {
@@ -67,11 +48,7 @@ fn fork_preparation_pending(root: &Path) -> Result<bool, String> {
 }
 
 fn transaction_directories_pending(root: &Path) -> Result<bool, String> {
-    if fork_transactions_pending(root)? || fork_preparation_pending(root)? { return Ok(true); }
-    for area in ["sessions", "archived"] {
-        if deletion_pending(root, area)? { return Ok(true); }
-    }
-    Ok(false)
+    Ok(fork_transactions_pending(root)? || fork_preparation_pending(root)?)
 }
 
 fn released_snapshots_pending(root: &Path) -> Result<bool, String> {

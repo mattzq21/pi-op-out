@@ -295,18 +295,6 @@ function cleanupCommittedRetention(root, journal) {
   cleanupRegistry(root, journal.registryIds ?? []);
 }
 
-function deletionLocks(directory, locks) {
-  if (!exists(directory)) return;
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.endsWith(".snapshots")) continue;
-    const file = path.join(directory, entry.name);
-
-    if (lockPattern.test(entry.name)) locks.push(file);
-    else deletionLocks(file, locks);
-  }
-}
-
 function removeUnstarted(directory) {
   const entries = fs.readdirSync(directory);
 
@@ -319,15 +307,15 @@ function recover(root) {
   if (!exists(root)) return;
   root = fs.realpathSync(root);
   cleanupCommitted(root);
-  const locks = [];
-  deletionLocks(path.join(root, "sessions"), locks);
-  deletionLocks(path.join(root, "archived"), locks);
+  const records = require('./legacy-deletion-locks.cjs');
+  const locks = records.list(root);
 
   for (const directory of locks) {
     if (exists(path.join(directory, "recovery.json"))) rollback(root, directory, readJournal(root, directory));
   }
 
   for (const directory of locks) if (exists(directory)) removeUnstarted(directory);
+  records.list(root);
 }
 
 module.exports = { recover, cleanupCommitted, sync, syncTree };

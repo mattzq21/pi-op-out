@@ -298,18 +298,6 @@ function finish(transaction) {
   catch (error) { console.error(`Deletion committed; restore receipt pruning will retry: ${error.message}`); }
 }
 
-function legacyLocks(directory) {
-  if (!io.exists(directory)) return;
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.endsWith('.snapshots')) continue;
-    const file = path.join(directory, entry.name);
-
-    if (/^\.delete-[a-f0-9]{64}\.lock$/.test(entry.name)) console.error(`Legacy deletion recovery retained without sufficient durable identity evidence: ${file}`);
-    else legacyLocks(file);
-  }
-}
-
 function discardAllocation(root, directory) {
   if (io.exists(directory)) { fs.rmdirSync(directory); io.sync(path.dirname(directory)); }
 
@@ -353,8 +341,7 @@ function recover(root) {
     catch (error) { failures.push(`${entry.directory}: ${error.message}`); }
   }
 
-  legacyLocks(path.join(root, 'sessions'));
-  legacyLocks(path.join(root, 'archived'));
+  for (const file of require('./legacy-deletion-locks.cjs').list(root)) console.error(`Legacy deletion recovery retained without sufficient durable identity evidence: ${file}`);
 
   if (failures.length) throw new Error(failures.join('\n'));
 }

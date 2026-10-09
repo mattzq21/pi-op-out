@@ -74,6 +74,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS legacy_queued_inputs (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS fork_preparations (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS archive_records (directory TEXT PRIMARY KEY, record_json TEXT);
+      CREATE TABLE IF NOT EXISTS legacy_deletion_locks (directory TEXT PRIMARY KEY, identity TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS legacy_archive_directories (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS legacy_committed_deletions (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS deletion_records (directory TEXT PRIMARY KEY, record_json TEXT);

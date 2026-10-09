@@ -194,18 +194,6 @@ function result(root, source) {
   return destinationState(snapshot.value).kind === 'valid' && unchanged(snapshot) ? snapshot.value.result : null;
 }
 
-function legacyPending(directory) {
-  if (!io.exists(directory)) return false;
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (/^\.delete-[a-f0-9]{64}\.lock$/.test(entry.name)) return true;
-
-    if (entry.isDirectory() && !entry.name.endsWith('.snapshots') && legacyPending(path.join(directory, entry.name))) return true;
-  }
-
-  return false;
-}
-
 function finishedArchive(root, directory, transaction) {
   if (!Check(finishedArchiveSchema, transaction)) return false;
 
@@ -233,7 +221,7 @@ function pending(root, ignoredJournal) {
 
   if (require('./legacy-archive-records.cjs').list(root).length) return true;
 
-  return legacyPending(path.join(root, 'sessions')) || legacyPending(path.join(root, 'archived'));
+  return require('./legacy-deletion-locks.cjs').list(root).length > 0;
 }
 
 function unchanged(snapshot) {

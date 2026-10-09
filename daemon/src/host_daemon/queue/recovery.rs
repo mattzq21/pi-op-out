@@ -65,32 +65,13 @@ fn storage_locks(root: &Path) -> Result<Option<(File, File)>> {
 }
 
 fn transactions_pending(root: &Path) -> Result<bool> {
-    if restoration_pending(root)? { return Ok(true); }
-    files_pending(root)
+    restoration_pending(root)
 }
 
 fn restoration_pending(root: &Path) -> Result<bool> {
     let database = crate::session_registry::open(root)?;
-    database.query_row("SELECT EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM fork_transactions) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM legacy_archive_directories) OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
+    database.query_row("SELECT EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM fork_transactions) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM legacy_archive_directories) OR EXISTS(SELECT 1 FROM legacy_deletion_locks) OR NOT EXISTS(SELECT 1 FROM storage_migrations WHERE name='legacy-deletion-locks-v1') OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
         .map_err(|error| error.to_string())
-}
-
-fn files_pending(root: &Path) -> Result<bool> {
-    deletion_pending(&root.join("sessions")).and_then(|active| {
-        if active { Ok(true) } else { deletion_pending(&root.join("archived")) }
-    })
-}
-
-fn deletion_pending(path: &Path) -> Result<bool> {
-    if !path.try_exists().map_err(|error| error.to_string())? { return Ok(false); }
-    let entries = walkdir::WalkDir::new(path).follow_links(false).into_iter()
-        .filter_entry(|entry| !entry.file_name().to_string_lossy().ends_with(".snapshots"));
-    for entry in entries {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let name = entry.file_name().to_string_lossy();
-        if name.starts_with(".delete-") && name.ends_with(".lock") { return Ok(true); }
-    }
-    Ok(false)
 }
 
 fn recover_journal(root: &Path, ownership: &ConversationOwnership, path: &Path) -> Result<bool> {
