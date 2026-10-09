@@ -44,13 +44,13 @@ function fragment(id, snapshot, cursor, revision, more, hooks) {
   return { snapshots: {}, next, fragment: { messageId: id, content, complete } };
 }
 
-function collect(fd, state, cursor, revision, hooks) {
+function collect(read, state, cursor, revision, hooks) {
   const ids = Object.keys(state.positions).filter(id => cursor.after === undefined || id > cursor.after).sort();
   const snapshots = Object.create(null); let bytes = 0; let last;
 
   for (let index = 0; index < ids.length; index += 1) {
     const id = ids[index];
-    const snapshot = indexedSnapshot(fd, state.positions[id], id, hooks.maxBytes);
+    const snapshot = read(id);
     const size = Buffer.byteLength(JSON.stringify({ [id]: snapshot }, hooks.ordered));
 
     if (last !== undefined && bytes + size > pageBytes) return { snapshots, next: nextCursor(last, revision, 0) };
@@ -71,8 +71,14 @@ function pageStore(filename, state, cursor, hooks) {
     const metadata = fs.fstatSync(fd, { bigint: true });
     const revision = `${state.end}:${metadata.size}:${metadata.mtimeNs}:${metadata.ino}`;
 
-    return collect(fd, state, pageCursor(cursor, revision, hooks), revision, hooks);
+    return collect(id => indexedSnapshot(fd, state.positions[id], id, hooks.maxBytes), state, pageCursor(cursor, revision, hooks), revision, hooks);
   } finally { fs.closeSync(fd); }
+}
+
+function pageDatabase(state, cursor, read, hooks) {
+  const revision = `${state.database?.id ?? ''}:${state.end}`;
+
+  return collect(read, state, pageCursor(cursor, revision, hooks), revision, hooks);
 }
 
 function indexedSnapshot(fd, position, id, maxBytes) {
@@ -100,4 +106,4 @@ function indexedSnapshot(fd, position, id, maxBytes) {
   throw new Error('Permanent diff limit: individual page record is too large');
 }
 
-module.exports = { pageStore, indexedSnapshot };
+module.exports = { pageStore, indexedSnapshot, pageDatabase };

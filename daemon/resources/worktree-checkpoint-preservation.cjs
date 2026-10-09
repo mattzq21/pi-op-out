@@ -168,7 +168,6 @@ function comparisonUsesWorktree(capture, target, common) {
 function checkPendingDiffs(record, target, common, readDiffStore) {
   const file = record.file.replace(/\.jsonl$/, '.diffs.json');
 
-  if (!fs.existsSync(file)) return;
   const locks = [];
 
   try {

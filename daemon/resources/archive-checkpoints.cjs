@@ -87,7 +87,6 @@ function captureUses(capture, target) {
 function checkDiffs(file, target) {
   const log = file.replace(/\.jsonl$/, '.diffs.json');
 
-  if (!io.exists(log)) return;
   const state = owners.withFile(log + '.lock', () => diffs.readStore(log, false));
 
   if (Object.values(state.pending).some(capture => captureUses(capture, target))) throw new Error('Pending diff comparisons require the archived worktree; recovery retained: ' + log);

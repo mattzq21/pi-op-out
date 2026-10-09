@@ -45,6 +45,13 @@ for (const candidate of candidates) {
   const database = require('./session-database.cjs').open(path.dirname(realRoot));
 
   try {
+    database.exec('BEGIN IMMEDIATE');
+
+    for (const table of ['session_diff_state', 'session_diff_transfers']) {
+      if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) database.prepare(`DELETE FROM ${table} WHERE session_id=lower(?)`).run(header.id);
+    }
+
     database.prepare('DELETE FROM sessions WHERE session_id=? AND session_path=?').run(header.id, file);
+    database.exec('COMMIT');
   } finally { database.close(); }
 }

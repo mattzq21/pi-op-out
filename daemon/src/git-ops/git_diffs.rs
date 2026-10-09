@@ -15,6 +15,7 @@ use crate::pi_launch::{remote_login_command, saved_remote_host, ssh};
 use crate::environment::home_dir;
 use crate::git_ops::snapshot_capture::{local_git_diff, local_git_diff_between, local_git_tree, parse_local_snapshot};
 
+#[cfg(test)]
 #[path = "git_diff_store.rs"]
 mod store;
 #[path = "git_diff_pending.rs"]
@@ -174,7 +175,7 @@ fn merge_diff_page(snapshots: &mut GitDiffSnapshots, fragment: &mut Option<(Stri
     let id = part["messageId"].as_str().ok_or("Diff fragment has no message ID")?;
     let content = part["content"].as_str().ok_or("Diff fragment has no contents")?;
     let current = fragment.get_or_insert_with(|| (id.to_owned(), String::new()));
-    if current.0 != id || current.1.len() + content.len() > store::MAX_RECORD_BYTES { return Err("Invalid or oversized fragmented snapshot; preserved".into()); }
+    if current.0 != id || current.1.len() + content.len() > MAX_GIT_PATCH_BYTES * 6 + 64 * 1024 { return Err("Invalid or oversized fragmented snapshot; preserved".into()); }
     current.1.push_str(content);
     if part["complete"] == true { let (id, content) = fragment.take().ok_or("Diff fragment disappeared")?; snapshots.insert(id, serde_json::from_str(&content).map_err(|error| error.to_string())?); }
     Ok(())
@@ -213,7 +214,9 @@ pub(crate) fn load_local_git_diffs(home: &Path, session_path: &str) -> Result<Gi
         return Ok(HashMap::new());
     }
     let path = local_desktop_session_file_at(home, session_path)?.with_extension("diffs.json");
-    let state = store::request(&path, &serde_json::json!({"action":"load"}))?;
+    let mut command = crate::node_command();
+    command.args(["-e", &storage_helper()]).arg(&path).env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).env("PIOP_DIFF_HOME", home).env("PIOP_DIFF_LOCK", "1");
+    let state = read_command(&mut command, Some(&serde_json::json!({"action":"load"})))?;
     serde_json::from_value(state["snapshots"].clone()).map_err(|error| error.to_string())
 }
 
@@ -266,12 +269,9 @@ fn storage_request(session_path: &str, request: &serde_json::Value, host: Option
     let Some(host) = host else {
         let home = home_dir()?;
         let path = local_desktop_session_file_at(&home, session_path)?.with_extension("diffs.json");
-        if matches!(request["action"].as_str(), Some("retain" | "discover" | "part")) {
-            let mut command = crate::node_command();
-            command.args(["-e", &storage_helper()]).arg(&path).env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).env("PIOP_DIFF_HOME", home).env("PIOP_DIFF_LOCK", "1");
-            return read_command(&mut command, Some(request));
-        }
-        return store::request(&path, request);
+        let mut command = crate::node_command();
+        command.args(["-e", &storage_helper()]).arg(&path).env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).env("PIOP_DIFF_HOME", home).env("PIOP_DIFF_LOCK", "1");
+        return read_command(&mut command, Some(request));
     };
     let mut command = ssh(host); command.arg(remote_save_git_diffs_script(session_path));
     read_command(&mut command, Some(request))
@@ -317,10 +317,10 @@ pub(crate) fn embedded_diff_store() -> String {
     let modules = [
         ("../session-database.cjs", include_str!("../../resources/session-database.cjs")),
         ("./checkpoint-owner-index.cjs", include_str!("../../resources/session-broker/checkpoint-owner-index.cjs")),
+        ("./git-diff-database.cjs", include_str!("../../resources/session-broker/git-diff-database.cjs")),
         ("./git-diff-pages.cjs", include_str!("../../resources/session-broker/git-diff-pages.cjs")),
         ("./git-diff-transfer-storage.cjs", include_str!("../../resources/session-broker/git-diff-transfer-storage.cjs")),
         ("./git-diff-transfer.cjs", include_str!("../../resources/session-broker/git-diff-transfer.cjs")),
-        ("./git-diff-migration.cjs", include_str!("../../resources/session-broker/git-diff-migration.cjs")),
         ("./git-diff-store.cjs", include_str!("../../resources/session-broker/git-diff-store.cjs")),
     ];
     let mut source = String::from("const diffStore = ((builtinRequire) => { const modules = {}; const require = name => modules[name] ?? builtinRequire(name);\n");

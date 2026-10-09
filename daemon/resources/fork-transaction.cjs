@@ -147,7 +147,16 @@ function registerPublished(root, destination) {
 function forgetPublished(root, destination) {
   const database = require('./session-database.cjs').open(root);
 
-  try { database.prepare('DELETE FROM sessions WHERE session_path=?').run(destination); }
+  try {
+    database.exec('BEGIN IMMEDIATE');
+
+    for (const table of ['session_diff_state', 'session_diff_transfers']) {
+      if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) database.prepare(`DELETE FROM ${table} WHERE session_id IN (SELECT lower(session_id) FROM sessions WHERE session_path=?)`).run(destination);
+    }
+
+    database.prepare('DELETE FROM sessions WHERE session_path=?').run(destination);
+    database.exec('COMMIT');
+  }
   finally { database.close(); }
 }
 

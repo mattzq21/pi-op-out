@@ -3,16 +3,14 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
+const diffDatabase = require('./git-diff-database.cjs');
 const pages = require('./git-diff-pages.cjs');
 const transfers = require('./git-diff-transfer.cjs');
-const { createMigration } = require('./git-diff-migration.cjs');
 const checkpointIndex = require('./checkpoint-owner-index.cjs');
 
 const header = 'PIOP-DIFFS-1\n';
 
 const maxRecordBytes = 4 * 1024 * 1024 * 6 + 64 * 1024;
-
-const migrateShardedStore = createMigration({ header, maxRecordBytes, stringValue, snapshotValid, withStoreLock, readStore, digest, saveStore, syncParent, writeAll, recordBytes });
 
 function stringValue(value) {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Standalone JSON boundary validation.
@@ -88,7 +86,7 @@ function applyPending(state, record) {
   state.done?.delete(record.id);
   const capture = { ...record.capture };
 
-  if (state.focus !== record.id) delete capture.snapshot;
+  if (state.focus !== '*' && state.focus !== record.id) delete capture.snapshot;
   state.pending[record.id] = capture;
 }
 
@@ -162,7 +160,7 @@ function merge(state, transaction) {
 
 function completed(state, id) { return state.done.has(id) || Object.hasOwn(state.digests, id); }
 
-function readStore(filename, materialize = true, focus) {
+function readLegacyStore(filename, materialize = true, focus) {
   let fd;
 
   try { fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); }
@@ -190,6 +188,58 @@ function readStore(filename, materialize = true, focus) {
   } finally { fs.closeSync(fd); }
 }
 
+function importLegacyStore(filename) {
+  const state = readLegacyStore(filename, true, '*');
+  const directory = path.join(filename.replace(/\.diffs\.json$/, '.snapshots'), 'diffs');
+  let metadata;
+
+  try { metadata = fs.lstatSync(directory); }
+  catch (error) { if (error.code === 'ENOENT') return state; throw error; }
+
+  if (!metadata.isDirectory() || fs.realpathSync(directory) !== directory) throw new Error('Invalid legacy diff shard directory; preserved');
+
+  for (const name of fs.readdirSync(directory).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).sort()) {
+    const record = legacyShard(path.join(directory, name));
+    const hash = digest(record.snapshot);
+    const existing = state.digests[record.messageId];
+
+    if (existing !== undefined && existing !== hash) throw new Error('Legacy diff shard conflicts with saved history; both copies preserved');
+
+    if (existing === undefined && state.done.has(record.messageId)) throw new Error('Legacy diff shard conflicts with a completed message; preserved');
+    state.snapshots[record.messageId] = record.snapshot;
+  }
+
+  return state;
+}
+
+function legacyShard(file) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+
+  try {
+    const metadata = fs.fstatSync(fd);
+
+    if (!metadata.isFile() || metadata.size > maxRecordBytes) throw new Error('Invalid or oversized legacy diff shard; preserved');
+    const record = JSON.parse(fs.readFileSync(fd, 'utf8'));
+
+    if (!stringValue(record.messageId) || !snapshotValid(record.snapshot)) throw new Error('Invalid legacy diff shard; preserved');
+
+    if (`${crypto.createHash('sha256').update(record.messageId).digest('hex')}.json` !== path.basename(file)) throw new Error('Invalid legacy diff shard identity; preserved');
+
+    return record;
+  } finally { fs.closeSync(fd); }
+}
+
+function databaseHooks() {
+  return {
+    profile: () => path.dirname(snapshotParent()), owner: transcriptId, digest, empty: emptyState, unowned: readLegacyStore,
+    legacy: importLegacyStore,
+  };
+}
+
+function readStore(filename, materialize = true, focus) {
+  return diffDatabase.load(filename, databaseHooks(), materialize, focus);
+}
+
 function emptyState() { return { snapshots: Object.create(null), digests: Object.create(null), positions: Object.create(null), pending: Object.create(null), transfers: Object.create(null), done: new Set(), end: 0, legacy: false }; }
 
 function withStoreLock(filename, operation) {
@@ -209,7 +259,6 @@ function withStoreLock(filename, operation) {
 function readStoreLocked(filename) { return withStoreLock(filename, () => recoverStore(filename, true)); }
 
 function recoverStore(filename, materialize, focus) {
-  migrateShardedStore(filename);
   transfers.recoverTransfers(filename, readStore(filename, false), transferHooks(filename));
 
   return readStore(filename, materialize, focus);
@@ -230,25 +279,21 @@ function copyRetainedStoreLocked(filename, destination, retainedIds, sessionId) 
   });
 }
 
-function publishRetained(filename, destination, state, retainedIds) {
-  const positions = Object.entries(state.positions).filter(([id]) => retainedIds.has(id));
-  const source = positions.length ? fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW) : undefined;
-
-  try {
+function publishRetained(_filename, destination, state, retainedIds) {
+  diffDatabase.snapshots(state, snapshot => {
     const fd = fs.openSync(destination, 'wx', 0o600);
 
     try {
       writeAll(fd, Buffer.from(header));
 
-      for (const [id, position] of positions) transaction(fd, [{ op: 'set', id, snapshot: pages.indexedSnapshot(source, position, id, maxRecordBytes) }]);
+      for (const id of Object.keys(state.positions)) if (retainedIds.has(id)) transaction(fd, [{ op: 'set', id, snapshot: snapshot(id) }]);
 
       for (const id of state.done) if (retainedIds.has(id)) transaction(fd, [{ op: 'done', id }]);
-
       fs.fsyncSync(fd);
     } finally { fs.closeSync(fd); }
 
     syncParent(destination);
-  } finally { if (source !== undefined) fs.closeSync(source); }
+  });
 }
 
 function validateRetainedSource(filename, sessionId) {
@@ -318,24 +363,6 @@ function syncParent(filename) {
   const fd = fs.openSync(path.dirname(filename), 'r');
 
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-}
-
-function migrate(filename, state) {
-  const temporary = `${filename}.${crypto.randomUUID()}.tmp`;
-
-  try {
-    const fd = fs.openSync(temporary, 'wx', 0o600);
-
-    try {
-      writeAll(fd, Buffer.from(header));
-
-      for (const [id, snapshot] of Object.entries(state.snapshots)) transaction(fd, [{ op: 'set', id, snapshot }]);
-
-      fs.fsyncSync(fd);
-    } finally { fs.closeSync(fd); }
-
-    fs.renameSync(temporary, filename); syncParent(filename);
-  } finally { fs.rmSync(temporary, { force: true }); }
 }
 
 function operations(state, request) {
@@ -508,7 +535,7 @@ function requestStore(filename, request) {
 
   if (request.action === 'pending_status') return { capture: state.pending[request.id] ?? null, completed: completed(state, request.id) };
 
-  if (request.action === 'page') return pages.pageStore(filename, state, request.cursor, { string: stringValue, ordered, maxBytes: maxRecordBytes });
+  if (request.action === 'page') return diffDatabase.snapshots(state, snapshot => pages.pageDatabase(state, request.cursor, snapshot, { string: stringValue, ordered, maxBytes: maxRecordBytes }));
 
   if (request.action === 'finish') return finishStore(filename, request, state);
 
@@ -545,25 +572,15 @@ function finishStore(filename, request, state) {
 }
 
 function saveStore(filename, request, state, records) {
+  if (['replace', 'merge'].includes(request.action) && records.length) records.push(...copyPending(state, records));
+
+  if (!records.length) return null;
+
   for (const record of records) {
     if (record.op === 'pending') checkpointIndex.recordCapture(path.dirname(snapshotParent()), 'diff', filename, transcriptId(filename), record.capture);
   }
 
-  if (state.legacy || !state.end) migrate(filename, state);
-  const fd = fs.openSync(filename, fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW, 0o600);
-
-  try {
-    const end = state.legacy || !state.end ? fs.fstatSync(fd).size : state.end;
-    fs.ftruncateSync(fd, end);
-
-    const append = fs.openSync(filename, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW);
-
-    try { appendChanges(request, state, records, append); }
-    finally { fs.closeSync(append); }
-
-    syncParent(filename);
-  } finally { fs.closeSync(fd); }
-
+  diffDatabase.save(state, records, databaseHooks());
   indexPending(filename, state, records);
 
   return null;
@@ -580,15 +597,6 @@ function indexPending(filename, state, records) {
 
     checkpointIndex.replaceCaptures(path.dirname(snapshotParent()), 'diff', filename, transcriptId(filename), Object.values(pending));
   }
-}
-
-function appendChanges(request, state, records, append) {
-  if (['replace', 'merge'].includes(request.action) && records.length) {
-    records.push(...copyPending(state, records));
-  }
-
-  if (records.length) transaction(append, records);
-  fs.fsyncSync(append);
 }
 
 module.exports = { readStore, readStoreLocked, copyRetainedStoreLocked, requestStore, requestStoreLocked, requestEphemeralStore };

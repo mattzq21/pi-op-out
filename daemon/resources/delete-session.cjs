@@ -138,7 +138,6 @@ async function collectDeletionFiles(root, targets, sources, request, files) {
 async function collectCompletedTransfers(root, source, header, files) {
   const file = source.replace(/\.jsonl$/, '.diffs.json');
 
-  if (!transactions.exists(file)) return;
   const state = ownerLocks.withFile(file + '.lock', () => diffStore.readStore(file, false));
 
   if (Object.values(state.transfers).some(transfer => transfer.committed !== true)) throw new Error('Unfinished project diff transfers still own their log and staged contents; recover them before deleting this conversation');

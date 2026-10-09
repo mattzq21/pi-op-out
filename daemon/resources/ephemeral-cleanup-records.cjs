@@ -45,8 +45,17 @@ function write(root, record) {
   const db = open(root);
 
   try {
+    db.exec('BEGIN IMMEDIATE');
+
+    if (record.phase === 'complete') {
+      for (const table of ['session_diff_state', 'session_diff_transfers']) {
+        if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) db.prepare(`DELETE FROM ${table} WHERE session_id=lower(?)`).run(record.sessionId);
+      }
+    }
+
     db.prepare('INSERT INTO ephemeral_cleanup_records VALUES (?, ?) ON CONFLICT(token) DO UPDATE SET record_json=excluded.record_json')
       .run(record.token, JSON.stringify(record));
+    db.exec('COMMIT');
   } finally { db.close(); }
 }
 
