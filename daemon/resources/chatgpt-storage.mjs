@@ -1,8 +1,93 @@
-import { mkdir as chatStoreMkdir, lstat as chatStoreLstat, open as chatStoreOpen, readdir as chatStoreReadDir, readFile as chatStoreRead, rename as chatStoreRename, rm as chatStoreRemove } from 'node:fs/promises';
+import * as chatStoreFs from 'node:fs';
+import { DatabaseSync as ChatStoreDatabase } from 'node:sqlite';
+import { mkdir as chatStoreMkdir, lstat as chatStoreLstat, open as chatStoreOpen } from 'node:fs/promises';
 import { constants as chatStoreConstants } from 'node:fs';
 import { join as chatStoreJoin } from 'node:path';
 import { createHash as chatStoreHash, randomUUID as chatStoreUuid } from 'node:crypto';
 import { spawn as chatStoreSpawn } from 'node:child_process';
+
+const chatGptDatabases = new Map();
+
+function chatGptImportRecord(database, directory, entry) {
+  const file = chatStoreJoin(directory, entry.name);
+  let body = null;
+  let failure = null;
+
+  try {
+    if (!entry.isFile()) throw new Error('The saved chat is not a regular file');
+    const descriptor = chatStoreFs.openSync(file, chatStoreConstants.O_RDONLY | chatStoreConstants.O_NOFOLLOW | chatStoreConstants.O_NONBLOCK);
+
+    try {
+      if (!chatStoreFs.fstatSync(descriptor).isFile()) throw new Error('The saved chat is not a regular file');
+      body = chatStoreFs.readFileSync(descriptor, 'utf8');
+    } finally { chatStoreFs.closeSync(descriptor); }
+  } catch (error) { failure = `${error.message}. Original file retained at ${file}`; }
+
+  database.prepare('INSERT INTO chat_records VALUES (?, ?, ?) ON CONFLICT(chat_id) DO NOTHING').run(entry.name.slice(0, -5), body, failure);
+}
+
+function chatGptImportRecords(database, directory) {
+  database.exec('BEGIN IMMEDIATE');
+
+  try {
+    if (!database.prepare("SELECT 1 FROM chat_metadata WHERE key='records-imported-v1'").get()) {
+      for (const entry of chatStoreFs.readdirSync(directory, { withFileTypes: true })) {
+        if (entry.name.endsWith('.json')) chatGptImportRecord(database, directory, entry);
+      }
+
+      database.prepare("INSERT INTO chat_metadata VALUES ('records-imported-v1', '1')").run();
+    }
+
+    database.exec('COMMIT');
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+}
+
+function chatGptDatabase(directory) {
+  const previous = chatGptDatabases.get(directory);
+
+  if (previous) return previous;
+  chatStoreFs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+
+  if (!chatStoreFs.lstatSync(directory).isDirectory()) throw new Error('Invalid ChatGPT storage directory');
+  const file = chatStoreJoin(directory, 'chats.sqlite');
+  const descriptor = chatStoreFs.openSync(file, chatStoreConstants.O_CREAT | chatStoreConstants.O_RDWR | chatStoreConstants.O_NOFOLLOW, 0o600);
+  chatStoreFs.closeSync(descriptor);
+  chatStoreFs.chmodSync(file, 0o600);
+  const database = new ChatStoreDatabase(file);
+
+  try {
+    database.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+      CREATE TABLE IF NOT EXISTS chat_records (chat_id TEXT PRIMARY KEY, record_json TEXT, import_error TEXT);
+      CREATE TABLE IF NOT EXISTS chat_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+    chatGptImportRecords(database, directory);
+    chatGptDatabases.set(directory, database);
+
+    return database;
+  } catch (error) { database.close(); throw error; }
+}
+
+export function chatGptStoredDevice(directory) {
+  const database = chatGptDatabase(directory);
+  const saved = database.prepare("SELECT value FROM chat_metadata WHERE key='device'").get();
+
+  if (saved) return saved.value;
+  let device;
+
+  try { device = chatStoreFs.readFileSync(chatStoreJoin(directory, 'device'), 'utf8').trim(); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; device = chatStoreUuid(); }
+
+  database.prepare("INSERT INTO chat_metadata VALUES ('device', ?) ON CONFLICT(key) DO NOTHING").run(device);
+
+  return database.prepare("SELECT value FROM chat_metadata WHERE key='device'").get().value;
+}
+
+function chatGptDatabaseData(database, id) {
+  const row = database.prepare('SELECT record_json, import_error FROM chat_records WHERE chat_id=?').get(chatGptId(id));
+
+  if (row?.import_error) throw chatGptRecordError(row.import_error);
+
+  return row?.record_json ?? null;
+}
 
 export const chatGptWrites = new Map();
 
@@ -174,8 +259,7 @@ export function chatGptKey(identity, id) { return `${identity.key}:${chatGptId(i
 function chatGptRevision(data) { return data === null ? null : chatStoreHash('sha256').update(data).digest('hex'); }
 
 export async function chatGptStoredData(identity, id) {
-  try { return await chatStoreRead(chatGptFile(identity, id), 'utf8'); }
-  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  return chatGptDatabaseData(chatGptDatabase(identity.directory), id);
 }
 
 export async function chatGptStoredChat(identity, id) {
@@ -245,11 +329,11 @@ export function chatGptRecordError(reason) {
 export function chatGptDecodeRecord(id, data) {
   let chat;
 
-  try { chat = JSON.parse(data); } catch { throw chatGptRecordError('The saved file contains invalid JSON'); }
+  try { chat = JSON.parse(data); } catch { throw chatGptRecordError('The saved record contains invalid JSON'); }
 
-  if (!chatGptValidRecord(chat)) throw chatGptRecordError('The saved file contains an invalid chat record');
+  if (!chatGptValidRecord(chat)) throw chatGptRecordError('The saved record contains an invalid chat record');
 
-  if (chat.id !== id) throw chatGptRecordError('The saved chat ID does not match its filename');
+  if (chat.id !== id) throw chatGptRecordError('The saved chat ID does not match its stored ID');
 
   chatGptRevisions.set(chat, { value: chatGptRevision(data) });
 
@@ -257,12 +341,12 @@ export function chatGptDecodeRecord(id, data) {
 }
 
 export function chatGptDamagedChat(identity, id, error) {
-  const reason = error.code === 'CHATGPT_RECORD_DAMAGED' ? error.message : `The saved file could not be read (${error.code || 'storage error'})`;
-  const path = chatStoreJoin(identity.directory, `${id}.json`);
-  const message = `${reason}. The file is preserved at ${path}. Stop the daemons using this account before restoring a known-good backup, or start a new chat and check ChatGPT history.`;
+  const reason = error.code === 'CHATGPT_RECORD_DAMAGED' ? error.message : `The saved record could not be read (${error.code || 'storage error'})`;
+  const path = chatStoreJoin(identity.directory, 'chats.sqlite');
+  const message = `${reason}. The saved data is preserved at ${path}. Stop the daemons using this account before restoring a known-good backup, or start a new chat and check ChatGPT history.`;
 
   return { id, title: `Saved chat needs repair (${id.slice(0, 8)})`, model: 'auto', updatedAt: 0, status: 'error', messages: [], error: message,
-    storageDiagnostic: { chatId: id, filename: `${id}.json`, path, message, preserved: true } };
+    storageDiagnostic: { chatId: id, filename: 'chats.sqlite', path, message, preserved: true } };
 }
 
 function chatGptWriteConflict() {
@@ -270,13 +354,6 @@ function chatGptWriteConflict() {
   error.code = 'CHATGPT_REVISION_CONFLICT';
 
   return error;
-}
-
-async function chatGptDurableTemporary(path, data) {
-  const file = await chatStoreOpen(path, 'wx', 0o600);
-
-  try { await file.writeFile(data); await file.sync(); }
-  finally { await file.close(); }
 }
 
 export async function chatGptSyncDirectory(directory) {
@@ -291,18 +368,18 @@ async function chatGptPublish(identity, chat, lease, baseline, data) {
 
   if (!lease.lock || chatGptLeases.get(key) !== lease || !chatGptLeaseLive(key, lease)) throw chatGptWriteConflict();
 
-  if (chatGptRevision(await chatGptStoredData(identity, chat.id)) !== baseline.value) throw chatGptWriteConflict();
-  const path = chatGptFile(identity, chat.id);
-  const temporary = `${path}.${chatStoreUuid()}.tmp`;
+  const database = chatGptDatabase(identity.directory);
+  database.exec('BEGIN IMMEDIATE');
 
   try {
-    await chatGptDurableTemporary(temporary, data);
-    await chatStoreRename(temporary, path);
-    baseline.value = chatGptRevision(data);
-    await chatGptSyncDirectory(identity.directory);
-    chatGptSaveErrors.delete(key);
-    chatGptChanged(identity.providerId, 'chats');
-  } finally { await chatStoreRemove(temporary, { force: true }); }
+    if (chatGptRevision(chatGptDatabaseData(database, chat.id)) !== baseline.value) throw chatGptWriteConflict();
+    database.prepare('INSERT INTO chat_records VALUES (?, ?, NULL) ON CONFLICT(chat_id) DO UPDATE SET record_json=excluded.record_json, import_error=NULL').run(chat.id, data);
+    database.exec('COMMIT');
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+
+  baseline.value = chatGptRevision(data);
+  chatGptSaveErrors.delete(key);
+  chatGptChanged(identity.providerId, 'chats');
 }
 
 export async function chatGptSave(identity, chat, lease) {
@@ -359,14 +436,14 @@ export function chatGptRestore(snapshot) {
 }
 
 export async function chatGptList(identity) {
-  const files = (await chatStoreReadDir(identity.directory)).filter(name => name.endsWith('.json'));
-  const chats = await Promise.all(files.map(name => chatGptListRecord(identity, name.slice(0, -5))));
+  const records = chatGptDatabase(identity.directory).prepare('SELECT chat_id FROM chat_records').all();
+  const chats = await Promise.all(records.map(record => chatGptListRecord(identity, record.chat_id)));
 
   return chats.filter(Boolean).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 async function chatGptListRecord(identity, id) {
-  if (!chatGptRecordId(id)) return chatGptDamagedChat(identity, id, chatGptRecordError('The saved filename is not a valid chat ID'));
+  if (!chatGptRecordId(id)) return chatGptDamagedChat(identity, id, chatGptRecordError('The stored chat ID is invalid'));
 
   try {
     const chat = await chatGptLoad(identity, id);

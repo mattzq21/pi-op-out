@@ -6,6 +6,21 @@ const { stageCategory, observeStage } = require('./storage-inventory-transfers.c
 
 const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', 'git-snapshots': 'git-diff-snapshots', 'git-diff-transfers': 'diff-transfer-staging', tmp: 'temporary-chats', worktrees: 'worktrees', 'archived-tmp': 'archived-worktrees', recovery: 'unattributed-recovery-storage', 'ephemeral-cleanup': 'ephemeral-cleanup' };
 
+function chatRecordCount(directory, entries) {
+  const legacy = () => entries.filter(entry => entry.isFile() && /^[a-zA-Z0-9-]{1,100}\.json$/.test(entry.name)).length;
+
+  if (!entries.some(entry => entry.isFile() && entry.name === 'chats.sqlite')) return legacy();
+  const db = new (require('node:sqlite').DatabaseSync)(path.join(directory, 'chats.sqlite'), { readOnly: true });
+
+  try {
+    const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_metadata'").get();
+
+    if (!table || !db.prepare("SELECT 1 FROM chat_metadata WHERE key='records-imported-v1'").get()) return legacy();
+
+    return db.prepare('SELECT chat_id FROM chat_records').all().filter(row => /^[a-zA-Z0-9-]{1,100}$/.test(row.chat_id)).length;
+  } finally { db.close(); }
+}
+
 function specialCategory(target, category, metadata, discovery) {
   category = queuedCategory(target, category, metadata, discovery);
 
@@ -83,7 +98,10 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
 
     if (category === 'ephemeral-cleanup') addCount(category, entries.filter(entry => entry.isFile() && entry.name.endsWith('.json')).length);
 
-    if (category === 'chatgpt-storage') addCount(category, entries.filter(entry => entry.isFile() && /^[a-zA-Z0-9-]{1,100}\.json$/.test(entry.name)).length);
+    if (category === 'chatgpt-storage') {
+      try { addCount(category, chatRecordCount(target, entries)); }
+      catch (error) { discovery.warnings.push(target + ': ChatGPT chat count unavailable: ' + error.message); }
+    }
     countSnapshots(target, category, entries);
     countWorkdirs(target, category, entries);
 

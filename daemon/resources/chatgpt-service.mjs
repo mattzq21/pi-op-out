@@ -1,4 +1,4 @@
-import { mkdir as chatMkdir, readFile as chatRead, writeFile as chatWrite } from 'node:fs/promises';
+import { mkdir as chatMkdir } from 'node:fs/promises';
 import { dirname as chatDirname, join as chatJoin } from 'node:path';
 import { createHash as chatHash, randomUUID as chatUuid } from 'node:crypto';
 import { getDefaultAutoSelectFamilyAttemptTimeout, setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net';
@@ -116,15 +116,7 @@ async function chatGptIdentity(loaded, providerId = 'openai-codex') {
   } };
 }
 
-async function chatGptDevice(directory) {
-  const path = chatJoin(directory, 'device');
-
-  try { return (await chatRead(path, 'utf8')).trim(); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-
-  try { await chatWrite(path, chatUuid(), { flag: 'wx', mode: 0o600 }); } catch (error) { if (error.code !== 'EEXIST') throw error; }
-
-  return (await chatRead(path, 'utf8')).trim();
-}
+async function chatGptDevice(directory) { return chatGptStoredDevice(directory); }
 
 async function chatGptHttp(identity, path, { body, headers, signal } = {}) {
   const opening = new AbortController();
