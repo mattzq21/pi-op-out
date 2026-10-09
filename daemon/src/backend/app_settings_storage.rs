@@ -8,18 +8,23 @@ pub(crate) use storage::read;
 pub(crate) use storage::{publish, Publication};
 use storage::{open, name, old_body};
 
-pub(super) fn needs_legacy(path: &Path) -> Result<bool, String> {
+pub(crate) fn needs_legacy(path: &Path) -> Result<bool, String> {
     if read(path)?.is_some() { return Ok(false); }
     open(path)?.query_row("SELECT legacy_imported=0 FROM application_settings WHERE name=?", [name(path)?], |row| row.get(0)).map_err(|error| error.to_string())
 }
 
 pub(super) fn import_legacy(path: &Path, legacy: &Path) -> Result<(), String> {
+    import_legacy_with(path, legacy, Ok)
+}
+
+pub(crate) fn import_legacy_with(path: &Path, legacy: &Path, transform: impl FnOnce(Vec<u8>) -> Result<Vec<u8>, String>) -> Result<(), String> {
     let mut database = open(path)?;
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
     let needed: bool = transaction.query_row("SELECT body IS NULL AND legacy_imported=0 FROM application_settings WHERE name=?", [name(path)?], |row| row.get(0))
         .map_err(|error| error.to_string())?;
     if needed {
-        transaction.execute("UPDATE application_settings SET body=?, legacy_imported=1 WHERE name=?", params![old_body(legacy)?, name(path)?])
+        let body = old_body(legacy)?.map(transform).transpose()?;
+        transaction.execute("UPDATE application_settings SET body=?, legacy_imported=1 WHERE name=?", params![body, name(path)?])
             .map_err(|error| error.to_string())?;
     }
     transaction.commit().map_err(|error| error.to_string())

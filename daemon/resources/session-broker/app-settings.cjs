@@ -72,6 +72,26 @@ function readFile(file) {
   return body === undefined ? undefined : JSON.parse(body);
 }
 
+function importMissing(file, legacy) {
+  readText(file);
+  const db = open(path.dirname(file));
+  const name = path.basename(file);
+
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    const row = db.prepare('SELECT body, legacy_imported FROM application_settings WHERE name=?').get(name);
+
+    if (row.body === null && !row.legacy_imported) {
+      const body = oldBody(legacy);
+
+      if (body !== null) JSON.parse(Buffer.from(body).toString('utf8'));
+      db.prepare('UPDATE application_settings SET body=?, legacy_imported=1 WHERE name=?').run(body, name);
+    }
+
+    db.exec('COMMIT');
+  } finally { db.close(); }
+}
+
 function read(root) { return readFile(path.join(root, 'settings.json')); }
 
 function write(file, body) {
@@ -84,4 +104,4 @@ function write(file, body) {
   } finally { db.close(); }
 }
 
-module.exports = { read, readFile, readText, write };
+module.exports = { read, readFile, readText, write, importMissing };

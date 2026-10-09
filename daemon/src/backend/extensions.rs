@@ -295,11 +295,12 @@ fn migrate_agent_prompt_paths(config: &mut Value, legacy_dir: &Path) {
 
 fn migrate_agent_config(config: &Path, legacy_dir: &Path) -> Result<(), String> {
     let _lock = crate::settings_concurrency::lock_settings(config)?;
-    if DEVELOPMENT || crate::settings_storage::records::read(config)?.is_some() || !legacy_dir.join("config.json").exists() { return Ok(()); }
-    let mut migrated: Value = serde_json::from_slice(&fs::read(legacy_dir.join("config.json")).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
-    migrate_agent_prompt_paths(&mut migrated, legacy_dir);
-    crate::settings_storage::records::publish(config, &serde_json::to_vec_pretty(&migrated).map_err(|error| error.to_string())?)?;
-    Ok(())
+    if DEVELOPMENT || !crate::settings_storage::records::needs_legacy(config)? { return Ok(()); }
+    crate::settings_storage::records::import_legacy_with(config, &legacy_dir.join("config.json"), |body| {
+        let mut migrated: Value = serde_json::from_slice(&body).map_err(|error| error.to_string())?;
+        migrate_agent_prompt_paths(&mut migrated, legacy_dir);
+        serde_json::to_vec_pretty(&migrated).map_err(|error| error.to_string())
+    })
 }
 
 fn prepare_agent_configuration(legacy_dir: &Path) -> Result<(), String> {
