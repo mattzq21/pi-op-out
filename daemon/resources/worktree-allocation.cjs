@@ -55,4 +55,64 @@ function create(container, target, branch, parentBranch) {
   } finally { db.close(); }
 }
 
-module.exports = { create };
+function metadata(file) {
+  try { return fs.lstatSync(file, { bigint: true }); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
+}
+
+function removeEmpty(container, expected) {
+  const info = metadata(container);
+
+  if (!info) {
+    const parent = path.dirname(container);
+    sync(metadata(parent) ? parent : path.dirname(parent));
+
+    return true;
+  }
+
+  if (!info.isDirectory() || `${info.dev}:${info.ino}` !== expected) return false;
+  const entries = fs.readdirSync(container, { withFileTypes: true });
+
+  if (!entries.every(entry => entry.isFile() && entry.name === 'parent.json')) return false;
+
+  for (const entry of entries) fs.unlinkSync(path.join(container, entry.name));
+
+  try { fs.rmdirSync(container); }
+  catch (error) { if (['ENOTEMPTY', 'EEXIST'].includes(error.code)) return false; throw error; }
+
+  sync(path.dirname(container));
+
+  return true;
+}
+
+function cleanup(target) {
+  const container = path.dirname(target);
+  const root = path.dirname(path.dirname(container));
+
+  if (path.dirname(container) !== path.join(root, 'worktrees') || !/^[a-f0-9]{4}$/.test(path.basename(container))) throw new Error('Invalid worktree container');
+
+  if (metadata(target)) return;
+  const db = database.open(root);
+
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    cleanupRecord(db, container, target);
+    db.exec('COMMIT');
+  } finally { db.close(); }
+}
+
+function cleanupRecord(db, container, target) {
+  if (metadata(target)) return;
+  const row = db.prepare('SELECT metadata_json FROM worktree_allocations WHERE container=?').get(container);
+
+  if (!row) return;
+  const saved = JSON.parse(row.metadata_json);
+
+  if (saved.creating || !saved.containerIdentity) return;
+
+  if (saved.allocation && saved.allocation.target !== target) return;
+
+  if (removeEmpty(container, saved.containerIdentity)) db.prepare('DELETE FROM worktree_allocations WHERE container=? AND metadata_json=?').run(container, row.metadata_json);
+}
+
+module.exports = { create, cleanup };

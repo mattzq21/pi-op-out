@@ -548,20 +548,6 @@ function importWorktrees(db, root) {
   db.prepare('INSERT INTO storage_migrations VALUES (?)').run('worktree-allocations-v1');
 }
 
-function recordWorktree(container, target, branch, parentBranch) {
-  const db = open(path.dirname(path.dirname(container)));
-
-  try {
-    const info = fs.lstatSync(container, { bigint: true });
-
-    if (!info.isDirectory()) throw new Error('Worktree allocation must be a directory');
-    const identity = `${info.dev}:${info.ino}`;
-    const value = { branch, parentBranch, containerIdentity: identity, allocation: { version: 1, identity, target } };
-    db.prepare('INSERT INTO worktree_allocations VALUES (?, ?) ON CONFLICT(container) DO UPDATE SET metadata_json=excluded.metadata_json')
-      .run(container, JSON.stringify(value));
-  } finally { db.close(); }
-}
-
 function worktreeMetadata(container) {
   const db = open(require('node:path').dirname(require('node:path').dirname(container)));
 
@@ -747,4 +733,4 @@ function storageRoot(file) {
 }
 
 module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
-  recordWorktree, worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons, comparisonRetry, saveComparisonRetry, removeComparisonRetry, pendingDiffs, pendingDiff, savePendingDiff, ephemeralOwners, queuedInputs, queuedInput };
+  worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons, comparisonRetry, saveComparisonRetry, removeComparisonRetry, pendingDiffs, pendingDiff, savePendingDiff, ephemeralOwners, queuedInputs, queuedInput };

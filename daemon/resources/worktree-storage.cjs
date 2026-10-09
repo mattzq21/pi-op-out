@@ -25,11 +25,7 @@ function cleanup(target) {
 
   if (path.dirname(container) !== root || !/^[a-f0-9]{4}$/.test(path.basename(container))) return;
 
-  if (fs.existsSync(target)) return;
-
-  try { fs.unlinkSync(path.join(container, 'parent.json')); } catch { }
-
-  try { fs.rmdirSync(container); } catch { }
+  require('./worktree-allocation.cjs').cleanup(target);
 }
 
 function allocate() {

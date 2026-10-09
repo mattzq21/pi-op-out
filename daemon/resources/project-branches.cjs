@@ -51,17 +51,9 @@ function checkout(branch, trees, descriptor) {
     git(['worktree', 'add', '--', target, branch], descriptor);
 
     return target;
-  } catch (error) { cleanupAllocation(container, target);
+  } catch (error) { require('./worktree-allocation.cjs').cleanup(target);
 
   throw error; }
-}
-
-function cleanupAllocation(container, target) {
-  if (fs.existsSync(target)) return;
-
-  try { fs.unlinkSync(path.join(container, 'parent.json')); } catch { }
-
-  try { fs.rmdirSync(container); } catch { }
 }
 
 try {
