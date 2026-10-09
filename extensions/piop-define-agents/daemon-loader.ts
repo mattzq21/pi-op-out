@@ -1,10 +1,10 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Check } from "typebox/value";
 import { Type } from "typebox";
 import { loadConfig } from "./index.ts";
 import { agentSchema, agentThinkingLevels } from "./state.ts";
-import { configPath, readConfigDocument, resolvePromptPath } from "./prompts.ts";
+import { configPath, readConfigDocument, readPrompt, resolvePromptPath } from "./prompts.ts";
 import type { RuntimeSettingsRequest } from "./contracts.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
@@ -56,7 +56,7 @@ const readOnlyStorage = {
   async ensurePromptFile(path: string, contents: string) {
     const resolved = resolvePromptPath(path);
 
-    try { prompts[resolved] ??= await readFile(resolved, "utf8"); }
+    try { prompts[resolved] ??= await readPrompt(resolved); }
     catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       prompts[resolved] ??= contents;
@@ -92,7 +92,7 @@ for (const agent of config.agents) {
 
   for (const path of [agent.path_systemprompt, agent.path_agent_prompt].filter(Boolean)) {
     const resolved = resolvePromptPath(path);
-    prompts[resolved] ??= await readFile(resolved, "utf8");
+    prompts[resolved] ??= await readPrompt(resolved);
   }
 }
 

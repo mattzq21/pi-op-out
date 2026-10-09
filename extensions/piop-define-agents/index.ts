@@ -1,7 +1,7 @@
 import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, subagentLimit, registerSubagentLimits } from "./state.ts";
 import { Type } from "typebox";
 import { Check, Errors, Parse } from "typebox/value";
-import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readConfigDocument, writeConfig } from "./prompts.ts";
+import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
 import { readDaemonDefinitions } from "./daemon-definitions.ts";
 import { fallbackConfig, migrateQuestionSnapshot, selectedProfileState } from "./profiles.ts";
@@ -11,7 +11,6 @@ import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest
 import type { FastModeRequest } from "../piop-openai-fast-mode/src/types.ts";
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
@@ -321,6 +320,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const currentAgent = () => snapshot?.definition ?? findAgent(active);
   registerSubagentLimits(pi, currentAgent);
+
   const currentMcpTools = (includeInactive = false) => { const request: McpToolsRequest = {}; pi.events.emit("piop:mcp:tools", request);
 
   return (includeInactive ? request.availableTools : request.tools) ?? []; };
@@ -464,7 +464,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   async function readAgentPrompt(path: string, fromCatalog = false) {
-    if (!daemonDefinitions || snapshot && !fromCatalog) return readFile(path, "utf8");
+    if (!daemonDefinitions || snapshot && !fromCatalog) return readPrompt(path);
     const prompt = daemonDefinitions?.prompts[path];
 
     if (prompt === undefined) throw new Error(`Prompt is missing from daemon definitions: ${path}`);

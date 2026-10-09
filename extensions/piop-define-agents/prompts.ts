@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { constants } from "node:fs";
-import { link, mkdir, open, realpath, rm } from "node:fs/promises";
+import { constants, openSync, closeSync, mkdirSync, chmodSync, readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { link, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -153,7 +154,7 @@ export async function ensurePromptFile(relativePath: string, contents: string) {
 export async function snapshotPrompt(contents: string) {
   const hash = createHash("sha256").update(contents).digest("hex");
   const path = resolvePromptPath(`prompt-snapshots/${hash}.md`);
-  await ensurePromptFile(path, contents);
+  savePromptSnapshot(path, hash, contents);
 
   return path;
 }
@@ -167,4 +168,65 @@ export async function snapshotPrompts(definition: Agent, systemPrompt: string, a
 
 export async function ensureDefaultAgentPrompt() {
   await ensurePromptFile(DEFAULT_AGENT_PROMPT_PATH, "");
+}
+
+function promptSnapshotDatabase(path: string) {
+  const directory = dirname(dirname(path));
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const database = join(directory, "sessions.sqlite");
+  closeSync(openSync(database, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600));
+  chmodSync(database, 0o600);
+  const db = new DatabaseSync(database);
+
+  try {
+    db.exec("PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS agent_prompt_snapshots (digest TEXT PRIMARY KEY, contents TEXT); BEGIN IMMEDIATE;");
+
+    return db;
+  } catch (error) { db.close(); throw error; }
+}
+
+function verifiedPrompt(contents: string, digest: string) {
+  if (createHash("sha256").update(contents).digest("hex") !== digest) throw new Error("Saved agent prompt contents changed");
+
+  return contents;
+}
+
+function savePromptSnapshot(path: string, digest: string, contents: string) {
+  verifiedPrompt(contents, digest);
+  const db = promptSnapshotDatabase(path);
+
+  try {
+    db.prepare("INSERT INTO agent_prompt_snapshots VALUES (?, ?) ON CONFLICT(digest) DO UPDATE SET contents=COALESCE(agent_prompt_snapshots.contents, excluded.contents)").run(digest, contents);
+    verifiedPrompt(String(db.prepare("SELECT contents FROM agent_prompt_snapshots WHERE digest=?").get(digest)?.contents), digest);
+    db.exec("COMMIT");
+  } finally { db.close(); }
+}
+
+function importPromptSnapshot(db: DatabaseSync, path: string, digest: string) {
+  let contents: string | null = null;
+
+  try { contents = verifiedPrompt(readFileSync(path, "utf8"), digest); }
+  catch (error) { if (!hasErrorCode(error, "ENOENT")) throw error; }
+
+  db.prepare("INSERT INTO agent_prompt_snapshots VALUES (?, ?)").run(digest, contents);
+
+  return contents;
+}
+
+export async function readPrompt(path: string): Promise<string> {
+  const digest = basename(path, ".md");
+
+  if (basename(dirname(path)) !== "prompt-snapshots" || !/^[a-f0-9]{64}\.md$/.test(basename(path))) return readFile(path, "utf8");
+  const db = promptSnapshotDatabase(path);
+  let contents: string | null;
+
+  try {
+    const row = db.prepare("SELECT contents FROM agent_prompt_snapshots WHERE digest=?").get(digest);
+    contents = row ? row.contents === null ? null : verifiedPrompt(String(row.contents), digest) : importPromptSnapshot(db, path, digest);
+    db.exec("COMMIT");
+  } finally { db.close(); }
+
+  if (contents === null) throw Object.assign(new Error(`Saved agent prompt is unavailable: ${path}`), { code: "ENOENT" });
+
+  return contents;
 }
