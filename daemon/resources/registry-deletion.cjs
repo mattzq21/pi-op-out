@@ -6,8 +6,8 @@ const { Check } = require('typebox/value');
 
 const targetsSchema = Type.Array(Type.Object({ sessionId: Type.String({ minLength: 1 }), path: Type.String() }));
 
-function removeNotes(db, targets) {
-  for (const table of ['chat_notes', 'note_editor_leases']) {
+function removeSessionRecords(db, targets) {
+  for (const table of ['chat_notes', 'note_editor_leases', 'snapshot_comparison_records']) {
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
     const remove = db.prepare(`DELETE FROM ${table} WHERE session_id=lower(?)`);
 
@@ -36,7 +36,7 @@ function forget(root, targets) {
       db.prepare('DELETE FROM legacy_queued_inputs WHERE owner_key=?').run(key);
     }
 
-    removeNotes(db, targets);
+    removeSessionRecords(db, targets);
 
     const registry = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_repositories'").get();
 

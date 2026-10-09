@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const comparisonRecords = require('./snapshot-comparison-records.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
 
 const git = (args, env = process.env) => execFileSync('git', args, { env, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -130,12 +131,20 @@ function releaseReader() {
   console.log('null');
 }
 
+function discardPreparation(directory) {
+  if (!fs.existsSync(directory)) return;
+  const identity = comparisonRecords.identity(directory);
+  fs.rmSync(directory, { recursive: true });
+  syncPath(path.dirname(directory));
+  comparisonRecords.remove(storageRoot(), identity);
+}
+
 function clearPreparations(retained) {
   for (const directory of [retained, path.join(retained, 'pending')]) {
     if (!fs.existsSync(directory)) continue;
 
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name.startsWith('.preparing-')) fs.rmSync(path.join(directory, entry.name), { recursive: true });
+      if (entry.isDirectory() && entry.name.startsWith('.preparing-')) discardPreparation(path.join(directory, entry.name));
     }
   }
 }
@@ -168,7 +177,9 @@ function readPending(retained) {
 
 function readPendingRecord(queue, name) {
     const directory = checkedDirectory(path.join(queue, name));
-    const record = JSON.parse(fs.readFileSync(path.join(directory, 'comparison.json'), 'utf8'));
+    const record = comparisonRecords.read(storageRoot(), directory, owner.sessionId);
+
+    if (!record) throw new Error('Pending comparison record is missing');
 
     if (record.version !== 1 || record.sessionId !== owner.sessionId || record.turnId !== name || !turnPattern.test(record.turnId)) throw new Error('Invalid pending comparison identity');
 
@@ -294,10 +305,10 @@ function completedComparisons(retained) {
 }
 
 function cleanupAcknowledged(directory) {
-  const file = path.join(directory, 'comparison.json');
+  const identity = comparisonRecords.identity(directory);
+  const record = comparisonRecords.read(storageRoot(), directory, owner.sessionId);
 
-  if (fs.existsSync(file)) {
-    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (record) {
 
     if (record.sessionId !== owner.sessionId) throw new Error('Acknowledged comparison identity changed');
 
@@ -317,6 +328,8 @@ function cleanupAcknowledged(directory) {
   }
 
   fs.rmSync(directory, { recursive: true });
+  syncPath(path.dirname(directory));
+  comparisonRecords.remove(storageRoot(), identity);
 }
 
 function snapshotAction(retained) {
@@ -380,7 +393,7 @@ function retainComparison(retained, token, request) {
   const saved = readSnapshot(token.root);
   const sources = [...new Set([request.baseline, JSON.stringify(token), request.originalBaseline].filter(Boolean))];
   const record = { version: 1, sessionId: owner.sessionId, turnId: request.turnId, messageId: request.messageId, cwd: token.repository_root, createdAt: saved.capturedAt, sources };
-  fs.writeFileSync(path.join(preparing, 'comparison.json'), JSON.stringify(record), { flag: 'wx', mode: 0o600 });
+  comparisonRecords.write(storageRoot(), preparing, record);
   syncTree(preparing);
   fs.renameSync(preparing, path.join(queue, request.turnId));
   preparing = undefined;
@@ -580,7 +593,7 @@ function captureSnapshot(root, retained) {
     else snapshotMetadata(token, retained);
   }
   catch (error) {
-    if (preparing) fs.rmSync(preparing, { recursive: true, force: true });
+    if (preparing) discardPreparation(preparing);
     preparing = undefined;
     token.retentionError = error.message;
   }
@@ -633,7 +646,7 @@ function main(retained) {
 
 try { lockedCapture(); }
 catch (error) {
-  if (preparing) fs.rmSync(preparing, { recursive: true, force: true });
+  if (preparing) discardPreparation(preparing);
 
   if (snapshot) removeTemporary(snapshot);
   console.error(error.message);

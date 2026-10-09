@@ -6,9 +6,13 @@ pub(crate) fn source() -> String {
 }
 
 pub(crate) fn with_database(script: &str) -> String {
-    format!("const sessionDatabase = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n{}",
+    let comparisons = if script.contains("require('./snapshot-comparison-records.cjs')") {
+        format!("const snapshotComparisonRecords = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n",
+            include_str!("../resources/snapshot-comparison-records.cjs").replace("require('./session-database.cjs')", "sessionDatabase"))
+    } else { String::new() };
+    format!("const sessionDatabase = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n{comparisons}{}",
         include_str!("../resources/session-database.cjs"),
-        script.replace("require('./session-database.cjs')", "sessionDatabase"))
+        script.replace("require('./session-database.cjs')", "sessionDatabase").replace("require('./snapshot-comparison-records.cjs')", "snapshotComparisonRecords"))
 }
 
 fn run(mut request: Value) {
