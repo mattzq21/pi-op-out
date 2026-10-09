@@ -53,7 +53,7 @@ function write(seed, contents) {
   } finally { fs.closeSync(fd); }
 }
 
-function withoutReference(contents, reference) {
+function withoutReference(contents, reference, expected) {
   const suffix = Buffer.from(` ${reference}`);
   const lines = [];
   let start = 0;
@@ -65,6 +65,8 @@ function withoutReference(contents, reference) {
     const line = contents.subarray(start, end);
     const body = newline < 0 ? line : line.subarray(0, -1);
     const match = body.subarray(-suffix.length).equals(suffix);
+
+    if (match && !expected.includes(body.subarray(0, body.length - suffix.length).toString('ascii'))) throw new Error('Packed worktree reference changed; retained');
 
     if (!match && !(removed && line[0] === 94)) lines.push(line);
     removed = match;
@@ -79,7 +81,7 @@ function removePacked(plan, record) {
   const lock = destination + '.lock';
   acquire(lock, record.packed);
   const contents = io.exists(destination) ? fs.readFileSync(destination) : Buffer.alloc(0);
-  const updated = withoutReference(contents, record.ref);
+  const updated = withoutReference(contents, record.ref, record.expectedObjects);
 
   if (!updated.equals(contents)) {
     if (owned(destination, record.packed)) throw new Error('Published Git reference data changed; retained');
@@ -95,24 +97,31 @@ function finish(plan, record) {
   const lock = destination + '.lock';
   acquire(lock, record.loose);
 
-  if (record.branch) {
-    try { verifyBranch(plan, record, destination); }
-    catch (error) { release(lock, record.loose); throw error; }
+  try { publishReference(plan, record, destination, lock); }
+  finally {
+    if (record.packed) release(path.join(plan.common, 'packed-refs.lock'), record.packed);
+    release(lock, record.loose);
   }
+}
+
+function publishReference(plan, record, destination, lock) {
+  if (record.branch) verifyBranch(plan, record, destination);
 
   if (record.object) {
     if (!owned(destination, record.loose)) write(record.loose, record.object + '\n');
     fs.renameSync(lock, destination);
     io.sync(path.dirname(destination));
-  } else {
-    removePacked(plan, record);
 
-    if (io.exists(destination)) { fs.unlinkSync(destination); io.sync(path.dirname(destination)); }
-
-    release(path.join(plan.common, 'packed-refs.lock'), record.packed);
+    return;
   }
 
-  release(lock, record.loose);
+  if (io.exists(destination)) {
+    if (!fs.lstatSync(destination).isFile() || fs.readFileSync(destination, 'utf8').trim() !== record.expected) throw new Error('Worktree reference changed; retained');
+  }
+
+  removePacked(plan, record);
+
+  if (io.exists(destination)) { fs.unlinkSync(destination); io.sync(path.dirname(destination)); }
 }
 
 function verifyBranch(plan, record, destination) {
@@ -145,7 +154,11 @@ function prepare(plan, kind, object) {
   io.mkdir(directory);
   const prefix = path.join(directory, `${plan.id}-${kind}`);
 
-  return { ref, object, branch: kind === 'branch', loose: seed(prefix + '.ref'), packed: object ? null : seed(prefix + '.packed') };
+  const expected = kind === 'creations' ? plan.base : plan.contentObject;
+
+  if (!object && !expected) throw new Error('Worktree reference deletion has no saved value');
+
+  return { ref, object, expected, expectedObjects: kind === 'content' ? plan.contentObjects : [expected], branch: kind === 'branch', loose: seed(prefix + '.ref'), packed: object ? null : seed(prefix + '.packed') };
 }
 
 function complete(db, plan, kind, record) {
@@ -192,4 +205,17 @@ function releaseBranch(plan) {
   } finally { db.close(); }
 }
 
-module.exports = { update, releaseBranch };
+function releaseLocks(plan) {
+  const db = open(plan);
+
+  try {
+    for (const row of db.prepare('SELECT record_json FROM worktree_reference_updates WHERE owner=?').all(plan.id)) {
+      const record = JSON.parse(row.record_json);
+      release(path.join(plan.common, record.ref + '.lock'), record.loose);
+
+      if (record.packed) release(path.join(plan.common, 'packed-refs.lock'), record.packed);
+    }
+  } finally { db.close(); }
+}
+
+module.exports = { update, releaseBranch, releaseLocks };

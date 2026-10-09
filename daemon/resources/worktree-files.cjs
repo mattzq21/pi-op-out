@@ -223,6 +223,8 @@ function capture(plan, lock) {
   convertCheckout(plan, files, object, lock);
   const converted = tree(plan, files, lock);
   references.update(plan, 'content', converted, lock);
+  plan.contentObject = converted;
+  plan.contentObjects = [...new Set([object, converted])];
 
   return files;
 }

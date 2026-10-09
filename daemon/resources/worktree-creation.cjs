@@ -344,6 +344,8 @@ function acquireIndexLock(index, lock, proof) {
 }
 
 function finish(root, plan, fd) {
+  references.releaseLocks(plan);
+
   if (plan.phase === 'capturing') {
     preserveBase(plan, fd);
     prepareAllocation(root, plan);
@@ -354,6 +356,22 @@ function finish(root, plan, fd) {
 
   if (plan.phase === 'planned') prepare(root, plan, fd);
 
+  if (plan.phase !== 'cleanup') {
+    publishFiles(root, plan, fd);
+    plan.phase = 'cleanup';
+    save(root, plan);
+  }
+
+  if (plan.base) references.update(plan, 'creations', null, fd);
+  references.update(plan, 'content', null, fd);
+  references.releaseBranch(plan);
+  const db = open(root);
+
+  try { db.prepare('DELETE FROM worktree_creations WHERE target=?').run(plan.target); }
+  finally { db.close(); }
+}
+
+function publishFiles(root, plan, fd) {
   verifyTarget(plan);
 
   for (const [index, file] of plan.files.entries()) fileContents.write(plan, file, index, fd);
@@ -364,13 +382,6 @@ function finish(root, plan, fd) {
   fileContents.sync(plan.target);
   cleanupHeadLock(plan);
 
-  if (plan.base) references.update(plan, 'creations', null, fd);
-  references.update(plan, 'content', null, fd);
-  references.releaseBranch(plan);
-  const db = open(root);
-
-  try { db.prepare('DELETE FROM worktree_creations WHERE target=?').run(plan.target); }
-  finally { db.close(); }
 }
 
 function pending(root) {
@@ -419,7 +430,8 @@ function create(root, source, branch, revision, copy, existingBranch = false) {
 function checkout(root, source, branch) {
   return locked(root, fd => {
     allocation.recover(root);
-    const previous = pending(root).find(plan => plan.source === source && plan.branch === branch);
+    const common = fs.realpathSync(git(source, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
+    const previous = pending(root).find(plan => plan.common === common && plan.branch === branch);
 
     if (previous) {
       validate(root, previous);

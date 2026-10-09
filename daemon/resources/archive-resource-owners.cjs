@@ -53,14 +53,36 @@ function relativeCwd(binding, cwd) {
   return relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative) ? null : relative;
 }
 
+function resolvedDirectory(cwd) {
+  try { return fs.realpathSync(cwd); }
+  catch (error) {
+    if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
+
+    return missingDirectory(cwd);
+  }
+}
+
+function missingDirectory(cwd) {
+  const parent = path.dirname(cwd);
+
+  if (parent === cwd) throw new Error('Cannot resolve archive owner directory');
+
+  try {
+    const target = fs.readlinkSync(cwd);
+
+    return resolvedDirectory(path.resolve(parent, target));
+  } catch (error) { if (!['EINVAL', 'ENOENT', 'ENOTDIR'].includes(error.code)) throw error; }
+
+  return path.join(resolvedDirectory(parent), path.basename(cwd));
+}
+
 function inferred(binding, cwd) {
-  try { return relativeCwd(binding, fs.realpathSync(cwd)); }
-  catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null; throw error; }
+  return relativeCwd(binding, resolvedDirectory(path.resolve(cwd)));
 }
 
 function observe(file, area, binding, resourceId, found, expectedId) {
   const { header, identity } = headerAt(file, expectedId);
-  const relative = header.archiveResourceId === resourceId ? relativeCwd(binding, header.cwd) : inferred(binding, header.cwd);
+  const relative = inferred(binding, header.cwd);
 
   if (header.archiveResourceId !== undefined && header.archiveResourceId !== resourceId) {
     if (inferred(binding, header.cwd) !== null) throw new Error('Directory has another durable shared resource identity; reconcile its journal before archiving');
@@ -95,7 +117,7 @@ function registeredOwner(root, row, binding, resourceId, found) {
     return;
   }
 
-  const relative = relativeCwd(binding, row.cwd);
+  const relative = inferred(binding, row.cwd);
 
   if (relative !== null) found.set(row.session_id, { sessionId: row.session_id, sessionPath: row.session_path, area: 'unresolved', relative, identity: null });
 }
@@ -142,7 +164,7 @@ function relocatedOwner(root, owner, binding, resourceId) {
   if (!file || !io.exists(file)) return false;
   const { header } = headerAt(file, owner.sessionId);
 
-  return header.archiveResourceId !== resourceId && relativeCwd(binding, header.cwd) === null;
+  return header.archiveResourceId !== resourceId && inferred(binding, header.cwd) === null;
 }
 
 function discover(root, binding, resourceId, recorded) {

@@ -437,6 +437,15 @@ function rollback(transaction) {
   cleanupCopies(transaction);
 }
 
+function symbolicBranch(common, ref) {
+  try {
+    io.git(common, ['symbolic-ref', '--quiet', ref]);
+
+    return true;
+  }
+  catch (error) { if (error.status === 1) return false; throw error; }
+}
+
 function removeBranch(group) {
   if (!group.branchRef) return;
   const common = repository(group);
@@ -445,13 +454,13 @@ function removeBranch(group) {
 
   if (current === null) return;
 
-  if (current !== group.head || io.git(common, ['worktree', 'list', '--porcelain', '-z']).split('\0').includes(`branch ${group.branchRef}`)) {
+  if (symbolicBranch(common, group.branchRef) || current !== group.head || io.git(common, ['worktree', 'list', '--porcelain', '-z']).split('\0').includes(`branch ${group.branchRef}`)) {
     console.error(`Archived successfully; branch with a surviving owner retained: ${group.branchRef}`);
 
     return;
   }
 
-  io.removeRef(common, group.branchRef, group.head);
+  io.git(common, ['update-ref', '--no-deref', '-d', group.branchRef, group.head]);
 }
 
 function finishGroup(transaction, group) {

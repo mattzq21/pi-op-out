@@ -47,7 +47,7 @@ function copyDirectory(transaction, journal, publication = transaction) {
   copy.stagingIdentity = io.identity(copy.staging);
   require('./restore-records.cjs').write(journal, JSON.stringify(publication));
   fs.cpSync(copy.source, copy.staging, { recursive: true, verbatimSymlinks: true, force: false, errorOnExist: true, preserveTimestamps: true });
-  fs.chmodSync(copy.staging, fs.statSync(copy.source).mode & 0o777);
+  fs.chmodSync(copy.staging, fs.statSync(copy.source).mode & 0o7777);
 
   if (!io.matches(copy.source, copy.sourceProof) || !io.sameContents(copy.staging, copy.sourceProof)) throw new Error('Shared archived directory changed while copying; retained');
   io.syncTree(copy.staging);

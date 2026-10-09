@@ -97,7 +97,7 @@ function visitStrings(value, visit) {
 function directReferences(entries, root) {
   const directories = new Set();
   visitStrings(entries, text => {
-    for (const match of text.matchAll(/\/attachments\/goal-[a-zA-Z0-9_-]+(?=\/)/g)) {
+    for (const match of text.matchAll(/\/attachments\/goal-[a-zA-Z0-9_-]+(?=\/|$|[\s"'`),.;:!?\]}>])/g)) {
       const start = text.lastIndexOf(root + path.sep, match.index);
 
       if (start < 0) continue;
