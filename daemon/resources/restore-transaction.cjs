@@ -390,7 +390,9 @@ function finishCommit(transaction, journal) {
   require('./session-database.cjs').movePaths(root, [transaction.trace, ...transaction.moves].filter(item => item.destination.endsWith('.jsonl')));
 
   for (const item of [transaction.trace, ...transaction.moves]) {
-    if (item.destination.endsWith('.jsonl')) checkpointIndex.relocate(item.source, item.destination);
+    if (!item.destination.endsWith('.jsonl')) continue;
+    checkpointIndex.relocate(item.source, item.destination);
+    require('./transcript-metadata.cjs').remember(item.destination);
   }
 
   for (const resource of resourceTransactions(transaction)) shared.finish(root, resource);

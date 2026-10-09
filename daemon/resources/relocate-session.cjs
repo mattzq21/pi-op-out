@@ -89,6 +89,7 @@ try {
   require('./transcript-metadata.cjs').invalidate(sessionPath);
   fs.renameSync(temporary, sessionPath);
   checkpointIndex.refresh(sessionPath);
+  require('./transcript-metadata.cjs').remember(sessionPath);
 } finally {
   if (file !== undefined) fs.closeSync(file);
   fs.rmSync(temporary, { force: true });

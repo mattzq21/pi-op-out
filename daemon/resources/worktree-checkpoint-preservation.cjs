@@ -284,6 +284,7 @@ function publish(record, common) {
     fs.renameSync(temporary, record.file);
     syncDirectory(path.dirname(record.file));
     checkpointIndex.refresh(record.file);
+    require('./transcript-metadata.cjs').remember(record.file);
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
     fs.rmSync(temporary, { force: true });

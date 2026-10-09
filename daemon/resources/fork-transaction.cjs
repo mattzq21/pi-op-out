@@ -173,6 +173,7 @@ function registerPublished(root, destination) {
 
   if (header.type !== 'session' || !Check(Type.String({ minLength: 1 }), header.id)) throw new Error('Invalid published fork identity');
   require('./session-database.cjs').registerPath(root, header.id, destination);
+  require('./transcript-metadata.cjs').remember(destination);
 }
 
 function forgetPublished(root, destination, sessionId) {
