@@ -23,6 +23,14 @@ const pendingTargets = new Map<string, z.infer<typeof restoredTargetSchema> | nu
 
 let saving = false;
 
+const channel = "BroadcastChannel" in globalThis ? new BroadcastChannel("piop-session-resume") : undefined;
+
+let cacheReady = false;
+
+let refreshing = false;
+
+let refreshAgain = false;
+
 function openTargets(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open("piop-session-resume", 1);
@@ -106,9 +114,42 @@ export async function initializeSessionResume() {
   try {
     await importTargets(database);
 
-    for (const { key, target } of await readTargets(database)) if (!pendingTargets.has(key)) targetCache.set(key, target);
+    await loadTargetCache(database);
+    cacheReady = true;
+
+    if (refreshAgain) refreshTargetCache();
   } finally { database.close(); }
 }
+
+async function loadTargetCache(database: IDBDatabase) {
+  const before = new Map(targetCache);
+  const unsaved = new Set(pendingTargets.keys());
+
+  for (const { key, target } of await readTargets(database)) {
+    if (!unsaved.has(key) && !pendingTargets.has(key) && targetCache.get(key) === before.get(key)) targetCache.set(key, target);
+  }
+}
+
+async function readTargetCache() {
+  const database = await openTargets();
+
+  try { await loadTargetCache(database); }
+  finally { database.close(); }
+}
+
+function refreshTargetCache() {
+  refreshAgain = true;
+
+  if (!cacheReady || refreshing) return;
+  refreshing = true; refreshAgain = false;
+  void readTargetCache().catch(error => { console.error("Could not refresh saved conversations", error); }).finally(() => {
+    refreshing = false;
+
+    if (refreshAgain) refreshTargetCache();
+  });
+}
+
+if (channel) channel.onmessage = refreshTargetCache;
 
 async function writeTargets(entries: [string, z.infer<typeof restoredTargetSchema> | null][]) {
   const database = await openTargets();
@@ -132,6 +173,8 @@ function flushTargets() {
   void writeTargets(entries).then(() => {
     for (const [key, target] of entries) if (pendingTargets.get(key) === target) pendingTargets.delete(key);
     succeeded = true;
+    channel?.postMessage(null);
+    refreshTargetCache();
   }).catch(error => { console.error("Could not save the last conversation", error); }).finally(() => {
     saving = false;
 
@@ -139,7 +182,7 @@ function flushTargets() {
   });
 }
 
-window.addEventListener("focus", flushTargets);
+window.addEventListener("focus", () => { flushTargets(); refreshTargetCache(); });
 
 function saveTarget(key: string, target: z.infer<typeof restoredTargetSchema> | null) {
   targetCache.set(key, target); pendingTargets.set(key, target); flushTargets();
