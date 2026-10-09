@@ -1,6 +1,8 @@
 use super::*;
 use crate::settings_concurrency::{lock_settings, settings_revision};
-use crate::private_fs::publish_private;
+
+#[path = "../../../shared/rust/settings_records.rs"]
+mod records;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,11 +21,7 @@ fn storage_path() -> Result<PathBuf, String> {
 }
 
 fn read_preferences(path: &Path) -> Result<Option<ClientSettings>, String> {
-    match fs::read(path) {
-        Ok(body) => serde_json::from_slice(&body).map(Some).map_err(|error| format!("Could not read client preferences: {error}")),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
+    records::read(path)?.map(|body| serde_json::from_slice(&body).map_err(|error| format!("Could not read client preferences: {error}"))).transpose()
 }
 
 fn merge_memberships(latest: &[String], baseline: &[String], intended: &[String]) -> Vec<String> {
@@ -72,13 +70,12 @@ fn intended_preferences(path: &Path, baseline: &ClientSettings, intended: Client
 pub(crate) fn load_client_settings() -> Result<Value, String> {
     let path = storage_path()?;
     let _guard = lock_settings(&path)?;
-    match fs::read(&path) {
-        Ok(body) => {
+    match records::read(&path)? {
+        Some(body) => {
             let settings: ClientSettings = serde_json::from_slice(&body).map_err(|error| format!("Could not read client preferences: {error}"))?;
             Ok(json!({"settings":settings,"revision":settings_revision(Some(&body))}))
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(json!({"settings":null,"revision":settings_revision(None)})),
-        Err(error) => Err(error.to_string()),
+        None => Ok(json!({"settings":null,"revision":settings_revision(None)})),
     }
 }
 
@@ -88,7 +85,7 @@ pub(crate) fn save_client_settings(app: AppHandle, settings: ClientSettings, bas
     let _guard = lock_settings(&path)?;
     let settings = intended_preferences(&path, &baseline, settings, initialize.unwrap_or(false))?;
     let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
-    let publication = publish_private(&path, &body)?;
+    let publication = records::publish(&path, &body)?;
     for window in app.webview_windows().values() { let _ = window.emit("pi://client-settings-changed", ()); }
     Ok(json!({"settings":settings,"revision":settings_revision(Some(&body)),"publication":publication}))
 }
