@@ -105,19 +105,29 @@ fn append_prompt_history(db: &rusqlite::Connection, entries: &[PromptHistoryEntr
     Ok(())
 }
 
-#[tauri::command]
-pub(crate) fn sync_prompt_history(entries: Vec<PromptHistoryEntry>, legacy: Vec<String>) -> Result<Vec<String>, String> {
+fn update_prompt_history(entries: Vec<PromptHistoryEntry>, legacy: Vec<String>) -> Result<(Vec<String>, bool), String> {
     let path = storage_path()?;
     let mut db = records::open(&path)?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS desktop_prompt_history (sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE, prompt TEXT NOT NULL);")
         .map_err(|error| error.to_string())?;
     let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+    let before = transaction.total_changes();
     import_prompt_history(&transaction, legacy)?;
     append_prompt_history(&transaction, &entries)?;
     transaction.execute("DELETE FROM desktop_prompt_history WHERE sequence NOT IN (SELECT sequence FROM desktop_prompt_history ORDER BY sequence DESC LIMIT 100)", [])
         .map_err(|error| error.to_string())?;
     let history = read_prompt_history(&transaction)?;
+    let changed = transaction.total_changes() != before;
     transaction.commit().map_err(|error| error.to_string())?;
+    Ok((history, changed))
+}
+
+#[tauri::command]
+pub(crate) fn sync_prompt_history(app: AppHandle, entries: Vec<PromptHistoryEntry>, legacy: Vec<String>) -> Result<Vec<String>, String> {
+    let (history, changed) = update_prompt_history(entries, legacy)?;
+    if changed {
+        for window in app.webview_windows().values() { let _ = window.emit("pi://prompt-history-changed", ()); }
+    }
     Ok(history)
 }
 

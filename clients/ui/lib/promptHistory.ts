@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { invoke, isMobile } from "./platform";
+import { invoke, isMobile, listen } from "./platform";
 import type { KeyboardEvent } from "./solid";
 
 const storageKey = "piop.prompt-history";
@@ -12,10 +12,20 @@ let initialized = false;
 
 let saving: Promise<void> | undefined;
 
+let refreshPending = false;
+
+let subscribed = false;
+
 const pending: { id: string; prompt: string }[] = [];
 
 function syncHistory() {
-  if (saving || isMobile) return;
+  if (isMobile) return;
+
+  if (saving) { refreshPending = true;
+
+  return; }
+
+  refreshPending = false;
   const sent = [...pending];
   const legacy = readHistory([]);
   let succeeded = false;
@@ -28,8 +38,24 @@ function syncHistory() {
   }).catch(error => { console.error("Could not save prompt history", error); }).finally(() => {
     saving = undefined;
 
-    if (succeeded && pending.length) syncHistory();
+    if (succeeded && (pending.length || refreshPending)) syncHistory();
   });
+}
+
+function startHistorySync() {
+  if (isMobile) return;
+
+  if (!subscribed) {
+    subscribed = true;
+    window.addEventListener("focus", syncHistory);
+    void listen("pi://prompt-history-changed", syncHistory, z.null()).then(() => syncHistory()).catch(error => {
+      subscribed = false;
+      window.removeEventListener("focus", syncHistory);
+      console.error("Could not watch prompt history", error);
+    });
+  }
+
+  syncHistory();
 }
 
 function readHistory(fallback: string[]): string[] {
@@ -101,7 +127,7 @@ function historyKey(event: KeyboardEvent) {
 
 export function createComposerPromptHistory(read: () => string, write: (value: string) => void, fallback: () => string[], onNavigate: (value: string) => void) {
   const navigation = createPromptHistoryNavigation(fallback);
-  syncHistory();
+  startHistorySync();
 
   const captureRemember = () => {
     const previous = fallback();
