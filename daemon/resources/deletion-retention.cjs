@@ -140,6 +140,8 @@ function worktreeContainers(root) {
 
   return require('./session-database.cjs').worktreeContainers(root).filter(directory => {
     if (path.dirname(directory) !== storage || !/^[a-f0-9]{4}$/.test(path.basename(directory))) throw new Error('Invalid registered worktree directory');
+
+    if (require('./session-database.cjs').worktreeMetadata(directory)?.creating) return false;
     const info = metadata(directory);
 
     return Boolean(info?.isDirectory() && containerContents(directory));

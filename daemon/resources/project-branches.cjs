@@ -44,33 +44,16 @@ function checkout(branch, trees, descriptor) {
   require('./session-database.cjs').markCleanup(path.dirname(root), 'worktree');
   const container = path.join(root, randomUUID().slice(0, 4));
 
-  try { fs.mkdirSync(container, { mode: 0o700 }); }
-  catch (error) { if (error.code === 'EEXIST') throw new Error(`Worktree directory already exists: ${container}`); throw error; }
-
   const target = path.join(container, project);
+  require('./worktree-allocation.cjs').create(container, target, branch, null);
 
   try {
-    try { fs.lstatSync(target); throw new Error(`Worktree directory already exists: ${target}`); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-
-    recordAllocation(container, target, branch);
     git(['worktree', 'add', '--', target, branch], descriptor);
 
     return target;
   } catch (error) { cleanupAllocation(container, target);
 
   throw error; }
-}
-
-function recordAllocation(container, target, branch) {
-  require('./session-database.cjs').recordWorktree(container, target, branch, null);
-
-  for (const directory of [container, path.dirname(container), path.dirname(path.dirname(container))]) {
-    const descriptor = fs.openSync(directory, 'r');
-
-    try { fs.fsyncSync(descriptor); }
-    finally { fs.closeSync(descriptor); }
-  }
 }
 
 function cleanupAllocation(container, target) {

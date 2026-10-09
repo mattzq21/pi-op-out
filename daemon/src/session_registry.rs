@@ -6,6 +6,10 @@ pub(crate) fn source() -> String {
 }
 
 pub(crate) fn with_database(script: &str) -> String {
+    let allocation = if script.contains("require('./worktree-allocation.cjs')") {
+        format!("const worktreeAllocation = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n",
+            include_str!("../resources/worktree-allocation.cjs").replace("require('./session-database.cjs')", "sessionDatabase"))
+    } else { String::new() };
     let comparisons = if script.contains("require('./snapshot-comparison-records.cjs')") {
         format!("const snapshotComparisonRecords = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n",
             include_str!("../resources/snapshot-comparison-records.cjs").replace("require('./session-database.cjs')", "sessionDatabase"))
@@ -14,9 +18,9 @@ pub(crate) fn with_database(script: &str) -> String {
         format!("const snapshotMetadata = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n",
             include_str!("../resources/snapshot-metadata.cjs").replace("require('./session-database.cjs')", "sessionDatabase"))
     } else { String::new() };
-    format!("const sessionDatabase = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n{comparisons}{metadata}{}",
+    format!("const sessionDatabase = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n{allocation}{comparisons}{metadata}{}",
         include_str!("../resources/session-database.cjs"),
-        script.replace("require('./session-database.cjs')", "sessionDatabase").replace("require('./snapshot-comparison-records.cjs')", "snapshotComparisonRecords").replace("require('./snapshot-metadata.cjs')", "snapshotMetadata"))
+        script.replace("require('./session-database.cjs')", "sessionDatabase").replace("require('./worktree-allocation.cjs')", "worktreeAllocation").replace("require('./snapshot-comparison-records.cjs')", "snapshotComparisonRecords").replace("require('./snapshot-metadata.cjs')", "snapshotMetadata"))
 }
 
 fn run(mut request: Value) {

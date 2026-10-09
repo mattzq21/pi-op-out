@@ -35,6 +35,8 @@ function targets(db, root, row) {
   if (path.dirname(row.container) !== path.join(root, 'worktrees') || !/^[a-f0-9]{4}$/.test(path.basename(row.container))) throw new Error('Invalid saved worktree container');
   const record = JSON.parse(row.metadata_json);
 
+  if (record?.creating) throw new Error(`Worktree creation is unfinished: ${row.container}`);
+
   if (!Check(schema, record)) throw new Error('Invalid saved worktree metadata');
 
   if (!present(row.container, record.containerIdentity)) return [];

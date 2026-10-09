@@ -51,24 +51,9 @@ function allocate() {
 
   if (worktrees.includes(target)) throw new Error(`Git worktree is already registered: ${target}`);
 
-  try { fs.mkdirSync(container, { mode: 0o700 }); }
-  catch (error) { if (error.code === 'EEXIST') throw new Error(`Worktree directory already exists: ${container}`); throw error; }
-
-  try { recordAllocation(container, target, branch, parentBranch); }
-  catch (error) { cleanup(target); throw error; }
+  require('./worktree-allocation.cjs').create(container, target, branch, parentBranch);
 
   return target;
-}
-
-function recordAllocation(container, target, branch, parentBranch) {
-  require('./session-database.cjs').recordWorktree(container, target, branch, parentBranch);
-
-  for (const directory of [container, root, path.dirname(root)]) {
-    const descriptor = fs.openSync(directory, 'r');
-
-    try { fs.fsyncSync(descriptor); }
-    finally { fs.closeSync(descriptor); }
-  }
 }
 
 function create(descriptor) {
