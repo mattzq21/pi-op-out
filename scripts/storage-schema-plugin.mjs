@@ -35,7 +35,9 @@ export function storageSchemaImports() {
 }
 
 const canonicalModules = new Set([
-  "session-database.cjs", "goal-dependencies.cjs", "goal-preparations.cjs", "goal-ownership.cjs",
+  "archive-resource-records.cjs", "archive-records.cjs", "deletion-records.cjs", "fork-transaction-records.cjs", "fork-preparation-records.cjs", "temporary-storage-records.cjs", "external-transcripts.cjs",
+  "publication-residue.cjs", "legacy-archive-records.cjs", "legacy-deletion-locks.cjs", "restore-records.cjs", "transcript-metadata.cjs", "legacy-deletion-records.cjs", "conversation-storage.cjs", "snapshot-recovery-records.cjs",
+  "session-database.cjs", "transcript-references.cjs", "goal-dependencies.cjs", "goal-preparations.cjs", "goal-ownership.cjs",
   "snapshot-operation-stores.cjs", "snapshot-comparison-records.cjs", "snapshot-metadata.cjs",
   "archive-checkpoints.cjs", "archive-legacy-recovery.cjs", "archive-resource-migration.cjs", "archive-resource-owners.cjs", "archive-resource-restore.cjs", "archive-resource-transactions.cjs", "archive-resources.cjs", "archive-transaction.cjs",
   "checkpoint-schemas.cjs", "delete-recovery.cjs", "delete-transaction.cjs", "deletion-retention.cjs", "directory-liveness.cjs", "fork-preparation.cjs", "fork-transaction.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
@@ -57,7 +59,9 @@ function canonicalImports(source, path) {
 
   if (!canonicalModules.has(basename(path))) return imports;
 
-  return imports.replace(/^module\.exports = \{ ([\w,:\s]+) \};$/m, (_declaration, properties) => {
+  const native = imports.replace(/^const (\{ [\w,: ]+ \}|\w+) = require\((["'])(node:[^"']+)\2\);/gm, (_declaration, binding, _quote, module) => binding.startsWith("{") ? `import ${binding.replaceAll(":", " as ")} from ${JSON.stringify(module)};` : `import * as ${binding} from ${JSON.stringify(module)};`);
+
+  return native.replace(/^module\.exports = \{ ([\w,:\s]+) \};$/m, (_declaration, properties) => {
     const names = properties.split(",").map(property => {
       const [exported, local] = property.trim().split(/:\s*/);
 

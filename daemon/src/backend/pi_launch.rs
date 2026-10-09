@@ -282,6 +282,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let app_rpc = shell_quote(include_str!("../../resources/runtime-bridge.cjs"));
     let runtime_configuration = shell_quote(include_str!("../../resources/runtime-configuration.cjs"));
     let sdk_storage = shell_quote(include_str!("../../resources/sdk-storage.mjs"));
+    let transcript_references = shell_quote(include_str!("../../resources/transcript-references.cjs"));
     let sdk_session_list = shell_quote(include_str!("../../resources/sdk-session-list.mjs"));
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
     let settings_storage = shell_quote(include_str!("../../resources/session-broker/app-settings.cjs"));
@@ -320,6 +321,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {app_rpc} > "$HOME/{STORAGE_DIRECTORY}/runtime-bridge.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-bridge.cjs""#);
     let remote = format!(r#"{remote} && printf %s {runtime_configuration} > "$HOME/{STORAGE_DIRECTORY}/runtime-configuration.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-configuration.cjs""#);
     let remote = format!(r#"{remote} && printf %s {sdk_storage} > "$HOME/{STORAGE_DIRECTORY}/sdk-storage.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/sdk-storage.mjs""#);
+    let remote = format!(r#"{remote} && printf %s {transcript_references} > "$HOME/{STORAGE_DIRECTORY}/transcript-references.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/transcript-references.cjs""#);
     let remote = format!(r#"{remote} && printf %s {sdk_session_list} > "$HOME/{STORAGE_DIRECTORY}/sdk-session-list.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/sdk-session-list.mjs""#);
     let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts""#);
     let mut remote = remote;

@@ -7,6 +7,7 @@ const { Check } = require('typebox/value');
 const { validSessionHeader } = require('./checkpoint-schemas.cjs');
 const { describeCandidates } = require('./retention-candidates.cjs');
 const { containerContents } = require('./worktree-container.cjs');
+const transcriptRecords = require('./transcript-references.cjs');
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -162,39 +163,22 @@ function references(value, candidates, found) {
   }
 }
 
-function transcriptReferences(content, candidates, found, inventory) {
-  let header;
+function storedTranscriptReferences(root, file, candidates, found, inventory) {
+  try {
+    const entries = transcriptRecords.read(root, file);
 
-  for (const line of content.split('\n')) {
-    if (!line.trim()) continue;
-    let value;
-
-    try { value = JSON.parse(line); }
-    catch { inventory.uncertain = true; continue; }
-
-    if (!header) {
-      header = value;
-
-      if (validSessionHeader(header)) inventory.sessionIds.add(header.id.toLowerCase());
-      else inventory.uncertain = true;
-    }
-
-    references(value, candidates, found);
-  }
-
-  if (!header) inventory.uncertain = true;
+    if (validSessionHeader(entries[0])) inventory.sessionIds.add(entries[0].id.toLowerCase());
+    else inventory.uncertain = true;
+    references(entries, candidates, found);
+  } catch { inventory.uncertain = true; }
 }
 
-function survivingReferences(inventory, candidates, excluded) {
+function survivingReferences(root, inventory, candidates, excluded) {
   const found = new Set();
 
   for (const file of inventory.transcripts) {
     if (excluded.has(file)) continue;
-    const before = fs.lstatSync(file);
-    transcriptReferences(fs.readFileSync(file, 'utf8'), candidates, found, inventory);
-    const after = fs.lstatSync(file);
-
-    if (before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs) inventory.uncertain = true;
+    storedTranscriptReferences(root, file, candidates, found, inventory);
   }
 
   return found;
@@ -301,10 +285,10 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
   const ignored = { sessionIds: new Set(), uncertain: false };
   const deleted = savedFiles.filter(saved => saved.sessionId);
 
-  for (const saved of deleted) transcriptReferences(saved.body.toString('utf8'), candidates, owned, ignored);
+  for (const saved of deleted) storedTranscriptReferences(root, saved.file, candidates, owned, ignored);
   goalReferences(root, owned, inventory.goals, candidates);
   const excluded = new Set([...sources, ...savedFiles.map(saved => saved.file)]);
-  const retained = survivingReferences(inventory, candidates, excluded);
+  const retained = survivingReferences(root, inventory, candidates, excluded);
   retainPublications(root, candidates, retained, inventory);
   queuedReferences(root, excluded, candidates, retained, inventory);
   const pendingGoals = retainActiveGoals(root, inventory.goals, retained);
@@ -327,7 +311,7 @@ function retainPublications(root, candidates, retained, inventory) {
   for (const publication of publications) {
     references(publication.dependencies, candidates, retained);
 
-    for (const file of publication.transcriptPaths) transcriptReferences(fs.readFileSync(file, 'utf8'), candidates, retained, inventory);
+    for (const file of publication.transcriptPaths) storedTranscriptReferences(root, file, candidates, retained, inventory);
   }
 }
 

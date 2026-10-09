@@ -13,6 +13,8 @@ const failedSessionStorage = new WeakSet();
 
 const sessionReferenceBaselines = new WeakMap();
 
+const sessionReferenceRecorders = new WeakMap();
+
 export async function installRuntimeStorage(directory) {
   const modules = ["core/auth-storage.js", "core/models-store.js", "core/model-config.js", "core/settings-manager.js", "core/trust-manager.js", "utils/paths.js"];
   const [auth, models, config, settings, trust, paths] = await Promise.all(modules.map(file => import(storageFileUrl(storagePath.join(directory, "dist", file)).href)));
@@ -88,8 +90,11 @@ function saveManagedMetadata(database, id, file, saved) {
   database.prepare("DELETE FROM session_file_writes WHERE session_id=?").run(id);
 }
 
-function finishManagedTranscript(manager) {
-  try { registerManagedTranscript(manager, true); }
+function finishManagedTranscript(manager, entries, entry) {
+  try {
+    registerManagedTranscript(manager, true);
+    sessionReferenceRecorders.get(Object.getPrototypeOf(manager))?.(sessionReferenceRoot(), manager.sessionFile, entries, entry);
+  }
   catch (error) { failedSessionStorage.add(manager); throw error; }
 }
 
@@ -594,7 +599,7 @@ function sessionStoragePublish(manager, entries, exclusive) {
       throw error;
     }
 
-    finishManagedTranscript(manager);
+    finishManagedTranscript(manager, entries);
     sessionReferenceBaselines.set(manager, { path, entries: manager.fileEntries, references });
   } finally { release(); }
 }
@@ -609,7 +614,7 @@ function sessionStorageAppend(manager, entry) {
     const references = managedGoalReferences([entry]);
     validateNewGoalReferences(references, previous);
     appendSessionStorage(manager, entry);
-    finishManagedTranscript(manager);
+    finishManagedTranscript(manager, manager.fileEntries, entry);
     sessionReferenceBaselines.set(manager, { path: manager.sessionFile, entries: manager.fileEntries, references: new Set([...previous, ...references]) });
   }
   finally { release(); }
@@ -694,11 +699,13 @@ function installSessionLookup(SessionManager) {
   };
 }
 
-export function installSessionStorage(SessionManager) {
+export function installSessionStorage(SessionManager, recordReferences) {
   if (installedStorageClasses.has(SessionManager)) return;
   const prototype = SessionManager.prototype;
   requireStorageMethods(prototype, ["_appendEntry", "_persist", "_rewriteFile", "_hasConversation"]);
   installSessionLookup(SessionManager);
+
+  if (recordReferences) sessionReferenceRecorders.set(prototype, recordReferences);
 
   prototype._appendEntry = function (entry) {
     sessionStorageState(this);

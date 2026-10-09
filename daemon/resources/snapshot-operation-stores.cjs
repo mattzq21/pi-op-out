@@ -1,3 +1,5 @@
+const preparations = require('./fork-preparation-records.cjs');
+const records = require('./archive-records.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Type } = require('typebox');
@@ -92,7 +94,6 @@ function legacyDeletions(root, stores) {
 }
 
 function archives(root, stores) {
-  const records = require('./archive-records.cjs');
 
   for (const directory of records.list(root)) {
     const record = records.read(directory);
@@ -158,7 +159,6 @@ function forks(root, stores) {
     add(stores, record.destination.replace(/\.jsonl$/, '.diffs.json'));
   }
 
-  const preparations = require('./fork-preparation-records.cjs');
 
   for (const directory of preparations.list(root)) {
     if (!present(directory)) continue;

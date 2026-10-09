@@ -73,6 +73,7 @@ async function backendScripts() {
         platform: "node",
         format: "iife",
         target: "node22",
+        charset: "utf8",
         minify: true,
         plugins: [storageSchemaImports()],
       }, `daemon/resources/${name}.bundle.mjs`, { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))], transform(content) {

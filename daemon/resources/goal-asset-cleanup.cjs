@@ -1,4 +1,4 @@
-const fs = require('node:fs');
+const records = require('./archive-records.cjs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { Type } = require('typebox');
@@ -18,9 +18,8 @@ function managedPath(root, directory) {
   return assets.validPath(root, directory) && io.inside(path.join(root, 'sessions'), directory);
 }
 
-function readTranscript(file) {
-  if (!fs.lstatSync(file).isFile() || fs.realpathSync(file) !== file) throw new Error(`Cannot verify surviving goal history: ${file}`);
-  const entries = fs.readFileSync(file, 'utf8').split('\n').filter(line => line.trim()).map(JSON.parse);
+function readTranscript(root, file) {
+  const entries = require('./transcript-references.cjs').read(root, file);
 
   if (!validSessionHeader(entries[0])) throw new Error(`Damaged surviving conversation retained: ${file}`);
 
@@ -34,7 +33,7 @@ function observe(root, file, observation, live = true) {
     return;
   }
 
-  const entries = readTranscript(file);
+  const entries = readTranscript(root, file);
   observation.files.set(file, entries[0].id);
 
   if (live) observation.sessions.add(entries[0].id);
@@ -73,7 +72,6 @@ function deletionFiles(root, observation) {
 function transactionFiles(root, kind, observation) {
   if (kind === 'delete') return deletionFiles(root, observation);
 
-  const records = require('./archive-records.cjs');
 
   for (const directory of records.list(root)) {
     const transaction = records.read(directory);

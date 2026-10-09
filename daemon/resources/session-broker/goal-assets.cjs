@@ -116,12 +116,6 @@ function directReferences(entries, root) {
   return directories;
 }
 
-function assetText(file) {
-  if (!fs.lstatSync(file).isFile() || fs.realpathSync(file) !== file) throw new Error(`Goal asset text has ambiguous ownership: ${file}`);
-
-  return new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(file));
-}
-
 function savedDependencies(root, directory) {
   const contract = goalDependencies.read(root, directory);
 
@@ -173,7 +167,7 @@ function inheritedReferences(entries, root) {
 
   for (const file of parents) {
     if (!path.isAbsolute(file) || !exists(file)) continue;
-    const saved = JSON.parse(`[${assetText(file).split('\n').filter(line => line.trim()).join(',')}]`);
+    const saved = require('../transcript-references.cjs').read(root, file);
     dependencyClosure(root, directReferences(saved, root)).forEach(directory => directories.add(directory));
   }
 

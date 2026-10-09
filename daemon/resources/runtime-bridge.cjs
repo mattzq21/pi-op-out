@@ -676,7 +676,7 @@ async function main() {
   const { installSessionLists } = await import("./sdk-session-list.mjs");
   await installRuntimeStorage(root);
   const { SessionManager } = await import(pathToFileURL(join(root, "dist/core/session-manager.js")).href);
-  installSessionStorage(SessionManager);
+  installSessionStorage(SessionManager, require("./transcript-references.cjs").publish);
   installSessionLists(SessionManager);
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
 

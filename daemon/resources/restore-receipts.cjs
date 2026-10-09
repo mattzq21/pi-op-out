@@ -1,3 +1,4 @@
+const records = require('./archive-records.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
@@ -205,7 +206,6 @@ function finishedArchive(root, directory, transaction) {
 }
 
 function archivePending(root) {
-  const records = require('./archive-records.cjs');
 
   try {
     return records.list(root).some(directory => !finishedArchive(root, directory, records.read(directory)));

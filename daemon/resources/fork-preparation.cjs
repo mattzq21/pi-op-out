@@ -1,3 +1,4 @@
+const records = require('./fork-preparation-records.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
@@ -104,7 +105,6 @@ function removeDirectory(directory) {
 
   fs.rmSync(removing, { recursive: true });
   sync(parent);
-  const records = require('./fork-preparation-records.cjs');
   records.remove(path.join(parent, path.basename(directory).replace(/^\.cleanup-/, '')));
   records.remove(removing);
 }
