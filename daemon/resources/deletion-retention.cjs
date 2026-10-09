@@ -200,17 +200,15 @@ function survivingReferences(inventory, candidates, excluded) {
   return found;
 }
 
-function goalReferences(root, found, goals, candidates, inventory) {
+function goalReferences(root, found, goals, candidates) {
   const visited = new Set();
 
   for (const directory of found) {
     if (!goals.has(directory) || visited.has(directory)) continue;
     visited.add(directory);
 
-    for (const name of require('./session-broker/goal-dependencies.cjs').textFiles(root, directory)) {
-      if (!fs.lstatSync(path.join(directory, name)).isFile()) { inventory.uncertain = true; continue; }
-
-      references(fs.readFileSync(path.join(directory, name), 'utf8'), candidates, found);
+    for (const entry of require('./session-broker/goal-dependencies.cjs').textContents(root, directory)) {
+      references(entry.text, candidates, found);
     }
   }
 }
@@ -304,13 +302,13 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
   const deleted = savedFiles.filter(saved => saved.sessionId);
 
   for (const saved of deleted) transcriptReferences(saved.body.toString('utf8'), candidates, owned, ignored);
-  goalReferences(root, owned, inventory.goals, candidates, inventory);
+  goalReferences(root, owned, inventory.goals, candidates);
   const excluded = new Set([...sources, ...savedFiles.map(saved => saved.file)]);
   const retained = survivingReferences(inventory, candidates, excluded);
   retainPublications(root, candidates, retained, inventory);
   queuedReferences(root, excluded, candidates, retained, inventory);
   const pendingGoals = retainActiveGoals(root, inventory.goals, retained);
-  goalReferences(root, retained, inventory.goals, candidates, inventory);
+  goalReferences(root, retained, inventory.goals, candidates);
   const requestedIds = [...new Set([...deleted.map(saved => saved.sessionId), ...deferred.sessionIds])].filter(id => uuidPattern.test(id));
 
   return {

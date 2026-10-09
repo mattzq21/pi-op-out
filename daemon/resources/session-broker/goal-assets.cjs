@@ -134,8 +134,8 @@ function savedDependencies(root, directory) {
 function textDependencies(root, directory) {
   const texts = [];
 
-  for (const entry of goalDependencies.textFiles(root, directory)) {
-    if (entry === 'goal-objective.md' || /^attachment-\d+\.txt$/.test(entry)) texts.push(assetText(path.join(directory, entry)));
+  for (const entry of goalDependencies.textContents(root, directory)) {
+    if (entry.name === 'goal-objective.md' || /^attachment-\d+\.txt$/.test(entry.name)) texts.push(entry.text);
   }
 
   return directReferences(texts, root);

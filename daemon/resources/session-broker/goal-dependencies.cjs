@@ -6,7 +6,7 @@ function withDatabase(root, operation) {
   const db = database.open(root);
 
   try {
-    db.exec('CREATE TABLE IF NOT EXISTS goal_text_files (directory TEXT NOT NULL, identity TEXT NOT NULL, names_json TEXT NOT NULL, PRIMARY KEY(directory, identity))');
+    db.exec('CREATE TABLE IF NOT EXISTS goal_text_files (directory TEXT NOT NULL, identity TEXT NOT NULL, names_json TEXT NOT NULL, PRIMARY KEY(directory, identity)); CREATE TABLE IF NOT EXISTS goal_text_contents (directory TEXT NOT NULL, identity TEXT NOT NULL, contents_json TEXT NOT NULL, PRIMARY KEY(directory, identity))');
 
     return operation(db);
   }
@@ -95,14 +95,67 @@ function textFiles(root, directory) {
   });
 }
 
+function readContents(directory, names) {
+  return validNames(names).map(name => {
+    const file = path.join(directory, name);
+    const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+
+    try {
+      const before = fs.fstatSync(descriptor, { bigint: true });
+
+      if (!before.isFile()) throw new Error('Goal text is not a regular file');
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(descriptor));
+      const after = fs.lstatSync(file, { bigint: true });
+
+      if (['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'].some(key => before[key] !== after[key])) throw new Error('Goal text changed during import');
+
+      return { name, text };
+    } finally { fs.closeSync(descriptor); }
+  });
+}
+
+function textContents(root, directory) {
+  const expected = identity(directory);
+  const names = textFiles(root, directory);
+
+  return withDatabase(root, db => {
+    const query = db.prepare('SELECT contents_json FROM goal_text_contents WHERE directory=? AND identity=?');
+    let row = query.get(directory, expected);
+
+    if (!row) {
+      const contents = readContents(directory, names);
+
+      if (identity(directory) !== expected) throw new Error('Goal text directory changed during import');
+      db.prepare('INSERT INTO goal_text_contents VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(directory, expected, JSON.stringify(contents));
+      row = query.get(directory, expected);
+    }
+
+    return JSON.parse(row.contents_json);
+  });
+}
+
 function saveTextFiles(root, directory, names, destination = directory) {
   const expected = identity(directory);
-  withDatabase(root, db => db.prepare(`INSERT INTO goal_text_files VALUES (?, ?, ?)
-    ON CONFLICT(directory, identity) DO UPDATE SET names_json=excluded.names_json`).run(destination, expected, JSON.stringify(validNames(names))));
+  const contents = readContents(directory, names);
+
+  if (identity(directory) !== expected) throw new Error('Goal text directory changed during publication');
+  withDatabase(root, db => {
+    db.exec('BEGIN IMMEDIATE');
+    db.prepare('INSERT INTO goal_text_files VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET names_json=excluded.names_json')
+      .run(destination, expected, JSON.stringify(names));
+    db.prepare('INSERT INTO goal_text_contents VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET contents_json=excluded.contents_json')
+      .run(destination, expected, JSON.stringify(contents));
+    db.exec('COMMIT');
+  });
 }
 
 function removeTextFiles(root, directory, expected) {
-  withDatabase(root, db => db.prepare('DELETE FROM goal_text_files WHERE directory=? AND identity=?').run(directory, expected));
+  withDatabase(root, db => {
+    db.exec('BEGIN IMMEDIATE');
+    db.prepare('DELETE FROM goal_text_files WHERE directory=? AND identity=?').run(directory, expected);
+    db.prepare('DELETE FROM goal_text_contents WHERE directory=? AND identity=?').run(directory, expected);
+    db.exec('COMMIT');
+  });
 }
 
-module.exports = { read, save, retained, remove, textFiles, saveTextFiles, removeTextFiles };
+module.exports = { read, save, retained, remove, textFiles, textContents, saveTextFiles, removeTextFiles };

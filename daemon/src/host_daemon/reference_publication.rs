@@ -92,18 +92,15 @@ fn validate_goal_directory(directory: &Path) -> Result<()> {
 fn goal_dependencies(root: &Path, directory: &Path) -> Result<HashSet<PathBuf>> {
     validate_goal_directory(directory)?;
     let mut found = HashSet::new();
-    for name in goal_text_files(root, directory)? {
-        let path = directory.join(name);
-        if !fs::symlink_metadata(&path).map_err(|error| error.to_string())?.is_file() { return Err("Goal text is not a regular file".into()); }
-        let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    for text in goal_text_contents(root, directory)? {
         text_references(root, &text, &mut found);
     }
     Ok(found)
 }
 
-fn goal_text_files(root: &Path, directory: &Path) -> Result<Vec<String>> {
+fn goal_text_contents(root: &Path, directory: &Path) -> Result<Vec<String>> {
     let module = include_str!("../../resources/session-broker/goal-dependencies.cjs").replace("require('../session-database.cjs')", "require('./session-database.cjs')");
-    let script = crate::session_registry::with_database(&format!("const goalTextFiles = (() => {{ const module = {{exports: {{}}}}; {module}\nreturn module.exports; }})();\nprocess.stdout.write(JSON.stringify(goalTextFiles.textFiles(process.argv[1], process.argv[2])));"));
+    let script = crate::session_registry::with_database(&format!("const goalTextFiles = (() => {{ const module = {{exports: {{}}}}; {module}\nreturn module.exports; }})();\nprocess.stdout.write(JSON.stringify(goalTextFiles.textContents(process.argv[1], process.argv[2]).map(entry => entry.text)));"));
     let output = crate::node_command().args(["-e", &script]).arg(root).arg(directory).output().map_err(|error| error.to_string())?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned()); }
     serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
