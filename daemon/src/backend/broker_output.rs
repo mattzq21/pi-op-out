@@ -1,6 +1,9 @@
 use std::{fs::{self, File, OpenOptions}, io::{self, Write}, path::{Path, PathBuf}, process::{Command, Stdio}, sync::Mutex};
 use uuid::Uuid;
 
+#[path = "broker_output_records.rs"]
+mod records;
+
 pub(super) struct MessageOutput {
     root: PathBuf,
     pub(super) stdout: PathBuf,
@@ -39,7 +42,9 @@ impl MessageOutput {
         let parent = directory()?;
         let gate = creation_gate(&parent)?;
         gate.lock_shared().map_err(|error| error.to_string())?;
-        let root = parent.join(Uuid::new_v4().to_string());
+        let id = Uuid::new_v4();
+        records::reserve(&parent, id)?;
+        let root = parent.join(id.to_string());
         create_directory(&root).map_err(|error| error.to_string())?;
         let mut owner = private_file(&root.join("owner.lock"), true).map_err(|error| error.to_string())?;
         owner.lock_shared().map_err(|error| error.to_string())?;
@@ -61,7 +66,7 @@ impl MessageOutput {
 
     pub(super) fn remove(&self) {
         self.owner.lock().unwrap_or_else(|error| error.into_inner()).take();
-        if let Err(error) = collect_owned(&self.root, true) {
+        if let Err(error) = collect_owned(&self.root, true).map_err(|error| error.to_string()).and_then(|()| records::forget_missing(&self.root)) {
             eprintln!("Could not remove agent output {}: {error}", self.root.display());
         }
     }
@@ -167,26 +172,34 @@ fn recover_managed() -> Result<(), String> {
     let root = directory()?;
     let gate = creation_gate(&root)?;
     gate.lock().map_err(|error| error.to_string())?;
-    for entry in fs::read_dir(&root).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        if entry.file_name().to_str().is_none_or(|name| Uuid::parse_str(name).is_err()) { continue; }
-        if let Err(error) = collect_owned(&entry.path(), false) { eprintln!("Broker output retained at {}: {error}", entry.path().display()); }
+    for path in records::paths(&root)? {
+        if let Err(error) = collect_owned(&path, false).map_err(|error| error.to_string()).and_then(|()| records::forget_missing(&path)) {
+            eprintln!("Broker output retained at {}: {error}", path.display());
+        }
     }
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
 fn recover_legacy() -> io::Result<()> {
-    use std::os::unix::fs::MetadataExt;
     let Some(boot) = fs::read_to_string("/proc/stat")?.lines().find_map(|line| line.strip_prefix("btime ").and_then(|value| value.parse::<i64>().ok())) else { return Ok(()); };
-    for entry in fs::read_dir(std::env::temp_dir())? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let Some(id) = name.to_str().and_then(|name| name.strip_prefix("pi-desktop-broker-")) else { continue; };
-        if Uuid::parse_str(id).is_err() || entry.metadata()?.ctime() >= boot { continue; }
-        collect_legacy(&entry.path(), boot)?;
+    let root = directory().map_err(io::Error::other)?;
+    for path in records::legacy_paths(&root, &std::env::temp_dir()).map_err(io::Error::other)? {
+        if !legacy_before_boot(&path, boot)? { continue; }
+        collect_legacy(&path, boot)?;
+        records::forget_legacy_missing(&root, &path).map_err(io::Error::other)?;
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn legacy_before_boot(path: &Path, boot: i64) -> io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata.ctime() < boot),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
