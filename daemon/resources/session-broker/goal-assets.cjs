@@ -358,4 +358,4 @@ function endReclamation(root, directory, expected) {
   updateReclamation(root, directory, expected, true);
 }
 
-module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, references, claim, retainHistory, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };
+module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, directReferences, references, claim, retainHistory, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };

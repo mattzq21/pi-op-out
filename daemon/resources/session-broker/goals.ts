@@ -1,3 +1,4 @@
+import { restoreGoalAttachments } from "./goal-files.ts";
 import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, InputEventResult, MessageEndEventResult } from "@earendil-works/pi-coding-agent";
 import { GoalState, GOAL_CONTEXT, goalTokens } from "./goal-state.ts";
 import { goalBudgetPrompt, goalChangedPrompt, goalInactivePrompt, goalPrompt } from "./goal-prompts.ts";
@@ -97,13 +98,15 @@ export function registerGoals(pi: ExtensionAPI) {
 
   registerGoalControls(pi, { state, coordination, assertAvailable, changed, start });
 
-  const restore = (ctx: ExtensionContext) => {
+  const restore = async (ctx: ExtensionContext) => {
     context = ctx; starting = false; pendingStart = false; resetAudit(); runGoalId = undefined;
 
     try {
       state.restore(ctx);
 
       if (!persistent(ctx)) { state.goal = null; state.publish(ctx); }
+
+      if (state.goal) await restoreGoalAttachments(ctx, state.goal.objective);
 
       restored = true;
       restoredSessionId = ctx.sessionManager.getSessionId();

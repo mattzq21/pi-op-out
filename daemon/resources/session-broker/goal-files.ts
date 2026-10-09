@@ -1,5 +1,5 @@
 import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "./goal-directory-recovery.cjs";
-import { saveTextFiles, removeTextFiles } from "./goal-dependencies.cjs";
+import { read as readDependencies, textContents, saveTextFiles, removeTextFiles } from "./goal-dependencies.cjs";
 import { markCleanup } from "../session-database.cjs";
 import { link, mkdir, open, rename, rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
@@ -13,7 +13,7 @@ import { Parse } from "typebox/value";
 import { read as readPreparation } from "./goal-prepared-files.cjs";
 import { save as savePreparation, remove as removePreparation } from "./goal-preparations.cjs";
 import { save as saveOwnership, remove as removeOwnership, allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
-import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
+import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
 import { acquireWorktreePublicationLock as acquireReferencePublicationLock } from "../piop-diff-watch/git.ts";
 
 const imageSchema = Type.Object({ data: Type.String(), mimeType: Type.Union([Type.Literal("image/png"), Type.Literal("image/jpeg"), Type.Literal("image/gif"), Type.Literal("image/webp")]) });
@@ -193,6 +193,29 @@ function materializedGoal(preparation: GoalPreparation, directory: string, creat
       bound = true;
     }),
   };
+}
+
+export async function restoreGoalAttachments(ctx: ExtensionContext, objective: string) {
+  const root = rootForDirectory(ctx.sessionManager.getSessionDir());
+  const directories = directReferences([objective], root);
+
+  if (!directories.size) return;
+  await withGoalPublication(async () => {
+    for (const directory of directories) {
+      if (!validPath(root, directory)) throw new Error("Goal attachment is outside shared storage");
+      recoverPublished(root, directory);
+      const record = readPreparation(root, directory);
+
+      if (record !== undefined) await restoreGoalDirectory(ctx, Parse(preparationSchema, record), directory);
+      const dependencies = readDependencies(root, directory);
+
+      for (const dependency of dependencies?.directories ?? []) directories.add(dependency.path);
+
+      for (const dependency of directReferences(textContents(root, directory).map(entry => entry.text), root)) directories.add(dependency);
+    }
+
+    claim(root, [...directories][0], ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile(), objective);
+  });
 }
 
 export async function loadMaterializedGoal(ctx: ExtensionContext, id: string) {
