@@ -9,9 +9,7 @@ try {
   const directory = fs.realpathSync(process.argv[1]);
 
   if (path.dirname(directory) !== parent || !path.basename(directory).startsWith('pi-desktop-diff-')) throw new Error('Invalid snapshot directory');
-  const db = database.open(profile);
-  db.close();
-  fs.rmSync(directory, { recursive: true });
+  require('./snapshot-metadata.cjs').remove(directory);
   database.removeSnapshotDirectory(directory);
 } catch (error) {
   console.error(error.message);
