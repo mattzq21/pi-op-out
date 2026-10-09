@@ -212,16 +212,18 @@ pub(super) fn prepare_session_cost_limit_extension(_settings: &AppSettings) -> R
     Ok(extension_path)
 }
 
-pub(super) const LOOP_DETECTION_ASSETS: [(&str, &str); 4] = [
+pub(super) const LOOP_DETECTION_ASSETS: [(&str, &str); 5] = [
     ("index.ts", include_str!("../../../extensions/piop-loop-detection/index.ts")),
     ("detector.ts", include_str!("../../../extensions/piop-loop-detection/detector.ts")),
     ("observations.ts", include_str!("../../../extensions/piop-loop-detection/observations.ts")),
     ("persistence.ts", include_str!("../../../extensions/piop-loop-detection/persistence.ts")),
+    ("storage.cjs", include_str!("../../../extensions/piop-loop-detection/storage.cjs")),
 ];
 
 pub(super) fn prepare_loop_detection_extension() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?.join("piop-loop-detection");
     ensure_private_dir(&dir)?;
+    atomic_write_private(&dir.join("../session-database.cjs"), include_str!("../../resources/session-database.cjs").as_bytes())?;
     for (name, content) in LOOP_DETECTION_ASSETS { atomic_write_private(&dir.join(name), content.as_bytes())?; }
     Ok(dir.join("index.ts"))
 }

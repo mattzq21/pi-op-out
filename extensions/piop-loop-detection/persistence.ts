@@ -1,5 +1,4 @@
-import { closeSync, constants, fstatSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { read, update } from "./storage.cjs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { snapshotSchema, type Snapshot } from "./detector.ts";
 import { Type, type Static } from "typebox";
@@ -17,38 +16,23 @@ const checkpointFileSchema = Type.Object({ version: Type.Literal(1), checkpoints
 
 const resumeSchema = Type.Object({ message: Type.String() });
 
-const file = (ctx: ExtensionContext) => {
-  const session = ctx.sessionManager.getSessionFile();
-
-  return session ? `${session}.loop-detection.json` : undefined;
-};
-
-function read(path: string): Checkpoint[] {
-  let fd: number | undefined;
+function checkpointsFrom(body: string | null): Checkpoint[] {
+  if (body === null || Buffer.byteLength(body) > MAX_BYTES) return [];
 
   try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    const stat = fstatSync(fd);
-
-    if (!stat.isFile() || stat.size > MAX_BYTES) return [];
-    const buffer = Buffer.alloc(MAX_BYTES + 1);
-    const size = readSync(fd, buffer, 0, buffer.length, 0);
-
-    if (size > MAX_BYTES) return [];
-    const data = JSON.parse(buffer.subarray(0, size).toString("utf8"));
+    const data = JSON.parse(body);
 
     if (!Check(checkpointFileSchema, data)) return [];
 
     return data.checkpoints.slice(-MAX_CHECKPOINTS).flatMap(item => Check(checkpointSchema, item) && item.state ? [item] : []);
   } catch { return []; }
-  finally { if (fd !== undefined) closeSync(fd); }
 }
 
 export function loadCheckpoint(ctx: ExtensionContext, configuration: string | null): Snapshot | undefined {
-  const path = file(ctx);
+  const path = ctx.sessionManager.getSessionFile();
 
   if (!path) return;
-  const checkpoints = read(path).filter(item => item.configuration === configuration);
+  const checkpoints = checkpointsFrom(read(path, ctx.sessionManager.getSessionId())).filter(item => item.configuration === configuration);
   const branch = ctx.sessionManager.getBranch();
 
   const resumes = new Set(branch.flatMap(entry => {
@@ -75,24 +59,18 @@ function newUserInput(entry: ReturnType<ExtensionContext["sessionManager"]["getB
 }
 
 export function saveCheckpoint(ctx: ExtensionContext, configuration: string | null, state: Snapshot) {
-  const path = file(ctx);
+  const path = ctx.sessionManager.getSessionFile();
   const anchor = ctx.sessionManager.getLeafId();
 
   if (!path || !anchor) return;
-  const checkpoints = [...read(path).filter(item => item.anchor !== anchor), { anchor, configuration, state }].slice(-MAX_CHECKPOINTS);
-  let data = JSON.stringify({ version: 1, checkpoints });
+  update(path, ctx.sessionManager.getSessionId(), (body: string | null) => {
+    const checkpoints = [...checkpointsFrom(body).filter(item => item.anchor !== anchor), { anchor, configuration, state }].slice(-MAX_CHECKPOINTS);
+    let data = JSON.stringify({ version: 1, checkpoints });
 
-  while (Buffer.byteLength(data) > MAX_BYTES && checkpoints.length > 1) {
-    checkpoints.shift(); data = JSON.stringify({ version: 1, checkpoints });
-  }
+    while (Buffer.byteLength(data) > MAX_BYTES && checkpoints.length > 1) {
+      checkpoints.shift(); data = JSON.stringify({ version: 1, checkpoints });
+    }
 
-  if (Buffer.byteLength(data) > MAX_BYTES) throw new Error("Loop detection checkpoint exceeds its size limit");
-  const temporary = `${path}.${randomUUID()}.tmp`;
-
-  try {
-    writeFileSync(temporary, data, { mode: 0o600, flag: "wx" });
-    renameSync(temporary, path);
-  } finally {
-    try { unlinkSync(temporary); } catch { }
-  }
+    return data;
+  });
 }

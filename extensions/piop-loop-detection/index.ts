@@ -102,7 +102,9 @@ export default function loopDetection(pi: ExtensionAPI) {
 
     if (entry?.type === "custom" && Check(savedConfigSchema, entry.data)) detector.state.config = { ...entry.data.config };
 
-    detector.restore(loadCheckpoint(ctx, configuration), Date.now());
+    try { detector.restore(loadCheckpoint(ctx, configuration), Date.now()); }
+    catch { ctx.ui.notify("Loop detection could not load its saved state; detection starts from this session view.", "warning"); }
+
     ctx.ui.setStatus(ENTRY, undefined); publish(ctx);
   };
 
