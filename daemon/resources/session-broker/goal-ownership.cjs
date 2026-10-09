@@ -120,7 +120,7 @@ function importTree(db, directory) {
   }
 }
 
-function directories(root) {
+function directories(root, sessionId) {
   return withDatabase(root, db => {
     db.exec('BEGIN IMMEDIATE');
 
@@ -136,7 +136,13 @@ function directories(root) {
         db.prepare("INSERT INTO storage_migrations VALUES ('goal-ownership-all-areas-v1')").run();
       }
 
-      const result = db.prepare('SELECT DISTINCT directory FROM goal_ownership').all().map(row => row.directory);
+      const rows = sessionId === undefined
+        ? db.prepare('SELECT DISTINCT directory FROM goal_ownership').all()
+        : db.prepare(`SELECT DISTINCT directory FROM goal_ownership
+          WHERE EXISTS (SELECT 1 FROM json_each(record_json, '$.owners') AS owner
+            WHERE json_extract(owner.value, '$.sessionId')=?)`).all(sessionId);
+
+      const result = rows.map(row => row.directory);
       db.exec('COMMIT');
 
       return result;

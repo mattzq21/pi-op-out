@@ -264,7 +264,7 @@ function undoClaim(root, snapshot, sessionId, sessionPath) {
 function ownedDirectories(root, sessionId) {
   const directories = [];
 
-  for (const directory of goalOwnership.directories(root)) {
+  for (const directory of goalOwnership.directories(root, sessionId)) {
     if (!validPath(root, directory)) continue;
 
     try { if (readOwners(root, directory).owners.some(owner => owner.sessionId === sessionId)) directories.push(directory); }
