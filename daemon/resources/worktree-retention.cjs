@@ -1,3 +1,4 @@
+const database = require('./session-database.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
@@ -86,7 +87,6 @@ function retainCandidate(root, candidate) {
 }
 
 function collectWorktreeAllocations(root) {
-  const database = require('./session-database.cjs');
   const revision = database.cleanupRequest(root, 'worktree');
 
   if (revision === undefined) return;

@@ -35,6 +35,7 @@ export function storageSchemaImports() {
 }
 
 const canonicalModules = new Set([
+  "session-database.cjs",
   "snapshot-operation-stores.cjs", "snapshot-comparison-records.cjs", "snapshot-metadata.cjs",
   "archive-checkpoints.cjs", "archive-legacy-recovery.cjs", "archive-resource-migration.cjs", "archive-resource-owners.cjs", "archive-resource-restore.cjs", "archive-resource-transactions.cjs", "archive-resources.cjs", "archive-transaction.cjs",
   "checkpoint-schemas.cjs", "delete-recovery.cjs", "delete-transaction.cjs", "deletion-retention.cjs", "directory-liveness.cjs", "fork-preparation.cjs", "fork-transaction.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
@@ -56,7 +57,7 @@ function canonicalImports(source, path) {
 
   if (!canonicalModules.has(basename(path))) return imports;
 
-  return imports.replace(/^module\.exports = \{ ([\w,: ]+) \};$/m, (_declaration, properties) => {
+  return imports.replace(/^module\.exports = \{ ([\w,:\s]+) \};$/m, (_declaration, properties) => {
     const names = properties.split(",").map(property => {
       const [exported, local] = property.trim().split(/:\s*/);
 

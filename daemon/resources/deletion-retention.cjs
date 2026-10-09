@@ -22,16 +22,6 @@ function metadata(file) {
   catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
 }
 
-function entries(directory) {
-  const info = metadata(directory);
-
-  if (!info) return [];
-
-  if (!info.isDirectory()) throw new Error(`Cannot inspect deletion references in ${directory}`);
-
-  return fs.readdirSync(directory, { withFileTypes: true });
-}
-
 function registeredGoals(root, inventory) {
   for (const directory of require('./session-broker/goal-ownership.cjs').directories(root)) {
     const area = path.relative(root, directory).split(path.sep)[0];
@@ -98,19 +88,6 @@ function retainActiveGoals(root, goals, retained) {
   return pending;
 }
 
-function legacySessionFiles(directory, inventory) {
-  for (const entry of entries(directory)) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isSymbolicLink()) { inventory.uncertain = true; continue; }
-
-    if (entry.isDirectory()) {
-      if (entry.name.endsWith('.snapshots') || entry.name.startsWith('.delete-') || entry.name === 'attachments') continue;
-      legacySessionFiles(file, inventory);
-    } else if (entry.isFile() && entry.name.endsWith('.jsonl')) inventory.transcripts.push(file);
-  }
-}
-
 function externalTranscripts(root, inventory) {
   const records = require('./external-transcripts.cjs');
 
@@ -144,7 +121,7 @@ function forkReferences(root, inventory) {
 
     if (!info.isDirectory() || fs.realpathSync(directory) !== directory) { inventory.uncertain = true; continue; }
 
-    if (area === 'fork-preparations') legacySessionFiles(directory, inventory);
+    if (area === 'fork-preparations') inventory.transcripts.push(...require('./fork-preparation-records.cjs').files(directory).filter(file => file.endsWith('.jsonl')));
     else forkTranscript(directory, inventory);
   }
 }
@@ -223,19 +200,17 @@ function survivingReferences(inventory, candidates, excluded) {
   return found;
 }
 
-function goalReferences(found, goals, candidates, inventory) {
+function goalReferences(root, found, goals, candidates, inventory) {
   const visited = new Set();
 
   for (const directory of found) {
     if (!goals.has(directory) || visited.has(directory)) continue;
     visited.add(directory);
 
-    for (const entry of entries(directory)) {
-      if (!/\.(md|txt)$/.test(entry.name)) continue;
+    for (const name of require('./session-broker/goal-dependencies.cjs').textFiles(root, directory)) {
+      if (!fs.lstatSync(path.join(directory, name)).isFile()) { inventory.uncertain = true; continue; }
 
-      if (!entry.isFile()) { inventory.uncertain = true; continue; }
-
-      references(fs.readFileSync(path.join(directory, entry.name), 'utf8'), candidates, found);
+      references(fs.readFileSync(path.join(directory, name), 'utf8'), candidates, found);
     }
   }
 }
@@ -329,13 +304,13 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
   const deleted = savedFiles.filter(saved => saved.sessionId);
 
   for (const saved of deleted) transcriptReferences(saved.body.toString('utf8'), candidates, owned, ignored);
-  goalReferences(owned, inventory.goals, candidates, inventory);
+  goalReferences(root, owned, inventory.goals, candidates, inventory);
   const excluded = new Set([...sources, ...savedFiles.map(saved => saved.file)]);
   const retained = survivingReferences(inventory, candidates, excluded);
   retainPublications(root, candidates, retained, inventory);
   queuedReferences(root, excluded, candidates, retained, inventory);
   const pendingGoals = retainActiveGoals(root, inventory.goals, retained);
-  goalReferences(retained, inventory.goals, candidates, inventory);
+  goalReferences(root, retained, inventory.goals, candidates, inventory);
   const requestedIds = [...new Set([...deleted.map(saved => saved.sessionId), ...deferred.sessionIds])].filter(id => uuidPattern.test(id));
 
   return {

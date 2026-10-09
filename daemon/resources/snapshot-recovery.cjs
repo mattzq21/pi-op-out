@@ -1,3 +1,4 @@
+const database = require('./session-database.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
@@ -74,7 +75,6 @@ function protectComparison(capture, sources) {
 }
 
 function protectionRecord(directory, name) {
-  const database = require('./session-database.cjs');
 
   if (name === 'temporary-owner.json') return database.snapshotOwner(directory);
 
@@ -231,7 +231,6 @@ function pruneReleasedReaders(parent, directories, boot, warnings) {
 
   if (!used) return;
   const root = path.dirname(parent);
-  const database = require('./session-database.cjs');
 
   for (const row of database.snapshotReaderReleases(root)) {
     if (used.has(row.scope)) continue;
@@ -418,7 +417,6 @@ function snapshotDirectoryExists(directory) {
 }
 
 function snapshotChildren(root, parent) {
-  const database = require('./session-database.cjs');
 
   return database.snapshotDirectories(root).flatMap(row => {
     if (path.dirname(row.directory) !== parent || !/^(\.cleanup-)?pi-desktop-diff-/.test(path.basename(row.directory))) throw new Error('Invalid temporary snapshot directory');

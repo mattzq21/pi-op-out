@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Type } = require('typebox');
-const { Parse } = require('typebox/value');
+const { Check } = require('typebox/value');
 
 const moveSchema = Type.Object({ source: Type.String(), destination: Type.String() });
 
@@ -22,6 +22,10 @@ const legacyDeletionSchema = Type.Object({ files: Type.Array(Type.Object({
   path: Type.String(), staged: Type.String({ pattern: '^\\d+\\.staged$' }),
 })) });
 
+function validate(schema, record) {
+  if (!Check(schema, record)) throw new Error('Invalid saved comparison operation');
+}
+
 function add(stores, file) {
   if (!path.isAbsolute(file) || path.resolve(file) !== file) throw new Error('Invalid saved comparison location');
   stores.add(file);
@@ -40,22 +44,6 @@ function moves(stores, records) {
   }
 }
 
-function legacyDirectory(directory, stores) {
-  let entries;
-
-  try {
-    if (!fs.lstatSync(directory).isDirectory() || fs.realpathSync(directory) !== directory) throw new Error('Saved comparison directory changed');
-    entries = fs.readdirSync(directory, { withFileTypes: true });
-  } catch (error) { if (error.code === 'ENOENT') return; throw error; }
-
-  for (const entry of entries) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) legacyDirectory(file, stores);
-    else if (entry.name.endsWith('.diffs.json')) add(stores, file);
-  }
-}
-
 function deletions(root, stores) {
   for (const { record } of require('./deletion-records.cjs').list(root)) {
     if (!record) continue;
@@ -67,7 +55,7 @@ function deletions(root, stores) {
 }
 
 function deletionStores(record, stores) {
-  Parse(deletionSchema, record);
+  validate(deletionSchema, record);
 
   for (const file of record.files) {
     if (!file.source.endsWith('.diffs.json')) continue;
@@ -92,7 +80,7 @@ function legacyDeletions(root, stores) {
     if (record.kind === 'delete') {
       deletionStores(record, stores);
     } else {
-      Parse(legacyDeletionSchema, record);
+      validate(legacyDeletionSchema, record);
 
       for (const file of record.files) {
         if (!file.path.endsWith('.diffs.json')) continue;
@@ -111,7 +99,7 @@ function archives(root, stores) {
 
     if (!record) continue;
 
-    Parse(archiveSchema, record);
+    validate(archiveSchema, record);
 
     for (const session of record.records) moves(stores, session.moves);
   }
@@ -131,7 +119,7 @@ function legacyArchives(root, stores) {
     }
 
     if (record.version === undefined) {
-      Parse(legacyArchiveSchema, record);
+      validate(legacyArchiveSchema, record);
 
       for (const session of record.records) {
         add(stores, session.file.replace(/\.jsonl$/, '.diffs.json'));
@@ -139,7 +127,7 @@ function legacyArchives(root, stores) {
       }
     } else if (record.version === 2) {
       if (record.preparing && record.moves === undefined) continue;
-      Parse(restorationSchema, record);
+      validate(restorationSchema, record);
       moves(stores, record.moves);
     } else throw new Error('Unsupported archived comparison record');
   }
@@ -151,7 +139,7 @@ function restorations(root, stores) {
   for (const file of records.list(root)) {
     const record = records.read(file)?.value;
 
-    Parse(restorationSchema, record);
+    validate(restorationSchema, record);
     moves(stores, record.moves);
   }
 }
@@ -166,11 +154,17 @@ function forks(root, stores) {
 
     if (!record) continue;
 
-    Parse(forkSchema, record);
+    validate(forkSchema, record);
     add(stores, record.destination.replace(/\.jsonl$/, '.diffs.json'));
   }
 
-  for (const directory of require('./fork-preparation-records.cjs').list(root)) legacyDirectory(directory, stores);
+  const preparations = require('./fork-preparation-records.cjs');
+
+  for (const directory of preparations.list(root)) {
+    if (!present(directory)) continue;
+
+    for (const file of preparations.files(directory)) if (file.endsWith('.diffs.json')) add(stores, file);
+  }
 }
 
 function collect(root, stores) {

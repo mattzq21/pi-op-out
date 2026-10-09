@@ -1,3 +1,4 @@
+const database = require('./session-database.cjs');
 const { randomUUID } = require('node:crypto');
 const { collectRetention, cleanupRegistry } = require('./deletion-retention.cjs');
 const { collectWorktreeAllocations } = require('./worktree-retention.cjs');
@@ -24,7 +25,6 @@ function collectDeferredLocked(root) {
 }
 
 function collectGoalAllocations(root) {
-  const database = require('./session-database.cjs');
   const revision = database.cleanupRequest(root, 'goal');
 
   if (revision === undefined) return;
