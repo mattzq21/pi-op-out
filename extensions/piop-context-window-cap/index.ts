@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile as readSettings } from "./app-settings.cjs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -31,7 +31,7 @@ async function loadCap(): Promise<number | undefined> {
   let config: unknown;
 
   try {
-    config = JSON.parse(await readFile(configPath, "utf8"));
+    config = readSettings(configPath);
   } catch (error) {
     throw new Error(`Could not read ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
   }

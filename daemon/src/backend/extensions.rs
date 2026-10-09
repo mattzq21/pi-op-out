@@ -196,7 +196,9 @@ pub(super) fn prepare_context_window_cap_extension(settings: &AppSettings) -> Re
     let extension_path = dir.join("index.ts");
     let config_path = dir.join("config.json");
     atomic_write_private(&extension_path, include_str!("../../../extensions/piop-context-window-cap/index.ts").as_bytes())?;
-    atomic_write_private(&config_path, &serde_json::to_vec_pretty(&json!({ "contextWindowCap": settings.context_window_cap, "enabled": settings.context_window_cap_enabled })).map_err(|error| error.to_string())?)?;
+    atomic_write_private(&dir.join("app-settings.cjs"), include_str!("../../resources/session-broker/app-settings.cjs").as_bytes())?;
+    let body = serde_json::to_vec(&json!({ "contextWindowCap": settings.context_window_cap, "enabled": settings.context_window_cap_enabled })).map_err(|error| error.to_string())?;
+    crate::settings_storage::records::publish(&config_path, &body)?;
     Ok(extension_path)
 }
 
