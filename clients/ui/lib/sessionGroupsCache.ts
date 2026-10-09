@@ -1,3 +1,4 @@
+import { cachedMobileHost } from "./mobileHosts";
 import type { SessionGroups } from "./sessionGroups";
 import { isMobile } from "./platform";
 import { z } from "zod";
@@ -13,11 +14,9 @@ const snapshots = new Map<string, SessionGroups>();
 function cacheKey() {
   if (!isMobile) return "desktop";
 
-  try {
-    const host = localStorage.getItem("piop-mobile-host");
+  const host = cachedMobileHost();
 
-    return host ? `piop-session-groups:v1:${host}` : undefined;
-  } catch { return undefined; }
+  return host ? `piop-session-groups:v1:${host}` : undefined;
 }
 
 export function restoreSessionGroups() {

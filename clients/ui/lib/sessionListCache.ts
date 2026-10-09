@@ -1,3 +1,4 @@
+import { cachedMobileHost } from "./mobileHosts";
 import { createEffect, createSignal } from "solid-js";
 import type { SessionSummary } from "../types";
 import { isMobile } from "./platform";
@@ -11,11 +12,9 @@ const sessionSchema = z.looseObject({
 function cacheKey() {
   if (!isMobile) return undefined;
 
-  try {
-    const host = localStorage.getItem("piop-mobile-host");
+  const host = cachedMobileHost();
 
-    return host ? `piop-session-list:v1:${host}` : undefined;
-  } catch { return undefined; }
+  return host ? `piop-session-list:v1:${host}` : undefined;
 }
 
 function restore(key?: string): SessionSummary[] {

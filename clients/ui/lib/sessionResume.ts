@@ -1,3 +1,4 @@
+import { cachedMobileHost } from "./mobileHosts";
 import type { Accessor } from "solid-js";
 import type { NativeConnectionTarget } from "./nativeTransport";
 import { isMobile } from "./platform";
@@ -17,7 +18,7 @@ const draftTargetSchema = nativeConnectionTargetSchema.pick({ cwd: true, hostId:
 const restoredTargetSchema = z.union([savedSessionTargetSchema, draftTargetSchema]);
 
 function storageKey() {
-  const host = isMobile ? localStorage.getItem("piop-mobile-host") ?? "" : "desktop";
+  const host = isMobile ? cachedMobileHost() : "desktop";
   const windowTarget = new URLSearchParams(window.location.search).get("target");
 
   if (windowTarget) {

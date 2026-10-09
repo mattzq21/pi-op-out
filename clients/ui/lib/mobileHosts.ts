@@ -122,8 +122,7 @@ async function connectionSettings(change?: (saved: MobileConnection) => MobileCo
     connectionCache = saved;
 
     try {
-      if (saved.lastHost) localStorage.setItem("piop-mobile-host", saved.lastHost);
-      else localStorage.removeItem("piop-mobile-host");
+      localStorage.removeItem("piop-mobile-host");
       localStorage.removeItem("piop-mobile-auto-reconnect");
     } catch { }
 

@@ -1,3 +1,4 @@
+import { cachedMobileHost } from "./mobileHosts";
 import { z } from "zod";
 import { imageAttachmentSchema } from "./responseSchemas";
 import { isMobile } from "./platform";
@@ -43,8 +44,7 @@ export function draftEndpoint() {
 
   if (connected) return connected;
 
-  try { return localStorage.getItem("piop-mobile-host") ?? "mobile"; }
-  catch { return "mobile"; }
+  return cachedMobileHost() || "mobile";
 }
 
 export const durableDraftId = (endpoint: string, key: string) => JSON.stringify([endpoint, key]);
