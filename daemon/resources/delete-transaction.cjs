@@ -44,7 +44,7 @@ function create(root, files, repositories, sources) {
   records.allocate(root, container);
   io.mkdir(container);
 
-  const targets = sources.map(file => ({ path: file, sessionId: JSON.parse(fs.readFileSync(file, 'utf8').split('\n').find(line => line.trim())).id }));
+  const targets = sources.map(file => ({ path: file, sessionId: require('./transcript-references.cjs').read(root, file)[0].id }));
 
   const transaction = {
     version: 2, kind: 'delete', id, root, container, containerIdentity: io.identity(container), state: 'pending',

@@ -640,7 +640,7 @@ function referencedDirectories(root, previous) {
     if (!metadata) throw new Error(`Registered archive reference is unavailable: ${file}`);
 
     if (!metadata.isFile() || fs.realpathSync(file) !== file) throw new Error(`Registered archive reference changed: ${file}`);
-    const header = JSON.parse(fs.readFileSync(file, 'utf8').split('\n')[0]);
+    const header = require('./transcript-references.cjs').read(root, file)[0];
     previous.delete(header.worktreeRestore?.storedPath);
   }
 }

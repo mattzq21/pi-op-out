@@ -162,7 +162,10 @@ function snapshot(group, transaction) {
 function preserveSharedDirectories(groups, selected) {
   walkSessions(sessions, (file) => {
     if (selected.has(fs.realpathSync(file))) return;
-    const cwd = readSession(file).header.cwd;
+    const header = require('./transcript-references.cjs').read(root, file)[0];
+
+    if (!validSessionHeader(header)) throw new Error(`Invalid session: ${file}`);
+    const cwd = header.cwd;
     let canonical;
 
     try { canonical = fs.realpathSync(cwd); }
