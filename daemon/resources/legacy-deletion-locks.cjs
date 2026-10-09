@@ -51,6 +51,7 @@ function present(db, root, record) {
   const info = metadata(record.directory);
 
   if (!info) {
+    require('./legacy-deletion-records.cjs').remove(root, record.directory);
     db.prepare('DELETE FROM legacy_deletion_locks WHERE directory=? AND identity=?').run(record.directory, record.identity);
 
     return false;

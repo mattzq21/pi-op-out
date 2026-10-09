@@ -132,7 +132,9 @@ function validateRetentionMetadata(root, journal) {
 }
 
 function readJournal(root, directory) {
-  const journal = JSON.parse(fs.readFileSync(path.join(directory, "recovery.json"), "utf8"));
+  const journal = require('./legacy-deletion-records.cjs').read(root, directory);
+
+  if (journal === undefined) return undefined;
 
   if (journal.kind === "delete") return null;
 
@@ -256,15 +258,14 @@ function cleanupCommitted(root) {
 
   for (const directory of records.list(root)) {
     if (!legacyDirectory(root, directory, registered)) continue;
+    const journal = readJournal(root, directory);
 
-    if (!exists(path.join(directory, "recovery.json"))) {
+    if (journal === undefined) {
       fs.rmSync(directory, { recursive: true }); sync(garbageRoot);
       records.remove(root, directory);
 
       continue;
     }
-
-    const journal = readJournal(root, directory);
 
     if (!journal) { records.remove(root, directory); continue; }
 
@@ -303,10 +304,22 @@ function recover(root) {
   const locks = records.list(root);
 
   for (const directory of locks) {
-    if (exists(path.join(directory, "recovery.json"))) rollback(root, directory, readJournal(root, directory));
+    if (!exists(directory)) continue;
+    const journal = readJournal(root, directory);
+
+    if (journal === null) throw new Error('Unsupported deletion recovery record in legacy lock');
+
+    if (journal !== undefined) {
+      rollback(root, directory, journal);
+      require('./legacy-deletion-records.cjs').remove(root, directory);
+    }
   }
 
-  for (const directory of locks) if (exists(directory)) removeUnstarted(directory);
+  for (const directory of locks) if (exists(directory)) {
+    removeUnstarted(directory);
+    require('./legacy-deletion-records.cjs').remove(root, directory);
+  }
+
   records.list(root);
 }
 
