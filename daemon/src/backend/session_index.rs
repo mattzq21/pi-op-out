@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
@@ -211,10 +211,21 @@ pub(super) fn home_directory(app: AppHandle, host_id: String) -> Result<String, 
     (!path.is_empty()).then_some(path).ok_or_else(|| "Remote home directory was unavailable".into())
 }
 
+fn temporary_chat_script() -> String {
+    crate::session_registry::with_database(include_str!("../../resources/temporary-chat.cjs"))
+}
+
+fn temporary_chat_output(mut command: Command) -> Result<String, String> {
+    let output = command.output().map_err(|error| format!("Could not update temporary chat directory: {error}"))?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 pub(super) fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf, String> {
-    let cwd = home.join(STORAGE_DIRECTORY).join("tmp").join(session_id);
-    fs::create_dir_all(&cwd).map_err(|error| format!("Could not create temporary chat directory: {error}"))?;
-    Ok(cwd)
+    let request = json!({"action":"create","id":session_id,"root":home.join(STORAGE_DIRECTORY)}).to_string();
+    let mut command = node_command();
+    command.args(["-e", &temporary_chat_script(), &request]);
+    temporary_chat_output(command).map(PathBuf::from)
 }
 
 pub(super) fn temporary_chat_id(path: &str) -> Option<&str> {
@@ -232,35 +243,19 @@ pub(super) fn remove_temporary_chat(app: AppHandle, path: String, host_id: Strin
 }
 
 pub(super) fn remove_remote_temporary_chat(path: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
-    temporary_chat_id(path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
-    let script = format!("candidate={}; root=\"$HOME/{STORAGE_DIRECTORY}/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ ! -L \"$HOME/{STORAGE_DIRECTORY}\" ] && [ ! -L \"$root\" ] && [ ! -L \"$candidate\" ] && {{ [ ! -e \"$candidate\" ] || {{ [ -d \"$candidate\" ] && node -e 'try {{ require(\"node:fs\").rmdirSync(process.argv[1]); }} catch (error) {{ if (![\"ENOTEMPTY\", \"EEXIST\", \"ENOENT\"].includes(error.code)) throw error; }}' \"$candidate\"; }}; }}", shell_quote(path));
-    let output = command(script).output().map_err(|error| format!("Could not remove temporary chat directory on {host_name}: {error}"))?;
-    if !output.status.success() { return Err(format!("Could not remove temporary chat directory on {host_name}: {}", String::from_utf8_lossy(&output.stderr).trim())); }
-    Ok(())
-}
-
-fn temporary_chat_directory_exists(directory: &Path) -> Result<bool, String> {
-    match fs::symlink_metadata(directory) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => Err("Refusing to remove a temporary chat through a symlink or non-directory".into()),
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(format!("Could not inspect temporary chat directory: {error}")),
-    }
+    let id = temporary_chat_id(path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
+    let request = json!({"action":"remove","id":id,"path":path}).to_string();
+    let remote = format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(&temporary_chat_script()), shell_quote(&request));
+    temporary_chat_output(command(remote_login_command(&remote)))
+        .map(|_| ()).map_err(|error| format!("Could not remove temporary chat directory on {host_name}: {error}"))
 }
 
 pub(super) fn remove_local_temporary_chat(home: &Path, path: &str) -> Result<(), String> {
-    temporary_chat_id(path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
-    let expected_root = home.join(STORAGE_DIRECTORY).join("tmp");
-    let candidate = PathBuf::from(path);
-    if candidate.parent() != Some(expected_root.as_path()) { return Err("Refusing to remove a directory outside the temporary chat root".into()); }
-    for directory in [home.join(STORAGE_DIRECTORY), expected_root, candidate.clone()] {
-        if !temporary_chat_directory_exists(&directory)? { return Ok(()); }
-    }
-    match fs::remove_dir(candidate) {
-        Ok(()) => Ok(()),
-        Err(error) if matches!(error.kind(), std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound) => Ok(()),
-        Err(error) => Err(format!("Could not remove temporary chat directory: {error}")),
-    }
+    let id = temporary_chat_id(path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
+    let request = json!({"action":"remove","id":id,"path":path,"root":home.join(STORAGE_DIRECTORY)}).to_string();
+    let mut command = node_command();
+    command.args(["-e", &temporary_chat_script(), &request]);
+    temporary_chat_output(command).map(|_| ())
 }
 pub(super) fn validate_project_directory(app: AppHandle, path: String, host_id: String, allow_storage: Option<bool>) -> Result<String, String> {
     if path.trim().is_empty() { return Err("Path can't be empty".into()); }
@@ -325,10 +320,10 @@ pub(super) fn create_temporary_chat(app: AppHandle, host_id: String, _e2e: Optio
 
 pub(super) fn create_remote_temporary_chat(session_id: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
     Uuid::parse_str(session_id).map_err(|_| "Invalid temporary chat session ID")?;
-    let remote = format!("mkdir -p \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && cd \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && pwd -P");
-    let output = command(remote).output().map_err(|error| format!("Could not create temporary chat directory on {host_name}: {error}"))?;
-    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let request = json!({"action":"create","id":session_id}).to_string();
+    let remote = format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(&temporary_chat_script()), shell_quote(&request));
+    let path = temporary_chat_output(command(remote_login_command(&remote)))
+        .map_err(|error| format!("Could not create temporary chat directory on {host_name}: {error}"))?;
     if path.is_empty() { return Err("Remote temporary chat directory was unavailable".into()); }
     Ok(path)
 }
