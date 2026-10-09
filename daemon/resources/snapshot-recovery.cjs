@@ -119,12 +119,36 @@ function protectedSources(root, directories, warnings) {
   try { protectDatabaseComparisons(root, sources); }
   catch (error) { sources.unknown = true; warn(warnings, root, error); }
 
+  protectExternalComparisons(root, sources, warnings);
+
   try { require('./snapshot-operation-stores.cjs').collect(root, sources.stores); }
   catch (error) { sources.unknown = true; warn(warnings, root, error); }
 
   for (const file of sources.stores) protectStore(file, sources, warnings);
 
   return sources;
+}
+
+function protectExternalComparisons(root, sources, warnings) {
+  const records = require('./external-transcripts.cjs');
+  let rows;
+
+  try { rows = records.list(root); }
+  catch (error) {
+    sources.unknown = true;
+    warn(warnings, root, error);
+
+    return;
+  }
+
+  for (const row of rows) {
+    try {
+      const file = records.transcript(row);
+
+      if (!file.endsWith('.jsonl')) throw new Error('Invalid external comparison transcript');
+      sources.stores.add(file.replace(/\.jsonl$/, '.diffs.json'));
+    } catch (error) { sources.unknown = true; warn(warnings, row.record_id, error); }
+  }
 }
 
 function protectDatabaseComparisons(root, sources) {
