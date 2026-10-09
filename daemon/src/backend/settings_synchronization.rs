@@ -165,7 +165,7 @@ impl Save {
 
 fn current_change(path: &Path, journal: &Journal) -> Result<Value, String> {
     let mut current = settings::read_settings_at(path)?;
-    settings::merge_discovered_skills(&mut current);
+    settings::merge_discovered_skills(&mut current)?;
     Ok(json!({"settings":current,"committed":true,"revision":journal.revision,"source":digest(progress_path(path)?.to_string_lossy().as_bytes())}))
 }
 
@@ -265,8 +265,7 @@ fn retry_locked(app: &AppHandle, runtime: &PiRuntime, path: &Path, applied: &mut
     if !needs_retry(&journal, &progress, applied) { return Ok(false); }
     let phase_revision = if progress.revision == journal.revision { progress.phase_revision } else { 0 };
     write_record(&owner_path, &Progress { revision: journal.revision, phase_revision, ..Progress::default() })?;
-    let mut settings = settings::read_settings_at(path)?;
-    settings::merge_discovered_skills(&mut settings);
+    let settings = settings_with_skills(path)?;
     schedule_effects(&settings, applied);
     let mut change = current_change(path, &journal)?;
     let warnings = apply_current(app, runtime, &journal, &settings, &mut change);
@@ -367,4 +366,10 @@ fn report_retry_error(app: &AppHandle, previous: &mut Option<String>, error: Opt
         let _ = app.emit("pi://daemon-error", json!({"hostId":"local","line":format!("Saved settings synchronization will retry automatically: {error}")}));
     }
     *previous = error;
+}
+
+fn settings_with_skills(path: &Path) -> Result<AppSettings, String> {
+    let mut settings = settings::read_settings_at(path)?;
+    settings::merge_discovered_skills(&mut settings)?;
+    Ok(settings)
 }

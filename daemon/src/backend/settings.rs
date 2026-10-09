@@ -38,7 +38,7 @@ pub(super) fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     synchronization::start(app);
     let mut settings = read_settings_at(&path)?;
-    merge_discovered_skills(&mut settings);
+    merge_discovered_skills(&mut settings)?;
     Ok(settings)
 }
 

@@ -161,10 +161,8 @@ fn handle_broker_request(app: AppHandle, _owner: String, args: Value) -> Command
     })
 }
 
-fn handle_load_host_settings(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(load_app_settings(app)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
+fn handle_load_host_settings(app: AppHandle, owner: String, args: Value) -> CommandFuture {
+    handle_load_app_settings(app, owner, args)
 }
 
 fn handle_save_host_settings(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
@@ -492,9 +490,12 @@ fn handle_relocate_session(app: AppHandle, _owner: String, args: Value) -> Comma
     })
 }
 
-fn handle_load_app_settings(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+fn handle_load_app_settings(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(load_app_settings(app.clone())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || {
+            if argument::<Option<bool>>(&args, "refreshSkills")?.unwrap_or(false) { crate::skill_discovery::refresh_skills()?; }
+            serde_json::to_value(load_app_settings(app)?).map_err(|error| error.to_string())
+        }).await.map_err(|error| error.to_string())?
     })
 }
 
