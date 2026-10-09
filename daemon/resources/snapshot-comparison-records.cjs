@@ -95,7 +95,7 @@ function present(queue, row) {
   return [];
 }
 
-function list(root, queue, sessionId) {
+function list(root, queue, sessionId, retireMissing = false) {
   const key = identity(queue);
 
   return withDatabase(root, db => {
@@ -110,7 +110,7 @@ function list(root, queue, sessionId) {
 
       const names = present(queue, row);
 
-      if (!names.length) db.prepare('DELETE FROM snapshot_comparison_records WHERE identity=?').run(row.identity);
+      if (retireMissing && !names.length) db.prepare('DELETE FROM snapshot_comparison_records WHERE identity=?').run(row.identity);
 
       return names;
     });

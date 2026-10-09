@@ -164,7 +164,7 @@ function readPending(retained) {
   if (!fs.existsSync(queue)) return [];
   checkedDirectory(queue);
 
-  const names = comparisonRecords.list(storageRoot(), queue, owner.sessionId);
+  const names = comparisonRecords.list(storageRoot(), queue, owner.sessionId, true);
 
   for (const name of names) {
     if (name.startsWith('.acknowledged-')) cleanupAcknowledged(path.join(queue, name));

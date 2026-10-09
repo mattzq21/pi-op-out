@@ -135,22 +135,34 @@ function protectStore(file, sources, warnings) {
   } catch (error) { sources.unknown = true; warn(warnings, file, error); }
 }
 
-function savedSnapshots(root, snapshots, warnings) {
-  for (const session of require('./session-database.cjs').paths(root)) {
-    const directory = session.replace(/\.jsonl$/, '.snapshots');
+function snapshotSessions(root) {
+  const db = require('./session-database.cjs').open(root);
 
-    try { savedSnapshotDirectory(directory, snapshots, warnings); }
+  try {
+    return db.prepare(`SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`).all();
+  } finally { db.close(); }
+}
+
+function savedSnapshots(root, snapshots, warnings) {
+  for (const session of snapshotSessions(root)) {
+    const directory = session.session_path.replace(/\.jsonl$/, '.snapshots');
+
+    try { savedSnapshotDirectory(root, session.session_id, directory, snapshots, warnings); }
     catch (error) { warn(warnings, directory, error); }
   }
 }
 
-function savedSnapshotDirectory(directory, snapshots, warnings) {
+function savedSnapshotDirectory(root, sessionId, directory, snapshots, warnings) {
   for (const name of ['latest', 'previous']) addSavedSnapshot(path.join(directory, name), snapshots, warnings);
+  const queue = path.join(directory, 'pending');
 
-  for (const pending of entries(path.join(directory, 'pending'))) {
-    if (!pending.isDirectory() || pending.name.startsWith('.')) continue;
+  if (!snapshotDirectoryExists(queue)) return;
 
-    for (const phase of ['before', 'after']) addSavedSnapshot(path.join(directory, 'pending', pending.name, phase), snapshots, warnings);
+  for (const name of require('./snapshot-comparison-records.cjs').list(root, queue, sessionId)) {
+    if (name.startsWith('.')) continue;
+
+    for (const phase of ['before', 'after']) addSavedSnapshot(path.join(queue, name, phase), snapshots, warnings);
   }
 }
 
