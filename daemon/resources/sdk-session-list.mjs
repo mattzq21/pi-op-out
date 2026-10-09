@@ -42,10 +42,25 @@ function fingerprint(row) {
   return `${stat.mtimeNs}:${stat.size}`;
 }
 
-function decode(body) {
-  const value = JSON.parse(body);
+function decode(row) {
+  let value;
+
+  try { value = JSON.parse(row.body); }
+  catch { return; }
+
+  if (!validSummary(value, row)) return;
 
   return { ...value, created: new Date(value.created ?? NaN), modified: new Date(value.modified ?? NaN) };
+}
+
+function validSummary(value, row) {
+  return value?.id === row.session_id && value?.path === row.session_path
+    && [value.cwd, value.firstMessage, value.allMessagesText].every(item => item?.constructor === String)
+    && Number.isSafeInteger(value.messageCount) && value.messageCount >= 0;
+}
+
+function savedSummary(row, stamp) {
+  return row.fingerprint === stamp && row.body ? decode(row) : undefined;
 }
 
 function entry(line) {
@@ -125,20 +140,21 @@ async function summary(db, row, signal) {
   const previous = cached.get(row.session_path);
 
   if (previous?.stamp === stamp && previous.id === row.session_id) return structuredClone(previous.value);
-  const value = row.fingerprint === stamp && row.body ? decode(row.body) : await readSummary(row, signal);
+  const stored = savedSummary(row, stamp);
+  const value = stored ?? await readSummary(row, signal);
 
   if (!value) return undefined;
-  const stat = row.fingerprint === stamp ? undefined : statSync(row.session_path, { bigint: true });
+  const stat = stored ? undefined : statSync(row.session_path, { bigint: true });
 
   if (stat && stamp !== `${stat.mtimeNs}:${stat.size}`) return value;
-  persistSummary(db, row, stamp, value);
+
+  if (!stored) persistSummary(db, row, stamp, value);
   remember(row, stamp, value);
 
   return structuredClone(value);
 }
 
 function persistSummary(db, row, stamp, value) {
-  if (row.fingerprint === stamp && row.body) return;
   db.prepare(`INSERT INTO sdk_session_summaries SELECT session_id, session_path, ?, ? FROM sessions WHERE session_id=? AND session_path=?
     ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, fingerprint=excluded.fingerprint, body=excluded.body`)
     .run(stamp, JSON.stringify(value), row.session_id, row.session_path);
