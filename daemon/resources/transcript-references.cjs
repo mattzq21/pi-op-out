@@ -7,7 +7,10 @@ function open(root) {
   const db = database.open(root);
 
   try {
-    db.exec('CREATE TABLE IF NOT EXISTS transcript_references (session_path TEXT PRIMARY KEY, session_id TEXT, fingerprint TEXT NOT NULL, entries_json TEXT NOT NULL)');
+    db.exec('BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS transcript_references (session_path TEXT PRIMARY KEY, session_id TEXT, fingerprint TEXT NOT NULL, entries_json TEXT NOT NULL, format_version INTEGER NOT NULL DEFAULT 1)');
+
+    if (!db.prepare('PRAGMA table_info(transcript_references)').all().some(column => column.name === 'format_version')) db.exec('ALTER TABLE transcript_references ADD COLUMN format_version INTEGER NOT NULL DEFAULT 1');
+    db.exec('COMMIT');
 
     return db;
   } catch (error) { db.close(); throw error; }
@@ -20,7 +23,7 @@ function fingerprint(info) {
 }
 
 function relevant(entry, root) {
-  return entry?.goalAssets !== undefined || JSON.stringify(entry)?.includes(JSON.stringify(root).slice(1, -1));
+  return entry?.goalAssets !== undefined || ['pi-project-prompt-checkpoint', 'pi-project-files-watch-snapshot'].includes(entry?.customType) || JSON.stringify(entry)?.includes(JSON.stringify(root).slice(1, -1));
 }
 
 function summarize(entries, root) {
@@ -28,17 +31,17 @@ function summarize(entries, root) {
 }
 
 function save(db, file, stamp, entries) {
-  db.prepare('INSERT INTO transcript_references VALUES (?, ?, ?, ?) ON CONFLICT(session_path) DO UPDATE SET session_id=excluded.session_id, fingerprint=excluded.fingerprint, entries_json=excluded.entries_json')
+  db.prepare('INSERT INTO transcript_references VALUES (?, ?, ?, ?, 2) ON CONFLICT(session_path) DO UPDATE SET session_id=excluded.session_id, fingerprint=excluded.fingerprint, entries_json=excluded.entries_json, format_version=2')
     .run(file, entries[0]?.id?.constructor === String ? entries[0].id.toLowerCase() : null, stamp, JSON.stringify(entries));
 }
 
 function appendSaved(db, file, previous, stamp, entry) {
   if (!previous) return false;
 
-  if (entry) return Boolean(db.prepare("UPDATE transcript_references SET fingerprint=?, entries_json=json_insert(entries_json, '$[#]', json(?)) WHERE session_path=? AND fingerprint=?")
+  if (entry) return Boolean(db.prepare("UPDATE transcript_references SET fingerprint=?, entries_json=json_insert(entries_json, '$[#]', json(?)) WHERE session_path=? AND fingerprint=? AND format_version=2")
     .run(stamp, JSON.stringify(entry), file, previous).changes);
 
-  return Boolean(db.prepare('UPDATE transcript_references SET fingerprint=? WHERE session_path=? AND fingerprint=?').run(stamp, file, previous).changes);
+  return Boolean(db.prepare('UPDATE transcript_references SET fingerprint=? WHERE session_path=? AND fingerprint=? AND format_version=2').run(stamp, file, previous).changes);
 }
 
 function previousAppend(root, file, entries, entry) {
@@ -72,7 +75,7 @@ function read(root, file) {
   const db = open(root);
 
   try {
-    const row = db.prepare('SELECT entries_json FROM transcript_references WHERE session_path=? AND fingerprint=?').get(file, before);
+    const row = db.prepare('SELECT entries_json FROM transcript_references WHERE session_path=? AND fingerprint=? AND format_version=2').get(file, before);
 
     if (row) {
       if (fingerprint(fs.lstatSync(file, { bigint: true })) !== before) throw new Error('Transcript changed while reading saved references');

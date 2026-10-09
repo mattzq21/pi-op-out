@@ -477,7 +477,7 @@ pub(crate) fn validate_worktree_unused(settings: &AppSettings, host_id: &str, ta
 }
 
 fn remove_worktree_with_checkpoints(settings: &AppSettings, host_id: &str, target: &WorktreeRemovalTarget, cancelled: &AtomicBool) -> Result<(), String> {
-    let checkpoint = format!("(() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})()", include_str!("../../resources/session-broker/checkpoint-owner-index.cjs"));
+    let checkpoint = format!("(() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})()", include_str!("../../resources/session-broker/checkpoint-owner-index.cjs").replace("require('../transcript-references.cjs')", "diffStore.transcriptReferences"));
     let metadata = format!("(() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})()", include_str!("../../resources/transcript-metadata.cjs").replace("require('./session-database.cjs')", "sessionDatabase"));
     let preservation = include_str!("../../resources/worktree-checkpoint-preservation.cjs")
         .replace("require('./session-database.cjs')", "sessionDatabase")

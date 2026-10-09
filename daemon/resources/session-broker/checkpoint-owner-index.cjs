@@ -87,7 +87,10 @@ function recordCheckpoint(file, sessionId, repositoryRoot) {
 }
 
 function recordTranscript(root, file, body) {
-  const entries = body.trim().split('\n').map(JSON.parse);
+  recordEntries(root, file, body.trim().split('\n').map(JSON.parse));
+}
+
+function recordEntries(root, file, entries) {
   const header = entries[0];
   const roots = [header.cwd, header.checkpointRepositoryRoot, header.worktreeRestore?.repositoryRoot];
 
@@ -131,7 +134,7 @@ function linked(root, targets) {
 function refresh(file) {
   const root = profile(file);
 
-  if (root && file.endsWith('.jsonl')) recordTranscript(root, file, fs.readFileSync(file, 'utf8'));
+  if (root && file.endsWith('.jsonl')) recordEntries(root, file, require('../transcript-references.cjs').read(root, file));
 }
 
 function relocate(source, destination) {
