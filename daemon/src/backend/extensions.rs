@@ -51,7 +51,7 @@ fn save_runtime_settings(dir: &std::path::Path, settings: &AppSettings) -> Resul
     Ok(())
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 54] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 48] = [
     ("goal-directory-recovery.cjs", include_str!("../../resources/session-broker/goal-directory-recovery.cjs")),
     ("subagent-usage-storage.cjs", include_str!("../../resources/session-broker/subagent-usage-storage.cjs")),
     ("app-settings.cjs", include_str!("../../resources/session-broker/app-settings.cjs")),
@@ -60,7 +60,6 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 54] = [
     ("conversation-location.ts", include_str!("../../resources/session-broker/conversation-location.ts")),
     ("pause.ts", include_str!("../../resources/session-broker/pause.ts")),
     ("fast-mode.ts", include_str!("../../resources/session-broker/fast-mode.ts")),
-    ("turn-capture.ts", include_str!("../../resources/session-broker/turn-capture.ts")),
     ("session-file.ts", include_str!("../../resources/session-broker/session-file.ts")),
     ("session-child-index.cjs", include_str!("../../resources/session-broker/session-child-index.cjs")),
     ("session-child-index.d.cts", include_str!("../../resources/session-broker/session-child-index.d.cts")),
@@ -72,11 +71,6 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 54] = [
     ("review-publication.cjs", include_str!("../../resources/session-broker/review-publication.cjs")),
     ("session-publication.d.cts", include_str!("../../resources/session-broker/session-publication.d.cts")),
     ("fork.ts", include_str!("../../resources/session-broker/fork.ts")),
-    ("git-diff-database.cjs", include_str!("../../resources/session-broker/git-diff-database.cjs")),
-    ("git-diff-store.cjs", include_str!("../../resources/session-broker/git-diff-store.cjs")),
-    ("git-diff-pages.cjs", include_str!("../../resources/session-broker/git-diff-pages.cjs")),
-    ("git-diff-transfer-storage.cjs", include_str!("../../resources/session-broker/git-diff-transfer-storage.cjs")),
-    ("git-diff-transfer.cjs", include_str!("../../resources/session-broker/git-diff-transfer.cjs")),
     ("subagents.ts", include_str!("../../resources/session-broker/subagents.ts")),
     ("subagent-state.ts", include_str!("../../resources/session-broker/subagent-state.ts")),
     ("subagent-reconciliation.ts", include_str!("../../resources/session-broker/subagent-reconciliation.ts")),
@@ -131,7 +125,6 @@ fn prepare_broker_storage(dir: &Path) -> Result<(), String> {
     atomic_write_private(&dir.join("transcript-references.cjs"), include_str!("../../resources/transcript-references.cjs").as_bytes())?;
     atomic_write_private(&dir.join("session-database.cjs"), include_str!("../../resources/session-database.cjs").as_bytes())?;
     atomic_write_private(&dir.join("sdk-storage.mjs"), include_str!("../../resources/sdk-storage.mjs").as_bytes())?;
-    atomic_write_private(&dir.join("session-diff-store.cjs"), include_str!("../../resources/session-diff-store.cjs").as_bytes())?;
     atomic_write_private(&dir.join("ask-user.ts"), include_str!("../../resources/ask-user.ts").as_bytes())
 }
 
@@ -151,7 +144,6 @@ pub(super) fn prepare_openai_cache_fork_extension() -> Result<PathBuf, String> {
     atomic_write_private(&path, include_str!("../../../extensions/piop-openai-cache-fork/index.ts").as_bytes())?;
     Ok(path)
 }
-
 
 pub(super) fn prepare_fast_mode_extension() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?.join("piop-openai-fast-mode");

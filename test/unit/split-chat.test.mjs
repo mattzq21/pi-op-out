@@ -30,8 +30,7 @@ describe('split conversation lifecycle', () => {
       return transport.command(command);
     };
 
-    const diffs = {};
-    props = { uploadsFor: () => [], onUploadsChange: () => {}, runtimePool: { forSession: () => transport, subscribe: () => () => {}, gitDiffs: () => diffs, captureMemoryDiffs: async () => undefined, setInteractive: (_, value) => calls.push({ interactive: value }) }, session: { id: 'session', name: 'Conversation', cwd: '/repo', path: '/session.jsonl', project: 'repo', messageCount: 0 }, settings: { autoCompaction: true, autoRetry: true, hiddenModels: [] }, draft: '', onDraftChange: () => {}, onOpenTerminal: () => {}, onDialogRequest: (...args) => dialogs.push(args), onDialogResolved: (...args) => dialogs.push(args), onDialogTransportClosed: async () => {}, onReleaseTransport: async value => released.push(value), onSessionChange: () => {}, onClose: () => {} };
+    props = { uploadsFor: () => [], onUploadsChange: () => {}, runtimePool: { forSession: () => transport, subscribe: () => () => {}, setInteractive: (_, value) => calls.push({ interactive: value }) }, session: { id: 'session', name: 'Conversation', cwd: '/repo', path: '/session.jsonl', project: 'repo', messageCount: 0 }, settings: { autoCompaction: true, autoRetry: true, hiddenModels: [] }, draft: '', onDraftChange: () => {}, onOpenTerminal: () => {}, onDialogRequest: (...args) => dialogs.push(args), onDialogResolved: (...args) => dialogs.push(args), onDialogTransportClosed: async () => {}, onReleaseTransport: async value => released.push(value), onSessionChange: () => {}, onClose: () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
 
@@ -52,7 +51,6 @@ describe('split conversation lifecycle', () => {
     await click(control('Close split pane')); assert.equal(closed, 1);
     await view.unmount(); view = undefined; assert.deepEqual(released, [transport]); assert.equal(listeners.size, 0); assert.deepEqual(calls.at(-1), { interactive: false });
   });
-
 
   test('extension status, widgets, notices and dialogs are routed to the split owner', async () => {
     await render();
@@ -106,12 +104,12 @@ describe('split conversation lifecycle', () => {
     assert.ok(calls.some(command => command.type === 'resume')); assert.ok(calls.some(command => command.type === 'abort'));
   });
 
-  test('branching forks before the next prompt and copies only the retained history diffs', async () => {
+  test('branching forks before the next prompt', async () => {
     const entries = [{ type: 'message', id: 'u', parentId: null, message: { role: 'user', content: 'Question' } }, { type: 'message', id: 'a', parentId: 'u', message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } }, { type: 'message', id: 'next', parentId: 'a', message: { role: 'user', content: 'Next question' } }];
     responses.get('get_snapshot').history = { entries, leafId: 'next' };
-    let path = '/source.jsonl'; const changes = [], bindings = [], copies = [];
+    let path = '/source.jsonl'; const changes = [], bindings = [];
     transport.currentSessionPath = () => path;
-    props.runtimePool.bind = (...args) => bindings.push(args); props.runtimePool.copySavedDiffs = async (...args) => copies.push(args);
+    props.runtimePool.bind = (...args) => bindings.push(args);
     responses.set('fork_after', () => { path = '/fork.jsonl'; const snapshot = responses.get('get_snapshot'); snapshot.state = { ...snapshot.state, sessionId: 'forked', sessionName: 'Fork', sessionFile: path }; snapshot.history = { entries: entries.slice(0, 2), leafId: 'a' };
 
     return {}; });
@@ -121,7 +119,6 @@ describe('split conversation lifecycle', () => {
     await click(control('Fork'));
     assert.ok(calls.some(command => command.type === 'fork_after' && command.entryId === 'a'));
     assert.deepEqual(bindings, [['local', 'forked', transport]]); assert.equal(changes[0][0].path, '/fork.jsonl'); assert.equal(changes[0][0].name, 'Fork'); assert.equal(changes[0][1], transport);
-    assert.deepEqual(copies, [[transport, '/source.jsonl', '/fork.jsonl', new Set(['u', 'a']), undefined]]);
   });
 
   test('branching the latest answer forks after it, honors cancellation, and exposes runtime errors', async () => {

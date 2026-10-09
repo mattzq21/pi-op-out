@@ -157,73 +157,30 @@ function readTranscript(file, archived) {
   return { file, archived, entries, header, identity: metadataIdentity(before), digest: digest(body), mode: Number(before.mode) & 0o777 };
 }
 
-function comparisonUsesWorktree(capture, target, common) {
-  if (capture.ready === true) return false;
-
-  if (lostRoot(capture.cwd, target, common)) return true;
-
-  return [capture.baseline, capture.current].some(token => token && lostRoot(JSON.parse(token).repository_root, target, common));
-}
-
-function checkPendingDiffs(record, target, common, readDiffStore) {
-  const file = record.file.replace(/\.jsonl$/, '.diffs.json');
-
-  const locks = [];
-
-  try {
-    lock(`${file}.lock`, locks);
-    const pending = readDiffStore(file, false).pending;
-
-    if (Object.values(pending).some(capture => comparisonUsesWorktree(capture, target, common))) throw new Error(`Pending diff comparisons require this worktree; recover project changes before removal: ${file}`);
-  } finally { for (const fd of locks) fs.closeSync(fd); }
-}
-
-function checkPendingPointers(storage, target, common) {
-  for (const { file: pointer, kind } of checkpointIndex.linked(storage, [target])) {
-    if (kind !== 'pointer') continue;
-
-    try {
-      const record = require('./session-database.cjs').pendingDiff(path.dirname(pointer));
-
-      if (record === undefined) continue;
-
-      if (comparisonUsesWorktree(record.capture, target, common)) throw new Error(`Pending diff recovery still requires this worktree: ${pointer}`);
-    } catch (error) { throw new Error(`Pending diff pointer preserved at ${pointer}: ${error.message}`); }
-  }
-}
-
-function inspectTranscript(file, archived, target, common, records, readDiffStore, sessionId) {
+function inspectTranscript(file, archived, target, common, records, sessionId) {
   try {
     const record = readTranscript(file, archived);
 
     if (record.header.id !== sessionId) throw new Error('Checkpoint owner index identity changed');
 
-    checkPendingDiffs(record, target, common, readDiffStore);
     const mapping = remapCheckpointRoots(record.header, record.entries, archived, target, common);
 
     if (mapping.changed) records.push({ ...record, refs: mapping.refs });
   } catch (error) { throw new Error(`Cannot preserve checkpoints in ${file}; file retained: ${error.message}`); }
 }
 
-function scan(storage, target, common, readDiffStore) {
+function scan(storage, target, common) {
   const records = [];
 
   for (const link of checkpointIndex.linked(storage, [target])) {
     if (!fs.existsSync(link.file)) continue;
 
-    if (link.kind === 'diff') {
-      checkPendingDiffs({ file: link.file.replace(/\.diffs\.json$/, '.jsonl') }, target, common, readDiffStore);
-      continue;
-    }
-
     if (link.kind !== 'transcript') continue;
     const archived = inside(path.join(storage, 'archived'), link.file);
 
     if (!archived && !inside(path.join(storage, 'sessions'), link.file)) throw new Error('Checkpoint owner index points outside conversation storage');
-    inspectTranscript(link.file, archived, target, common, records, readDiffStore, link.sessionId);
+    inspectTranscript(link.file, archived, target, common, records, link.sessionId);
   }
-
-  checkPendingPointers(storage, target, common);
 
   return records.sort((left, right) => left.file.localeCompare(right.file));
 }
@@ -304,7 +261,7 @@ function authorizeWorktreeRemoval() {
   if (fs.readSync(0, acknowledgement, 0, 1) !== 1 || acknowledgement[0] !== 49) throw new Error('Worktree removal cancelled after checkpoint preservation');
 }
 
-function preserveAndRemoveWorktree(targetPath, authorizeRemoval, readDiffStore) {
+function preserveAndRemoveWorktree(targetPath, authorizeRemoval) {
   const target = fs.realpathSync(targetPath);
   const common = canonicalRepository(target);
   const own = fs.realpathSync(git(target, ['rev-parse', '--absolute-git-dir']));
@@ -318,15 +275,15 @@ function preserveAndRemoveWorktree(targetPath, authorizeRemoval, readDiffStore) 
 
   try {
     lock(path.join(storage, 'session-transactions.lock'), locks);
-    const records = scan(storage, target, common, readDiffStore);
+    const records = scan(storage, target, common);
 
     lockOwners(storage, records, locks);
 
-    if (!samePlan(records, scan(storage, target, common, readDiffStore))) throw new Error('Checkpoint owners changed; retry worktree removal');
+    if (!samePlan(records, scan(storage, target, common))) throw new Error('Checkpoint owners changed; retry worktree removal');
 
     for (const record of records) publish(record, common);
 
-    if (scan(storage, target, common, readDiffStore).length) throw new Error('New checkpoint owners still use the worktree; retry removal');
+    if (scan(storage, target, common).length) throw new Error('New checkpoint owners still use the worktree; retry removal');
     authorizeRemoval();
     git(common, ['worktree', 'remove', '--', target]);
   } finally { for (const fd of locks.reverse()) fs.closeSync(fd); }

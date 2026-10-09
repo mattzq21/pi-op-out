@@ -19,7 +19,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
     time::Duration,
 };
-use tokio::sync::{oneshot, Mutex as AsyncMutex};
+use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -39,9 +39,7 @@ pub(super) struct Registry {
     agent_definitions: Value,
     agent_revision: u64,
     requested_agent_revision: u64,
-    drains: HashMap<String, oneshot::Sender<Result<()>>>,
     guards: HashMap<String, (Guard, String)>,
-    captures: HashMap<String, HashSet<String>>,
     maintenance: HashSet<String>,
     release_gates: HashMap<String, Arc<AsyncMutex<()>>>,
     dialog_gates: HashMap<String, Arc<AsyncMutex<()>>>,
@@ -67,9 +65,6 @@ pub(super) struct Callbacks(Weak<Host>);
 
 impl Callbacks {
     pub(super) fn queue_root(&self) -> Option<PathBuf> { self.0.upgrade().map(|host| host.home.join(&host.storage).join("queued-input")) }
-    pub(super) async fn drain_capture(&self, key: &str) -> Result<()> {
-        self.0.upgrade().ok_or("Host daemon disconnected")?.drain_capture(key).await
-    }
     pub(super) fn record_tool_failure(&self, record: Value) {
         if let Some(host) = self.0.upgrade() {
             if let Err(error) = host.tool_failures.record(record) {
@@ -341,8 +336,7 @@ impl Host {
             .cloned()
             .collect();
         for session in sessions { self.release_owned_session(id, intent, session).await?; }
-        if intent == "transfer-local" { return Ok(()); }
-        self.drain_captures(id).await
+        Ok(())
     }
 
     async fn release_owned_session(&self, id: &str, intent: &str, session: Arc<Session>) -> Result<()> {
@@ -363,7 +357,6 @@ impl Host {
             );
         }
         session.publish(json!({"type":"ownership_lost"}), None);
-        if intent == "transfer-local" { return Ok(()); }
         if released_session_needs_abort(intent, &session) {
             let _ = session.raw(json!({"type":"abort"})).await;
         }
@@ -371,42 +364,7 @@ impl Host {
         if intent == "archive" {
             self.registry().pending.remove(&session.key());
         }
-        self.registry().captures.entry(id.into()).or_default().insert(session.key());
         Ok(())
-    }
-
-    pub(super) async fn drain_capture(&self, key: &str) -> Result<()> {
-        let request = Uuid::new_v4().to_string();
-        let (sender, receiver) = oneshot::channel();
-        self.registry().drains.insert(request.clone(), sender);
-        self.output(json!({"type":"ownership_drain","id":request,"sessionKey":key}));
-        let result = match tokio::time::timeout(Duration::from_secs(120), receiver).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err("Host daemon disconnected while saving project changes".into()),
-            Err(_) => Err("Project capture drain timed out; source retained".into()),
-        };
-        self.registry().drains.remove(&request);
-        result
-    }
-
-    async fn drain_captures(&self, id: &str) -> Result<()> {
-        let keys = self.registry().captures.get(id).cloned().unwrap_or_default();
-        for key in keys {
-            self.flush_capture(&key).await?;
-            if let Some(keys) = self.registry().captures.get_mut(id) {
-                keys.remove(&key);
-            }
-        }
-        self.registry().captures.remove(id);
-        Ok(())
-    }
-
-    pub async fn flush_capture(&self, key: &str) -> Result<()> {
-        let request = Uuid::new_v4().to_string();
-        let (sender, receiver) = oneshot::channel();
-        self.registry().drains.insert(request.clone(), sender);
-        self.output(json!({"type":"ownership_drain","id":request,"sessionKey":key}));
-        receiver.await.map_err(|_| "Host daemon disconnected while saving project changes")?
     }
 
     async fn configure(self: &Arc<Self>, configuration: &Value) -> Result<()> {
@@ -626,7 +584,6 @@ impl Host {
         }
         self.ownership().shutdown();
         self.registry().guards.clear();
-        self.registry().drains.clear();
     }
 }
 

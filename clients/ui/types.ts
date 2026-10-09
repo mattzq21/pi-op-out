@@ -24,7 +24,7 @@ export interface StorageOwner { sessionId: string; sessionPath?: string; kind: s
 
 export interface StorageRoot { path: string; ownership: StorageOwnership; provenance: string[]; available: boolean; owners: StorageOwner[]; state?: string; refs?: string[]; }
 
-export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "archived-project-checkpoints" | "project-checkpoints" | "git-diff-snapshots" | "archived-git-diff-snapshots" | "temporary-chats" | "worktrees" | "archived-worktrees" | "other-storage" | "referenced-worktrees" | "recovery-storage" | "unattributed-recovery-storage" | "legacy-recovery-storage" | "pending-diff-snapshots" | "diff-transfer-staging" | "unattributed-diff-transfer-staging" | "chatgpt-storage" | "goal-attachments" | "unattributed-goal-attachments" | "unattributed-project-checkpoints"; byteSize: number; itemCount: number; estimated?: boolean; directories?: string[]; countUnit?: string; coverage?: string; ownership?: StorageOwnership; reclaimability?: "retained" | "requires-owner-check" | "unknown"; measurement?: "allocated-blocks" | "git-object-estimate"; includedInTotal?: boolean; roots?: StorageRoot[]; }
+export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "archived-project-checkpoints" | "project-checkpoints" | "temporary-chats" | "worktrees" | "archived-worktrees" | "other-storage" | "referenced-worktrees" | "recovery-storage" | "unattributed-recovery-storage" | "legacy-recovery-storage" | "chatgpt-storage" | "goal-attachments" | "unattributed-goal-attachments" | "unattributed-project-checkpoints"; byteSize: number; itemCount: number; estimated?: boolean; directories?: string[]; countUnit?: string; coverage?: string; ownership?: StorageOwnership; reclaimability?: "retained" | "requires-owner-check" | "unknown"; measurement?: "allocated-blocks" | "git-object-estimate"; includedInTotal?: boolean; roots?: StorageRoot[]; }
 
 export interface ArchivedConversation { id: string; path: string; name: string; cwd: string; modifiedAt: number; byteSize: number; deletable: boolean; deleteError?: string; worktreePath?: string; restorable?: boolean; restoreError?: string; byteSizeCoverage?: string; }
 
@@ -100,15 +100,7 @@ export interface UsageWindow { status: string; remainingPercent: number; resetAt
 
 export interface OpencodeGoUsage { rolling: UsageWindow; weekly: UsageWindow; monthly: UsageWindow; }
 
-export interface ToolPathMapping { toolCallId: string; path: string; absolutePath: string; canonicalPath: string; }
-
-export type GitDiffSnapshot = string | { patch: string; toolPaths?: ToolPathMapping[] };
-
-export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;
-
-export interface FileChangeSnapshot { id: string; cwd: string; toolCallIds: string[]; toolPaths?: ToolPathMapping[]; paths: string[]; patch: string; warnings: string[]; }
-
-export interface ChatMessage { toolCallId?: string; details?: unknown; fileChanges?: FileChangeSnapshot[]; toolDiff?: { path?: string; patch: string }; }
+export interface ChatMessage { toolCallId?: string; details?: unknown; }
 
 export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; toolPayloadVersion?: number; loadedToolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
 

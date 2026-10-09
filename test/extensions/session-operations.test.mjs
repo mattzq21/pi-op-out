@@ -88,15 +88,6 @@ test('archived child-owned checkpoints recover missing refs from retained commit
   assert.equal(await git('rev-parse', entries[1].data.ref), inheritedCommit);
 });
 
-test('fork copies only retained response diffs without changing its parent', async t => {
-  const f = await fixture(t);
-  const diffs = { a1: { files: [] }, tool: { files: [{ path: 'later' }] } };
-  await writeFile(f.sourcePath.replace(/\.jsonl$/, '.diffs.json'), JSON.stringify(diffs));
-  const fork = await f.forkConversation(f.ctx, {}, unexpectedWorktree);
-  assert.deepEqual(JSON.parse(await readFile(fork.sessionPath.replace(/\.jsonl$/, '.diffs.json'), 'utf8')), { a1: diffs.a1 });
-  assert.deepEqual(JSON.parse(await readFile(f.sourcePath.replace(/\.jsonl$/, '.diffs.json'), 'utf8')), diffs);
-});
-
 test('non-Git fork retains completed history, unique identity, permissions, and untouched parent', async t => {
   const f = await fixture(t);
   const result = await f.forkConversation(f.ctx, {}, unexpectedWorktree);

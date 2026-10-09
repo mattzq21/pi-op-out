@@ -1,7 +1,6 @@
 const { Type } = require("typebox");
 const { Check } = require("typebox/value");
 const { unavailableCheckpoint, promptCheckpoint, snapshotCheckpoint, validSessionHeader } = require("./checkpoint-schemas.cjs");
-const { recoverSnapshotTemps } = require('./snapshot-recovery.cjs');
 const fs = require("node:fs/promises");
 const { createReadStream } = require("node:fs");
 const path = require("node:path");
@@ -13,7 +12,6 @@ const { createObservation, observeEntry, recordSession, resolveOwners, sessionKi
 const { diskStorage } = require('./storage-inventory-disk.cjs');
 const { checkpointStorage } = require('./storage-inventory-checkpoints.cjs');
 const { inventoryCategories, archiveCoverage } = require('./storage-inventory-report.cjs');
-const { discoverPendingSnapshots, discoverPendingLogs } = require('./storage-inventory-pending.cjs');
 const { reconcileGoalAssets } = require('./storage-inventory-goals.cjs');
 const { discoverGoalDiagnostics } = require('./storage-inventory-diagnostics.cjs');
 const { sharedArchiveRestore, discoverArchiveResources } = require('./storage-inventory-resources.cjs');
@@ -23,17 +21,6 @@ const configuredRoot = process.env.PIOP_STORAGE_DIRECTORY || '.piop';
 const piopRoot = path.join(os.homedir(), configuredRoot);
 
 function promptRepository(entry, header) { return entry.data?.repositoryRoot ?? header.checkpointRepositoryRoot ?? header.cwd; }
-
-async function regularFileSize(file) {
-  try {
-    const metadata = await fs.lstat(file);
-
-    return metadata.isFile() ? metadata.size : 0;
-  } catch (error) {
-    if (error.code === "ENOENT") return 0;
-    throw error;
-  }
-}
 
 function messageText(message) {
   if (Check(Type.String(), message?.content)) return message.content;
@@ -140,8 +127,6 @@ function sessionDetails(header, malformed, observation, repositories) {
 
 async function archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result) {
   const metadata = await fs.lstat(file);
-  const diffFile = file.replace(/\.jsonl$/, ".diffs.json");
-  const diffBytes = await regularFileSize(diffFile);
   const validHeader = validSessionHeader(header);
   const deletable = validHeader && !malformed && !checkpointError;
 
@@ -153,7 +138,7 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
     ...archiveLocation(header, file),
     name: explicitName || firstPrompt || "Untitled conversation",
     modifiedAt: Math.floor(metadata.mtimeMs / 1000),
-    byteSize: metadata.size + diffBytes,
+    byteSize: metadata.size,
     byteSizeCoverage: archiveCoverage + ' Queued messages are stored in the shared database and excluded from this size.',
     deletable,
     ...await archivedWorktree(header, file),
@@ -350,7 +335,7 @@ async function collectUnreadableArchive(file, archives) {
     id: path.basename(file, ".jsonl"), path: file,
     name: "Unreadable conversation", cwd: "Unknown project",
     modifiedAt: Math.floor(metadata.mtimeMs / 1000),
-    byteSize: metadata.size + await regularFileSize(file.replace(/\.jsonl$/, ".diffs.json")),
+    byteSize: metadata.size,
     byteSizeCoverage: archiveCoverage,
     deletable: false,
     deleteError: "This archive is malformed, so piop cannot discover and safely remove its project checkpoint refs.",
@@ -411,10 +396,8 @@ async function registeredSessions(root, warnings) {
 }
 
 async function main() {
-  const snapshotWarnings = recoverSnapshotTemps(piopRoot);
   const profile = await fs.realpath(piopRoot).catch(() => piopRoot);
   const discovery = await discoverRoots(profile);
-  await discoverPendingSnapshots(profile, discovery);
   discovery.sessions = new Map();
   discovery.headers = new Map();
   discovery.goals = new Map();
@@ -439,7 +422,6 @@ async function main() {
     for (const candidate of candidates.values()) await collectSession(candidate, discovery, archives, referencedWorktrees, read);
   });
   resolveOwners(discovery);
-  discoverPendingLogs(profile, discovery);
   await discoverGoalDiagnostics(profile, discovery);
   await discoverArchiveResources(profile, discovery);
   await reconcileGoalAssets(profile, discovery);
@@ -456,7 +438,7 @@ async function main() {
   process.stdout.write(JSON.stringify({
     categories: inventoryCategories(disk, checkpoints, active.itemCount, archived.itemCount),
     archives,
-    warnings: [...new Set([...discovery.warnings, ...disk.warnings, ...checkpoints.warnings, ...snapshotWarnings])],
+    warnings: [...new Set([...discovery.warnings, ...disk.warnings, ...checkpoints.warnings])],
   }));
 }
 

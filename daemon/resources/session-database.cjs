@@ -8,7 +8,6 @@ function initialize(db) {
     db.exec(`CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
       CREATE TABLE IF NOT EXISTS session_deletion_tombstones (session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL, session_path TEXT NOT NULL); CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE); CREATE TRIGGER IF NOT EXISTS session_file_metadata_moved AFTER UPDATE ON sessions WHEN OLD.session_path IS NOT NEW.session_path BEGIN DELETE FROM session_file_metadata WHERE session_id=OLD.session_id; END;`);
 
-
     db.exec(`CREATE TABLE IF NOT EXISTS session_repositories (
       session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, cwd TEXT NOT NULL,
       repository_root TEXT, remote_name TEXT, remote_url TEXT, branch TEXT, upstream_branch TEXT,
@@ -55,11 +54,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS worktree_allocations (container TEXT PRIMARY KEY, metadata_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS recovery_directories (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS snapshot_recovery (directory TEXT PRIMARY KEY, identity TEXT NOT NULL, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS snapshot_reader_releases (scope TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS snapshot_directories (directory TEXT PRIMARY KEY, owner_json TEXT);
-      CREATE TABLE IF NOT EXISTS snapshot_comparison_retries (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS snapshot_pending_diffs (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
+
       CREATE TABLE IF NOT EXISTS goal_asset_dependencies (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity));
       CREATE TABLE IF NOT EXISTS goal_asset_reclamations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
@@ -68,10 +63,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS archive_records (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS deletion_records (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS fork_transactions (directory TEXT PRIMARY KEY, record_json TEXT);
-      CREATE TABLE IF NOT EXISTS fork_preparation_checkpoints (preparation TEXT NOT NULL, session_id TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(preparation, session_id));
-      CREATE TABLE IF NOT EXISTS session_comparison_state (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
-      CREATE TABLE IF NOT EXISTS session_completed_comparisons (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, turn_id TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY(session_id, turn_id));`);
-
+      CREATE TABLE IF NOT EXISTS fork_preparation_checkpoints (preparation TEXT NOT NULL, session_id TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(preparation, session_id));`);
 
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -147,135 +139,6 @@ function queuedInput(root, id) {
 
     return row ? JSON.parse(row.record_json) : undefined;
   } finally { db.close(); }
-}
-
-
-function pendingDiffs(root) {
-  const db = open(root);
-
-  try { return db.prepare('SELECT directory, record_json FROM snapshot_pending_diffs').all(); }
-  finally { db.close(); }
-}
-
-function pendingDiff(directory) {
-  const db = open(path.dirname(path.dirname(directory)));
-
-  try {
-    const row = db.prepare('SELECT record_json FROM snapshot_pending_diffs WHERE directory=?').get(directory);
-
-    return row ? JSON.parse(row.record_json) : undefined;
-  } finally { db.close(); }
-}
-
-function savePendingDiff(directory, record) {
-  const db = open(path.dirname(path.dirname(directory)));
-
-  try {
-    db.prepare('INSERT INTO snapshot_pending_diffs VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET record_json=excluded.record_json')
-      .run(directory, JSON.stringify(record));
-  } finally { db.close(); }
-}
-
-function comparisonRetry(directory) {
-  const db = open(path.dirname(path.dirname(directory)));
-
-  try {
-    const row = db.prepare('SELECT record_json FROM snapshot_comparison_retries WHERE directory=?').get(directory);
-
-    if (!row) return undefined;
-    const record = JSON.parse(row.record_json);
-
-    if (!record || record.version !== 1 || !['sessionId', 'turnId', 'messageId', 'baseline', 'current'].every(key => String(record[key]) === record[key])) throw new Error('Invalid comparison retry record');
-
-    return record;
-  } finally { db.close(); }
-}
-
-function saveComparisonRetry(directory, record) {
-  const db = open(path.dirname(path.dirname(directory)));
-
-  try {
-    db.prepare('INSERT INTO snapshot_comparison_retries VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET record_json=excluded.record_json')
-      .run(directory, JSON.stringify(record));
-  } finally { db.close(); }
-}
-
-function removeComparisonRetry(directory) {
-  const db = open(path.dirname(path.dirname(directory)));
-
-  try { db.prepare('DELETE FROM snapshot_comparison_retries WHERE directory=?').run(directory); }
-  finally { db.close(); }
-}
-
-function completedComparisons(root, sessionId, retained, completed) {
-  const db = open(root);
-  db.exec('BEGIN IMMEDIATE');
-
-  try {
-    register(db, sessionId, retained.replace(/\.snapshots$/, '.jsonl'));
-
-    if (completed) {
-      db.prepare('INSERT INTO session_completed_comparisons VALUES (?, ?, ?) ON CONFLICT(session_id, turn_id) DO UPDATE SET message_id=excluded.message_id')
-        .run(sessionId, completed.turnId, completed.messageId);
-    }
-
-    const rows = db.prepare('SELECT turn_id, message_id FROM session_completed_comparisons WHERE session_id=?').all(sessionId);
-    db.exec('COMMIT');
-
-    return Object.fromEntries(rows.map(row => [row.turn_id, row.message_id]));
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
-  finally { db.close(); }
-}
-
-function saveSnapshotOwner(directory, owner, reserve = false) {
-  const db = open(path.dirname(path.dirname(directory)));
-
-  try {
-    db.prepare('INSERT INTO snapshot_directories VALUES (?, ?)' + (reserve ? '' : ' ON CONFLICT(directory) DO UPDATE SET owner_json=excluded.owner_json'))
-      .run(directory, JSON.stringify(owner));
-  } finally { db.close(); }
-}
-
-function snapshotDirectories(root) { return rows(root, 'SELECT directory, owner_json FROM snapshot_directories'); }
-
-function snapshotOwner(directory) {
-  const db = open(path.dirname(path.dirname(directory)));
-
-  try {
-    const row = db.prepare('SELECT owner_json FROM snapshot_directories WHERE directory=?').get(directory);
-
-    return row?.owner_json ? JSON.parse(row.owner_json) : undefined;
-  } finally { db.close(); }
-}
-
-function removeSnapshotDirectory(directory) {
-  const db = open(path.dirname(path.dirname(directory)));
-
-  try {
-    db.exec('BEGIN IMMEDIATE');
-    db.prepare('DELETE FROM snapshot_directories WHERE directory=?').run(directory);
-    db.prepare('DELETE FROM snapshot_recovery WHERE directory=?').run(directory);
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
-  finally { db.close(); }
-}
-
-function releaseSnapshotReader(root, scope, record) {
-  const db = open(root);
-
-  try {
-    db.prepare('INSERT INTO snapshot_reader_releases VALUES (?, ?) ON CONFLICT(scope) DO UPDATE SET record_json=excluded.record_json')
-      .run(scope, JSON.stringify(record));
-  } finally { db.close(); }
-}
-
-function snapshotReaderReleases(root) { return rows(root, 'SELECT scope, record_json FROM snapshot_reader_releases'); }
-
-function removeSnapshotReaderRelease(root, row) {
-  const db = open(root);
-
-  try { db.prepare('DELETE FROM snapshot_reader_releases WHERE scope=? AND record_json=?').run(row.scope, row.record_json); }
-  finally { db.close(); }
 }
 
 function recoveryRecords(root) { return rows(root, 'SELECT record_id, record_json FROM recovery_directories ORDER BY record_id'); }
@@ -384,4 +247,4 @@ function storageRoot(file) {
 }
 
 module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
-  worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons, comparisonRetry, saveComparisonRetry, removeComparisonRetry, pendingDiffs, pendingDiff, savePendingDiff, queuedInputs, queuedInput };
+  worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };

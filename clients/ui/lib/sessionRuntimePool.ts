@@ -1,23 +1,16 @@
 import { agentStateSchema } from "./responseSchemas";
-import { required } from "./required";
 import { extensionUiSchema } from "./extensionUiSchema";
 import { wireMessageSchema } from "./messageSchemas";
 import { z } from "zod";
-import { type Accessor } from "solid-js";
-import { createSubscription } from "./solid";
 
-import type { AgentState, AppSettings, GitDiffSnapshots, RpcEvent, SessionSummary } from "../types";
+import type { AgentState, AppSettings, RpcEvent, SessionSummary } from "../types";
 import { textOf } from "./content";
 import { NativeTransport, type NativeConnectionTarget } from "./nativeTransport";
-import { forgetSession, retainSessionResource } from "./sessionMemory";
+import { forgetSession } from "./sessionMemory";
 
 const sessionKey = (hostId: string, sessionId: string) => `${hostId}:${sessionId}`;
 
-const EMPTY_DIFFS: GitDiffSnapshots = {};
-
 const startsUserMessage = (event: RpcEvent) => event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success;
-
-type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: string; promise: Promise<GitDiffSnapshots> } };
 
 function retainedName(state: AgentState, prompt: string | undefined, previous: SessionSummary | undefined) {
   return state.sessionName || prompt?.slice(0, 60) || previous?.name || "New session";
@@ -43,7 +36,6 @@ export class SessionRuntimePool {
   private readonly observers = new Map<NativeTransport, number>();
   private readonly deferredReleases = new Set<NativeTransport>();
   private readonly retainedTransports = new Set<NativeTransport>();
-  private readonly diffStates = new Map<NativeTransport, DiffState>();
   private readonly listeners = new Set<() => void>();
   private runningSessionKeys: ReadonlySet<string> = new Set();
   private unseenSessionKeys: ReadonlySet<string> = new Set();
@@ -74,45 +66,6 @@ export class SessionRuntimePool {
   private errorHandler?: (message: string) => void;
 
   private notify() { for (const listener of this.listeners) listener(); }
-
-  private retainDiffs(transport: NativeTransport, state: DiffState) {
-    retainSessionResource(transport, "diffs", state.snapshots, () => {
-      state.snapshots = EMPTY_DIFFS; state.path = undefined; state.load = undefined; this.notify();
-    });
-  }
-
-  private diffState(transport: NativeTransport) { let state = this.diffStates.get(transport);
-
-  if (!state) { state = { snapshots: EMPTY_DIFFS }; this.diffStates.set(transport, state); }
-
-  return state; }
-
-  private loadSavedDiffs(transport: NativeTransport, sessionPath: string) {
-    const key = `${transport.currentHostId()}:${sessionPath}`;
-    const state = this.diffState(transport);
-
-    if (state.load?.key === key) return state.load.promise;
-
-    if (state.path !== key) state.snapshots = EMPTY_DIFFS;
-    state.path = key;
-
-    const promise = transport.loadGitDiffs(sessionPath, transport.currentHostId()).then((snapshots) => {
-      if (state.path === key && state.load?.promise === promise) { state.snapshots = snapshots; this.retainDiffs(transport, state); this.notify(); }
-
-      return snapshots;
-    }).catch((reason) => {
-      if (state.path === key && state.load?.promise === promise) {
-        state.load = undefined; this.notify();
-        this.errorHandler?.(`Could not load saved project changes: ${reason instanceof Error ? reason.message : String(reason)}`);
-      }
-
-      return state.path === key ? state.snapshots : EMPTY_DIFFS;
-    });
-
-    state.load = { key, promise };
-
-    return promise;
-  }
 
   private publishSessionStates() {
     const running = new Set<string>();
@@ -174,15 +127,6 @@ export class SessionRuntimePool {
     }
   }
 
-  private captureDiffEvent(transport: NativeTransport, event: RpcEvent) {
-    if (event.hostId !== transport.currentHostId() || event.sessionPath !== transport.currentSessionPath()) return;
-
-    if (event.type === "diffs_changed") {
-      this.diffState(transport).load = undefined;
-      void this.loadSavedDiffs(transport, String(event.sessionPath));
-    }
-  }
-
   private updateActivity(transport: NativeTransport, event: RpcEvent) {
     const running = this.runningTransports.size;
     const unseen = this.unseenTransports.size;
@@ -203,11 +147,9 @@ export class SessionRuntimePool {
   create(target?: NativeConnectionTarget) {
     const transport = new NativeTransport(target); this.transports.add(transport);
 
-    if (!target?.sessionId && transport.currentSessionPath()) void this.loadSavedDiffs(transport, required(transport.currentSessionPath()));
     transport.subscribe((event) => {
       this.retainMcpSession(transport, event);
       this.retainUserSession(transport, event);
-      this.captureDiffEvent(transport, event);
 
       if (this.updateActivity(transport, event)) this.publishSessionStates();
 
@@ -249,9 +191,7 @@ export class SessionRuntimePool {
 
     this.sessions.set(sessionKey(transport.currentDaemonId() ?? hostId, sessionId), transport);
     this.sessions.set(sessionKey(hostId, sessionId), transport);
-    const sessionPath = transport.currentSessionPath();
 
-    if (sessionPath) void this.loadSavedDiffs(transport, sessionPath);
     this.publishSessionStates();
   }
 
@@ -289,13 +229,6 @@ export class SessionRuntimePool {
     }
   }
   pendingSettingsCount() { return [...this.transports].filter((transport) => transport.hasPendingSettings()).length; }
-
-  async refreshSavedDiffs(transport: NativeTransport, destinationPath: string | undefined) {
-    if (!destinationPath) return;
-    const state = this.diffState(transport);
-    state.load = undefined;
-    await this.loadSavedDiffs(transport, destinationPath);
-  }
 
   async remove(session: SessionSummary) {
     const key = sessionKey(session.daemonId ?? session.hostId ?? "local", session.id); const transport = this.sessions.get(key);
@@ -345,7 +278,7 @@ export class SessionRuntimePool {
       forgetSession(transport);
 
       for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key);
-      this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport); this.diffStates.delete(transport);
+      this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport);
 
       if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); }
 
@@ -362,7 +295,6 @@ export class SessionRuntimePool {
   return () => this.listeners.delete(listener); }
   runningSessions() { return this.runningSessionKeys; }
   unseenSessions() { return this.unseenSessionKeys; }
-  gitDiffs(transport: NativeTransport) { return this.diffStates.get(transport)?.snapshots ?? EMPTY_DIFFS; }
 
   async disconnectAll(strict = false) {
     const results = await Promise.allSettled([...this.transports].map((transport) => transport.dispose()));
@@ -372,5 +304,3 @@ export class SessionRuntimePool {
     if (failed?.status === "rejected") throw failed.reason; }
   }
 }
-
-export function useTurnDiffs(pool: Accessor<SessionRuntimePool>, transport: Accessor<NativeTransport>) { return createSubscription(() => (listener) => pool().subscribe(listener), () => () => pool().gitDiffs(transport())); }

@@ -18,7 +18,7 @@ export function DeleteArchivesDialog(props: { count: number; hostName: string; o
 
   return <dialog ref={element => { dialog.current = element; }} class="extension-dialog" aria-labelledby={titleId} aria-describedby={descriptionId} onCancel={event => { event.preventDefault(); props.onCancel(); }}>
     <h2 id={titleId}>Delete archived conversations?</h2>
-    <p id={descriptionId}>Permanently delete {props.count} archived conversations on {props.hostName}, including their attached reviews and subagents? Their diff histories, project checkpoint refs, and archived directories no other chats use will also be removed. Forks and branch-offs are only deleted if selected themselves. This cannot be undone.</p>
+    <p id={descriptionId}>Permanently delete {props.count} archived conversations on {props.hostName}, including their attached reviews and subagents? Their project checkpoint refs, and archived directories no other chats use will also be removed. Forks and branch-offs are only deleted if selected themselves. This cannot be undone.</p>
     <div class="dialog-actions"><button autofocus onClick={props.onCancel}>Cancel</button><button class="primary-button" onClick={props.onConfirm}>Delete {props.count} conversations</button></div>
   </dialog>;
 }

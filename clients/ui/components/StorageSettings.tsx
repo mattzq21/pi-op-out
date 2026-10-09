@@ -5,20 +5,15 @@ import { Dynamic } from "solid-js/web";
 import { DeleteArchivesDialog } from "./DeleteArchivesDialog";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
-import { Archive, Camera, Database, FolderClock, GitBranch, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
+import { Archive, Database, FolderClock, GitBranch, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
 import { deleteArchivedConversations, loadStorageReport, openGroupDirectory, restoreArchivedWorktree } from "../lib/nativeTransport";
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport, StorageRoot } from "../types";
 
 const categoryDetails: Record<StorageCategory["id"], { name: string; description: string; icon: typeof Archive; item: string }> = {
-  "active-conversations": { name: "Conversations", description: "Saved chats and their diff histories", icon: MessageSquare, item: "conversation" },
-  "archived-conversations": { name: "Conversations", description: "Saved chats and their diff histories", icon: MessageSquare, item: "conversation" },
+  "active-conversations": { name: "Conversations", description: "Saved chats", icon: MessageSquare, item: "conversation" },
+  "archived-conversations": { name: "Conversations", description: "Saved chats", icon: MessageSquare, item: "conversation" },
   "project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects with readable active or side conversation owners", icon: GitBranch, item: "ref" },
   "archived-project-checkpoints": { name: "Project checkpoints", description: "Estimated Git objects retained only by archived session checkpoints", icon: GitBranch, item: "ref" },
-  "git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
-  "pending-diff-snapshots": { name: "Pending diff snapshots", description: "Comparison inputs retained until durable recovery succeeds", icon: Camera, item: "snapshot" },
-  "diff-transfer-staging": { name: "Diff transfer staging", description: "Staged diff packets with source-log ownership · reclaimability unknown", icon: Camera, item: "stage file" },
-  "unattributed-diff-transfer-staging": { name: "Unresolved diff transfer staging", description: "Unmatched or unavailable stages · contents retained", icon: ShieldAlert, item: "stage file" },
-  "archived-git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
   "temporary-chats": { name: "No-project workdirs", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
   "worktrees": { name: "Managed worktrees", description: "Working copies in Piop’s allocation namespace", icon: GitBranch, item: "worktree" },
   "archived-worktrees": { name: "No-project workdirs", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
@@ -35,10 +30,10 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
 
 const storageSections: { title: string; categories: StorageCategory["id"][] }[] = [
   { title: "General and shared history", categories: ["other-storage", "chatgpt-storage", "goal-attachments"] },
-  { title: "Active sessions", categories: ["active-conversations", "git-diff-snapshots", "project-checkpoints"] },
-  { title: "Archived sessions", categories: ["archived-conversations", "archived-git-diff-snapshots", "archived-project-checkpoints", "archived-worktrees"] },
+  { title: "Active sessions", categories: ["active-conversations", "project-checkpoints"] },
+  { title: "Archived sessions", categories: ["archived-conversations", "archived-project-checkpoints", "archived-worktrees"] },
   { title: "Managed directories", categories: ["worktrees", "temporary-chats", "recovery-storage"] },
-  { title: "Unresolved and temporary storage", categories: ["unattributed-project-checkpoints", "unattributed-recovery-storage", "legacy-recovery-storage", "pending-diff-snapshots", "diff-transfer-staging", "unattributed-diff-transfer-staging", "unattributed-goal-attachments"] },
+  { title: "Unresolved and temporary storage", categories: ["unattributed-project-checkpoints", "unattributed-recovery-storage", "legacy-recovery-storage", "unattributed-goal-attachments"] },
   { title: "Referenced user storage", categories: ["referenced-worktrees"] },
 ];
 
@@ -167,7 +162,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
   const deleteOne = (host: HostStorage, archive: ArchivedConversation) => {
     if (!archive.deletable) return;
 
-    if (!window.confirm(`Permanently delete “${archive.name}” and its attached reviews and subagents? Their diff histories, project checkpoint refs, and any archived directory no other chat uses will also be removed. Forks and branch-offs will be kept.`)) return;
+    if (!window.confirm(`Permanently delete “${archive.name}” and its attached reviews and subagents? Their project checkpoint refs, and any archived directory no other chat uses will also be removed. Forks and branch-offs will be kept.`)) return;
 
     void removeArchives(host, [archive]);
   };
@@ -256,7 +251,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
                 if (!z.object({ path: z.string() }).safeParse(archive()).success) return null;
                 const name = createMemo(() => (z.string().catch(archive().path).parse(archive().name)));
                 const key = createMemo(() => (archiveKey(host(), { ...archive(), name: name() }))); const pending = createMemo(() => (deleting().has(key())));
-                const renderArchiveDetails = () => (<span><strong>{name()}</strong><small>{archive().deletable ? `${z.string().catch("").parse(archive().cwd)} · ${formatDate(archive().modifiedAt)}` : `Cleanup unavailable · ${archive().deleteError}`}</small><small data-tooltip={archive().byteSizeCoverage ?? "Logical JSONL + .diffs.json sidecar size only; other sidecars, global comparison snapshots and shared assets are excluded. Freed disk space is unknown."}>Transcript + diff sidecar only · logical size · freed space unknown</small></span>);
+                const renderArchiveDetails = () => (<span><strong>{name()}</strong><small>{archive().deletable ? `${z.string().catch("").parse(archive().cwd)} · ${formatDate(archive().modifiedAt)}` : `Cleanup unavailable · ${archive().deleteError}`}</small><small data-tooltip={archive().byteSizeCoverage ?? "Chat file size only; other saved files and shared assets are excluded. Freed disk space is unknown."}>Chat file only · logical size · freed space unknown</small></span>);
                 const renderArchiveDelete = () => (<button aria-label={archive().deletable ? `Permanently delete ${name()}` : `Cannot safely delete ${name()}: ${archive().deleteError}`} disabled={!archive().deletable || deleting().size > 0 || loading()} onClick={() => deleteOne(host(), archive())}>{!archive().deletable ? <ShieldAlert size={14} /> : pending() ? <RefreshCw size={14} class="spinning" /> : <Trash2 size={14} />}</button>);
 
                 const renderWorktreeAction = () => ((!archive().worktreePath && archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : "Restore conversation"}</button>);

@@ -115,13 +115,6 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("prepare_worktree_setup", handle_prepare_worktree_setup),
     ("cancel_worktree_setup", handle_cancel_worktree_setup),
     ("run_worktree_setup", handle_run_worktree_setup),
-    ("capture_git_tree", handle_capture_git_tree),
-    ("discard_git_tree", handle_discard_git_tree),
-    ("load_git_diff", handle_load_git_diff),
-    ("load_git_diffs", handle_load_git_diffs),
-    ("load_git_diff_page", handle_load_git_diff_page),
-    ("save_git_diffs", handle_save_git_diffs),
-    ("append_git_diff_part", handle_append_git_diff_part),
     ("archive_session", handle_archive_session),
     ("delete_session", handle_delete_session),
     ("delete_archived_session", handle_delete_archived_session),
@@ -396,48 +389,6 @@ fn handle_run_worktree_setup(app: AppHandle, owner: String, args: Value) -> Comm
     Box::pin(async move {
         verify_setup_owner(&app.state::<PiRuntime>(), &argument::<String>(&args, "setupId")?, &owner)?;
         serde_json::to_value(run_worktree_setup(app.clone(), argument(&args, "setupId")?, argument(&args, "cwd")?, argument(&args, "worktreePath")?, argument(&args, "hostId")?).await?).map_err(|error| error.to_string())
-    })
-}
-
-fn handle_capture_git_tree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(capture_git_tree(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_discard_git_tree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(discard_git_tree(app.clone(), argument(&args, "snapshot")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_load_git_diff(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(load_git_diff(app.clone(), argument(&args, "cwd")?, argument(&args, "baseTree")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_load_git_diffs(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || load_git_diffs(app.clone(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "cursor")?)).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_save_git_diffs(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(save_git_diffs(app.clone(), argument(&args, "sessionPath")?, argument(&args, "snapshots")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_load_git_diff_page(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || crate::git_ops::git_diffs::load_git_diff_page(app, argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "page")?)).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_append_git_diff_part(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || crate::git_ops::git_diffs::append_git_diff_part(app, argument(&args, "sessionPath")?, argument(&args, "part")?, argument(&args, "hostId")?, argument(&args, "clientId")?)).await.map_err(|error| error.to_string())?
     })
 }
 

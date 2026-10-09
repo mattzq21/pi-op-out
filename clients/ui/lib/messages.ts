@@ -1,6 +1,6 @@
-import type { ChatMessage, FileChangeSnapshot } from "../types";
+import type { ChatMessage } from "../types";
 import { z } from "zod";
-import { fileChangesSchema, pauseStateSchema, promptContextSchema, resumeContentSchema, resumeMarkerSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
+import { pauseStateSchema, promptContextSchema, resumeContentSchema, resumeMarkerSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "piop-review-link", "piop-html-preview"]);
 
@@ -17,30 +17,6 @@ function replaceMessage(messages: ChatMessage[], index: number, message: ChatMes
   result[index] = message;
 
   return result;
-}
-
-export function appendFileChanges(messages: ChatMessage[], entry: PiEntry, inPlace = false): ChatMessage[] {
-  if (entry.type !== "custom" || entry.customType !== "piop-file-changes") return messages;
-  const parsed = fileChangesSchema.safeParse(entry.data);
-
-  if (!parsed.success) return messages;
-  const data = parsed.data;
-  const ids = new Set(data.toolCallIds);
-  const index = latestMatchingTool(messages, ids);
-
-  if (index < 0) return messages;
-  const snapshot: FileChangeSnapshot = { id: entry.id, ...data };
-  const message = messages[index];
-
-  return replaceMessage(messages, index, { ...message, fileChanges: [...(message.fileChanges ?? []).filter((change) => change.id !== entry.id), snapshot] }, inPlace);
-}
-
-function latestMatchingTool(messages: ChatMessage[], ids: Set<string>) {
-  let index = messages.length - 1;
-
-  while (index >= 0 && !(messages[index].role === "tool" && ids.has(messages[index].toolCallId ?? messages[index].id))) index--;
-
-  return index;
 }
 
 export function resumeMarker(entry: PiEntry) {
@@ -164,7 +140,6 @@ export function appendQueuedProjectContext(messages: ChatMessage[], entry: PiEnt
 function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers: Set<string>) {
   if (entry.customType === "piop-queued-project-context") return appendQueuedProjectContext(messages, entry, true);
 
-  if (entry.customType === "piop-file-changes") return appendFileChanges(messages, entry, true);
   const marker = resumeMarker(entry);
 
   if (marker) { resumeMarkers.add(marker);

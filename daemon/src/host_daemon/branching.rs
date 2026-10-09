@@ -20,16 +20,8 @@ fn requires_idle_source(session: &Session, command: &Value) -> bool {
     !matches!(kind(command), "fork" | "fork_after") && (session.working() || !session.queue.is_empty())
 }
 
-async fn checkpoint(host: &Host, session: &Session, command: Value) -> Result<Value> {
-    let state = session.execute(json!({"type":"get_state"})).await?;
-    let path = state["sessionFile"].as_str().filter(|path| !path.is_empty()).ok_or("The conversation has no session file")?;
-    host.flush_capture(&session.key()).await?;
-    crate::git_ops::git_diff_retry::retry_pending_git_diffs(path, None)?;
-    session.raw(command).await
-}
-
 pub(super) async fn switch(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: Value) -> Result<Value> {
-    if kind(&command) == "branch_checkpoint" { return checkpoint(host, session, command).await; }
+    if kind(&command) == "branch_checkpoint" { return session.raw(command).await; }
     switch_destination(host, session, runtime, command).await
 }
 

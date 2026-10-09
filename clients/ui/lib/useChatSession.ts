@@ -9,7 +9,7 @@ import { DEFINED_AGENTS_STATUS_KEY } from "./agentProtocol";
 import { chatSessionEventSchema, pendingMessagesSchema, type ChatSessionEvent } from "./chatSessionEventSchema";
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 import { contextUsageAfterCompaction } from "./contextUsage";
-import { appendFileChanges, appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
+import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
 import { matchesSubmittedMessage, reconcileMessages, sameUserContent, upsertLiveMessage } from "./reconcileMessages";
@@ -358,7 +358,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
       if (entry.customType === "piop-queued-project-context") { liveRevision.current += 1; session.setMessages((current) => appendQueuedProjectContext(current, entry)); }
 
-      if (entry.customType === "piop-file-changes") { liveRevision.current += 1; session.setMessages((current) => appendFileChanges(current, entry)); } }
+    }
     };
 
     const handleAgentStart = () => {

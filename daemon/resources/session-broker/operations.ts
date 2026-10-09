@@ -2,13 +2,12 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type as Schema, type Static } from "typebox";
 import { Parse } from "typebox/value";
 import { forkConversation, type ForkOptions } from "./fork.ts";
-import { boundedForkWait } from "./turn-capture.ts";
 
 const branchRequestSchema = Schema.Object({ entryId: Schema.String() });
 
 const preparationSchema = Schema.Object({ mode: Schema.Union([Schema.Literal("fork"), Schema.Literal("fork_after"), Schema.Literal("clone")]), entryId: Schema.Optional(Schema.String()) });
 
-export type ForkGate = { ready?: Promise<void>; captureReady?: Promise<void>; entryIds: ReadonlySet<string>; sessionId: string };
+export type ForkGate = { ready?: Promise<void>; sessionId: string };
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
@@ -36,24 +35,17 @@ function preparationText(ctx: ExtensionContext, entryId?: string) {
   return Array.isArray(content) ? content.filter(part => part.type === "text").map(part => part.text).join("") : content;
 }
 
-function selectedCaptureIds(ctx: ExtensionContext, selection: ForkSelection) {
-  const branch = ctx.sessionManager.getBranch(selection.entryId);
-  const retained = selection.position === "before" ? branch.slice(0, -1) : branch;
-
-  return new Set(retained.flatMap(entry => entry.type === "message" && entry.message.role === "assistant" ? [entry.id] : []));
-}
-
 async function prepareFork(pi: ExtensionAPI, ctx: ExtensionContext, preparation: Static<typeof preparationSchema>) {
   if (preparation.mode !== "clone" && !preparation.entryId) throw new Error("Select a message to branch from");
   const selection = preparationSelection(ctx, preparation);
   const sessionId = ctx.sessionManager.getSessionId();
   const source = ctx.sessionManager.getSessionFile();
-  const gate: ForkGate = { sessionId, entryIds: selectedCaptureIds(ctx, selection) };
+  const gate: ForkGate = { sessionId };
   pi.events.emit("piop:before-fork", gate);
-  await boundedForkWait(Promise.all([gate.ready, gate.captureReady]).then(() => undefined));
+  await waitForCheckpoints(gate.ready ?? Promise.resolve());
 
-  if (ctx.sessionManager.getSessionId() !== sessionId || ctx.sessionManager.getSessionFile() !== source) throw new Error("The source conversation changed while its project captures were draining");
-  const fork = await forkConversation(ctx, { ...selection, events: pi.events }, async () => { throw new Error("Unexpected worktree request"); });
+  if (ctx.sessionManager.getSessionId() !== sessionId || ctx.sessionManager.getSessionFile() !== source) throw new Error("The source conversation changed while its checkpoints were being saved");
+  const fork = await forkConversation(ctx, selection, async () => { throw new Error("Unexpected worktree request"); });
 
   return { ...fork, cancelled: false, text: selection.text };
 }
@@ -69,7 +61,7 @@ export function registerForkAndForget(pi: ExtensionAPI) {
     const ctx = request.ctx;
     request.ready = (async () => {
       const branch = Parse(branchRequestSchema, request.payload);
-      const fork = await forkConversation(ctx, { entryId: branch.entryId, events: pi.events }, async () => { throw new Error("Unexpected worktree request"); });
+      const fork = await forkConversation(ctx, { entryId: branch.entryId }, async () => { throw new Error("Unexpected worktree request"); });
 
       return ctx.switchSession(fork.sessionPath);
     })();
@@ -94,4 +86,14 @@ export function registerForkAndForget(pi: ExtensionAPI) {
       return result;
     })();
   });
+}
+
+async function waitForCheckpoints(work: Promise<void>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    await Promise.race([work, new Promise<void>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Checkpoints did not finish saving before branching. Retry after saving is complete.")), 150_000);
+    })]);
+  } finally { clearTimeout(timer); }
 }

@@ -118,8 +118,6 @@ function validateRecord(transaction, record) {
 function sidecarPaths(file, destination) {
   return [
     [file.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.snapshots')],
-    [file.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json')],
-    [file.replace(/\.jsonl$/, '.diffs.json.lock'), destination.replace(/\.jsonl$/, '.diffs.json.lock')],
     [`${file}.loop-detection.json`, `${destination}.loop-detection.json`],
   ];
 }
@@ -575,6 +573,5 @@ function recover(root) {
 
   if (failures.length) throw new Error(failures.join('\n'));
 }
-
 
 module.exports = { prepare, plan, load, begin, save, moveGroup, publishRecord, commit, rollback, finish, recover };

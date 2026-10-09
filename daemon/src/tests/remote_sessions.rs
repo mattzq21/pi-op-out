@@ -18,48 +18,6 @@ fn remote_session_header_reads_only_one_line_and_quotes_shell_paths() {
     assert!(read_remote_session_header("unused", |_| Command::new("/missing/piop-header-test")).is_err());
 }
 
-#[test]
-fn remote_diff_lifecycle_discards_both_snapshots_after_success_or_patch_failure() {
-    use std::cell::RefCell;
-    let base = json!({"root":"/tmp/pi-desktop-diff-base", "tree":"a".repeat(40), "repository_root":"/project"}).to_string();
-    let current = json!({"root":"/tmp/pi-desktop-diff-current", "tree":"b".repeat(40), "repository_root":"/project"}).to_string();
-    for failure in [false, true] {
-        for cleanup_failure in [false, true] {
-            let events = RefCell::new(Vec::new());
-            let result = load_remote_git_diff_with(&base,
-                || { events.borrow_mut().push("capture"); Ok(Some(current.clone())) },
-                |actual_base, actual_current| {
-                    assert_eq!(actual_base, base); assert_eq!(actual_current, current);
-                    events.borrow_mut().push("diff");
-                    if failure { Err("patch failed".into()) } else { Ok(Some(GitDiffSnapshot::Located { patch: "change".into(), repository_root: "/project".into(), tool_paths: Vec::new() })) }
-                },
-                |token| {
-                    if token == base { events.borrow_mut().push("discard base"); }
-                    else { assert_eq!(token, current); events.borrow_mut().push("discard current"); }
-                    if cleanup_failure { Err("cleanup failed".into()) } else { Ok(()) }
-                });
-            assert_eq!(*events.borrow(), ["capture", "diff", "discard base", "discard current"]);
-            if failure { assert_eq!(result.err().unwrap(), "patch failed"); }
-            else { assert_eq!(serde_json::to_value(result.unwrap().unwrap()).unwrap(), json!({"patch":"change","repositoryRoot":"/project"})); }
-        }
-    }
-    let mut discarded = Vec::new();
-    assert!(load_remote_git_diff_with(&base, || Ok(Some(current.clone())), |_, _| Ok(None), |token| { discarded.push(token.to_owned()); Ok(()) }).unwrap().is_none());
-    assert_eq!(discarded, [base, current]);
-}
-
-#[test]
-fn remote_diff_lifecycle_preserves_base_when_capture_cannot_produce_a_snapshot() {
-    let base = json!({"root":"/tmp/pi-desktop-diff-base", "tree":"a".repeat(40), "repository_root":"/project"}).to_string();
-    let unsupported = load_remote_git_diff_with(&base, || Ok(None), |_, _| panic!("missing snapshot diffed"), |_| panic!("retryable baseline discarded"));
-    assert!(unsupported.unwrap().is_none());
-    let error = load_remote_git_diff_with(&base, || Err("connection failed".into()), |_, _| panic!("failed capture diffed"), |_| panic!("retryable baseline discarded"));
-    assert_eq!(error.err().unwrap(), "connection failed");
-    for invalid in ["not JSON", "{}", "{\"root\":\"relative\",\"tree\":\"bad\"}"] {
-        assert!(load_remote_git_diff_with(invalid, || panic!("invalid token captured"), |_, _| panic!("invalid token diffed"), |_| panic!("invalid token discarded")).is_err());
-    }
-}
-
 #[cfg(unix)]
 #[test]
 fn remote_session_scan_creates_storage_and_reports_only_real_session_files() {
@@ -287,52 +245,6 @@ fn local_project_validation_follows_directory_links_but_rejects_broken_or_file_l
     assert_eq!(fs::read_to_string(&project).unwrap(), "now a file");
 }
 
-#[cfg(unix)]
-#[test]
-fn remote_diff_scripts_round_trip_private_sidecars_and_reject_outside_sessions() {
-    use std::os::unix::fs::{PermissionsExt, symlink};
-    let directory = TestDirectory::new();
-    let sessions = directory.0.join(STORAGE_DIRECTORY).join("sessions/project 'quoted'"); fs::create_dir_all(&sessions).unwrap();
-    let session = sessions.join("conversation ' λ.jsonl"); fs::write(&session, "session data").unwrap();
-    let command = |script: String| { let mut command = Command::new("bash"); command.args(["-c", &script]).env("HOME", &directory.0); command };
-    let read = |path: &Path| query_remote_git_diffs(&mut command(remote_session_sidecar_script(path.to_str().unwrap(), "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi")), "Server");
-    assert!(read(&session).unwrap().is_empty());
-    let body = r#"{"first":"patch λ","second":{"patch":"diff","repositoryRoot":"/project","toolPaths":[]}}"#;
-    write_remote_git_diffs(&mut command(remote_save_git_diffs_script(session.to_str().unwrap())), body).unwrap();
-    assert_eq!(serde_json::to_value(read(&session).unwrap()).unwrap(), json!({"first":"patch λ","second":{"patch":"diff","repositoryRoot":"/project"}}));
-    let sidecar = session.with_extension("diffs.json");
-    assert_eq!(fs::metadata(&sidecar).unwrap().permissions().mode() & 0o777, 0o600);
-    assert_eq!(fs::read_to_string(&session).unwrap(), "session data");
-    write_remote_git_diffs(&mut command(remote_save_git_diffs_script(session.to_str().unwrap())), "{}").unwrap();
-    assert!(read(&session).unwrap().is_empty());
-    assert_eq!(fs::read_dir(&sessions).unwrap().count(), 2, "temporary sidecars must be removed");
-    let outside = directory.0.join("outside.jsonl"); fs::write(&outside, "outside").unwrap();
-    let link = sessions.join("escape.jsonl"); symlink(&outside, &link).unwrap();
-    let wrong_extension = sessions.join("not-a-session.txt"); fs::write(&wrong_extension, "text").unwrap();
-    for rejected in [&outside, &link, &wrong_extension] {
-        assert!(read(rejected).is_err());
-        assert!(write_remote_git_diffs(&mut command(remote_save_git_diffs_script(rejected.to_str().unwrap())), "{}").is_err());
-        assert!(!rejected.with_extension("diffs.json").exists());
-    }
-    assert_eq!(fs::read_to_string(&outside).unwrap(), "outside");
-}
-
-#[cfg(unix)]
-#[test]
-fn remote_diff_queries_propagate_process_encoding_json_and_size_errors() {
-    let query = |script: &str| { let mut command = Command::new("bash"); command.args(["-c", script]); query_remote_git_diffs(&mut command, "Server") };
-    assert_eq!(query("printf ' remote failure ' >&2; exit 7").err().unwrap(), "remote failure");
-    assert_eq!(query("printf '\\377'").err().unwrap(), "Saved remote diffs were not valid UTF-8");
-    assert!(query("printf 'not JSON'").err().unwrap().starts_with("Could not parse saved diffs:"));
-    assert!(query("printf '[]'").is_err());
-    assert!(query(&format!("head -c {} /dev/zero", MAX_GIT_DIFFS_BYTES + 1)).err().unwrap().contains("Saved diffs on Server exceed the limit"));
-    let directory = TestDirectory::new();
-    assert!(query_remote_git_diffs(&mut Command::new(directory.0.join("missing")), "Server").is_err());
-    assert!(write_remote_git_diffs(&mut Command::new(directory.0.join("missing")), "{}").is_err());
-    let mut rejected = Command::new("bash"); rejected.args(["-c", "cat >/dev/null; printf 'write rejected' >&2; exit 9"]);
-    assert_eq!(write_remote_git_diffs(&mut rejected, "{}").unwrap_err(), "write rejected");
-}
-
 #[test]
 fn executable_discovery_searches_home_installations_in_order_and_ignores_directories() {
     let home = TestDirectory::new();
@@ -443,62 +355,6 @@ fn remote_directory_output_preserves_names_and_root_parent_semantics() {
 }
 
 #[test]
-fn saved_diff_history_round_trips_and_replaces_removed_messages() {
-    let home = TestDirectory::new();
-    let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions/project");
-    fs::create_dir_all(&sessions).unwrap();
-    let session = sessions.join("conversation.jsonl");
-    fs::write(&session, "{\"type\":\"session\",\"id\":\"conversation\"}\n").unwrap();
-    let original = fs::read(&session).unwrap();
-    let history = json!({"first":"diff --git a/a b/a\n+hello 日本語\n", "second":{"patch":"+new\n","repositoryRoot":"/project with spaces","toolPaths":[{"toolCallId":"call","path":"a","absolutePath":"/project with spaces/a","canonicalPath":"/project with spaces/a"}]}});
-    for expected in [history, json!({"second":"updated patch"}), json!({})] {
-        save_local_git_diffs(&home.0, session.to_str().unwrap(), &expected.to_string()).unwrap();
-        let loaded = load_local_git_diffs(&home.0, session.to_str().unwrap()).unwrap();
-        assert_eq!(serde_json::to_value(loaded).unwrap(), expected);
-        assert_eq!(fs::read(&session).unwrap(), original);
-        #[cfg(unix)] {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(session.with_extension("diffs.json")).unwrap().permissions().mode() & 0o777, 0o600);
-        }
-    }
-    assert_eq!(fs::read_dir(&sessions).unwrap().count(), 2);
-}
-
-#[test]
-fn saving_diffs_requires_an_existing_desktop_session_and_reports_sidecar_failures() {
-    let home = TestDirectory::new();
-    let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions");
-    fs::create_dir_all(&sessions).unwrap();
-    let missing = sessions.join("missing.jsonl");
-    assert!(save_local_git_diffs(&home.0, missing.to_str().unwrap(), "{}").is_err());
-    assert!(!missing.with_extension("diffs.json").exists());
-    let outside = home.0.join("outside.jsonl");
-    fs::write(&outside, "outside").unwrap();
-    assert!(save_local_git_diffs(&home.0, outside.to_str().unwrap(), "{}").is_err());
-    assert!(!outside.with_extension("diffs.json").exists());
-    let session = sessions.join("valid.jsonl");
-    fs::write(&session, "original").unwrap();
-    let sidecar = session.with_extension("diffs.json");
-    fs::create_dir(&sidecar).unwrap();
-    fs::write(sidecar.join("keep"), "keep").unwrap();
-    assert!(save_local_git_diffs(&home.0, session.to_str().unwrap(), "{}").unwrap_err().starts_with("Could not save diffs:"));
-    assert_eq!(fs::read_to_string(sidecar.join("keep")).unwrap(), "keep");
-    assert_eq!(fs::read_to_string(&session).unwrap(), "original");
-}
-
-#[test]
-fn oversized_diff_histories_are_rejected_before_accessing_local_or_remote_storage() {
-    let root = TestDirectory::new(); let session = root.0.join("untouched.jsonl"); fs::write(&session, "retain").unwrap();
-    let remote = RemoteHost { enabled: true, id: "remote".into(), name: "Remote".into(), target: "unused.invalid".into(), pi_path: "pi".into() };
-    for host in [None, Some(&remote)] {
-        let snapshots = HashMap::from([("message".into(), GitDiffSnapshot::Legacy("x".repeat(MAX_GIT_DIFFS_BYTES)))]);
-        assert_eq!(save_git_diffs_at_host(session.to_str().unwrap(), snapshots, host).unwrap_err(), "Diff history exceeds the 16 MiB limit");
-    }
-    assert_eq!(fs::read_to_string(&session).unwrap(), "retain");
-    assert!(!session.with_extension("diffs.json").exists());
-}
-
-#[test]
 fn session_identity_reads_only_the_header_and_accepts_the_size_boundary() {
     let directory = TestDirectory::new();
     let path = directory.0.join("session.jsonl");
@@ -533,30 +389,4 @@ fn session_identity_rejects_missing_ids_invalid_headers_and_unavailable_files() 
         assert_eq!(fs::read(&path).unwrap(), content);
     }
     assert!(session_identity(&settings, "unknown-host", path.to_str().unwrap()).unwrap_err().contains("Unknown machine"));
-}
-
-#[test]
-fn git_snapshot_workflow_compares_changes_and_cleans_both_snapshots() {
-    for changed in [false, true] {
-        let temporary = TestDirectory::new(); let repository = temporary.0.join("repository");
-        let snapshots = temporary.0.join("snapshots");
-        fs::create_dir(&repository).unwrap(); fs::create_dir(&snapshots).unwrap();
-        test_git(&repository, &["init", "--initial-branch=main"]);
-        fs::write(repository.join("file"), "before\n").unwrap();
-        test_git(&repository, &["add", "."]); test_git(&repository, &["commit", "-m", "Initial"]);
-        let baseline = local_git_tree_with(repository.to_str().unwrap(), || Ok(snapshots.clone())).unwrap().unwrap();
-        if changed { fs::write(repository.join("file"), "after\n").unwrap(); }
-        let diff = local_git_diff_with(repository.to_str().unwrap(), &baseline,
-            |token| validate_snapshot_location(serde_json::from_str(token).unwrap(), &snapshots),
-            |cwd| local_git_tree_with(cwd, || Ok(snapshots.clone()))).unwrap();
-        if changed {
-            match diff.unwrap() {
-                GitDiffSnapshot::Located { patch, repository_root, .. } => {
-                    assert!(patch.contains("-before\n+after")); assert_eq!(repository_root, repository.to_str().unwrap());
-                }
-                _ => panic!("expected located diff"),
-            }
-        } else { assert!(diff.is_none()); }
-        assert_eq!(fs::read_dir(&snapshots).unwrap().count(), 0);
-    }
 }

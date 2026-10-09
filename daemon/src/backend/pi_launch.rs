@@ -14,20 +14,12 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
-use crate::platform::AppHandle;
 use uuid::Uuid;
 use crate::{AppSettings, BrokerRuntime, RemoteHost, STORAGE_DIRECTORY, hash_claim_key};
 use crate::git_ops::worktree_setup::{ensure_desktop_sessions_dir, run_limited, shell_quote};
 use crate::environment::home_dir;
 use crate::environment::pi_executable;
-use crate::settings::{load_app_settings};
 use crate::extensions::{SESSION_BROKER_MODULES, LEGACY_FILE_CHANGE_ASSETS, LOOP_DETECTION_ASSETS, EXCALIDRAW_ASSETS, generated_extension_root, prepare_codex_web_search_extension, prepare_context_bar_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_diff_watch_extension, prepare_fast_mode_extension, prepare_loop_detection_extension, prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_rtk_extension, prepare_runtime_settings, prepare_session_broker, prepare_session_cost_limit_extension, prepare_trace_reader, runtime_settings};
-
-pub(super) fn saved_remote_host(app: AppHandle, host_id: Option<String>) -> Result<Option<RemoteHost>, String> {
-    let host_id = host_id.unwrap_or_else(|| "local".into());
-    if host_id == "local" { return Ok(None); }
-    Ok(Some(remote_host(&load_app_settings(app)?, &host_id)?.clone()))
-}
 
 pub(super) fn remote_host<'a>(settings: &'a AppSettings, host_id: &str) -> Result<&'a RemoteHost, String> {
     let host = settings.hosts.iter().find(|host| host.id == host_id).ok_or_else(|| format!("Unknown machine: {host_id}"))?;
@@ -172,7 +164,6 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let settings_storage = shell_quote(include_str!("../../resources/session-broker/app-settings.cjs"));
     let save_runtime_settings = shell_quote("require(process.argv[1]).write(process.argv[2], process.argv[3])");
     let broker = shell_quote(include_str!("../../resources/session-broker.ts"));
-    let session_diff_store = shell_quote(include_str!("../../resources/session-diff-store.cjs"));
     let session_database = shell_quote(include_str!("../../resources/session-database.cjs"));
     let ask_user = shell_quote(include_str!("../../resources/ask-user.ts"));
     let trace_reader = shell_quote(include_str!("../../resources/trace-reader.ts"));
@@ -192,7 +183,6 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!("umask 077 && rm -f -- \"$HOME/{STORAGE_DIRECTORY}/piop-btw.ts\" && rm -rf -- \"$HOME/{STORAGE_DIRECTORY}/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/{STORAGE_DIRECTORY}/sessions\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents\" && chmod 700 \"$HOME/{STORAGE_DIRECTORY}\" \"$HOME/{STORAGE_DIRECTORY}/sessions\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents\" && printf %s {broker} > \"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/{STORAGE_DIRECTORY}/piop-mcp-bridge.ts\" && printf %s {context_window_cap} > \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\" && printf %s {context_bar} > \"$HOME/{STORAGE_DIRECTORY}/piop-context-bar.ts\" && printf %s {diff_watch} > \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\" && printf %s {openai_cache_fork} > \"$HOME/{STORAGE_DIRECTORY}/piop-openai-cache-fork.ts\" && printf %s {mcp_types} > \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/mcp-config.ts\" && printf %s {defined_agents} > \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\" && chmod 600 -- \"$HOME/{STORAGE_DIRECTORY}/piop-context-bar.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-openai-cache-fork.ts\" \"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-mcp-bridge.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/index.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\"");
     let remote = format!(r#"{remote} && printf %s {agent_extension_loader} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/extension-loader.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/extension-loader.ts" && printf %s {diagrams_extension} > "$HOME/{STORAGE_DIRECTORY}/piop-diagrams.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-diagrams.ts""#);
     let remote = format!(r#"{remote} && printf %s {ask_user} > "$HOME/{STORAGE_DIRECTORY}/ask-user.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/ask-user.ts""#);
-    let remote = format!(r#"{remote} && printf %s {session_diff_store} > "$HOME/{STORAGE_DIRECTORY}/session-diff-store.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/session-diff-store.cjs""#);
     let remote = format!(r#"{remote} && printf %s {session_database} > "$HOME/{STORAGE_DIRECTORY}/session-database.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/session-database.cjs""#);
      let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode" && printf %s {fast_mode} > "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts""#);
      let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit" && printf %s {session_cost_limit} > "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts""#);

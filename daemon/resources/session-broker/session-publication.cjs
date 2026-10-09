@@ -7,12 +7,9 @@ const io = require('./session-publication-io.cjs');
 const reviews = require('./review-publication.cjs');
 const dependencies = require('./session-publication-dependencies.cjs');
 const children = require('./session-child-index.cjs');
-const diffDatabase = require('./git-diff-database.cjs');
 const database = require('../session-database.cjs');
 
 const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
-
-const sidecarSchema = Type.Object({ path: Type.String(), identity: Type.Optional(identitySchema), digest: Type.Optional(Type.String()), bytes: Type.Optional(Type.Integer({ minimum: 0 })) });
 
 const journalSchema = Type.Object({
   version: Type.Literal(1), kind: Type.Literal('session-publication'), id: io.uuid, root: Type.String(), rootIdentity: identitySchema,
@@ -20,8 +17,7 @@ const journalSchema = Type.Object({
   bytes: Type.Integer({ minimum: 1 }), digest: Type.String({ pattern: '^[a-f0-9]{64}$' }), lock: Type.String(), lockIdentity: identitySchema,
   writer: io.writerSchema, phase: Type.Union(['planned', 'writing', 'ready', 'linked', 'parent-pending', 'quarantined'].map(value => Type.Literal(value))),
   temporaryIdentity: Type.Optional(identitySchema), review: Type.Optional(reviews.reviewSchema),
-  dependencies: Type.Optional(dependencies.contractSchema), preparationComplete: Type.Optional(Type.Boolean()), sidecars: Type.Optional(Type.Array(sidecarSchema)),
-  databaseDiffs: Type.Optional(Type.Boolean()), diffRevision: Type.Optional(Type.Integer({ minimum: 1 })),
+  dependencies: Type.Optional(dependencies.contractSchema), preparationComplete: Type.Optional(Type.Boolean()),
   quarantine: Type.Optional(Type.Object({ path: Type.String(), reason: Type.String() })),
 });
 
@@ -53,8 +49,6 @@ function validate(root, journal, file) {
 
 function validateDependencies(journal) {
   if (journal.dependencies) dependencies.validate(journal.root, journal.sessionId, journal.dependencies);
-
-  if (journal.sidecars?.some(sidecar => sidecar.path !== journal.target.replace(/\.jsonl$/, '.diffs.json'))) throw new Error('Publication sidecar ownership is ambiguous; retained');
 
   if (journal.quarantine && ![journal.temporary, path.join(journal.root, 'session-publication-quarantine', journal.id, 'transcript.jsonl.part')].includes(journal.quarantine.path)) throw new Error('Publication quarantine mapping is ambiguous; retained');
 }
@@ -124,8 +118,6 @@ function prepareJournal(root, target, prepared, id, lock, lease, options) {
   if (options.beforeWrite) {
     if (!(options.beforeWrite instanceof Function)) throw new Error('Publication preparation must be a callback');
     journal.preparationComplete = false;
-    journal.databaseDiffs = options.databaseDiffs === true;
-    journal.sidecars = sidecarIntention(target, options.sidecars ?? [target.replace(/\.jsonl$/, '.diffs.json')]);
   }
 
   if (options.review) journal.review = reviews.prepare(root, { ...options.review, target }, prepared.header, id, prepared.body);
@@ -138,45 +130,6 @@ function prepareJournal(root, target, prepared, id, lock, lease, options) {
   catch (error) { if (database.publication(root, id)) throw failedPublication(journal, error); throw error; }
 
   return { journal, body: prepared.body, lease };
-}
-
-function sidecarIntention(target, sidecars) {
-  if (!Array.isArray(sidecars) || sidecars.some(file => file !== target.replace(/\.jsonl$/, '.diffs.json'))) throw new Error('Publication sidecars must bind the target transcript');
-
-  return [...new Set(sidecars)].map(file => {
-    if (io.exists(file)) throw new Error(`Publication sidecar is already occupied: ${file}`);
-
-    return { path: file };
-  });
-}
-
-function preparedSidecars(journal) {
-  if (journal.databaseDiffs) journal.diffRevision = diffDatabase.revision(journal.root, journal.sessionId);
-
-  for (const sidecar of journal.sidecars ?? []) {
-    const snapshot = io.proof(sidecar.path);
-    sidecar.identity = snapshot.identity;
-    sidecar.digest = snapshot.digest;
-    sidecar.bytes = snapshot.bytes;
-    io.sync(sidecar.path);
-    io.sync(path.dirname(sidecar.path));
-  }
-
-  journal.preparationComplete = true;
-  save(journal);
-}
-
-function verifyPreparation(journal) {
-  if (journal.preparationComplete === false) throw new Error('Publication preparation is incomplete; retained without replaying its callback');
-
-  if (journal.databaseDiffs && diffDatabase.revision(journal.root, journal.sessionId) !== journal.diffRevision) throw new Error('Prepared fork history changed; publication retained');
-
-  for (const sidecar of journal.sidecars ?? []) {
-    if (!sidecar.identity || !io.matches(sidecar.path, sidecar.identity)) throw new Error(`Publication sidecar identity changed; retained: ${sidecar.path}`);
-    const snapshot = io.proof(sidecar.path);
-
-    if (snapshot.bytes !== sidecar.bytes || snapshot.digest !== sidecar.digest) throw new Error(`Publication sidecar changed; retained: ${sidecar.path}`);
-  }
 }
 
 function writeTemporary(operation) {
@@ -255,7 +208,7 @@ async function publishLocked(root, target, body, options) {
   try {
     dependencies.retain(journal);
 
-    if (options.beforeWrite) { await options.beforeWrite(); preparedSidecars(journal); }
+    if (options.beforeWrite) { await options.beforeWrite(); journal.preparationComplete = true; save(journal); }
 
     writeTemporary(operation);
     children.registerTranscript(root, journal.target, operation.body);
@@ -441,7 +394,7 @@ function retainedDependencies(root) {
 
     const transcriptPaths = [...new Set(candidates)].filter(candidate => io.verified(candidate, journal));
 
-    return { kind: 'publication-diagnostic', sessionId: journal.sessionId, journalPath: file, transcriptPaths, dependencies: journal.dependencies, sidecars: journal.sidecars ?? [] };
+    return { kind: 'publication-diagnostic', sessionId: journal.sessionId, journalPath: file, transcriptPaths, dependencies: journal.dependencies };
   }));
 }
 
@@ -497,3 +450,7 @@ function visibleReview(root, file, parentId) {
 }
 
 module.exports = { temporaryPaths, SessionPublicationError, publish, recover, retainedDependencies, pendingReviews, acknowledge, release, reviewVisibility };
+
+function verifyPreparation(journal) {
+  if (journal.preparationComplete === false) throw new Error("Publication preparation is incomplete; retained without replaying its callback");
+}

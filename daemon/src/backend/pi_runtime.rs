@@ -210,7 +210,7 @@ pub(super) fn detach_owner(runtime: &PiRuntime, owner: &str, discard_blank: bool
 pub(super) fn shutdown(runtime: &PiRuntime) {
     let daemons = runtime.connections.snapshot();
     for daemon in &daemons { daemon.shutdown(); }
-    for daemon in daemons { daemon.wait_shutdown(); let _ = daemon.drain_captures(None); }
+    for daemon in daemons { daemon.wait_shutdown(); }
 }
 
 pub(super) fn update_runtime_snapshot(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {

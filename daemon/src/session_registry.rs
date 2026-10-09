@@ -10,17 +10,9 @@ pub(crate) fn with_database(script: &str) -> String {
         format!("const worktreeAllocation = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n",
             include_str!("../resources/worktree-allocation.cjs").replace("require('./session-database.cjs')", "sessionDatabase"))
     } else { String::new() };
-    let comparisons = if script.contains("require('./snapshot-comparison-records.cjs')") {
-        format!("const snapshotComparisonRecords = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n",
-            include_str!("../resources/snapshot-comparison-records.cjs").replace("require('./session-database.cjs')", "sessionDatabase"))
-    } else { String::new() };
-    let metadata = if script.contains("require('./snapshot-metadata.cjs')") {
-        format!("const snapshotMetadata = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n",
-            include_str!("../resources/snapshot-metadata.cjs").replace("require('./session-database.cjs')", "sessionDatabase"))
-    } else { String::new() };
-    format!("const sessionDatabase = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n{allocation}{comparisons}{metadata}{}",
+    format!("const sessionDatabase = (() => {{ const module = {{exports:{{}}}}; {} return module.exports; }})();\n{allocation}{}",
         include_str!("../resources/session-database.cjs"),
-        script.replace("require('./session-database.cjs')", "sessionDatabase").replace("require('./worktree-allocation.cjs')", "worktreeAllocation").replace("require('./snapshot-comparison-records.cjs')", "snapshotComparisonRecords").replace("require('./snapshot-metadata.cjs')", "snapshotMetadata"))
+        script.replace("require('./session-database.cjs')", "sessionDatabase").replace("require('./worktree-allocation.cjs')", "worktreeAllocation"))
 }
 
 fn run(mut request: Value) {

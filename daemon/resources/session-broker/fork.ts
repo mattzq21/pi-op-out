@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -8,12 +8,10 @@ import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from "../piop-diff-watch/pin-checkpoints.ts";
 import { registerPreparedCheckpoints } from "../piop-diff-watch/fork-preparation.ts";
-import { copyRetainedStoreLocked } from "./git-diff-store.cjs";
 import { existsSync } from "node:fs";
 import { releaseHistory, retainHistory, rootForDirectory } from "./goal-assets.cjs";
-import { drainForkCaptures } from "./turn-capture.ts";
 
-export type ForkOptions = { events: ExtensionAPI["events"]; cwd?: string; worktree?: string; entryId?: string; position?: "before" | "at" };
+export type ForkOptions = { cwd?: string; worktree?: string; entryId?: string; position?: "before" | "at" };
 
 export const createdWorktreeSchema = Type.Object({ path: Type.String(), branch: Type.String(), setupError: Type.Optional(Type.Union([Type.String(), Type.Null()])) });
 
@@ -54,7 +52,6 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   const source = ctx.sessionManager.getSessionFile();
 
   if (!header || !source) throw new Error("Save this conversation before forking it");
-  await drainForkCaptures(options.events, ctx, new Set(retained.map(entry => entry.id)));
   let cwd = await forkDirectory(ctx.cwd, options);
   const worktree = options.worktree ? await createWorktree(options.worktree) : undefined;
 
@@ -73,13 +70,10 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
     goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source }, ...retained], sessionId, sessionPath);
     publication = await writeSessionFile(sessionPath, [forkHeader({ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, header.cwd), ...retained], {
       dependencies: { checkpoints, workspace: publicationWorkspace(cwd, options, worktree) },
-      sidecars: [],
-      databaseDiffs: true,
-      beforeWrite: () => copyRetainedDiffs(source, sessionPath, new Set(retained.map(entry => entry.id)), header.id, sessionId),
     });
   } catch (error) {
     if (retainedFork(error instanceof Error ? error : undefined, publication)) {
-      ctx.ui.notify(`Fork publication and its checkpoint, goal, diff, and workspace dependencies are retained for recovery: ${sessionPath}`, "warning");
+      ctx.ui.notify(`Fork publication and its checkpoint, goal, and workspace dependencies are retained for recovery: ${sessionPath}`, "warning");
       throw new Error(`Fork recovery is pending at ${sessionPath}: ${String(error)}`, { cause: error });
     }
 
@@ -99,10 +93,6 @@ function releaseForkAssets(ctx: ExtensionContext, goalAssets: ReturnType<typeof 
 
   try { releaseHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), goalAssets, sessionId); }
   catch (error) { ctx.ui.notify(`Fork goal asset ownership was retained for recovery: ${String(error)}`, "warning"); }
-}
-
-async function copyRetainedDiffs(source: string, destination: string, ids: ReadonlySet<string>, sessionId: string, destinationId: string) {
-  copyRetainedStoreLocked(source.replace(/\.jsonl$/, ".diffs.json"), destination.replace(/\.jsonl$/, ".diffs.json"), ids, sessionId, destinationId);
 }
 
 async function cleanupForkDirectory(cwd: string, options: ForkOptions) {

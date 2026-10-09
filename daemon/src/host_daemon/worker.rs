@@ -48,10 +48,7 @@ fn launch_command(spec: &LaunchSpec, identity: &str, home: &std::path::Path) -> 
     } else {
         Command::new(&spec.program)
     };
-    command.args(&spec.args).envs(&spec.env).env(
-        "PI_DESKTOP_GIT_CAPTURE_SCRIPT",
-        crate::session_registry::with_database(include_str!("../../resources/capture-git-tree.cjs")),
-    ).env("PIOP_GIT_CAPTURE_READER_PID", std::process::id().to_string());
+    command.args(&spec.args).envs(&spec.env);
     if let Some(cwd) = spec.cwd.as_ref().filter(|cwd| !cwd.is_empty()) {
         command.current_dir(cwd);
     }

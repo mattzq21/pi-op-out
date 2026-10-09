@@ -36,14 +36,14 @@ export function storageSchemaImports() {
 
 const canonicalModules = new Set([
   "archive-resource-records.cjs", "archive-records.cjs", "deletion-records.cjs", "fork-transaction-records.cjs", "fork-preparation-records.cjs", "external-transcripts.cjs",
-  "restore-records.cjs", "transcript-metadata.cjs", "conversation-storage.cjs", "snapshot-recovery-records.cjs",
+  "restore-records.cjs", "transcript-metadata.cjs", "conversation-storage.cjs",
   "session-database.cjs", "transcript-references.cjs", "goal-dependencies.cjs", "goal-preparations.cjs", "goal-ownership.cjs",
-  "snapshot-operation-stores.cjs", "snapshot-comparison-records.cjs", "snapshot-metadata.cjs",
+
   "archive-checkpoints.cjs", "archive-resource-owners.cjs", "archive-resource-restore.cjs", "archive-resource-transactions.cjs", "archive-resources.cjs", "archive-transaction.cjs",
   "checkpoint-schemas.cjs", "delete-transaction.cjs", "deletion-retention.cjs", "directory-liveness.cjs", "fork-preparation.cjs", "fork-transaction.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
-  "restore-receipts.cjs", "restore-transaction.cjs", "retention-candidates.cjs", "retention-collection.cjs", "session-diff-store.cjs", "session-transactions.cjs", "snapshot-recovery.cjs", "storage-lock.cjs", "storage-recovery.cjs", "storage-transaction-lock.cjs",
+  "restore-receipts.cjs", "restore-transaction.cjs", "retention-candidates.cjs", "retention-collection.cjs", "session-transactions.cjs", "storage-lock.cjs", "storage-recovery.cjs", "storage-transaction-lock.cjs",
   "transaction-owner-locks.cjs", "transcript-identity.cjs", "worktree-checkpoint-preservation.cjs", "worktree-container.cjs", "worktree-retention.cjs",
-  "git-diff-store.cjs", "git-diff-database.cjs", "git-diff-pages.cjs", "git-diff-transfer.cjs", "git-diff-transfer-storage.cjs", "session-publication.cjs", "session-publication-io.cjs", "session-publication-dependencies.cjs", "session-child-index.cjs", "checkpoint-owner-index.cjs", "review-publication.cjs", "goal-assets.cjs",
+  "session-publication.cjs", "session-publication-io.cjs", "session-publication-dependencies.cjs", "session-child-index.cjs", "checkpoint-owner-index.cjs", "review-publication.cjs", "goal-assets.cjs",
 ]);
 
 function canonicalImports(source, path) {

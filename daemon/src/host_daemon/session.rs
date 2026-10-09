@@ -159,7 +159,6 @@ impl Session {
         } = launch;
         spec.prepare(&key, &client_id, home);
         let epoch = Uuid::new_v4().to_string();
-        spec.env.insert("PIOP_GIT_CAPTURE_READER_SCOPE".into(), epoch.clone());
         let storage = queue_storage(host.as_ref(), &spec, cwd.as_deref(), home, &key)?;
         let pending = match &storage { Some(storage) => storage.recover(pending)?, None => pending };
         let identity = if spec.argument("--session").is_some() {
@@ -544,7 +543,7 @@ impl Session {
         self.host.finished(&key, &self.epoch, pending, transient);
         if !transient {
             self.host
-                .output(json!({"type":"session_closed","sessionKey":key,"readerScope":self.epoch,"state":self.saved_state(),"submitted":self.submitted()}));
+                .output(json!({"type":"session_closed","sessionKey":key,"state":self.saved_state(),"submitted":self.submitted()}));
         }
     }
 

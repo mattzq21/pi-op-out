@@ -12,52 +12,10 @@ fn git_project_detection_distinguishes_main_worktrees_and_plain_directories() {
     let nested = worktree.join("nested"); fs::create_dir(&nested).unwrap();
     assert!(matches!(inspect_git_project_kind(&settings, nested.to_str().unwrap(), "local").unwrap(), ProjectKind::Worktree));
     assert!(inspect_git_project_kind(&settings, root.0.join("missing").to_str().unwrap(), "local").unwrap_err().contains("Project directory does not exist"));
-    let (main_root, main_objects) = git_root_and_objects(repository.to_str().unwrap()).unwrap().unwrap();
-    let (linked_root, linked_objects) = git_root_and_objects(nested.to_str().unwrap()).unwrap().unwrap();
-    assert_eq!(main_root, repository.canonicalize().unwrap());
-    assert_eq!(linked_root, worktree.canonicalize().unwrap());
-    assert_eq!(main_objects, linked_objects, "linked worktrees share the object database");
-    assert!(git_root_and_objects(root.0.to_str().unwrap()).unwrap().is_none());
-    assert!(git_root_and_objects(root.0.join("missing").to_str().unwrap()).unwrap_err().contains("Could not open project directory"));
     let bare = root.0.join("bare"); fs::create_dir(&bare).unwrap(); test_git(&bare, &["init", "--bare"]);
     assert!(matches!(inspect_git_project_kind(&settings, bare.to_str().unwrap(), "local").unwrap(), ProjectKind::Main));
     let file = root.0.join("file"); fs::write(&file, "not a directory").unwrap();
     assert!(inspect_git_project_kind(&settings, file.to_str().unwrap(), "local").unwrap_err().contains("Project directory does not exist"));
-}
-#[test]
-fn git_capture_limits_accept_exact_file_and_total_boundaries() {
-    let root = TestDirectory::new(); test_git(&root.0, &["init", "--initial-branch=main"]);
-    let bounded = || local_git_input_is_bounded(root.0.to_str().unwrap(), &root.0).unwrap();
-    assert!(bounded());
-    let first = fs::File::create(root.0.join("first.bin")).unwrap(); first.set_len(MAX_GIT_FILE_BYTES).unwrap();
-    assert!(bounded(), "the per-file boundary is inclusive");
-    first.set_len(MAX_GIT_FILE_BYTES + 1).unwrap(); assert!(!bounded());
-    first.set_len(MAX_GIT_FILE_BYTES).unwrap();
-    let second = fs::File::create(root.0.join("second.bin")).unwrap(); second.set_len(MAX_GIT_SNAPSHOT_BYTES - MAX_GIT_FILE_BYTES).unwrap();
-    assert!(bounded(), "the total snapshot boundary is inclusive");
-    fs::write(root.0.join("third.bin"), [1]).unwrap(); assert!(!bounded(), "combined files must respect the total limit");
-    fs::remove_file(root.0.join("third.bin")).unwrap(); assert!(bounded());
-}
-
-#[test]
-fn git_capture_counts_staged_and_unstaged_paths_once_and_ignores_excluded_files() {
-    let root = TestDirectory::new(); test_git(&root.0, &["init", "--initial-branch=main"]);
-    fs::write(root.0.join(".gitignore"), "ignored.bin\n").unwrap();
-    fs::write(root.0.join("tracked.bin"), "initial").unwrap();
-    test_git(&root.0, &["add", ".gitignore", "tracked.bin"]);
-    test_git(&root.0, &["commit", "-m", "Seed tracked files"]);
-    let ignored = fs::File::create(root.0.join("ignored.bin")).unwrap(); ignored.set_len(MAX_GIT_FILE_BYTES + 1).unwrap();
-    let bounded = || local_git_input_is_bounded(root.0.to_str().unwrap(), &root.0).unwrap();
-    assert!(bounded(), "ignored files are outside the capture");
-    fs::write(root.0.join("tracked.bin"), "staged modification").unwrap(); test_git(&root.0, &["add", "tracked.bin"]);
-    let tracked = fs::OpenOptions::new().write(true).open(root.0.join("tracked.bin")).unwrap(); tracked.set_len(MAX_GIT_FILE_BYTES).unwrap();
-    let extra = fs::File::create(root.0.join("extra.bin")).unwrap(); extra.set_len(1).unwrap();
-    assert!(bounded(), "a path listed as both staged and modified must count once");
-    tracked.set_len(MAX_GIT_FILE_BYTES + 1).unwrap(); assert!(!bounded(), "tracked modifications must also be bounded");
-    fs::remove_file(root.0.join("tracked.bin")).unwrap(); assert!(bounded(), "deleted paths have no content to capture");
-    let plain = root.0.join("plain"); fs::create_dir(&plain).unwrap();
-    let outside = TestDirectory::new();
-    assert!(local_git_input_is_bounded(outside.0.to_str().unwrap(), &outside.0).is_err());
 }
 
 #[test]
@@ -425,18 +383,6 @@ fn worktree_output_requires_complete_success_data_and_preserves_git_errors() {
     }
     assert_eq!(parse_worktree_output(output(1, "feature\n/project\n", "  branch already exists\n"), "Create worktree").err().unwrap(), "branch already exists");
     assert_eq!(parse_worktree_output(output(1, "", " \n"), "Create worktree").err().unwrap(), "Create worktree");
-}
-
-#[test]
-fn saved_diff_schema_preserves_tool_path_mappings_and_rejects_incomplete_records() {
-    let value = json!({"message":{"patch":"diff contents","repositoryRoot":"/repo","toolPaths":[{"toolCallId":"tool-1","path":"src/file.rs","absolutePath":"/repo/src/file.rs","canonicalPath":"/real/repo/src/file.rs"}]}});
-    let snapshots: GitDiffSnapshots = serde_json::from_value(value.clone()).unwrap();
-    assert_eq!(serde_json::to_value(snapshots).unwrap(), value);
-    for invalid in [
-        json!({"message":42}), json!({"message":{"patch":"diff"}}),
-        json!({"message":{"patch":"diff","repositoryRoot":"/repo","toolPaths":[{"path":"file"}]}}),
-        json!({"message":{"patch":"diff","repositoryRoot":"/repo","toolPaths":null}}),
-    ] { assert!(serde_json::from_value::<GitDiffSnapshots>(invalid).is_err()); }
 }
 
 fn setup_script(name: &str, path: &Path, code: &str, cleanup: &str) -> WorktreeSetupScript {

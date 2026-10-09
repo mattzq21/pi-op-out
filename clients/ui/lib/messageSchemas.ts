@@ -43,11 +43,6 @@ export const promptContextSchema = z.object({
 
 export const toolPathSchema = z.object({ toolCallId: z.string(), path: z.string(), absolutePath: z.string(), canonicalPath: z.string() });
 
-export const fileChangesSchema = z.object({
-  cwd: z.string(), patch: z.string(), toolCallIds: stringsSchema, paths: stringsSchema,
-  toolPaths: validItems(toolPathSchema).catch([]), warnings: stringsSchema.catch([]),
-});
-
 const nestedCallsSchema = z.object({
   calls: z.array(z.object({
     id: z.string(), name: z.string(), arguments: z.record(z.string(), z.json()).optional(),
@@ -76,8 +71,6 @@ export const wireMessageSchema = z.looseObject({
   }).optional(),
   deferredToolPayload: z.string().optional(), toolPayloadLoaded: z.boolean().optional(),
   toolPayloadVersion: z.number().optional(), loadedToolPayloadVersion: z.number().optional(),
-  toolDiff: z.object({ path: z.string().optional(), patch: z.string() }).optional(),
-  fileChanges: z.array(fileChangesSchema.extend({ id: z.string() })).optional(),
   deliveryBehavior: z.enum(["steer", "followUp"]).optional(),
 });
 

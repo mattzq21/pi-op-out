@@ -5,8 +5,6 @@ const { createHash, randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
 const goalAssets = require('./goal-asset-cleanup.cjs');
 const shared = require('./archive-resource-transactions.cjs');
-const ownerLocks = require('./transaction-owner-locks.cjs');
-const diffStore = require('./session-broker/git-diff-store.cjs');
 
 const records = require('./deletion-records.cjs');
 
@@ -79,7 +77,7 @@ function plannedFile(saved, index, container) {
 }
 
 function validSource(root, source) {
-  return ['sessions', 'archived', path.join('notes', 'chats'), 'archived-tmp', 'git-diff-transfers', 'queued-input'].some(name => io.inside(path.join(root, name), source) && source !== path.join(root, name));
+  return ['sessions', 'archived', path.join('notes', 'chats'), 'archived-tmp', 'queued-input'].some(name => io.inside(path.join(root, name), source) && source !== path.join(root, name));
 }
 
 function validRef(transaction, ref) {
@@ -147,10 +145,6 @@ function stageFile(transaction, file) {
 
     return;
   }
-
-  if (file.source.endsWith('.diffs.json')) ownerLocks.withFile(file.source + '.lock', () => {
-    if (Object.values(diffStore.readStore(file.source, false).transfers).some(transfer => transfer.committed !== true)) throw new Error('Unfinished diff transfer ownership prevents deletion; log and staged contents retained');
-  });
 
   io.syncTree(file.source);
   io.move({ source: file.source, destination: file.staged, identity: file.identity });
@@ -343,7 +337,6 @@ function recover(root) {
     try { recoverRecord(root, entry); }
     catch (error) { failures.push(`${entry.directory}: ${error.message}`); }
   }
-
 
   if (failures.length) throw new Error(failures.join('\n'));
 }

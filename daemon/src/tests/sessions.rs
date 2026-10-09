@@ -77,33 +77,6 @@ fn session_file_validation_resolves_symlinks_before_checking_store_boundaries() 
 }
 
 #[test]
-fn saved_diffs_load_legacy_and_located_snapshots_and_allow_unsaved_sessions() {
-    let home = TestDirectory::new(); let root = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&root).unwrap();
-    let session = root.join("chat.jsonl"); let path = session.to_str().unwrap();
-    assert!(load_local_git_diffs(&home.0, path).unwrap().is_empty());
-    fs::write(&session, "session").unwrap();
-    assert!(load_local_git_diffs(&home.0, path).unwrap().is_empty());
-    let value = json!({"old":"legacy patch","new":{"patch":"located patch","repositoryRoot":"/repo"}});
-    atomic_write_private(&session.with_extension("diffs.json"), value.to_string().as_bytes()).unwrap();
-    let snapshots = load_local_git_diffs(&home.0, path).unwrap();
-    assert_eq!(serde_json::to_value(snapshots).unwrap(), value);
-    assert!(load_local_git_diffs(&home.0, home.0.join("outside.jsonl").to_str().unwrap()).is_err());
-    assert!(load_local_git_diffs(&home.0, root.join("wrong.txt").to_str().unwrap()).is_err());
-}
-
-#[test]
-fn saved_diff_loading_rejects_corruption_invalid_utf8_and_oversized_sidecars() {
-    let home = TestDirectory::new(); let root = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&root).unwrap();
-    let session = root.join("chat.jsonl"); fs::write(&session, "session").unwrap();
-    let sidecar = session.with_extension("diffs.json"); let path = session.to_str().unwrap();
-    fs::write(&sidecar, "not json").unwrap();
-    assert!(load_local_git_diffs(&home.0, path).err().unwrap().contains("Could not parse saved diffs"));
-    fs::write(&sidecar, [255]).unwrap();
-    assert!(load_local_git_diffs(&home.0, path).err().unwrap().contains("Could not read saved diffs"));
-    let file = fs::OpenOptions::new().write(true).open(&sidecar).unwrap(); file.set_len(MAX_GIT_DIFFS_BYTES as u64 + 1).unwrap();
-    assert_eq!(load_local_git_diffs(&home.0, path).err().unwrap(), "Saved diffs exceed the 16 MiB limit");
-}
-#[test]
 fn skill_rediscovery_preserves_preferences_manual_entries_and_refreshes_metadata() {
     let home = TestDirectory::new(); let root = home.0.join(".agents/skills");
     fs::create_dir_all(root.join("existing")).unwrap(); fs::create_dir_all(root.join("new")).unwrap();
@@ -138,12 +111,11 @@ fn explicit_invocation_skills_remain_available_and_pi_root_markdown_is_discovere
     assert!(settings.skills.iter().any(|skill| skill["name"] == "quick"));
 }
 #[test]
-fn blank_session_cleanup_removes_only_matching_unused_sessions_and_sidecars() {
+fn blank_session_cleanup_removes_only_matching_unused_sessions() {
     let root = TestDirectory::new(); let path = root.0.join("date_chat.jsonl");
     let body = format!("{}\n", json!({"type":"session","id":"chat","cwd":"/repo"}));
-    fs::write(&path, &body).unwrap(); fs::write(path.with_extension("diffs.json"), "{}").unwrap();
+    fs::write(&path, &body).unwrap();
     cleanup_blank_session_at(BlankSessionCleanup { path: None, id: Some("chat".into()), host: None, submitted: false }, Some(&root.0));
-    assert!(!path.exists()); assert!(!path.with_extension("diffs.json").exists());
     for (content, id, submitted) in [
         (body.clone(), "other", false),
         (body.clone(), "chat", true),
@@ -162,38 +134,6 @@ fn blank_session_cleanup_does_not_delete_files_outside_the_store() {
     let path = outside.0.join("chat.jsonl"); fs::write(&path, "{\"type\":\"session\",\"id\":\"chat\"}\n").unwrap();
     cleanup_blank_session_at(BlankSessionCleanup { path: Some(path.to_string_lossy().into_owned()), id: Some("chat".into()), host: None, submitted: false }, Some(&root.0));
     assert!(path.exists());
-}
-#[test]
-fn snapshot_token_validation_rejects_malformed_tokens_before_accessing_storage() {
-    for token in ["", "null", "{}", r#"{"root":42,"tree":"abc","repositoryRoot":"/repo"}"#] {
-        assert_eq!(parse_local_snapshot_with(token, || panic!("invalid token accessed storage")).err().unwrap(), "Invalid Git snapshot token");
-    }
-    for tree in ["a".repeat(39), "a".repeat(65), "g".repeat(40), format!("{};", "a".repeat(39))] {
-        let token = json!({"root":"/unused","tree":tree,"repositoryRoot":"/repo"}).to_string();
-        assert_eq!(parse_local_snapshot_with(&token, || panic!("invalid tree accessed storage")).err().unwrap(), "Invalid Git snapshot tree");
-    }
-}
-
-#[test]
-fn snapshot_token_validation_checks_storage_errors_expiry_and_canonical_location() {
-    let temporary = TestDirectory::new();
-    let parent = temporary.0.join("snapshots"); fs::create_dir(&parent).unwrap();
-    let root = parent.join("pi-desktop-diff-test"); fs::create_dir(&root).unwrap();
-    for length in [40, 64] { for token_root in [&root, &root.join("..").join("pi-desktop-diff-test")] {
-        let token = json!({"root":token_root,"tree":"A".repeat(length),"repository_root":"/repo"}).to_string();
-        let parsed = parse_local_snapshot_with(&token, || Ok(parent.clone())).unwrap();
-        assert_eq!(parsed.root, root.canonicalize().unwrap().to_string_lossy());
-        assert_eq!(parsed.tree, "A".repeat(length)); assert_eq!(parsed.repository_root, "/repo");
-        assert_eq!(parse_local_snapshot_with(&token, || Err("storage failed".into())).err().unwrap(), "storage failed");
-        assert!(parse_local_snapshot_with(&token, || Ok(temporary.0.join("missing"))).is_err());
-    } }
-    let token = json!({"root":root,"tree":"a".repeat(40),"repositoryRoot":"/repo"}).to_string();
-    fs::remove_dir(&root).unwrap();
-    assert_eq!(parse_local_snapshot_with(&token, || Ok(parent.clone())).err().unwrap(), "Git snapshot expired");
-    let outside = temporary.0.join("pi-desktop-diff-outside"); fs::create_dir(&outside).unwrap();
-    let token = json!({"root":outside,"tree":"a".repeat(40),"repositoryRoot":"/repo"}).to_string();
-    assert_eq!(parse_local_snapshot_with(&token, || Ok(parent)).err().unwrap(), "Invalid Git snapshot location");
-    assert!(outside.exists());
 }
 
 #[test]
@@ -391,18 +331,16 @@ fn deletion_removes_recorded_git_checkpoints_but_preserves_unrelated_refs_and_fi
         let header = json!({"type":"session","id":"one","cwd":repository.0});
         let checkpoint = json!({"type":"custom","customType":"pi-project-files-watch-snapshot","data":{"repositoryRoot":repository.0,"ref":owned_ref,"commit":commit}});
         let content = format!("{header}\n{checkpoint}\n"); fs::write(&session, &content).unwrap();
-        let sidecar = session.with_extension("diffs.json"); fs::write(&sidecar, "{}").unwrap();
         let result = delete_session_files(&PiRuntime::default(), session.to_str().unwrap(), "local", None, &root, false);
         let owned = Command::new("git").arg("-C").arg(&repository.0).args(["show-ref", "--verify", owned_ref]).output().unwrap();
         if mismatched_ref {
             assert!(result.unwrap_err().contains("no longer points to its recorded commit"));
             assert!(owned.status.success());
             assert_eq!(fs::read_to_string(&session).unwrap(), content);
-            assert_eq!(fs::read_to_string(&sidecar).unwrap(), "{}");
-            assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+            assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
         } else {
             result.unwrap(); assert!(!owned.status.success());
-            assert!(!session.exists()); assert!(!sidecar.exists());
+            assert!(!session.exists());
             assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         }
         let other = Command::new("git").arg("-C").arg(&repository.0).args(["rev-parse", unrelated_ref]).output().unwrap();
@@ -498,7 +436,7 @@ fn remote_relocation_rejects_invalid_inputs_without_modifying_files() {
 }
 
 #[test]
-fn relocating_a_session_preserves_messages_metadata_and_diff_history() {
+fn relocating_a_session_preserves_messages_metadata() {
     let home = TestDirectory::new();
     let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions/project");
     let project = home.0.join("new project 日本語");
@@ -508,7 +446,6 @@ fn relocating_a_session_preserves_messages_metadata_and_diff_history() {
     let tail = "{\"type\":\"message\",\"text\":\"hello 🌍\"}\n\n{\"custom\": true}\n";
     let header = json!({"type":"session","id":"stable-id","cwd":"/old","version":3,"custom":{"keep":true}});
     fs::write(&path, format!("{header}\n{tail}")).unwrap();
-    fs::write(path.with_extension("diffs.json"), "unchanged diffs").unwrap();
     #[cfg(unix)] {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
@@ -520,8 +457,7 @@ fn relocating_a_session_preserves_messages_metadata_and_diff_history() {
     expected["cwd"] = json!(project.to_str().unwrap());
     assert_eq!(serde_json::from_str::<Value>(first).unwrap(), expected);
     assert_eq!(rest, tail);
-    assert_eq!(fs::read_to_string(path.with_extension("diffs.json")).unwrap(), "unchanged diffs");
-    assert_eq!(fs::read_dir(&sessions).unwrap().count(), 2, "temporary file must be committed");
+    assert_eq!(fs::read_dir(&sessions).unwrap().count(), 1, "temporary file must be committed");
     #[cfg(unix)] {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640);
@@ -552,15 +488,14 @@ fn invalid_relocations_leave_the_original_session_untouched() {
 }
 
 #[test]
-fn remote_archive_moves_session_and_sidecar_without_replacing_earlier_archives() {
+fn remote_archive_moves_session_without_replacing_earlier_archives() {
     let home = TestDirectory::new(); let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions/nested ' 日本語"); fs::create_dir_all(&sessions).unwrap();
-    let source = sessions.join("chat ' $(touch injected).jsonl"); let sidecar = source.with_extension("diffs.json");
+    let source = sessions.join("chat ' $(touch injected).jsonl");
     let shell = |script: String| { let mut command = Command::new("sh"); command.args(["-c", &script]).env("HOME", &home.0).current_dir(&home.0); command };
     for index in 0..2 {
         fs::write(&source, format!("session {index}")).unwrap();
-        fs::write(&sidecar, format!("diff {index}")).unwrap();
         archive_remote_session(source.to_str().unwrap(), shell).unwrap();
-        assert!(!source.exists()); assert!(!sidecar.exists());
+        assert!(!source.exists());
     }
     let archived = home.0.join(STORAGE_DIRECTORY).join("archived");
     let mut contents = Vec::new();
@@ -568,29 +503,28 @@ fn remote_archive_moves_session_and_sidecar_without_replacing_earlier_archives()
         let path = entry.unwrap().path();
         if path.extension().is_some_and(|extension| extension == "jsonl") {
             let session = fs::read_to_string(&path).unwrap();
-            assert_eq!(fs::read_to_string(path.with_extension("diffs.json")).unwrap(), session.replace("session", "diff"));
             contents.push(session);
         }
     }
     contents.sort(); assert_eq!(contents, ["session 0", "session 1"]);
-    assert_eq!(fs::read_dir(&archived).unwrap().count(), 4);
+    assert_eq!(fs::read_dir(&archived).unwrap().count(), 2);
     assert!(!home.0.join("injected").exists());
-    fs::write(&source, "no diffs").unwrap(); archive_remote_session(source.to_str().unwrap(), shell).unwrap();
-    assert_eq!(fs::read_dir(&archived).unwrap().count(), 5);
+    fs::write(&source, "plain chat").unwrap(); archive_remote_session(source.to_str().unwrap(), shell).unwrap();
+    assert_eq!(fs::read_dir(&archived).unwrap().count(), 3);
 }
 
 #[test]
-fn remote_archive_rolls_back_diffs_when_session_move_fails_and_rejects_outside_paths() {
+fn remote_archive_preserves_session_when_move_fails_and_rejects_outside_paths() {
     let home = TestDirectory::new(); let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&sessions).unwrap();
-    let source = sessions.join("chat.jsonl"); let sidecar = source.with_extension("diffs.json");
-    fs::write(&source, "session").unwrap(); fs::write(&sidecar, "diff").unwrap();
+    let source = sessions.join("chat.jsonl");
+    fs::write(&source, "session").unwrap();
     let shell = |script: String| { let mut command = Command::new("sh"); command.args(["-c", &script]).env("HOME", &home.0); command };
     let error = archive_remote_session(source.to_str().unwrap(), |script| {
         let wrapped = format!("mv() {{ if [ \"$2\" = {} ]; then printf 'session move failed' >&2; return 1; fi; command mv \"$@\"; }}; {script}", shell_quote(source.to_str().unwrap()));
         shell(wrapped)
     }).unwrap_err();
     assert_eq!(error, "session move failed");
-    assert_eq!(fs::read_to_string(&source).unwrap(), "session"); assert_eq!(fs::read_to_string(&sidecar).unwrap(), "diff");
+    assert_eq!(fs::read_to_string(&source).unwrap(), "session");
     assert_eq!(fs::read_dir(home.0.join(STORAGE_DIRECTORY).join("archived")).unwrap().count(), 0);
     let outside = home.0.join("outside.jsonl"); fs::write(&outside, "precious").unwrap();
     assert!(archive_remote_session(outside.to_str().unwrap(), shell).unwrap_err().contains("Refusing to archive"));
@@ -604,55 +538,42 @@ fn remote_archive_rolls_back_diffs_when_session_move_fails_and_rejects_outside_p
 }
 
 #[test]
-fn local_archiving_moves_conversation_and_diffs_without_overwriting_existing_conversations() {
+fn local_archiving_moves_conversation_without_overwriting_existing_conversations() {
     let home = TestDirectory::new();
     let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions/project");
     fs::create_dir_all(&sessions).unwrap();
     let source = sessions.join("conversation.jsonl");
-    let diffs = source.with_extension("diffs.json");
     fs::write(&source, "first conversation").unwrap();
-    fs::write(&diffs, "first diffs").unwrap();
     archive_local_session(&home.0, source.to_str().unwrap()).unwrap();
     let archive = home.0.join(STORAGE_DIRECTORY).join("archived");
     assert!(!source.exists());
-    assert!(!diffs.exists());
     assert_eq!(fs::read_to_string(archive.join("conversation.jsonl")).unwrap(), "first conversation");
-    assert_eq!(fs::read_to_string(archive.join("conversation.diffs.json")).unwrap(), "first diffs");
     fs::write(&source, "second conversation").unwrap();
-    fs::write(&diffs, "second diffs").unwrap();
     archive_local_session(&home.0, source.to_str().unwrap()).unwrap();
     let conversations: Vec<_> = fs::read_dir(&archive).unwrap().map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("jsonl")).collect();
     assert_eq!(conversations.len(), 2);
     let second = conversations.iter().find(|path| path.file_name().unwrap() != "conversation.jsonl").unwrap();
     assert_eq!(fs::read_to_string(second).unwrap(), "second conversation");
-    assert_eq!(fs::read_to_string(second.with_extension("diffs.json")).unwrap(), "second diffs");
     assert_eq!(fs::read_to_string(archive.join("conversation.jsonl")).unwrap(), "first conversation");
-    assert_eq!(fs::read_to_string(archive.join("conversation.diffs.json")).unwrap(), "first diffs");
     let plain = sessions.join("plain.jsonl");
-    fs::write(&plain, "no diffs").unwrap();
+    fs::write(&plain, "plain chat").unwrap();
     archive_local_session(&home.0, plain.to_str().unwrap()).unwrap();
-    assert_eq!(fs::read_to_string(archive.join("plain.jsonl")).unwrap(), "no diffs");
-    assert!(!archive.join("plain.diffs.json").exists());
+    assert_eq!(fs::read_to_string(archive.join("plain.jsonl")).unwrap(), "plain chat");
 }
 
 #[test]
-fn local_archiving_preserves_sources_when_directory_or_diff_move_fails() {
+fn local_archiving_preserves_sources_when_directory_creation_fails() {
     let home = TestDirectory::new();
     let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions");
     fs::create_dir_all(&sessions).unwrap();
     let source = sessions.join("conversation.jsonl");
-    let diffs = source.with_extension("diffs.json");
     fs::write(&source, "conversation").unwrap();
-    fs::write(&diffs, "diffs").unwrap();
     let archive = home.0.join(STORAGE_DIRECTORY).join("archived");
     fs::write(&archive, "blocking file").unwrap();
     assert!(archive_local_session(&home.0, source.to_str().unwrap()).unwrap_err().contains("Could not create archive directory"));
     fs::remove_file(&archive).unwrap();
-    fs::create_dir_all(archive.join("conversation.diffs.json")).unwrap();
-    assert!(archive_local_session(&home.0, source.to_str().unwrap()).unwrap_err().contains("Could not archive session diffs"));
     assert_eq!(fs::read_to_string(&source).unwrap(), "conversation");
-    assert_eq!(fs::read_to_string(&diffs).unwrap(), "diffs");
     assert!(!archive.join("conversation.jsonl").exists());
     let outside = home.0.join("outside.jsonl");
     fs::write(&outside, "outside").unwrap();

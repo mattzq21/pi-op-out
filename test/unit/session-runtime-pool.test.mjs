@@ -11,7 +11,7 @@ describe('session runtime pool', () => {
     globalThis.window = Object.assign(new EventTarget(), { crypto: globalThis.crypto });
     globalThis.document = Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true });
     calls = []; errors = [];
-    responses = new Map([['start_pi', { attached: false }], ['stop_pi', true], ['load_git_diffs', {}], ['pi_command:get_state', { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', sessionFile: '/session', messageCount: 0, pendingMessageCount: 0 }]]);
+    responses = new Map([['start_pi', { attached: false }], ['stop_pi', true], ['pi_command:get_state', { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', sessionFile: '/session', messageCount: 0, pendingMessageCount: 0 }]]);
     mockIPC((command, args) => {
       calls.push({ command, args });
       const result = responses.get(command === 'pi_command' ? `pi_command:${args.command.type}` : command);
@@ -36,7 +36,6 @@ describe('session runtime pool', () => {
   const send = (runtimeId, event) => emit('pi://event', { runtimeId, event });
   const settled = async () => { await setImmediate(); };
 
-  const patch = 'diff --git a/a b/a\n@@ -1 +1 @@\n-old\n+new';
   const session = { id: 'session', cwd: '/repo', path: '/session', hostId: 'local' };
 
   test('informational extension messages do not mark an idle conversation running', async () => {
@@ -159,42 +158,6 @@ describe('session runtime pool', () => {
     assert.deepEqual(pool.liveSessionSummaries(), []);
   });
 
-  test('saved diffs load once per path, reload for matching notifications and report failures', async () => {
-    responses.set('load_git_diffs', { answer: patch });
-    const client = pool.forSession(session); const id = await connect(client);
-    await settled();
-    assert.deepEqual(pool.gitDiffs(client), { answer: patch });
-    pool.bind('local', 'session', client);
-    assert.equal(commands('load_git_diffs').length, 1);
-    await send(id, { type: 'diffs_changed', hostId: 'remote', sessionPath: '/session' });
-    await send(id, { type: 'diffs_changed', hostId: 'local', sessionPath: '/other' });
-    assert.equal(commands('load_git_diffs').length, 1);
-    responses.set('load_git_diffs', new Error('unreadable'));
-    await send(id, { type: 'diffs_changed', hostId: 'local', sessionPath: '/session' });
-    await settled();
-    assert.deepEqual(pool.gitDiffs(client), {});
-    assert.match(errors[0], /Could not load saved project changes: unreadable/);
-    responses.set('load_git_diffs', { newer: patch });
-    pool.bind('local', 'session', client);
-    await settled();
-    assert.deepEqual(pool.gitDiffs(client), { newer: patch });
-  });
-
-  test('copied diffs retain only requested message ids and ignore obsolete source loads', async () => {
-    const pending = Promise.withResolvers();
-    responses.set('load_git_diffs', args => args.sessionPath === '/session' ? pending.promise : { keep: patch, discard: patch });
-    const client = pool.forSession(session);
-    await pool.copySavedDiffs(client, '/source', '/destination', new Set(['keep']));
-    pending.resolve({ stale: patch }); await settled();
-    assert.deepEqual(pool.gitDiffs(client), { keep: patch });
-    assert.deepEqual(commands('save_git_diffs')[0].args, { sessionPath: '/destination', snapshots: { keep: patch }, hostId: 'local' });
-
-    for (const [source, destination] of [[undefined, '/a'], ['/a', undefined], ['/a', '/a']]) await pool.copySavedDiffs(client, source, destination);
-    assert.equal(commands('save_git_diffs').length, 1);
-    await pool.copySavedDiffs(client, '/source', '/all');
-    assert.deepEqual(pool.gitDiffs(client), { keep: patch, discard: patch });
-  });
-
   test('settings reconnect only transports whose remote connection changed', async () => {
     pool.create({ cwd: '/repo' });
     const remote = pool.create({ cwd: '/repo', hostId: 'remote' });
@@ -208,9 +171,6 @@ describe('session runtime pool', () => {
     assert.equal(commands('start_pi').length, 1);
     assert.equal(commands('start_pi')[0].args.hostId, 'remote');
   });
-
-
-
 
   test('delayed pane cleanup cannot release a transport reused by a visible pane', async () => {
     const client = pool.forSession(session); await connect(client);

@@ -1,12 +1,12 @@
 import { type Accessor, createMemo } from "solid-js";
 import { createMemoFields, createSubscription, type StateUpdate } from "./solid";
 
-import type { AgentState, ChatMessage, GitDiffSnapshots, Model, RpcEvent, SlashCommand } from "../types";
+import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
 import { z } from "zod";
 import { wireMessageSchema } from "./messageSchemas";
 
-type SessionResource = GitDiffSnapshots | Array<RpcEvent | undefined>;
+type SessionResource = Array<RpcEvent | undefined>;
 
 const toolPayloadSchema = wireMessageSchema.pick({ content: true, details: true, toolInput: true, nestedCalls: true });
 

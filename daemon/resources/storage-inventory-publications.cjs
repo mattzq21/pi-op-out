@@ -3,7 +3,6 @@ const path = require('node:path');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { retainedDependencies } = require('./session-broker/session-publication.cjs');
-const { proof } = require('./session-broker/session-publication-io.cjs');
 const { addRoot } = require('./storage-inventory-roots.cjs');
 const { createObservation, observeEntry, recordGoals } = require('./storage-inventory-owners.cjs');
 
@@ -50,19 +49,6 @@ async function transcripts(diagnostic, journal, discovery, transcript) {
   }
 }
 
-function sidecars(diagnostic, discovery) {
-  for (const sidecar of diagnostic.sidecars) {
-    const record = artifact(discovery, sidecar.path, diagnostic, 'active-conversations', 'Declared publication sidecar in ' + diagnostic.journalPath + '; declared bytes are not allocated bytes', sidecar.identity);
-
-    try {
-      const actual = proof(sidecar.path);
-
-      if (sidecar.identity !== undefined && actual.identity !== sidecar.identity || sidecar.bytes !== undefined && actual.bytes !== sidecar.bytes || sidecar.digest !== undefined && actual.digest !== sidecar.digest) throw new Error('Publication sidecar differs from its declared identity, size or digest');
-      record.provenance.push('Observed sidecar identity: ' + actual.identity + '; logical bytes: ' + actual.bytes);
-    } catch (error) { record.ownership = 'unattributed'; discovery.warnings.push(sidecar.path + ': publication sidecar coverage unresolved: ' + error.message + '; retained'); }
-  }
-}
-
 async function namespaces(profile, discovery) {
   for (const name of ['session-publications', 'session-publication-locks', 'session-publication-quarantine']) {
     const directory = path.join(profile, name);
@@ -91,8 +77,6 @@ async function discoverPublicationDiagnostics(profile, discovery, transcript) {
 
   for (const diagnostic of diagnostics) {
     contractGoals(diagnostic, discovery);
-
-    sidecars(diagnostic, discovery);
 
     try { await transcripts(diagnostic, journalProof(profile, diagnostic), discovery, transcript); }
     catch (error) { discovery.warnings.push(diagnostic.journalPath + ': publication transcript coverage unavailable: ' + error.message); }

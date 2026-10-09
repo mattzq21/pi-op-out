@@ -3,8 +3,6 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { Message } from '../../clients/ui/components/Message.tsx';
-import { DiffViewer } from '../../clients/ui/components/DiffViewer.tsx';
-import { parseDiff } from '../../clients/ui/lib/diff.ts';
 
 describe('message rendering', () => {
   let dom, view, copied, opened, openError;
@@ -22,7 +20,6 @@ describe('message rendering', () => {
   const click = async element => act(async () => element.click());
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const contextMenu = async link => act(async () => link.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 100, clientY: 100 })));
-
 
   test('system messages and compact tool status hide raw payloads until debug mode is enabled', async () => {
     await render({ role: 'system', content: 'status message' }); assert.equal(document.querySelector('[role=status]').textContent, 'status message');
@@ -132,16 +129,6 @@ describe('message rendering', () => {
     assert.equal(document.querySelector('.reasoning-text').textContent.trim(), 'Reasoning'); assert.match(document.querySelector('.cache-hit-rate').textContent, /^75%/);
     assert.equal(document.querySelector('.cache-hit-rate').getAttribute('aria-label'), 'Cache 75%, 3000/4000');
     await click(document.querySelector('.message-actions .icon-button')); assert.deepEqual(copied, ['Answer']);
-  });
-
-  test('diff previews follow keyboard focus and render changed tokens, line numbers and warnings', async () => {
-    const files = parseDiff('diff --git a/a b/a\n@@ -1,2 +1,2 @@\n-const a = 1;\n+const a = 2;\n context\n\\ No newline at end of file');
-    view = await renderComponent(DiffViewer, { files, warnings: ['Partial snapshot'] });
-    assert.match(document.body.textContent, /1 file/); assert.match(document.body.textContent, /Partial snapshot/); assert.equal(document.querySelector('.diff-file'), null);
-    await act(async () => document.querySelector('.diff-file-chip').focus());
-    assert.ok(control('a diff')); assert.equal(document.querySelectorAll('.diff-token.changed').length, 2); assert.match(document.querySelector('.diff-code').textContent, /const a = 2/);
-    const outside = document.createElement('button'); document.body.append(outside); await act(async () => outside.focus()); assert.equal(document.querySelector('.diff-file'), null);
-    await view.rerender({ files: [], warnings: [] }); assert.equal(document.querySelector('.diff-viewer'), null);
   });
 
 });

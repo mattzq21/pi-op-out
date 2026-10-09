@@ -1,22 +1,5 @@
 use super::*;
 
-#[test]
-fn closed_conversations_release_capture_writers_after_draining() {
-    let (daemon, _) = TestDaemon::new();
-    let (sender, receiver) = mpsc::channel();
-    daemon.0.captures.lock().unwrap().insert("closed".into(), sender);
-    let reader = thread::spawn(move || loop {
-        match receiver.recv_timeout(Duration::from_secs(2)) {
-            Ok(CaptureWork::Drain(reply)) => reply.send(Ok(())).unwrap(),
-            Ok(CaptureWork::Packet(_)) => {},
-            Err(mpsc::RecvTimeoutError::Disconnected) => return true,
-            Err(mpsc::RecvTimeoutError::Timeout) => return false,
-        }
-    });
-    handle_session_closed(&AppHandle::new(), &daemon.0, &json!({"sessionKey":"closed"}));
-    assert!(reader.join().unwrap(), "closed writer still has a sender");
-}
-
 struct TestDaemon(Arc<Daemon>);
 
 impl TestDaemon {
@@ -24,9 +7,9 @@ impl TestDaemon {
         let (input, packets) = tokio::sync::mpsc::unbounded_channel();
         let daemon = Arc::new(Daemon {
             alive: AtomicBool::new(true), remote_port: None, connection_config: None,
-            host: None, agent_prefix: "test:".into(), events: Mutex::new(()),
+            agent_prefix: "test:".into(), events: Mutex::new(()),
             worker: Mutex::new(None), events_worker: Mutex::new(None), input: Mutex::new(input),
-            pending: Mutex::new(HashMap::new()), captures: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
         });
         (Self(daemon), packets)
     }
@@ -58,25 +41,6 @@ fn daemon_connections_match_transport_configuration_and_reject_missing_hosts() {
 }
 
 #[test]
-fn capture_draining_targets_one_session_and_reports_stopped_writers() {
-    let (daemon, _) = TestDaemon::new();
-    let (first, first_rx) = mpsc::channel(); let (second, second_rx) = mpsc::channel();
-    daemon.0.captures.lock().unwrap().insert("first".into(), first);
-    daemon.0.captures.lock().unwrap().insert("second".into(), second);
-    let connection = daemon.0.clone();
-    let drain = thread::spawn(move || connection.drain_captures(Some("first")));
-    match first_rx.recv_timeout(Duration::from_secs(2)).unwrap() {
-        CaptureWork::Drain(completed) => completed.send(Ok(())).unwrap(),
-        CaptureWork::Packet(_) => panic!("expected a drain barrier"),
-    }
-    assert!(drain.join().unwrap().is_ok());
-    assert!(second_rx.try_recv().is_err());
-    assert!(daemon.0.drain_captures(Some("missing")).is_ok());
-    drop(second_rx);
-    assert_eq!(daemon.0.drain_captures(Some("second")).unwrap_err(), "The project changes writer stopped before finishing");
-}
-
-#[test]
 fn failed_daemon_input_cleans_up_pending_requests_and_shutdown_tolerates_unavailable_input() {
     let (daemon, _) = TestDaemon::new();
     let connection = daemon.0.clone();
@@ -95,28 +59,6 @@ fn shutdown_sends_a_standalone_packet_without_registering_a_request() {
     daemon.0.shutdown();
     assert_eq!(packets.blocking_recv().unwrap(), json!({"type":"shutdown"}));
     assert!(daemon.0.pending.lock().unwrap().is_empty());
-}
-
-#[test]
-fn draining_all_captures_waits_for_every_writer_and_reports_unacknowledged_work() {
-    for abandon_second in [false, true] {
-        let (daemon, _) = TestDaemon::new();
-        let (first, first_rx) = mpsc::channel(); let (second, second_rx) = mpsc::channel();
-        daemon.0.captures.lock().unwrap().insert("first".into(), first);
-        daemon.0.captures.lock().unwrap().insert("second".into(), second);
-        let connection = daemon.0.clone(); let (finished, result) = mpsc::channel();
-        let drain = thread::spawn(move || finished.send(connection.drain_captures(None)).unwrap());
-        let CaptureWork::Drain(first_done) = first_rx.recv_timeout(Duration::from_secs(2)).unwrap() else { panic!("expected drain") };
-        let CaptureWork::Drain(second_done) = second_rx.recv_timeout(Duration::from_secs(2)).unwrap() else { panic!("expected drain") };
-        first_done.send(Ok(())).unwrap();
-        assert!(matches!(result.try_recv(), Err(mpsc::TryRecvError::Empty)));
-        if abandon_second { drop(second_done); } else { second_done.send(Ok(())).unwrap(); }
-        let outcome = result.recv_timeout(Duration::from_secs(2)).unwrap();
-        if abandon_second {
-            assert_eq!(outcome.unwrap_err(), "Could not finish saving project changes before moving the conversation");
-        } else { assert!(outcome.is_ok()); }
-        drain.join().unwrap();
-    }
 }
 
 #[test]

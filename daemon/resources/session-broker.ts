@@ -5,7 +5,6 @@ import { promisify } from "node:util";
 import { registerRequestUserInput } from "./ask-user.ts";
 import { registerPauseControl } from "./session-broker/pause.ts";
 import { registerFastModeStatus } from "./session-broker/fast-mode.ts";
-import { registerTurnCapture } from "./session-broker/turn-capture.ts";
 import { registerForkAndForget } from "./session-broker/operations.ts";
 import { registerSubagents } from "./session-broker/subagents.ts";
 import { registerSubagentMailbox } from "./session-broker/subagent-mailbox.ts";
@@ -43,7 +42,6 @@ export default function sessionBroker(pi: ExtensionAPI) {
 
     ctx.ui.setStatus("pi-desktop-worktree-root", JSON.stringify(root));
   });
-  registerTurnCapture(pi);
   registerPauseControl(pi);
   registerFastModeStatus(pi);
   registerForkAndForget(pi);

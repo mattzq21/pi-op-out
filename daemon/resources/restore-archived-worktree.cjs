@@ -10,7 +10,6 @@ const transactions = require('./session-transactions.cjs');
 const { canonicalTranscriptBasename } = require('./transcript-identity.cjs');
 const shared = require('./archive-resource-restore.cjs');
 
-
 const configuredRoot = process.env.PIOP_RESTORE_ROOT || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop');
 
 const root = fs.existsSync(configuredRoot) ? fs.realpathSync(configuredRoot) : path.resolve(configuredRoot);
@@ -122,7 +121,7 @@ function restoreArchives(files) {
     if (ids.has(record.header.id) || destinations.has(destination)) throw new Error('Duplicate conversation in restoration');
     ids.add(record.header.id); destinations.add(destination);
 
-    for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json.lock'), `${destination}.loop-detection.json`]) absent(target);
+    for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), `${destination}.loop-detection.json`]) absent(target);
 
     const shared = record.header.archiveResourceId ? resourcePlan(locations, record, destination) : existingDirectory(record);
     retainWorkingDirectory(record, shared);

@@ -93,7 +93,6 @@ export function createWorktreeActions(context: WorktreeContext) {
     setSessions((current) => [...current, session]);
     setComposerDraft(`${target.hostId}:${result.sessionId}`, beforePrompt ? textOf(sourceMessage.content) : "");
     const branchTransport = capturedRuntimePool.forSession(session);
-    await capturedRuntimePool.refreshSavedDiffs(branchTransport, result.sessionPath);
 
     setComposerUploads(branchTransport, beforePrompt && Array.isArray(sourceMessage.content) ? sourceMessage.content.flatMap((part): ComposerUpload[] => part.type === "image" && part.data && part.mimeType ? [{ id: crypto.randomUUID(), name: "Attached image", kind: "image", byteSize: Math.ceil(part.data.length * 3 / 4), image: { type: "image", data: part.data, mimeType: part.mimeType } }] : []) : []);
     selectSession(session);

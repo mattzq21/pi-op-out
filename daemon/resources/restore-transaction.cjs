@@ -387,7 +387,6 @@ function rollback(root, transaction, _journal) {
 
   for (const item of [...transaction.moves].reverse()) undoRestorationMove(transaction, item);
 
-
   for (const resource of [...resourceTransactions(transaction)].reverse()) shared.rollback(root, resource);
   undoCreatedDirectories(transaction);
 
@@ -464,8 +463,6 @@ function sessionTransaction(root, { header, file, destination, result }) {
     trace: move(file, destination),
     moves: [
       [file.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.snapshots')],
-      [file.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json')],
-      [file.replace(/\.jsonl$/, '.diffs.json.lock'), destination.replace(/\.jsonl$/, '.diffs.json.lock')],
       [`${file}.loop-detection.json`, `${destination}.loop-detection.json`],
     ].flatMap(([source, target]) => exists(source) ? [move(source, target)] : []),
     ownership: {
@@ -614,7 +611,7 @@ function validateSessions(root, transaction, sessions) {
 }
 
 function restoreMappings(source, destination) {
-  return [['', ''], ['.snapshots', '.snapshots'], ['.diffs.json', '.diffs.json'], ['.diffs.json.lock', '.diffs.json.lock']].map(([left, right]) =>
+  return [['', ''], ['.snapshots', '.snapshots']].map(([left, right]) =>
     [left ? source.replace(/\.jsonl$/, left) : source, right ? destination.replace(/\.jsonl$/, right) : destination])
     .concat([[`${source}.loop-detection.json`, `${destination}.loop-detection.json`]]);
 }

@@ -38,7 +38,7 @@ impl Host {
         match name {
             "check_daemon_idle" | "prepare_daemon_restart" => return self.restart_request(packet).await,
             "agent_definitions" => return Ok(self.registry().agent_definitions.clone()),
-            "conversation_owner" | "ownership_drained" | "conversation_mutation" | "conversation_mutation_end" => return self.ownership_request(&packet).await,
+            "conversation_owner" | "conversation_mutation" | "conversation_mutation_end" => return self.ownership_request(&packet).await,
             "provider_auth" | "provider_auth_cancel_owner" | "plugin_call" | "plugin_status" => return self.services.handle(packet).await,
             "configure" | "attach" | "shutdown" => return self.lifecycle(packet).await,
             "retire" | "session_command" | "orchestration" => return self.conversation_request(packet).await,
@@ -50,7 +50,6 @@ impl Host {
     async fn ownership_request(&self, packet: &Value) -> Result<Value> {
         match kind(packet) {
             "conversation_owner" => self.ownership().owns(&text(packet, "sessionId"), &text(packet, "clientId"), flag(packet, "allowReleased")).map(Value::Bool),
-            "ownership_drained" => Ok(self.ownership_drained(packet)),
             "conversation_mutation" => self.begin_mutation(packet).await,
             _ => self.end_mutation(packet),
         }
@@ -255,21 +254,9 @@ impl Host {
         } else { Ok(Value::Null) }
     }
 
-    fn ownership_drained(&self, packet: &Value) -> Value {
-        if let Some(sender) = self.registry().drains.remove(&text(packet, "requestId")) {
-            let result = packet["error"]
-                .as_str()
-                .filter(|error| !error.is_empty())
-                .map(|error| Err(error.into()))
-                .unwrap_or(Ok(()));
-            let _ = sender.send(result);
-        }
-        Value::Null
-    }
-
     async fn begin_mutation(&self, packet: &Value) -> Result<Value> {
         let operation = text(packet, "operation");
-        let guard = self.ownership().begin(&text(packet,"sessionId"), &text(packet,"clientId"), &json!({"mutation":operation!="save_diffs","message":operation=="message","archive":operation=="archive","path":packet["sessionPath"],"archived":packet["archived"]})).await?;
+        let guard = self.ownership().begin(&text(packet,"sessionId"), &text(packet,"clientId"), &json!({"mutation":true,"message":operation=="message","archive":operation=="archive","path":packet["sessionPath"],"archived":packet["archived"]})).await?;
         if !guard.owned {
             return Err(ownership_error());
         }

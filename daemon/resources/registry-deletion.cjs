@@ -7,7 +7,7 @@ const { Check } = require('typebox/value');
 const targetsSchema = Type.Array(Type.Object({ sessionId: Type.String({ minLength: 1 }), path: Type.String() }));
 
 function removeSessionRecords(db, targets) {
-  for (const table of ['session_diff_state', 'session_diff_transfers', 'chat_notes', 'note_editor_leases', 'snapshot_comparison_records', 'snapshot_preparations', 'snapshot_metadata', 'transcript_references']) {
+  for (const table of ['chat_notes', 'note_editor_leases', 'transcript_references']) {
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
     const remove = db.prepare(`DELETE FROM ${table} WHERE session_id=lower(?)`);
 

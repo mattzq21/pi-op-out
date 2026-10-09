@@ -1,7 +1,7 @@
 import { createRoot, getOwner, onCleanup, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { useSessionMemory } from "../lib/sessionMemory";
-import { SessionRuntimePool, useTurnDiffs } from "../lib/sessionRuntimePool";
+import { SessionRuntimePool } from "../lib/sessionRuntimePool";
 import { useChatSession } from "../lib/useChatSession";
 import type { AgentState } from "../types";
 import { conversationSource } from "./transcript";
@@ -10,7 +10,7 @@ import type { PluginConversation } from "./types";
 export function followConversation(pool: SessionRuntimePool, transport: NativeTransport, initialState: AgentState): Accessor<PluginConversation> {
   onCleanup(pool.observe(transport));
   const memory = useSessionMemory(() => transport, () => initialState);
-  const gitDiffs = useTurnDiffs(() => pool, () => transport);
+
   const owner = getOwner();
   let session: ReturnType<typeof useChatSession> | undefined;
   let disposeSession: (() => void) | undefined;
@@ -44,7 +44,7 @@ export function followConversation(pool: SessionRuntimePool, transport: NativeTr
       await current.refresh();
 
       if (!ownsSession(current)) return;
-      await pool.refreshSavedDiffs(transport, transport.currentSessionPath());
+
     } catch {
       if (ownsSession(current)) scheduleReconnect(2000);
     } finally { reconnecting = false; }
@@ -84,5 +84,5 @@ export function followConversation(pool: SessionRuntimePool, transport: NativeTr
 
   onCleanup(() => { stopped = true; clearTimeout(retryTimer); unsubscribe(); unsubscribeView(); disposeSession?.(); });
 
-  return conversationSource(() => transport.currentHostId(), () => memory, gitDiffs);
+  return conversationSource(() => transport.currentHostId(), () => memory);
 }

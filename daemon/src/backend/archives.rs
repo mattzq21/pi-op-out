@@ -142,7 +142,7 @@ pub(super) fn remote_session_file(path: &str, archived: bool, command: impl FnOn
     } else {
         ("sessions", "Could not locate Piop session", "Only session files in this Piop profile can be opened")
     };
-    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/{area}" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) exit 1 ;; esac"#, shell_quote(path));
+    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/{area}" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(path));
     let output = run_limited(&mut command(script), MAX_GIT_PATH_LIST_BYTES, context)?;
     if !output.status.success() { return Err(rejected.into()); }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
@@ -155,7 +155,6 @@ fn retire_archived_session(app: &AppHandle, client: &PiRuntime, host_id: &str, s
         let path = desktop_session_file(&settings, host_id, session_path)?;
         let key = session_identity(&settings, host_id, &path)?;
         if daemon.alive.load(Ordering::SeqCst) { daemon.request(json!({"type":"retire","sessionKey":key,"sessionPath":path,"archive":true}))?; }
-        daemon.drain_captures(Some(&key))?;
     }
 
     Ok(())
@@ -221,8 +220,7 @@ fn session_descendants(app: &AppHandle, host_id: &str, session_path: &str, archi
 pub(super) fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let file_name = Path::new(session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
     let destination = format!("{}-{file_name}", Uuid::new_v4());
-    let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
-    let remote = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/{STORAGE_DIRECTORY}/archived"; mkdir -p "$archive" || exit 1; diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || exit 1; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(session_path), shell_quote(&diff_destination), shell_quote(&destination));
+    let remote = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/{STORAGE_DIRECTORY}/archived"; mkdir -p "$archive" && mv -- "$target" "$archive"/{} ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(session_path), shell_quote(&destination));
     let remote = format!(r#"{remote} && {{ rm -f -- "$target.loop-detection.json" || true; }}"#);
     let output = command(remote).output().map_err(|error| error.to_string())?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
@@ -241,13 +239,7 @@ pub(super) fn archive_local_session(home: &Path, session_path: &str) -> Result<(
         let extension = source.extension().and_then(|value| value.to_str()).unwrap_or("jsonl");
         destination = archive_dir.join(format!("{stem}-{}.{}", Uuid::new_v4(), extension));
     }
-    let diff_source = source.with_extension("diffs.json"); let diff_destination = destination.with_extension("diffs.json");
-    let moved_diff = if diff_source.exists() {
-        if let Err(error) = fs::rename(&diff_source, &diff_destination) { return Err(format!("Could not archive session diffs: {error}")); }
-        true
-    } else { false };
     if let Err(error) = fs::rename(&source, &destination) {
-        if moved_diff { let _ = fs::rename(&diff_destination, &diff_source); }
         return Err(format!("Could not archive session: {error}"));
     }
     let _ = fs::remove_file(format!("{}.loop-detection.json", source.display()));

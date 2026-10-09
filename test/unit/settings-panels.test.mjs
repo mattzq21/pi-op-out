@@ -26,17 +26,14 @@ describe('settings panels', () => {
   const archive = (name, extra = {}) => ({ id: name, name, path: `/${name}.jsonl`, cwd: '/repo', byteSize: 42, modifiedAt: 100, deletable: true, ...extra });
   const host = (extra = {}) => ({ hostId: 'local', hostName: 'Local', categories: [], archives: [], warnings: [], ...extra });
 
-
-
-
   test('storage scan renders per-host categories, approximate totals, warnings and inaccessible hosts', async () => {
     const pending = Promise.withResolvers(); responses.set('storage_report', () => pending.promise);
     await render(StorageSettings); assert.match(document.querySelector('[role=status]').textContent, /Scanning storage/);
-    const categories = [{ id: 'active-conversations', byteSize: 500, itemCount: 1 }, { id: 'archived-conversations', byteSize: 2048, itemCount: 2 }, { id: 'project-checkpoints', byteSize: 1024 ** 2, itemCount: 1, estimated: true }, { id: 'git-diff-snapshots', byteSize: 12 * 1024 ** 3, itemCount: 3 }, { id: 'temporary-chats', byteSize: 1024 ** 4, itemCount: 1 }];
+    const categories = [{ id: 'active-conversations', byteSize: 500, itemCount: 1 }, { id: 'archived-conversations', byteSize: 2048, itemCount: 2 }, { id: 'project-checkpoints', byteSize: 1024 ** 2, itemCount: 1, estimated: true }, { id: 'temporary-chats', byteSize: 1024 ** 4, itemCount: 1 }];
     await act(async () => pending.resolve({ hosts: [host({ categories, warnings: ['Repository missing'] }), host({ hostId: 'remote', hostName: 'Remote', error: 'offline' })] }));
     const text = document.body.textContent;
 
-    for (const expected of ['About ', '500 B', '2.00 KiB', '1.00 MiB', '12.0 GiB', '1.00 TiB', '1 conversation', '2 conversations', '1 ref', 'Storage unavailable', 'offline']) assert.ok(text.includes(expected), expected);
+    for (const expected of ['About ', '500 B', '2.00 KiB', '1.00 MiB', '1.00 TiB', '1 conversation', '2 conversations', '1 ref', 'Storage unavailable', 'offline']) assert.ok(text.includes(expected), expected);
     assert.equal(document.querySelector('.storage-warning').dataset.tooltip, 'Repository missing');
     assert.equal(button('Refresh').disabled, false);
   });

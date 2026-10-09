@@ -6,9 +6,7 @@ import { registerPreparedCheckpoints } from "./fork-preparation.ts";
 import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
 import { resolvePromptHistory, recordRecoveredCheckpoints, indexCheckpoint } from "./prompt-history.ts";
 import { writeSessionFile, publicationRetainsDependencies } from "../session-broker.ts";
-import { copyRetainedStoreLocked } from "../session-broker/git-diff-store.cjs";
 import { retainHistory, releaseHistory, rootForDirectory } from "../session-broker/goal-assets.cjs";
-import { drainForkCaptures } from "../session-broker/turn-capture.ts";
 import { Check } from "typebox/value";
 import { existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
@@ -269,12 +267,12 @@ async function createCheckpointWorktree(root: string, branch: string, commit: st
   } finally { await lock.close(); }
 }
 
-async function branchCheckpoint(pi: ExtensionAPI, ctx: ExtensionContext, entryId: string, name: string, afterResponse = false) {
+async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: string, afterResponse = false) {
   const root = await repositoryRoot(ctx.cwd);
 
   if (!root) throw new Error("Project is not a Git repository");
   const owner = ctx.sessionManager.getSessionId();
-  const source = await checkpointSource(ctx, owner);
+  await checkpointSource(ctx, owner);
   const history = await resolvePromptHistory(ctx.sessionManager.getBranch(entryId), ctx.sessionManager.getEntries(), owner, resolvePromptCommit);
   validateBranchMessage(history, entryId, afterResponse);
   let checkpoint = precedingCheckpoint(history, afterResponse);
@@ -298,13 +296,10 @@ async function branchCheckpoint(pi: ExtensionAPI, ctx: ExtensionContext, entryId
     const entries = await branchSessionEntries(ctx, root, id, history, owner, checkpoint, timestamp, target, afterResponse, entryId, createdRefs);
     goalAssets = retainHistory(assetRoot, entries, id, sessionPath);
     const [header, ...retained] = entries;
-    const ids = new Set(retained.slice(0, -1).map(entry => entry.id));
 
     await writeSessionFile(sessionPath, [{ ...header, goalAssets }, ...retained], {
       dependencies: { workspace: { path: target, kind: "created-worktree", branch }, checkpoints: createdRefs },
-      sidecars: [],
-      databaseDiffs: true,
-      beforeWrite: () => copyCheckpointDiffs(pi, ctx, source, sessionPath, ids, owner, id),
+
     });
 
     return { branch, path: target, sessionPath, sessionId: id };
@@ -324,13 +319,6 @@ async function checkpointSource(ctx: ExtensionContext, owner: string) {
   if (!source || await sessionIdFromFile(source) !== owner) throw new Error("Save this conversation before branching it; its source must match the current session");
 
   return source;
-}
-
-async function copyCheckpointDiffs(pi: ExtensionAPI, ctx: ExtensionContext, source: string, destination: string, ids: ReadonlySet<string>, owner: string, destinationId: string) {
-  await drainForkCaptures(pi.events, ctx, ids);
-
-  if (ctx.sessionManager.getSessionId() !== owner || await checkpointSource(ctx, owner) !== source) throw new Error("Conversation changed while its checkpoint branch was being prepared");
-  copyRetainedStoreLocked(source.replace(/\.jsonl$/, ".diffs.json"), destination.replace(/\.jsonl$/, ".diffs.json"), ids, owner, destinationId);
 }
 
 function releaseCheckpointAssets(ctx: ExtensionContext, root: string, goalAssets: ReturnType<typeof retainHistory> | undefined, id: string) {
@@ -550,7 +538,7 @@ export default function diffWatch(pi: ExtensionAPI) {
     request.ready = (async () => {
       if (!Check(branchRequestSchema, request.payload)) throw new Error("Invalid checkpoint branch request");
       const branch = request.payload;
-      const operation = snapshotQueue.then(() => branchCheckpoint(pi, ctx, branch.entryId, branch.name, branch.afterResponse === true));
+      const operation = snapshotQueue.then(() => branchCheckpoint(ctx, branch.entryId, branch.name, branch.afterResponse === true));
       snapshotQueue = operation.then(() => undefined, () => undefined);
 
       return operation;

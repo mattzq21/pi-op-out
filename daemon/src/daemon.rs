@@ -4,23 +4,16 @@ use super::*;
 #[path = "daemon_tests.rs"]
 mod tests;
 
-enum CaptureWork {
-    Packet(Value),
-    Drain(mpsc::Sender<Result<(), String>>),
-}
-
 pub(crate) struct Daemon {
     pub(crate) alive: AtomicBool,
     pub(crate) remote_port: Option<u16>,
     connection_config: Option<(String, String)>,
-    host: Option<RemoteHost>,
     agent_prefix: String,
     events: Mutex<()>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
     events_worker: Mutex<Option<thread::JoinHandle<()>>>,
     input: Mutex<tokio::sync::mpsc::UnboundedSender<Value>>,
     pending: Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>,
-    captures: Mutex<HashMap<String, mpsc::Sender<CaptureWork>>>,
 }
 
 impl Daemon {
@@ -41,9 +34,6 @@ impl Daemon {
     fn disconnect(self: &Arc<Self>, app: &AppHandle, runtime: &PiRuntime) {
         let _events = self.events.lock().unwrap_or_else(|error| error.into_inner());
         self.alive.store(false, Ordering::SeqCst);
-        if let Ok(captures) = self.captures.lock() {
-            for sender in captures.values() { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); }
-        }
         if let Ok(mut pending) = self.pending.lock() { for (_, sender) in pending.drain() { let _ = sender.send(Err("Host daemon disconnected".into())); } }
         let ids = runtime.disconnect_daemon(self);
         if let Ok(mut agents) = runtime.active_agents.lock() { agents.retain(|key, _| !key.starts_with(&self.agent_prefix) && !ids.contains(key)); }
@@ -81,22 +71,6 @@ impl Daemon {
         if let Some(events) = events { let _ = events.join(); }
     }
 
-    pub(crate) fn drain_captures(&self, session_key: Option<&str>) -> Result<(), String> {
-        let writers = self.captures.lock().map_err(|_| "Capture queue lock was poisoned")?.iter()
-            .filter(|(key, _)| session_key.is_none_or(|session_key| key.as_str() == session_key))
-            .map(|(_, sender)| sender.clone()).collect::<Vec<_>>();
-        let deadline = Instant::now() + Duration::from_secs(660);
-        let mut completions = Vec::new();
-        for writer in writers {
-            let (sender, receiver) = mpsc::channel();
-            writer.send(CaptureWork::Drain(sender)).map_err(|_| "The project changes writer stopped before finishing")?;
-            completions.push(receiver);
-        }
-        for completion in completions {
-            completion.recv_timeout(deadline.saturating_duration_since(Instant::now())).map_err(|_| "Could not finish saving project changes before moving the conversation")??;
-        }
-        Ok(())
-    }
 }
 
 fn connection_config(settings: &AppSettings, host_id: &str) -> Result<Option<(String, String)>, String> {
@@ -109,7 +83,7 @@ pub(crate) fn invalidate_changed(app: &AppHandle, runtime: &PiRuntime, settings:
     let mut daemons = runtime.connections.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?;
     let changed: Vec<_> = daemons.iter().filter(|(host_id, daemon)| !daemon.matches_connection(settings, host_id)).map(|(host_id, _)| host_id.clone()).collect();
     for host_id in changed {
-        if let Some(daemon) = daemons.get(&host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.wait_shutdown(); daemon.drain_captures(None)?; }
+        if let Some(daemon) = daemons.get(&host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.wait_shutdown(); }
         daemons.remove(&host_id);
     }
     Ok(())
@@ -130,9 +104,8 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, _broker: &BrokerRunt
     if host_id != "local" { return Err("Remote workers must be managed through their Piop daemon".into()); }
     let mut daemons = runtime.connections.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?;
     let connection_config = connection_config(settings, host_id)?;
-    let host = if host_id == "local" { None } else { Some(remote_host(settings, host_id)?.clone()) };
     if let Some(daemon) = reuse_connection(&mut daemons, app, runtime, settings, host_id, &connection_config)? { return Ok(daemon); }
-    let (daemon, packets) = spawn_connection(host_id, connection_config, host)?;
+    let (daemon, packets) = spawn_connection(host_id, connection_config)?;
     daemons.insert(host_id.into(), daemon.clone());
     let configuration_host_id = host_id.to_owned();
     let failure_app = app.clone();
@@ -147,102 +120,6 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, _broker: &BrokerRunt
         return Err(error);
     }
     Ok(daemon)
-}
-
-fn retry_capture(app: &AppHandle, host_id: &str, path: &str, host: Option<&RemoteHost>) -> Result<(), String> {
-    if crate::git_ops::git_diff_retry::retry_pending_git_diffs(path, host)? {
-        let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path}));
-    }
-    Ok(())
-}
-
-fn retain_capture_packet(packet: &Value, baseline: Option<&str>, host: Option<&RemoteHost>) -> Result<(), String> {
-    if packet["durable"] == true { return Ok(()); }
-    crate::git_ops::git_diff_retry::retain_pending_git_diff(packet, baseline.ok_or("Comparison baseline is missing")?, host)
-}
-
-struct CaptureWriter {
-    app: AppHandle,
-    daemon: std::sync::Weak<Daemon>,
-    host_id: String,
-    host: Option<RemoteHost>,
-    baselines: HashMap<String, String>,
-    session_path: Option<String>,
-    pending: Vec<Value>,
-}
-
-impl CaptureWriter {
-    fn retry(&mut self) -> Result<(), String> {
-        retry_captures(&mut self.pending, &self.app, &self.host_id, self.host.as_ref())?;
-        if let Some(path) = &self.session_path { retry_capture(&self.app, &self.host_id, path, self.host.as_ref())?; }
-        Ok(())
-    }
-
-    fn run(mut self, receiver: mpsc::Receiver<CaptureWork>) {
-        while let Ok(work) = receiver.recv() {
-            match work {
-                CaptureWork::Packet(packet) => self.packet(packet),
-                CaptureWork::Drain(completion) => { let _ = completion.send(self.retry()); }
-            }
-        }
-        for baseline in self.baselines.into_values() { let _ = discard_git_tree_at_host(&baseline, self.host.as_ref()); }
-    }
-
-    fn packet(&mut self, mut packet: Value) {
-        if let Some(path) = packet["sessionPath"].as_str() { self.session_path = Some(path.to_owned()); }
-        let _ = self.retry();
-        if update_capture_baseline(&mut self.baselines, &packet, self.host.as_ref()) { return; }
-        let Some(turn_id) = packet["turnId"].as_str() else { return; };
-        if let Some(baseline) = self.baselines.remove(turn_id) { packet["baseline"] = Value::String(baseline); }
-        if let Err(error) = save_capture_packet(&self.app, &self.host_id, &packet, self.host.as_ref()) {
-            self.pending.push(packet);
-            if self.daemon.upgrade().is_some_and(|daemon| daemon.alive.load(Ordering::SeqCst)) {
-                let _ = self.app.emit("pi://daemon-error", json!({"hostId":self.host_id,"line":format!("Could not save project changes; comparison retained for retry: {error}")}));
-            }
-        }
-    }
-}
-
-fn persist_capture(app: &AppHandle, daemon: &Arc<Daemon>, host_id: &str, packet: Value) {
-    let Some(key) = packet["sessionKey"].as_str() else { return; };
-    let Ok(mut captures) = daemon.captures.lock() else { return; };
-    let sender = captures.entry(key.into()).or_insert_with(|| {
-        let (sender, receiver) = mpsc::channel::<CaptureWork>();
-        let writer = CaptureWriter {
-            app: app.clone(), daemon: Arc::downgrade(daemon), host_id: host_id.to_owned(), host: daemon.host.clone(),
-            baselines: HashMap::new(), session_path: None, pending: Vec::new(),
-        };
-        thread::spawn(move || writer.run(receiver));
-        sender
-    });
-    let _ = sender.send(CaptureWork::Packet(packet));
-}
-
-fn save_capture_packet(app: &AppHandle, host_id: &str, packet: &Value, host: Option<&RemoteHost>) -> Result<(), String> {
-    let baseline = packet["baseline"].as_str(); let current = packet["current"].as_str();
-    let (Some(baseline), Some(current), Some(cwd), Some(path), Some(id)) = (baseline, current, packet["cwd"].as_str(), packet["sessionPath"].as_str(), packet["messageId"].as_str()) else {
-        if let Some(baseline) = baseline { let _ = discard_git_tree_at_host(baseline, host); }
-        if let Some(current) = current { let _ = discard_git_tree_at_host(current, host); }
-        return Ok(());
-    };
-    if packet["durable"].is_boolean() {
-        retain_capture_packet(packet, Some(baseline), host)?;
-        crate::git_ops::git_diff_retry::retry_pending_git_diffs(path, host)?;
-        let _ = discard_git_tree_at_host(baseline, host);
-        let _ = discard_git_tree_at_host(current, host);
-    }
-    else { crate::git_ops::git_diffs::persist_capture_diff(path, id, cwd, baseline, current, host)?; }
-    let _ = app.emit("pi://event", json!({"type":"diffs_changed","hostId":host_id,"sessionPath":path}));
-    Ok(())
-}
-
-fn retry_captures(failures: &mut Vec<Value>, app: &AppHandle, host_id: &str, host: Option<&RemoteHost>) -> Result<(), String> {
-    let mut retained = Vec::new(); let mut errors = Vec::new();
-    for packet in failures.drain(..) {
-        if let Err(error) = save_capture_packet(app, host_id, &packet, host) { retained.push(packet); errors.push(error); }
-    }
-    *failures = retained;
-    if errors.is_empty() { Ok(()) } else { Err(format!("Project changes are pending; snapshots preserved: {}", errors.join("; "))) }
 }
 
 pub(crate) fn spec(command: &Command) -> Value {
@@ -283,21 +160,8 @@ fn handle_session_state(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str
                     let _ = app.emit("pi://sessions-changed", ());
 }
 
-fn close_session_captures(connection: &Daemon, key: &str, scope: Option<&str>) -> Result<(), String> {
-    connection.drain_captures(Some(key))?;
-    if let Some(scope) = scope { crate::git_ops::git_diff_retry::release_snapshot_reader(scope, connection.host.as_ref())?; }
-    let mut captures = connection.captures.lock().map_err(|_| "Capture queue lock was poisoned")?;
-    if let Some(sender) = captures.remove(key) { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); }
-    Ok(())
-}
-
 fn handle_session_closed(app: &AppHandle, connection: &Arc<Daemon>, packet: &Value) {
                     let runtime = app.state::<PiRuntime>();
-                    if let Some(key) = packet["sessionKey"].as_str() {
-                        if let Err(error) = close_session_captures(connection, key, packet["readerScope"].as_str()) {
-                            let _ = app.emit("pi://daemon-error", json!({"line":error}));
-                        }
-                    }
                     if let Ok(mut agents) = runtime.active_agents.lock() { agents.remove(&format!("{}{}", connection.agent_prefix, packet["sessionKey"].as_str().unwrap_or_default())); };
                     let _ = app.emit("pi://sessions-changed", ());
 }
@@ -325,16 +189,16 @@ fn read_packets(app: AppHandle, connection: Arc<Daemon>, host_id: String, packet
 
 fn reuse_connection(daemons: &mut HashMap<String, Arc<Daemon>>, app: &AppHandle, runtime: &PiRuntime, settings: &AppSettings, host_id: &str, connection_config: &Option<(String, String)>) -> Result<Option<Arc<Daemon>>, String> {
     if let Some(daemon) = daemons.get(host_id).filter(|daemon| daemon.alive.load(Ordering::SeqCst) && &daemon.connection_config == connection_config) { daemon.configure(runtime, settings, host_id)?; return Ok(Some(daemon.clone())); }
-    if let Some(daemon) = daemons.get(host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.wait_shutdown(); daemon.drain_captures(None)?; }
+    if let Some(daemon) = daemons.get(host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.wait_shutdown(); }
     daemons.remove(host_id);
     Ok(None)
 }
 
-fn spawn_connection(host_id: &str, connection_config: Option<(String, String)>, host: Option<RemoteHost>) -> Result<(Arc<Daemon>, mpsc::Receiver<Value>), String> {
+fn spawn_connection(host_id: &str, connection_config: Option<(String, String)>) -> Result<(Arc<Daemon>, mpsc::Receiver<Value>), String> {
     let auth_executable = pi_executable().to_string_lossy().into_owned();
     let (output, packets) = mpsc::channel();
     let supervisor = crate::host_supervisor::start(home_dir()?, STORAGE_DIRECTORY.into(), auth_executable, output)?;
-    let daemon = Arc::new(Daemon { alive: AtomicBool::new(true), remote_port: None, connection_config, host, agent_prefix: format!("daemon:{host_id}:{}:", Uuid::new_v4()), events: Mutex::new(()), worker: Mutex::new(Some(supervisor.worker)), events_worker: Mutex::new(None), input: Mutex::new(supervisor.input), pending: Mutex::new(HashMap::new()), captures: Mutex::new(HashMap::new()) });
+    let daemon = Arc::new(Daemon { alive: AtomicBool::new(true), remote_port: None, connection_config, agent_prefix: format!("daemon:{host_id}:{}:", Uuid::new_v4()), events: Mutex::new(()), worker: Mutex::new(Some(supervisor.worker)), events_worker: Mutex::new(None), input: Mutex::new(supervisor.input), pending: Mutex::new(HashMap::new()) });
     Ok((daemon, packets))
 }
 
@@ -360,36 +224,13 @@ fn handle_response(connection: &Daemon, packet: &Value) {
 
 fn handle_packet(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str, packet: Value) {
             match packet["type"].as_str() {
-                Some("ownership_drain") => {
-                    let connection = connection.clone();
-                    thread::spawn(move || {
-                        let error = connection.drain_captures(packet["sessionKey"].as_str()).err();
-                        let _ = connection.notify(json!({"type":"ownership_drained","requestId":packet["id"],"error":error}));
-                    });
-                },
                 Some("response") => handle_response(connection, &packet),
                 Some("event") => handle_event(app, connection, &packet),
                 Some("session_state") => handle_session_state(app, connection, host_id, &packet),
                 Some("session_closed") => handle_session_closed(app, connection, &packet),
                 Some("session_removed") => { let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionId":packet["sessionId"],"sessionPath":packet["sessionPath"]})); },
-                Some("turn_capture") => persist_capture(app, connection, host_id, packet.clone()),
                 _ => handle_notice(app, host_id, &packet),
             }
-}
-
-fn update_capture_baseline(baselines: &mut HashMap<String, String>, packet: &Value, host: Option<&RemoteHost>) -> bool {
-                if packet["phase"].as_str() == Some("closed") {
-                    for (_, baseline) in baselines.drain() { let _ = discard_git_tree_at_host(&baseline, host); }
-                    return true;
-                }
-                let Some(turn_id) = packet["turnId"].as_str() else { return true; };
-                if packet["phase"].as_str() == Some("start") {
-                    if let Some(baseline) = packet["baseline"].as_str() {
-                        if let Some(previous) = baselines.insert(turn_id.into(), baseline.into()) { let _ = discard_git_tree_at_host(&previous, host); }
-                    }
-                    return true;
-                }
-    false
 }
 
 #[derive(Default)]

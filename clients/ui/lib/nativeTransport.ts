@@ -7,7 +7,6 @@ import { PromptControls } from "./promptControls";
 import { nativeCall as call } from "./nativeCall";
 import { NativeSettings } from "./nativeSettings";
 import { locateConversation } from "./conversationLookup";
-import { appendGitDiffs, readGitDiffs } from "./gitDiffPersistence";
 import { nativeTerminals } from "./nativeTerminals";
 import { ConversationCommands } from "./conversationCommands";
 import { commandListingSchema } from "./fastModeCommands";
@@ -15,7 +14,7 @@ import { htmlPreviewSize, listen, type UnlistenFn } from "./platform";
 import { restoredSessionTarget, targetedWindowSession } from "./sessionResume";
 import { inspectRecoveryDirectory, recoverSessionDirectory } from "./sessionRecovery";
 import type { GroupChange, SessionGroup, SessionGroupSeed } from "./sessionGroups";
-import type { AppSettings, GitDiffSnapshots, RpcCommand, RpcEvent, StorageReport } from "../types";
+import type { AppSettings, RpcCommand, RpcEvent, StorageReport } from "../types";
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call("new_window", { target }, z.string());
 
@@ -508,10 +507,6 @@ export class NativeTransport {
 
   return () => this.listeners.delete(listener); }
   listSessions() { return call("list_sessions", undefined, z.array(sessionSummarySchema)); }
-  loadGitDiffs(sessionPath: string, hostId = "local") {
-    return readGitDiffs(sessionPath, hostId);
-  }
-  saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId = "local") { return appendGitDiffs(sessionPath, snapshots, hostId); }
   archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionPath, hostId, terminalIds }, voidResultSchema); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call("relocate_session", { sessionPath, cwd, hostId }, voidResultSchema); }
   inspectMissingSession(sessionPath: string, hostId = "local") { return inspectRecoveryDirectory(sessionPath, hostId); }

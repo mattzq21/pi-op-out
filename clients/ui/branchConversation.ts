@@ -118,7 +118,6 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       forked = true;
       let nextState = await ownerTransport.command({ type: "get_state" }, agentStateSchema);
       let history = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
-      await runtimePool.refreshSavedDiffs(ownerTransport, nextState.sessionFile);
 
       if (destinationCwd) {
         ({ nextState, history } = await relocateBranch(nextState, destinationCwd));

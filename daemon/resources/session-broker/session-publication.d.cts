@@ -14,8 +14,6 @@ export interface PublicationOptions {
     checkpoints?: { root: string; ref: string; commit: string }[];
   };
   beforeWrite?: () => void | Promise<void>;
-  sidecars?: string[];
-  databaseDiffs?: boolean;
 }
 
 export interface PublicationDependencies {
@@ -31,7 +29,6 @@ export interface DiagnosticPublication {
   journalPath: string;
   transcriptPaths: string[];
   dependencies?: PublicationDependencies;
-  sidecars: { path: string; identity?: string; bytes?: number; digest?: string }[];
 }
 
 export interface SessionPublication {

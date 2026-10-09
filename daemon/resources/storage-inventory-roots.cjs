@@ -202,7 +202,7 @@ async function chatGptRoots(profile, discovery) {
 }
 
 async function discoverRoots(profile) {
-  const discovery = { repositories: new Map(), cwds: new Map(), recovery: new Map(), legacy: new Map(), pendingSnapshots: new Map(), transfers: new Map(), retainedArtifacts: new Map(), chatgpt: new Map(), sessionPaths: new Set(), warnings: [] };
+  const discovery = { repositories: new Map(), cwds: new Map(), recovery: new Map(), legacy: new Map(), retainedArtifacts: new Map(), chatgpt: new Map(), sessionPaths: new Set(), warnings: [] };
   await readRegistry(profile, discovery);
   await recoveryRoots(profile, discovery);
   await chatGptRoots(profile, discovery);

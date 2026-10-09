@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { appendFileChanges, resumeMarker, isResumeMessage, checkpointLatestUser, cacheHitStats, normalizeMessage, applyAssistantMessageEvent, branchMessages } from '../../clients/ui/lib/messages.ts';
+import { resumeMarker, isResumeMessage, checkpointLatestUser, cacheHitStats, normalizeMessage, applyAssistantMessageEvent, branchMessages } from '../../clients/ui/lib/messages.ts';
 import { promptContext } from '../prompt-context-fixture.mjs';
 
 test('message normalization preserves content and selects stable identifiers and roles', () => {
@@ -74,25 +74,6 @@ test('streamed tool calls preserve identity without retaining arguments', () => 
   assert.deepEqual(applyAssistantMessageEvent(message, { type: 'toolcall_end', contentIndex: 2 }).content, message.content);
 });
 
-test('file-change snapshots attach to the last matching tool and sanitize extension data', () => {
-  const mapping = { toolCallId: 'call', path: 'a', absolutePath: '/repo/a', canonicalPath: '/repo/a' };
-  const data = { cwd: '/repo', patch: 'patch', toolCallIds: ['call', 42], paths: ['a', null], warnings: ['warning', 1], toolPaths: [null, {}, mapping] };
-  const entry = { id: 'snapshot', type: 'custom', customType: 'piop-file-changes', data };
-  const messages = [{ id: 'call', role: 'tool' }, { id: 'answer', role: 'assistant' }, { id: 'result', role: 'tool', toolCallId: 'call', fileChanges: [{ id: 'keep' }, { id: 'snapshot', patch: 'old' }] }, { id: 'tail', role: 'assistant' }];
-  const result = appendFileChanges(messages, entry);
-  assert.equal(result[0], messages[0]);
-  assert.equal(result[3], messages[3]);
-  assert.deepEqual(result[2].fileChanges, [{ id: 'keep' }, { id: 'snapshot', ...data, toolCallIds: ['call'], paths: ['a'], warnings: ['warning'], toolPaths: [mapping] }]);
-  assert.equal(messages[2].fileChanges[1].patch, 'old');
-  assert.equal(appendFileChanges(messages, { ...entry, type: 'message' }), messages);
-  assert.equal(appendFileChanges(messages, { ...entry, customType: 'other' }), messages);
-
-  for (const invalid of [undefined, {}, { ...data, cwd: null }, { ...data, patch: null }, { ...data, toolCallIds: null }, { ...data, paths: null }, { ...data, toolCallIds: [] }]) assert.equal(appendFileChanges(messages, { ...entry, data: invalid }), messages);
-  const minimal = appendFileChanges([messages[0]], { ...entry, data: { ...data, warnings: undefined, toolPaths: undefined } });
-  assert.deepEqual(minimal[0].fileChanges[0].warnings, []);
-  assert.deepEqual(minimal[0].fileChanges[0].toolPaths, []);
-});
-
 test('resume markers and checkpoints distinguish synthetic prompts from ordinary messages', () => {
   const marker = { type: 'custom', customType: 'pi-desktop-resume', data: { message: 'resume\nnow' } };
   assert.equal(resumeMarker(marker), 'resume\nnow');
@@ -132,8 +113,7 @@ test('branch reconstruction follows ancestry, hides resume prompts and attaches 
     custom('context2', 'context', 'pi-desktop-prompt-context', promptContext({ system: 999 })),
     msg('a', 'context2', 'assistant', [{ type: 'thinking', thinking: 'plan' }, { type: 'toolCall', id: 'call', name: 'read', arguments: { path: 'a' } }]),
     msg('t', 'a', 'toolResult', 'result', { toolCallId: 'call' }),
-    custom('files', 't', 'piop-file-changes', { cwd: '/repo', patch: '', paths: ['a'], toolCallIds: ['call'] }),
-    custom('r', 'files', 'pi-desktop-resume', { message: 'resume' }),
+    custom('r', 't', 'pi-desktop-resume', { message: 'resume' }),
     msg('synthetic', 'r', 'user', 'resume'),
     msg('final', 'synthetic', 'assistant', 'answer'),
     msg('sibling', 'u', 'assistant', 'other branch'),
@@ -144,7 +124,6 @@ test('branch reconstruction follows ancestry, hides resume prompts and attaches 
   assert.deepEqual(result[0].promptContext, promptContext({ system: 100 }));
   assert.equal(result[0].contextCheckpoint, true);
   assert.equal(result[2].toolInput, undefined);
-  assert.equal(result[2].fileChanges[0].id, 'files');
   assert.equal(entries[0].message.contextCheckpoint, undefined);
   assert.deepEqual(branchMessages(entries, null), []);
   assert.deepEqual(branchMessages(entries, 'missing'), []);

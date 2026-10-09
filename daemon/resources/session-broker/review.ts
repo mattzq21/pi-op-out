@@ -85,7 +85,7 @@ async function createReview(ctx: ExtensionContext, agentState: SessionAgentState
     { type: "custom", id: metadataId, parentId: null, timestamp, customType: "piop-review-parent", data: { parentSessionId: record.parentSessionId, sessionId, hostId: record.hostId, parentHostId: record.hostId, publicationId: record.publicationId } },
     { type: "custom", id: `${metadataId}-agent`, parentId: metadataId, timestamp, customType: "pi-define-agents-state", data: agentState },
     { type: "session_info", id: randomUUID().slice(0, 8), parentId: `${metadataId}-agent`, timestamp, name: "Code review" },
-  ], { review: { record, parentSessionPath }, sidecars: [], beforeWrite: () => signal?.throwIfAborted() });
+  ], { review: { record, parentSessionPath }, beforeWrite: () => signal?.throwIfAborted() });
 
   return { record, publication };
 }

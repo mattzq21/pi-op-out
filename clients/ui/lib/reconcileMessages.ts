@@ -22,7 +22,7 @@ export function upsertLiveMessage(messages: ChatMessage[], message: ChatMessage)
 
   if (index === -1) return [...messages, message];
   const previous = messages[index];
-  const next = { ...message, entryId: message.entryId ?? previous.entryId, toolInput: message.toolInput ?? previous.toolInput, details: message.details ?? previous.details, fileChanges: previous.fileChanges, promptContext: previous.promptContext };
+  const next = { ...message, entryId: message.entryId ?? previous.entryId, toolInput: message.toolInput ?? previous.toolInput, details: message.details ?? previous.details, promptContext: previous.promptContext };
 
   if (message.role === "assistant") next.content = reuseAssistantContent(previous.content, message.content);
 

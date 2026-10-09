@@ -6,7 +6,7 @@ function profile(file) {
   let directory = path.dirname(file);
 
   while (path.dirname(directory) !== directory) {
-    if (['sessions', 'archived', 'git-snapshots'].includes(path.basename(directory))) return path.dirname(directory);
+    if (['sessions', 'archived'].includes(path.basename(directory))) return path.dirname(directory);
     directory = path.dirname(directory);
   }
 }
@@ -104,20 +104,6 @@ function recordEntries(root, file, entries) {
   record(root, 'transcript', file, header.id, roots, true);
 }
 
-function captureRoots(capture) {
-  if (capture.ready === true) return [];
-
-  return [capture.cwd, ...[capture.baseline, capture.current].flatMap(token => token ? [JSON.parse(token).repository_root] : [])];
-}
-
-function recordCapture(root, kind, file, sessionId, capture) {
-  record(root, kind, file, sessionId, captureRoots(capture));
-}
-
-function replaceCaptures(root, kind, file, sessionId, captures) {
-  record(root, kind, file, sessionId, captures.flatMap(captureRoots), true);
-}
-
 function linked(root, targets) {
   if (!targets.length) return [];
 
@@ -142,11 +128,11 @@ function relocate(source, destination) {
 
   if (!root || !source.endsWith('.jsonl')) return;
   database(root, db => transaction(db, () => {
-    for (const [before, after] of [[source, destination], [source.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json')]]) {
+    for (const [before, after] of [[source, destination]]) {
       db.prepare('UPDATE OR REPLACE checkpoint_owner_links SET owner_path = ? WHERE owner_path = ?').run(after, before);
     }
   }));
   refresh(destination);
 }
 
-module.exports = { profile, recordCheckpoint, recordTranscript, recordCapture, replaceCaptures, linked, refresh, relocate };
+module.exports = { profile, recordCheckpoint, recordTranscript, linked, refresh, relocate };

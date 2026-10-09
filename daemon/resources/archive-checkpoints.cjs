@@ -5,7 +5,6 @@ const io = require('./session-transactions.cjs');
 const owners = require('./transaction-owner-locks.cjs');
 const resources = require('./archive-resources.cjs');
 const checkpoints = require('./worktree-checkpoint-preservation.cjs');
-const diffs = require('./session-broker/git-diff-store.cjs');
 const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 
 function targets(transaction) {
@@ -30,8 +29,6 @@ function read(file, archived) {
 }
 
 function map(record, target, resourceOwners) {
-  checkDiffs(record.file, target);
-
   if (!io.exists(target.path)) {
     if (usesCheckpointRoot(record, target)) throw new Error('A historical owner still references the removed archive path; recovery retained: ' + record.file);
 
@@ -76,58 +73,23 @@ function entryUsesRoot(entry, header, target) {
   return Boolean(ref && io.refValue(target.common, ref));
 }
 
-function captureUses(capture, target) {
-  if (capture.ready === true) return false;
-
-  if (io.inside(target.path, capture.cwd ?? '')) return true;
-
-  return [capture.baseline, capture.current].some(token => token && io.inside(target.path, JSON.parse(token).repository_root ?? ''));
-}
-
-function checkDiffs(file, target) {
-  const log = file.replace(/\.jsonl$/, '.diffs.json');
-
-  const state = owners.withFile(log + '.lock', () => diffs.readStore(log, false));
-
-  if (Object.values(state.pending).some(capture => captureUses(capture, target))) throw new Error('Pending diff comparisons require the archived worktree; recovery retained: ' + log);
-}
-
-function checkGlobalDiffs(links, worktrees) {
-  for (const { file, kind } of links) {
-    if (kind !== 'pointer') continue;
-
-    const record = require('./session-database.cjs').pendingDiff(path.dirname(file));
-
-    if (record === undefined) continue;
-
-    if (worktrees.some(target => captureUses(record.capture, target))) throw new Error('Pending comparison recovery requires the archived worktree: ' + file);
-  }
-}
-
 function scan(transaction, links) {
   const records = [];
   const worktrees = targets(transaction);
   const resourceOwners = new Set(peerIds(transaction));
 
   for (const link of links) {
-    const record = readLinked(transaction.root, link, worktrees);
+    const record = readLinked(transaction.root, link);
 
     if (record) records.push(record);
   }
 
   for (const record of records) for (const target of worktrees) map(record, target, resourceOwners);
-  checkGlobalDiffs(links, worktrees);
 
   return records.sort((left, right) => left.file.localeCompare(right.file));
 }
 
-function readLinked(root, link, worktrees) {
-  if (link.kind === 'diff') {
-    for (const target of worktrees) checkDiffs(link.file.replace(/\.diffs\.json$/, '.jsonl'), target);
-
-    return;
-  }
-
+function readLinked(root, link) {
   if (link.kind !== 'transcript' || !io.exists(link.file)) return;
   const archived = io.inside(path.join(root, 'archived'), link.file);
 

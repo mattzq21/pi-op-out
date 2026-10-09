@@ -7,7 +7,6 @@ import { flushPlugins } from "./lifecycle";
 export const plugins = [
   { id: "chatgpt", scope: "client", name: "ChatGPT", description: "Client-owned ChatGPT chats with context from any agent host.", load: (): Promise<PluginModule> => import("./chatgpt/plugin") },
   { id: "markdown", scope: "conversation", name: "Notes", description: "Shared conversation notes, with one client editing at a time.", load: (): Promise<PluginModule> => import("./markdown/plugin") },
-  { id: "diff", scope: "client", name: "Diff viewer", description: "Browse captured conversation file changes from any agent host.", load: (): Promise<PluginModule> => import("./diff/plugin") },
 ];
 
 export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), revision: z.string(), error: z.string().nullable() });

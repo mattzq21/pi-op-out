@@ -2,37 +2,14 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { validGoalPath } = require('./storage-inventory-owners.cjs');
 const { goalOwner } = require('./storage-inventory-goals.cjs');
-const { stageCategory, observeStage } = require('./storage-inventory-transfers.cjs');
-const snapshotMetadata = require('./snapshot-metadata.cjs');
 const { chatGptStoredCount } = require('./chatgpt-storage.mjs');
 
-const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', 'git-snapshots': 'git-diff-snapshots', 'git-diff-transfers': 'diff-transfer-staging', tmp: 'temporary-chats', worktrees: 'worktrees', 'archived-tmp': 'archived-worktrees', recovery: 'unattributed-recovery-storage' };
-
-function savedSnapshotIdentities(profile, warnings) {
-  try { return new Set(snapshotMetadata.identities(profile)); }
-  catch (error) { warnings.push(`${profile}: snapshot record count unavailable: ${error.message}`);
-
-  return new Set(); }
-}
-
-function savedSnapshotDirectories(profile, warnings) {
-  try {
-    return new Set(require('./session-database.cjs').snapshotDirectories(profile).map(row => {
-      if (path.dirname(row.directory) !== path.join(profile, 'git-snapshots')) throw new Error('Invalid saved snapshot directory');
-
-      return row.directory;
-    }));
-  } catch (error) { warnings.push(`${profile}: snapshot directories unavailable: ${error.message}`);
-
-  return new Set(); }
-}
+const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', tmp: 'temporary-chats', worktrees: 'worktrees', 'archived-tmp': 'archived-worktrees', recovery: 'unattributed-recovery-storage' };
 
 function specialCategory(target, category, metadata, discovery) {
   category = queuedCategory(target, category, metadata, discovery);
 
-  if (!metadata.isDirectory()) return stageCategory(target, category, metadata, discovery);
-
-  if (discovery.pendingSnapshots.has(target)) return 'pending-diff-snapshots';
+  if (!metadata.isDirectory()) return category;
 
   if (discovery.recovery.has(target)) return discovery.recovery.get(target).ownership === 'owned' ? 'recovery-storage' : 'unattributed-recovery-storage';
 
@@ -40,21 +17,11 @@ function specialCategory(target, category, metadata, discovery) {
 
   if (knownGoal && validGoalPath(target)) return goalCategory(target, discovery);
 
-  return snapshotCategory(target, category);
+  return category;
 }
 
 function queuedCategory(target, category, metadata, discovery) {
   return metadata.isFile() && discovery.queuedInput?.has(target) ? discovery.queuedInput.get(target).category : category;
-}
-
-function snapshotCategory(target, category) {
-  if (!target.endsWith('.snapshots')) return category;
-
-  if (category === 'active-conversations') return 'git-diff-snapshots';
-
-  if (category === 'archived-conversations') return 'archived-git-diff-snapshots';
-
-  return category;
 }
 
 function goalCategory(target, discovery) {
@@ -73,24 +40,11 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
   const root = await fs.realpath(profile).catch(() => profile);
   const chatRoots = new Set(await Promise.all([...discovery.chatgpt.keys()].map(directory => fs.realpath(directory).catch(() => directory))));
 
-  const savedSnapshots = savedSnapshotIdentities(root, warnings);
-  const snapshotDirectories = savedSnapshotDirectories(root, warnings);
-  const savedSnapshotFiles = new Set([...savedSnapshots].map(key => key.split(':').slice(0, 2).map(Number).join(':')));
-
   function addCount(category, amount = 1) { counts.set(category, (counts.get(category) || 0) + amount); }
 
   function register(category, record) {
     if (!roots.has(category)) roots.set(category, new Map());
     roots.get(category).set(record.path, record);
-  }
-
-  function countStage(target, category, metadata) {
-    const record = observeStage(target, category, metadata, discovery);
-
-    if (!record) return;
-    register(category, record);
-
-    if (metadata.isFile()) addCount(category);
   }
 
   function observeQueue(target, metadata) {
@@ -114,10 +68,8 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     }
   }
 
-  function countDirectory(target, category, entries, metadata) {
+  function countDirectory(target, category, entries) {
     if (category === 'other-storage') addCount(category, entries.filter(entry => entry.isFile() && !discovery.queuedInput?.has(path.join(target, entry.name))).length);
-
-    countSnapshots(target, category, entries, metadata);
 
     if (['goal-attachments', 'unattributed-goal-attachments'].includes(category) && validGoalPath(target)) {
       addCount(category);
@@ -126,29 +78,6 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
       record.directory = true;
       register(category, record);
     }
-  }
-
-  function savedSnapshot(target, entries, metadata) {
-    if (snapshotDirectories.has(target)) return true;
-
-    if (savedSnapshotFiles.has(`${metadata.dev}:${metadata.ino}`) && savedSnapshots.has(snapshotMetadata.identity(target))) return true;
-
-    if (!entries.some(entry => entry.name === 'snapshot.json')) return false;
-
-    try { return snapshotMetadata.read(target) !== undefined; }
-    catch (error) { warnings.push(`${target}: snapshot record unavailable: ${error.message}`);
-
-    return false; }
-  }
-
-  function countSnapshots(target, category, entries, metadata) {
-    const pending = discovery.pendingSnapshots.has(target);
-
-    if (!pending && ['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && savedSnapshot(target, entries, metadata)) addCount(category);
-
-    if (pending) addCount('pending-diff-snapshots');
-
-    if (['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && target.endsWith('.snapshots')) register(category, { path: target, ownership: 'owned', provenance: ['Conversation diff snapshot sidecar'], owners: [], available: true, directory: true });
   }
 
   async function visit(target, category, required = false) {
@@ -163,12 +92,11 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
       seen.add(identity);
       const bytes = Number.isFinite(metadata.blocks) ? metadata.blocks * 512 : metadata.size;
       sizes.set(category, (sizes.get(category) || 0) + bytes);
-      countStage(target, category, metadata);
 
       if (!metadata.isDirectory()) return;
       directories.add(target);
       const entries = await fs.readdir(target, { withFileTypes: true });
-      countDirectory(target, category, entries, metadata);
+      countDirectory(target, category, entries);
 
       for (const entry of entries) {
         const nextCategory = childCategory(target, entry.name, category);
@@ -258,14 +186,6 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
     for (const record of records.values()) { addCount(category); await visitRecord(category, record); }
   }
 
-  async function visitKnownRecords(records, category) {
-    for (const record of records.values()) await visitRecord(category, record);
-  }
-
-  async function visitTransfers() {
-    for (const record of discovery.transfers.values()) await visitRecord(record.ownership === 'owned' ? 'diff-transfer-staging' : 'unattributed-diff-transfer-staging', record);
-  }
-
   async function inspectResourcePins(record) {
     for (const pin of record.pins || []) {
       record.provenance.push('Shared resource Git pin: ' + pin.root + ' ' + pin.ref + ' -> ' + pin.commit);
@@ -308,11 +228,6 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
 
   for (const record of discovery.chatgpt.values()) await visitRecord('chatgpt-storage', record);
   await visitCandidates(discovery.legacy, 'legacy-recovery-storage');
-
-
-  await visitKnownRecords(discovery.pendingSnapshots, 'pending-diff-snapshots');
-
-  await visitTransfers();
 
   for (const record of discovery.goals.values()) await visitRecord(goalOwner(record) ? 'goal-attachments' : 'unattributed-goal-attachments', record);
 

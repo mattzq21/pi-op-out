@@ -32,19 +32,8 @@ fn transaction_directories_pending(root: &Path) -> Result<bool, String> {
     Ok(fork_transactions_pending(root)? || fork_preparation_pending(root)?)
 }
 
-fn released_snapshots_pending(root: &Path) -> Result<bool, String> {
-    let db = crate::session_registry::open(root)?;
-    db.query_row("SELECT EXISTS(SELECT 1 FROM snapshot_reader_releases)", [], |row| row.get(0)).map_err(|error| error.to_string())
-}
-
-fn snapshot_cleanup_pending(root: &Path) -> Result<bool, String> {
-    if released_snapshots_pending(root)? { return Ok(true); }
-    let db = crate::session_registry::open(root)?;
-    db.query_row("SELECT EXISTS(SELECT 1 FROM snapshot_directories)", [], |row| row.get(0)).map_err(|error| error.to_string())
-}
-
 pub(crate) fn recover(root: &Path) -> Result<(), String> {
-    if !recovery_pending(root)? && !transaction_directories_pending(root)? && !snapshot_cleanup_pending(root)? { return Ok(()); }
+    if !recovery_pending(root)? && !transaction_directories_pending(root)? { return Ok(()); }
     let output = crate::node_command()
         .env("PIOP_RESTORE_ROOT", root)
         .args(["-e", include_str!("../resources/restore-archived-worktree.bundle.mjs"), "--", "--recover"])

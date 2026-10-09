@@ -35,18 +35,16 @@ describe('chat session hook', () => {
     assert.ok(hook.current.messages[0].completedAt > 0);
   });
 
-  test('tool payloads load on demand while snapshot metadata survives final messages', async () => {
+  test('tool payloads load on demand and survive final messages', async () => {
     await send({ type: 'tool_execution_start', toolCallId: 'call', toolName: 'edit', args: { path: 'a' } }, { type: 'tool_execution_update', toolCallId: 'call', partialResult: { content: 'partial' } });
     await dom.flushFrames(); assert.equal(hook.current.messages[0].content, ''); assert.equal(hook.current.messages[0].toolInput, undefined);
     await send({ type: 'tool_execution_end', toolCallId: 'call', result: { content: 'done', details: { diff: 'patch' } }, isError: false });
     assert.equal(hook.current.messages[0].toolStatus, 'done');
-    await send({ type: 'entry_appended', entry: { type: 'custom', customType: 'piop-file-changes', id: 'snap', data: { cwd: '/repo', patch: 'patch', paths: ['a'], toolCallIds: ['call'] } } });
     await send(message('message_end', 'toolResult', 'persisted', { toolCallId: 'call' }));
     assert.equal(hook.current.messages.length, 1);
     await act(() => hook.current.messages[0].loadToolPayload());
     assert.deepEqual(hook.current.messages[0].toolInput, { path: 'a' });
     assert.deepEqual(hook.current.messages[0].details, { diff: 'patch' });
-    assert.equal(hook.current.messages[0].fileChanges[0].id, 'snap');
     await send({ type: 'tool_execution_start', toolCallId: 'call', toolName: 'read' }, { type: 'tool_execution_end', toolCallId: 'call', isError: true });
     assert.equal(hook.current.messages.length, 1); assert.equal(hook.current.messages[0].toolStatus, 'error');
     assert.equal(hook.current.messages[0].content, ''); assert.equal(hook.current.messages[0].toolInput, undefined);

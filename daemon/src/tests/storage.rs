@@ -1,16 +1,13 @@
 #[test]
 fn storage_inventory_query_counts_real_files_and_marks_malformed_archives_undeletable() {
     let home = TestDirectory::new(); let root = home.0.join(".piop");
-    for directory in ["sessions", "archived", "git-snapshots/pi-desktop-diff-one", "tmp/chat"] {
+    for directory in ["sessions", "archived", "tmp/chat"] {
         fs::create_dir_all(root.join(directory)).unwrap();
     }
     let active = "{\"type\":\"session\",\"id\":\"active\"}\n";
     fs::write(root.join("sessions/active.jsonl"), active).unwrap();
-    fs::write(root.join("sessions/active.diffs.json"), "{}").unwrap();
     fs::write(root.join("sessions/ignored.txt"), "not counted").unwrap();
     fs::write(root.join("archived/broken.jsonl"), "broken").unwrap();
-    fs::write(root.join("archived/broken.diffs.json"), "{}").unwrap();
-    fs::write(root.join("git-snapshots/pi-desktop-diff-one/object"), "object").unwrap();
     fs::write(root.join("tmp/chat/file"), "temporary").unwrap();
     let script = format!("require('node:os').homedir = () => {};\n{}", serde_json::to_string(home.0.to_str().unwrap()).unwrap(), include_str!("../../resources/storage-inventory.bundle.mjs"));
     let mut command = Command::new("node"); command.args(["-e", &script]);
@@ -28,8 +25,6 @@ fn storage_inventory_query_counts_real_files_and_marks_malformed_archives_undele
     assert_eq!(category("active-conversations").byte_size, allocated_bytes(&root.join("sessions")));
     assert_eq!(category("active-conversations").item_count, 1);
     assert_eq!(category("archived-conversations").byte_size, allocated_bytes(&root.join("archived")));
-    assert_eq!(category("git-diff-snapshots").byte_size, allocated_bytes(&root.join("git-snapshots")));
-    assert_eq!(category("git-diff-snapshots").item_count, 1);
     assert_eq!(category("temporary-chats").byte_size, allocated_bytes(&root.join("tmp")));
     assert_eq!(category("temporary-chats").item_count, 1);
     assert!(category("project-checkpoints").estimated);
@@ -141,16 +136,14 @@ fn session_summary_loading_skips_unreadable_and_invalid_files_without_losing_val
 }
 
 #[test]
-fn session_deletion_removes_trace_and_sidecar_in_both_storage_areas() {
+fn session_deletion_removes_trace_in_both_storage_areas() {
     let home = TestDirectory::new(); let runtime = PiRuntime::default();
     for archived in [false, true] {
         let root = home.0.join(if archived { ".piop/archived" } else { ".piop/sessions" }); fs::create_dir_all(&root).unwrap();
         let path = root.join("conversation.jsonl");
         fs::write(&path, json!({"type":"session","id":"one","cwd":home.0.join("missing-project")}).to_string()).unwrap();
-        fs::write(path.with_extension("diffs.json"), "{}").unwrap();
         let other = root.join("other.jsonl"); fs::write(&other, "keep").unwrap();
         delete_session_files(&runtime, path.to_str().unwrap(), "local", None, &root, archived).unwrap();
-        assert!(!path.exists()); assert!(!path.with_extension("diffs.json").exists());
         assert_eq!(fs::read_to_string(&other).unwrap(), "keep");
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
     }
@@ -185,10 +178,10 @@ fn session_deletion_checks_active_path_and_identity_and_preserves_invalid_traces
 fn session_deletion_only_blocks_owned_matching_sessions_on_the_same_host() {
     let blocks_deletion = |messageable: bool, same_host: bool, same_path: bool, same_id: bool| !messageable && same_host && (same_path || same_id);
     let home = TestDirectory::new(); let root = home.0.join("sessions"); fs::create_dir(&root).unwrap();
-    let path = root.join("conversation.jsonl"); let sidecar = path.with_extension("diffs.json");
+    let path = root.join("conversation.jsonl");
     let content = json!({"type":"session","id":"one","cwd":home.0.join("missing-project")}).to_string();
     for messageable in [false, true] { for same_host in [false, true] { for same_path in [false, true] { for same_id in [false, true] {
-        fs::write(&path, &content).unwrap(); fs::write(&sidecar, "{}").unwrap();
+        fs::write(&path, &content).unwrap();
         let runtime = PiRuntime::default();
         runtime.active_agents.lock().unwrap().insert("active".into(), AgentAddress {
             host_id: if same_host { "local" } else { "remote" }.into(),
@@ -203,8 +196,7 @@ fn session_deletion_only_blocks_owned_matching_sessions_on_the_same_host() {
             let expected_error = if same_path { "Close the session before deleting it" } else { "Deletion failed: Close the session before deleting it\nDeletion was rolled back." };
             assert_eq!(result.unwrap_err(), expected_error);
             assert_eq!(fs::read_to_string(&path).unwrap(), content);
-            assert_eq!(fs::read_to_string(&sidecar).unwrap(), "{}");
-        } else { assert!(!path.exists()); assert!(!sidecar.exists()); }
+        } else { assert!(!path.exists()); }
     } } } }
 }
 

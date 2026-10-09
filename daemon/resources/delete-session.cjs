@@ -6,7 +6,6 @@ const path = require("node:path");
 const os = require("node:os");
 const transactions = require('./session-transactions.cjs');
 const deletionTransaction = require('./delete-transaction.cjs');
-const diffStore = require('./session-broker/git-diff-store.cjs');
 const ownerLocks = require('./transaction-owner-locks.cjs');
 const { lockStorage } = require('./restore-transaction.cjs');
 const { withReferencePublicationLock } = require('./storage-lock.cjs');
@@ -112,21 +111,11 @@ async function collectDeletionFiles(sources, request, files) {
       const header = entries[0];
       validateHeader(header, request);
       trace.sessionId = header.id;
-      verifyCompletedTransfers(source);
 
       mergeRepositories(repositoriesByPath, await snapshotRefs(entries, header));
     }
 
     return [...repositoriesByPath.values()];
-
-}
-
-function verifyCompletedTransfers(source) {
-  const file = source.replace(/\.jsonl$/, '.diffs.json');
-
-  const state = ownerLocks.withFile(file + '.lock', () => diffStore.readStore(file, false));
-
-  if (Object.values(state.transfers).some(transfer => transfer.committed !== true)) throw new Error('Unfinished project diff transfers still own their log and staged contents; recover them before deleting this conversation');
 
 }
 

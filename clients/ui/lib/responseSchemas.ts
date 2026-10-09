@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { rpcEventSchema, rpcCommandSchema } from "./rpcSchemas";
 import { entrySchema, pendingMessageSchema } from "./chatSessionEventSchema";
-import { gitDiffSnapshotSchema } from "./diffSchemas";
 
-export { z, rpcEventSchema, rpcCommandSchema, entrySchema, gitDiffSnapshotSchema, pendingMessageSchema };
+export { z, rpcEventSchema, rpcCommandSchema, entrySchema, pendingMessageSchema };
 
 export const voidResultSchema = z.unknown().transform(() => undefined);
 
@@ -39,7 +38,7 @@ export const storageOwnerSchema = z.object({ sessionId: z.string(), sessionPath:
 
 export const storageRootSchema = z.object({ path: z.string(), ownership: storageOwnershipSchema, provenance: z.array(z.string()), available: z.boolean(), owners: z.array(storageOwnerSchema), state: z.string().optional(), refs: z.array(z.string()).optional() });
 
-export const storageCategorySchema = z.object({ id: z.enum(["active-conversations", "archived-conversations", "archived-project-checkpoints", "project-checkpoints", "git-diff-snapshots", "archived-git-diff-snapshots", "temporary-chats", "worktrees", "archived-worktrees", "other-storage", "referenced-worktrees", "recovery-storage", "unattributed-recovery-storage", "legacy-recovery-storage", "pending-diff-snapshots", "diff-transfer-staging", "unattributed-diff-transfer-staging", "chatgpt-storage", "goal-attachments", "unattributed-goal-attachments", "unattributed-project-checkpoints"]), byteSize: z.number(), itemCount: z.number(), estimated: z.boolean().optional(), directories: z.array(z.string()).optional(), countUnit: z.string().optional(), coverage: z.string().optional(), ownership: storageOwnershipSchema.optional(), reclaimability: z.enum(["retained", "requires-owner-check", "unknown"]).optional(), measurement: z.enum(["allocated-blocks", "git-object-estimate"]).optional(), includedInTotal: z.boolean().optional(), roots: z.array(storageRootSchema).optional() });
+export const storageCategorySchema = z.object({ id: z.enum(["active-conversations", "archived-conversations", "archived-project-checkpoints", "project-checkpoints", "temporary-chats", "worktrees", "archived-worktrees", "other-storage", "referenced-worktrees", "recovery-storage", "unattributed-recovery-storage", "legacy-recovery-storage", "chatgpt-storage", "goal-attachments", "unattributed-goal-attachments", "unattributed-project-checkpoints"]), byteSize: z.number(), itemCount: z.number(), estimated: z.boolean().optional(), directories: z.array(z.string()).optional(), countUnit: z.string().optional(), coverage: z.string().optional(), ownership: storageOwnershipSchema.optional(), reclaimability: z.enum(["retained", "requires-owner-check", "unknown"]).optional(), measurement: z.enum(["allocated-blocks", "git-object-estimate"]).optional(), includedInTotal: z.boolean().optional(), roots: z.array(storageRootSchema).optional() });
 
 export const archivedConversationSchema = z.object({ id: z.string(), path: z.string(), name: z.string(), cwd: z.string(), modifiedAt: z.number(), byteSize: z.number(), deletable: z.boolean(), deleteError: z.string().optional(), worktreePath: z.string().optional(), restorable: z.boolean().optional(), restoreError: z.string().optional(), byteSizeCoverage: z.string().optional() });
 
@@ -50,8 +49,6 @@ export const storageReportSchema = z.object({ hosts: z.array(hostStorageSchema) 
 export const gitWorktreeSchema = z.object({ branch: z.string(), path: z.string() });
 
 export const gitWorktreeRemovalSchema = z.object({ branch: z.string().optional(), branchDeleted: z.boolean(), warning: z.string().optional() });
-
-export const gitDiffSnapshotsSchema = z.record(z.string(), gitDiffSnapshotSchema);
 
 export const codexUsageSchema = z.object({ remainingPercent: z.number(), resetAt: z.number().optional() });
 
