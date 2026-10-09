@@ -7,12 +7,7 @@ function initialize(db) {
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
       CREATE TABLE IF NOT EXISTS session_deletion_tombstones (session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL, session_path TEXT NOT NULL); CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE); CREATE TRIGGER IF NOT EXISTS session_file_metadata_moved AFTER UPDATE ON sessions WHEN OLD.session_path IS NOT NEW.session_path BEGIN DELETE FROM session_file_metadata WHERE session_id=OLD.session_id; END;`);
-    const columns = db.prepare('PRAGMA table_info(session_repositories)').all();
 
-    if (columns.some(column => column.name === 'session_path')) {
-      db.exec(`INSERT INTO sessions SELECT session_id, session_path FROM session_repositories WHERE true ON CONFLICT(session_id) DO NOTHING;
-        ALTER TABLE session_repositories RENAME TO session_repositories_previous;`);
-    }
 
     db.exec(`CREATE TABLE IF NOT EXISTS session_repositories (
       session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, cwd TEXT NOT NULL,
@@ -71,34 +66,23 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ephemeral_cleanup_owners (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS queued_inputs (session_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS legacy_queued_inputs (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS fork_preparations (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS archive_records (directory TEXT PRIMARY KEY, record_json TEXT);
-      CREATE TABLE IF NOT EXISTS legacy_publication_residue (path TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS legacy_deletion_locks (directory TEXT PRIMARY KEY, identity TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS legacy_archive_directories (directory TEXT PRIMARY KEY);
-      CREATE TABLE IF NOT EXISTS legacy_committed_deletions (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS deletion_records (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS fork_transactions (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS fork_preparation_checkpoints (preparation TEXT NOT NULL, session_id TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(preparation, session_id));
       CREATE TABLE IF NOT EXISTS session_comparison_state (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_completed_comparisons (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, turn_id TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY(session_id, turn_id));`);
 
-    if (columns.some(column => column.name === 'session_path')) {
-      db.exec(`INSERT INTO session_repositories SELECT session_id, cwd, repository_root, remote_name, remote_url,
-        branch, upstream_branch, head_commit, checked_at, observed_at, directory_exists FROM session_repositories_previous;
-        DROP TABLE session_repositories_previous;`);
-    }
 
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-function repositoryQuery(db, columns, suffix = '') {
-  const legacy = db.prepare('PRAGMA table_info(session_repositories)').all().some(column => column.name === 'session_path');
-  const fields = columns.map(column => `${column === 'session_path' && !legacy ? 's' : 'r'}.${column}`).join(', ');
+function repositoryQuery(_db, columns, suffix = '') {
+  const fields = columns.map(column => `${column === 'session_path' ? 's' : 'r'}.${column}`).join(', ');
 
-  return `SELECT ${fields} FROM session_repositories r${legacy ? '' : ' JOIN sessions s USING(session_id)'}${suffix}`;
+  return `SELECT ${fields} FROM session_repositories r JOIN sessions s USING(session_id)${suffix}`;
 }
 
 function movePaths(root, moves) {
@@ -148,110 +132,6 @@ function registerPath(root, sessionId, sessionPath) {
   } finally { db.close(); }
 }
 
-function importDirectory(db, directory) {
-  let entries;
-
-  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code === 'ENOENT') return; throw error; }
-
-  for (const entry of entries) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) importDirectory(db, file);
-
-    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
-    importTranscript(db, file);
-  }
-}
-
-function importTranscript(db, file) {
-  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  let header;
-
-  try {
-    const buffer = Buffer.alloc(65536);
-    const count = fs.readSync(descriptor, buffer);
-    header = JSON.parse(buffer.subarray(0, count).toString().split('\n')[0]);
-  } finally { fs.closeSync(descriptor); }
-
-  if (header.type !== 'session') return;
-  require('node:assert/strict').match(header.id, /\S/);
-  register(db, header.id, file);
-}
-
-function importSessions(db, root) {
-  db.exec('CREATE TABLE IF NOT EXISTS storage_migrations (name TEXT PRIMARY KEY); BEGIN IMMEDIATE');
-
-  try {
-    if (!db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('session-catalog-v1')) {
-      for (const area of ['sessions', 'archived']) importDirectory(db, require('node:path').join(root, area));
-      db.prepare('INSERT INTO storage_migrations VALUES (?)').run('session-catalog-v1');
-    }
-
-    importPublications(db, root);
-    importRestorations(db, root);
-    importRestorations(db, root, true);
-    importRetention(db, root);
-    importCleanupRequests(db, root);
-    importWorktrees(db, root);
-    importDirectories(db, root, 'fork-preparations', 'fork_preparations', 'fork-preparations-v1');
-    importDirectories(db, root, 'fork-transactions', 'fork_transactions', 'fork-transactions-v1');
-    importDirectories(db, root, 'delete-transactions', 'deletion_records', 'deletion-records-pending-v1');
-    importDirectories(db, root, 'deleted-sessions', 'deletion_records', 'deletion-records-committed-v1');
-    importDirectories(db, root, 'deleted-sessions', 'legacy_committed_deletions', 'legacy-committed-deletions-v1');
-    importDirectories(db, root, 'archive-transactions', 'archive_records', 'archive-records-v1');
-    importDirectories(db, root, '', 'legacy_archive_directories', 'legacy-archive-directories-v1', entry => entry.name.startsWith('archive-transaction-'));
-    importRecoveryDirectories(db, root);
-    importReaderReleases(db, root);
-    importSnapshotDirectories(db, root);
-    importComparisonRetries(db);
-    importPendingDiffs(db);
-    importJsonRecords(db, root, 'ephemeral-cleanup/owners', 'ephemeral_cleanup_owners', 'ephemeral-cleanup-owners-v1');
-    importJsonRecords(db, root, 'queued-input', 'queued_inputs', 'queued-inputs-v1');
-    importJsonRecords(db, root, 'goal-asset-reclamations', 'goal_asset_reclamations', 'goal-asset-reclamations-v1');
-    importJsonRecords(db, root, 'external-transcripts', 'external_transcripts', 'external-transcripts-v1');
-    importJsonRecords(db, root, 'conversation-queues', 'legacy_queued_inputs', 'legacy-queued-inputs-v1');
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
-}
-
-function importDirectories(db, root, area, table, migration, select = () => true) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get(migration)) return;
-  const directory = path.join(root, area);
-  let entries;
-
-  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
-
-  for (const entry of entries.filter(select)) {
-    if (['archive_records', 'deletion_records'].includes(table) && !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(entry.name)) continue;
-
-    if (!entry.isDirectory()) throw new Error(`Invalid ${area} storage`);
-    db.prepare(`INSERT INTO ${table} (directory) VALUES (?)`).run(path.join(directory, entry.name));
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run(migration);
-}
-
-function importJsonRecords(db, root, area, table, migration) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get(migration)) return;
-  const directory = path.join(root, area);
-  let entries;
-
-  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
-
-  for (const entry of entries.filter(entry => entry.name.endsWith('.json'))) {
-    if (!entry.isFile()) throw new Error(`Invalid ${area} record`);
-
-    if (table === 'queued_inputs' && db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(entry.name.slice(0, -5))) continue;
-    db.prepare(`INSERT INTO ${table} VALUES (?, ?) ON CONFLICT DO NOTHING`)
-      .run(entry.name.slice(0, -5), fs.readFileSync(path.join(directory, entry.name), 'utf8'));
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run(migration);
-}
-
 function rows(root, sql, ...parameters) {
   const db = open(root);
 
@@ -259,35 +139,19 @@ function rows(root, sql, ...parameters) {
   finally { db.close(); }
 }
 
-function queuedInputs(root) { return rows(root, 'SELECT session_id, record_json FROM queued_inputs UNION ALL SELECT owner_key AS session_id, record_json FROM legacy_queued_inputs'); }
+function queuedInputs(root) { return rows(root, 'SELECT session_id, record_json FROM queued_inputs'); }
 
 function queuedInput(root, id) {
   const db = open(root);
 
   try {
-    const key = require('node:crypto').createHash('sha256').update(id.toLowerCase()).digest('hex').slice(0, 40);
-    const row = db.prepare('SELECT record_json FROM queued_inputs WHERE session_id=lower(?) UNION ALL SELECT record_json FROM legacy_queued_inputs WHERE owner_key=? LIMIT 1').get(id, key);
+    const row = db.prepare('SELECT record_json FROM queued_inputs WHERE session_id=lower(?)').get(id);
 
     return row ? JSON.parse(row.record_json) : undefined;
   } finally { db.close(); }
 }
 
 function ephemeralOwners(root) { return rows(root, 'SELECT owner_key, record_json FROM ephemeral_cleanup_owners ORDER BY owner_key'); }
-
-function importPendingDiffs(db) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-pending-diffs-v1')) return;
-
-  for (const row of db.prepare('SELECT directory FROM snapshot_directories').all()) {
-    let body;
-
-    try { body = fs.readFileSync(path.join(row.directory, 'pending-diff.json'), 'utf8'); }
-    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
-
-    db.prepare('INSERT INTO snapshot_pending_diffs VALUES (?, ?)').run(row.directory, body);
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('snapshot-pending-diffs-v1');
-}
 
 function pendingDiffs(root) {
   const db = open(root);
@@ -313,21 +177,6 @@ function savePendingDiff(directory, record) {
     db.prepare('INSERT INTO snapshot_pending_diffs VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET record_json=excluded.record_json')
       .run(directory, JSON.stringify(record));
   } finally { db.close(); }
-}
-
-function importComparisonRetries(db) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-comparison-retries-v1')) return;
-
-  for (const row of db.prepare('SELECT directory FROM snapshot_directories').all()) {
-    let body;
-
-    try { body = fs.readFileSync(path.join(row.directory, 'comparison-retry.json'), 'utf8'); }
-    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
-
-    db.prepare('INSERT INTO snapshot_comparison_retries VALUES (?, ?)').run(row.directory, body);
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('snapshot-comparison-retries-v1');
 }
 
 function comparisonRetry(directory) {
@@ -361,30 +210,12 @@ function removeComparisonRetry(directory) {
   finally { db.close(); }
 }
 
-function importCompletedComparisons(db, sessionId, retained) {
-  if (db.prepare('SELECT 1 FROM session_comparison_state WHERE session_id=?').get(sessionId)) return;
-  let completed = {};
-
-  try { completed = JSON.parse(fs.readFileSync(require('node:path').join(retained, 'completed.json'), 'utf8')); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-
-  if (!completed || Object.getPrototypeOf(completed) !== Object.prototype) throw new Error('Invalid completed comparison records');
-  register(db, sessionId, retained.replace(/\.snapshots$/, '.jsonl'));
-
-  for (const [turnId, messageId] of Object.entries(completed)) {
-    if (String(messageId) !== messageId) throw new Error('Invalid completed comparison message');
-    db.prepare('INSERT INTO session_completed_comparisons VALUES (?, ?, ?)').run(sessionId, turnId, messageId);
-  }
-
-  db.prepare('INSERT INTO session_comparison_state VALUES (?)').run(sessionId);
-}
-
 function completedComparisons(root, sessionId, retained, completed) {
   const db = open(root);
   db.exec('BEGIN IMMEDIATE');
 
   try {
-    importCompletedComparisons(db, sessionId, retained);
+    register(db, sessionId, retained.replace(/\.snapshots$/, '.jsonl'));
 
     if (completed) {
       db.prepare('INSERT INTO session_completed_comparisons VALUES (?, ?, ?) ON CONFLICT(session_id, turn_id) DO UPDATE SET message_id=excluded.message_id')
@@ -397,28 +228,6 @@ function completedComparisons(root, sessionId, retained, completed) {
     return Object.fromEntries(rows.map(row => [row.turn_id, row.message_id]));
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   finally { db.close(); }
-}
-
-function importSnapshotDirectories(db, root) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-directories-v1')) return;
-  const parent = path.join(root, 'git-snapshots');
-  let entries;
-
-  try { entries = fs.readdirSync(parent, { withFileTypes: true }); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !/^(\.cleanup-)?pi-desktop-diff-/.test(entry.name)) continue;
-    const directory = path.join(parent, entry.name);
-    let owner = null;
-
-    try { owner = fs.readFileSync(path.join(directory, 'temporary-owner.json'), 'utf8'); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-
-    db.prepare('INSERT INTO snapshot_directories VALUES (?, ?)').run(directory, owner);
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('snapshot-directories-v1');
 }
 
 function saveSnapshotOwner(directory, owner, reserve = false) {
@@ -454,24 +263,6 @@ function removeSnapshotDirectory(directory) {
   finally { db.close(); }
 }
 
-function importReaderReleases(db, root) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('snapshot-reader-releases-v1')) return;
-  const directory = path.join(root, 'git-snapshots', '.released-readers');
-  let entries;
-
-  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
-
-  for (const entry of entries) {
-    if (!entry.isFile() || !/^[a-f0-9-]{36}\.json$/.test(entry.name)) continue;
-    const body = fs.readFileSync(path.join(directory, entry.name), 'utf8');
-    JSON.parse(body);
-    db.prepare('INSERT INTO snapshot_reader_releases VALUES (?, ?)').run(entry.name.slice(0, -5), body);
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('snapshot-reader-releases-v1');
-}
-
 function releaseSnapshotReader(root, scope, record) {
   const db = open(root);
 
@@ -490,29 +281,6 @@ function removeSnapshotReaderRelease(root, row) {
   finally { db.close(); }
 }
 
-function importRecoveryDirectories(db, root) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('recovery-directories-v1')) return;
-  const directory = path.join(root, 'recovery');
-  let entries;
-
-  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const file = path.join(directory, entry.name, 'ownership.json');
-    let body;
-
-    try { body = fs.readFileSync(file, 'utf8'); }
-    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
-
-    JSON.parse(body);
-    db.prepare('INSERT INTO recovery_directories VALUES (?, ?)').run(entry.name, body);
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('recovery-directories-v1');
-}
-
 function recoveryRecords(root) { return rows(root, 'SELECT record_id, record_json FROM recovery_directories ORDER BY record_id'); }
 
 function saveRecoveryRecord(root, record, reserve = false) {
@@ -522,30 +290,6 @@ function saveRecoveryRecord(root, record, reserve = false) {
     db.prepare('INSERT INTO recovery_directories VALUES (?, ?)' + (reserve ? '' : ' ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json'))
       .run(record.id, JSON.stringify(record));
   } finally { db.close(); }
-}
-
-function importWorktrees(db, root) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('worktree-allocations-v1')) return;
-  const directory = path.join(root, 'worktrees');
-  let entries;
-
-  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !/^[a-f0-9]{4}$/.test(entry.name)) continue;
-    const container = path.join(directory, entry.name);
-    const info = fs.lstatSync(container, { bigint: true });
-    let parent = {};
-
-    try { parent = JSON.parse(fs.readFileSync(path.join(container, 'parent.json'), 'utf8')); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-
-    const value = { ...parent, containerIdentity: `${info.dev}:${info.ino}` };
-    db.prepare('INSERT INTO worktree_allocations VALUES (?, ?)').run(container, JSON.stringify(value));
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('worktree-allocations-v1');
 }
 
 function worktreeMetadata(container) {
@@ -559,22 +303,6 @@ function worktreeMetadata(container) {
 }
 
 function worktreeContainers(root) { return rows(root, 'SELECT container FROM worktree_allocations ORDER BY container').map(row => row.container); }
-
-function importCleanupRequests(db, root) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('cleanup-requests-v1')) return;
-
-  for (const kind of ['goal', 'worktree']) {
-    let metadata;
-
-    try { metadata = fs.lstatSync(path.join(root, `${kind}-retention.pending`)); }
-    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
-
-    if (!metadata.isFile()) throw new Error('Invalid cleanup request');
-    db.prepare('INSERT OR IGNORE INTO cleanup_requests VALUES (?, 1)').run(kind);
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('cleanup-requests-v1');
-}
 
 function markCleanup(root, kind) {
   const db = open(root);
@@ -595,79 +323,6 @@ function finishCleanup(root, kind, revision) {
 
   try { db.prepare('DELETE FROM cleanup_requests WHERE kind=? AND revision=?').run(kind, revision); }
   finally { db.close(); }
-}
-
-function importRetention(db, root) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('retention-candidates-v1')) return;
-  const directory = path.join(root, 'retention-candidates');
-  let names;
-
-  try { names = fs.readdirSync(directory); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; names = []; }
-
-  for (const name of names.filter(name => name.endsWith('.json'))) {
-    const descriptor = fs.openSync(path.join(directory, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-
-    try {
-      const metadata = fs.fstatSync(descriptor);
-
-      if (!metadata.isFile()) throw new Error('Invalid deferred cleanup record');
-      db.prepare('INSERT INTO retention_candidates VALUES (?, ?, ?)').run(name.slice(0, -5), fs.readFileSync(descriptor, 'utf8'), metadata.mtimeMs);
-    } finally { fs.closeSync(descriptor); }
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('retention-candidates-v1');
-}
-
-function importRestorations(db, root, receipts = false) {
-  const configuration = receipts
-    ? { migration: 'session-restore-receipts-v1', table: 'session_restore_receipts', directory: 'restore-receipts', name: /^[a-f0-9]{64}\.json$/ }
-    : { migration: 'session-restorations-v1', table: 'session_restorations', directory: 'restore-transactions', name: /^[a-f0-9]{40}\.json$/ };
-
-  const { migration, table } = configuration;
-
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get(migration)) return;
-  const directory = path.join(root, configuration.directory);
-  let names;
-
-  try { names = fs.readdirSync(directory); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; names = []; }
-
-  for (const name of names.filter(name => name.endsWith('.json'))) {
-    if (!configuration.name.test(name)) throw new Error('Invalid restore record name');
-    const descriptor = fs.openSync(path.join(directory, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-
-    try {
-      if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid restore record');
-      db.prepare(`INSERT INTO ${table} VALUES (?, ?)`).run(name.slice(0, -5), fs.readFileSync(descriptor, 'utf8'));
-    } finally { fs.closeSync(descriptor); }
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run(migration);
-}
-
-function importPublications(db, root) {
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('session-publications-v1')) return;
-  const directory = path.join(root, 'session-publications');
-  let names;
-
-  try { names = fs.readdirSync(directory); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; names = []; }
-
-  for (const name of names.filter(name => /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.json$/.test(name))) {
-    const file = path.join(directory, name);
-    const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    let body;
-
-    try {
-      if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid session publication record');
-      body = fs.readFileSync(descriptor, 'utf8');
-    } finally { fs.closeSync(descriptor); }
-
-    db.prepare('INSERT INTO session_publications VALUES (?, ?)').run(name.slice(0, -5), body);
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run('session-publications-v1');
 }
 
 function publication(root, id) {
@@ -701,7 +356,6 @@ function open(root) {
   try {
     require('node:fs').chmodSync(file, 0o600);
     initialize(db);
-    importSessions(db, root);
 
     return db;
   } catch (error) { db.close(); throw error; }
@@ -732,5 +386,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, importSessions, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
   worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons, comparisonRetry, saveComparisonRetry, removeComparisonRetry, pendingDiffs, pendingDiff, savePendingDiff, ephemeralOwners, queuedInputs, queuedInput };

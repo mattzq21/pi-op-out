@@ -19,28 +19,16 @@ fn open(auth: &Path) -> Result<Connection> {
     db.busy_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
     db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
         CREATE TABLE IF NOT EXISTS provider_accounts (auth_file TEXT NOT NULL, provider_id TEXT NOT NULL, account_number INTEGER NOT NULL, id TEXT NOT NULL,
-        PRIMARY KEY(auth_file, id), UNIQUE(auth_file, provider_id, account_number));
-        CREATE TABLE IF NOT EXISTS account_imports (auth_file TEXT PRIMARY KEY)").map_err(|error| error.to_string())?;
+        PRIMARY KEY(auth_file, id), UNIQUE(auth_file, provider_id, account_number))").map_err(|error| error.to_string())?;
     Ok(db)
 }
 
 fn key(auth: &Path) -> Result<&str> { auth.file_name().and_then(|name| name.to_str()).ok_or_else(|| "Invalid provider authentication filename".into()) }
 
-fn import(db: &Connection, auth: &Path) -> Result<()> {
-    let key = key(auth)?;
-    let imported: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM account_imports WHERE auth_file=?)", [key], |row| row.get(0)).map_err(|error| error.to_string())?;
-    if imported { return Ok(()); }
-    for record in super::legacy_accounts(auth)? {
-        db.execute("INSERT INTO provider_accounts VALUES (?, ?, ?, ?)", rusqlite::params![key, record["providerId"].as_str(), record["number"].as_u64(), record["id"].as_str()]).map_err(|error| error.to_string())?;
-    }
-    db.execute("INSERT INTO account_imports VALUES (?)", [key]).map_err(|error| error.to_string())?;
-    Ok(())
-}
 
 pub(super) fn read(auth: &Path) -> Result<Vec<Value>> {
     let mut db = open(auth)?;
     let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
-    import(&transaction, auth)?;
     let records = read_rows(&transaction, key(auth)?)?;
     transaction.commit().map_err(|error| error.to_string())?;
     Ok(records)
@@ -56,7 +44,6 @@ fn read_rows(db: &Connection, key: &str) -> Result<Vec<Value>> {
 pub(super) fn allocate(auth: &Path, id: &str, occupied: HashSet<String>) -> Result<Value> {
     let mut db = open(auth)?;
     let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
-    import(&transaction, auth)?;
     let key = key(auth)?;
     let maximum: u64 = transaction.query_row("SELECT COALESCE(MAX(account_number), 1) FROM provider_accounts WHERE auth_file=? AND provider_id=?", [key, id], |row| row.get(0)).map_err(|error| error.to_string())?;
     let number = available_number(maximum, id, &occupied)?;

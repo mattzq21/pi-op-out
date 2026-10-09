@@ -1,7 +1,6 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('./session-publication-io.cjs');
@@ -18,37 +17,9 @@ function database(root) {
   const db = tables.open(root);
 
   try {
-    migrate(db, root);
 
     return db;
   } catch (error) { db.close(); throw error; }
-}
-
-function migrate(db, root) {
-  db.exec('BEGIN IMMEDIATE');
-
-  try {
-    if (!db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get('session-children-v1')) {
-      importFiles(db, root);
-      db.prepare('INSERT INTO storage_migrations VALUES (?)').run('session-children-v1');
-    }
-
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
-}
-
-function importFiles(db, root) {
-  const directory = path.join(root, 'conversation-children');
-
-  if (!io.exists(directory)) return;
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.isFile() || !/^[a-f0-9]{64}\.json$/.test(entry.name)) continue;
-    const value = JSON.parse(io.read(path.join(directory, entry.name)).body);
-
-    if (!Check(indexSchema, value) || entry.name !== createHash('sha256').update(value.sessionId).digest('hex') + '.json') throw new Error('Invalid conversation child index');
-    write(db, value);
-  }
 }
 
 function read(root, sessionId) {

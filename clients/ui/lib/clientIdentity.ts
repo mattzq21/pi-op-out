@@ -25,18 +25,13 @@ function openDatabase() {
   });
 }
 
-function legacyIdentity(key: string) {
-  try { return localStorage.getItem(key) || undefined; }
-  catch { return undefined; }
-}
-
 function freshIdentity(kind: ClientKind) {
   const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}-${Math.random()}`;
 
   return `${kind}:${id}`;
 }
 
-function readOrCreate(database: IDBDatabase, kind: ClientKind, legacy: string | undefined) {
+function readOrCreate(database: IDBDatabase, kind: ClientKind) {
   return new Promise<string>((resolve, reject) => {
     const transaction = database.transaction("identities", "readwrite", { durability: "strict" });
     const store = transaction.objectStore("identities");
@@ -45,7 +40,7 @@ function readOrCreate(database: IDBDatabase, kind: ClientKind, legacy: string | 
     let failure: Error | undefined;
     request.onsuccess = () => {
       try {
-        result = request.result === undefined ? legacy ?? freshIdentity(kind) : identitySchema.parse(request.result);
+        result = request.result === undefined ? freshIdentity(kind) : identitySchema.parse(request.result);
 
         if (request.result === undefined) store.put(result, kind);
       } catch (error) { failure = error instanceof Error ? error : new Error(String(error)); transaction.abort(); }
@@ -58,16 +53,10 @@ function readOrCreate(database: IDBDatabase, kind: ClientKind, legacy: string | 
 }
 
 async function loadIdentity(kind: ClientKind) {
-  const key = `piop-conversation-client:${kind}`;
   const database = await openDatabase();
 
   try {
-    const legacy = legacyIdentity(key);
-    const identity = await readOrCreate(database, kind, legacy);
-
-    try { if (legacy && localStorage.getItem(key) === identity) localStorage.removeItem(key); } catch { }
-
-    return identity;
+    return await readOrCreate(database, kind);
   } finally { database.close(); }
 }
 

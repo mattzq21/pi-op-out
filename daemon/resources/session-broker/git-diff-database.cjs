@@ -44,7 +44,7 @@ function active(db, id) {
   if (db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=?').get(id)) throw new Error('Diff history session was deleted');
 }
 
-function initialize(db, filename, id, hooks) {
+function initialize(db, id) {
   if (db.prepare('SELECT 1 FROM session_diff_state WHERE session_id=?').get(id)) return;
   db.exec('BEGIN IMMEDIATE');
 
@@ -52,23 +52,11 @@ function initialize(db, filename, id, hooks) {
     active(db, id);
 
     if (!db.prepare('SELECT 1 FROM session_diff_state WHERE session_id=?').get(id)) {
-      const state = hooks.legacy(filename);
       db.prepare('INSERT INTO session_diff_state VALUES (?, 1)').run(id);
-      importState(db, id, state, hooks);
     }
 
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
-}
-
-function importState(db, id, state, hooks) {
-  for (const [message, snapshot] of Object.entries(state.snapshots)) put(db, id, 'set', message, snapshot, hooks.digest(snapshot));
-
-  for (const [message, capture] of Object.entries(state.pending)) put(db, id, 'pending', message, capture);
-
-  for (const [key, transfer] of Object.entries(state.transfers)) put(db, id, 'transfer', key, transfer);
-
-  for (const message of state.done) put(db, id, 'done', message, true);
 }
 
 function put(db, id, kind, key, value, digest = null) {
@@ -84,9 +72,9 @@ function load(filename, hooks, materialize, focus) {
   try {
     const id = identity(db, filename, hooks);
 
-    if (!id) return hooks.unowned(filename, materialize, focus);
+    if (!id) return hooks.empty();
     active(db, id);
-    initialize(db, filename, id, hooks);
+    initialize(db, id);
     db.exec('BEGIN IMMEDIATE');
     active(db, id);
     db.prepare('INSERT INTO session_diff_locations VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET session_id=excluded.session_id').run(filename, id);

@@ -87,11 +87,11 @@ fn attach_assignments_at(sessions: &mut [super::SessionSummary], path: &Path) ->
     }
     Ok(())
 }
-pub fn load_session_groups(app: AppHandle, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
+pub fn load_session_groups(app: AppHandle, seeds: Vec<SessionSeed>) -> Result<SessionGroups, String> {
     let _lock = STORAGE_LOCK.lock().map_err(|_| "Session groups lock was poisoned")?;
     let path = storage_path()?;
     deletions::refresh(&path, &super::load_app_settings(app.clone())?, &seeds, None)?;
-    let mut state = load_at(&path, seeds, legacy)?;
+    let mut state = load_at(&path, seeds)?;
     prune_missing_branch_groups(&app, &path, &mut state)?;
     Ok(state)
 }
@@ -184,11 +184,11 @@ fn assign_seed(state: &mut SessionGroups, seed: SessionSeed) -> bool {
     true
 }
 
-fn load_at(path: &Path, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
+fn load_at(path: &Path, seeds: Vec<SessionSeed>) -> Result<SessionGroups, String> {
     let _file_lock = lock_storage(path)?;
     let stored = read(path)?;
     let mut dirty = stored.is_none();
-    let mut state = stored.unwrap_or(legacy);
+    let mut state = stored.unwrap_or_default();
     let deleted = deletions::known(path)?;
     dirty |= deletions::prune(&mut state, &deleted);
     let seeds: Vec<_> = seeds.into_iter().filter(|seed| !deletions::contains(&deleted, &seed.session_key)).collect();

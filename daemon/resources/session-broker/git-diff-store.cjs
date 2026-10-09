@@ -8,7 +8,6 @@ const pages = require('./git-diff-pages.cjs');
 const transfers = require('./git-diff-transfer.cjs');
 const checkpointIndex = require('./checkpoint-owner-index.cjs');
 
-const header = 'PIOP-DIFFS-1\n';
 
 const maxRecordBytes = 4 * 1024 * 1024 * 6 + 64 * 1024;
 
@@ -90,149 +89,11 @@ function applyPending(state, record) {
   state.pending[record.id] = capture;
 }
 
-function readLog(fd, materialize, focus) {
-  const state = { ...emptyState(), materialize, focus, end: Buffer.byteLength(header) };
-  const buffer = Buffer.alloc(64 * 1024);
-  let tail = Buffer.alloc(0); let offset = state.end; let position = state.end; let transaction;
-
-  for (;;) {
-    const count = fs.readSync(fd, buffer, 0, buffer.length, position);
-
-    if (!count) break;
-    position += count;
-    tail = Buffer.concat([tail, buffer.subarray(0, count)]);
-    let end;
-
-    while ((end = tail.indexOf(10)) >= 0) {
-      const line = tail.subarray(0, end + 1);
-
-      if (line.length > maxRecordBytes) throw new Error('Permanent diff limit: individual log record is too large; file preserved');
-      const record = JSON.parse(line.toString('utf8'));
-      offset += line.length;
-      transaction = consumeRecord(state, record, transaction, offset, offset - line.length);
-      tail = tail.subarray(end + 1);
-    }
-
-    if (tail.length > maxRecordBytes) throw new Error('Permanent diff limit: individual log record is too large; file preserved');
-  }
-
-  return state;
-}
-
-function consumeRecord(state, record, transaction, offset, start) {
-  if (record.op === 'begin') {
-    if (transaction) throw new Error('Nested diff transaction; file preserved');
-
-    return { ...emptyState(), materialize: state.materialize, focus: state.focus, removed: new Set(), done: new Set() };
-  }
-
-  if (!transaction) throw new Error('Diff operation outside transaction; file preserved');
-
-  if (record.op === 'commit') {
-    merge(state, transaction);
-    state.end = offset;
-
-    return undefined;
-  }
-
-  apply(transaction, record);
-
-  if (record.op === 'set') transaction.positions[record.id] = start;
-
-  return transaction;
-}
-
-function merge(state, transaction) {
-  for (const [id, snapshot] of Object.entries(transaction.snapshots)) state.snapshots[id] = snapshot;
-
-  for (const [id, digest] of Object.entries(transaction.digests)) state.digests[id] = digest;
-
-  for (const [id, position] of Object.entries(transaction.positions)) state.positions[id] = position;
-
-  for (const [id, capture] of Object.entries(transaction.pending)) if (!state.done.has(id) || capture.source === 'copy') state.pending[id] = capture;
-
-  Object.assign(state.transfers, transaction.transfers);
-
-  for (const id of transaction.removed) { delete state.snapshots[id]; delete state.digests[id]; delete state.positions[id]; }
-
-  for (const id of transaction.done) { delete state.pending[id]; state.done.add(id); }
-}
-
 function completed(state, id) { return state.done.has(id) || Object.hasOwn(state.digests, id); }
-
-function readLegacyStore(filename, materialize = true, focus) {
-  let fd;
-
-  try { fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); }
-  catch (error) { if (error.code === 'ENOENT') return emptyState(); throw error; }
-
-  try {
-    const prefix = Buffer.alloc(Buffer.byteLength(header));
-    const count = fs.readSync(fd, prefix, 0, prefix.length, 0);
-
-    if (!count) return emptyState();
-
-    if (prefix.subarray(0, 5).toString() === 'PIOP-') {
-      if (prefix.toString() !== header) throw new Error('Unknown diff storage version; file preserved');
-
-      return readLog(fd, materialize, focus);
-    }
-
-    const snapshots = JSON.parse(fs.readFileSync(fd, 'utf8'));
-
-    if (!objectValue(snapshots) || !Object.values(snapshots).every(snapshotValid)) throw new Error('Invalid legacy diff map; file preserved');
-
-    const digests = Object.fromEntries(Object.entries(snapshots).map(([id, snapshot]) => [id, digest(snapshot)]));
-
-    return { ...emptyState(), snapshots, digests, legacy: true };
-  } finally { fs.closeSync(fd); }
-}
-
-function importLegacyStore(filename) {
-  const state = readLegacyStore(filename, true, '*');
-  const directory = path.join(filename.replace(/\.diffs\.json$/, '.snapshots'), 'diffs');
-  let metadata;
-
-  try { metadata = fs.lstatSync(directory); }
-  catch (error) { if (error.code === 'ENOENT') return state; throw error; }
-
-  if (!metadata.isDirectory() || fs.realpathSync(directory) !== directory) throw new Error('Invalid legacy diff shard directory; preserved');
-
-  for (const name of fs.readdirSync(directory).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).sort()) {
-    const record = legacyShard(path.join(directory, name));
-    const hash = digest(record.snapshot);
-    const existing = state.digests[record.messageId];
-
-    if (existing !== undefined && existing !== hash) throw new Error('Legacy diff shard conflicts with saved history; both copies preserved');
-
-    if (existing === undefined && state.done.has(record.messageId)) throw new Error('Legacy diff shard conflicts with a completed message; preserved');
-    state.snapshots[record.messageId] = record.snapshot;
-  }
-
-  return state;
-}
-
-function legacyShard(file) {
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-
-  try {
-    const metadata = fs.fstatSync(fd);
-
-    if (!metadata.isFile() || metadata.size > maxRecordBytes) throw new Error('Invalid or oversized legacy diff shard; preserved');
-    const record = JSON.parse(fs.readFileSync(fd, 'utf8'));
-
-    if (!stringValue(record.messageId) || !snapshotValid(record.snapshot)) throw new Error('Invalid legacy diff shard; preserved');
-
-    if (`${crypto.createHash('sha256').update(record.messageId).digest('hex')}.json` !== path.basename(file)) throw new Error('Invalid legacy diff shard identity; preserved');
-
-    return record;
-  } finally { fs.closeSync(fd); }
-}
 
 function databaseHooks() {
   return {
-    profile: () => path.dirname(snapshotParent()), owner: transcriptId, digest, empty: emptyState, unowned: readLegacyStore,
-    legacy: importLegacyStore,
+    profile: () => path.dirname(snapshotParent()), owner: transcriptId, digest, empty: emptyState,
   };
 }
 

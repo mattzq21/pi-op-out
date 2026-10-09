@@ -13,8 +13,8 @@ import { ConversationCommands } from "./conversationCommands";
 import { commandListingSchema } from "./fastModeCommands";
 import { htmlPreviewSize, listen, type UnlistenFn } from "./platform";
 import { restoredSessionTarget, targetedWindowSession } from "./sessionResume";
-import { inspectRecoveryDirectory, isTemporaryRecoveryDirectory, recoverSessionDirectory } from "./sessionRecovery";
-import type { GroupChange, SessionGroup, SessionGroups, SessionGroupSeed } from "./sessionGroups";
+import { inspectRecoveryDirectory, recoverSessionDirectory } from "./sessionRecovery";
+import type { GroupChange, SessionGroup, SessionGroupSeed } from "./sessionGroups";
 import type { AppSettings, GitDiffSnapshots, RpcCommand, RpcEvent, StorageReport } from "../types";
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call("new_window", { target }, z.string());
@@ -28,7 +28,7 @@ export function initialWindowTarget(): NativeConnectionTarget {
 
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; readOnly?: boolean; draftKey?: string; }
 
-export const loadSessionGroups = (seeds: SessionGroupSeed[], legacy: SessionGroups) => call("load_session_groups", { seeds, legacy }, sessionGroupsSchema);
+export const loadSessionGroups = (seeds: SessionGroupSeed[]) => call("load_session_groups", { seeds }, sessionGroupsSchema);
 
 export const changeSessionGroups = (change: GroupChange) => call("change_session_groups", { change }, sessionGroupsSchema);
 
@@ -283,12 +283,6 @@ export class NativeTransport {
     if (event.type === "extension_ui_request" && ["input", "editor", "select", "confirm"].includes(String(event.method)) && event.id !== undefined) this.retainedRequests.set(event.id, event);
   }
   private async ensureConnectionDirectory(version: number) {
-    if (!this.readOnly && this.sessionPath && this.cwd && isTemporaryRecoveryDirectory(this.cwd)) {
-      const inspected = await inspectRecoveryDirectory(this.sessionPath, this.hostId);
-
-      if (version !== this.connectionVersion) return false;
-      this.cwd = inspected.cwd;
-    }
 
     if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" }, z.object({ cwd: z.string(), sessionId: z.string() }));
 

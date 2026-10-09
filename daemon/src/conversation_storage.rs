@@ -1,5 +1,5 @@
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
-use std::{fs, path::Path};
+use std::path::Path;
 
 fn open(root: &Path) -> Result<Connection, String> {
     let database = crate::session_registry::open(root)?;
@@ -15,13 +15,6 @@ fn validate_key(key: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn legacy(root: &Path, key: &str) -> Result<Option<String>, String> {
-    match fs::read_to_string(root.join("conversation-ownership").join(format!("{key}.json"))) {
-        Ok(body) => Ok(Some(body)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
-}
 
 pub(crate) fn read(root: &Path, key: &str) -> Result<Option<String>, String> {
     validate_key(key)?;
@@ -29,11 +22,7 @@ pub(crate) fn read(root: &Path, key: &str) -> Result<Option<String>, String> {
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
     let saved: Option<Option<String>> = transaction.query_row("SELECT record_json FROM conversation_ownership WHERE record_id=?", [key], |row| row.get(0))
         .optional().map_err(|error| error.to_string())?;
-    let body = if let Some(saved) = saved { saved } else {
-        let body = legacy(root, key)?;
-        transaction.execute("INSERT INTO conversation_ownership VALUES (?, ?)", rusqlite::params![key, body]).map_err(|error| error.to_string())?;
-        body
-    };
+    let body = saved.flatten();
     transaction.commit().map_err(|error| error.to_string())?;
     Ok(body)
 }

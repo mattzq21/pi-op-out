@@ -100,13 +100,6 @@ fn prepare_table(transaction: &rusqlite::Transaction<'_>) -> Result<(), rusqlite
             UNIQUE (epoch, tool_call_id)
         );",
     )?;
-    let old_column: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tool_failures') WHERE name = 'session')",
-        [], |row| row.get(0),
-    )?;
-    if old_column {
-        transaction.execute_batch("ALTER TABLE tool_failures RENAME COLUMN session TO session_id;")?;
-    }
     Ok(())
 }
 

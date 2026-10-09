@@ -373,23 +373,11 @@ function recoverFile(root, file, result) {
   finally { if (lease !== undefined && lease !== null) fs.closeSync(lease); }
 }
 
-function legacyResidue(root, result) {
-  const known = new Set(journalFiles(root).map(file => {
-    try { return load(root, file).temporary; }
-    catch (_error) { return ''; }
-  }));
-
-  for (const record of require('./publication-residue.cjs').list(root, known)) {
-    result.quarantined.push({ path: record.path, reason: record.reason });
-  }
-}
-
 function recover(root) {
   return io.locked(root, () => {
     const result = { recovered: [], pendingReviews: [], quarantined: [], active: [], warnings: [] };
 
     for (const file of journalFiles(root)) recoverFile(root, file, result);
-    legacyResidue(root, result);
 
     return result;
   });

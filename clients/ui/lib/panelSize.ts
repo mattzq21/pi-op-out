@@ -74,31 +74,15 @@ function flushSizes() {
 
 window.addEventListener("focus", flushSizes);
 
-function legacySize(keys: string[], fallback: number, minimum: number) {
-  try {
-    const stored = keys.map(key => localStorage.getItem(key));
-    const value = Number(stored.find(value => value !== null));
-
-    return { value: Number.isFinite(value) && value >= minimum ? value : fallback, stored };
-  } catch { return { value: fallback, stored: [] }; }
-}
-
-function removeLegacy(keys: string[], stored: (string | null)[]) {
-  try { keys.forEach((key, index) => { if (localStorage.getItem(key) === stored[index]) localStorage.removeItem(key); }); } catch { }
-}
-
-export function createPanelSize(key: string, fallback: number, minimum: number, olderKeys: string[] = []): readonly [Accessor<number>, (value: number) => void] {
-  const keys = [key, ...olderKeys];
-  const legacy = legacySize(keys, fallback, minimum);
-  const [size, setSize] = createSignal(cache.get(key) ?? legacy.value);
+export function createPanelSize(key: string, fallback: number, minimum: number, _olderKeys: string[] = []): readonly [Accessor<number>, (value: number) => void] {
+  const [size, setSize] = createSignal(cache.get(key) ?? fallback);
   const revision = revisions.get(key);
   const pendingAtStart = pending.has(key);
   let disposed = false;
   onCleanup(() => { disposed = true; });
   onMount(() => {
     flushSizes();
-    void loadSize(key, legacy.value).then(saved => {
-      removeLegacy(keys, legacy.stored);
+    void loadSize(key, fallback).then(saved => {
 
       if (pendingAtStart || revisions.get(key) !== revision) return;
       const value = saved >= minimum ? saved : fallback;

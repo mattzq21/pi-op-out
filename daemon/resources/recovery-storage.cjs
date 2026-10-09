@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { randomUUID, createHash } = require('node:crypto');
+const { randomUUID } = require('node:crypto');
 
 const kind = 'missing-directory-recovery';
 
@@ -39,24 +39,6 @@ function realDirectory(directory) {
   }
 }
 
-function legacyDirectory(cwd) {
-  if (/^\/tmp\/piop-session-[a-zA-Z0-9]{6}$/.test(cwd)) return cwd;
-
-  if (/^\/tmp\/piop-recovery-[a-zA-Z0-9]{6}\/workdir$/.test(cwd)) return cwd;
-
-  return null;
-}
-
-function existingLegacyDirectory(cwd) {
-  const source = legacyDirectory(cwd);
-
-  if (!source) return null;
-
-  if (path.basename(source) === 'workdir' && !realDirectory(path.dirname(source))) return null;
-
-  return realDirectory(source) ? source : null;
-}
-
 function syncTree(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const target = path.join(directory, entry.name);
@@ -71,106 +53,6 @@ function syncTree(directory) {
   }
 
   syncDirectory(directory);
-}
-
-function fileDigest(file) {
-  const descriptor = fs.openSync(file, 'r');
-
-  const hash = createHash('sha256');
-
-  const buffer = Buffer.alloc(1024 * 1024);
-
-  try {
-    let count;
-
-    while ((count = fs.readSync(descriptor, buffer)) > 0) hash.update(buffer.subarray(0, count));
-
-    return hash.digest('hex');
-  } finally { fs.closeSync(descriptor); }
-}
-
-function fingerprint(metadata) {
-  return `${metadata.dev}:${metadata.ino}:${metadata.mode}:${metadata.size}:${metadata.mtimeNs}:${metadata.ctimeNs}`;
-}
-
-function captureEntry(target, relative, entries) {
-  const before = fs.lstatSync(target, { bigint: true });
-
-  let contents;
-
-  if (before.isFile()) contents = fileDigest(target);
-  else if (before.isSymbolicLink()) contents = fs.readlinkSync(target);
-  else if (!before.isDirectory()) throw new Error(`Cannot safely migrate a special file: ${target}`);
-
-  entries.set(relative, { identity: fingerprint(before), mode: before.mode, contents, symlink: before.isSymbolicLink() });
-
-  if (before.isDirectory()) {
-    for (const name of fs.readdirSync(target).sort()) captureEntry(path.join(target, name), path.join(relative, name), entries);
-  }
-
-  if (fingerprint(fs.lstatSync(target, { bigint: true })) !== fingerprint(before)) throw new Error('The temporary recovery directory changed while being read. Stop its writers and retry.');
-}
-
-function captureTree(directory) {
-  const entries = new Map();
-
-  captureEntry(directory, '', entries);
-
-  return entries;
-}
-
-function relocatedLinkTarget(target, source, destination, name) {
-  const absolute = path.isAbsolute(target);
-
-  const originalTarget = absolute ? target : path.resolve(source, path.dirname(name), target);
-
-  const relative = path.relative(source, originalTarget);
-
-  if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) return originalTarget;
-
-  return absolute ? path.join(destination, relative) : target;
-}
-
-function relocateInternalLinks(entries, source, destination) {
-  const unmanagedTemporarySymlinks = [];
-
-  for (const [name, entry] of entries) {
-    if (!entry.symlink) continue;
-
-    const replacement = relocatedLinkTarget(entry.contents, source, destination, name);
-
-    if (replacement !== entry.contents) {
-      const link = path.join(destination, name);
-      fs.unlinkSync(link);
-      fs.symlinkSync(replacement, link);
-    }
-
-    if (replacement.startsWith('/tmp/')) unmanagedTemporarySymlinks.push(name);
-  }
-
-  return unmanagedTemporarySymlinks;
-}
-
-function copiedContents(entry, source, destination, name) {
-  return entry.symlink ? relocatedLinkTarget(entry.contents, source, destination, name) : entry.contents;
-}
-
-function verifyCopy(before, source, destination) {
-  const after = captureTree(source);
-
-  const copy = captureTree(destination);
-
-  if (before.size !== after.size || before.size !== copy.size) throw new Error('The temporary recovery directory changed during migration. Its original files have been retained.');
-
-  for (const [name, original] of before) {
-    const current = after.get(name);
-
-    const replacement = copy.get(name);
-
-    if (original.identity !== current?.identity || original.contents !== current.contents) throw new Error('The temporary recovery directory changed during migration. Its original files have been retained.');
-
-    if (original.mode !== replacement?.mode || copiedContents(original, source, destination, name) !== replacement.contents) throw new Error('The durable recovery copy could not be verified. Its original files have been retained.');
-  }
 }
 
 function createRecoveryStorage(profileRoot) {
@@ -226,7 +108,7 @@ function createRecoveryStorage(profileRoot) {
   function validRecord(record, id) {
     return record.version === 1 && record.managedBy === 'piop' && record.kind === kind
       && record.id === id && states.has(record.state) && validOwners(record.owners)
-      && path.isAbsolute(record.originalCwd ?? '') && ['empty', 'remote-branch', 'legacy-copy'].includes(record.mode);
+      && path.isAbsolute(record.originalCwd ?? '') && ['empty', 'remote-branch'].includes(record.mode);
   }
 
   function validOwners(owners) {
@@ -304,39 +186,7 @@ function createRecoveryStorage(profileRoot) {
     writeRecord(containerFor(record), record);
   }
 
-  function migrate(header, sessionPath) {
-    const pending = find(header, sessionPath, 'legacy-copy');
-
-    const source = existingLegacyDirectory(header.cwd);
-
-    if (!source && pending) return pending;
-
-    if (!source) throw new Error('The temporary recovery directory is missing. Its contents cannot be migrated; choose an empty directory or the latest remote branch instead.');
-
-    const before = captureTree(source);
-
-    if (pending) {
-      try {
-        verifyCopy(before, source, pending.directory);
-
-        return pending;
-      } catch (error) { console.error(`Retaining an earlier recovery copy at ${pending.directory}: ${error.message}`); }
-    }
-
-    const record = allocate(header, sessionPath, 'legacy-copy');
-
-    fs.cpSync(source, record.directory, { recursive: true, force: false, errorOnExist: true, dereference: false, verbatimSymlinks: true, preserveTimestamps: true });
-
-    const unmanagedTemporarySymlinks = relocateInternalLinks(before, source, record.directory);
-
-    verifyCopy(before, source, record.directory);
-
-    ready(record, { sourceCwd: source, sourceRetained: true, unmanagedTemporarySymlinks });
-
-    return record;
-  }
-
-  return { root, allocate, ready, find, current, published, migrate, records, retained };
+  return { root, allocate, ready, find, current, published, records, retained };
 }
 
-module.exports = { createRecoveryStorage, existingLegacyDirectory, legacyDirectory, readSession };
+module.exports = { createRecoveryStorage, readSession };

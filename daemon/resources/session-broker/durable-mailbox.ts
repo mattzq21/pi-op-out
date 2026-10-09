@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { open, readdir, type FileHandle } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Type, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
@@ -23,7 +23,6 @@ const messageSchema = Type.Object({
 
 const recordSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.String(), deliveryId: Type.String(), sequence: Type.Integer({ minimum: 0 }), message: messageSchema });
 
-const ownerSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.String() });
 
 const headerSchema = Type.Object({ type: Type.Literal("session"), id: Type.String() });
 
@@ -48,31 +47,12 @@ async function syncDirectory(path: string) {
   finally { await directory.close(); }
 }
 
-async function readJson(path: string) {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-
-  try {
-    if (!(await file.stat()).isFile()) throw new Error("Agent mailbox record must be a regular file");
-
-    return JSON.parse(await file.readFile("utf8"));
-  } finally { await file.close(); }
-}
-
-async function optionalJson(path: string) {
-  try { return await readJson(path); }
-  catch (error) { if (error instanceof Error && missing(error)) return undefined; throw error; }
-}
-
 function mailboxPath(ctx: ExtensionContext) {
   const path = ctx.sessionManager.getSessionFile();
 
   if (!path?.endsWith(".jsonl")) throw new Error("Durable agent mail requires a saved conversation");
 
   return join(path.slice(0, -6) + ".snapshots", "mailbox");
-}
-
-function pendingPath(root: string, deliveryId: string) {
-  return join(root, "pending", `${createHash("sha256").update(deliveryId).digest("hex")}.json`);
 }
 
 function normalizeMessage(ctx: ExtensionContext, message: SendMessage, deliveryId: string): MailboxMessage {
@@ -202,32 +182,11 @@ async function readSavedDeliveries(db: DatabaseSync, id: string, path: string, r
   } finally { await file.close(); }
 }
 
-async function legacyPendingRecords(ctx: ExtensionContext, root: string) {
-  const owner = await optionalJson(join(root, "owner.json"));
-
-  if (!owner) return [];
-
-  if (Parse(ownerSchema, owner).sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Agent mailbox belongs to another conversation");
-  const files = (await readdir(join(root, "pending"))).filter(name => name.endsWith(".json"));
-  const records: MailboxRecord[] = [];
-
-  for (const name of files) {
-    const record = Parse(recordSchema, await readJson(join(root, "pending", name)));
-
-    if (record.sessionId !== ctx.sessionManager.getSessionId() || record.message.details.mailboxSessionId !== record.sessionId) throw new Error("Agent mail belongs to another conversation");
-
-    if (record.message.details.notificationId !== record.deliveryId || pendingPath(root, record.deliveryId) !== join(root, "pending", name)) throw new Error("Invalid agent mailbox delivery identity");
-    records.push(record);
-  }
-
-  return records.sort((left, right) => left.sequence - right.sequence);
-}
-
 function assertSameDelivery(fingerprint: string, message: MailboxMessage) {
   if (fingerprint !== message.details.mailboxFingerprint) throw new Error("Agent delivery ID was reused for a different message");
 }
 
-async function mailboxDatabase(ctx: ExtensionContext, root: string) {
+async function mailboxDatabase(ctx: ExtensionContext, _root: string) {
   const sessionId = ctx.sessionManager.getSessionId();
   const file = ctx.sessionManager.getSessionFile();
 
@@ -236,24 +195,22 @@ async function mailboxDatabase(ctx: ExtensionContext, root: string) {
 
   try {
     if (!db.prepare("SELECT 1 FROM session_mailbox_state WHERE session_id=?").get(sessionId)) {
-      const records = await legacyPendingRecords(ctx, root);
 
       if (ctx.sessionManager.getSessionId() !== sessionId) throw new Error("Conversation changed while recovering agent mail");
-      importPending(db, sessionId, file, records);
+      initializeMailbox(db, sessionId, file);
     }
 
     return db;
   } catch (error) { db.close(); throw error; }
 }
 
-function importPending(db: DatabaseSync, sessionId: string, file: string, records: MailboxRecord[]) {
+function initializeMailbox(db: DatabaseSync, sessionId: string, file: string) {
   db.exec("BEGIN IMMEDIATE");
 
   try {
     if (!db.prepare("SELECT 1 FROM session_mailbox_state WHERE session_id=?").get(sessionId)) {
       register(db, sessionId, file);
 
-      for (const record of records) insertPending(db, record);
       db.prepare("INSERT INTO session_mailbox_state VALUES (?)").run(sessionId);
     }
 

@@ -16,9 +16,8 @@ function open(root) {
 }
 
 function initialize(db) {
-  db.exec('CREATE TABLE IF NOT EXISTS transcript_references (session_path TEXT PRIMARY KEY, session_id TEXT, fingerprint TEXT NOT NULL, entries_json TEXT NOT NULL, format_version INTEGER NOT NULL DEFAULT 1)');
+  db.exec('CREATE TABLE IF NOT EXISTS transcript_references (session_path TEXT PRIMARY KEY, session_id TEXT, fingerprint TEXT NOT NULL, entries_json TEXT NOT NULL, format_version INTEGER NOT NULL)');
 
-  if (!db.prepare('PRAGMA table_info(transcript_references)').all().some(column => column.name === 'format_version')) db.exec('ALTER TABLE transcript_references ADD COLUMN format_version INTEGER NOT NULL DEFAULT 1');
   db.exec(`CREATE TRIGGER IF NOT EXISTS transcript_references_moved AFTER UPDATE OF session_path ON sessions
     WHEN OLD.session_path IS NOT NEW.session_path BEGIN
       DELETE FROM transcript_references WHERE session_path=OLD.session_path AND session_id=lower(OLD.session_id);

@@ -114,39 +114,6 @@ function legacyRecovery(cwd) {
     || /^\/tmp\/piop-recovery-[a-zA-Z0-9]{6}\/workdir$/.test(cwd);
 }
 
-async function temporaryRoots(profile, discovery) {
-  for (const root of new Set([os.tmpdir(), '/tmp'])) {
-    let records;
-
-    try { records = require('./temporary-storage-records.cjs').list(profile, root); }
-    catch (error) { discovery.warnings.push(`${root}: temporary storage records unavailable: ${error.message}`); continue; }
-
-    for (const record of records) await temporaryRecord(record, discovery);
-  }
-}
-
-async function temporaryRecord(record, discovery) {
-  const target = record.path;
-  let metadata;
-
-  try { metadata = await fs.lstat(target); }
-  catch (error) {
-    if (error.code !== 'ENOENT') discovery.warnings.push(`${target}: temporary storage unavailable: ${error.message}`);
-
-    return;
-  }
-
-  if (record.kind === 'recovery' && metadata.isDirectory()) {
-    addRoot(discovery.legacy, target, 'Legacy recovery name; no verified profile ownership', 'unattributed');
-  }
-
-  if (record.kind === 'ephemeral') {
-    addRoot(discovery.ephemeral, target, 'Imported side conversation artifact; runtime liveness unknown', 'unattributed');
-
-    if (metadata.isFile() && target.endsWith('.jsonl')) discovery.sessionPaths.add(target);
-  }
-}
-
 function piCandidates(selected) {
   if (selected) {
     const expanded = selected.startsWith('~/') ? path.join(os.homedir(), selected.slice(2)) : selected;
@@ -238,7 +205,6 @@ async function discoverRoots(profile) {
   const discovery = { repositories: new Map(), cwds: new Map(), recovery: new Map(), legacy: new Map(), ephemeral: new Map(), ephemeralRecords: new Map(), cleanup: new Map(), cleanupRecordCount: 0, pendingSnapshots: new Map(), transfers: new Map(), retainedArtifacts: new Map(), chatgpt: new Map(), sessionPaths: new Set(), warnings: [] };
   await readRegistry(profile, discovery);
   await recoveryRoots(profile, discovery);
-  await temporaryRoots(profile, discovery);
   await chatGptRoots(profile, discovery);
 
   return discovery;

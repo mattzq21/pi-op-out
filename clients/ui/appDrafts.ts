@@ -2,38 +2,15 @@ import { createMemo, createSignal, onCleanup } from "solid-js";
 import { NativeTransport, type NativeConnectionTarget } from "./lib/nativeTransport";
 import type { StateUpdate } from "./lib/solid";
 import type { ComposerUpload, SessionSummary } from "./types";
-import { z } from "zod";
 import { DraftStorage, draftEndpoint, durableDraftId, type DraftDestination, type DraftStorageIssue, type DurableDraft, type DurableSubmission } from "./lib/draftStorage";
 import { bindDraftStaging, goalPreparationSchema, submissionFingerprint, type DraftSubmissionHandle, type DraftSubmissionPayload } from "./lib/draftSubmission";
 import type { DraftConflictSnapshot } from "./lib/draftStorage";
 
 export interface ConversationDraft { text: string; uploads: ComposerUpload[]; target?: NativeConnectionTarget; updatedAt: number; }
 
-const legacyEntriesSchema = z.record(z.string(), z.json());
-
 const mergeText = (previous: string, newer: string) => !previous ? newer : newer && newer !== previous ? `${previous}\n\n${newer}` : previous;
 
 const mergeUploads = (previous: ComposerUpload[], newer: ComposerUpload[]) => [...previous.filter(item => !newer.some(other => other.id === item.id)), ...newer];
-
-function legacyEntries(key: string) {
-  return legacyEntriesSchema.parse(JSON.parse(localStorage.getItem(key) ?? "{}"));
-}
-
-function legacyDrafts(key: string) {
-  const drafts: Record<string, string> = {};
-  const issues: DraftStorageIssue[] = [];
-
-  try {
-    for (const [id, value] of Object.entries(legacyEntries(key))) {
-      const text = z.string().safeParse(value);
-
-      if (text.success) drafts[id] = text.data;
-      else issues.push({ kind: "storage", id, message: `Older draft ${id} has invalid saved text. Its original content has been retained.` });
-    }
-  } catch (reason) { issues.push({ kind: "storage", id: key, message: `Older drafts could not be read. Their original content has been retained. ${String(reason)}` }); }
-
-  return { drafts, issues };
-}
 
 function restoredDraft(record: DurableDraft, current: DurableDraft, textChanged: boolean, uploadsChanged: boolean): DurableDraft {
   const text = textChanged ? current.text : record.text;
@@ -45,15 +22,12 @@ function restoredDraft(record: DurableDraft, current: DurableDraft, textChanged:
 
 export function createConversationDrafts() {
   const endpoint = draftEndpoint();
-  const legacyKey = `piop-conversation-drafts:v1:${endpoint}`;
   const storage = new DraftStorage();
-  const legacyState = legacyDrafts(legacyKey);
-  const legacy = legacyState.drafts;
-  const [records, setRecords] = createSignal<Map<string, DurableDraft>>(new Map(Object.entries(legacy).map(([key, text]) => [key, { id: durableDraftId(endpoint, key), endpoint, key, text, uploads: [], updatedAt: Date.now() }])));
+  const [records, setRecords] = createSignal<Map<string, DurableDraft>>(new Map());
   const [submissions, setSubmissions] = createSignal<DurableSubmission[]>([]);
   const [uploadsByTransport, setUploadsByTransport] = createSignal<Map<NativeTransport, ComposerUpload[]>>(new Map());
   const [persistenceError, setPersistenceError] = createSignal<string>();
-  const [storageIssues, setStorageIssues] = createSignal<DraftStorageIssue[]>(legacyState.issues);
+  const [storageIssues, setStorageIssues] = createSignal<DraftStorageIssue[]>([]);
   const [loaded, setLoaded] = createSignal(false);
   const [pendingWrites, setPendingWrites] = createSignal(0);
   const [conflictCount, setConflictCount] = createSignal(0);
@@ -62,7 +36,6 @@ export function createConversationDrafts() {
   const redirected = new WeakMap<NativeTransport, NativeTransport>();
   const textChanged = new Set<string>();
   const uploadsChanged = new Set<string>();
-  const legacyCopies = new Map<string, DurableDraft>();
   let queue: Promise<void> = Promise.resolve();
   let revisionEpoch = 0;
   let loading: Promise<void> | undefined;
@@ -92,17 +65,7 @@ export function createConversationDrafts() {
     return result;
   };
 
-  const retireLegacy = (record: DurableDraft) => {
-    try {
-      const stored = legacyEntries(legacyKey);
-
-      if (stored[record.key] !== record.text) return;
-      delete stored[record.key];
-      localStorage.setItem(legacyKey, JSON.stringify(stored));
-    } catch (reason) { report(String(reason)); }
-  };
-
-  const save = (record: DurableDraft) => enqueue(async () => { const current = recordFor(record.key); await storage.commit([current]); retireLegacy(current); });
+  const save = (record: DurableDraft) => enqueue(async () => { const current = recordFor(record.key); await storage.commit([current]); });
 
   const update = (key: string, transform: (record: DurableDraft) => DurableDraft) => {
     const next = transform(recordFor(key)); publish(next);
@@ -111,46 +74,14 @@ export function createConversationDrafts() {
     return next;
   };
 
-  const preserveLegacyConflict = (record: DurableDraft, text: string) => {
-    let copy = legacyCopies.get(record.key);
-
-    if (!copy) {
-      const key = `recovered:draft-${crypto.randomUUID()}`;
-      copy = { ...empty(key), text, updatedAt: record.updatedAt };
-      legacyCopies.set(record.key, copy);
-    }
-
-    publish(copy);
-
-    return copy;
-  };
-
-  const restoreDrafts = (saved: DurableDraft[], issues: DraftStorageIssue[]) => {
-    const migrated: DurableDraft[] = [];
-    const retired: DurableDraft[] = [];
-
-    for (const record of saved) {
-      const previous = legacy[record.key];
-
-      if (previous && previous !== record.text) migrated.push(preserveLegacyConflict(record, previous));
-
-      if (previous !== undefined) retired.push({ ...record, text: previous });
-      publish(restoredDraft(record, recordFor(record.key), textChanged.has(record.key), uploadsChanged.has(record.key)));
-    }
-
-    for (const key of Object.keys(legacy)) {
-      if (saved.some(record => record.key === key) || issues.some(issue => issue.kind === "draft" && issue.id === durableDraftId(endpoint, key))) continue;
-      const record = recordFor(key);
-      migrated.push(record); retired.push(record);
-    }
-
-    return { migrated, retired };
+  const restoreDrafts = (saved: DurableDraft[]) => {
+    for (const record of saved) publish(restoredDraft(record, recordFor(record.key), textChanged.has(record.key), uploadsChanged.has(record.key)));
   };
 
   const load = () => loading ??= storage.load(endpoint).then(async restored => {
-    setStorageIssues([...legacyState.issues, ...restored.issues]);
+    setStorageIssues(restored.issues);
     setConflictCount(storage.conflictCount());
-    const { migrated, retired } = restoreDrafts(restored.drafts, restored.issues);
+    restoreDrafts(restored.drafts);
     setSubmissions(restored.submissions);
 
     for (const submission of restored.submissions) {
@@ -159,9 +90,7 @@ export function createConversationDrafts() {
       if (!record.text && !record.uploads.length) publish({ ...record, destination: submission.destination, updatedAt: submission.createdAt });
     }
 
-    await storage.commit(migrated);
 
-    for (const record of retired) retireLegacy(record);
     setLoaded(true);
   }).catch(reason => { report(reason); throw reason; }).finally(() => { loading = undefined; });
 
@@ -214,7 +143,7 @@ export function createConversationDrafts() {
     publish(record);
     await enqueue(() => storage.commit([record], [], [], [submission.id]));
     setSubmissions(current => current.filter(item => item.id !== submission.id));
-    retireLegacy(record);
+
   };
 
   const transferSubmission = async (submission: DurableSubmission, source: NativeTransport, destination: NativeTransport, committed: (next: DurableSubmission) => void) => {
@@ -236,7 +165,7 @@ export function createConversationDrafts() {
     publish({ ...latest, text: "", uploads: [] });
     publish({ ...transferred, text, uploads: mergeUploads(transferred.uploads, additions) });
     setSubmissions(current => current.map(item => item.id === next.id ? next : item));
-    retireLegacy(previous);
+
     await enqueue(() => storage.commit([recordFor(target.key), recordFor(previousKey)], [next]));
 
     return next;
@@ -317,7 +246,7 @@ export function createConversationDrafts() {
 
     const moved = copy ? [] : submissions().flatMap(item => item.destination.key === previousKey ? [{ ...item, destination: { ...item.destination, key: nextKey } }] : []);
     setSubmissions(current => current.map(item => moved.find(next => next.id === item.id) ?? item));
-    void enqueue(async () => { await storage.commit([next], moved, copy ? [] : [previous.id]); retireLegacy(previous); }).catch(() => undefined);
+    void enqueue(async () => { await storage.commit([next], moved, copy ? [] : [previous.id]); }).catch(() => undefined);
     publishUploads();
   };
 
@@ -353,7 +282,6 @@ export function createConversationDrafts() {
   const applyConflicts = (snapshot: DraftConflictSnapshot) => {
     const changedDrafts = new Set(snapshot.changes.flatMap(change => change.store === "drafts" ? [change.id] : []));
     const changedSubmissions = new Set(snapshot.changes.flatMap(change => change.store === "submissions" ? [change.id] : []));
-    const discarded = [...records().values()].filter(record => changedDrafts.has(record.id));
     storage.acceptConflicts(snapshot); revisionEpoch += 1;
 
     for (const key of aliases.keys()) if (changedDrafts.has(durableDraftId(endpoint, key))) aliases.delete(key);
@@ -362,7 +290,6 @@ export function createConversationDrafts() {
     for (const record of snapshot.drafts) publish(record);
     setSubmissions(current => [...current.filter(item => !changedSubmissions.has(item.id)), ...snapshot.submissions]);
 
-    for (const record of discarded) retireLegacy(record);
     publishUploads(); setConflictCount(storage.conflictCount()); setPersistenceError(undefined);
   };
 
@@ -406,7 +333,6 @@ export function createConversationDrafts() {
       setRecords(current => new Map([...current].filter(([key]) => !removed.some(record => record.key === key))));
       setSubmissions(current => current.filter(item => !removedSubmissions.includes(item)));
 
-      for (const record of removed) retireLegacy(record);
 
       publishUploads();
     }).catch(() => undefined);

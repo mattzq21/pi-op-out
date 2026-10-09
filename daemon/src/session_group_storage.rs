@@ -1,44 +1,18 @@
 use super::{SessionGroup, SessionGroups};
 use rusqlite::{params, Connection, Transaction, TransactionBehavior};
-use std::{collections::HashSet, fs, path::Path};
+use std::{collections::HashSet, path::Path};
 
 fn database(path: &Path) -> Result<Connection, String> {
     let parent = path.parent().ok_or("Session group storage has no directory")?;
     let root = if parent.file_name().is_some_and(|name| name == "sessions") {
         parent.parent().ok_or("Session group storage has no root")?
     } else { parent };
-    let mut database = crate::session_registry::open(root)?;
-    migrate(&mut database, path)?;
+    let database = crate::session_registry::open(root)?;
+    database.execute("INSERT INTO session_group_state VALUES (1, 0) ON CONFLICT DO NOTHING", []).map_err(|error| error.to_string())?;
     Ok(database)
 }
 
-fn migrate(database: &mut Connection, path: &Path) -> Result<(), String> {
-    let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
-    let imported: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM session_group_state)", [], |row| row.get(0))
-        .map_err(|error| error.to_string())?;
-    if !imported {
-        import_files(&transaction, path)?;
-    }
-    transaction.commit().map_err(|error| error.to_string())
-}
 
-fn import_files(transaction: &Transaction<'_>, path: &Path) -> Result<(), String> {
-    let groups = legacy::<SessionGroups>(path)?;
-    transaction.execute("INSERT INTO session_group_state VALUES (1, ?)", [groups.is_some()]).map_err(|error| error.to_string())?;
-    if let Some(groups) = groups { save_groups(transaction, &groups)?; }
-    if let Some(deleted) = legacy::<HashSet<String>>(&path.with_extension("deletions.json"))? {
-        save_deleted(transaction, &deleted)?;
-    }
-    Ok(())
-}
-
-fn legacy<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
-    match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| format!("Could not import {}: {error}", path.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
-}
 
 pub(super) fn read(path: &Path) -> Result<Option<SessionGroups>, String> {
     let mut database = database(path)?;

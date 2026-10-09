@@ -1,4 +1,3 @@
-const fs = require('node:fs');
 const path = require('node:path');
 const database = require('./session-database.cjs');
 
@@ -25,14 +24,9 @@ function read(file) {
 
     try {
       const row = db.prepare('SELECT record_json FROM conversation_ownership WHERE record_id=?').get(key);
-      let body = row?.record_json ?? null;
+      const body = row?.record_json ?? null;
 
-      if (!row) {
-        try { body = fs.readFileSync(file, 'utf8'); }
-        catch (error) { if (error.code !== 'ENOENT') throw error; }
 
-        db.prepare('INSERT INTO conversation_ownership VALUES (?, ?)').run(key, body);
-      }
 
       db.exec('COMMIT');
 

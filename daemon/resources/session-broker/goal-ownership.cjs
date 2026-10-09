@@ -21,19 +21,6 @@ function identity(directory) {
   return `${info.dev}:${info.ino}`;
 }
 
-function legacy(directory) {
-  let descriptor;
-
-  try { descriptor = fs.openSync(path.join(directory, 'owners.json'), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); }
-  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-
-  try {
-    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid saved goal ownership');
-
-    return new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(descriptor));
-  } finally { fs.closeSync(descriptor); }
-}
-
 function read(root, directory) {
   let expected;
 
@@ -42,15 +29,12 @@ function read(root, directory) {
 
   return withDatabase(root, db => {
     const query = db.prepare('SELECT record_json FROM goal_ownership WHERE directory=? AND identity=?');
-    let row = query.get(directory, expected);
+    const row = query.get(directory, expected);
 
     if (!row) {
       assertSavedIdentity(db, directory, expected);
-      const body = legacy(directory);
 
-      if (identity(directory) !== expected) throw new Error('Goal ownership changed during import');
-      db.prepare('INSERT INTO goal_ownership VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(directory, expected, body);
-      row = query.get(directory, expected);
+      return undefined;
     }
 
     return row.record_json === null ? undefined : JSON.parse(row.record_json);
@@ -119,47 +103,11 @@ function allocate(root, parent) {
   throw new Error('Could not allocate goal attachment storage');
 }
 
-function importDirectory(db, directory) {
-  const expected = identity(directory);
-  assertSavedIdentity(db, directory, expected);
-  const body = legacy(directory);
-
-  if (identity(directory) !== expected) throw new Error('Goal ownership changed during import');
-  db.prepare('INSERT INTO goal_ownership VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(directory, expected, body);
-}
-
-function importTree(db, directory) {
-  let entries;
-
-  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code === 'ENOENT') return; throw error; }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.endsWith('.snapshots')) continue;
-    const child = path.join(directory, entry.name);
-
-    if (path.basename(directory) === 'attachments') {
-      if (/^goal-[a-zA-Z0-9_-]+$/.test(entry.name) && !/-pending-[a-zA-Z0-9]+$/.test(entry.name)) importDirectory(db, child);
-    } else importTree(db, child);
-  }
-}
-
 function directories(root, sessionId) {
   return withDatabase(root, db => {
     db.exec('BEGIN IMMEDIATE');
 
     try {
-      if (!db.prepare("SELECT 1 FROM storage_migrations WHERE name='goal-ownership-v1'").get()) {
-        importTree(db, path.join(root, 'sessions'));
-        importTree(db, path.join(root, 'attachments'));
-        db.prepare("INSERT INTO storage_migrations VALUES ('goal-ownership-v1')").run();
-      }
-
-      if (!db.prepare("SELECT 1 FROM storage_migrations WHERE name='goal-ownership-all-areas-v1'").get()) {
-        for (const area of ['archived', 'fork-transactions', 'fork-preparations']) importTree(db, path.join(root, area));
-        db.prepare("INSERT INTO storage_migrations VALUES ('goal-ownership-all-areas-v1')").run();
-      }
-
       const rows = sessionId === undefined
         ? db.prepare('SELECT DISTINCT directory FROM goal_ownership').all()
         : db.prepare(`SELECT DISTINCT directory FROM goal_ownership

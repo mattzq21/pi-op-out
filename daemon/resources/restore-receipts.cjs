@@ -217,11 +217,9 @@ function pending(root, ignoredJournal) {
 
   if (archivePending(root) || require('./deletion-records.cjs').list(root).length) return true;
 
-  if (require('./legacy-deletion-records.cjs').list(root).length) return true;
 
-  if (require('./legacy-archive-records.cjs').list(root).length) return true;
 
-  return require('./legacy-deletion-locks.cjs').list(root).length > 0;
+  return false;
 }
 
 function unchanged(snapshot) {

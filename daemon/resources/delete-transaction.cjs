@@ -344,7 +344,6 @@ function recover(root) {
     catch (error) { failures.push(`${entry.directory}: ${error.message}`); }
   }
 
-  for (const file of require('./legacy-deletion-locks.cjs').list(root)) console.error(`Legacy deletion recovery retained without sufficient durable identity evidence: ${file}`);
 
   if (failures.length) throw new Error(failures.join('\n'));
 }

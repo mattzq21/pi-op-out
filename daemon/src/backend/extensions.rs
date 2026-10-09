@@ -51,7 +51,7 @@ fn save_runtime_settings(dir: &std::path::Path, settings: &AppSettings) -> Resul
     Ok(())
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 55] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 54] = [
     ("goal-directory-recovery.cjs", include_str!("../../resources/session-broker/goal-directory-recovery.cjs")),
     ("subagent-usage-storage.cjs", include_str!("../../resources/session-broker/subagent-usage-storage.cjs")),
     ("app-settings.cjs", include_str!("../../resources/session-broker/app-settings.cjs")),
@@ -100,7 +100,6 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 55] = [
     ("goal-controls.ts", include_str!("../../resources/session-broker/goal-controls.ts")),
     ("goal-coordination.ts", include_str!("../../resources/session-broker/goal-coordination.ts")),
     ("goal-files.ts", include_str!("../../resources/session-broker/goal-files.ts")),
-    ("publication-residue.cjs", include_str!("../../resources/session-broker/publication-residue.cjs")),
     ("goal-dependencies.cjs", include_str!("../../resources/session-broker/goal-dependencies.cjs")),
     ("goal-prepared-files.cjs", include_str!("../../resources/session-broker/goal-prepared-files.cjs")),
     ("goal-preparations.cjs", include_str!("../../resources/session-broker/goal-preparations.cjs")),
@@ -167,18 +166,8 @@ pub(super) fn prepare_openai_cache_fork_extension() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn migrate_extension_directory(old: &str, new: &str) -> Result<(), String> {
-    let root = home_dir()?.join(STORAGE_DIRECTORY);
-    let source = root.join(old);
-    let destination = root.join(new);
-    if source.exists() && !destination.exists() {
-        fs::rename(source, destination).map_err(|error| format!("Could not migrate piop extension directory: {error}"))?;
-    }
-    Ok(())
-}
 
 pub(super) fn prepare_fast_mode_extension() -> Result<PathBuf, String> {
-    migrate_extension_directory("pi-openai-fast-mode-piop", "piop-openai-fast-mode")?;
     let dir = generated_extension_root()?.join("piop-openai-fast-mode");
     ensure_private_dir(&dir)?;
     let path = dir.join("index.ts");
@@ -203,7 +192,6 @@ pub(super) fn prepare_context_bar_extension() -> Result<PathBuf, String> {
 }
 
 pub(super) fn prepare_context_window_cap_extension(settings: &AppSettings) -> Result<PathBuf, String> {
-    migrate_extension_directory("pi-context-window-cap", "piop-context-window-cap")?;
     let dir = generated_extension_root()?.join("piop-context-window-cap");
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
@@ -216,7 +204,6 @@ pub(super) fn prepare_context_window_cap_extension(settings: &AppSettings) -> Re
 }
 
 pub(super) fn prepare_session_cost_limit_extension(_settings: &AppSettings) -> Result<PathBuf, String> {
-    migrate_extension_directory("pi-session-cost-limit", "piop-session-cost-limit")?;
     let dir = generated_extension_root()?.join("piop-session-cost-limit");
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
@@ -258,7 +245,6 @@ fn prepare_diff_storage(dir: &Path) -> Result<(), String> {
 }
 
 pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
-    migrate_extension_directory("pi-diff-watch", "piop-diff-watch")?;
     let config_dir = home_dir()?.join(STORAGE_DIRECTORY);
     let legacy_dir = config_dir.join("pi-git-change-context");
     if legacy_dir.exists() { fs::remove_dir_all(&legacy_dir).map_err(|error| format!("Could not remove legacy diff watch extension: {error}"))?; }
@@ -282,34 +268,6 @@ pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
     Ok(extension_path)
 }
 
-fn migrate_agent_prompt_paths(config: &mut Value, legacy_dir: &Path) {
-    if let Some(agents) = config["agents"].as_array_mut() {
-        for agent in agents {
-            for key in ["path_systemprompt", "path_agent_prompt", "path_agentprompt"] {
-                if let Some(path) = agent[key].as_str().filter(|path| !path.is_empty() && !path.starts_with('~') && !Path::new(path).is_absolute()) {
-                    agent[key] = json!(legacy_dir.join(path).to_string_lossy());
-                }
-            }
-        }
-    }
-}
-
-fn migrate_agent_config(config: &Path, legacy_dir: &Path) -> Result<(), String> {
-    let _lock = crate::settings_concurrency::lock_settings(config)?;
-    if DEVELOPMENT || !crate::settings_storage::records::needs_legacy(config)? { return Ok(()); }
-    crate::settings_storage::records::import_legacy_with(config, &legacy_dir.join("config.json"), |body| {
-        let mut migrated: Value = serde_json::from_slice(&body).map_err(|error| error.to_string())?;
-        migrate_agent_prompt_paths(&mut migrated, legacy_dir);
-        serde_json::to_vec_pretty(&migrated).map_err(|error| error.to_string())
-    })
-}
-
-fn prepare_agent_configuration(legacy_dir: &Path) -> Result<(), String> {
-    let config_dir = home_dir()?.join(STORAGE_DIRECTORY).join("piop-define-agents");
-    ensure_private_dir(&config_dir)?;
-    migrate_agent_config(&config_dir.join("config.json"), legacy_dir)
-}
-
 pub(super) const EXCALIDRAW_ASSETS: [(&str, &str); 2] = [
     ("SKILL.md", include_str!("../../../extensions/piop-excalidraw/SKILL.md")),
     ("references/cheatsheet.md", include_str!("../../../extensions/piop-excalidraw/references/cheatsheet.md")),
@@ -326,11 +284,9 @@ fn prepare_agent_directories(dir: &Path) -> Result<(), String> {
 }
 
 pub(super) fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
-    migrate_extension_directory("pi-define-agents", "piop-define-agents")?;
     let dir = generated_extension_root()?.join("piop-define-agents");
     prepare_agent_directories(&dir)?;
     let legacy_dir = home_dir()?.join(".pi/agent/extensions/pi-define-agents");
-    prepare_agent_configuration(&legacy_dir)?;
     let path = dir.join("index.ts");
     for (name, source) in [
         ("mcp-schema.ts", include_str!("../../resources/mcp-schema.bundle.mjs")),

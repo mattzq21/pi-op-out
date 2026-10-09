@@ -22,7 +22,7 @@ export function storageSchemaImports() {
         .replace("const fs = require('node:fs');", "import fs from 'node:fs';")
         .replace("const path = require('node:path');", "import path from 'node:path';")
         .replace("const { DatabaseSync } = require('node:sqlite');", "import { DatabaseSync } from 'node:sqlite';")
-        .replace('module.exports = { read, readFile, readText, write, importMissing };', 'export { read, readFile, readText, write, importMissing };'), loader: 'js' };
+        .replace('module.exports = { read, readFile, readText, write };', 'export { read, readFile, readText, write };'), loader: 'js' };
 
       const values = /const \{ ([A-Z]\w*(?:, [A-Z]\w*)*) \} = require\(["']typebox\/value["']\);/g;
       const contents = lazyImports(canonicalImports(schemaImports(source), path), path).replace(values, (_declaration, names) => `import { ${names} } from "typebox/value";`);
@@ -35,12 +35,12 @@ export function storageSchemaImports() {
 }
 
 const canonicalModules = new Set([
-  "archive-resource-records.cjs", "archive-records.cjs", "deletion-records.cjs", "fork-transaction-records.cjs", "fork-preparation-records.cjs", "temporary-storage-records.cjs", "external-transcripts.cjs",
-  "publication-residue.cjs", "legacy-archive-records.cjs", "legacy-deletion-locks.cjs", "restore-records.cjs", "transcript-metadata.cjs", "legacy-deletion-records.cjs", "conversation-storage.cjs", "snapshot-recovery-records.cjs",
+  "archive-resource-records.cjs", "archive-records.cjs", "deletion-records.cjs", "fork-transaction-records.cjs", "fork-preparation-records.cjs", "external-transcripts.cjs",
+  "restore-records.cjs", "transcript-metadata.cjs", "conversation-storage.cjs", "snapshot-recovery-records.cjs",
   "session-database.cjs", "transcript-references.cjs", "goal-dependencies.cjs", "goal-preparations.cjs", "goal-ownership.cjs",
   "snapshot-operation-stores.cjs", "snapshot-comparison-records.cjs", "snapshot-metadata.cjs",
-  "archive-checkpoints.cjs", "archive-legacy-recovery.cjs", "archive-resource-migration.cjs", "archive-resource-owners.cjs", "archive-resource-restore.cjs", "archive-resource-transactions.cjs", "archive-resources.cjs", "archive-transaction.cjs",
-  "checkpoint-schemas.cjs", "delete-recovery.cjs", "delete-transaction.cjs", "deletion-retention.cjs", "directory-liveness.cjs", "fork-preparation.cjs", "fork-transaction.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
+  "archive-checkpoints.cjs", "archive-resource-owners.cjs", "archive-resource-restore.cjs", "archive-resource-transactions.cjs", "archive-resources.cjs", "archive-transaction.cjs",
+  "checkpoint-schemas.cjs", "delete-transaction.cjs", "deletion-retention.cjs", "directory-liveness.cjs", "fork-preparation.cjs", "fork-transaction.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
   "restore-receipts.cjs", "restore-transaction.cjs", "retention-candidates.cjs", "retention-collection.cjs", "session-diff-store.cjs", "session-transactions.cjs", "snapshot-recovery.cjs", "storage-lock.cjs", "storage-recovery.cjs", "storage-transaction-lock.cjs",
   "transaction-owner-locks.cjs", "transcript-identity.cjs", "worktree-checkpoint-preservation.cjs", "worktree-container.cjs", "worktree-retention.cjs",
   "git-diff-store.cjs", "git-diff-database.cjs", "git-diff-pages.cjs", "git-diff-transfer.cjs", "git-diff-transfer-storage.cjs", "session-publication.cjs", "session-publication-io.cjs", "session-publication-dependencies.cjs", "session-child-index.cjs", "checkpoint-owner-index.cjs", "review-publication.cjs", "goal-assets.cjs",

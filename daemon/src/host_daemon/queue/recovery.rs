@@ -17,12 +17,7 @@ pub(crate) struct Recovery {
 }
 
 pub(crate) fn recover_missing_transcripts(root: &Path, ownership: &ConversationOwnership) -> Recovery {
-    let mut recovery = recover_storage(root, ownership).unwrap_or_else(|error| Recovery { errors: vec![error], ..Recovery::default() });
-    if let Err(error) = cleanup_temporary(root) {
-        recovery.errors.push(error);
-        recovery.retry = true;
-    }
-    recovery
+    recover_storage(root, ownership).unwrap_or_else(|error| Recovery { errors: vec![error], ..Recovery::default() })
 }
 
 fn recover_storage(root: &Path, ownership: &ConversationOwnership) -> Result<Recovery> {
@@ -33,17 +28,6 @@ fn recover_storage(root: &Path, ownership: &ConversationOwnership) -> Result<Rec
     let entries = statement.query_map([], |row| row.get::<_, String>(0)).map_err(|error| error.to_string())?
         .collect::<std::result::Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
     Ok(recover_entries(root, ownership, entries))
-}
-
-fn cleanup_temporary(root: &Path) -> Result<()> {
-    let _publication = super::super::reference_publication::lock(root)?;
-    let _storage = super::temporary::lock(root)?;
-    let db = crate::session_registry::open(root)?;
-    let cleaned: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM storage_migrations WHERE name='queued-input-temporary-cleanup-v1')", [], |row| row.get(0)).map_err(|error| error.to_string())?;
-    if cleaned { return Ok(()); }
-    super::temporary::cleanup(&root.join("queued-input"), None)?;
-    db.execute("INSERT INTO storage_migrations VALUES ('queued-input-temporary-cleanup-v1')", []).map_err(|error| error.to_string())?;
-    Ok(())
 }
 
 fn recover_entries(root: &Path, ownership: &ConversationOwnership, entries: Vec<String>) -> Recovery {
@@ -70,7 +54,7 @@ fn transactions_pending(root: &Path) -> Result<bool> {
 
 fn restoration_pending(root: &Path) -> Result<bool> {
     let database = crate::session_registry::open(root)?;
-    database.query_row("SELECT EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM fork_transactions) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions) OR EXISTS(SELECT 1 FROM legacy_archive_directories) OR EXISTS(SELECT 1 FROM legacy_deletion_locks) OR NOT EXISTS(SELECT 1 FROM storage_migrations WHERE name='legacy-deletion-locks-v1') OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
+    database.query_row("SELECT EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM fork_transactions) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))", [], |row| row.get(0))
         .map_err(|error| error.to_string())
 }
 

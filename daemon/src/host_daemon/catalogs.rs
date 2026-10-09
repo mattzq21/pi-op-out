@@ -6,7 +6,7 @@ use reqwest::{
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashSet},
-    path::{Path, PathBuf},
+    path::Path,
     time::Duration,
 };
 
@@ -231,24 +231,6 @@ fn discovered_model(entry: &Value, known: &[Value]) -> Result<Value> {
 
 pub(super) fn read_accounts(auth: &Path) -> Result<Vec<Value>> { accounts::read(auth) }
 
-fn legacy_accounts(auth: &Path) -> Result<Vec<Value>> {
-    let path = PathBuf::from(format!("{}.piop-accounts.json", auth.to_string_lossy()));
-    let records: Value = match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| "Invalid provider account registry")?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error.to_string()),
-    };
-    let records = records.as_array().ok_or("Invalid provider account registry")?;
-    if records.iter().any(|record| {
-        let number = record["number"].as_u64();
-        !record["providerId"].is_string()
-            || number.is_none_or(|number| !(2..=9_007_199_254_740_991).contains(&number))
-            || record["id"] != format!("{}--piop-account-{}", text(record, "providerId"), number.unwrap_or(0))
-    }) {
-        return Err("Invalid provider account registry".into());
-    }
-    Ok(records.clone())
-}
 
 pub(super) async fn allocate_account(auth: &Path, id: &str, occupied: HashSet<String>) -> Result<Value> {
     accounts::allocate(auth, id, occupied)

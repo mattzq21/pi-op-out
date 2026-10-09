@@ -37,16 +37,13 @@ impl QueueStorage {
     }
 
     pub fn recover(&self, pending: Vec<Value>) -> Result<Vec<Value>> {
-        let root = self.path.parent().and_then(Path::parent).ok_or("Queued-input storage has no root")?;
-        let id = self.path.file_stem().and_then(|name| name.to_str()).ok_or("Queued-input identity is missing")?;
         let mut recovered = self.load()?;
-        for mut item in super::persistence::load_legacy(root, id)?.into_iter().chain(pending) {
+        for mut item in pending {
             validate_item(&item)?;
             item["retry"] = json!(true);
             if !recovered.iter().any(|saved| saved["id"] == item["id"]) { recovered.push(item); }
         }
         self.save(&recovered)?;
-        super::persistence::remove_legacy(root, id)?;
         Ok(recovered)
     }
 

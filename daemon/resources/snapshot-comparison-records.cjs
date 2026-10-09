@@ -21,11 +21,11 @@ function withDatabase(root, operation) {
         identity TEXT PRIMARY KEY REFERENCES snapshot_comparison_records(identity) ON DELETE CASCADE,
         queue_identity TEXT NOT NULL, name TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS snapshot_comparison_queue ON snapshot_comparison_locations(queue_identity);
-      CREATE TABLE IF NOT EXISTS snapshot_comparison_imports (queue_identity TEXT PRIMARY KEY);
+
       CREATE TABLE IF NOT EXISTS snapshot_preparations (
         parent_identity TEXT NOT NULL, name TEXT NOT NULL, identity TEXT, session_id TEXT NOT NULL,
         PRIMARY KEY(parent_identity, name));
-      CREATE TABLE IF NOT EXISTS snapshot_preparation_imports (parent_identity TEXT PRIMARY KEY);
+
       BEGIN IMMEDIATE;`);
     const result = operation(db);
     db.exec('COMMIT');
@@ -34,24 +34,11 @@ function withDatabase(root, operation) {
   } finally { db.close(); }
 }
 
-function legacy(directory) {
-  try { return fs.readFileSync(path.join(directory, 'comparison.json'), 'utf8'); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-
-  return null;
-}
-
 function stored(db, directory, sessionId) {
   const key = identity(directory);
-  let row = db.prepare('SELECT session_id, record_json FROM snapshot_comparison_records WHERE identity=?').get(key);
+  const row = db.prepare('SELECT session_id, record_json FROM snapshot_comparison_records WHERE identity=?').get(key);
 
-  if (!row) {
-    const body = legacy(directory);
-
-    if (identity(directory) !== key) throw new Error('Comparison directory changed during import');
-    db.prepare('INSERT INTO snapshot_comparison_records VALUES (?, ?, ?)').run(key, sessionId, body);
-    row = { session_id: sessionId, record_json: body };
-  }
+  if (!row) return null;
 
   if (row.session_id !== sessionId) throw new Error('Comparison session identity changed');
 
@@ -72,20 +59,6 @@ function locate(db, directory, queue, name) {
     .run(identity(directory), identity(queue), name);
 }
 
-function importQueue(db, queue, sessionId, key) {
-  if (db.prepare('SELECT 1 FROM snapshot_comparison_imports WHERE queue_identity=?').get(key)) return;
-
-  for (const entry of fs.readdirSync(queue, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith('.') && !entry.name.startsWith('.acknowledged-')) continue;
-    const directory = path.join(queue, entry.name);
-    stored(db, directory, sessionId);
-    locate(db, directory, queue, entry.name.replace(/^\.acknowledged-/, ''));
-  }
-
-  if (identity(queue) !== key) throw new Error('Comparison queue changed during import');
-  db.prepare('INSERT INTO snapshot_comparison_imports VALUES (?)').run(key);
-}
-
 function present(queue, row) {
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(row.name)) throw new Error('Invalid saved comparison name');
 
@@ -104,7 +77,6 @@ function list(root, queue, sessionId, retireMissing = false) {
   const key = identity(queue);
 
   return withDatabase(root, db => {
-    importQueue(db, queue, sessionId, key);
 
     const rows = db.prepare(`SELECT locations.identity, locations.name, records.session_id
       FROM snapshot_comparison_locations locations JOIN snapshot_comparison_records records USING(identity)
@@ -162,20 +134,6 @@ function prepare(root, parent, sessionId) {
   return directory;
 }
 
-function importPreparations(db, parent, key, sessionId) {
-  if (db.prepare('SELECT 1 FROM snapshot_preparation_imports WHERE parent_identity=?').get(key)) return;
-
-  for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !entry.name.startsWith('.preparing-')) continue;
-    const name = preparationName(entry.name);
-    db.prepare('INSERT INTO snapshot_preparations VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING')
-      .run(key, name, identity(path.join(parent, name)), sessionId);
-  }
-
-  if (identity(parent) !== key) throw new Error('Snapshot preparation parent changed during import');
-  db.prepare('INSERT INTO snapshot_preparation_imports VALUES (?)').run(key);
-}
-
 function preparationDirectory(db, parent, row) {
   const directory = path.join(parent, preparationName(row.name));
   let current;
@@ -199,7 +157,6 @@ function preparations(root, parent, sessionId) {
   const key = identity(parent);
 
   return withDatabase(root, db => {
-    importPreparations(db, parent, key, sessionId);
 
     return db.prepare('SELECT * FROM snapshot_preparations WHERE parent_identity=? ORDER BY name').all(key).flatMap(row => {
       if (row.session_id !== sessionId) throw new Error('Snapshot preparation session identity changed');

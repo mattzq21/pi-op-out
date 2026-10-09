@@ -125,9 +125,7 @@ function pendingTranscripts(root, binding, resourceId, found) {
     if (io.exists(file)) observe(file, 'unresolved', binding, resourceId, found);
   }
 
-  for (const record of require('./session-broker/publication-residue.cjs').list(root, known)) {
-    observe(record.path, 'unresolved', binding, resourceId, found);
-  }
+
 }
 
 function discover(root, binding, resourceId, recorded) {

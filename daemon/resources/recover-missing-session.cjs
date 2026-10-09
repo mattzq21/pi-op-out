@@ -7,7 +7,7 @@ const request = JSON.parse(process.argv[1]);
 
 const relocate = process.argv[2];
 
-const { createRecoveryStorage, existingLegacyDirectory, legacyDirectory, readSession } = require('./recovery-storage.cjs');
+const { createRecoveryStorage, readSession } = require('./recovery-storage.cjs');
 
 const profileRoot = path.join(os.homedir(), request.storage || process.env.PIOP_STORAGE_DIRECTORY || '.piop');
 
@@ -41,8 +41,6 @@ if (request.action === 'inspect') {
     canRecoverRemote: Boolean(saved?.remote_url && (saved?.upstream_branch || saved?.branch)),
     cwd: header.cwd,
     managedRoot: storage.root,
-    legacyRecovery: legacyDirectory(header.cwd) ? (existingLegacyDirectory(header.cwd) ? 'available' : 'missing') : null,
-    stagedDirectory: storage.find(header, request.sessionPath, 'legacy-copy')?.directory ?? null,
     currentRecovery: current ?? null,
     retainedDirectories: storage.retained(header, request.sessionPath).map(record => ({ directory: record.directory, state: record.state, mode: record.mode })),
   }));
@@ -134,7 +132,7 @@ function reportRecovery(record) {
   process.stdout.write(JSON.stringify({ cwd: record.directory, recovery: record, warnings }));
 }
 
-if (!['empty', 'remote', 'migrate'].includes(request.action)) throw new Error('Unknown recovery action');
+if (!['empty', 'remote'].includes(request.action)) throw new Error('Unknown recovery action');
 
 const current = storage.current(header, request.sessionPath);
 
@@ -146,13 +144,7 @@ if (current && fs.existsSync(current.directory)) {
   process.exit(0);
 }
 
-if (request.action === 'migrate') {
-  const record = storage.migrate(header, request.sessionPath);
-
-  storage.ready(record, { ...record.recovered, ...gitState(record.directory) });
-
-  publish(record);
-} else {
+{
   assertMissingDirectory();
 
   if (request.action === 'empty') {

@@ -1,4 +1,3 @@
-const fs = require('node:fs');
 const database = require('../session-database.cjs');
 
 function withDatabase(file, sessionId, operation) {
@@ -18,25 +17,12 @@ function withDatabase(file, sessionId, operation) {
   } finally { db.close(); }
 }
 
-function legacy(file) {
-  try { return fs.readFileSync(`${file}.goal-usage.json`, 'utf8'); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-
-  return null;
-}
-
 function read(file, sessionId) {
   return withDatabase(file, sessionId, (db, deleted, registeredPath) => {
     if (deleted || !registeredPath) return;
-    let row = db.prepare('SELECT record_json FROM session_usage_channels WHERE session_id=?').get(sessionId);
+    const row = db.prepare('SELECT record_json FROM session_usage_channels WHERE session_id=?').get(sessionId);
 
-    if (!row) {
-      const body = legacy(registeredPath);
-      db.prepare('INSERT INTO session_usage_channels VALUES (?, ?)').run(sessionId, body);
-      row = { record_json: body };
-    }
-
-    if (row.record_json === null) return;
+    if (!row || row.record_json === null) return;
 
     try { return JSON.parse(row.record_json); }
     catch (error) { if (!(error instanceof SyntaxError)) throw error; }

@@ -21,20 +21,6 @@ function identity(directory) {
   return `${info.dev}:${info.ino}`;
 }
 
-function legacy(directory) {
-  const file = path.join(directory, 'dependencies.json');
-  let descriptor;
-
-  try { descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); }
-  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-
-  try {
-    if (!fs.fstatSync(descriptor).isFile() || fs.realpathSync(file) !== file) throw new Error('Invalid goal dependency record');
-
-    return new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(descriptor));
-  } finally { fs.closeSync(descriptor); }
-}
-
 function value(row) { return row && row.record_json !== null ? JSON.parse(row.record_json) : undefined; }
 
 function read(root, directory) {
@@ -45,12 +31,8 @@ function read(root, directory) {
     const row = query.get(directory, expected);
 
     if (row) return value(row);
-    const body = legacy(directory);
 
-    if (identity(directory) !== expected) throw new Error('Goal dependency directory changed during import');
-    db.prepare('INSERT INTO goal_asset_dependencies VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(directory, expected, body);
-
-    return value(query.get(directory, expected));
+    return undefined;
   });
 }
 
@@ -81,15 +63,9 @@ function textFiles(root, directory) {
 
   return withDatabase(root, db => {
     const query = db.prepare('SELECT names_json FROM goal_text_files WHERE directory=? AND identity=?');
-    let row = query.get(directory, expected);
+    const row = query.get(directory, expected);
 
-    if (!row) {
-      const names = fs.readdirSync(directory, { withFileTypes: true }).filter(entry => entry.isFile() && /\.(md|txt)$/.test(entry.name)).map(entry => entry.name);
-
-      if (identity(directory) !== expected) throw new Error('Goal text directory changed during import');
-      db.prepare('INSERT INTO goal_text_files VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(directory, expected, JSON.stringify(validNames(names)));
-      row = query.get(directory, expected);
-    }
+    if (!row) throw new Error('Goal text files are not registered');
 
     return validNames(JSON.parse(row.names_json));
   });
@@ -116,19 +92,12 @@ function readContents(directory, names) {
 
 function textContents(root, directory) {
   const expected = identity(directory);
-  const names = textFiles(root, directory);
 
   return withDatabase(root, db => {
     const query = db.prepare('SELECT contents_json FROM goal_text_contents WHERE directory=? AND identity=?');
-    let row = query.get(directory, expected);
+    const row = query.get(directory, expected);
 
-    if (!row) {
-      const contents = readContents(directory, names);
-
-      if (identity(directory) !== expected) throw new Error('Goal text directory changed during import');
-      db.prepare('INSERT INTO goal_text_contents VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(directory, expected, JSON.stringify(contents));
-      row = query.get(directory, expected);
-    }
+    if (!row) throw new Error('Goal text contents are not registered');
 
     return JSON.parse(row.contents_json);
   });

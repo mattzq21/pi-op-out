@@ -4,7 +4,6 @@ const recoverySchema = z.object({
   scope: z.string(), id: z.string(), revision: z.string(), content: z.string(), baseVersion: z.string(), updatedAt: z.number(),
 });
 
-const legacySchema = z.object({ content: z.string(), version: z.string() });
 
 export type NoteRecovery = z.infer<typeof recoverySchema>;
 
@@ -74,29 +73,6 @@ async function removeRecovery(database: IDBDatabase, recovery: NoteRecovery) {
   await done;
 }
 
-async function migrateLegacy(database: IDBDatabase, scope: string, hostId: string, sessionId: string) {
-  const key = "piop-chat-note:" + JSON.stringify([hostId, sessionId]);
-  const before = localStorage.getItem(key);
-
-  if (before === null) return;
-  const legacy = legacySchema.parse(JSON.parse(before));
-  const transaction = database.transaction("edits", "readwrite", { durability: "strict" });
-  const done = transactionDone(transaction);
-  const store = transaction.objectStore("edits");
-  const request = store.get([scope, "legacy"]);
-  request.onsuccess = () => {
-    const previous = recoverySchema.safeParse(request.result);
-
-    if (previous.success && previous.data.content === legacy.content && previous.data.baseVersion === legacy.version) return;
-    const id = request.result === undefined ? "legacy" : crypto.randomUUID();
-    store.put({ scope, id, revision: crypto.randomUUID(), content: legacy.content, baseVersion: legacy.version, updatedAt: 0 });
-  };
-
-  await done;
-
-  if (localStorage.getItem(key) === before) localStorage.removeItem(key);
-}
-
 export function createNoteRecovery(identity: string | undefined, hostId: string, sessionId: string, id: string) {
   const scope = JSON.stringify([identity, hostId, sessionId]);
 
@@ -111,10 +87,7 @@ export function createNoteRecovery(identity: string | undefined, hostId: string,
   const load = () => withDatabase(async database => {
     const warnings: string[] = [];
 
-    if (identity === "desktop") {
-      try { await migrateLegacy(database, scope, hostId, sessionId); }
-      catch (reason) { warnings.push("Could not restore older note edits. " + String(reason)); }
-    }
+
 
     return { copies: await readRecoveries(database, scope, warnings), warnings };
   });

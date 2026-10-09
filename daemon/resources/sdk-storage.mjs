@@ -147,46 +147,8 @@ function goalTextContents(directory) {
     const saved = db.prepare("SELECT contents_json FROM goal_text_contents WHERE directory=? AND identity=?").get(directory, identity);
 
     if (saved) return JSON.parse(saved.contents_json);
-    const query = db.prepare('SELECT names_json FROM goal_text_files WHERE directory=? AND identity=?');
-    let row = query.get(directory, identity);
-
-    if (!row) {
-      const names = storageFs.readdirSync(directory, { withFileTypes: true }).filter(entry => entry.isFile() && /\.(md|txt)$/.test(entry.name)).map(entry => entry.name);
-      const after = storageFs.lstatSync(directory, { bigint: true });
-
-      if (`${after.dev}:${after.ino}` !== identity) throw new Error('Goal text directory changed during import');
-      db.prepare('INSERT INTO goal_text_files VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(directory, identity, JSON.stringify(names));
-      row = query.get(directory, identity);
-    }
-
-    const names = JSON.parse(row.names_json);
-
-    if (!Array.isArray(names) || names.some(name => !/^[^/\\]+\.(md|txt)$/.test(name) || storagePath.basename(name) !== name)) throw new Error('Invalid goal text file list');
-
-    const contents = names.map(name => ({ name, text: importGoalText(storagePath.join(directory, name)) }));
-    const after = storageFs.lstatSync(directory, { bigint: true });
-
-    if (`${after.dev}:${after.ino}` !== identity) throw new Error('Goal text directory changed during import');
-    db.prepare('INSERT INTO goal_text_contents VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(directory, identity, JSON.stringify(contents));
-
-    return JSON.parse(db.prepare('SELECT contents_json FROM goal_text_contents WHERE directory=? AND identity=?').get(directory, identity).contents_json);
+    throw new Error('Goal text contents are not registered');
   } finally { db.close(); }
-}
-
-function importGoalText(file) {
-  const descriptor = storageFs.openSync(file, storageFs.constants.O_RDONLY | storageFs.constants.O_NOFOLLOW | storageFs.constants.O_NONBLOCK);
-
-  try {
-    const before = storageFs.fstatSync(descriptor, { bigint: true });
-
-    if (!before.isFile()) throw new Error('Goal text is not a regular file');
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(storageFs.readFileSync(descriptor));
-    const after = storageFs.lstatSync(file, { bigint: true });
-
-    if (['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'].some(key => before[key] !== after[key])) throw new Error('Goal text changed during import');
-
-    return text;
-  } finally { storageFs.closeSync(descriptor); }
 }
 
 function validateGoalDirectory(directory) {
@@ -323,7 +285,7 @@ function withStoredAuth(path, operation) {
       BEGIN IMMEDIATE;`);
 
     if (!database.prepare("SELECT 1 FROM provider_credentials WHERE auth_file=?").get(key)) {
-      database.prepare("INSERT INTO provider_credentials VALUES (?, ?, 0)").run(key, storageReadOptional(target) ?? null);
+      database.prepare("INSERT INTO provider_credentials VALUES (?, ?, 0)").run(key, null);
     }
 
     const result = operation(database, key);
@@ -512,7 +474,7 @@ function withStoredSettings(path, operation) {
       BEGIN IMMEDIATE;`);
 
     if (!database.prepare("SELECT 1 FROM sdk_settings WHERE path=?").get(key)) {
-      database.prepare("INSERT INTO sdk_settings VALUES (?, ?)").run(key, storageReadOptional(key) ?? null);
+      database.prepare("INSERT INTO sdk_settings VALUES (?, ?)").run(key, null);
     }
 
     const current = database.prepare("SELECT body FROM sdk_settings WHERE path=?").get(key).body;

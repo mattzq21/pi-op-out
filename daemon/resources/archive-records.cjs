@@ -36,15 +36,6 @@ function read(directory) {
     if (!row) throw new Error('Archive operation is not registered');
 
     if (row.record_json !== null) return JSON.parse(row.record_json);
-    let body;
-
-    try { body = fs.readFileSync(path.join(directory, 'recovery.json'), 'utf8'); }
-    catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
-
-    const record = JSON.parse(body);
-    db.prepare('UPDATE archive_records SET record_json=? WHERE directory=? AND record_json IS NULL').run(body, directory);
-
-    return record;
   } finally { db.close(); }
 }
 

@@ -1,18 +1,7 @@
 import { createSignal, onCleanup } from "solid-js";
 import { z } from "zod";
-import { captureDaemonTransport, isMobile } from "./platform";
-import { readStoredJson } from "./storedJson";
+import { captureDaemonTransport } from "./platform";
 import type { StateUpdate } from "./solid";
-
-const keys = {
-  collapsed: "pi-desktop-collapsed-projects",
-  sessions: "pi-desktop-session-orders",
-  sidebar: "pi-desktop-sidebar-order",
-  parents: "pi-desktop-project-groups",
-  children: "pi-desktop-group-child-order",
-};
-
-const legacyGroupKeys = ["pi-desktop-removed-project-groups", "pi-desktop-custom-session-groups", "pi-desktop-session-locations"];
 
 const layoutSchema = z.object({
   collapsed: z.array(z.string()),
@@ -28,29 +17,6 @@ const recordSchema = z.object({ revision: z.number().int().nonnegative(), layout
 type Layout = z.infer<typeof layoutSchema>;
 
 type LayoutRecord = z.infer<typeof recordSchema>;
-
-function legacyLayout(): Layout {
-  const empty: Layout = { collapsed: [], sessions: {}, sidebar: [], parents: {}, children: {}, removed: [] };
-
-  if (isMobile) return empty;
-
-  return {
-    collapsed: readStoredJson(keys.collapsed, layoutSchema.shape.collapsed, []),
-    sessions: readStoredJson(keys.sessions, layoutSchema.shape.sessions, {}),
-    sidebar: readStoredJson(keys.sidebar, layoutSchema.shape.sidebar, []),
-    parents: readStoredJson(keys.parents, layoutSchema.shape.parents, {}),
-    children: readStoredJson(keys.children, layoutSchema.shape.children, {}),
-    removed: [],
-  };
-}
-
-function legacyWarning() {
-  if (!isMobile) return;
-
-  try {
-    if ([...Object.values(keys), ...legacyGroupKeys].some(key => localStorage.getItem(key) !== null)) return "Older sidebar preferences have no saved host identity. They were retained on this device; new preferences are saved separately for each host.";
-  } catch { }
-}
 
 function openLayouts() {
   return new Promise<IDBDatabase>((resolve, reject) => {
@@ -86,10 +52,9 @@ function transactLayout(database: IDBDatabase, key: string, fallback: Layout, ch
 
 export function createSidebarPersistence() {
   const endpoint = captureDaemonTransport().identity;
-  const initial = legacyLayout();
+  const initial: Layout = { collapsed: [], sessions: {}, sidebar: [], parents: {}, children: {}, removed: [] };
   const [layout, setLayout] = createSignal(initial);
   const [error, setError] = createSignal<string>();
-  const warning = legacyWarning();
   const notificationKey = `piop-sidebar-revision:${endpoint}`;
   const channel = "BroadcastChannel" in globalThis ? new BroadcastChannel(notificationKey) : undefined;
   let revision = -1;
@@ -159,7 +124,7 @@ export function createSidebarPersistence() {
     return { ...pruned, removed: pruned.removed.filter(key => key.startsWith("__pi-desktop-custom-group__:")) };
   });
 
-  return { layout, change, removeGroup, error: () => error() ?? warning };
+  return { layout, change, removeGroup, error };
 }
 
 function pruneRemovedGroups(current: Layout): Layout {

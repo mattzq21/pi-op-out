@@ -31,13 +31,6 @@ fn name(path: &Path) -> Result<&str, String> {
     path.file_name().and_then(|name| name.to_str()).ok_or_else(|| "Invalid settings synchronization record name".into())
 }
 
-fn legacy(path: &Path) -> Result<Option<String>, String> {
-    match fs::read_to_string(path) {
-        Ok(body) => Ok(Some(body)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
-}
 
 fn saved(db: &Connection, key: &str) -> Result<Option<Option<String>>, String> {
     db.query_row("SELECT record_json FROM settings_sync_records WHERE name=?", [key], |row| row.get(0))
@@ -47,14 +40,7 @@ fn saved(db: &Connection, key: &str) -> Result<Option<Option<String>>, String> {
 pub(super) fn read<T: DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
     let db = open(path)?;
     let key = name(path)?;
-    let body = match saved(&db, key)? {
-        Some(body) => body,
-        None => {
-            db.execute("INSERT INTO settings_sync_records VALUES (?, ?) ON CONFLICT(name) DO NOTHING", params![key, legacy(path)?])
-                .map_err(|error| error.to_string())?;
-            saved(&db, key)?.flatten()
-        }
-    };
+    let body = saved(&db, key)?.flatten();
     match body {
         Some(body) => serde_json::from_str(&body).map_err(|error| format!("Could not read settings synchronization record {}: {error}", path.display())),
         None => Ok(T::default()),

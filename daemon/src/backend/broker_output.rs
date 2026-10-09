@@ -165,7 +165,6 @@ fn remove_output(path: &Path, mut files: Vec<PathBuf>) -> io::Result<()> {
 
 pub(super) fn recover() {
     if let Err(error) = recover_managed() { eprintln!("Could not recover broker output: {error}"); }
-    if let Err(error) = recover_legacy() { eprintln!("Could not inspect old broker output: {error}"); }
 }
 
 fn recover_managed() -> Result<(), String> {
@@ -178,38 +177,4 @@ fn recover_managed() -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn recover_legacy() -> io::Result<()> {
-    let Some(boot) = fs::read_to_string("/proc/stat")?.lines().find_map(|line| line.strip_prefix("btime ").and_then(|value| value.parse::<i64>().ok())) else { return Ok(()); };
-    let root = directory().map_err(io::Error::other)?;
-    for path in records::legacy_paths(&root, &std::env::temp_dir()).map_err(io::Error::other)? {
-        if !legacy_before_boot(&path, boot)? { continue; }
-        collect_legacy(&path, boot)?;
-        records::forget_legacy_missing(&root, &path).map_err(io::Error::other)?;
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn legacy_before_boot(path: &Path, boot: i64) -> io::Result<bool> {
-    use std::os::unix::fs::MetadataExt;
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => Ok(metadata.ctime() < boot),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
-        Err(error) => Err(error),
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn recover_legacy() -> io::Result<()> { Ok(()) }
-
-#[cfg(target_os = "linux")]
-fn collect_legacy(path: &Path, boot: i64) -> io::Result<()> {
-    use std::os::unix::fs::MetadataExt;
-    let Some(files) = output_files(path, false)? else { return Ok(()); };
-    for file in &files { if fs::metadata(file)?.ctime() >= boot { return Ok(()); } }
-    if crate::process_cleanup::directory_in_use(path)? { return Ok(()); }
-    remove_output(path, files)
 }

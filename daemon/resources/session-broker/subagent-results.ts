@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { constants, readFileSync, readdirSync } from "node:fs";
+import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
@@ -35,17 +34,15 @@ function sessionFile(ctx: ExtensionContext) {
   return file;
 }
 
-function runDatabase(file: string, sessionId: string, allowMissing = false) {
+function runDatabase(file: string, sessionId: string) {
   const db = openDatabase(storageRoot(file));
 
   try {
     db.exec("BEGIN IMMEDIATE");
 
     if (!db.prepare("SELECT 1 FROM session_subagent_state WHERE session_id=?").get(sessionId)) {
-      const runs = importRuns(file, sessionId, allowMissing);
       register(db, sessionId, file);
 
-      for (const run of runs.values()) storeRun(db, run);
       db.prepare("INSERT INTO session_subagent_state VALUES (?)").run(sessionId);
     }
 
@@ -53,48 +50,6 @@ function runDatabase(file: string, sessionId: string, allowMissing = false) {
 
     return db;
   } catch (error) { db.close(); throw error; }
-}
-
-function importRuns(file: string, sessionId: string, allowMissing: boolean) {
-  const lines = transcriptLines(file, allowMissing);
-  const header = Schema.Object({ type: Schema.Literal("session"), id: Schema.Literal(sessionId) });
-
-  if (lines.length && !Check(header, JSON.parse(lines[0]))) throw new Error("Subagent recovery transcript identity changed");
-  const runs = new Map<string, SubagentRun>();
-
-  for (const line of lines.slice(1)) collectSubagentRun(line, sessionId, runs);
-  importRunFiles(file, sessionId, runs);
-
-  return runs;
-}
-
-function transcriptLines(file: string, allowMissing: boolean) {
-  let body: string;
-
-  try { body = readFileSync(file, "utf8"); }
-  catch (error) { if (allowMissing && Check(Schema.Object({ code: Schema.Literal("ENOENT") }), error)) return []; throw error; }
-
-  const lines = body.split("\n").filter(line => line.trim());
-
-  if (!lines.length) throw new Error("Subagent recovery transcript is empty");
-
-  return lines;
-}
-
-function importRunFiles(file: string, sessionId: string, runs: Map<string, SubagentRun>) {
-  const directory = join(file.replace(/\.jsonl$/, ".snapshots"), "subagent-runs");
-  let names: string[];
-
-  try { names = readdirSync(directory); }
-  catch (error) { if (Check(Schema.Object({ code: Schema.Literal("ENOENT") }), error)) return; throw error; }
-
-  for (const name of names.filter(name => /^subagent-[a-f0-9]{64}\.json$/.test(name))) {
-    const run = Parse(runSchema, JSON.parse(readFileSync(join(directory, name), "utf8")));
-
-    if (name !== `${resultNotificationId(run)}.json`) throw new Error("Invalid saved subagent run");
-
-    if (run.parentSessionId === sessionId) mergeSavedRun(runs, run);
-  }
 }
 
 const savedRunSchema = Schema.Object({ run_id: Schema.String(), run_json: Schema.String(), child_path: Schema.Union([Schema.String(), Schema.Null()]) });
@@ -151,8 +106,8 @@ export function persistSubagentRun(pi: ExtensionAPI, ctx: ExtensionContext, run:
   if (accepted) pi.appendEntry(SUBAGENT_RUN, structuredClone(run));
 }
 
-function readRuns(file: string, sessionId: string, allowMissing = false) {
-  const db = runDatabase(file, sessionId, allowMissing);
+function readRuns(file: string, sessionId: string) {
+  const db = runDatabase(file, sessionId);
 
   try {
     return db.prepare(`${selectRuns} WHERE r.session_id=? ORDER BY r.started_at, r.run_id`)
@@ -163,7 +118,7 @@ function readRuns(file: string, sessionId: string, allowMissing = false) {
 export function savedSubagentRuns(ctx: ExtensionContext) {
   const file = ctx.sessionManager.getSessionFile();
 
-  return file ? readRuns(file, ctx.sessionManager.getSessionId(), true) : [];
+  return file ? readRuns(file, ctx.sessionManager.getSessionId()) : [];
 }
 
 export async function unresolvedSubagentRuns(file: string, sessionId: string) {
@@ -175,26 +130,6 @@ export function accountingUnresolved(run: SubagentRun) {
   const total = run.accountedTokens ?? 0;
 
   return total > (run.forwardedTokens ?? 0) || Boolean(run.goalId && total > (run.goalTokens ?? 0));
-}
-
-function collectSubagentRun(line: string, sessionId: string, runs: Map<string, SubagentRun>) {
-  const entrySchema = Schema.Object({ type: Schema.Literal("custom"), customType: Schema.Literal(SUBAGENT_RUN), data: Schema.Unknown() });
-  const entry = JSON.parse(line);
-
-  if (!Check(entrySchema, entry)) return;
-
-  if (!Check(runSchema, entry.data)) throw new Error("Invalid saved descendant run");
-
-  if (entry.data.parentSessionId === sessionId) runs.set(resultNotificationId(entry.data), entry.data);
-}
-
-function mergeSavedRun(runs: Map<string, SubagentRun>, run: SubagentRun) {
-  const previous = runs.get(resultNotificationId(run));
-
-  if (run.status === "running" && previous && previous.status !== "running") return;
-
-  if (previous?.accountingPending === false && run.accountingPending) return;
-  runs.set(resultNotificationId(run), run);
 }
 
 export function reportedSubagentUsage(ctx: ExtensionContext, run: SubagentRun) {

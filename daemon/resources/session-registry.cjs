@@ -138,7 +138,6 @@ function readMetadata(file) {
 }
 
 function metadata() {
-  sessionTables.importSessions(db, root);
   const directory = path.join(root, 'sessions') + path.sep;
 
   const rows = db.prepare(`SELECT s.session_path, m.modified_ns, m.size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?))=?
@@ -184,7 +183,6 @@ function externalIdentity(file) {
 }
 
 function identity() {
-  sessionTables.importSessions(db, root);
 
   const id = db.prepare(`SELECT session_id FROM sessions WHERE session_path=?
     AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`).get(request.path)?.session_id;
@@ -198,12 +196,11 @@ function identity() {
 }
 
 try {
-  if (request.action === 'initialize') sessionTables.importSessions(db, root);
+  if (request.action === 'initialize') sessionTables.initialize(db);
   else if (request.action === 'metadata') metadata();
   else if (request.action === 'identity') identity();
   else if (request.action === 'get') process.stdout.write(JSON.stringify(db.prepare('SELECT r.*, s.session_path FROM session_repositories r JOIN sessions s USING(session_id) WHERE r.session_id = ?').get(request.sessionId) || null));
   else if (request.action === 'deleted') process.stdout.write(JSON.stringify(db.prepare('SELECT session_id FROM session_deletion_tombstones').all().map(record => record.session_id)));
-  else if (request.action === 'scan') sessionTables.importSessions(db, root);
   else if (request.action === 'record') record(request);
   else throw new Error('Unknown session registry action');
 } finally { db.close(); }

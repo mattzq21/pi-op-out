@@ -8,40 +8,6 @@ import { spawn as chatStoreSpawn } from 'node:child_process';
 
 const chatGptDatabases = new Map();
 
-function chatGptImportRecord(database, directory, entry) {
-  const file = chatStoreJoin(directory, entry.name);
-  let body = null;
-  let failure = null;
-
-  try {
-    if (!entry.isFile()) throw new Error('The saved chat is not a regular file');
-    const descriptor = chatStoreFs.openSync(file, chatStoreConstants.O_RDONLY | chatStoreConstants.O_NOFOLLOW | chatStoreConstants.O_NONBLOCK);
-
-    try {
-      if (!chatStoreFs.fstatSync(descriptor).isFile()) throw new Error('The saved chat is not a regular file');
-      body = chatStoreFs.readFileSync(descriptor, 'utf8');
-    } finally { chatStoreFs.closeSync(descriptor); }
-  } catch (error) { failure = `${error.message}. Original file retained at ${file}`; }
-
-  database.prepare('INSERT INTO chat_records VALUES (?, ?, ?) ON CONFLICT(chat_id) DO NOTHING').run(entry.name.slice(0, -5), body, failure);
-}
-
-function chatGptImportRecords(database, directory) {
-  database.exec('BEGIN IMMEDIATE');
-
-  try {
-    if (!database.prepare("SELECT 1 FROM chat_metadata WHERE key='records-imported-v1'").get()) {
-      for (const entry of chatStoreFs.readdirSync(directory, { withFileTypes: true })) {
-        if (entry.name.endsWith('.json')) chatGptImportRecord(database, directory, entry);
-      }
-
-      database.prepare("INSERT INTO chat_metadata VALUES ('records-imported-v1', '1')").run();
-    }
-
-    database.exec('COMMIT');
-  } catch (error) { database.exec('ROLLBACK'); throw error; }
-}
-
 function chatGptDatabase(directory) {
   const previous = chatGptDatabases.get(directory);
 
@@ -57,9 +23,8 @@ function chatGptDatabase(directory) {
 
   try {
     database.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-      CREATE TABLE IF NOT EXISTS chat_records (chat_id TEXT PRIMARY KEY, record_json TEXT, import_error TEXT);
+      CREATE TABLE IF NOT EXISTS chat_records (chat_id TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS chat_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
-    chatGptImportRecords(database, directory);
     chatGptDatabases.set(directory, database);
 
     return database;
@@ -71,10 +36,7 @@ export function chatGptStoredDevice(directory) {
   const saved = database.prepare("SELECT value FROM chat_metadata WHERE key='device'").get();
 
   if (saved) return saved.value;
-  let device;
-
-  try { device = chatStoreFs.readFileSync(chatStoreJoin(directory, 'device'), 'utf8').trim(); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; device = chatStoreUuid(); }
+  const device = chatStoreUuid();
 
   database.prepare("INSERT INTO chat_metadata VALUES ('device', ?) ON CONFLICT(key) DO NOTHING").run(device);
 
@@ -87,9 +49,8 @@ export function chatGptStoredCount(directory) {
 }
 
 function chatGptDatabaseData(database, id) {
-  const row = database.prepare('SELECT record_json, import_error FROM chat_records WHERE chat_id=?').get(chatGptId(id));
+  const row = database.prepare('SELECT record_json FROM chat_records WHERE chat_id=?').get(chatGptId(id));
 
-  if (row?.import_error) throw chatGptRecordError(row.import_error);
 
   return row?.record_json ?? null;
 }
@@ -378,7 +339,7 @@ async function chatGptPublish(identity, chat, lease, baseline, data) {
 
   try {
     if (chatGptRevision(chatGptDatabaseData(database, chat.id)) !== baseline.value) throw chatGptWriteConflict();
-    database.prepare('INSERT INTO chat_records VALUES (?, ?, NULL) ON CONFLICT(chat_id) DO UPDATE SET record_json=excluded.record_json, import_error=NULL').run(chat.id, data);
+    database.prepare('INSERT INTO chat_records (chat_id, record_json) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET record_json=excluded.record_json').run(chat.id, data);
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }
 

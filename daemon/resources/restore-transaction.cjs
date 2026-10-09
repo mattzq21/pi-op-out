@@ -8,7 +8,6 @@ const transactionIO = require('./session-transactions.cjs');
 const goalAssets = require('./session-broker/goal-assets.cjs');
 const receipts = require('./restore-receipts.cjs');
 const shared = require('./archive-resource-restore.cjs');
-const migration = require('./archive-resource-migration.cjs');
 const ownerLocks = require('./transaction-owner-locks.cjs');
 const { lockStorage } = require('./storage-transaction-lock.cjs');
 const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
@@ -349,12 +348,11 @@ function restoredResult(root, source) {
   return result;
 }
 
-function rollback(root, transaction, journal) {
+function rollback(root, transaction, _journal) {
   validateRollbackSource(transaction);
 
   for (const item of [...transaction.moves].reverse()) undoRestorationMove(transaction, item);
 
-  for (const resource of [...resourceTransactions(transaction)].reverse()) migration.rollback(resource, journal, transaction);
 
   for (const resource of [...resourceTransactions(transaction)].reverse()) shared.rollback(root, resource);
   undoCreatedDirectories(transaction);
@@ -372,7 +370,7 @@ function rollback(root, transaction, journal) {
 }
 
 function validateRollbackSource(transaction) {
-  if ((!matches(transaction.trace.source, transaction.trace.identity) && !resourceTransactions(transaction).some(resource => migration.sourcePresent(resource))) || exists(transaction.trace.destination)) throw new Error('Session files changed during restoration; recovery retained');
+  if (!matches(transaction.trace.source, transaction.trace.identity) || exists(transaction.trace.destination)) throw new Error('Session files changed during restoration; recovery retained');
 }
 
 function undoRestorationMove(transaction, item) {
@@ -404,7 +402,7 @@ function finishCommit(transaction, journal) {
     require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
   }
 
-  try { releaseReservation(transaction); retireMigrations(transaction, journal); cleanup(journal); }
+  try { releaseReservation(transaction); cleanup(journal); }
   catch (error) { console.error(`Restore committed; cleanup will retry: ${error.message}`); }
 }
 
@@ -414,25 +412,12 @@ function recover(root) {
 
     validateTransaction(root, transaction, journal);
 
-    const ids = resourceTransactions(transaction).flatMap(resource => (resource.migration?.owners ?? []).map(owner => owner.sessionId));
+    const ids = [];
     ownerLocks.withOwners(root, ids, [], () => {
       if (transaction.committed || committed(transaction)) finishCommit(transaction, journal);
-      else { prepareLegacyRollback(root, transaction, journal); finishRollback(root, transaction, journal); }
+      else { finishRollback(root, transaction, journal); }
     });
   }
-}
-
-function prepareLegacyRollback(root, transaction, journal) {
-  for (const plan of worktrees(transaction)) {
-    if (plan.recovery) continue;
-    plan.recovery = path.join(root, 'restore-recovery', randomUUID());
-    const directory = [plan.path, plan.staging].find(file => exists(file));
-
-    if (directory) plan.stagingIdentity = identity(directory);
-  }
-
-  for (const directory of directories(transaction)) directory.recovery ??= path.join(root, 'restore-recovery', randomUUID());
-  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
 }
 
 function sessionTransaction(root, { header, file, destination, result }) {
@@ -459,7 +444,6 @@ function sessionTransaction(root, { header, file, destination, result }) {
 }
 
 function publishRestoration(root, transaction, journal) {
-  for (const resource of transaction.resources) migration.preparePin(resource, journal, transaction);
 
   for (const worktree of transaction.worktrees) prepareWorktree(worktree, transaction, journal);
 
@@ -475,10 +459,9 @@ function publishRestoration(root, transaction, journal) {
 
   for (const resource of transaction.resources) {
     shared.seal(root, resource, journal, transaction);
-    migration.seal(root, resource, journal, transaction);
   }
 
-  reconcileMigrationTraces(transaction);
+  reconcileResourceTraces(transaction);
   require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
 
   for (const item of transaction.moves) { syncTree(item.source); performMove(item); }
@@ -489,7 +472,7 @@ function publishRestoration(root, transaction, journal) {
   performMove(transaction.trace);
 }
 
-function reconcileMigrationTraces(transaction) {
+function reconcileResourceTraces(transaction) {
   const peers = transaction.resources.flatMap(resource => resource.resourcePeers ?? []);
 
   for (const trace of [transaction.trace, ...transaction.moves]) {
@@ -500,7 +483,7 @@ function reconcileMigrationTraces(transaction) {
 }
 
 function restoreGroup(root, records, directoryPlans, worktreePlans, reusedWorktrees, resources) {
-  const ids = resources.flatMap(resource => (resource.migration?.owners ?? []).map(owner => owner.sessionId));
+  const ids = [];
 
   return ownerLocks.withOwners(root, ids, records.map(record => record.header.id), () => restoreGroupLocked(root, records, directoryPlans, worktreePlans, reusedWorktrees, resources));
 }
@@ -558,113 +541,20 @@ function restoreGroupLocked(root, records, directoryPlans, worktreePlans, reused
   return transaction.result;
 }
 
-function restore(root, header, file, destination, result, directory, worktree, resource) {
-  const ids = (resource?.migration?.owners ?? []).map(owner => owner.sessionId);
-
-  return ownerLocks.withOwners(root, ids, [header.id], () => restoreLocked(root, header, file, destination, result, directory, worktree, resource));
-}
-
 function finishRollback(root, transaction, journal) {
   rollback(root, transaction, journal);
   releaseReservation(transaction);
   receipts.discardRolledBack(root, transaction, journal);
-  retireMigrations(transaction, journal);
   cleanup(journal);
 
   try { receipts.prune(root); }
   catch (error) { console.error(`Restore rolled back; receipt pruning will retry: ${error.message}`); }
 }
 
-function retireMigrations(transaction, journal) {
-  for (const resource of resourceTransactions(transaction)) migration.retire(resource, journal, transaction);
-}
-
-function restorePlan(root, header, file, destination, result, directory, worktree, resource) {
-  const key = createHash('sha256').update(header.id.toLowerCase()).digest('hex').slice(0, 40);
-  const ownershipPath = path.join(root, 'conversation-ownership', `${key}.json`);
-  const record = JSON.parse(conversationStorage.required(ownershipPath));
-  const journalDirectory = path.join(root, 'restore-transactions');
-  fs.mkdirSync(journalDirectory, { recursive: true, mode: 0o700 });
-  sync(root);
-
-  if (worktree) worktree.recovery = path.join(root, 'restore-recovery', randomUUID());
-
-  const transaction = {
-    version: 2, root,
-    receiptId: receiptIdentity(resource),
-    result: { ...result, sessionId: header.id },
-    trace: move(file, destination),
-    moves: [
-      [file.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.snapshots')],
-      [file.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json')],
-      [file.replace(/\.jsonl$/, '.diffs.json.lock'), destination.replace(/\.jsonl$/, '.diffs.json.lock')],
-      [`${file}.loop-detection.json`, `${destination}.loop-detection.json`],
-    ].flatMap(([source, target]) => exists(source) ? [move(source, target)] : []),
-    ownership: {
-      path: ownershipPath,
-      initial: conversationStorage.required(ownershipPath),
-      before: JSON.stringify({ ...record, path: file, deleted: true, client: null }),
-      after: JSON.stringify({ ...record, path: destination, deleted: false, client: null }),
-    },
-    directory: directory ? move(directory.source, directory.destination) : undefined,
-    worktree,
-    ...resourceFields(resource),
-  };
-
-  const journal = path.join(journalDirectory, `${key}.json`);
-  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
-
-  return { transaction, journal };
-}
-
-function receiptIdentity(resource) { return resource?.change?.operationId ?? resource?.migration?.operationId ?? randomUUID(); }
-
-function resourceFields(resource) {
-  return { resource: resource?.change, directoryCopy: resource?.directoryCopy, migration: resource?.migration, container: resource?.migration?.container };
-}
-
-function restoreLocked(root, header, file, destination, result, directory, worktree, resource) {
-  const { transaction, journal } = restorePlan(root, header, file, destination, result, directory, worktree, resource);
-  const entries = fs.readFileSync(file, 'utf8').split('\n').filter(line => line.trim()).map(JSON.parse);
-  const ownershipPath = transaction.ownership.path;
-
-  try {
-    goalAssets.retainHistory(root, entries, header.id, destination);
-    conversationStorage.write(ownershipPath, transaction.ownership.before);
-    migration.preparePin(transaction, journal);
-
-    if (worktree) prepareWorktree(worktree, transaction, journal);
-    shared.copyDirectory(transaction, journal);
-
-    if (transaction.directory) { transactionIO.mkdir(path.dirname(transaction.directory.destination)); syncTree(transaction.directory.source); syncParents(path.dirname(transaction.directory.destination)); performMove(transaction.directory); }
-
-    for (const item of transaction.moves) { syncTree(item.source); performMove(item); }
-
-    conversationStorage.write(ownershipPath, transaction.ownership.after);
-    shared.seal(root, transaction, journal);
-    migration.seal(root, transaction, journal);
-    syncTree(file);
-    receipts.publish(root, transaction);
-    performMove(transaction.trace);
-  } catch (error) {
-    if (!committed(transaction)) {
-      try { finishRollback(root, transaction, journal); }
-      catch (failure) { throw new Error(`${error.message}\nRestore recovery is pending: ${failure.message}`); }
-
-      throw error;
-    }
-  }
-
-  try { finishCommit(transaction, journal); }
-  catch (error) { console.error(`Restore committed; recovery will retry: ${error.message}`); }
-
-  return transaction.result;
-}
-
 function resourceTransactions(transaction) { return transaction.resources ?? [transaction]; }
 
 function validateTransaction(root, transaction, journal) {
-  if (![1, 2, 3].includes(transaction.version)) throw new Error(`Unsupported restore transaction: ${journal}`);
+  if (transaction.version !== 2) throw new Error(`Unsupported restore transaction: ${journal}`);
   const sessions = transaction.result.sessions ?? [{ ...transaction.result, sourcePath: transaction.trace.source }];
 
   validateSessions(root, transaction, sessions);
@@ -676,7 +566,7 @@ function validateTransaction(root, transaction, journal) {
 
   for (const worktree of worktrees(transaction)) validateDirectory(root, { worktree });
 
-  for (const resource of resourceTransactions(transaction)) { shared.validate(root, resource); migration.validate(root, resource); }
+  for (const resource of resourceTransactions(transaction)) { shared.validate(root, resource); }
 }
 
 function validateSessions(root, transaction, sessions) {
@@ -708,4 +598,4 @@ function validateDirectory(root, transaction) {
   if (worktree.recovery && path.dirname(worktree.recovery) !== path.join(root, 'restore-recovery')) throw new Error('Invalid restore recovery directory');
 }
 
-module.exports = { exists, recover, restore, restoreGroup, restoredResult, lockStorage };
+module.exports = { exists, recover, restoreGroup, restoredResult, lockStorage };

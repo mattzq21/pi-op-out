@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { readText } from "../../../daemon/resources/session-broker/app-settings.cjs";
-import { dirname, join, resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
   DEFAULT_SERVICE_TIER,
@@ -158,9 +158,8 @@ export async function loadConfigFromPath(
 }
 
 function readConfigText(path: string): string | undefined {
-  const legacy = join(dirname(dirname(path)), "pi-openai-fast-mode-piop", "config.json");
 
-  return readText(path, legacy, (value: Partial<FastModeConfig>) => configSchema.safeParse(value).success);
+  return readText(path);
 }
 
 export async function loadConfigForScope(

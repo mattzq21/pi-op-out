@@ -2,7 +2,6 @@ import { For, Show, type Accessor } from "solid-js";
 import { type ChatNoteTarget } from "./useNotes";
 import { useNoteSession } from "./noteSessions";
 import { LiveMarkdownEditor } from "./LiveMarkdownEditor";
-import { LegacyNoteDraftRecovery } from "./LegacyNoteDraftRecovery";
 import "./notes.css";
 
 export function NotesPane(props: ChatNoteTarget & { visible: Accessor<boolean> }) {
@@ -29,7 +28,6 @@ export function NotesPane(props: ChatNoteTarget & { visible: Accessor<boolean> }
     <Show when={notes.deleted()}><div class="notes-error" role="status">This conversation was permanently deleted.</div></Show>
     <Show when={notes.disabled()}><div class="notes-error" role="status">Markdown notes are disabled on this host.</div></Show>
     <Show when={notes.ready() && !notes.owned()}><div class="notes-error" role="status"><span>Read-only </span><button disabled={controlsDisabled()} onClick={() => void notes.takeControl()}>Take control</button></div></Show>
-    <Show when={notes.legacyDraft()}>{draft => <LegacyNoteDraftRecovery draft={draft()} busy={controlsDisabled()} restoreDisabled={notes.dirty() || !notes.ready()} savedVersion={notes.savedVersion()} onRestore={notes.restoreLegacyDraft} />}</Show>
     {renderConflict()}
     <Show when={notes.dirty() && !notes.conflict()}><div class="notes-error" role="status">{notes.durable() ? "Your unsaved edit has a recovery copy on this device." : "Preserving your unsaved edit…"}</div></Show>
     <For each={notes.recoveries()}>{value => <details class="notes-error"><summary>Recovered edit {value.updatedAt ? new Date(value.updatedAt).toLocaleString() : "from an earlier version"}</summary><textarea class="notes-recovery-content" aria-label="Recovered note edit" value={value.content} readOnly /><div class="notes-recovery-actions"><button disabled={notes.dirty() || controlsDisabled()} onClick={() => notes.restore(value)}>Restore edit</button><button disabled={controlsDisabled()} onClick={() => void notes.discardRecovery(value)}>Discard recovery copy</button></div></details>}</For>

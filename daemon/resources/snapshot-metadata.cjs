@@ -39,13 +39,6 @@ function withDatabase(directory, operation) {
   } finally { db.close(); }
 }
 
-function legacy(directory) {
-  try { return fs.readFileSync(path.join(directory, 'snapshot.json'), 'utf8'); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-
-  return null;
-}
-
 function read(directory) {
   let key;
 
@@ -53,17 +46,9 @@ function read(directory) {
   catch (error) { if (error.code === 'ENOENT') return; throw error; }
 
   return withDatabase(directory, db => {
-    let row = db.prepare('SELECT record_json FROM snapshot_metadata WHERE identity=?').get(key);
+    const row = db.prepare('SELECT record_json FROM snapshot_metadata WHERE identity=?').get(key);
 
-    if (!row) {
-      const body = legacy(directory);
-
-      if (identity(directory) !== key) throw new Error('Snapshot directory changed during import');
-      const sessionId = body === null ? null : JSON.parse(body).sessionId ?? null;
-      db.prepare('INSERT INTO snapshot_metadata VALUES (?, ?, ?)').run(key, sessionId, body);
-      row = { record_json: body };
-    }
-
+    if (!row) return;
     linkDirectory(db, directory);
 
     return row.record_json === null ? undefined : JSON.parse(row.record_json);

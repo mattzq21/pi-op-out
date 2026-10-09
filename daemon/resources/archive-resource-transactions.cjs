@@ -2,7 +2,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const io = require('./session-transactions.cjs');
 const resources = require('./archive-resources.cjs');
-const checkpoints = require('./worktree-checkpoint-preservation.cjs');
 const checkpointIndex = require('./session-broker/checkpoint-owner-index.cjs');
 
 function validateChanges(transaction, changes) {
@@ -95,7 +94,6 @@ function peerPlan(transaction, update, index) {
 
   if (entries[0]?.type !== 'session' || entries[0].id !== update.sessionId) throw new Error('Shared archived owner identity changed');
 
-  if (transaction.migration?.kind === 'git') checkpoints.remapCheckpointRoots(entries[0], entries, false, transaction.migration.path, transaction.migration.recovery.repositoryRoot);
   updateHeader(entries[0], update);
 
   return { file: update.sessionPath, sessionId: update.sessionId, original, mode: fs.statSync(update.sessionPath).mode & 0o777,

@@ -22,7 +22,7 @@ pub(super) fn open(path: &Path) -> Result<Connection, String> {
     let database = Connection::open(file).map_err(|error| error.to_string())?;
     database.busy_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
     database.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-        CREATE TABLE IF NOT EXISTS application_settings (name TEXT PRIMARY KEY, body BLOB, legacy_imported INTEGER NOT NULL DEFAULT 0);")
+        CREATE TABLE IF NOT EXISTS application_settings (name TEXT PRIMARY KEY, body BLOB);")
         .map_err(|error| error.to_string())?;
     Ok(database)
 }
@@ -31,31 +31,19 @@ pub(super) fn name(path: &Path) -> Result<&str, String> {
     path.file_name().and_then(|name| name.to_str()).ok_or_else(|| "Invalid settings record name".into())
 }
 
-pub(super) fn old_body(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    match fs::read(path) {
-        Ok(body) => Ok(Some(body)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
 pub(crate) fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
     let mut database = open(path)?;
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
     let key = name(path)?;
     let saved: Option<Option<Vec<u8>>> = transaction.query_row("SELECT body FROM application_settings WHERE name=?", [key], |row| row.get(0))
         .optional().map_err(|error| error.to_string())?;
-    let body = if let Some(body) = saved { body } else {
-        let body = old_body(path)?;
-        transaction.execute("INSERT INTO application_settings (name, body) VALUES (?, ?)", params![key, body]).map_err(|error| error.to_string())?;
-        body
-    };
+    let body = saved.flatten();
     transaction.commit().map_err(|error| error.to_string())?;
     Ok(body)
 }
 
 pub(crate) fn publish(path: &Path, body: &[u8]) -> Result<Publication, String> {
-    open(path)?.execute("INSERT INTO application_settings VALUES (?, ?, 1) ON CONFLICT(name) DO UPDATE SET body=excluded.body, legacy_imported=1", params![name(path)?, body])
+    open(path)?.execute("INSERT INTO application_settings (name, body) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET body=excluded.body", params![name(path)?, body])
         .map_err(|error| error.to_string())?;
     Ok(Publication { committed: true, durable: true, error: None })
 }

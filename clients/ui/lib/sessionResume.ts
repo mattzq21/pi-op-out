@@ -44,53 +44,6 @@ function openTargets(): Promise<IDBDatabase> {
   });
 }
 
-function legacyTargets() {
-  const entries = new Map<string, { body: string; target: z.infer<typeof restoredTargetSchema> }>();
-
-  for (let index = 0; index < localStorage.length; index++) {
-    const key = localStorage.key(index);
-
-    if (!key?.startsWith("piop-last-session:") || !key.endsWith(":main")) continue;
-    const body = localStorage.getItem(key);
-
-    if (body === null) continue;
-
-    try { entries.set(key, { body, target: restoredTargetSchema.parse(JSON.parse(body)) }); } catch { }
-  }
-
-  return entries;
-}
-
-function importTargets(database: IDBDatabase): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction(["targets", "state"], "readwrite", { durability: "strict" });
-    const state = transaction.objectStore("state");
-    const targets = transaction.objectStore("targets");
-    const request = state.get("imported");
-    let legacy: ReturnType<typeof legacyTargets> = new Map();
-    request.onsuccess = () => {
-      if (request.result) return;
-
-      try {
-        legacy = legacyTargets();
-        legacy.forEach(({ target }, key) => {
-          const stored = targets.get(key);
-          stored.onsuccess = () => { if (stored.result === undefined) targets.put({ key, target }); };
-        });
-        state.put(true, "imported");
-      } catch (error) { transaction.abort(); reject(error); }
-    };
-
-    transaction.oncomplete = () => {
-      try { legacy.forEach(({ body }, key) => { if (localStorage.getItem(key) === body) localStorage.removeItem(key); }); } catch { }
-
-      resolve();
-    };
-
-    transaction.onabort = () => reject(transaction.error ?? new Error("Could not import saved conversations"));
-  });
-}
-
 const targetRecordsSchema = z.array(z.object({ key: z.string(), target: restoredTargetSchema.nullable() }));
 
 function readTargets(database: IDBDatabase): Promise<z.infer<typeof targetRecordsSchema>> {
@@ -112,7 +65,6 @@ export async function initializeSessionResume() {
   const database = await openTargets();
 
   try {
-    await importTargets(database);
 
     await loadTargetCache(database);
     cacheReady = true;

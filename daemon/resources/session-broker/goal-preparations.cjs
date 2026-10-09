@@ -1,5 +1,4 @@
 const fs = require('node:fs');
-const path = require('node:path');
 const database = require('../session-database.cjs');
 
 function withDatabase(root, operation) {
@@ -20,19 +19,6 @@ function identity(directory) {
   return `${info.dev}:${info.ino}`;
 }
 
-function legacy(directory) {
-  let descriptor;
-
-  try { descriptor = fs.openSync(path.join(directory, 'prepared.json'), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); }
-  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-
-  try {
-    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid saved goal preparation');
-
-    return new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(descriptor));
-  } finally { fs.closeSync(descriptor); }
-}
-
 function read(root, directory) {
   let expected;
 
@@ -41,15 +27,12 @@ function read(root, directory) {
 
   return withDatabase(root, db => {
     const query = db.prepare('SELECT record_json FROM goal_preparations WHERE directory=? AND identity=?');
-    let row = query.get(directory, expected);
+    const row = query.get(directory, expected);
 
     if (!row) {
       if (db.prepare('SELECT 1 FROM goal_preparations WHERE directory=? AND identity<>? AND record_json IS NOT NULL').get(directory, expected)) throw new Error('Saved goal preparation directory was replaced');
-      const body = legacy(directory);
 
-      if (identity(directory) !== expected) throw new Error('Goal preparation changed during import');
-      db.prepare('INSERT INTO goal_preparations VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(directory, expected, body);
-      row = query.get(directory, expected);
+      return undefined;
     }
 
     return row.record_json === null ? undefined : JSON.parse(row.record_json);

@@ -5,29 +5,16 @@ import { dirname as accountDirname, join as accountJoin, basename as accountBase
 import { Type } from 'typebox';
 import { Check } from 'typebox/value';
 
+
 const accountSchema = Type.Object({ providerId: Type.String(), number: Type.Integer({ minimum: 2, maximum: Number.MAX_SAFE_INTEGER }), id: Type.String() });
-
-const messageSchema = Type.Object({ role: Type.Literal('assistant') });
-
-export const providerAccountsPath = (authPath) => `${authPath}.piop-accounts.json`;
 
 function validProviderAccount(record) {
   return Check(accountSchema, record) && record.id === `${record.providerId}--piop-account-${record.number}`;
 }
 
-function importProviderAccounts(db, authPath, key) {
-  if (db.prepare('SELECT 1 FROM account_imports WHERE auth_file=?').get(key)) return;
-  let records = [];
+const messageSchema = Type.Object({ role: Type.Literal('assistant') });
 
-  try { records = JSON.parse(accountFs.readFileSync(providerAccountsPath(authPath), 'utf8')); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-
-  if (!Array.isArray(records) || records.some(record => !validProviderAccount(record))) throw new Error('Invalid provider account registry');
-  const insert = db.prepare('INSERT INTO provider_accounts VALUES (?, ?, ?, ?)');
-
-  for (const record of records) insert.run(key, record.providerId, record.number, record.id);
-  db.prepare('INSERT INTO account_imports VALUES (?)').run(key);
-}
+export const providerAccountsPath = (authPath) => `${authPath}.piop-accounts.json`;
 
 function withAccountDatabase(authPath, operation) {
   const directory = accountDirname(authPath);
@@ -43,9 +30,7 @@ function withAccountDatabase(authPath, operation) {
       CREATE TABLE IF NOT EXISTS provider_accounts (
         auth_file TEXT NOT NULL, provider_id TEXT NOT NULL, account_number INTEGER NOT NULL, id TEXT NOT NULL,
         PRIMARY KEY(auth_file, id), UNIQUE(auth_file, provider_id, account_number));
-      CREATE TABLE IF NOT EXISTS account_imports (auth_file TEXT PRIMARY KEY);
       BEGIN IMMEDIATE;`);
-    importProviderAccounts(db, authPath, key);
     const result = operation(db, key);
     db.exec('COMMIT');
 

@@ -3,7 +3,7 @@ pub use headless::*;
 
 mod headless {
     use serde::Serialize;
-    use std::{any::{Any, TypeId}, collections::HashMap, ops::Deref, path::PathBuf, sync::{Arc, Mutex}};
+    use std::{any::{Any, TypeId}, collections::HashMap, ops::Deref, sync::{Arc, Mutex}};
 
     pub mod async_runtime {
         pub use tokio::{spawn, task::spawn_blocking};
@@ -70,20 +70,5 @@ mod headless {
             self.0.listeners.lock().unwrap_or_else(|error| error.into_inner()).entry(name.into()).or_default().push(Arc::new(listener));
         }
 
-        pub fn path(&self) -> Paths { Paths }
-    }
-
-    pub struct Paths;
-    impl Paths {
-        pub fn app_config_dir(&self) -> Result<PathBuf, String> {
-            let base = if cfg!(target_os = "macos") {
-                crate::home_dir()?.join("Library/Application Support")
-            } else if cfg!(target_os = "windows") {
-                std::env::var_os("APPDATA").map(PathBuf::from).ok_or("APPDATA is unavailable")?
-            } else {
-                std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or(crate::home_dir()?.join(".config"))
-            };
-            Ok(base.join(if crate::DEVELOPMENT { "dev.pi.desktop.debug" } else { "dev.pi.desktop" }))
-        }
     }
 }

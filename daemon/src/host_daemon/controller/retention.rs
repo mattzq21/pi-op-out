@@ -31,7 +31,7 @@ impl Host {
 fn retention_pending(root: &Path) -> Result<bool> {
     let database = crate::session_registry::open(root)?;
     database.query_row("SELECT EXISTS(SELECT 1 FROM retention_candidates) OR EXISTS(SELECT 1 FROM cleanup_requests)
-        OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM legacy_committed_deletions)", [], |row| row.get(0)).map_err(|error| error.to_string())
+        OR EXISTS(SELECT 1 FROM deletion_records)", [], |row| row.get(0)).map_err(|error| error.to_string())
 }
 
 async fn retention_pass(root: &Path, initialize: bool) -> Result<()> {

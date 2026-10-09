@@ -26,34 +26,15 @@ function directoryIdentity(directory) {
   return `${info.dev}:${info.ino}`;
 }
 
-function importFiles(directory, files) {
-  directoryIdentity(directory);
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isSymbolicLink()) throw new Error('Fork preparation contains an unresolved link');
-
-    if (entry.isDirectory() && !entry.name.endsWith('.snapshots')) importFiles(file, files);
-    else if (entry.isFile() && (entry.name.endsWith('.jsonl') || entry.name.endsWith('.diffs.json'))) files.push(file);
-  }
-}
-
 function files(preparation) {
   if (path.basename(path.dirname(preparation)) !== 'fork-preparations') throw new Error('Invalid fork preparation location');
-  const identity = directoryIdentity(preparation);
   const db = open(preparation);
 
   try {
     db.exec('BEGIN IMMEDIATE');
-    let row = db.prepare('SELECT identity, files_json FROM fork_preparation_files WHERE preparation=?').get(preparation);
+    const row = db.prepare('SELECT identity, files_json FROM fork_preparation_files WHERE preparation=?').get(preparation);
 
-    if (!row) {
-      const paths = [];
-      importFiles(preparation, paths);
-      row = { identity, files_json: JSON.stringify(paths) };
-      db.prepare('INSERT INTO fork_preparation_files VALUES (?, ?, ?)').run(preparation, identity, row.files_json);
-    }
+    if (!row) throw new Error('Fork preparation files are not registered');
 
     if (row.identity !== directoryIdentity(preparation)) throw new Error('Saved fork preparation was replaced');
     db.exec('COMMIT');
@@ -77,31 +58,11 @@ function validateFile(preparation, file) {
   if (!fs.lstatSync(file).isFile() || fs.realpathSync(file) !== file) throw new Error('Saved fork preparation file changed');
 }
 
-function importRecords(db, preparation) {
-  const migration = `fork-checkpoints:${preparation}`;
-
-  if (db.prepare('SELECT 1 FROM storage_migrations WHERE name=?').get(migration)) return;
-  const directory = path.join(preparation, 'checkpoint-owners');
-  let entries;
-
-  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
-
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    db.prepare('INSERT INTO fork_preparation_checkpoints VALUES (?, ?, ?) ON CONFLICT(preparation, session_id) DO NOTHING')
-      .run(preparation, entry.name.slice(0, -5), fs.readFileSync(path.join(directory, entry.name), 'utf8'));
-  }
-
-  db.prepare('INSERT INTO storage_migrations VALUES (?)').run(migration);
-}
-
 function read(preparation) {
   const db = database.open(profile(preparation));
 
   try {
     db.exec('BEGIN IMMEDIATE');
-    importRecords(db, preparation);
     const rows = db.prepare('SELECT session_id, record_json FROM fork_preparation_checkpoints WHERE preparation=?').all(preparation);
     db.exec('COMMIT');
 
@@ -119,7 +80,6 @@ function remove(preparation) {
     db.prepare('DELETE FROM fork_preparation_checkpoints WHERE preparation=?').run(preparation);
     db.prepare('DELETE FROM fork_preparation_files WHERE preparation=?').run(preparation);
     db.prepare('DELETE FROM fork_preparations WHERE directory=?').run(preparation);
-    db.prepare('DELETE FROM storage_migrations WHERE name=?').run(`fork-checkpoints:${preparation}`);
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   finally { db.close(); }

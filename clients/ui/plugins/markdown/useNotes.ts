@@ -1,4 +1,4 @@
-import { createMemo, createSignal, onCleanup, onMount, type Accessor } from "solid-js";
+import { createSignal, onCleanup, onMount, type Accessor } from "solid-js";
 import { z } from "zod";
 import { captureDaemonTransport } from "../../lib/platform";
 import { required } from "../../lib/required";
@@ -7,7 +7,6 @@ import { createDependencyEffect } from "../../lib/solid";
 import { ownershipSchema } from "../ownership";
 import { createNoteRecovery, type NoteRecovery } from "./noteRecovery";
 
-import { legacyNoteDraftCurrent, readLegacyNoteDraft, retireLegacyNoteDraft, type LegacyNoteDraft } from "./legacyNoteDrafts";
 
 const noteOwnershipSchema = ownershipSchema.extend({ token: z.string().nullable() });
 
@@ -36,10 +35,6 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const [unconfirmed, setUnconfirmed] = createSignal<string>();
   const [readError, setReadError] = createSignal("");
   const [saveError, setSaveError] = createSignal("");
-  const [restoredLegacyDraft, setRestoredLegacyDraft] = createSignal<LegacyNoteDraft>();
-  const [legacyPending, setLegacyPending] = createSignal(false);
-  const storedLegacyDraft = createMemo(() => readLegacyNoteDraft(target));
-  const legacyDraft = () => storedLegacyDraft()?.stored === restoredLegacyDraft()?.stored ? undefined : storedLegacyDraft();
   const [recoveryError, setRecoveryError] = createSignal("");
   const [recoveryReadError, setRecoveryReadError] = createSignal("");
   const [storagePending, setStoragePending] = createSignal(0);
@@ -60,7 +55,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   let operations = Promise.resolve();
   let checking = false;
   const dirty = () => !!local();
-  const conflict = () => !!local() && !!document() && (legacyPending() || local()?.baseVersion !== document()?.version);
+  const conflict = () => !!local() && !!document() && (local()?.baseVersion !== document()?.version);
   const editable = () => visible() && !loading() && !flushing() && !releasing() && !conflict() && leaseValid() && ownership().owned;
   const pendingWork = () => !!inFlight || dirty() || !!recoveryError() || storagePending() > 0;
   const durable = () => !local() || storedRevision() === local()?.revision;
@@ -101,14 +96,12 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const forgetLocal = (discard = true) => {
     const value = local();
     const source = recoveredSource();
-    setLegacyPending(false);
     setLocal(undefined); setUnconfirmed(undefined); setStoredRevision(undefined); setRecoveredSource(undefined);
 
     if (value) void removeRecovery(value);
 
     if (discard && source) void discardRecovery(source);
 
-    if (discard) retireRestoredDraft();
   };
 
   const acknowledgeCopies = (body: string) => {
@@ -133,9 +126,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
       setRecoveryReadError(warnings.join(" "));
 
       if (values[0]) restore(values[0]);
-      const legacy = storedLegacyDraft();
 
-      if (legacy) legacyNoteDraftCurrent(legacy);
     } catch (reason) { setRecoveryReadError("Could not restore saved note edits. " + String(reason)); }
   };
 
@@ -169,14 +160,6 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     if (value.owned && !disposed) leaseTimer = setTimeout(() => { setLeaseValid(false); void sync(); }, 25000);
   };
 
-  const retireRestoredDraft = () => {
-    const draft = restoredLegacyDraft();
-
-    if (!draft) return;
-    setRestoredLegacyDraft(undefined);
-    retireLegacyNoteDraft(draft);
-  };
-
   const reconcileLocal = (next: NoteDocument) => {
     const edit = local();
 
@@ -196,7 +179,6 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
 
     if (!dirty()) setContent(next.content);
 
-    if (!next.deleted && (next.content === restoredLegacyDraft()?.content || !dirty())) retireRestoredDraft();
   };
 
   const loadDocument = async (action: string) => {
@@ -315,7 +297,6 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const useLocal = async () => {
     if (!canChooseLocal() || !local() || !document() || document()?.deleted || document()?.disabled) return;
     const next = recovery.create(content(), required(document()).version);
-    setLegacyPending(false);
     setLocal(next); setUnconfirmed(undefined);
     await persist(next);
     await save();
@@ -405,21 +386,6 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     if (dirty()) await save();
   };
 
-  const restoreLegacyDraft = () => {
-    const draft = legacyDraft();
-
-    if (!draft || draft.content === undefined || !document() || loading() || saving() || dirty() || !transport.active()) return;
-
-    if (!legacyNoteDraftCurrent(draft)) { setSaveError("The older draft changed or could not be read. Review it again before restoring it.");
-
-    return; }
-
-    const next = recovery.create(draft.content, draft.baseVersion ?? required(document()).version);
-    setRestoredLegacyDraft(draft); setLegacyPending(true);
-    setLocal(next); setContent(next.content);
-    void persist(next);
-  };
-
   const resume = () => { if (!window.document.hidden) void sync(); };
 
   const settleOwnership = async () => {
@@ -469,5 +435,5 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     return unique;
   };
 
-  return { content, loading, saving, error, dirty, conflict, durable, legacyDraft, restoreLegacyDraft, owned: () => ownership().owned, savedVersion: () => document()?.version, saveEdits: useLocal, recoveries: recoveryCopies, restore, discardRecovery, useSaved, useLocal, savedContent: () => document()?.content ?? "", deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending, editable, edit, save, retry, takeControl };
+  return { content, loading, saving, error, dirty, conflict, durable, owned: () => ownership().owned, savedVersion: () => document()?.version, saveEdits: useLocal, recoveries: recoveryCopies, restore, discardRecovery, useSaved, useLocal, savedContent: () => document()?.content ?? "", deleted: () => document()?.deleted, disabled: () => document()?.disabled, ready, pending, editable, edit, save, retry, takeControl };
 }

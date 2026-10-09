@@ -3,7 +3,7 @@ import { z } from "zod";
 import { imageAttachmentSchema } from "./responseSchemas";
 import { isMobile } from "./platform";
 import { remoteClient } from "./remoteClient";
-import { legacyDraftIssues, upgradeDraftStorage } from "./draftStorageMigration";
+import { upgradeDraftStorage } from "./draftStorageMigration";
 import { DraftRevisions, type DraftMutation } from "./draftStorageRevisions";
 
 const uploadSchema = z.object({ id: z.string(), name: z.string(), kind: z.enum(["image", "text"]), byteSize: z.number(), image: imageAttachmentSchema.optional(), text: z.string().optional() }).refine(upload => upload.kind === "image" ? Boolean(upload.image) : upload.text !== undefined, "Attachment content is missing");
@@ -32,9 +32,7 @@ const storedAttachmentSchema = z.object({ id: z.string(), endpoint: z.string(), 
 
 const identitySchema = z.object({ id: z.string(), endpoint: z.string().optional(), destination: z.object({ endpoint: z.string() }).optional() });
 
-const referenceSchema = z.object({ version: z.literal(2), uploadIds: z.array(z.string()) });
 
-const versionSchema = z.object({ version: z.number() });
 
 const endpointSchema = z.union([z.object({ endpoint: z.string() }), z.object({ destination: z.object({ endpoint: z.string() }) }).transform(record => ({ endpoint: record.destination.endpoint }))]);
 
@@ -78,14 +76,8 @@ function referencedUploads(ids: string[], attachments: Map<string, z.infer<typeo
 }
 
 function readDraft(input: z.JSONType, attachments: Map<string, z.infer<typeof uploadSchema>>) {
-  const stored = storedDraftSchema.safeParse(input);
-  let draft: DurableDraft;
-
-  if (stored.success) draft = durableDraftSchema.parse({ ...stored.data, uploads: referencedUploads(stored.data.uploadIds, attachments) });
-  else {
-    if (versionSchema.safeParse(input).success) throw stored.error;
-    draft = durableDraftSchema.parse(input);
-  }
+  const stored = storedDraftSchema.parse(input);
+  const draft = durableDraftSchema.parse({ ...stored, uploads: referencedUploads(stored.uploadIds, attachments) });
 
   if (draft.id !== durableDraftId(draft.endpoint, draft.key)) throw new Error("Draft identity is inconsistent");
 
@@ -103,13 +95,9 @@ function readAttachment(input: z.JSONType) {
 }
 
 function readSubmission(input: z.JSONType, attachments: Map<string, z.infer<typeof uploadSchema>>) {
-  const stored = storedSubmissionSchema.safeParse(input);
+  const stored = storedSubmissionSchema.parse(input);
 
-  if (stored.success) return durableSubmissionSchema.parse({ ...stored.data, uploads: referencedUploads(stored.data.uploadIds, attachments) });
-
-  if (versionSchema.safeParse(input).success) throw stored.error;
-
-  return durableSubmissionSchema.parse(input);
+  return durableSubmissionSchema.parse({ ...stored, uploads: referencedUploads(stored.uploadIds, attachments) });
 }
 
 function cleanUnusedAttachments(transaction: IDBTransaction, healthy: Set<string>) {
@@ -149,7 +137,7 @@ export class DraftStorage {
       const request = indexedDB.open("piop-conversation-drafts", 3);
       let blocked = false;
       request.onupgradeneeded = () => {
-        if (!request.transaction) throw new Error("Draft migration transaction is unavailable");
+        if (!request.transaction) throw new Error("Draft storage transaction is unavailable");
         upgradeDraftStorage(request.result, request.transaction);
       };
 
@@ -187,7 +175,7 @@ export class DraftStorage {
 
   private readDrafts(inputs: z.JSONType[], endpoint: string, attachments: Map<string, z.infer<typeof uploadSchema>>, issues: DraftStorageIssue[]) {
     const drafts: DurableDraft[] = [];
-    const migrated: DurableDraft[] = [];
+    const empty: DurableDraft[] = [];
 
     for (const input of inputs) {
       const scope = recordScope(input, endpoint);
@@ -200,16 +188,15 @@ export class DraftStorage {
         drafts.push(draft);
         this.revisions.observe("drafts", draft.id, input);
 
-        if (!referenceSchema.safeParse(input).success || !draft.text && !draft.uploads.length) migrated.push(draft);
+        if (!draft.text && !draft.uploads.length) empty.push(draft);
       } catch (reason) { this.damagedDrafts.add(scope.id); issues.push(storageIssue("draft", scope.id, String(reason))); }
     }
 
-    return { drafts, migrated };
+    return { drafts, empty };
   }
 
   private readSubmissions(inputs: z.JSONType[], endpoint: string, attachments: Map<string, z.infer<typeof uploadSchema>>, issues: DraftStorageIssue[]) {
     const submissions: DurableSubmission[] = [];
-    const migrated: DurableSubmission[] = [];
 
     for (const input of inputs) {
       const scope = recordScope(input, endpoint);
@@ -222,38 +209,34 @@ export class DraftStorage {
         submissions.push(submission);
         this.revisions.observe("submissions", submission.id, input);
 
-        if (!referenceSchema.safeParse(input).success) migrated.push(submission);
       } catch (reason) { this.damagedSubmissions.add(scope.id); issues.push(storageIssue("submission", scope.id, String(reason))); }
     }
 
-    return { submissions, migrated };
+    return { submissions };
   }
 
   async load(endpoint: string) {
     const database = await this.open();
 
-    const restored = await new Promise<{ drafts: DurableDraft[]; submissions: DurableSubmission[]; migratedDrafts: DurableDraft[]; migratedSubmissions: DurableSubmission[]; issues: DraftStorageIssue[] }>((resolve, reject) => {
-      const stores = ["drafts", "submissions", "attachments", ...database.objectStoreNames.contains("legacyDrafts") ? ["legacyDrafts"] : []];
+    const restored = await new Promise<{ drafts: DurableDraft[]; submissions: DurableSubmission[]; emptyDrafts: DurableDraft[]; issues: DraftStorageIssue[] }>((resolve, reject) => {
+      const stores = ["drafts", "submissions", "attachments"];
       const transaction = database.transaction(stores, "readonly");
       const drafts = transaction.objectStore("drafts").getAll();
       const submissions = transaction.objectStore("submissions").getAll();
       const uploads = transaction.objectStore("attachments").index("endpoint").getAll(endpoint);
-      const legacy = database.objectStoreNames.contains("legacyDrafts") ? transaction.objectStore("legacyDrafts").getAll() : undefined;
       transaction.onabort = () => reject(transaction.error ?? new Error("Could not read saved drafts"));
       transaction.oncomplete = () => {
         const issues: DraftStorageIssue[] = [];
         this.revisions.reset();
-        this.retainedLegacy = Boolean(legacy?.result.length);
-        issues.push(...legacyDraftIssues(legacy?.result ?? [], endpoint));
         const attachments = this.readAttachments(uploads.result, issues);
         const restoredDrafts = this.readDrafts(drafts.result, endpoint, attachments, issues);
         const restoredSubmissions = this.readSubmissions(submissions.result, endpoint, attachments, issues);
-        resolve({ drafts: restoredDrafts.drafts, submissions: restoredSubmissions.submissions, migratedDrafts: restoredDrafts.migrated, migratedSubmissions: restoredSubmissions.migrated, issues });
+        resolve({ drafts: restoredDrafts.drafts, submissions: restoredSubmissions.submissions, emptyDrafts: restoredDrafts.empty, issues });
       };
     });
 
-    try { await this.commit(restored.migratedDrafts, restored.migratedSubmissions); }
-    catch (reason) { restored.issues.push(storageIssue("storage", "attachment migration", String(reason))); }
+    try { await this.commit(restored.emptyDrafts, []); }
+    catch (reason) { restored.issues.push(storageIssue("storage", "empty drafts", String(reason))); }
 
     return restored;
   }

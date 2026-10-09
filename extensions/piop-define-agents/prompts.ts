@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { constants, openSync, closeSync, mkdirSync, chmodSync, readFileSync } from "node:fs";
+import { constants, openSync, closeSync, mkdirSync, chmodSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { link, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -202,17 +202,6 @@ function savePromptSnapshot(path: string, digest: string, contents: string) {
   } finally { db.close(); }
 }
 
-function importPromptSnapshot(db: DatabaseSync, path: string, digest: string) {
-  let contents: string | null = null;
-
-  try { contents = verifiedPrompt(readFileSync(path, "utf8"), digest); }
-  catch (error) { if (!hasErrorCode(error, "ENOENT")) throw error; }
-
-  db.prepare("INSERT INTO agent_prompt_snapshots VALUES (?, ?)").run(digest, contents);
-
-  return contents;
-}
-
 export async function readPrompt(path: string): Promise<string> {
   const digest = basename(path, ".md");
 
@@ -222,7 +211,7 @@ export async function readPrompt(path: string): Promise<string> {
 
   try {
     const row = db.prepare("SELECT contents FROM agent_prompt_snapshots WHERE digest=?").get(digest);
-    contents = row ? row.contents === null ? null : verifiedPrompt(String(row.contents), digest) : importPromptSnapshot(db, path, digest);
+    contents = row ? row.contents === null ? null : verifiedPrompt(String(row.contents), digest) : null;
     db.exec("COMMIT");
   } finally { db.close(); }
 

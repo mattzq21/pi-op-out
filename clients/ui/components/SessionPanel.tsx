@@ -4,7 +4,7 @@ import { createComputed,createMemo,createSignal,Show,type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type KeyboardEvent,type MouseEvent } from "../lib/solid";
 
-import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderInput,FolderOpen,LoaderCircle,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
+import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderOpen,LoaderCircle,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
 import { openGroupDirectory } from "../lib/nativeTransport";
 import { isMobile } from "../lib/platform";
 import type { SessionGroup } from "../lib/sessionGroups";
@@ -15,8 +15,6 @@ import type { NativeTransport } from "../lib/nativeTransport";
 import type { AppSettings } from "../types";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 import { SessionTooltip } from "./SessionTooltip";
-import { RecoveryDirectoryDialog } from "./RecoveryDirectoryDialog";
-import { isTemporaryRecoveryDirectory, type RecoveredDirectory } from "../lib/sessionRecovery";
 
 export type SessionAction = "split" | "new-window" | "rename" | "open-directory" | "archive" | "copy-id" | "open-rollout";
 
@@ -75,7 +73,6 @@ export function SessionPanel(props: Props) {
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = createSignal<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [removingGroup, setRemovingGroup] = createSignal<{ id: string; name: string }>();
-  const [recoverySession, setRecoverySession] = createSignal<SessionSummary>();
   const [groupSaving, setGroupSaving] = createSignal(false);
   const groupSavePending = createRef(false);
   const [groupActionError, setGroupActionError] = createSignal<string>();
@@ -411,14 +408,6 @@ export function SessionPanel(props: Props) {
   const isActiveSession = (session: SessionSummary) => panel().activeId === session.id && (session.hostId ?? "local") === panel().activeHostId;
   const isSavedSession = (session: SessionSummary) => !session.isDraft && Boolean(session.path);
 
-  const openMigratedSession = async (session: SessionSummary, result: RecoveredDirectory) => {
-    const recovered = result.recovery.recovered;
-    const owner = panel().onSelect({ ...session, cwd: result.cwd, cwdExists: true, projectRoot: recovered.headCommit ? result.cwd : null, worktreeRoot: null, projectKind: recovered.headCommit ? "main" : "no-repo", branch: recovered.branch });
-
-    if (!owner) throw new Error("The chat could not be selected. Finish its current action and try again.");
-    await owner.restoreRecoveryConnection(result.cwd, session.path, session.hostId);
-    setRecoverySession(undefined);
-  };
 
   const SessionRow = (row: { session: SessionSummary; projectKey: string }) => {
     const session = () => row.session;
@@ -447,13 +436,11 @@ export function SessionPanel(props: Props) {
 
     const renderArchiveButton = () => (<button class="session-archive" aria-busy={archiving()} aria-label={`${archiving() ? "Archiving" : "Archive"} ${session().name}`} data-tooltip={!isSavedSession(session()) ? "Send a message before archiving this draft" : `${archiving() ? "Archiving" : "Archive"} ${session().name}`} disabled={archiving() || !isSavedSession(session())} onClick={() => void archive()}><Show when={archiving()} fallback={<Archive size={14} />}><LoaderCircle size={14} class="spinning" /></Show></button>);
 
-    const renderRecoveryButton = () => (<Show when={isSavedSession(session()) && isTemporaryRecoveryDirectory(session().cwd)}><button class="session-archive" disabled={archiving() || running()} aria-label={`Move recovery directory for ${session().name}`} data-tooltip="Move recovery directory into Piop storage" onClick={() => setRecoverySession(session())}><FolderInput size={14} /></button></Show>);
 
     return <div onMouseEnter={(event) => setTooltipAnchor(event.currentTarget)} onMouseLeave={() => setTooltipAnchor(undefined)} onFocusIn={(event) => setTooltipAnchor(event.currentTarget)} onFocusOut={() => setTooltipAnchor(undefined)} data-sidebar-token={sessionLayoutToken(key())} data-session-key={key()} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault();
 
       if (archiving()) return; const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session: session(), x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
       {renderSessionMain()}
-      {renderRecoveryButton()}
       <Show when={session().branch ? tooltipAnchor() : undefined}>{(anchor) => <SessionTooltip session={session()} anchor={anchor()} onClose={() => setTooltipAnchor(undefined)} />}</Show>
       {renderArchiveButton()}
     </div>;
@@ -566,7 +553,6 @@ export function SessionPanel(props: Props) {
   }}>{<Key each={menuActions().menuItems} by={({ label }) => label}>{(entry, _index) => <button  role="menuitem" disabled={entry().disabled} data-tooltip={entry().disabled ? groupMenu() ? "Custom groups have no directory" : "Send a message before cloning this draft" : undefined} onClick={() => { const run = entry().run; run(); closeMenu(true); }}><Dynamic component={entry().Icon} size={14} />{entry().label}</button>}</Key>}</div>);
 
   return <aside class="session-panel">
-    <Show when={recoverySession()}>{session => <RecoveryDirectoryDialog session={session()} onCancel={() => setRecoverySession(undefined)} onOpen={result => openMigratedSession(session(), result)} />}</Show>
     {removingGroup() && <RemoveGroupDialog name={required((removingGroup())).name} onCancel={() => setRemovingGroup(undefined)} onRemove={async () => {
       const capturedRemovingGroup = removingGroup();
 

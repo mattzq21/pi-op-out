@@ -8,16 +8,14 @@ import { loadAccountProviders } from "../piop-runtime-settings/provider-accounts
 import { createFastModeDiscovery } from "../piop-openai-fast-mode/src/discovery.ts";
 import { piDirectory } from "./validation-runtime.ts";
 import { installRuntimeStorage } from "../../daemon/resources/sdk-storage.mjs";
-import type { FastModeConfig } from "../piop-openai-fast-mode/src/types.ts";
 import type { Agent } from "./contracts.ts";
 
 async function configuredFastTargets(agentDir: string) {
   const path = join(agentDir, "extensions", "piop-openai-fast-mode", "config.json");
-  const legacy = join(agentDir, "extensions", "pi-openai-fast-mode-piop", "config.json");
   const targets: Array<{ provider: string; model: string }> = [];
 
   try {
-    const text = readText(path, legacy, (value: Partial<FastModeConfig>) => Check(Type.Object({}), value));
+    const text = readText(path);
 
     if (text === undefined) return targets;
     const value = JSON.parse(text);

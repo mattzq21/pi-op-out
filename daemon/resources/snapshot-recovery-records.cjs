@@ -28,17 +28,6 @@ function read(directory) {
     if (row?.identity === current) return JSON.parse(row.record_json);
 
     if (row) throw new Error('Snapshot recovery directory was replaced; saved record retained');
-    let body;
-
-    try { body = fs.readFileSync(path.join(directory, 'recovery.json'), 'utf8'); }
-    catch (error) { if (error.code === 'ENOENT') return; throw error; }
-
-    const record = JSON.parse(body);
-
-    if (identity(directory) !== current) throw new Error('Snapshot recovery directory changed during import');
-    save(db, directory, current, record);
-
-    return record;
   } finally { db.close(); }
 }
 

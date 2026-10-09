@@ -2,7 +2,6 @@ package dev.pi.mobile;
 
 import android.content.ContentValues;
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
@@ -26,19 +25,11 @@ final class ClientPreferencesStorage implements AutoCloseable {
             database.execSQL("PRAGMA synchronous=FULL");
             database.execSQL("CREATE TABLE IF NOT EXISTS client_preferences (id INTEGER PRIMARY KEY CHECK(id=1), settings TEXT, revision TEXT NOT NULL)");
             database.beginTransaction();
-            if (read() == null) importLegacy(context);
+            if (read() == null) write(null, "missing");
         } catch (RuntimeException error) {
             close();
             throw error;
         }
-    }
-
-    private void importLegacy(Context context) {
-        SharedPreferences legacy = context.getSharedPreferences("piop-client-settings", Context.MODE_PRIVATE);
-        String settings = legacy.getString("settings", null);
-        String fallback = settings == null ? "missing" : "legacy:" + java.util.UUID.nameUUIDFromBytes(settings.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        String revision = legacy.getString("revision", fallback);
-        write(settings, revision == null ? fallback : revision);
     }
 
     Saved read() {

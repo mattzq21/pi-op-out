@@ -16,14 +16,6 @@ const restorationSchema = Type.Object({ moves: Type.Array(moveSchema) });
 
 const forkSchema = Type.Object({ destination: Type.String({ pattern: '\\.jsonl$' }) });
 
-const legacyArchiveSchema = Type.Object({ records: Type.Array(Type.Object({
-  file: Type.String({ pattern: '\\.jsonl$' }), destination: Type.String({ pattern: '\\.jsonl$' }),
-})) });
-
-const legacyDeletionSchema = Type.Object({ files: Type.Array(Type.Object({
-  path: Type.String(), staged: Type.String({ pattern: '^\\d+\\.staged$' }),
-})) });
-
 function validate(schema, record) {
   if (!Check(schema, record)) throw new Error('Invalid saved comparison operation');
 }
@@ -53,7 +45,6 @@ function deletions(root, stores) {
     deletionStores(record, stores);
   }
 
-  legacyDeletions(root, stores);
 }
 
 function deletionStores(record, stores) {
@@ -69,30 +60,6 @@ function deletionStores(record, stores) {
   }
 }
 
-function legacyDeletions(root, stores) {
-  const records = require('./legacy-deletion-records.cjs');
-  const directories = new Set([...records.list(root), ...require('./legacy-deletion-locks.cjs').list(root)]);
-
-  for (const directory of directories) {
-    if (!present(directory)) continue;
-    const record = records.read(root, directory);
-
-    if (!record) throw new Error(`Deletion comparison ownership is unavailable: ${directory}`);
-
-    if (record.kind === 'delete') {
-      deletionStores(record, stores);
-    } else {
-      validate(legacyDeletionSchema, record);
-
-      for (const file of record.files) {
-        if (!file.path.endsWith('.diffs.json')) continue;
-        add(stores, file.path);
-        add(stores, path.join(directory, file.staged));
-      }
-    }
-  }
-}
-
 function archives(root, stores) {
 
   for (const directory of records.list(root)) {
@@ -105,33 +72,6 @@ function archives(root, stores) {
     for (const session of record.records) moves(stores, session.moves);
   }
 
-  legacyArchives(root, stores);
-}
-
-function legacyArchives(root, stores) {
-  const records = require('./legacy-archive-records.cjs');
-
-  for (const directory of records.list(root)) {
-    const record = records.read(root, directory);
-
-    if (!record) {
-      if (present(directory)) throw new Error(`Archive comparison ownership is unavailable: ${directory}`);
-      continue;
-    }
-
-    if (record.version === undefined) {
-      validate(legacyArchiveSchema, record);
-
-      for (const session of record.records) {
-        add(stores, session.file.replace(/\.jsonl$/, '.diffs.json'));
-        add(stores, session.destination.replace(/\.jsonl$/, '.diffs.json'));
-      }
-    } else if (record.version === 2) {
-      if (record.preparing && record.moves === undefined) continue;
-      validate(restorationSchema, record);
-      moves(stores, record.moves);
-    } else throw new Error('Unsupported archived comparison record');
-  }
 }
 
 function restorations(root, stores) {

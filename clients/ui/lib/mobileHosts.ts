@@ -3,7 +3,6 @@ import { z } from "zod";
 
 export interface SavedMobileHost { name: string; url: string }
 
-const key = "piop-mobile-hosts";
 
 const hostSchema = z.object({ name: z.string(), url: z.string(), position: z.number().int().nonnegative().optional() });
 
@@ -34,22 +33,19 @@ function openDatabase(): Promise<IDBDatabase> {
 
 async function storedHosts(change?: (hosts: SavedMobileHost[]) => SavedMobileHost[], forgotten?: string): Promise<SavedMobileHost[]> {
   const database = await openDatabase();
-  let legacy: string | null = null;
 
-  try { legacy = localStorage.getItem(key); } catch { }
 
   try {
-    const result = await hostTransaction(database, legacy, change, forgotten);
+    const result = await hostTransaction(database, change, forgotten);
 
     if (result.connection) rememberConnection(result.connection);
 
-    try { if (localStorage.getItem(key) === legacy) localStorage.removeItem(key); } catch { }
 
     return result.hosts;
   } finally { database.close(); }
 }
 
-function hostTransaction(database: IDBDatabase, legacy: string | null, change?: (hosts: SavedMobileHost[]) => SavedMobileHost[], forgotten?: string): Promise<{ hosts: SavedMobileHost[]; connection?: MobileConnection }> {
+function hostTransaction(database: IDBDatabase, change?: (hosts: SavedMobileHost[]) => SavedMobileHost[], forgotten?: string): Promise<{ hosts: SavedMobileHost[]; connection?: MobileConnection }> {
   return new Promise((resolve, reject) => {
     const transaction = database.transaction(["hosts", "state"], "readwrite", { durability: "strict" });
     const hosts = transaction.objectStore("hosts");
@@ -61,19 +57,13 @@ function hostTransaction(database: IDBDatabase, legacy: string | null, change?: 
       const request = state.get("connection");
       request.onsuccess = () => {
         try {
-          connection = withoutHost(request.result === undefined ? legacyConnection() : connectionSchema.parse(request.result), forgotten);
+          connection = withoutHost(request.result === undefined ? { lastHost: "", autoReconnect: false } : connectionSchema.parse(request.result), forgotten);
           state.put(connection, "connection");
         } catch (error) { transaction.abort(); reject(error); }
       };
     }
 
-    const imported = state.get("imported");
-    imported.onsuccess = () => {
-      if (!imported.result) {
-        legacyHosts(legacy).forEach((host, position) => hosts.put({ ...host, position }));
-        state.put(true, "imported");
-      }
-
+    {
       const request = hosts.getAll();
       request.onsuccess = () => {
         result = parseHosts(hostListSchema.parse(request.result));
@@ -84,15 +74,13 @@ function hostTransaction(database: IDBDatabase, legacy: string | null, change?: 
           result.forEach((host, position) => hosts.put({ ...host, position }));
         }
       };
-    };
+    }
+
+;
 
     transaction.oncomplete = () => resolve({ hosts: result, connection });
     transaction.onabort = () => reject(transaction.error ?? new Error("Could not save mobile hosts"));
   });
-}
-
-function legacyHosts(value: string | null) {
-  try { return parseHosts(hostListSchema.parse(JSON.parse(value ?? "[]"))); } catch { return []; }
 }
 
 export function readMobileHosts(): Promise<SavedMobileHost[]> { return storedHosts(); }
@@ -120,12 +108,7 @@ const connectionSchema = z.object({ lastHost: z.string(), autoReconnect: z.boole
 
 type MobileConnection = z.infer<typeof connectionSchema>;
 
-function legacyConnection(): MobileConnection {
-  try { return { lastHost: localStorage.getItem("piop-mobile-host") ?? "", autoReconnect: localStorage.getItem("piop-mobile-auto-reconnect") === "true" }; }
-  catch { return { lastHost: "", autoReconnect: false }; }
-}
-
-let connectionCache = legacyConnection();
+let connectionCache: MobileConnection = { lastHost: "", autoReconnect: false };
 
 export function cachedMobileHost() { return connectionCache.lastHost; }
 
@@ -143,10 +126,7 @@ async function connectionSettings(change?: (saved: MobileConnection) => MobileCo
 function rememberConnection(saved: MobileConnection) {
   connectionCache = saved;
 
-  try {
-    localStorage.removeItem("piop-mobile-host");
-    localStorage.removeItem("piop-mobile-auto-reconnect");
-  } catch { }
+
 }
 
 function connectionTransaction(database: IDBDatabase, change?: (saved: MobileConnection) => MobileConnection): Promise<MobileConnection> {
@@ -157,7 +137,7 @@ function connectionTransaction(database: IDBDatabase, change?: (saved: MobileCon
     let result: MobileConnection;
     request.onsuccess = () => {
       try {
-        const saved = request.result === undefined ? legacyConnection() : connectionSchema.parse(request.result);
+        const saved = request.result === undefined ? { lastHost: "", autoReconnect: false } : connectionSchema.parse(request.result);
         result = change ? change(saved) : saved;
         state.put(result, "connection");
       } catch (error) { transaction.abort(); reject(error); }

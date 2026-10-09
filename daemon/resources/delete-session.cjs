@@ -8,7 +8,6 @@ const transactions = require('./session-transactions.cjs');
 const deletionTransaction = require('./delete-transaction.cjs');
 const diffStore = require('./session-broker/git-diff-store.cjs');
 const ownerLocks = require('./transaction-owner-locks.cjs');
-const { createHash } = require('node:crypto');
 const { lockStorage } = require('./restore-transaction.cjs');
 const { withReferencePublicationLock } = require('./storage-lock.cjs');
 const { recoverStorage } = require('./storage-recovery.cjs');
@@ -42,10 +41,6 @@ async function readSnapshotDirectory(file) {
 
   return { file, metadata, directory: true, stagedPath: "", staged: false };
 }
-
-
-
-
 
 function checkpointRepository(roots, cwd) {
   if (!roots.has(cwd)) roots.set(cwd, { required: false, commits: new Set(), expectedRefs: new Map() });
@@ -104,14 +99,12 @@ function mergeRepositories(repositoriesByPath, repositories) {
   }
 }
 
-async function collectDeletionFiles(root, targets, sources, request, files) {
+async function collectDeletionFiles(sources, request, files) {
   const repositoriesByPath = new Map();
-    const selected = new Set(sources);
 
-    for (const [index, source] of sources.entries()) {
-      const target = targets[index];
-      const [trace, sidecar, loopCheckpoint] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true), readFile(`${source}.loop-detection.json`, true)]);
-      files.push(...[trace, sidecar, loopCheckpoint].filter(Boolean));
+    for (const source of sources) {
+      const trace = await readFile(source);
+      files.push(trace);
       const snapshots = await readSnapshotDirectory(source.replace(/\.jsonl$/, ".snapshots"));
 
       if (snapshots) files.push(snapshots);
@@ -119,14 +112,7 @@ async function collectDeletionFiles(root, targets, sources, request, files) {
       const header = entries[0];
       validateHeader(header, request);
       trace.sessionId = header.id;
-      await collectCompletedTransfers(root, source, header, files);
-      const diffLock = await readFile(source.replace(/\.jsonl$/, '.diffs.json.lock'), true);
-
-      if (diffLock) files.push(diffLock);
-      await appendConversationNote(files, header, target);
-      const directory = await archivedDirectory(source, header, target, selected);
-
-      if (directory && !files.some(saved => saved.file === directory.file)) files.push(directory);
+      verifyCompletedTransfers(source);
 
       mergeRepositories(repositoriesByPath, await snapshotRefs(entries, header));
     }
@@ -135,33 +121,18 @@ async function collectDeletionFiles(root, targets, sources, request, files) {
 
 }
 
-async function collectCompletedTransfers(root, source, header, files) {
+function verifyCompletedTransfers(source) {
   const file = source.replace(/\.jsonl$/, '.diffs.json');
 
   const state = ownerLocks.withFile(file + '.lock', () => diffStore.readStore(file, false));
 
   if (Object.values(state.transfers).some(transfer => transfer.committed !== true)) throw new Error('Unfinished project diff transfers still own their log and staged contents; recover them before deleting this conversation');
 
-  for (const transfer of Object.values(state.transfers)) await collectCompletedTransfer(root, header, transfer, files);
 }
-
-async function collectCompletedTransfer(root, header, transfer, files) {
-  if (transfer.owner.toLowerCase() !== header.id.toLowerCase() || !/^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$/.test(transfer.owner) || !/^[a-f0-9]{64}$/.test(transfer.transferId)) throw new Error('Diff transfer ownership is ambiguous; staged contents retained');
-  const message = createHash('sha256').update(transfer.messageId).digest('hex');
-  const part = await readFile(path.join(root, 'git-diff-transfers', transfer.owner, message + '-' + transfer.transferId + '.part'), true);
-
-  if (!part) return;
-
-  if (part.metadata.nlink !== 1 || part.body.length !== transfer.offset || createHash('sha256').update(part.body).digest('hex') !== transfer.digest) throw new Error('Committed diff transfer contents changed; staged contents retained');
-  files.push(part);
-}
-
 
 function deletionStorageRoot(target) {
   return fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", target.area === "archived" ? "archived" : "sessions"));
 }
-
-
 
 async function main(root, request) {
   const targets = request.targets || [request];
@@ -171,7 +142,7 @@ async function main(root, request) {
 
   if (!sources.length || new Set(sources).size !== sources.length) throw new Error("Invalid conversation deletion targets");
   const files = [];
-  const repositories = await collectDeletionFiles(root, targets, sources, request, files);
+  const repositories = await collectDeletionFiles(sources, request, files);
   const retention = collectRetention(root, sources, files);
   const transaction = deletionTransaction.create(root, files, repositories, sources);
   recordRetention(root, transaction.id, retention.deferred);
@@ -190,73 +161,6 @@ async function main(root, request) {
 
   try { deletionTransaction.finish(transaction); collectDeferredRetention(root); }
   catch (error) { console.error(`Deletion committed; cleanup will retry. Recovery data: ${transaction.garbagePath}: ${error.message}`); }
-}
-
-
-async function appendConversationNote(files, header, target) {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)) return undefined;
-  const storage = target.root ? path.dirname(await fs.realpath(target.root)) : path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
-
-  const note = await readFile(path.join(storage, "notes", "chats", `${header.id.toLowerCase()}.md`), true);
-
-  if (note && !files.some(saved => saved.file === note.file)) files.push({ ...note, note: true });
-}
-
-
-async function archivedDirectoryMetadata(directory) {
-  const metadata = await fs.lstat(directory);
-
-  if (!metadata.isDirectory()) throw new Error("Archived working directory is not a directory");
-
-  return { file: directory, metadata, directory: true, stagedPath: "", staged: false };
-}
-
-function referencesDirectory(root, file, storedPath) {
-  const header = require('./transcript-references.cjs').read(root, file)[0];
-
-  return header.worktreeRestore?.kind === "directory" && header.worktreeRestore.storedPath === storedPath;
-}
-
-async function directoryReferenced(location, storedPath, selected) {
-  const files = require('./session-database.cjs').paths(path.dirname(location));
-
-  for (const file of files) {
-    if (!file.startsWith(location + path.sep) || selected.has(file)) continue;
-    let metadata;
-
-    try { metadata = await fs.lstat(file); }
-    catch (error) { if (error.code === "ENOENT") continue; throw error; }
-
-    if (metadata.isSymbolicLink()) throw new Error("Session database path must not be a symbolic link");
-
-    if (metadata.isFile() && referencesDirectory(path.dirname(location), file, storedPath)) return true;
-  }
-
-  return false;
-}
-
-async function archivedDirectory(source, header, target, selected = new Set([source])) {
-  const saved = header.worktreeRestore;
-
-  if (header.archiveResourceId || saved?.kind !== "directory") return undefined;
-  const area = await deletionStorageRoot(target);
-  const storage = path.dirname(area);
-  let directory;
-
-  try { directory = await fs.realpath(saved.storedPath); }
-  catch (error) { if (error.code === "ENOENT") return undefined; throw error; }
-
-  const root = await fs.realpath(path.join(storage, "archived-tmp"));
-
-  if (path.dirname(directory) !== root) throw new Error("Invalid archived working directory");
-
-  const locations = new Set([area, path.join(storage, "sessions"), path.join(storage, "archived")]);
-
-  for (const location of locations) {
-    if (await directoryReferenced(location, saved.storedPath, selected)) return undefined;
-  }
-
-  return archivedDirectoryMetadata(directory);
 }
 
 function collectSnapshot(entry, roots, prefix, legacy) {
@@ -361,7 +265,6 @@ async function sessionSource(target) {
 
   return source;
 }
-
 
 function validateHeader(header, target) {
   if (!validSessionHeader(header)) {
