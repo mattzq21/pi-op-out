@@ -45,6 +45,7 @@ function read(root, directory) {
     let row = query.get(directory, expected);
 
     if (!row) {
+      assertSavedIdentity(db, directory, expected);
       const body = legacy(directory);
 
       if (identity(directory) !== expected) throw new Error('Goal ownership changed during import');
@@ -54,6 +55,10 @@ function read(root, directory) {
 
     return row.record_json === null ? undefined : JSON.parse(row.record_json);
   });
+}
+
+function assertSavedIdentity(db, directory, expected) {
+  if (db.prepare('SELECT 1 FROM goal_ownership WHERE directory=? AND identity<>? AND record_json IS NOT NULL').get(directory, expected)) throw new Error('Saved goal ownership directory was replaced');
 }
 
 function missingDirectoryRecord(root, directory) {
@@ -108,6 +113,7 @@ function allocate(root, parent) {
 
 function importDirectory(db, directory) {
   const expected = identity(directory);
+  assertSavedIdentity(db, directory, expected);
   const body = legacy(directory);
 
   if (identity(directory) !== expected) throw new Error('Goal ownership changed during import');
