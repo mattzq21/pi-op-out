@@ -5,20 +5,29 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { App as AndroidApp } from "@capacitor/app";
 import App from "../App";
-import { readMobileHosts, removeMobileHost, saveMobileHost } from "../lib/mobileHosts";
+import { readMobileHosts, removeMobileHost, saveMobileHost, type SavedMobileHost } from "../lib/mobileHosts";
 import { remoteClient, validateHost } from "../lib/remoteClient";
 import { loadMobileDebugConnection } from "../lib/mobileDebug";
 import { MobileTailscaleStatus } from "./MobileTailscaleStatus";
 
 export function MobileApp() {
   const [url, setUrl] = createSignal((() => localStorage.getItem("piop-mobile-host") ?? "")());
-  const [hosts, setHosts] = createSignal((readMobileHosts)());
+  const [hosts, setHosts] = createSignal<SavedMobileHost[]>([]);
+  let hostsChanged = false;
+  const applyHosts = (saved: SavedMobileHost[]) => { hostsChanged = true; setHosts(saved); };
+
   const [name, setName] = createSignal("");
   const [autoReconnect, setAutoReconnect] = createSignal((() => localStorage.getItem("piop-mobile-auto-reconnect") === "true")());
   const [connected, setConnected] = createSignal(false);
   const [workspaceOpen, setWorkspaceOpen] = createSignal(false);
   const [connecting, setConnecting] = createSignal(false);
   const [error, setError] = createSignal("");
+  createDependencyEffect(() => {
+    let active = true;
+    void readMobileHosts().then(saved => { if (active && !hostsChanged) setHosts(saved); }).catch(reason => { if (active) setError(String(reason)); });
+
+    return () => { active = false; };
+  });
   const [restartGrace, setRestartGrace] = createSignal(false);
   const restartGraceTimer = createRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const generation = createRef(0);
@@ -58,6 +67,14 @@ export function MobileApp() {
     setDisconnecting(false);
   };
 
+  const finishConnection = async (attempt: number, cleanUrl: string, label: string) => {
+    const savedHosts = await saveMobileHost(cleanUrl, label);
+
+    if (attempt !== generation.current) return;
+    localStorage.setItem("piop-mobile-host", cleanUrl);
+    applyHosts(savedHosts); setUrl(cleanUrl); setConnected(true); setWorkspaceOpen(true); retryDelay.current = 2000; restartUntil.current = 0;
+  };
+
   const connect = async (address: string, label = "") => {
     if (address !== activeDebugAddress.current) activeDebugAddress.current = undefined;
     const attempt = ++generation.current;
@@ -68,8 +85,7 @@ export function MobileApp() {
       await remoteClient.connect({ url: cleanUrl });
 
       if (attempt !== generation.current) return;
-      localStorage.setItem("piop-mobile-host", cleanUrl);
-      setHosts(saveMobileHost(cleanUrl, label)); setUrl(cleanUrl); setConnected(true); setWorkspaceOpen(true); retryDelay.current = 2000; restartUntil.current = 0;
+      await finishConnection(attempt, cleanUrl, label);
     } catch (reason) {
       if (attempt !== generation.current) return;
       remoteClient.close(); setError(reason instanceof Error ? reason.message : String(reason));
@@ -126,13 +142,24 @@ export function MobileApp() {
     return () => { generation.current++; clearTimeout(retry.current); clearTimeout(restartGraceTimer.current); remoteClient.close(); window.removeEventListener("piop-mobile-disconnect", disconnect); window.removeEventListener("piop-daemon-restarting", restarting); void restartListener.then(stop => stop()); remoteClient.onDisconnect = undefined; void back.then((handle) => handle.remove()); window.visualViewport?.removeEventListener("resize", viewport); };
   }, () => [disconnect, scheduleReconnect]);
 
-  const saveHost = () => {
-    try { setHosts(saveMobileHost(url(), name())); setUrl(validateHost({ url: url().trim() })); setError(""); }
+  const saveHost = async () => {
+    const address = url();
+
+    try { applyHosts(await saveMobileHost(address, name()));
+
+      if (url() === address) setUrl(validateHost({ url: address.trim() }));
+      setError(""); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
 
-  const forgetHost = () => {
-    try { setHosts(removeMobileHost(url())); setUrl(""); setName(""); clearTimeout(retry.current); setError(""); }
+  const forgetHost = async () => {
+    const address = url();
+
+    try { applyHosts(await removeMobileHost(address));
+
+      if (url() === address) { setUrl(""); setName(""); }
+
+      clearTimeout(retry.current); setError(""); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
 
