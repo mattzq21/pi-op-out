@@ -166,4 +166,11 @@ function read(root, file, connection) {
   } finally { if (!connection) db.close(); }
 }
 
-module.exports = { read, publish };
+function remove(root, file) {
+  const db = open(root);
+
+  try { db.prepare('DELETE FROM transcript_references WHERE session_path=?').run(file); }
+  finally { db.close(); }
+}
+
+module.exports = { read, publish, remove };

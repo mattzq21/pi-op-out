@@ -7,6 +7,7 @@ const { loadDiffs } = require('./session-diff-store.cjs');
 const { copyRetainedStoreLocked } = require('./session-broker/git-diff-store.cjs');
 const diffDatabase = require('./session-broker/git-diff-database.cjs');
 const records = require('./fork-transaction-records.cjs');
+const transcriptRecords = require('./transcript-references.cjs');
 
 const diffsSchema = Type.Record(Type.String(), Type.Union([Type.String(), Type.Object({ patch: Type.String(), toolPaths: Type.Optional(Type.Array(Type.Unknown())) })]));
 
@@ -71,7 +72,10 @@ function cleanup(directory) {
   fs.rmSync(removing, { recursive: true, force: true });
 
   if (exists(parent)) sync(parent);
-  records.remove(path.join(parent, path.basename(directory).replace(/^\.cleanup-/, '')));
+  const original = path.join(parent, path.basename(directory).replace(/^\.cleanup-/, ''));
+  transcriptRecords.remove(path.dirname(parent), path.join(original, 'session.jsonl'));
+  transcriptRecords.remove(path.dirname(parent), path.join(removing, 'session.jsonl'));
+  records.remove(original);
   records.remove(removing);
 }
 
@@ -86,7 +90,7 @@ function readTransaction(root, directory) {
 
   verifyLegacyHistory(transaction, directory);
 
-  if (transaction.version === 2 && transaction.sessionId !== transcriptHeader(path.join(directory, 'session.jsonl')).id) throw new Error('Fork preparation session changed');
+  if (transaction.version === 2 && transaction.sessionId !== transcriptHeader(root, path.join(directory, 'session.jsonl')).id) throw new Error('Fork preparation session changed');
 
   return transaction;
 }
@@ -114,7 +118,7 @@ function recoverTransaction(root, directory) {
 
     if (transaction.diffs) removeOwned(sidecar, transaction.diffs);
     sync(path.dirname(destination));
-    forgetPublished(root, destination, transcriptHeader(path.join(directory, 'session.jsonl')).id);
+    forgetPublished(root, destination, transcriptHeader(root, path.join(directory, 'session.jsonl')).id);
     cleanup(directory);
 
     return;
@@ -153,8 +157,8 @@ function recoverDatabaseFork(root, directory, transaction) {
   cleanup(directory);
 }
 
-function transcriptHeader(file) {
-  const header = JSON.parse(fs.readFileSync(file, 'utf8').split('\n')[0]);
+function transcriptHeader(root, file) {
+  const header = transcriptRecords.read(root, file)[0];
 
   if (header.type !== 'session' || !Check(Type.String({ pattern: '^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$' }), header.id)) throw new Error('Invalid fork session identity');
 
@@ -169,7 +173,7 @@ function removeOwned(file, expected) {
 }
 
 function registerPublished(root, destination) {
-  const header = JSON.parse(fs.readFileSync(destination, 'utf8').split('\n')[0]);
+  const header = transcriptRecords.read(root, destination)[0];
 
   if (header.type !== 'session' || !Check(Type.String({ minLength: 1 }), header.id)) throw new Error('Invalid published fork identity');
   require('./session-database.cjs').registerPath(root, header.id, destination);
@@ -185,7 +189,7 @@ function forgetPublished(root, destination, sessionId) {
 
     if (registered?.session_path && registered.session_path !== destination) throw new Error('Removed fork moved to another location; database records retained');
 
-    for (const table of ['session_diff_state', 'session_diff_transfers']) {
+    for (const table of ['session_diff_state', 'session_diff_transfers', 'transcript_references']) {
       if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) database.prepare(`DELETE FROM ${table} WHERE session_id=lower(?)`).run(sessionId);
     }
 
@@ -221,7 +225,7 @@ function prepare(root, request) {
 
   if (header.type !== 'session' || header.id !== request.sessionId) throw new Error('Fork session identity changed');
   header.parentSession = source;
-  const sourceId = transcriptHeader(source).id;
+  const sourceId = transcriptHeader(root, source).id;
   const selected = retainedIds(lines.slice(1).map(line => JSON.parse(line)));
   const journals = path.join(root, 'fork-transactions');
   fs.mkdirSync(journals, { recursive: true, mode: 0o700 });
@@ -280,7 +284,7 @@ function remove(root, request) {
     const sidecar = destination.replace(/\.jsonl$/, '.diffs.json');
 
     if (exists(sidecar)) fs.linkSync(sidecar, path.join(directory, 'diffs.json'));
-    const transaction = { version: 2, removing: true, destination, sessionId: transcriptHeader(destination).id, transcript: identity(path.join(directory, 'session.jsonl')), diffs: exists(sidecar) ? identity(path.join(directory, 'diffs.json')) : undefined };
+    const transaction = { version: 2, removing: true, destination, sessionId: transcriptHeader(root, destination).id, transcript: identity(path.join(directory, 'session.jsonl')), diffs: exists(sidecar) ? identity(path.join(directory, 'diffs.json')) : undefined };
     sync(directory);
     records.save(directory, transaction);
   } catch (error) { cleanup(directory); throw error; }
@@ -292,7 +296,7 @@ function published(root, request) {
   const destination = destinationPath(root, request.destination);
 
   if (!exists(destination)) return false;
-  const header = JSON.parse(fs.readFileSync(destination, 'utf8').split('\n')[0]);
+  const header = transcriptRecords.read(root, destination)[0];
 
   if (header.type !== 'session' || header.id !== request.sessionId) throw new Error('Fork publication destination was replaced');
 
