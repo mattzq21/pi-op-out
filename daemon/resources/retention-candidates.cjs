@@ -187,6 +187,9 @@ function goalStorageProtected(record, candidate, file) {
 
   if (['owners.json', 'prepared.json', 'dependencies.json'].some(name => metadata(path.join(file, name)))) return true;
   const root = path.dirname(path.dirname(record.file));
+
+  if (require('./session-broker/goal-dependencies.cjs').retained(root, candidate.path, candidate.identity)) return true;
+
   const publications = require('./session-broker/session-publication.cjs').retainedDependencies(root);
 
   return publications.some(publication => JSON.stringify(publication.dependencies ?? null).includes(candidate.path)

@@ -58,11 +58,12 @@ function activeGoalAllocation(directory) {
   } finally { fs.closeSync(descriptor); }
 }
 
-function retainActiveGoals(goals, retained) {
+function retainActiveGoals(root, goals, retained) {
   let pending = false;
 
   for (const directory of goals) {
-    const managed = ['owners.json', 'prepared.json', 'dependencies.json'].some(name => metadata(path.join(directory, name)));
+    const managed = ['owners.json', 'prepared.json'].some(name => metadata(path.join(directory, name)))
+      || require('./session-broker/goal-dependencies.cjs').read(root, directory) !== undefined;
 
     if (retained.has(directory)) continue;
 
@@ -284,7 +285,7 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
   const retained = survivingReferences(inventory, candidates, excluded);
   retainPublications(root, candidates, retained, inventory);
   queuedReferences(root, excluded, candidates, retained, inventory);
-  const pendingGoals = retainActiveGoals(inventory.goals, retained);
+  const pendingGoals = retainActiveGoals(root, inventory.goals, retained);
   goalReferences(retained, inventory.goals, candidates, inventory);
   const requestedIds = [...new Set([...deleted.map(saved => saved.sessionId), ...deferred.sessionIds])].filter(id => uuidPattern.test(id));
 

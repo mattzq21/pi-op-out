@@ -119,7 +119,7 @@ function propagateDependency(record, target, owner, verified, source, discovery)
 
 async function dependencyRecord(profile, record, dependency, owners, discovery) {
   if (!managedGoal(profile, dependency.path)) throw new Error('Goal dependency is outside managed profile storage: ' + dependency.path);
-  const source = path.join(record.path, 'dependencies.json');
+  const source = record.path + ' (saved goal dependencies)';
   const target = addRoot(discovery.goals, dependency.path, 'Durable transitive goal dependency in ' + source + '; expected directory identity: ' + dependency.identity, 'unattributed');
 
   await recordClaims(target, discovery);
@@ -136,11 +136,17 @@ async function dependencyRecord(profile, record, dependency, owners, discovery) 
 
 async function dependencies(profile, record, discovery) {
   if (!managedGoal(profile, record.path)) return;
-  const source = path.join(record.path, 'dependencies.json');
+  const source = record.path + ' (saved goal dependencies)';
 
   try {
     if (!record.identity || await directoryIdentity(record.path) !== record.identity) throw new Error('Dependency source directory identity unavailable or changed');
-    const contract = await json(source);
+    const contract = require('./session-broker/goal-dependencies.cjs').read(profile, record.path);
+
+    if (contract === undefined) {
+      record.provenance.push('No saved dependency record; undeclared legacy text dependencies are outside verified ownership coverage');
+
+      return;
+    }
 
     if (!Check(contractSchema, contract)) throw new Error('Invalid durable goal dependency contract');
     const owners = record.owners.filter(owner => goalOwner({ owners: [owner] }) || owner.kind.startsWith('diagnostic-'));
@@ -148,7 +154,7 @@ async function dependencies(profile, record, discovery) {
     for (const dependency of contract.directories) await dependencyRecord(profile, record, dependency, owners, discovery);
   } catch (error) {
     if (error.code === 'ENOENT') {
-      record.provenance.push('No dependencies.json contract found; undeclared legacy text dependencies are outside verified ownership coverage');
+      record.provenance.push('No saved dependency record; undeclared legacy text dependencies are outside verified ownership coverage');
 
       return;
     }

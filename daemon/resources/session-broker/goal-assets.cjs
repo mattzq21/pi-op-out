@@ -4,6 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
+const goalDependencies = require('./goal-dependencies.cjs');
 
 const ownerSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.Optional(Type.String()) });
 
@@ -138,10 +139,9 @@ function assetText(file) {
 }
 
 function savedDependencies(root, directory) {
-  const file = path.join(directory, 'dependencies.json');
+  const contract = goalDependencies.read(root, directory);
 
-  if (!exists(file)) return [];
-  const contract = JSON.parse(assetText(file));
+  if (contract === undefined) return [];
   verifyContract(root, contract);
 
   return contract.directories;
@@ -230,7 +230,7 @@ function claim(root, directory, sessionId, sessionPath, objective) {
     const directories = dependencyClosure(root, [directory, ...directReferences([objective], root)]);
     const snapshots = claimSnapshots(root, directories);
     const dependencies = snapshots.flatMap(snapshot => snapshot.directory === directory ? [] : [{ path: snapshot.directory, identity: snapshot.identity }]);
-    write(path.join(directory, 'dependencies.json'), { version: 1, policy: 'shared-profile', directories: dependencies });
+    goalDependencies.save(root, directory, { version: 1, policy: 'shared-profile', directories: dependencies });
     publishClaims(root, snapshots, sessionId, sessionPath);
 
     return { path: directory, identity: identity(directory) };
@@ -346,12 +346,13 @@ function releaseHistory(root, contract, sessionId) {
 function discardPreparation(root, directory, sessionId) {
   return locked(root, () => {
     if (!validPath(root, directory)) throw new Error('Invalid unpublished goal asset directory');
-    identity(directory);
+    const expected = identity(directory);
     const record = readOwners(directory);
 
     if (record.owners.some(owner => owner.sessionId !== sessionId)) return;
     fs.rmSync(directory, { recursive: true });
     sync(path.dirname(directory));
+    goalDependencies.remove(root, directory, expected);
   });
 }
 
@@ -387,6 +388,9 @@ function updateReclamation(root, directory, expected, removing) {
 
 function beginReclamation(root, directory, expected) { updateReclamation(root, directory, expected, false); }
 
-function endReclamation(root, directory, expected) { updateReclamation(root, directory, expected, true); }
+function endReclamation(root, directory, expected) {
+  if (!exists(directory)) goalDependencies.remove(root, directory, expected);
+  updateReclamation(root, directory, expected, true);
+}
 
 module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, write, references, claim, retainHistory, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };

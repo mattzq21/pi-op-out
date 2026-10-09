@@ -44,7 +44,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 46] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 47] = [
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
     ("conversation-location.ts", include_str!("../../resources/session-broker/conversation-location.ts")),
@@ -89,6 +89,7 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 46] = [
     ("goal-controls.ts", include_str!("../../resources/session-broker/goal-controls.ts")),
     ("goal-coordination.ts", include_str!("../../resources/session-broker/goal-coordination.ts")),
     ("goal-files.ts", include_str!("../../resources/session-broker/goal-files.ts")),
+    ("goal-dependencies.cjs", include_str!("../../resources/session-broker/goal-dependencies.cjs")),
     ("goal-assets.cjs", include_str!("../../resources/session-broker/goal-assets.cjs")),
     ("goal-prompts.ts", include_str!("../../resources/session-broker/goal-prompts.ts")),
 ];
