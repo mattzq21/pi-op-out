@@ -673,9 +673,11 @@ async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const root = runtimeRoot(executable);
   const { installRuntimeStorage, installSessionStorage } = await import("./sdk-storage.mjs");
+  const { installSessionLists } = await import("./sdk-session-list.mjs");
   await installRuntimeStorage(root);
   const { SessionManager } = await import(pathToFileURL(join(root, "dist/core/session-manager.js")).href);
   installSessionStorage(SessionManager);
+  installSessionLists(SessionManager);
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
 
   if (args.includes("--print")) return import(pathToFileURL(join(root, "dist/cli.js")).href);

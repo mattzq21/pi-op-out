@@ -37,7 +37,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     let path = dir.join("runtime-settings.ts");
     atomic_write_private(&dir.join("runtime-bridge.cjs"), include_str!("../../resources/runtime-bridge.cjs").as_bytes())?;
     atomic_write_private(&dir.join("runtime-configuration.cjs"), include_str!("../../resources/runtime-configuration.cjs").as_bytes())?;
-    atomic_write_private(&dir.join("sdk-storage.mjs"), include_str!("../../resources/sdk-storage.mjs").as_bytes())?;
+    prepare_sdk_storage(&dir)?;
     atomic_write_private(&dir.join("provider-accounts.mjs"), include_str!("../../resources/provider-accounts.bundle.mjs").as_bytes())?;
     atomic_write_private(&path, include_str!("../../../extensions/piop-runtime-settings/index.ts").as_bytes())?;
     save_runtime_settings(&dir, settings)?;
@@ -118,6 +118,12 @@ pub(super) fn prepare_session_broker() -> Result<PathBuf, String> {
     let path = dir.join("session-broker.ts");
     atomic_write_private(&path, include_str!("../../resources/session-broker.ts").as_bytes())?;
     Ok(path)
+}
+
+fn prepare_sdk_storage(dir: &Path) -> Result<(), String> {
+    atomic_write_private(&dir.join("sdk-storage.mjs"), include_str!("../../resources/sdk-storage.mjs").as_bytes())?;
+    atomic_write_private(&dir.join("sdk-session-list.mjs"), include_str!("../../resources/sdk-session-list.mjs").as_bytes())?;
+    atomic_write_private(&dir.join("session-database.cjs"), include_str!("../../resources/session-database.cjs").as_bytes())
 }
 
 fn prepare_broker_storage(dir: &Path) -> Result<(), String> {
