@@ -156,10 +156,40 @@ async function discoverEphemeral(profile, discovery) {
     await ownerRecord(path.join(profile, 'sessions.sqlite'), row, discovery);
   }
 
+  await externalSessions(profile, discovery);
   await manifests(root, discovery);
 
   for (const row of require('./session-database.cjs').snapshotDirectories(profile)) {
     if (path.dirname(row.directory) === path.join(profile, 'git-snapshots') && path.basename(row.directory).startsWith('pi-desktop-diff-')) await pointer(row.directory, profile, discovery);
+  }
+}
+
+async function externalSessions(profile, discovery) {
+  const records = require('./external-transcripts.cjs');
+
+  for (const row of records.list(profile)) {
+    try {
+      const file = records.transcript(row);
+
+      if (!/^pi-desktop-btw-[a-f0-9-]{36}\.jsonl$/.test(path.basename(file)) || discovery.ephemeralRecords.has(file)) continue;
+      await externalArtifacts(file, discovery);
+    } catch (error) { discovery.warnings.push(`External transcript ${row.record_id}: storage unavailable: ${error.message}`); }
+  }
+}
+
+async function externalArtifacts(file, discovery) {
+  for (const artifact of artifacts(file)) {
+    let metadata;
+
+    try { metadata = await fs.lstat(artifact); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+
+    addRoot(discovery.ephemeral, artifact, 'Saved external transcript path; runtime liveness unknown', 'unattributed');
+
+    if (artifact !== file) continue;
+
+    if (!metadata.isFile() || await fs.realpath(file) !== file) throw new Error('External transcript is not a regular canonical file');
+    discovery.sessionPaths.add(file);
   }
 }
 
