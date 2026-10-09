@@ -157,13 +157,10 @@ function walkAssets(directory, visit) {
   }
 }
 
-function preparedOwner(directory) {
-  const file = path.join(directory, 'prepared.json');
+function preparedOwner(root, directory) {
+  const receipt = require('./session-broker/goal-preparations.cjs').read(root, directory);
 
-  if (!assets.exists(file)) return;
-
-  if (!assets.exists(file).isFile()) throw new Error('Prepared goal ownership is not a regular file');
-  const receipt = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (receipt === undefined) return;
 
   if (!Check(receiptSchema, receipt)) throw new Error('Damaged prepared goal ownership retained');
 
@@ -188,7 +185,7 @@ function ownedCandidate(root, directory, deleted, candidates) {
 
   try {
     const record = assets.readOwners(directory);
-    const ids = [...record.owners.map(owner => owner.sessionId), ...record.retiredOwners ?? [], preparedOwner(directory)].filter(id => deleted.has(id));
+    const ids = [...record.owners.map(owner => owner.sessionId), ...record.retiredOwners ?? [], preparedOwner(root, directory)].filter(id => deleted.has(id));
 
     if (ids.length) candidate(root, directory, candidates, ids);
   } catch (error) { console.error(`${directory}: goal ownership could not be established; retained: ${error.message}`); }

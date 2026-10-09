@@ -5,6 +5,7 @@ const { spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const goalDependencies = require('./goal-dependencies.cjs');
+const goalPreparations = require('./goal-preparations.cjs');
 
 const ownerSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.Optional(Type.String()) });
 
@@ -353,6 +354,7 @@ function discardPreparation(root, directory, sessionId) {
     fs.rmSync(directory, { recursive: true });
     sync(path.dirname(directory));
     goalDependencies.remove(root, directory, expected);
+    goalPreparations.remove(root, directory, expected);
   });
 }
 
@@ -389,7 +391,11 @@ function updateReclamation(root, directory, expected, removing) {
 function beginReclamation(root, directory, expected) { updateReclamation(root, directory, expected, false); }
 
 function endReclamation(root, directory, expected) {
-  if (!exists(directory)) goalDependencies.remove(root, directory, expected);
+  if (!exists(directory)) {
+    goalDependencies.remove(root, directory, expected);
+    goalPreparations.remove(root, directory, expected);
+  }
+
   updateReclamation(root, directory, expected, true);
 }
 

@@ -1,13 +1,14 @@
 import { markCleanup } from "../session-database.cjs";
-import { mkdir, mkdtemp, open, readFile, rename, rm } from "node:fs/promises";
-import { createHash, randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, open, rename, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { validateObjective } from "./goal-state.ts";
 import { Type, type Static } from "typebox";
-import { Check, Parse } from "typebox/value";
+import { Parse } from "typebox/value";
+import { read as readPreparation, save as savePreparation, remove as removePreparation } from "./goal-preparations.cjs";
 import { claim, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
 import { acquireWorktreePublicationLock as acquireReferencePublicationLock } from "../piop-diff-watch/git.ts";
 
@@ -20,8 +21,6 @@ const draftSchema = Type.Object({ objective: Type.String(), attachments: Type.Ar
 export const goalImagesSchema = Type.Array(Type.Object({ data: Type.String(), mimeType: Type.String(), name: Type.Optional(Type.String()) }));
 
 const preparationSchema = Type.Object({ version: Type.Literal(1), submissionId: Type.String(), digest: Type.String(), objective: Type.String(), sessionId: Type.String(), sessionPath: Type.Optional(Type.String()), cwd: Type.String(), goalId: Type.Optional(Type.String()), expectedState: Type.Optional(Type.String()) });
-
-const fileErrorSchema = Type.Object({ code: Type.String() });
 
 export type GoalPreparation = Static<typeof preparationSchema>;
 
@@ -75,16 +74,15 @@ async function writeContent(path: string, content: string | Buffer) {
 }
 
 export async function readGoalPreparation(ctx: ExtensionContext, id: string) {
-  try {
-    const preparation = Parse(preparationSchema, JSON.parse(await readFile(join(preparationDirectory(ctx, id), "prepared.json"), "utf8")));
+  const saved = readPreparation(rootForDirectory(ctx.sessionManager.getSessionDir()), preparationDirectory(ctx, id));
 
-    if (preparation.submissionId !== id) throw new Error("Saved goal preparation identity is inconsistent");
-    validateObjective(preparation.objective);
+  if (saved === undefined) return;
+  const preparation = Parse(preparationSchema, saved);
 
-    return preparation;
-  } catch (error) { if (Check(fileErrorSchema, error) && error.code === "ENOENT") return;
+  if (preparation.submissionId !== id) throw new Error("Saved goal preparation identity is inconsistent");
+  validateObjective(preparation.objective);
 
-  throw error; }
+  return preparation;
 }
 
 export async function goalPreparationView(ctx: ExtensionContext, id: string) {
@@ -102,16 +100,11 @@ function materializedGoal(preparation: GoalPreparation, directory: string, creat
     objective: preparation.objective, goalId: preparation.goalId, submissionId: preparation.submissionId,
     cleanup: () => withGoalPublication(async () => { if (created && !bound) discardPreparation(rootForDirectory(dirname(dirname(directory))), directory, preparation.sessionId); }),
     bind: (goalId: string, ctx: ExtensionContext, expectedState: string) => withGoalPublication(async () => {
-      const temporary = join(directory, `prepared-${randomUUID()}.tmp`);
       const next: GoalPreparation = { ...preparation, goalId, expectedState, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
-
-      try {
-        claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, next.sessionId, next.sessionPath, next.objective);
-        await writeContent(temporary, JSON.stringify(next));
-        await rename(temporary, join(directory, "prepared.json"));
-        bound = true;
-        await syncDirectory(directory);
-      } finally { await rm(temporary, { force: true }); }
+      const root = rootForDirectory(ctx.sessionManager.getSessionDir());
+      claim(root, directory, next.sessionId, next.sessionPath, next.objective);
+      savePreparation(root, directory, next);
+      bound = true;
     }),
   };
 }
@@ -159,21 +152,30 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
   await markGoalAllocation(ctx);
   await mkdir(root, { recursive: true, mode: 0o700 });
   const staging = await mkdtemp(join(root, "goal-"));
+  const profile = rootForDirectory(ctx.sessionManager.getSessionDir());
+  let savedIdentity: string | undefined;
+  let published = false;
   let release: (() => void) | undefined;
 
   try {
     release = ownGoalDirectory(staging);
     const objective = await saveObjective(staging, directory, draft);
     const preparation: GoalPreparation = { version: 1, submissionId: id, digest, objective, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
-    await writeContent(join(staging, "prepared.json"), JSON.stringify(preparation));
+    savedIdentity = savePreparation(profile, staging, preparation, directory);
     await writeContent(join(staging, "owners.json"), JSON.stringify({ version: 1, kind: "goal-assets", owners: [{ sessionId: preparation.sessionId, sessionPath: preparation.sessionPath }] }));
     await syncDirectory(staging);
     await rename(staging, directory);
+    published = true;
     claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, preparation.sessionId, preparation.sessionPath, preparation.objective);
     await syncPreparation(ctx, directory);
 
     return materializedGoal(preparation, directory, true);
-  } finally { release?.(); await rm(staging, { recursive: true, force: true }); }
+  } finally {
+    release?.();
+    await rm(staging, { recursive: true, force: true });
+
+    if (!published && savedIdentity) removePreparation(profile, directory, savedIdentity);
+  }
 }
 
 async function saveObjective(staging: string, directory: string, draft: Static<typeof draftSchema>) {
