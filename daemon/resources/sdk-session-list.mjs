@@ -1,6 +1,6 @@
 import { createReadStream, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import database from "./session-database.cjs";
 import { sessionHeaderMatches } from "./sdk-storage.mjs";
@@ -22,13 +22,17 @@ function managedDirectory(directory, root) {
 }
 
 function candidates(db, directory, recursive) {
+  const prefix = directory + sep;
+
   const rows = db.prepare(`SELECT s.session_id, s.session_path, m.modified_ns, m.size, c.fingerprint, c.body
     FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path
     LEFT JOIN sdk_session_summaries c ON c.session_id=s.session_id AND c.session_path=s.session_path
-    WHERE s.session_path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(s.session_id))`).all();
+    WHERE substr(s.session_path, 1, length(?))=?
+    AND (? OR instr(substr(s.session_path, length(?) + 1), ?)=0)
+    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(s.session_id))`)
+    .all(prefix, prefix, Number(recursive), prefix, sep);
 
-  return rows.filter(row => recursive ? row.session_path.startsWith(directory + sep) : dirname(row.session_path) === directory)
-    .sort((a, b) => basename(b.session_path).localeCompare(basename(a.session_path)));
+  return rows.sort((a, b) => basename(b.session_path).localeCompare(basename(a.session_path)));
 }
 
 function fingerprint(row) {
