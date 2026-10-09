@@ -106,7 +106,8 @@ async function backendScripts() {
     buildBundle({
       entryPoints: ["extensions/piop-define-agents/daemon-loader.ts"],
       bundle: true, platform: "node", format: "esm", target: "node22", minify: true,
-    }, "daemon/resources/agent-definitions.bundle.mjs", { script: import.meta.url, transform(content) {
+      plugins: [storageSchemaImports()],
+    }, "daemon/resources/agent-definitions.bundle.mjs", { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))], transform(content) {
       const agentsPayload = gzipSync(content, { level: 9 }).toString("base64");
 
       return `import { gunzipSync } from "node:zlib";\ntry { await import("data:text/javascript;base64," + gunzipSync(Buffer.from("${agentsPayload}", "base64")).toString("base64")); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; } finally { process.exit(process.exitCode ?? 0); }\n`;

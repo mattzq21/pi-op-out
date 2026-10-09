@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { link, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
+import { link, mkdir, open, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./index.ts";
 import type { Agent, AgentSnapshot } from "./contracts.ts";
+import { readText as readSettings, write as writeSettings } from "../app-settings.cjs";
 
 function hasErrorCode(cause: unknown, code: string) {
   return cause instanceof Error && "code" in cause && cause.code === code;
@@ -37,7 +38,9 @@ async function writeTemporary(path: string, contents: string) {
 }
 
 export async function readConfigDocument() {
-  const body = await readFile(configPath, "utf8");
+  const body = readSettings(configPath);
+
+  if (body === undefined) throw Object.assign(new Error("Agent definitions are unavailable"), { code: "ENOENT" });
 
   return { ...JSON.parse(body), revision: createHash("sha256").update(body).digest("hex") };
 }
@@ -64,27 +67,12 @@ async function existingConfigRevision() {
   catch (error) { if (hasErrorCode(error, "ENOENT")) return "missing"; throw error; }
 }
 
-async function publishConfig(value: Config, createOnly: boolean) {
+async function publishConfig(value: Config) {
   const { revision: _revision, ...configuration } = value;
   const body = `${JSON.stringify({ ...configuration, _revision: randomUUID() }, null, 2)}\n`;
-  const temporary = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
+  writeSettings(configPath, body);
+  value.revision = createHash("sha256").update(body).digest("hex");
   const warnings: string[] = [];
-  let published = false;
-
-  try {
-    await writeTemporary(temporary, body);
-
-    if (createOnly) await link(temporary, configPath);
-    else await rename(temporary, configPath);
-    published = true;
-    value.revision = createHash("sha256").update(body).digest("hex");
-    await syncPath(dirname(configPath));
-  } catch (error) {
-    if (!published) throw error;
-    warnings.push(`Agent definitions were saved, but durability could not be confirmed: ${String(error)}`);
-  } finally {
-    await rm(temporary, { force: true }).catch(error => warnings.push(`Could not clean the agent configuration temporary file: ${String(error)}`));
-  }
 
   return { revision: value.revision, warnings };
 }
@@ -102,7 +90,7 @@ export async function writeConfig(value: Config, createOnly = false): Promise<{ 
 
     if (!createOnly && (!value.revision || value.revision !== current)) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
 
-    saved = await publishConfig(value, createOnly);
+    saved = await publishConfig(value);
 
     return saved;
   } finally {

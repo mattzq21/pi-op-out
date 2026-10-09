@@ -280,10 +280,11 @@ fn migrate_agent_prompt_paths(config: &mut Value, legacy_dir: &Path) {
 
 fn migrate_agent_config(config: &Path, legacy_dir: &Path) -> Result<(), String> {
     let _lock = crate::settings_concurrency::lock_settings(config)?;
-    if DEVELOPMENT || config.exists() || !legacy_dir.join("config.json").exists() { return Ok(()); }
+    if DEVELOPMENT || crate::settings_storage::records::read(config)?.is_some() || !legacy_dir.join("config.json").exists() { return Ok(()); }
     let mut migrated: Value = serde_json::from_slice(&fs::read(legacy_dir.join("config.json")).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     migrate_agent_prompt_paths(&mut migrated, legacy_dir);
-    atomic_write_private(config, &serde_json::to_vec_pretty(&migrated).map_err(|error| error.to_string())?)
+    crate::settings_storage::records::publish(config, &serde_json::to_vec_pretty(&migrated).map_err(|error| error.to_string())?)?;
+    Ok(())
 }
 
 fn prepare_agent_configuration(legacy_dir: &Path) -> Result<(), String> {
@@ -299,6 +300,7 @@ pub(super) const EXCALIDRAW_ASSETS: [(&str, &str); 2] = [
 
 fn prepare_agent_directories(dir: &Path) -> Result<(), String> {
     ensure_private_dir(dir)?;
+    atomic_write_private(&dir.join("../app-settings.cjs"), include_str!("../../resources/session-broker/app-settings.cjs").as_bytes())?;
     let excalidraw = home_dir()?.join(STORAGE_DIRECTORY).join("piop-excalidraw");
     ensure_private_dir(&excalidraw)?;
     ensure_private_dir(&excalidraw.join("references"))?;

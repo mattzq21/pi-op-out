@@ -17,7 +17,7 @@ function open(root) {
   } catch (error) { db.close(); throw error; }
 }
 
-function readFile(file) {
+function readText(file) {
   const db = open(path.dirname(file));
   const name = path.basename(file);
 
@@ -35,8 +35,14 @@ function readFile(file) {
 
     db.exec('COMMIT');
 
-    return body === null ? undefined : JSON.parse(Buffer.from(body).toString('utf8'));
+    return body === null ? undefined : Buffer.from(body).toString('utf8');
   } finally { db.close(); }
+}
+
+function readFile(file) {
+  const body = readText(file);
+
+  return body === undefined ? undefined : JSON.parse(body);
 }
 
 function read(root) { return readFile(path.join(root, 'settings.json')); }
@@ -51,4 +57,4 @@ function write(file, body) {
   } finally { db.close(); }
 }
 
-module.exports = { read, readFile, write };
+module.exports = { read, readFile, readText, write };
