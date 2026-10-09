@@ -125,8 +125,15 @@ async function transcript(file, source, discovery, kind) {
   } finally { await handle.close(); }
 }
 
-async function inspectDirectory(profile, namespace, directory, discovery) {
-  const journal = await readJournal(profile, namespace, directory);
+async function inspectDirectory(profile, namespace, directory, discovery, saved) {
+  const journal = saved ?? await readJournal(profile, namespace, directory);
+
+  if (saved) {
+    const metadata = await fs.lstat(directory, { bigint: true });
+
+    if (!metadata.isDirectory() || await fs.realpath(directory) !== directory) throw new Error('Diagnostic journal container has ambiguous ancestry');
+    validateLocation(profile, namespace, directory, saved, metadata);
+  }
 
   for (const source of diagnosticSources(journal)) {
     if (!source.file) continue;
@@ -142,7 +149,21 @@ async function inspectDirectory(profile, namespace, directory, discovery) {
 async function discoverGoalDiagnostics(profile, discovery) {
   await discoverPublicationDiagnostics(profile, discovery, transcript);
 
-  for (const namespace of ['archive-transactions', 'delete-transactions', 'deleted-sessions']) {
+  for (const { record } of require('./deletion-records.cjs').list(profile)) {
+    if (!record) continue;
+
+    const directory = await fs.lstat(record.container).then(() => record.container, error => {
+      if (error.code !== 'ENOENT') throw error;
+
+      return record.garbagePath;
+    });
+
+    try { await inspectDirectory(profile, path.basename(path.dirname(directory)), directory, discovery, record); }
+    catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(directory + ': diagnostic goal ownership unavailable: ' + error.message); }
+  }
+
+
+  for (const namespace of ['archive-transactions']) {
     for (const entry of await directories(path.join(profile, namespace), discovery.warnings)) {
       if (!entry.isDirectory()) continue;
       const directory = path.join(profile, namespace, entry.name);

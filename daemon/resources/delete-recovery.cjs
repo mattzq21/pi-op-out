@@ -241,13 +241,17 @@ function rollback(root, directory, journal) {
 }
 
 function cleanupCommitted(root) {
+  const registered = new Set(require('./deletion-records.cjs').list(root).flatMap(({ record }) => record ? [record.garbagePath] : []));
   const garbageRoot = path.join(root, "deleted-sessions");
 
   if (!exists(garbageRoot)) return;
 
-  for (const entry of fs.readdirSync(garbageRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !uuidPattern.test(entry.name)) continue;
+  const entries = fs.readdirSync(garbageRoot, { withFileTypes: true }).filter(entry => entry.isDirectory() && uuidPattern.test(entry.name));
+
+  for (const entry of entries) {
     const directory = path.join(garbageRoot, entry.name);
+
+    if (registered.has(directory)) continue;
 
     if (!exists(path.join(directory, "recovery.json"))) {
       fs.rmSync(directory, { recursive: true }); sync(garbageRoot);

@@ -77,7 +77,21 @@ function observeRegistered(root, record, observation, deleted) {
   observe(root, record.session_path, observation);
 }
 
+function deletionFiles(root, observation) {
+  for (const { record } of require('./deletion-records.cjs').list(root)) {
+    if (!record || !assets.exists(record.container)) continue;
+
+    for (const file of recoveryFiles(record, 'delete')) {
+      if (path.dirname(file) !== record.container) throw new Error('Ambiguous goal asset transaction references retained');
+
+      if (assets.exists(file)) observe(root, file, observation, false);
+    }
+  }
+}
+
 function transactionFiles(root, kind, observation) {
+  if (kind === 'delete') return deletionFiles(root, observation);
+
   const parent = path.join(root, `${kind}-transactions`);
 
   if (!assets.exists(parent)) return;

@@ -70,6 +70,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS queued_inputs (session_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS legacy_queued_inputs (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS fork_preparations (directory TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS deletion_records (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS fork_transactions (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS fork_preparation_checkpoints (preparation TEXT NOT NULL, session_id TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(preparation, session_id));
       CREATE TABLE IF NOT EXISTS session_comparison_state (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
@@ -187,6 +188,8 @@ function importSessions(db, root) {
     importWorktrees(db, root);
     importDirectories(db, root, 'fork-preparations', 'fork_preparations', 'fork-preparations-v1');
     importDirectories(db, root, 'fork-transactions', 'fork_transactions', 'fork-transactions-v1');
+    importDirectories(db, root, 'delete-transactions', 'deletion_records', 'deletion-records-pending-v1');
+    importDirectories(db, root, 'deleted-sessions', 'deletion_records', 'deletion-records-committed-v1');
     importRecoveryDirectories(db, root);
     importReaderReleases(db, root);
     importSnapshotDirectories(db, root);

@@ -261,7 +261,7 @@ function archivePending(root) {
 function pending(root, ignoredJournal) {
   if (require('./restore-records.cjs').list(root).some(file => file !== ignoredJournal)) return true;
 
-  if (archivePending(root)) return true;
+  if (archivePending(root) || require('./deletion-records.cjs').list(root).length) return true;
 
   for (const name of ['delete-transactions', 'deleted-sessions']) {
     if (pendingDirectory(path.join(root, name))) return true;

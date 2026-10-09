@@ -7,6 +7,8 @@ const shared = require('./archive-resource-transactions.cjs');
 const ownerLocks = require('./transaction-owner-locks.cjs');
 const diffStore = require('./session-broker/git-diff-store.cjs');
 
+const records = require('./deletion-records.cjs');
+
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
 function location(transaction) {
@@ -14,7 +16,7 @@ function location(transaction) {
 }
 
 function save(transaction) {
-  io.write(path.join(location(transaction), 'recovery.json'), JSON.stringify(transaction));
+  records.save(transaction);
 }
 
 function ownership(root, targets) {
@@ -37,6 +39,7 @@ function create(root, files, repositories, sources) {
 
   const container = path.join(root, 'delete-transactions', id);
 
+  records.allocate(root, container);
   io.mkdir(container);
 
   const targets = sources.map(file => ({ path: file, sessionId: JSON.parse(fs.readFileSync(file, 'utf8').split('\n').find(line => line.trim())).id }));
@@ -218,10 +221,13 @@ function retire(transaction) {
   const unexpected = fs.readdirSync(directory).filter(name => name !== 'recovery.json');
 
   if (unexpected.length) throw new Error(`Unresolved recovery files retained: ${unexpected.join(', ')}`);
-  fs.unlinkSync(path.join(directory, 'recovery.json'));
+  transaction.retiring = true;
+  save(transaction);
+  fs.rmSync(path.join(directory, 'recovery.json'), { force: true });
   io.sync(directory);
   fs.rmdirSync(directory);
   io.sync(path.dirname(directory));
+  records.remove(transaction.root, transaction.container);
 }
 
 function rollback(transaction) {
@@ -304,37 +310,49 @@ function legacyLocks(directory) {
   }
 }
 
-function recoverDirectory(root, parent, committed, failures) {
-  if (!io.exists(parent)) return;
+function discardAllocation(root, directory) {
+  if (io.exists(directory)) { fs.rmdirSync(directory); io.sync(path.dirname(directory)); }
 
-  for (const name of fs.readdirSync(parent).filter(name => uuid.test(name))) {
-    const directory = path.join(parent, name);
+  records.remove(root, directory);
+}
 
-    const journal = path.join(directory, 'recovery.json');
+function recoverRecord(root, entry) {
+  const { directory, record: transaction } = entry;
 
-    if (!io.exists(journal)?.isFile()) continue;
+  if (path.dirname(directory) !== path.join(root, 'delete-transactions') || !uuid.test(path.basename(directory))) throw new Error('Invalid registered deletion directory');
 
-    try {
-      const transaction = JSON.parse(fs.readFileSync(journal, 'utf8'));
+  if (!transaction) {
+    discardAllocation(root, directory);
 
-      if (committed && transaction.kind === undefined) continue;
-      validate(transaction, root, directory);
-
-      if (committed) finish(transaction);
-      else rollback(transaction);
-    } catch (error) {
-      const message = `${directory}: ${error.message}`;
-
-      if (committed) console.error(`Committed deletion recovery retained: ${message}`);
-      else failures.push(message);
-    }
+    return;
   }
+
+  if (transaction.root !== root || transaction.container !== directory) throw new Error('Invalid registered deletion identity');
+  const current = location(transaction);
+
+  if (transaction.retiring === true && !io.exists(current)) {
+    records.remove(root, directory);
+
+    return;
+  }
+
+  validate(transaction, root, current);
+
+  if (transaction.retiring === true) retire(transaction);
+
+  else if (committed(transaction)) finish(transaction);
+
+  else rollback(transaction);
 }
 
 function recover(root) {
   const failures = [];
-  recoverDirectory(root, path.join(root, 'delete-transactions'), false, failures);
-  recoverDirectory(root, path.join(root, 'deleted-sessions'), true, failures);
+
+  for (const entry of records.list(root)) {
+    try { recoverRecord(root, entry); }
+    catch (error) { failures.push(`${entry.directory}: ${error.message}`); }
+  }
+
   legacyLocks(path.join(root, 'sessions'));
   legacyLocks(path.join(root, 'archived'));
 
