@@ -64,8 +64,9 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
     goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source }, ...retained], sessionId, sessionPath);
     publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...retained], {
       dependencies: { checkpoints, workspace: publicationWorkspace(cwd, options, worktree) },
-      sidecars: [sessionPath.replace(/\.jsonl$/, ".diffs.json")],
-      beforeWrite: () => copyRetainedDiffs(source, sessionPath, new Set(retained.map(entry => entry.id)), header.id),
+      sidecars: [],
+      databaseDiffs: true,
+      beforeWrite: () => copyRetainedDiffs(source, sessionPath, new Set(retained.map(entry => entry.id)), header.id, sessionId),
     });
   } catch (error) {
     if (retainedFork(error instanceof Error ? error : undefined, publication)) {
@@ -91,8 +92,8 @@ function releaseForkAssets(ctx: ExtensionContext, goalAssets: ReturnType<typeof 
   catch (error) { ctx.ui.notify(`Fork goal asset ownership was retained for recovery: ${String(error)}`, "warning"); }
 }
 
-async function copyRetainedDiffs(source: string, destination: string, ids: ReadonlySet<string>, sessionId: string) {
-  copyRetainedStoreLocked(source.replace(/\.jsonl$/, ".diffs.json"), destination.replace(/\.jsonl$/, ".diffs.json"), ids, sessionId);
+async function copyRetainedDiffs(source: string, destination: string, ids: ReadonlySet<string>, sessionId: string, destinationId: string) {
+  copyRetainedStoreLocked(source.replace(/\.jsonl$/, ".diffs.json"), destination.replace(/\.jsonl$/, ".diffs.json"), ids, sessionId, destinationId);
 }
 
 async function cleanupForkDirectory(cwd: string, options: ForkOptions) {

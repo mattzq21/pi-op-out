@@ -15,6 +15,7 @@ export interface PublicationOptions {
   };
   beforeWrite?: () => void | Promise<void>;
   sidecars?: string[];
+  databaseDiffs?: boolean;
 }
 
 export interface PublicationDependencies {

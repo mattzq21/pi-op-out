@@ -7,6 +7,7 @@ const io = require('./session-publication-io.cjs');
 const reviews = require('./review-publication.cjs');
 const dependencies = require('./session-publication-dependencies.cjs');
 const children = require('./session-child-index.cjs');
+const diffDatabase = require('./git-diff-database.cjs');
 const database = require('../session-database.cjs');
 
 const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
@@ -20,6 +21,7 @@ const journalSchema = Type.Object({
   writer: io.writerSchema, phase: Type.Union(['planned', 'writing', 'ready', 'linked', 'parent-pending', 'quarantined'].map(value => Type.Literal(value))),
   temporaryIdentity: Type.Optional(identitySchema), review: Type.Optional(reviews.reviewSchema),
   dependencies: Type.Optional(dependencies.contractSchema), preparationComplete: Type.Optional(Type.Boolean()), sidecars: Type.Optional(Type.Array(sidecarSchema)),
+  databaseDiffs: Type.Optional(Type.Boolean()), diffRevision: Type.Optional(Type.Integer({ minimum: 1 })),
   quarantine: Type.Optional(Type.Object({ path: Type.String(), reason: Type.String() })),
 });
 
@@ -122,6 +124,7 @@ function prepareJournal(root, target, prepared, id, lock, lease, options) {
   if (options.beforeWrite) {
     if (!(options.beforeWrite instanceof Function)) throw new Error('Publication preparation must be a callback');
     journal.preparationComplete = false;
+    journal.databaseDiffs = options.databaseDiffs === true;
     journal.sidecars = sidecarIntention(target, options.sidecars ?? [target.replace(/\.jsonl$/, '.diffs.json')]);
   }
 
@@ -148,6 +151,8 @@ function sidecarIntention(target, sidecars) {
 }
 
 function preparedSidecars(journal) {
+  if (journal.databaseDiffs) journal.diffRevision = diffDatabase.revision(journal.root, journal.sessionId);
+
   for (const sidecar of journal.sidecars ?? []) {
     const snapshot = io.proof(sidecar.path);
     sidecar.identity = snapshot.identity;
@@ -163,6 +168,8 @@ function preparedSidecars(journal) {
 
 function verifyPreparation(journal) {
   if (journal.preparationComplete === false) throw new Error('Publication preparation is incomplete; retained without replaying its callback');
+
+  if (journal.databaseDiffs && diffDatabase.revision(journal.root, journal.sessionId) !== journal.diffRevision) throw new Error('Prepared fork history changed; publication retained');
 
   for (const sidecar of journal.sidecars ?? []) {
     if (!sidecar.identity || !io.matches(sidecar.path, sidecar.identity)) throw new Error(`Publication sidecar identity changed; retained: ${sidecar.path}`);

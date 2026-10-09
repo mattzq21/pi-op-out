@@ -264,35 +264,20 @@ function recoverStore(filename, materialize, focus) {
   return readStore(filename, materialize, focus);
 }
 
-function copyRetainedStoreLocked(filename, destination, retainedIds, sessionId) {
+function copyRetainedStoreLocked(filename, destination, retainedIds, sessionId, destinationId) {
   validateRetainedSource(filename, sessionId);
 
   return withStoreLock(filename, () => {
     validateRetainedSource(filename, sessionId);
     const state = recoverStore(filename, false);
+
+    if (state.database?.id !== sessionId.toLowerCase()) throw new Error('Fork source session changed; history preserved');
     const pending = [...Object.keys(state.pending), ...discoverComparisons(filename, true).filter(record => !completed(state, record.id)).map(record => record.id)];
     const partial = Object.values(state.transfers).flatMap(transfer => transfer.committed ? [] : [transfer.messageId]);
 
     if ([...pending, ...partial].some(id => retainedIds.has(id))) throw new Error('Selected source diffs are still pending; recover project changes before forking. Original comparisons were retained.');
 
-    publishRetained(filename, destination, state, retainedIds);
-  });
-}
-
-function publishRetained(_filename, destination, state, retainedIds) {
-  diffDatabase.snapshots(state, snapshot => {
-    const fd = fs.openSync(destination, 'wx', 0o600);
-
-    try {
-      writeAll(fd, Buffer.from(header));
-
-      for (const id of Object.keys(state.positions)) if (retainedIds.has(id)) transaction(fd, [{ op: 'set', id, snapshot: snapshot(id) }]);
-
-      for (const id of state.done) if (retainedIds.has(id)) transaction(fd, [{ op: 'done', id }]);
-      fs.fsyncSync(fd);
-    } finally { fs.closeSync(fd); }
-
-    syncParent(destination);
+    diffDatabase.copy(state, destination, destinationId, retainedIds);
   });
 }
 
@@ -341,28 +326,6 @@ function requestEphemeralStore(filename, request) {
 
     return requestStore(filename, request);
   });
-}
-
-function writeAll(fd, body) {
-  let offset = 0;
-
-  while (offset < body.length) offset += fs.writeSync(fd, body, offset, body.length - offset);
-}
-
-function transaction(fd, records) {
-  for (const record of records) recordBytes(record);
-  writeAll(fd, Buffer.from('{"op":"begin"}\n'));
-
-  for (const record of records) writeAll(fd, recordBytes(record));
-
-  writeAll(fd, Buffer.from('{"op":"commit"}\n'));
-  fs.fsyncSync(fd);
-}
-
-function syncParent(filename) {
-  const fd = fs.openSync(path.dirname(filename), 'r');
-
-  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
 
 function operations(state, request) {

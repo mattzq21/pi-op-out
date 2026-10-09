@@ -172,4 +172,42 @@ function snapshots(state, operation) {
   } finally { db.close(); }
 }
 
-module.exports = { load, save, snapshots };
+function copy(state, destination, destinationId, retainedIds) {
+  if (!state.database || !/^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$/.test(destinationId)) throw new Error('Invalid fork history identity');
+  const { root, id, revision } = state.database;
+
+  if (database.storageRoot(destination) !== root) throw new Error('Fork history must use the same session database');
+  const target = destinationId.toLowerCase();
+  const db = open(root);
+
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    active(db, id); active(db, target);
+
+    if (db.prepare('SELECT revision FROM session_diff_state WHERE session_id=?').get(id)?.revision !== revision) throw new Error('Source history changed during fork preparation; retry');
+    db.prepare('INSERT INTO session_diff_state VALUES (?, 1)').run(target);
+    db.prepare('INSERT INTO session_diff_locations VALUES (?, ?)').run(destination, target);
+
+    const insert = db.prepare(`INSERT INTO session_diff_records
+      SELECT ?, kind, record_id, record_json, digest FROM session_diff_records
+      WHERE session_id=? AND record_id=? AND kind IN ('set', 'done')`);
+
+    for (const message of retainedIds) insert.run(target, id, message);
+    db.exec('COMMIT');
+  } finally { db.close(); }
+}
+
+function revision(root, sessionId) {
+  const db = open(root);
+
+  try {
+    active(db, sessionId.toLowerCase());
+    const row = db.prepare('SELECT revision FROM session_diff_state WHERE session_id=?').get(sessionId.toLowerCase());
+
+    if (!row) throw new Error('Prepared fork history is missing');
+
+    return row.revision;
+  } finally { db.close(); }
+}
+
+module.exports = { load, save, snapshots, copy, revision };
