@@ -111,11 +111,13 @@ function externalTranscripts(root, inventory) {
 }
 
 function worktreeContainers(root) {
-  return entries(path.join(root, 'worktrees')).flatMap(entry => {
-    if (!entry.isDirectory() || !/^[a-f0-9]{4}$/.test(entry.name)) return [];
-    const directory = path.join(root, 'worktrees', entry.name);
+  const storage = path.join(root, 'worktrees');
 
-    return containerContents(directory) ? [directory] : [];
+  return require('./session-database.cjs').worktreeContainers(root).filter(directory => {
+    if (path.dirname(directory) !== storage || !/^[a-f0-9]{4}$/.test(path.basename(directory))) throw new Error('Invalid registered worktree directory');
+    const info = metadata(directory);
+
+    return Boolean(info?.isDirectory() && containerContents(directory));
   });
 }
 

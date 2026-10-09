@@ -193,11 +193,24 @@ function goalStorageProtected(record, candidate, file) {
     || publication.transcriptPaths.some(transcript => fs.readFileSync(transcript, 'utf8').includes(candidate.path)));
 }
 
+function forgetRemovedAllocations(database, record) {
+  const remove = database.prepare("DELETE FROM worktree_allocations WHERE container=? AND json_extract(metadata_json, '$.containerIdentity')=?");
+
+  for (const [index, candidate] of record.pending.directories.entries()) {
+    if (path.basename(path.dirname(candidate.path)) !== 'worktrees') continue;
+
+    if (metadata(candidate.path) || metadata(stagePath(record, index))) continue;
+    remove.run(candidate.path, candidate.identity);
+  }
+}
+
 function finishRecord(record, done) {
   const root = path.dirname(path.dirname(record.file));
   const database = tables.open(root);
 
   try {
+    forgetRemovedAllocations(database, record);
+
     if (done) database.prepare('DELETE FROM retention_candidates WHERE record_id=?').run(record.id);
     else database.prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), record.id);
   } finally { database.close(); }
