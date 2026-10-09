@@ -92,11 +92,6 @@ export function createConversationDrafts() {
     return result;
   };
 
-  const preserveText = (key: string, text: string) => {
-    try { const stored = legacyEntries(legacyKey); stored[key] = text; localStorage.setItem(legacyKey, JSON.stringify(stored)); }
-    catch (reason) { report(String(reason)); }
-  };
-
   const retireLegacy = (record: DurableDraft) => {
     try {
       const stored = legacyEntries(legacyKey);
@@ -179,7 +174,6 @@ export function createConversationDrafts() {
     const key = keyFor(sessionKey);
     textChanged.add(key);
     const text = value instanceof Function ? value(recordFor(key).text) : value;
-    preserveText(key, text);
     update(key, record => ({ ...record, text, updatedAt: Date.now() }));
   };
 
@@ -217,7 +211,7 @@ export function createConversationDrafts() {
     const key = keyFor(submission.destination.key);
     const fingerprint = await submissionFingerprint(submission.rawText, submission.uploads);
     const record = { ...recordFor(key), destination: { ...submission.destination, key }, text: mergeText(submission.rawText, recordFor(key).text), uploads: mergeUploads(submission.uploads, recordFor(key).uploads), updatedAt: Date.now(), retrySubmission: { id: submission.id, fingerprint } };
-    preserveText(key, record.text); publish(record);
+    publish(record);
     await enqueue(() => storage.commit([record], [], [], [submission.id]));
     setSubmissions(current => current.filter(item => item.id !== submission.id));
     retireLegacy(record);
