@@ -1,7 +1,5 @@
 package dev.pi.mobile;
 
-import android.content.Context;
-import android.content.SharedPreferences;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -18,23 +16,15 @@ import org.json.JSONObject;
 public class ClientPreferencesPlugin extends Plugin {
     private static final Object STORAGE_LOCK = new Object();
 
-    private String revision(SharedPreferences preferences) {
-        String stored = preferences.getString("settings", null);
-        return preferences.getString("revision", stored == null ? "missing" : "legacy:" + java.util.UUID.nameUUIDFromBytes(stored.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-    }
-
-    private SharedPreferences preferences() {
-        return getContext().getSharedPreferences("piop-client-settings", Context.MODE_PRIVATE);
-    }
-
     @PluginMethod
     public void load(PluginCall call) {
         synchronized (STORAGE_LOCK) {
-            try {
-                String stored = preferences().getString("settings", null);
+            try (ClientPreferencesStorage storage = new ClientPreferencesStorage(getContext())) {
+                ClientPreferencesStorage.Saved stored = storage.read();
                 JSObject result = new JSObject();
-                result.put("settings", stored == null ? JSONObject.NULL : new JSObject(stored));
-                result.put("revision", revision(preferences()));
+                result.put("settings", stored.settings == null ? JSONObject.NULL : new JSObject(stored.settings));
+                result.put("revision", stored.revision);
+                storage.commit();
                 call.resolve(result);
             } catch (Exception error) {
                 call.reject("Could not read client preferences", error);
@@ -111,25 +101,20 @@ public class ClientPreferencesPlugin extends Plugin {
         JSObject baseline = call.getObject("baseline");
         if (settings == null || baseline == null) { call.reject("Client preferences and an editing baseline are required"); return; }
         synchronized (STORAGE_LOCK) {
-            try {
+            try (ClientPreferencesStorage storage = new ClientPreferencesStorage(getContext())) {
                 validate(settings);
                 validate(baseline);
-                SharedPreferences storage = preferences();
-                String stored = storage.getString("settings", null);
+                String stored = storage.read().settings;
                 JSONObject latest = stored == null ? null : new JSONObject(stored);
                 if (latest != null) validate(latest);
                 JSONObject committed = latest == null ? settings : Boolean.TRUE.equals(call.getBoolean("initialize")) ? latest : merge(latest, baseline, settings);
                 String serialized = committed.toString();
                 String revision = java.util.UUID.randomUUID().toString();
-                boolean durable = storage.edit().putString("settings", serialized).putString("revision", revision).commit();
-                if (!revision.equals(revision(storage)) || !serialized.equals(storage.getString("settings", null))) {
-                    call.reject("Could not save client preferences");
-                    return;
-                }
+                storage.write(serialized, revision);
+                storage.commit();
                 JSObject publication = new JSObject();
                 publication.put("committed", true);
-                publication.put("durable", durable);
-                if (!durable) publication.put("error", "Client preferences changed in memory, but could not be confirmed on disk.");
+                publication.put("durable", true);
                 JSObject result = new JSObject();
                 result.put("settings", committed);
                 result.put("revision", revision);
