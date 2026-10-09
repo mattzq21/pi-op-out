@@ -27,45 +27,46 @@ function open(root) {
   } catch (error) { db.close(); throw error; }
 }
 
-function saved(root, file, stamp) {
-  const db = open(root);
+function saved(db, file, stamp) {
+  const row = db.prepare('SELECT body FROM storage_transcript_summaries WHERE session_path=? AND fingerprint=?').get(file, stamp);
+
+  if (!row) return;
 
   try {
-    const row = db.prepare('SELECT body FROM storage_transcript_summaries WHERE session_path=? AND fingerprint=?').get(file, stamp);
+    const stored = deserialize(row.body);
 
-    if (!row) return;
-
-    try {
-      const stored = deserialize(row.body);
-
-      if (stored?.version === 1) return stored.value;
-    } catch { }
-  } finally { db.close(); }
+    if (stored?.version === 1) return stored.value;
+  } catch { }
 }
 
-function save(root, file, stamp, value) {
-  const db = open(root);
+function save(db, file, stamp, value) {
+  db.exec('BEGIN IMMEDIATE');
 
   try {
-    db.exec('BEGIN IMMEDIATE');
-
     if (fingerprint(file) === stamp) db.prepare('INSERT INTO storage_transcript_summaries VALUES (?, ?, ?) ON CONFLICT(session_path) DO UPDATE SET fingerprint=excluded.fingerprint, body=excluded.body')
       .run(file, stamp, serialize({ version: 1, value }));
     db.exec('COMMIT');
-  } finally { db.close(); }
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-async function read(root, file, inspect) {
+async function read(db, file, inspect) {
   const stamp = fingerprint(file);
-  const previous = saved(root, file, stamp);
+  const previous = saved(db, file, stamp);
 
   if (previous && fingerprint(file) === stamp) return previous;
   const value = await inspect();
 
   if (fingerprint(file) !== stamp) throw new Error('Transcript changed while preparing the storage report');
-  save(root, file, stamp, value);
+  save(db, file, stamp, value);
 
   return value;
 }
 
-module.exports = { read };
+async function withCache(root, operation) {
+  let db;
+
+  try { return await operation((file, inspect) => read(db ??= open(root), file, inspect)); }
+  finally { db?.close(); }
+}
+
+module.exports = { withCache };

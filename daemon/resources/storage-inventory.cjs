@@ -53,8 +53,8 @@ function checkpointRepositoryRecord(repositories, root) {
   return repositories.get(root);
 }
 
-async function inspectSession(file, includeArchiveDetails) {
-  const { header, explicitName, firstPrompt, malformed, checkpointError, result } = await require('./storage-transcript-cache.cjs').read(piopRoot, file, () => inspectTranscript(file));
+async function inspectSession(file, includeArchiveDetails, read) {
+  const { header, explicitName, firstPrompt, malformed, checkpointError, result } = await read(file, () => inspectTranscript(file));
 
   if (!includeArchiveDetails) return result;
 
@@ -356,9 +356,9 @@ async function collectUnreadableArchive(file, archives) {
   });
 }
 
-async function collectSession(candidate, discovery, archives, referencedWorktrees) {
+async function collectSession(candidate, discovery, archives, referencedWorktrees, read) {
   try {
-    const details = await inspectSession(candidate.file, candidate.archived);
+    const details = await inspectSession(candidate.file, candidate.archived, read);
     recordSession(discovery, details, candidate);
 
     if (!details.readable) discovery.warnings.push(`${candidate.file}: session provenance is incomplete`);
@@ -434,7 +434,9 @@ async function main() {
   const archives = [];
   const referencedWorktrees = new Map();
 
-  for (const candidate of candidates.values()) await collectSession(candidate, discovery, archives, referencedWorktrees);
+  await require('./storage-transcript-cache.cjs').withCache(piopRoot, async read => {
+    for (const candidate of candidates.values()) await collectSession(candidate, discovery, archives, referencedWorktrees, read);
+  });
   resolveOwners(discovery);
   discoverPendingLogs(profile, discovery);
   await discoverGoalDiagnostics(profile, discovery);
