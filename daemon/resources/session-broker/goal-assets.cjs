@@ -5,7 +5,6 @@ const { spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const goalDependencies = require('./goal-dependencies.cjs');
-const goalPreparations = require('./goal-preparations.cjs');
 const goalOwnership = require('./goal-ownership.cjs');
 
 const ownerSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.Optional(Type.String()) });
@@ -304,9 +303,7 @@ function discardPreparation(root, directory, sessionId) {
     if (record.owners.some(owner => owner.sessionId !== sessionId)) return;
     fs.rmSync(directory, { recursive: true });
     sync(path.dirname(directory));
-    goalDependencies.remove(root, directory, expected);
-    goalPreparations.remove(root, directory, expected);
-    goalOwnership.remove(root, directory, expected);
+    endReclamation(root, directory, expected);
   });
 }
 
@@ -317,6 +314,17 @@ function reclamationPending(root, directory) {
 
   try { return Boolean(database.prepare('SELECT 1 FROM goal_asset_reclamations WHERE record_id=?').get(reclamationKey(directory))); }
   finally { database.close(); }
+}
+
+function removeDirectoryRecords(database, directory, expected) {
+  if (exists(directory)) return;
+
+  for (const table of ['goal_asset_dependencies', 'goal_text_files', 'goal_text_contents', 'goal_preparations', 'goal_ownership']) {
+    if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
+    database.prepare(`DELETE FROM ${table} WHERE directory=? AND identity=?`).run(directory, expected);
+  }
+
+  if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_history'").get()) database.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
 }
 
 function updateReclamation(root, directory, expected, removing) {
@@ -333,7 +341,10 @@ function updateReclamation(root, directory, expected, removing) {
       if (record.path !== directory || record.identity !== expected) throw new Error(`Ambiguous goal reclamation retained: ${directory}`);
     }
 
-    if (removing) database.prepare('DELETE FROM goal_asset_reclamations WHERE record_id=?').run(key);
+    if (removing) {
+      removeDirectoryRecords(database, directory, expected);
+      database.prepare('DELETE FROM goal_asset_reclamations WHERE record_id=?').run(key);
+    }
     else if (!row) database.prepare('INSERT INTO goal_asset_reclamations VALUES (?, ?)').run(key, JSON.stringify({ path: directory, identity: expected }));
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }
@@ -343,12 +354,6 @@ function updateReclamation(root, directory, expected, removing) {
 function beginReclamation(root, directory, expected) { updateReclamation(root, directory, expected, false); }
 
 function endReclamation(root, directory, expected) {
-  if (!exists(directory)) {
-    goalDependencies.remove(root, directory, expected);
-    goalPreparations.remove(root, directory, expected);
-    goalOwnership.remove(root, directory, expected);
-  }
-
   updateReclamation(root, directory, expected, true);
 }
 
