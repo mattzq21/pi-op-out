@@ -8,6 +8,7 @@ import { z, type JSONType } from "zod";
 import { jsonResultSchema, nativeArgumentsSchema, type NativeArguments } from "./transportSchemas";
 import { invokeWithBackpressure } from "./backpressure";
 import type { SettingsPublication } from "../types";
+import { clientIdentity } from "./clientIdentity";
 
 export type { UnlistenFn };
 
@@ -23,18 +24,6 @@ const clientPreferences = registerPlugin<{
   load(): Promise<{ settings: unknown; revision: string }>;
   save(options: { settings: unknown; baseline: unknown; initialize: boolean }): Promise<{ settings: unknown; revision: string; publication: SettingsPublication }>;
 }>("ClientPreferences");
-
-const conversationClientId = (() => {
-  const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}-${Math.random()}`;
-  const fresh = `${isMobile ? "mobile" : "desktop"}:${id}`;
-  const key = `piop-conversation-client:${isMobile ? "mobile" : "desktop"}`;
-
-  try { const saved = localStorage.getItem(key);
-
-  if (saved) return saved; localStorage.setItem(key, fresh); } catch { }
-
-  return fresh;
-})();
 
 export const listen = <S extends z.ZodType>(event: string, handler: EventCallback<z.output<S>>, schema: S): Promise<UnlistenFn> => isMobile ? remoteClient.listen(event, handler, schema) : nativeListen(event, value => handler({ ...value, payload: schema.parse(value.payload) }), { target: { kind: "WebviewWindow", label: getCurrentWebviewWindow().label } });
 
@@ -57,7 +46,7 @@ export function captureDaemonTransport() {
 export function invoke<S extends z.ZodType>(command: string, args: NativeArguments | undefined, schema: S): Promise<z.output<S>>;
 export function invoke(command: string, args?: NativeArguments): Promise<JSONType | undefined>;
 export async function invoke(command: string, args?: NativeArguments, schema: z.ZodType = jsonResultSchema) {
-  args = nativeArgumentsSchema.parse({ ...args, clientId: conversationClientId });
+  args = nativeArgumentsSchema.parse({ ...args, clientId: await clientIdentity(isMobile ? "mobile" : "desktop") });
 
   if (!isMobile) {
     const local = ["load_client_settings", "save_client_settings", "sync_prompt_history", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file"];
