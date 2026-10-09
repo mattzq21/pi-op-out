@@ -1,6 +1,5 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { DatabaseSync } = require('node:sqlite');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('./session-transactions.cjs');
@@ -11,13 +10,19 @@ const headerSchema = Type.Object({ type: Type.Literal('session'), id: Type.Strin
 
 const ownerSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.Union([Type.String(), Type.Null()]), area: Type.Union(['active', 'archived', 'unresolved'].map(value => Type.Literal(value))), relative: Type.Union([Type.String(), Type.Null()]), identity: Type.Union([Type.String(), Type.Null()]) });
 
-const registrySchema = Type.Object({ session_id: Type.String({ minLength: 1 }), session_path: Type.Union([Type.String(), Type.Null()]), cwd: Type.String() });
+const registrySchema = Type.Object({ session_id: Type.String({ minLength: 1 }), session_path: Type.Union([Type.String(), Type.Null()]), cwd: Type.Union([Type.String(), Type.Null()]) });
 
 function canonical(file) {
   if (!path.isAbsolute(file) || path.resolve(file) !== file || fs.realpathSync(file) !== file) throw new Error('Shared resource path has ambiguous ancestry: ' + file);
 }
 
-function headerAt(file) {
+function validateHeader(header, file, expectedId) {
+  if (!Check(headerSchema, header) || !path.isAbsolute(header.cwd)) throw new Error('Invalid shared resource owner header: ' + file);
+
+  if (expectedId !== undefined && header.id !== expectedId) throw new Error('Registered shared resource owner identity changed: ' + file);
+}
+
+function headerAt(file, expectedId) {
   canonical(file);
   const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
 
@@ -32,7 +37,7 @@ function headerAt(file) {
     if (newline < 0) throw new Error('Shared resource owner header is incomplete: ' + file);
     const header = JSON.parse(buffer.subarray(0, newline).toString('utf8'));
 
-    if (!Check(headerSchema, header) || !path.isAbsolute(header.cwd)) throw new Error('Invalid shared resource owner header: ' + file);
+    validateHeader(header, file, expectedId);
     const after = fs.fstatSync(descriptor, { bigint: true });
     const identity = String(before.dev) + ':' + before.ino;
 
@@ -53,8 +58,8 @@ function inferred(binding, cwd) {
   catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null; throw error; }
 }
 
-function observe(file, area, binding, resourceId, found) {
-  const { header, identity } = headerAt(file);
+function observe(file, area, binding, resourceId, found, expectedId) {
+  const { header, identity } = headerAt(file, expectedId);
   const relative = header.archiveResourceId === resourceId ? relativeCwd(binding, header.cwd) : inferred(binding, header.cwd);
 
   if (header.archiveResourceId !== undefined && header.archiveResourceId !== resourceId) {
@@ -71,29 +76,21 @@ function observe(file, area, binding, resourceId, found) {
   found.set(header.id, owner);
 }
 
-function walk(directory, area, binding, resourceId, found) {
-  if (!io.exists(directory)) return;
-  canonical(directory);
-
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isSymbolicLink()) throw new Error('Ambiguous transcript storage prevents shared resource cleanup: ' + file);
-
-    if (entry.isDirectory() && !entry.name.endsWith('.snapshots') && entry.name !== 'attachments') walk(file, area, binding, resourceId, found);
-    else if (entry.isFile() && /\.jsonl(?:\.[a-f0-9-]+\.tmp)?$/.test(entry.name)) observe(file, entry.name.endsWith('.jsonl') ? area : 'unresolved', binding, resourceId, found);
-  }
-}
-
 function registeredOwner(root, row, binding, resourceId, found) {
   if (!Check(registrySchema, row)) throw new Error('Invalid registry provenance prevents shared resource cleanup');
 
   if (found.has(row.session_id)) return;
 
   if (row.session_path && io.exists(row.session_path)) {
-    const area = io.inside(path.join(root, 'sessions'), row.session_path) ? 'active' : 'unresolved';
+    const area = transcriptArea(root, row.session_path);
 
-    observe(row.session_path, area, binding, resourceId, found);
+    observe(row.session_path, area, binding, resourceId, found, row.session_id);
+
+    return;
+  }
+
+  if (row.cwd === null) {
+    if (row.session_path) throw new Error('Registered shared resource transcript is unavailable: ' + row.session_path);
 
     return;
   }
@@ -103,30 +100,41 @@ function registeredOwner(root, row, binding, resourceId, found) {
   if (relative !== null) found.set(row.session_id, { sessionId: row.session_id, sessionPath: row.session_path, area: 'unresolved', relative, identity: null });
 }
 
-function registered(root, binding, resourceId, found) {
-  const file = path.join(root, 'sessions.sqlite');
+function transcriptArea(root, file) {
+  if (io.inside(path.join(root, 'sessions'), file)) return 'active';
 
-  if (!io.exists(file)) return;
-  canonical(file);
-  const database = new DatabaseSync(file, { readOnly: true });
+  return io.inside(path.join(root, 'archived'), file) ? 'archived' : 'unresolved';
+}
+
+function registered(root, binding, resourceId, found) {
+  const database = require('./session-database.cjs').open(root);
 
   try {
-    const tables = database.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
+    const query = `SELECT s.session_id, s.session_path, r.cwd FROM sessions s
+      LEFT JOIN session_repositories r ON r.session_id=s.session_id
+      WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(s.session_id))`;
 
-    if (!tables.some(table => table.name === 'session_repositories')) return;
-    const hasTombstones = tables.some(table => table.name === 'session_deletion_tombstones');
-    const exclusion = hasTombstones ? ' WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id = lower(r.session_id))' : '';
-
-    for (const row of database.prepare(require('./session-database.cjs').repositoryQuery(database, ['session_id', 'session_path', 'cwd'], exclusion)).all()) registeredOwner(root, row, binding, resourceId, found);
+    for (const row of database.prepare(query).all()) registeredOwner(root, row, binding, resourceId, found);
   } finally { database.close(); }
+}
+
+function pendingTranscripts(root, binding, resourceId, found) {
+  const known = new Set(require('./session-broker/session-publication.cjs').temporaryPaths(root));
+
+  for (const file of known) {
+    if (io.exists(file)) observe(file, 'unresolved', binding, resourceId, found);
+  }
+
+  for (const record of require('./session-broker/publication-residue.cjs').list(root, known)) {
+    observe(record.path, 'unresolved', binding, resourceId, found);
+  }
 }
 
 function discover(root, binding, resourceId, recorded) {
   const found = new Map();
 
-  walk(path.join(root, 'sessions'), 'active', binding, resourceId, found);
-  walk(path.join(root, 'archived'), 'archived', binding, resourceId, found);
   registered(root, binding, resourceId, found);
+  pendingTranscripts(root, binding, resourceId, found);
 
   for (const owner of recorded) {
     if (!found.has(owner.sessionId)) found.set(owner.sessionId, { ...owner, area: 'unresolved', identity: null });

@@ -19,8 +19,7 @@ function plan(root, file, destination, header, operationId) {
     container: path.join(root, 'restore-resource-transactions', operationId) };
 
   migration.recovery = recovery(root, saved, migration);
-  discover(root, path.join(root, 'archived'), true, migration);
-  discover(root, path.join(root, 'sessions'), false, migration);
+  discover(root, migration);
 
   if (!migration.owners.some(owner => owner.sessionPath === file && owner.sessionId === header.id)) throw new Error('Legacy restoration source could not be reconciled');
   verifyRegistry(root, migration);
@@ -48,17 +47,11 @@ function recovery(root, saved, migration) {
     ref: `refs/piop-archive-resources/${migration.resourceId}/${migration.operationId}`, commit: saved.commit, branch: saved.branch };
 }
 
-function discover(root, directory, archived, migration) {
-  if (!io.exists(directory)) return;
-  ownership.canonical(directory);
+function discover(root, migration) {
+  for (const file of require('./session-database.cjs').paths(root)) {
+    const archived = io.inside(path.join(root, 'archived'), file);
 
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
-
-    if (entry.isSymbolicLink()) throw new Error('Legacy owner storage has ambiguous ancestry; explicit migration required');
-
-    if (entry.isDirectory() && !entry.name.endsWith('.snapshots') && entry.name !== 'attachments') discover(root, file, archived, migration);
-    else if (entry.isFile() && entry.name.endsWith('.jsonl')) observe(file, archived, migration);
+    if (archived || io.inside(path.join(root, 'sessions'), file)) observe(file, archived, migration);
   }
 }
 

@@ -76,6 +76,8 @@ function journalFiles(root) {
   return database.publications(root).map(id => io.journalPath(root, id));
 }
 
+function temporaryPaths(root) { return journalFiles(root).map(file => load(root, file).temporary); }
+
 function prepareBody(body, id) {
   if (!body.endsWith('\n')) throw new Error('Session publication requires complete JSONL records');
   const values = body.split('\n').flatMap(line => line ? [JSON.parse(line)] : []);
@@ -499,4 +501,4 @@ function visibleReview(root, file, parentId) {
   return 'pending';
 }
 
-module.exports = { SessionPublicationError, publish, recover, retainedDependencies, pendingReviews, acknowledge, release, reviewVisibility };
+module.exports = { temporaryPaths, SessionPublicationError, publish, recover, retainedDependencies, pendingReviews, acknowledge, release, reviewVisibility };
