@@ -47,7 +47,6 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     branchPending.current.add(pendingKey);
     const sourceCwd = ownerTransport.currentCwd();
     const sourceHostId = ownerTransport.currentHostId();
-    const sourceEphemeral = ownerTransport.isEphemeral();
     const parentSession = [...sessions, ...runtimePool.liveSessionSummaries()].find((session) => session.path === sourcePath && (session.hostId ?? "local") === sourceHostId);
 
     const forkSource = async () => {
@@ -77,7 +76,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     const restoreBranchSource = async () => {
       if (activeTransportRef.current === ownerTransport) updateConnected(false);
       await ownerTransport.disconnect();
-      await ownerTransport.connect(sourceCwd, sourcePath, sourceHostId, undefined, sourceEphemeral);
+      await ownerTransport.connect(sourceCwd, sourcePath, sourceHostId);
 
       if (activeTransportRef.current === ownerTransport) setActiveCwd(sourceCwd);
       const restoredSettings = await ownerTransport.loadSettings();

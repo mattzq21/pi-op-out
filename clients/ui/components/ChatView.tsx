@@ -284,7 +284,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };
 
 function startsTurn(message: ChatMessage | undefined) {
-  return message?.role === "user" || message?.customType === "pi-desktop-btw";
+  return message?.role === "user";
 }
 
 function sameTurn(turn: ConversationGroup, messages: ChatMessage[], start: number) {

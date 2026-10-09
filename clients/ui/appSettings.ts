@@ -140,7 +140,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
       const writer = new NativeTransport({ cwd: "~", hostId: "local" });
 
       try {
-        await writer.connect(undefined, undefined, undefined, undefined, true);
+        await writer.connect();
         const change = await writer.command({ type: "configure_agents", configuration }, agentConfigChangeSchema);
         change.warnings?.forEach(message => addNotice({ title: "Agent definitions saved with a warning", message }));
 

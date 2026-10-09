@@ -156,7 +156,7 @@ function checkpointOwners(ref, oid, records, sessions) {
 }
 
 function ownerCategory(owners) {
-  if (owners.some(owner => ['active', 'ephemeral'].includes(owner.kind))) return 'project-checkpoints';
+  if (owners.some(owner => owner.kind === 'active')) return 'project-checkpoints';
 
   if (owners.some(owner => owner.kind === 'archived')) return 'archived-project-checkpoints';
 
@@ -170,7 +170,6 @@ function sessionKind(file, profile) {
 
   if (relative[0] === 'archived') return 'archived';
 
-  if (/^pi-desktop-btw-[a-f0-9-]{36}\.jsonl$/.test(path.basename(file))) return 'ephemeral';
 
   return 'referenced';
 }

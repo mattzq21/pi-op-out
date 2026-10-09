@@ -63,7 +63,7 @@ describe('chat session hook', () => {
     assert.equal(hook.current.state.isStreaming, true);
     await send({ type: 'pause_state', isPaused: true, isPausing: false });
     assert.equal(hook.current.state.isStreaming, false); assert.equal(hook.current.messages[0].contextCheckpoint, true);
-    await send({ type: 'entry_appended', entry: { id: 'resume-marker', type: 'custom', customType: 'pi-desktop-resume', data: { message: 'resume' } } }, message('message_start', 'user', 'resume'), message('message_start', 'custom', 'hidden', { display: false, customType: 'piop-session-operation' }), message('message_start', 'custom', 'side response', { customType: 'pi-desktop-btw' }));
+    await send({ type: 'entry_appended', entry: { id: 'resume-marker', type: 'custom', customType: 'pi-desktop-resume', data: { message: 'resume' } } }, message('message_start', 'user', 'resume'), message('message_start', 'custom', 'hidden', { display: false, customType: 'piop-session-operation' }));
     assert.equal(hook.current.messages.length, 1);
   });
 

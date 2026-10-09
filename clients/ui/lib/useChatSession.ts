@@ -422,7 +422,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       if (event.type === "message_start") trackLiveId(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
       let message = { ...normalized, id: liveId };
 
-      if (message.customType === "pi-desktop-btw") return;
       message = updateAssistant(message);
       session.setMessages(current => upsertLiveMessage(current, message));
     };

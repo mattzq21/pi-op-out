@@ -75,7 +75,7 @@ describe("Agent profiles acceptance", () => {
     await $('button[aria-label="Remove release-reviewer"]').click();
   });
 
-  it("saves agent configuration using a sessionless writer", async () => {
+  it("saves agent configuration using a native writer", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({
       ...connectedSessionResponses("agents-save"),
@@ -96,7 +96,6 @@ describe("Agent profiles acceptance", () => {
     expect(saved.agents.find((agent) => agent.name === "reviewer")?.path_agentprompt).toBe("review-acceptance.md");
     expect((await backendCalls()).filter(({ command }) => command === "save_app_settings")).toHaveLength(1);
     expect((await backendCalls()).some(({ command }) => command === "stop_pi")).toBe(true);
-    expect((await backendCalls()).some(({ command, args }) => command === "start_pi" && args.noSession === true)).toBe(true);
   });
 
   it("persists a GUI-created agent through a real native save", async () => {
@@ -139,7 +138,7 @@ describe("Agent profiles acceptance", () => {
         path_agentprompt: "sysprompt/default.md",
         path_systemprompt: "sysprompt/default.md",
       });
-      await browser.waitUntil(async () => (await backendCalls()).some(({ command, args, mocked }) => command === "start_pi" && args.noSession === true && !mocked), { timeoutMsg: "Saving the agent did not start a sessionless native writer" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ command, mocked }) => command === "start_pi" && !mocked), { timeoutMsg: "Saving the agent did not start a native writer" });
 
       await app.openConversations();
       await app.agentPicker.click();

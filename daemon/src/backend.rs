@@ -91,9 +91,6 @@ fn cleanup_blank_session_at(target: BlankSessionCleanup, root: Option<&Path>) {
     }
 }
 
-#[cfg(test)]
-use pi_launch::EphemeralSession;
-
 #[derive(Clone)]
 struct CachedSession { fingerprint: String, summary: SessionSummary }
 
@@ -350,8 +347,6 @@ mod extensions;
 mod settings;
 #[path = "backend/pi_launch.rs"]
 mod pi_launch;
-#[path = "backend/ephemeral_cleanup.rs"]
-mod ephemeral_cleanup;
 #[path = "backend/pi_runtime.rs"]
 mod pi_runtime;
 #[path = "backend/session_index.rs"]
@@ -389,7 +384,7 @@ use git_ops::GitSnapshotToken;
 use git_ops::worktree_setup::{LimitedOutput, WorktreeScriptPhase, execute_worktree_setup, register_worktree_setup, run_setup_process, run_worktree_scripts, signal_worktree_setup_cancellation};
 use pi_launch::{ remote_host, remote_login_command, session_identity, ssh, ssh_base};
 #[cfg(test)]
-use pi_launch::{ prepare_ephemeral_path, read_remote_session_header, remote_directory_path, remote_pi_path, remove_ephemeral_session, stage_extension_script, validate_remote_host};
+use pi_launch::{ read_remote_session_header, remote_directory_path, remote_pi_path, stage_extension_script, validate_remote_host};
 #[cfg(test)]
 use broker::{agent_is_active, broker_response, read_broker_line, resolve_agent};
 use session_index::{collect_host_sessions, create_temporary_chat, home_directory, list_directories, list_local_sessions, list_sessions, remove_temporary_chat, validate_project_directory};

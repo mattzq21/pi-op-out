@@ -24,7 +24,6 @@ impl Session {
         let mut state = self.raw(command).await?;
         merge(&mut state, self.raw(json!({"type":"get_pause_state"})).await?);
         state["pendingMessages"] = self.queue.view()["pendingMessages"].clone();
-        state["ephemeral"] = json!(self.ephemeral);
         state["pendingMessageCount"] = json!(state["pendingMessageCount"].as_u64().unwrap_or(0) + self.queue.held_count() as u64);
         Ok(state)
     }
@@ -128,7 +127,6 @@ impl Session {
         loop {
             let revision = self.state().state_revision;
             let mut state = self.raw(json!({"type":"get_state"})).await?;
-            state["ephemeral"] = json!(self.ephemeral);
             merge(&mut state, self.raw(json!({"type":"get_pause_state"})).await?);
             let mut snapshot = self.raw_as(json!({"type":"get_entries"}), "get_snapshot_entries", state).await?;
             let current = snapshot["stateRevision"].as_u64();
@@ -197,7 +195,7 @@ impl Session {
     }
 
     fn receive_state(&self, data: &Value) {
-        if !self.ephemeral && self.state().state["sessionId"] != data["sessionId"] {
+        if self.state().state["sessionId"] != data["sessionId"] {
             crate::session_registry::record(data, self.cwd.as_deref());
         }
         let rekey = {
@@ -205,7 +203,7 @@ impl Session {
             state.state = data.clone();
             data["sessionId"]
                 .as_str()
-                .filter(|id| !id.is_empty() && !self.ephemeral && !state.transient && state.key != *id)
+                .filter(|id| !id.is_empty() && !state.transient && state.key != *id)
                 .map(|id| {
                     let old = std::mem::replace(&mut state.key, id.into());
                     (old, id.to_owned())

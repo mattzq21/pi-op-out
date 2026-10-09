@@ -133,7 +133,7 @@ export function registerTurnCapture(pi: ExtensionAPI) {
   const snapshot = async (cwd: string, ctx: ExtensionContext, turnId: string, phase: string, comparison?: { baseline: string; messageId: string }) => {
 
     try {
-      const owner = { sessionPath: ctx.sessionManager.getSessionFile(), sessionId: ctx.sessionManager.getSessionId(), turnId, phase, ephemeral: process.env.PIOP_EPHEMERAL_SESSION === "1", ...comparison };
+      const owner = { sessionPath: ctx.sessionManager.getSessionFile(), sessionId: ctx.sessionManager.getSessionId(), turnId, phase, ...comparison };
       const { stdout } = await runFile(process.execPath, ["-e", script, JSON.stringify(owner)], { cwd, maxBuffer: 64 * 1024 });
       const capture = JSON.parse(stdout);
 

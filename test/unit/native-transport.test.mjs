@@ -109,9 +109,8 @@ test('existing-session attachment and explicit restore retain the correct connec
 
 test('unused temporary chats are removed on disposal while used chats survive', async () => {
   const unused = transport({});
-  await unused.connect(undefined, undefined, undefined, undefined, true);
+  await unused.connect();
   assert.equal(unused.isTemporaryChat(), true);
-  assert.equal(commands('start_pi').at(-1).args.noSession, true);
   await unused.dispose();
   assert.deepEqual(commands('remove_temporary_chat').at(-1).args, { path: '/tmp/chat', hostId: 'local' });
   const used = transport({});

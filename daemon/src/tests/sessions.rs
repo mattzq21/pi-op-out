@@ -162,10 +162,6 @@ fn blank_session_cleanup_does_not_delete_files_outside_the_store() {
     let path = outside.0.join("chat.jsonl"); fs::write(&path, "{\"type\":\"session\",\"id\":\"chat\"}\n").unwrap();
     cleanup_blank_session_at(BlankSessionCleanup { path: Some(path.to_string_lossy().into_owned()), id: Some("chat".into()), host: None, submitted: false }, Some(&root.0));
     assert!(path.exists());
-    let ephemeral = root.0.join("ephemeral.jsonl"); fs::write(&ephemeral, "temporary").unwrap();
-    remove_ephemeral_session(EphemeralSession::Local(ephemeral.clone()));
-    assert!(!ephemeral.exists()); assert!(path.exists());
-    remove_ephemeral_session(EphemeralSession::Local(ephemeral));
 }
 #[test]
 fn snapshot_token_validation_rejects_malformed_tokens_before_accessing_storage() {

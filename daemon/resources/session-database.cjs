@@ -60,11 +60,9 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS snapshot_directories (directory TEXT PRIMARY KEY, owner_json TEXT);
       CREATE TABLE IF NOT EXISTS snapshot_comparison_retries (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS snapshot_pending_diffs (directory TEXT PRIMARY KEY REFERENCES snapshot_directories(directory) ON DELETE CASCADE, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS ephemeral_cleanup_records (token TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS goal_asset_dependencies (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity));
       CREATE TABLE IF NOT EXISTS goal_asset_reclamations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS ephemeral_cleanup_owners (owner_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS queued_inputs (session_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS fork_preparations (directory TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS archive_records (directory TEXT PRIMARY KEY, record_json TEXT);
@@ -151,7 +149,6 @@ function queuedInput(root, id) {
   } finally { db.close(); }
 }
 
-function ephemeralOwners(root) { return rows(root, 'SELECT owner_key, record_json FROM ephemeral_cleanup_owners ORDER BY owner_key'); }
 
 function pendingDiffs(root) {
   const db = open(root);
@@ -387,4 +384,4 @@ function storageRoot(file) {
 }
 
 module.exports = { initialize, repositoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
-  worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons, comparisonRetry, saveComparisonRetry, removeComparisonRetry, pendingDiffs, pendingDiff, savePendingDiff, ephemeralOwners, queuedInputs, queuedInput };
+  worktreeMetadata, worktreeContainers, recoveryRecords, saveRecoveryRecord, releaseSnapshotReader, snapshotReaderReleases, removeSnapshotReaderRelease, saveSnapshotOwner, snapshotDirectories, snapshotOwner, removeSnapshotDirectory, completedComparisons, comparisonRetry, saveComparisonRetry, removeComparisonRetry, pendingDiffs, pendingDiff, savePendingDiff, queuedInputs, queuedInput };

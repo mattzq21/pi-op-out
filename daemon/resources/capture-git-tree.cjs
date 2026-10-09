@@ -64,7 +64,7 @@ function sessionHeader(file) {
 }
 
 function snapshotStorage() {
-  if (!owner?.sessionPath || owner.ephemeral) return undefined;
+  if (!owner?.sessionPath) return undefined;
   let session;
 
   try { session = fs.realpathSync(owner.sessionPath); }
@@ -648,11 +648,7 @@ function retainCapture(token, env, retained) {
   if (owner.phase === 'end' && retained) storeFallback(token, retained);
   sealSnapshot(token, env, retained);
 
-  if (!retained) {
-    if (owner.ephemeral) ownTemporary(token.root, 'reader');
-
-    return;
-  }
+  if (!retained) return;
 
   ensureStorage(retained);
 

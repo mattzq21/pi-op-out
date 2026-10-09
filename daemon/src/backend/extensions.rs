@@ -112,7 +112,6 @@ pub(super) fn prepare_session_broker() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
     prepare_broker_storage(&dir)?;
-    remove_obsolete_side_chat_extensions(&dir)?;
     let modules = dir.join("session-broker");
     ensure_private_dir(&modules)?;
     for (name, content) in SESSION_BROKER_MODULES { atomic_write_private(&modules.join(name), content.as_bytes())?; }
@@ -134,19 +133,6 @@ fn prepare_broker_storage(dir: &Path) -> Result<(), String> {
     atomic_write_private(&dir.join("sdk-storage.mjs"), include_str!("../../resources/sdk-storage.mjs").as_bytes())?;
     atomic_write_private(&dir.join("session-diff-store.cjs"), include_str!("../../resources/session-diff-store.cjs").as_bytes())?;
     atomic_write_private(&dir.join("ask-user.ts"), include_str!("../../resources/ask-user.ts").as_bytes())
-}
-
-fn remove_obsolete_side_chat_extensions(dir: &Path) -> Result<(), String> {
-    let mut paths = vec![dir.join("piop-btw.ts")];
-    if !DEVELOPMENT { paths.push(home_dir()?.join(".pi/agent/extensions/pi-desktop-btw.ts")); }
-    for path in paths {
-        match fs::remove_file(path) {
-            Ok(()) => {},
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    Ok(())
 }
 
 pub(super) fn prepare_trace_reader() -> Result<PathBuf, String> {

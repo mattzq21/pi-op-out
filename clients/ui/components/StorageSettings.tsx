@@ -18,7 +18,6 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
   "pending-diff-snapshots": { name: "Pending diff snapshots", description: "Comparison inputs retained until durable recovery succeeds", icon: Camera, item: "snapshot" },
   "diff-transfer-staging": { name: "Diff transfer staging", description: "Staged diff packets with source-log ownership · reclaimability unknown", icon: Camera, item: "stage file" },
   "unattributed-diff-transfer-staging": { name: "Unresolved diff transfer staging", description: "Unmatched or unavailable stages · contents retained", icon: ShieldAlert, item: "stage file" },
-  "ephemeral-cleanup": { name: "Ephemeral cleanup records", description: "Active ownership, durable retry jobs and replay manifests", icon: FolderClock, item: "record" },
   "archived-git-diff-snapshots": { name: "Diff snapshots", description: "Comparison baselines for turn diffs", icon: Camera, item: "snapshot" },
   "temporary-chats": { name: "No-project workdirs", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
   "worktrees": { name: "Managed worktrees", description: "Working copies in Piop’s allocation namespace", icon: GitBranch, item: "worktree" },
@@ -28,7 +27,6 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
   "recovery-storage": { name: "Managed recovery", description: "Durable recovery containers with ownership records", icon: FolderClock, item: "recovery" },
   "unattributed-recovery-storage": { name: "Unresolved recovery storage", description: "Loose recovery files or unverified ownership records", icon: ShieldAlert, item: "recovery" },
   "legacy-recovery-storage": { name: "Legacy temporary recovery", description: "Temporary recovery candidates and retained migration sources", icon: FolderClock, item: "directory" },
-  "ephemeral-storage": { name: "Side conversations", description: "Temporary transcripts and sidecars · liveness unknown", icon: MessageSquare, item: "artifact" },
   "chatgpt-storage": { name: "ChatGPT storage", description: "Stored chats and support files across auth-directory accounts", icon: MessageSquare, item: "chat" },
   "goal-attachments": { name: "Goal assets", description: "Objective files and attachments owned by surviving history and forks", icon: Archive, item: "asset directory" },
   "unattributed-goal-attachments": { name: "Unattributed goal assets", description: "No readable surviving owner found · ownership unresolved", icon: ShieldAlert, item: "asset directory" },
@@ -40,7 +38,7 @@ const storageSections: { title: string; categories: StorageCategory["id"][] }[] 
   { title: "Active sessions", categories: ["active-conversations", "git-diff-snapshots", "project-checkpoints"] },
   { title: "Archived sessions", categories: ["archived-conversations", "archived-git-diff-snapshots", "archived-project-checkpoints", "archived-worktrees"] },
   { title: "Managed directories", categories: ["worktrees", "temporary-chats", "recovery-storage"] },
-  { title: "Unresolved and temporary storage", categories: ["unattributed-project-checkpoints", "unattributed-recovery-storage", "legacy-recovery-storage", "ephemeral-storage", "ephemeral-cleanup", "pending-diff-snapshots", "diff-transfer-staging", "unattributed-diff-transfer-staging", "unattributed-goal-attachments"] },
+  { title: "Unresolved and temporary storage", categories: ["unattributed-project-checkpoints", "unattributed-recovery-storage", "legacy-recovery-storage", "pending-diff-snapshots", "diff-transfer-staging", "unattributed-diff-transfer-staging", "unattributed-goal-attachments"] },
   { title: "Referenced user storage", categories: ["referenced-worktrees"] },
 ];
 

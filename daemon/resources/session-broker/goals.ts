@@ -30,7 +30,7 @@ declare module "@earendil-works/pi-coding-agent" {
 function persistent(ctx: ExtensionContext) {
   const path = ctx.sessionManager.getSessionFile();
 
-  return !!path && !/(?:^|[\\/])pi-desktop-btw-[^/\\]+\.jsonl$/.test(path);
+  return !!path;
 }
 
 function providerErrorStatus(message: string | undefined): "usage_limited" | "blocked" {
@@ -68,7 +68,7 @@ export function registerGoals(pi: ExtensionAPI) {
   const allowed = () => ["get_goal", "create_goal", "update_goal"].every(name => pi.getActiveTools().includes(name));
 
   const assertAvailable = (ctx: ExtensionContext) => {
-    if (!persistent(ctx)) throw new Error("Goals require a saved conversation and are unavailable in temporary side chats.");
+    if (!persistent(ctx)) throw new Error("Goals require a saved conversation.");
 
     if (!allowed()) throw new Error("Enable get_goal, create_goal and update_goal for this agent under Settings → Agents → Tools before starting a goal.");
   };

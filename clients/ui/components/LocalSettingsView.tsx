@@ -127,7 +127,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
 
         if (cancelled) return;
         receiveChange(loaded, capturedHostId);
-        await reader.connect(undefined, undefined, undefined, undefined, true);
+        await reader.connect();
 
         if (cancelled) return;
 
@@ -166,7 +166,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
 
     try {
       if (config) {
-        await writer.connect(undefined, undefined, undefined, undefined, true);
+        await writer.connect();
         restoreAgents = await saveAgentConfiguration(config, previousConfig, writeAgents);
       }
 

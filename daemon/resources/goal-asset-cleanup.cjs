@@ -15,7 +15,6 @@ const queuedSchema = Type.Object({ version: Type.Literal(1), items: Type.Array(T
 
 const receiptSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.String() });
 
-const ephemeralSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.String(), location: Type.Object({ kind: Type.Union([Type.Literal('local'), Type.Literal('remote')]), path: Type.String() }) });
 
 function managedPath(root, directory) {
   return assets.validPath(root, directory) && io.inside(path.join(root, 'sessions'), directory);
@@ -112,7 +111,6 @@ function surviving(root, deleted) {
   const observation = { files: new Map(), sessions: new Set(), directories: new Set() };
   registered(root, observation, deleted);
   queued(root, observation, deleted);
-  ephemeral(root, observation);
   external(root, observation);
   transactionFiles(root, 'archive', observation);
   transactionFiles(root, 'delete', observation);
@@ -139,16 +137,6 @@ function publicationDiagnostics(root, observation) {
     }
 
     for (const file of diagnostic.transcriptPaths) observe(root, file, observation, false);
-  }
-}
-
-function ephemeral(root, observation) {
-  for (const row of require('./session-database.cjs').ephemeralOwners(root)) {
-    const record = JSON.parse(row.record_json);
-
-    if (!Check(ephemeralSchema, record)) throw new Error('Unresolved ephemeral ownership prevents goal asset cleanup');
-
-    if (record.location.kind === 'local') observe(root, record.location.path, observation);
   }
 }
 

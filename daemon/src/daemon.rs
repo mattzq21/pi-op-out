@@ -189,9 +189,7 @@ impl CaptureWriter {
     }
 
     fn packet(&mut self, mut packet: Value) {
-        if packet["ephemeral"] != true {
-            if let Some(path) = packet["sessionPath"].as_str() { self.session_path = Some(path.to_owned()); }
-        }
+        if let Some(path) = packet["sessionPath"].as_str() { self.session_path = Some(path.to_owned()); }
         let _ = self.retry();
         if update_capture_baseline(&mut self.baselines, &packet, self.host.as_ref()) { return; }
         let Some(turn_id) = packet["turnId"].as_str() else { return; };
@@ -227,11 +225,7 @@ fn save_capture_packet(app: &AppHandle, host_id: &str, packet: &Value, host: Opt
         if let Some(current) = current { let _ = discard_git_tree_at_host(current, host); }
         return Ok(());
     };
-    if packet["ephemeral"] == true {
-        let session_id = packet["sessionId"].as_str().ok_or("Temporary capture has no stable session ID; snapshots preserved")?;
-        crate::git_ops::git_diffs::persist_ephemeral_capture_diff(path, session_id, id, cwd, baseline, current, host)?;
-    }
-    else if packet["durable"].is_boolean() {
+    if packet["durable"].is_boolean() {
         retain_capture_packet(packet, Some(baseline), host)?;
         crate::git_ops::git_diff_retry::retry_pending_git_diffs(path, host)?;
         let _ = discard_git_tree_at_host(baseline, host);

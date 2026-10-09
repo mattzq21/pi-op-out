@@ -126,10 +126,7 @@ function recoverStore(filename, materialize, focus) {
 }
 
 function copyRetainedStoreLocked(filename, destination, retainedIds, sessionId, destinationId, preparationOwner) {
-  validateRetainedSource(filename, sessionId);
-
   return withStoreLock(filename, () => {
-    validateRetainedSource(filename, sessionId);
     const state = recoverStore(filename, false);
 
     if (state.database?.id !== sessionId.toLowerCase()) throw new Error('Fork source session changed; history preserved');
@@ -142,52 +139,7 @@ function copyRetainedStoreLocked(filename, destination, retainedIds, sessionId, 
   });
 }
 
-function validateRetainedSource(filename, sessionId) {
-  if (path.basename(filename).startsWith('pi-desktop-btw-')) validateEphemeralTranscript(filename, { ephemeralSessionId: sessionId });
-}
-
 function requestStoreLocked(filename, request) { return withStoreLock(filename, () => requestStore(filename, request)); }
-
-const ephemeralUuid = /^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$/;
-
-function ephemeralTranscriptPath(filename) {
-  const session = filename.replace(/\.diffs\.json$/, '.jsonl');
-  const id = path.basename(session).slice('pi-desktop-btw-'.length, -'.jsonl'.length);
-
-  if (!filename.endsWith('.diffs.json') || !path.isAbsolute(session) || path.normalize(session) !== session || !path.basename(session).startsWith('pi-desktop-btw-') || !ephemeralUuid.test(id)) throw new Error('Invalid temporary transcript namespace');
-
-  return session;
-}
-
-function validateEphemeralTranscript(filename, request) {
-  const session = ephemeralTranscriptPath(filename);
-  const temporary = process.env.PIOP_DIFF_EPHEMERAL_TMP || os.tmpdir();
-
-  if (!stringValue(request.ephemeralSessionId) || !ephemeralUuid.test(request.ephemeralSessionId)) throw new Error('Invalid temporary transcript stable identity');
-  const parent = path.dirname(session);
-  const canonical = fs.realpathSync(temporary);
-
-  if (parent !== temporary && parent !== canonical) throw new Error('Temporary transcript is outside the temporary conversation namespace');
-
-  if (fs.realpathSync(parent) !== canonical || !fs.lstatSync(session).isFile()) throw new Error('Temporary transcript must be a regular file in the temporary namespace');
-
-  if (transcriptId(filename) !== request.ephemeralSessionId) throw new Error('Temporary transcript stable identity changed; recovery retained');
-}
-
-function requestEphemeralStore(filename, request) {
-  const permitted = ['ephemeral_validate', 'retain', 'discover', 'pending_ids', 'pending_status', 'pending', 'finish', 'page'];
-
-  if (!permitted.includes(request.action)) throw new Error('Temporary transcript diff access permits pending recovery only');
-  validateEphemeralTranscript(filename, request);
-
-  if (request.action === 'ephemeral_validate') return null;
-
-  return withStoreLock(filename, () => {
-    validateEphemeralTranscript(filename, request);
-
-    return requestStore(filename, request);
-  });
-}
 
 function operations(state, request) {
   if (request.action === 'replace') return replacement(state, request.snapshots);
@@ -349,7 +301,7 @@ function requestStore(filename, request) {
   const state = recoverStore(filename, request.action === 'load', request.id);
   const hooks = transferHooks(filename);
 
-  if (request.action === 'discover') return discoverComparisons(filename, request.ephemeralSessionId !== undefined);
+  if (request.action === 'discover') return discoverComparisons(filename, false);
 
   if (request.action === 'part') return transfers.appendPart(filename, request.part, state, hooks);
 
@@ -423,4 +375,4 @@ function indexPending(filename, state, records) {
   }
 }
 
-module.exports = { readStore, readStoreLocked, copyRetainedStoreLocked, requestStore, requestStoreLocked, requestEphemeralStore };
+module.exports = { readStore, readStoreLocked, copyRetainedStoreLocked, requestStore, requestStoreLocked };

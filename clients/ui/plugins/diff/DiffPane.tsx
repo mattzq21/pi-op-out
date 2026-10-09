@@ -13,7 +13,7 @@ function diffResponses(messages: ChatMessage[]) {
   let response: DiffResponse | undefined;
 
   for (const message of messages) {
-    if (message.role === "user" || message.customType === "pi-desktop-btw") {
+    if (message.role === "user") {
       if (response) responses.push(response);
       prompt = textOf(message.content).replace(/\s+/g, " ").trim().slice(0, 80);
       response = undefined;

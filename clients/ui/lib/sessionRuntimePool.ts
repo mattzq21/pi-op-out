@@ -64,7 +64,7 @@ export class SessionRuntimePool {
     this.liveRevision += 1; this.notify();
   }
   private reviewTransports = new WeakSet<NativeTransport>();
-  liveSessionSummaries() { return [...this.liveSessions].flatMap(([transport, session]) => !transport.isEphemeral() && !this.reviewTransports.has(transport) ? [session] : []); }
+  liveSessionSummaries() { return [...this.liveSessions].flatMap(([transport, session]) => !this.reviewTransports.has(transport) ? [session] : []); }
   setLiveSession(transport: NativeTransport, session: SessionSummary) {
     if (this.isRemoved(session)) return;
     this.liveSessions.set(transport, session);

@@ -402,7 +402,7 @@ fn broker_conversation_operation(app: &AppHandle, broker: &BrokerRuntime, value:
     let mut packet = json!({"type":"orchestration","action":action,"sessionKey":id,"sessionPath":path,
         "sourceSessionId":value["sourceSessionId"],"sourceHostId":value["sourceHostId"],"message":value["message"],"wake":value["wake"],"clientId":value["clientId"],"deliveryId":value["deliveryId"],"deadline":value["deadline"],"recoveryDepth":value["recoveryDepth"]});
     if matches!(action, "send" | "recover_usage") {
-        let mut command = build_pi_command(broker, &settings, host, PiLaunch::Rpc { cwd: Some(cwd), session_path: Some(path), session_id: None, fork_path: None, no_session: false }, daemon.remote_port)?;
+        let mut command = build_pi_command(broker, &settings, host, PiLaunch::Rpc { cwd: Some(cwd), session_path: Some(path), session_id: None, fork_path: None }, daemon.remote_port)?;
         if action == "recover_usage" { command.env("PIOP_USAGE_RECOVERY", "1"); }
         packet["spec"] = crate::daemon::spec(&command);
         packet["cwd"] = json!(cwd);

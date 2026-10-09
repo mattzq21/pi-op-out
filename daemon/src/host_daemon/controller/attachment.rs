@@ -31,7 +31,7 @@ impl Attachment {
         host.registry().attachments.insert(runtime.clone(), packet.clone());
         let spec: LaunchSpec = serde_json::from_value(packet["spec"].clone()).map_err(|error| error.to_string())?;
         let identity = spec.identity(&text(&packet, "sessionKey"))?;
-        if !flag(&packet, "ephemeral") && Uuid::parse_str(&text(&packet, "sessionKey")).is_ok() && identity != text(&packet, "sessionKey") {
+        if Uuid::parse_str(&text(&packet, "sessionKey")).is_ok() && identity != text(&packet, "sessionKey") {
             return Err("The saved path belongs to another conversation; resolve its identity again".into());
         }
         let path = spec.argument("--session").map(str::to_owned);
@@ -77,9 +77,6 @@ impl Attachment {
     }
 
     async fn ownership(&self, host: &Host) -> Result<Guard> {
-        if flag(&self.packet, "ephemeral") {
-            return Ok(Guard::ephemeral());
-        }
         host.ownership()
             .begin(
                 &self.identity,
@@ -149,7 +146,6 @@ impl Attachment {
             key: self.identity.clone(),
             spec,
             timeout: Duration::from_millis(self.packet["timeout"].as_u64().unwrap_or(630000)),
-            ephemeral: flag(&self.packet, "ephemeral"),
             transient: false,
             client_id: text(&self.packet, "clientId"),
             cwd,

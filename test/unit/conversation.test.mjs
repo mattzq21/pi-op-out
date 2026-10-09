@@ -38,10 +38,10 @@ describe('conversation behavior', () => {
     assert.doesNotMatch(document.body.textContent, /read x2/);
   });
 
-  test('user prompts and side chats start turns, with only the latest turn remaining active or paused', async () => {
-    const messages = [user('u'), assistant('a'), { id: 'btw', role: 'system', customType: 'pi-desktop-btw', content: 'Side chat' }, user('u2', 'Next'), assistant('a2', '', { stopReason: 'aborted' })];
+  test('user prompts start turns, with only the latest turn remaining active or paused', async () => {
+    const messages = [user('u'), assistant('a'), user('u2', 'Next'), assistant('a2', '', { stopReason: 'aborted' })];
     await render({ messages, state: { isStreaming: true, viewers: 2 } });
-    assert.equal(document.querySelectorAll('.conversation-turn').length, 3);
+    assert.equal(document.querySelectorAll('.conversation-turn').length, 2);
     assert.equal(document.querySelectorAll('.active-work-content').length, 1);
     await render({ state: { isPaused: true } });
     assert.match(document.querySelector('.active-work-content').textContent, /Response paused/);

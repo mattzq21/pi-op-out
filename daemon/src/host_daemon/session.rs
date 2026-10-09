@@ -72,7 +72,6 @@ pub(super) struct Session {
     client_id: Mutex<String>,
     pub spec: LaunchSpec,
     pub cwd: Option<String>,
-    pub ephemeral: bool,
     pub timeout: Duration,
     pub queue: SessionQueue,
     pub orchestration_interrupt: AsyncMutex<Option<tokio::task::JoinHandle<Result<Value>>>>,
@@ -91,7 +90,6 @@ pub(super) struct SessionCallbacks(Weak<Session>);
 impl Execution for SessionCallbacks {
     fn saved_user_messages(&self) -> Result<Vec<Value>> {
         let session = self.0.upgrade().ok_or("Pi is not running")?;
-        if session.ephemeral { return Ok(Vec::new()); }
         let saved = session.saved_state();
         let Some(path) = saved["sessionFile"].as_str().or_else(|| session.spec.argument("--session")) else { return Ok(Vec::new()); };
         queued_input::saved_user_messages(Path::new(path), &session.spec.identity(&session.key())?)
@@ -155,16 +153,14 @@ impl Session {
             key,
             mut spec,
             timeout,
-            ephemeral,
             transient,
             client_id,
             cwd,
         } = launch;
         spec.prepare(&key, &client_id, home);
-        spec.env.insert("PIOP_EPHEMERAL_SESSION".into(), u8::from(ephemeral).to_string());
         let epoch = Uuid::new_v4().to_string();
         spec.env.insert("PIOP_GIT_CAPTURE_READER_SCOPE".into(), epoch.clone());
-        let storage = queue_storage(host.as_ref(), &spec, cwd.as_deref(), home, &key, ephemeral)?;
+        let storage = queue_storage(host.as_ref(), &spec, cwd.as_deref(), home, &key)?;
         let pending = match &storage { Some(storage) => storage.recover(pending)?, None => pending };
         let identity = if spec.argument("--session").is_some() {
             key.clone()
@@ -180,7 +176,6 @@ impl Session {
             client_id: Mutex::new(client_id),
             spec,
             cwd,
-            ephemeral,
             timeout,
             epoch,
             queue: match storage {
@@ -478,7 +473,7 @@ impl Session {
         let (stopped, submitted) = {
             let state = self.state();
             (
-                !preserve_running && state.views.is_empty() && (self.ephemeral || discard_blank && !state.submitted && !state.working),
+                !preserve_running && state.views.is_empty() && discard_blank && !state.submitted && !state.working,
                 state.submitted,
             )
         };
@@ -545,7 +540,7 @@ impl Session {
             (state.key.clone(), state.transient)
         };
         self.queue.receive(json!({"type":"disconnected"}));
-        let pending = if self.ephemeral { Vec::new() } else { self.queue.pending() };
+        let pending = self.queue.pending();
         self.host.finished(&key, &self.epoch, pending, transient);
         if !transient {
             self.host
@@ -579,8 +574,7 @@ impl Session {
     }
 }
 
-fn queue_storage(host: &Callbacks, spec: &LaunchSpec, cwd: Option<&str>, home: &Path, key: &str, ephemeral: bool) -> Result<Option<QueueStorage>> {
-    if ephemeral { return Ok(None); }
+fn queue_storage(host: &Callbacks, spec: &LaunchSpec, cwd: Option<&str>, home: &Path, key: &str) -> Result<Option<QueueStorage>> {
     let Some(root) = host.queue_root() else { return Ok(None); };
     let directory = cwd.or(spec.cwd.as_deref()).or_else(|| spec.env.get("PIOP_SESSION_CWD").map(String::as_str))
         .map(Path::new).unwrap_or(home);

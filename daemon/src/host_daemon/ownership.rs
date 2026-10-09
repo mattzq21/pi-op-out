@@ -56,9 +56,9 @@ pub(super) struct Guard {
 }
 
 impl Guard {
-    pub fn ephemeral() -> Self {
+    fn unowned() -> Self {
         Self {
-            owned: true,
+            owned: false,
             saved: None,
             archived: false,
             record: Value::Null,
@@ -231,10 +231,7 @@ impl ConversationOwnership {
         let previous = record.clone().unwrap_or(Value::Null);
         let saved = self.saved_for_claim(id, &previous, options)?;
         if claim_blocked(&previous, client, options) {
-            return Ok(Guard {
-                owned: false,
-                ..Guard::ephemeral()
-            });
+            return Ok(Guard::unowned());
         }
         let mut worker_lock = self.claim_worker_lock(id, record.as_ref(), client, options).await?;
         let next = self.write_claim(id, client, saved.as_ref())?;

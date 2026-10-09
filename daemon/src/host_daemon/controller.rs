@@ -253,13 +253,9 @@ impl Host {
 
     pub fn remember(&self, runtime: &str, session: &Session) {
         let saved = session.saved_state();
-        let spec = if session.ephemeral {
-            session.spec.clone()
-        } else {
-            session
-                .spec
-                .session("--session-id", saved["sessionId"].as_str().unwrap_or(&session.identity))
-        };
+        let spec = session
+            .spec
+            .session("--session-id", saved["sessionId"].as_str().unwrap_or(&session.identity));
         let mut registry = self.registry();
         let mut packet = registry
             .attachments
@@ -269,7 +265,6 @@ impl Host {
         packet["spec"] = json!(spec);
         packet["sessionKey"] = json!(session.identity);
         packet["cwd"] = json!(session.cwd);
-        packet["ephemeral"] = json!(session.ephemeral);
         registry.attachments.insert(runtime.into(), Arc::new(packet));
     }
 
@@ -314,7 +309,7 @@ impl Host {
     }
 
     pub async fn release_unused(&self, session: &Session) -> Result<()> {
-        if !session.ephemeral && session.unused() {
+        if session.unused() {
             self.ownership()
                 .release_client(&session.identity, &session.client_id(), || session.unused())
                 .await?;

@@ -127,8 +127,6 @@ export class NativeTransport {
     this.emit({ type: "session_info_changed" });
     this.emit({ type: "settings_applied" });
   }
-  private ephemeral = false;
-  isEphemeral() { return this.ephemeral; }
   private fresh = true;
   needsDefaults() { return this.fresh; }
   defaultsApplied() { this.fresh = false; }
@@ -295,8 +293,6 @@ export class NativeTransport {
     return true;
   }
   private retainCommandSession(command: RpcCommand, result: CommandSession) {
-    this.retainResultClassification(result);
-
     if (command.type === "get_state" || command.type === "get_snapshot") { const state = command.type === "get_snapshot" ? result.state ?? {} : result;
 
     this.retainSessionIdentity(state, command.type === "get_snapshot"); }
@@ -316,8 +312,6 @@ export class NativeTransport {
       this.automaticRetry = undefined;
       this.automaticBehaviorGeneration += 1;
     }
-
-    if (event.type === "session_switched") this.retainClassification(event.ephemeral);
 
     if (event.type === "ownership_lost") this.promptControls.reset();
     this.settings.receive(event);
@@ -343,12 +337,6 @@ export class NativeTransport {
 
     this.settings.afterEvent(event);
   }
-  private retainClassification(ephemeral?: boolean) {
-    if (ephemeral !== undefined) this.ephemeral = ephemeral;
-  }
-  private retainResultClassification(result: CommandSession) {
-    this.retainClassification(result.state?.ephemeral ?? result.ephemeral);
-  }
   private connectionLost() {
     ++this.connectionVersion; this.connectPromise = undefined; this.running = false; this.owns = false;
     this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
@@ -358,9 +346,8 @@ export class NativeTransport {
     if (sessionPath !== this.sessionPath) this.sessionId = undefined;
     this.sessionPath = sessionPath;
   }
-  async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false) {
+  async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string) {
     if (this.disposed) throw new Error("This conversation view has been closed");
-    this.ephemeral ||= ephemeral;
 
     if (cwd !== undefined) this.cwd = cwd;
 
@@ -385,7 +372,7 @@ export class NativeTransport {
     }
   }
   private async resolveSavedTarget(version: number, forkPath?: string) {
-    if (!this.sessionId || this.ephemeral || forkPath) return;
+    if (!this.sessionId || forkPath) return;
 
     if (!this.sessionPath && !this.readOnly) return;
     const location = await locateConversation(this.sessionId, this.hostId);
@@ -439,7 +426,7 @@ export class NativeTransport {
     return; }
 
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }, z.object({ attached: z.boolean(), owned: z.boolean().optional(), daemonId: z.string().optional() })));
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId, presence: this.presence() }, z.object({ attached: z.boolean(), owned: z.boolean().optional(), daemonId: z.string().optional() })));
 
     if (version !== this.connectionVersion || !attached) throw new Error("The conversation disconnected while starting. Reconnect to try again.");
     this.daemonId = attached.daemonId;
@@ -522,11 +509,7 @@ export class NativeTransport {
   return () => this.listeners.delete(listener); }
   listSessions() { return call("list_sessions", undefined, z.array(sessionSummarySchema)); }
   loadGitDiffs(sessionPath: string, hostId = "local") {
-    const ephemeral = this.ephemeral && sessionPath === this.sessionPath && hostId === this.hostId;
-
-    if (ephemeral && !this.sessionId) return Promise.reject(new Error("Temporary project changes have no stable conversation identity; saved data is preserved"));
-
-    return readGitDiffs(sessionPath, hostId, ephemeral ? this.sessionId : undefined);
+    return readGitDiffs(sessionPath, hostId);
   }
   saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId = "local") { return appendGitDiffs(sessionPath, snapshots, hostId); }
   archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionPath, hostId, terminalIds }, voidResultSchema); }

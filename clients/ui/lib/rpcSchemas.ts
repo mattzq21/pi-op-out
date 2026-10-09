@@ -6,14 +6,13 @@ const optionalString = z.string().optional().catch(undefined);
 export const rpcEventSchema = z.looseObject({
   type: z.string(), id: optionalString, method: optionalString,
   statusKey: optionalString, widgetKey: optionalString,
-  ephemeral: z.boolean().optional(),
 });
 
 export const rpcCommandSchema = z.looseObject({
   type: z.string(), id: z.string().optional(), message: z.string().optional(), images: z.array(imageSchema).optional(),
 });
 
-const sessionIdentitySchema = z.object({ sessionId: optionalString, sessionFile: optionalString, ephemeral: z.boolean().optional() });
+const sessionIdentitySchema = z.object({ sessionId: optionalString, sessionFile: optionalString });
 
 export const commandSessionSchema = sessionIdentitySchema.extend({
   state: sessionIdentitySchema.optional(), extensionState: z.array(rpcEventSchema).optional(),

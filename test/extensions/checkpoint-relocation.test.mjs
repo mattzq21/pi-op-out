@@ -59,19 +59,3 @@ test('archive preservation tolerates deleted ancestor refs while preserving chil
   assert.equal(saved[0].worktreeRestore.commit, second);
   assert.equal(git('rev-parse', saved[0].worktreeRestore.ref), second);
 });
-
-test('temporary conversation cleanup removes its refs without deleting parent checkpoints', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'piop-temporary-checkpoint-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  git('init'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial');
-  const commit = git('rev-parse', 'HEAD');
-  const ownRef = 'refs/pi-session-snapshots/chats/side/prompts/one', parentRef = 'refs/pi-session-snapshots/chats/parent/prompts/one';
-  git('update-ref', ownRef, commit); git('update-ref', parentRef, commit);
-  const file = join(dir, 'side.jsonl');
-  await writeFile(file, JSON.stringify({ type: 'session', id: 'side', cwd: dir }) + '\n');
-  const script = await readFile(new URL('../../daemon/resources/cleanup-ephemeral-session.bundle.mjs', import.meta.url), 'utf8');
-  execFileSync(process.execPath, ['-e', script, file]);
-  assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/pi-session-snapshots/'), parentRef);
-  await assert.rejects(readFile(file), { code: 'ENOENT' });
-});

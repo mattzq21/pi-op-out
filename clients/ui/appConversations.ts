@@ -120,7 +120,7 @@ export function createAppConversations(preloadChat: () => void) {
     if (activeTransportRef.current === ownerTransport || capturedRuntimePool.isInteractive(ownerTransport)) return;
     await closeTransportDialogs(ownerTransport);
 
-    if (!ownerTransport.isEphemeral() && hasRetainedDraft(ownerTransport)) return;
+    if (hasRetainedDraft(ownerTransport)) return;
 
     if (ownerTransport.currentSessionPath() && (uploadsByTransport().get(ownerTransport)?.length ?? 0) > 0) return;
 
@@ -169,7 +169,7 @@ export function createAppConversations(preloadChat: () => void) {
   useSessionResume(() => {
     const saved = chatSession().state.messageCount > 0;
 
-    return { ready: connected() && drafts.loaded(), saved, ephemeral: transport().isEphemeral(), target: { sessionId: chatSession().state.sessionId, sessionPath: chatSession().state.sessionFile, cwd: !saved && transport().isTemporaryChat() ? undefined : activeCwd(), hostId: activeHostId(), draftKey: transportHasDraft(transport(), activeConversationKey()) ? activeConversationKey() : undefined } };
+    return { ready: connected() && drafts.loaded(), saved, target: { sessionId: chatSession().state.sessionId, sessionPath: chatSession().state.sessionFile, cwd: !saved && transport().isTemporaryChat() ? undefined : activeCwd(), hostId: activeHostId(), draftKey: transportHasDraft(transport(), activeConversationKey()) ? activeConversationKey() : undefined } };
   });
   const splitSessionId = createMemo(() => splitConversationKey(splitPane()));
 

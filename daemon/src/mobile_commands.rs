@@ -120,7 +120,6 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("load_git_diff", handle_load_git_diff),
     ("load_git_diffs", handle_load_git_diffs),
     ("load_git_diff_page", handle_load_git_diff_page),
-    ("load_ephemeral_git_diff_page", handle_load_ephemeral_git_diff_page),
     ("save_git_diffs", handle_save_git_diffs),
     ("append_git_diff_part", handle_append_git_diff_part),
     ("archive_session", handle_archive_session),
@@ -433,12 +432,6 @@ fn handle_save_git_diffs(app: AppHandle, _owner: String, args: Value) -> Command
 fn handle_load_git_diff_page(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || crate::git_ops::git_diffs::load_git_diff_page(app, argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "page")?)).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_load_ephemeral_git_diff_page(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || crate::git_ops::git_diffs::load_ephemeral_git_diff_page(app, argument(&args, "sessionPath")?, argument(&args, "sessionId")?, argument(&args, "hostId")?, argument(&args, "page")?)).await.map_err(|error| error.to_string())?
     })
 }
 

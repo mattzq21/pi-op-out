@@ -13,7 +13,7 @@ const { createObservation, observeEntry, recordSession, resolveOwners, sessionKi
 const { diskStorage } = require('./storage-inventory-disk.cjs');
 const { checkpointStorage } = require('./storage-inventory-checkpoints.cjs');
 const { inventoryCategories, archiveCoverage } = require('./storage-inventory-report.cjs');
-const { discoverEphemeral, discoverPendingLogs } = require('./storage-inventory-ephemeral.cjs');
+const { discoverPendingSnapshots, discoverPendingLogs } = require('./storage-inventory-pending.cjs');
 const { reconcileGoalAssets } = require('./storage-inventory-goals.cjs');
 const { discoverGoalDiagnostics } = require('./storage-inventory-diagnostics.cjs');
 const { sharedArchiveRestore, discoverArchiveResources } = require('./storage-inventory-resources.cjs');
@@ -414,7 +414,7 @@ async function main() {
   const snapshotWarnings = recoverSnapshotTemps(piopRoot);
   const profile = await fs.realpath(piopRoot).catch(() => piopRoot);
   const discovery = await discoverRoots(profile);
-  await discoverEphemeral(profile, discovery);
+  await discoverPendingSnapshots(profile, discovery);
   discovery.sessions = new Map();
   discovery.headers = new Map();
   discovery.goals = new Map();
@@ -429,7 +429,7 @@ async function main() {
   for (const file of archived.files) candidates.set(file, { file, archived: true, kind: 'archived' });
 
   for (const file of discovery.sessionPaths) {
-    if (!candidates.has(file)) candidates.set(file, { file, archived: false, kind: discovery.ephemeralRecords.has(file) ? 'ephemeral' : sessionKind(file, profile) });
+    if (!candidates.has(file)) candidates.set(file, { file, archived: false, kind: sessionKind(file, profile) });
   }
 
   const archives = [];

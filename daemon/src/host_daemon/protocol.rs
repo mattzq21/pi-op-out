@@ -8,7 +8,6 @@ pub(super) struct SessionLaunch {
     pub key: String,
     pub spec: LaunchSpec,
     pub timeout: std::time::Duration,
-    pub ephemeral: bool,
     pub transient: bool,
     pub client_id: String,
     pub cwd: Option<String>,
@@ -40,7 +39,7 @@ impl LaunchSpec {
         while let Some(arg) = args.next() {
             if matches!(arg.as_str(), "--session" | "--session-id" | "--fork") {
                 args.next();
-            } else if arg != "--no-session" {
+            } else {
                 next.args.push(arg.clone());
             }
         }

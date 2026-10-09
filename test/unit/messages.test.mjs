@@ -24,7 +24,6 @@ test('message normalization preserves content and selects stable identifiers and
   assert.equal(normalizeMessage({ role: 'toolResult' }).role, 'tool');
 
   for (const customType of ['pi-desktop-mcp-status', 'piop-review-link', 'piop-html-preview']) assert.equal(normalizeMessage({ role: 'custom', customType }).role, 'system');
-  assert.equal(normalizeMessage({ role: 'custom', customType: 'pi-desktop-btw' }).role, 'assistant');
   assert.equal(normalizeMessage({ role: 'custom', customType: 'other' }).role, 'custom');
   assert.equal(original.id, 'original');
 });
@@ -159,8 +158,7 @@ test('branch reconstruction handles orphaned metadata, custom visibility and pau
     custom('p', 'u', 'pi-desktop-pause-state', { isPaused: true }),
     { id: 's', parentId: 'p', type: 'custom_message', customType: 'piop-review-link' },
     { id: 'hidden', parentId: 's', type: 'custom_message', customType: 'piop-session-operation', display: false },
-    { id: 'btw', parentId: 'hidden', type: 'custom_message', customType: 'pi-desktop-btw' },
-    msg('unsupported', 'btw', 'system'),
+    msg('unsupported', 'hidden', 'system'),
     msg('t', 'unsupported', 'toolResult', '', { toolCallId: 'unknown' }),
     custom('unpaused', 't', 'pi-desktop-pause-state', { isPaused: false }),
   ];

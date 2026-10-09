@@ -5,7 +5,7 @@ import { fileChangesSchema, pauseStateSchema, promptContextSchema, resumeContent
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "piop-review-link", "piop-html-preview"]);
 
 export function isContextInjection(message: { role?: string; customType?: string }) {
-  return message.role === "custom" && !SYSTEM_MESSAGES.has(message.customType ?? "") && !["pi-desktop-btw", "piop-subagent-result", "piop-goal-summary", "piop-session-operation"].includes(message.customType ?? "");
+  return message.role === "custom" && !SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-goal-summary", "piop-session-operation"].includes(message.customType ?? "");
 }
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
@@ -97,10 +97,9 @@ function messageTimestamp(source: WireMessage) {
 
 function messageRole(source: WireMessage): ChatMessage['role'] {
   if (source.role === "custom" && source.customType === "piop-review-feedback") return "tool";
-  const isBtw = source.role === "custom" && source.customType === "pi-desktop-btw";
   const isSystemMessage = source.role === "custom" && SYSTEM_MESSAGES.has(String(source.customType));
 
-  return source.role === 'toolResult' ? 'tool' : isBtw ? 'assistant' : isSystemMessage ? 'system' : source.role ?? 'system';
+  return source.role === 'toolResult' ? 'tool' : isSystemMessage ? 'system' : source.role ?? 'system';
 }
 
 function messageIdentity(source: WireMessage, stamp: number, entryId?: string, fallbackId?: string) {
@@ -190,7 +189,7 @@ function compactionMessage(entry: PiEntry): ChatMessage {
 }
 
 function customEntryMessage(entry: PiEntry): ChatMessage | undefined {
-  if (entry.type === "custom_message" && entry.customType !== "pi-desktop-btw" && (entry.display !== false || isContextInjection({ role: "custom", customType: entry.customType }))) {
+  if (entry.type === "custom_message" && (entry.display !== false || isContextInjection({ role: "custom", customType: entry.customType }))) {
     return normalizeMessage({ role: "custom", customType: entry.customType, details: entry.details, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp);
   }
 }

@@ -32,7 +32,7 @@ impl Session {
             return;
         }
         self.record_tool_failure(&event);
-        if !self.ephemeral && (kind(&event) == "agent_settled" || (kind(&event) == "message_end" && event["message"]["role"] == "assistant")) {
+        if kind(&event) == "agent_settled" || (kind(&event) == "message_end" && event["message"]["role"] == "assistant") {
             crate::session_registry::record(&self.state().state, self.cwd.as_deref());
         }
         self.retain_live(&event);
@@ -216,7 +216,6 @@ impl Session {
             Ok(mut capture) => {
                 capture["type"] = json!("turn_capture");
                 capture["sessionKey"] = json!(self.key());
-                capture["ephemeral"] = json!(self.ephemeral);
                 self.host.output(capture);
             }
             Err(error) => self.host.output(json!({"type":"diagnostic","line":error.to_string()})),

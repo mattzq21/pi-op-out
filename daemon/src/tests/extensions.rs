@@ -417,34 +417,6 @@ fn defined_agent_preparation_migrates_configuration_once_and_preserves_user_chan
 }
 
 #[test]
-fn temporary_snapshot_reconnects_to_the_latest_branch_and_cleans_every_owned_file() {
-    let directory = TestDirectory::new(); let runtime = PiRuntime::default();
-    let first = directory.0.join("first.jsonl"); let second = directory.0.join("second.jsonl");
-    fs::write(&first, "{}").unwrap(); fs::write(&second, "{}").unwrap();
-    runtime.ephemeral.test_sessions().lock().unwrap().insert("stable".into(), EphemeralSession::Local(first.clone()));
-    runtime.ephemeral.test_keys().lock().unwrap().insert("view".into(), "stable".into());
-    update_runtime_snapshot(&runtime, "view", &json!({"sessionFile":second,"sessionId":"branch"})).unwrap();
-    assert_eq!(runtime.ephemeral.test_sessions().lock().unwrap()["stable"].path(), second.to_string_lossy());
-    detach_pi(&runtime, "view", false).unwrap();
-    assert!(!first.exists()); assert!(!second.exists());
-    assert!(runtime.ephemeral.test_sessions().lock().unwrap().is_empty());
-}
-
-#[test]
-fn temporary_startup_preserves_remote_cleanup_metadata_and_isolates_failures() {
-    let runtime = PiRuntime::default();
-    let host = RemoteHost { enabled: true, id: "remote".into(), name: "Server".into(), target: "user@example.com".into(), pi_path: "pi".into() };
-    let saved = EphemeralSession::Remote { host, path: "/tmp/existing-fork.jsonl".into() };
-    assert_eq!(prepare_ephemeral_path(&runtime, "remote-view", Some(saved)).unwrap().as_deref(), Some("/tmp/existing-fork.jsonl"));
-    let sessions = runtime.ephemeral.test_sessions().lock().unwrap();
-    assert_eq!(sessions.len(), 1);
-    match &sessions["remote-view"] {
-        EphemeralSession::Remote { host, path } => { assert_eq!(host.target, "user@example.com"); assert_eq!(host.id, "remote"); assert_eq!(path, "/tmp/existing-fork.jsonl"); }
-        _ => panic!("remote cleanup metadata replaced"),
-    }
-}
-
-#[test]
 fn prepared_runtime_configuration_tracks_settings_and_removes_stale_values() {
     let home = TestDirectory::new();
     let _home = HomeOverride::take(&home.0);

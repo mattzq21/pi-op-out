@@ -27,7 +27,7 @@ function collectFragment(previous: Fragment | undefined, fragment: z.infer<typeo
   snapshots.set(fragment.messageId, gitDiffSnapshotSchema.parse(JSON.parse(current.chunks.join(""))));
 }
 
-export async function readGitDiffs(sessionPath: string, hostId: string, ephemeralSessionId?: string): Promise<GitDiffSnapshots> {
+export async function readGitDiffs(sessionPath: string, hostId: string): Promise<GitDiffSnapshots> {
   const snapshots = new Map<string, GitDiffSnapshot>();
   const cursors = new Set<string>();
   let cursor = "";
@@ -36,8 +36,7 @@ export async function readGitDiffs(sessionPath: string, hostId: string, ephemera
   while (true) {
     if (cursors.has(cursor)) throw new Error("Saved project changes returned a repeated page; retry loading the history");
     cursors.add(cursor);
-    const command = ephemeralSessionId ? "load_ephemeral_git_diff_page" : "load_git_diff_page";
-    const page = await nativeCall(command, { sessionPath, hostId, sessionId: ephemeralSessionId, page: cursor }, pageSchema);
+    const page = await nativeCall("load_git_diff_page", { sessionPath, hostId, page: cursor }, pageSchema);
 
     for (const [id, snapshot] of Object.entries(page.snapshots)) snapshots.set(id, snapshot);
 

@@ -4,11 +4,10 @@ use crate::RemoteHost;
 use crate::git_ops::GitDiffSnapshots;
 use super::{discard_git_tree_at_host, load_git_diff_between_at_host, storage_request};
 
-struct Storage<'a> { path: &'a str, host: Option<&'a RemoteHost>, ephemeral_id: Option<&'a str> }
+struct Storage<'a> { path: &'a str, host: Option<&'a RemoteHost> }
 
 impl Storage<'_> {
-    fn request(&self, mut request: Value) -> Result<Value, String> {
-        if let Some(id) = self.ephemeral_id { request["ephemeralSessionId"] = json!(id); }
+    fn request(&self, request: Value) -> Result<Value, String> {
         storage_request(self.path, &request, self.host)
     }
 }
@@ -64,13 +63,7 @@ fn capture_snapshot(capture: &Value, cwd: &str, baseline: &str, current: &str, h
 }
 
 pub(crate) fn capture(session_path: &str, id: &str, cwd: &str, baseline: &str, current: &str, host: Option<&RemoteHost>) -> Result<(), String> {
-    let storage = Storage { path: session_path, host, ephemeral_id: None };
-    capture_at(&storage, id, cwd, baseline, current).map(|_| ())
-}
-
-pub(crate) fn capture_ephemeral(session_path: &str, session_id: &str, id: &str, cwd: &str, baseline: &str, current: &str, host: Option<&RemoteHost>) -> Result<(), String> {
-    let storage = Storage { path: session_path, host, ephemeral_id: Some(session_id) };
-    storage.request(json!({"action":"ephemeral_validate"}))?;
+    let storage = Storage { path: session_path, host };
     capture_at(&storage, id, cwd, baseline, current).map(|_| ())
 }
 
@@ -103,12 +96,12 @@ pub(super) fn load(session_path: &str, host: Option<&RemoteHost>) -> Result<GitD
 }
 
 pub(super) fn page(session_path: &str, cursor: &str, host: Option<&RemoteHost>) -> Result<Value, String> {
-    if cursor.is_empty() { recover(session_path, host, None)?; }
+    if cursor.is_empty() { recover(session_path, host)?; }
     storage_request(session_path, &json!({"action":"page","cursor":cursor}), host)
 }
 
-pub(super) fn recover(session_path: &str, host: Option<&RemoteHost>, ephemeral_id: Option<&str>) -> Result<(), String> {
-    let storage = Storage { path: session_path, host, ephemeral_id };
+pub(super) fn recover(session_path: &str, host: Option<&RemoteHost>) -> Result<(), String> {
+    let storage = Storage { path: session_path, host };
     let mut errors = discover(&storage)?;
     let state = storage.request(json!({"action":"pending_ids"}))?;
     if let Some(ids) = state["ids"].as_array() {
@@ -125,7 +118,6 @@ pub(super) fn recover(session_path: &str, host: Option<&RemoteHost>, ephemeral_i
 fn report_recovery_errors(storage: &Storage<'_>, errors: Vec<String>) -> Result<(), String> {
     if errors.is_empty() { return Ok(()); }
     let message = format!("Pending project changes for {}, preserved: {}", storage.path, errors.join("; "));
-    if storage.ephemeral_id.is_some() { return Err(message); }
     eprintln!("{message}");
     Ok(())
 }

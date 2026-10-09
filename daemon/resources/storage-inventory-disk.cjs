@@ -6,7 +6,7 @@ const { stageCategory, observeStage } = require('./storage-inventory-transfers.c
 const snapshotMetadata = require('./snapshot-metadata.cjs');
 const { chatGptStoredCount } = require('./chatgpt-storage.mjs');
 
-const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', 'git-snapshots': 'git-diff-snapshots', 'git-diff-transfers': 'diff-transfer-staging', tmp: 'temporary-chats', worktrees: 'worktrees', 'archived-tmp': 'archived-worktrees', recovery: 'unattributed-recovery-storage', 'ephemeral-cleanup': 'ephemeral-cleanup' };
+const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', 'git-snapshots': 'git-diff-snapshots', 'git-diff-transfers': 'diff-transfer-staging', tmp: 'temporary-chats', worktrees: 'worktrees', 'archived-tmp': 'archived-worktrees', recovery: 'unattributed-recovery-storage' };
 
 function savedSnapshotIdentities(profile, warnings) {
   try { return new Set(snapshotMetadata.identities(profile)); }
@@ -308,10 +308,7 @@ async function diskStorage(profile, discovery, referencedWorktrees, git) {
 
   for (const record of discovery.chatgpt.values()) await visitRecord('chatgpt-storage', record);
   await visitCandidates(discovery.legacy, 'legacy-recovery-storage');
-  await visitCandidates(discovery.ephemeral, 'ephemeral-storage');
 
-  await visitKnownRecords(discovery.cleanup, 'ephemeral-cleanup');
-  counts.set('ephemeral-cleanup', discovery.cleanupRecordCount);
 
   await visitKnownRecords(discovery.pendingSnapshots, 'pending-diff-snapshots');
 

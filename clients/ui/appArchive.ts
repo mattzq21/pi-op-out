@@ -53,12 +53,6 @@ export function createConversationArchive(context: ArchiveContext) {
 
     const ownerTransport = runtimePool().forSession(session);
 
-    if (ownerTransport.isEphemeral()) {
-      addNotice({ title: "Temporary conversation", message: "Temporary side conversations cannot be archived." });
-
-      return;
-    }
-
     if (confirm && !window.confirm(`Archive “${session.name}”?`)) return;
 
     return ownerTransport;

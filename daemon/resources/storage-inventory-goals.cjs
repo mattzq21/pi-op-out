@@ -33,7 +33,7 @@ function observeGoalContract(observation, entry) {
   }
 }
 
-function goalOwner(record) { return Boolean(record?.owners.some(owner => ['fork-history', 'fork-dependency-history'].includes(owner.kind) || /^(active|archived|ephemeral|referenced)-goal-(history|contract|dependency)$/.test(owner.kind))); }
+function goalOwner(record) { return Boolean(record?.owners.some(owner => ['fork-history', 'fork-dependency-history'].includes(owner.kind) || /^(active|archived|referenced)-goal-(history|contract|dependency)$/.test(owner.kind))); }
 
 async function directoryIdentity(directory) {
   const metadata = await fs.lstat(directory, { bigint: true });

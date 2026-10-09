@@ -12,33 +12,30 @@ use crate::platform::State;
 use uuid::Uuid;
 use crate::{AgentAddress, AppSettings, BlankSessionCleanup, BrokerRuntime, BusyAgent, RemoteHost, cleanup_blank_session, daemon};
 use crate::archives::{archived_session_file, desktop_session_file};
-use crate::pi_launch::{PiLaunch, build_pi_command, cleanup_runtime_ephemeral, prepare_ephemeral_path, remote_host, session_identity};
+use crate::pi_launch::{PiLaunch, build_pi_command, remote_host, session_identity};
 use crate::session_index::{validate_session_working_directory};
 use crate::settings::{load_app_settings};
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct StartPiOptions { pub(super) runtime_id: String, pub(super) cwd: Option<String>, pub(super) session_path: Option<String>, pub(super) session_id: Option<String>, pub(super) fork_path: Option<String>, pub(super) no_session: Option<bool>, pub(super) host_id: Option<String>, pub(super) presence: Option<Value>, pub(super) client_id: String }
+pub(super) struct StartPiOptions { pub(super) runtime_id: String, pub(super) cwd: Option<String>, pub(super) session_path: Option<String>, pub(super) session_id: Option<String>, pub(super) fork_path: Option<String>, pub(super) host_id: Option<String>, pub(super) presence: Option<Value>, pub(super) client_id: String }
 
 struct PreparedPiSession {
     host_id: String,
     session_id: Option<String>,
     session_path: Option<String>,
     fork_path: Option<String>,
-    ephemeral_path: Option<String>,
-    ephemeral: bool,
 }
 
 impl PreparedPiSession {
     fn claim_id(&self, settings: &AppSettings) -> Result<Option<String>, String> {
-        if self.ephemeral { return Ok(None); }
         if let Some(id) = &self.session_id { return Ok(Some(id.clone())); }
         self.session_path.as_deref().map(|path| session_identity(settings, &self.host_id, path)).transpose()
     }
 
     fn claim(&self, broker: &BrokerRuntime, claim_id: Option<&str>, presence: Option<&Value>) -> Result<Option<BusyAgent>, String> {
         if presence.is_some_and(|value| value["readOnly"] == true) {
-            if self.session_path.is_none() || self.ephemeral || self.fork_path.is_some() {
+            if self.session_path.is_none() || self.fork_path.is_some() {
                 return Err("A read-only view requires a saved conversation".into());
             }
             return Ok(None);
@@ -49,29 +46,18 @@ impl PreparedPiSession {
     fn launch<'a>(&'a self, options: &'a StartPiOptions) -> PiLaunch<'a> {
         PiLaunch::Rpc {
             cwd: options.cwd.as_deref(),
-            session_path: self.ephemeral_path.as_deref().or(self.session_path.as_deref()),
+            session_path: self.session_path.as_deref(),
             session_id: self.session_id.as_deref(),
-            fork_path: if self.ephemeral_path.is_some() { None } else { self.fork_path.as_deref() },
-            no_session: self.ephemeral && self.ephemeral_path.is_none(),
+            fork_path: self.fork_path.as_deref(),
         }
     }
 }
 
-fn prepare_pi_session(runtime: &PiRuntime, settings: &AppSettings, host_id: String, options: &StartPiOptions) -> Result<PreparedPiSession, String> {
+fn prepare_pi_session(settings: &AppSettings, host_id: String, options: &StartPiOptions) -> Result<PreparedPiSession, String> {
     let session_id = options.session_id.clone().or_else(|| (options.session_path.is_none() && options.fork_path.is_none()).then(|| Uuid::new_v4().to_string()));
-    let ephemeral_key = format!("{}:{}:{}", host_id, options.client_id, options.runtime_id.rsplit(':').next().unwrap_or(&options.runtime_id));
-    let saved_ephemeral = reusable_ephemeral(runtime, options, &ephemeral_key)?;
-    let ephemeral = options.no_session.unwrap_or(false) || saved_ephemeral.is_some();
-    let session_path = if ephemeral { None } else { saved_pi_path(settings, &host_id, options)? };
+    let session_path = saved_pi_path(settings, &host_id, options)?;
     let fork_path = options.fork_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()?;
-    let ephemeral_path = prepare_ephemeral_path(runtime, &ephemeral_key, saved_ephemeral)?;
-    if ephemeral_path.is_some() { runtime.ephemeral.attach(&options.runtime_id, ephemeral_key)?; }
-    Ok(PreparedPiSession { host_id, session_id, session_path, fork_path, ephemeral_path, ephemeral })
-}
-
-fn reusable_ephemeral(runtime: &PiRuntime, options: &StartPiOptions, key: &str) -> Result<Option<crate::pi_launch::EphemeralSession>, String> {
-    let persistent_target = !options.no_session.unwrap_or(false) && (options.session_path.is_some() || options.session_id.is_some());
-    if persistent_target { Ok(None) } else { runtime.ephemeral.get(key) }
+    Ok(PreparedPiSession { host_id, session_id, session_path, fork_path })
 }
 
 fn saved_pi_path(settings: &AppSettings, host_id: &str, options: &StartPiOptions) -> Result<Option<String>, String> {
@@ -106,7 +92,7 @@ pub(super) fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<P
     let read_only = options.presence.as_ref().is_some_and(|presence| presence["readOnly"] == true);
     let settings = session_launch_settings(app.clone(), &host_id, options.cwd.as_deref(), read_only)?;
     if runtime_is_attached(&runtime, &options.runtime_id, &settings, &host_id)? { return Ok(json!({"attached":true})); }
-    let session = prepare_pi_session(&runtime, &settings, host_id, &options)?;
+    let session = prepare_pi_session(&settings, host_id, &options)?;
     let claim_id = session.claim_id(&settings)?;
     let _agent_claim = session.claim(&broker, claim_id.as_deref(), options.presence.as_ref())?;
     attach_pi_session(&app, owner, &runtime, &broker, &settings, options, (session, claim_id))
@@ -117,9 +103,9 @@ fn attach_pi_session(app: &AppHandle, owner: String, runtime: &PiRuntime, broker
     let daemon = daemon::connect(app, runtime, broker, settings, &session.host_id)?;
     let command = build_pi_command(broker, settings, &session.host_id, session.launch(&options), daemon.remote_port)?;
     let StartPiOptions { runtime_id, cwd, presence, client_id, .. } = options;
-    let PreparedPiSession { host_id, session_id, session_path, ephemeral, .. } = session;
-    let result = daemon.request(json!({"type":"attach","clientId":client_id,"runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":630_000,"ephemeral":ephemeral,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
-    let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(settings, &host_id)?.clone()) }, submitted: ephemeral };
+    let PreparedPiSession { host_id, session_id, session_path, .. } = session;
+    let result = daemon.request(json!({"type":"attach","clientId":client_id,"runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":630_000,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
+    let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(settings, &host_id)?.clone()) }, submitted: false };
     runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: owner, blank_cleanup });
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: cwd, working: false, messageable: result["owned"].as_bool() == Some(false) });
     Ok(result)
@@ -138,10 +124,7 @@ pub(super) fn detach_pi_with(runtime: &PiRuntime, runtime_id: &str, discard_blan
             stopped = true;
             process.blank_cleanup.submitted |= result["submitted"].as_bool().unwrap_or(false);
             if discard_blank { cleanup_blank_session(process.blank_cleanup); }
-            cleanup_runtime_ephemeral(runtime, runtime_id)?;
         }
-    } else {
-        cleanup_runtime_ephemeral(runtime, runtime_id)?;
     }
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.remove(runtime_id);
     Ok(stopped)
@@ -228,11 +211,9 @@ pub(super) fn shutdown(runtime: &PiRuntime) {
     let daemons = runtime.connections.snapshot();
     for daemon in &daemons { daemon.shutdown(); }
     for daemon in daemons { daemon.wait_shutdown(); let _ = daemon.drain_captures(None); }
-    crate::pi_launch::cleanup_all_ephemeral(runtime);
 }
 
 pub(super) fn update_runtime_snapshot(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
-        crate::pi_launch::update_ephemeral_snapshot(runtime, runtime_id, state)?;
         if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(runtime_id) {
             if let Some(path) = state["sessionFile"].as_str() { process.blank_cleanup.path = Some(path.into()); }
             if let Some(id) = state["sessionId"].as_str() { process.blank_cleanup.id = Some(id.into()); }
@@ -254,7 +235,6 @@ struct PiProcess {
 #[derive(Default)]
 pub(super) struct PiRuntime {
     pub(super) setups: crate::git_ops::worktree_setup::WorktreeSetups,
-    pub(super) ephemeral: crate::pi_launch::EphemeralSessions,
     pub(super) connections: daemon::DaemonRegistry,
     processes: Arc<Mutex<HashMap<String, PiProcess>>>,
     pub(super) lifecycle: Mutex<()>,

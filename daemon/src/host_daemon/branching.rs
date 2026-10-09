@@ -24,7 +24,7 @@ async fn checkpoint(host: &Host, session: &Session, command: Value) -> Result<Va
     let state = session.execute(json!({"type":"get_state"})).await?;
     let path = state["sessionFile"].as_str().filter(|path| !path.is_empty()).ok_or("The conversation has no session file")?;
     host.flush_capture(&session.key()).await?;
-    if !session.ephemeral { crate::git_ops::git_diff_retry::retry_pending_git_diffs(path, None)?; }
+    crate::git_ops::git_diff_retry::retry_pending_git_diffs(path, None)?;
     session.raw(command).await
 }
 
@@ -112,17 +112,13 @@ fn destination_header(path: &str) -> Result<Value> {
 }
 
 async fn destination_ownership(host: &Host, session: &Session, destination: &Destination) -> Result<Guard> {
-    if session.ephemeral {
-        Ok(Guard::ephemeral())
-    } else {
-        host.ownership()
-            .begin(
-                &destination.key,
-                &session.client_id(),
-                &json!({"path":destination.existing.then_some(&destination.path),"create":!destination.existing}),
-            )
-            .await
-    }
+    host.ownership()
+        .begin(
+            &destination.key,
+            &session.client_id(),
+            &json!({"path":destination.existing.then_some(&destination.path),"create":!destination.existing}),
+        )
+        .await
 }
 
 async fn attach_readonly(host: &Host, session: &Session, runtime: &str, destination: Destination) -> Result<Value> {
@@ -169,7 +165,6 @@ async fn open_destination(host: &Arc<Host>, session: &Arc<Session>, runtime: &st
             key: destination.key,
             spec: destination.spec,
             timeout: session.timeout,
-            ephemeral: session.ephemeral,
             transient: false,
             client_id: session.client_id(),
             cwd: destination.cwd,
@@ -215,15 +210,12 @@ async fn transfer(host: &Arc<Host>, session: &Arc<Session>, next: &Arc<Session>,
     host.reconcile(next.clone());
     host.remember(runtime, next);
     if host.current(runtime, next) {
-        next.publish(json!({"type":"session_switched","ephemeral":next.ephemeral}), Some(runtime));
+        next.publish(json!({"type":"session_switched"}), Some(runtime));
     }
     Ok(json!({}))
 }
 
 async fn finish_transfer(host: &Host, session: &Session) -> Result<()> {
-    if session.ephemeral && session.views().is_empty() {
-        session.stop().await;
-    }
     host.release_unused(session).await
 }
 
@@ -256,12 +248,12 @@ impl Branch<'_> {
         let destination = validate_prepared(self.host, &branch, self.state, self.path)?;
         let opened = self.open(&branch, &destination).await.map_err(|error| retained_branch(&destination, error))?;
         self.commit(&opened).await.map_err(|error| retained_branch(&destination, error))?;
-        Ok(json!({"cancelled":false, "text":branch["text"], "state":{"sessionId":branch["sessionId"], "sessionFile":destination, "cwd":branch["cwd"], "ephemeral":false}}))
+        Ok(json!({"cancelled":false, "text":branch["text"], "state":{"sessionId":branch["sessionId"], "sessionFile":destination, "cwd":branch["cwd"]}}))
     }
 
     fn spawn(&self, key: String, spec: LaunchSpec) -> Result<Arc<Session>> {
         self.host.spawn_session(SessionLaunch {
-            key, spec, timeout: self.session.timeout, ephemeral: false, transient: true,
+            key, spec, timeout: self.session.timeout, transient: true,
             client_id: self.session.client_id(), cwd: self.session.cwd.clone(),
         })
     }
@@ -309,7 +301,7 @@ impl Branch<'_> {
         self.host.release_unused(self.session).await?;
         self.host.reconcile(opened.clone());
         if self.host.current(self.runtime, opened) {
-            opened.publish(json!({"type":"session_switched","ephemeral":opened.ephemeral}), Some(self.runtime));
+            opened.publish(json!({"type":"session_switched"}), Some(self.runtime));
         }
         Ok(())
     }

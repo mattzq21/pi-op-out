@@ -177,7 +177,7 @@ export function targetedWindowSession(target: string): NativeConnectionTarget {
   } catch { return initial; }
 }
 
-export function useSessionResume(selection: Accessor<{ target: NativeConnectionTarget; ready: boolean; saved: boolean; ephemeral: boolean }>) {
+export function useSessionResume(selection: Accessor<{ target: NativeConnectionTarget; ready: boolean; saved: boolean }>) {
   let key: string | undefined;
 
   try { key = storageKey(); } catch { }
@@ -185,7 +185,7 @@ export function useSessionResume(selection: Accessor<{ target: NativeConnectionT
   createDependencyEffect(() => {
     const current = selection();
 
-    if (!key || !current.ready || current.ephemeral) return;
+    if (!key || !current.ready) return;
 
     try {
       if (current.saved && current.target.sessionId && current.target.sessionPath) saveTarget(key, savedSessionTargetSchema.parse(current.target));
