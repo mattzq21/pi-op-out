@@ -1,3 +1,4 @@
+import { createPanelSize } from "../lib/panelSize";
 import { createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type CSSProperties, type JSXElement } from "../lib/solid";
 
@@ -10,15 +11,7 @@ const maximumWidth = () => Math.max(MIN_WIDTH, Math.floor(window.innerWidth / 2)
 export function ResizableSidebar(componentProps: { compact: boolean; children: JSXElement }) {
   const [maxWidth, setMaxWidth] = createSignal((maximumWidth)());
 
-  const [width, setWidth] = createSignal((() => {
-    try {
-      const saved = Number(localStorage.getItem(WIDTH_KEY));
-
-      if (Number.isFinite(saved) && saved >= MIN_WIDTH) return saved;
-    } catch { }
-
-    return window.innerWidth <= 1050 ? 232 : 260;
-  })());
+  const [width, setWidth] = createPanelSize(WIDTH_KEY, window.innerWidth <= 1050 ? 232 : 260, MIN_WIDTH);
 
   const [dragging, setDragging] = createSignal(false);
   const drag = createRef<{ pointerId: number; x: number; width: number } | null>(null);
@@ -31,11 +24,6 @@ export function ResizableSidebar(componentProps: { compact: boolean; children: J
 
     return () => window.removeEventListener("resize", onResize);
   }, () => []);
-
-  createDependencyEffect(() => { const capturedWidth = width();
-
-    try { localStorage.setItem(WIDTH_KEY, String(capturedWidth)); } catch { }
-  }, () => [width()]);
 
   createDependencyEffect(() => { const capturedDragging = dragging(); const capturedCompact0 = componentProps.compact;
 

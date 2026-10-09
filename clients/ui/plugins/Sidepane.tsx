@@ -1,17 +1,8 @@
+import { createPanelSize } from "../lib/panelSize";
 import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 
-function savedWidth() {
-  try {
-    const value = Number(localStorage.getItem("piop-sidepane-width") ?? localStorage.getItem("piop-notes:width"));
-
-    if (Number.isFinite(value) && value >= 300) return value;
-  } catch {}
-
-  return 420;
-}
-
 export function Sidepane(props: { open: boolean; children: JSX.Element }) {
-  const [width, setWidth] = createSignal(savedWidth());
+  const [width, setWidth] = createPanelSize("piop-sidepane-width", 420, 300, ["piop-notes:width"]);
   const [available, setAvailable] = createSignal(window.innerWidth);
   const [dragging, setDragging] = createSignal(false);
   const maximum = () => Math.max(0, Math.floor(available() * .6));
@@ -23,8 +14,6 @@ export function Sidepane(props: { open: boolean; children: JSX.Element }) {
   const resize = (value: number) => {
     const next = Math.round(Math.min(maximum(), Math.max(minimum(), value)));
     setWidth(next);
-
-    try { localStorage.setItem("piop-sidepane-width", String(next)); } catch {}
   };
 
   onMount(() => {

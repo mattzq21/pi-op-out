@@ -1,3 +1,4 @@
+import { createPanelSize } from "../lib/panelSize";
 import { createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type CSSProperties, type JSXElement } from "../lib/solid";
 
@@ -10,15 +11,7 @@ const maximumHeight = () => Math.max(MIN_HEIGHT, Math.floor(window.innerHeight *
 export function ResizableTerminalPanel(componentProps: { children: JSXElement }) {
   const [maxHeight, setMaxHeight] = createSignal((maximumHeight)());
 
-  const [height, setHeight] = createSignal((() => {
-    try {
-      const saved = Number(localStorage.getItem(HEIGHT_KEY));
-
-      if (Number.isFinite(saved) && saved >= MIN_HEIGHT) return saved;
-    } catch { }
-
-    return Math.max(210, Math.min(380, Math.round(window.innerHeight * 0.34)));
-  })());
+  const [height, setHeight] = createPanelSize(HEIGHT_KEY, Math.max(210, Math.min(380, Math.round(window.innerHeight * 0.34))), MIN_HEIGHT);
 
   const [dragging, setDragging] = createSignal(false);
   const drag = createRef<{ pointerId: number; y: number; height: number } | null>(null);
@@ -31,11 +24,6 @@ export function ResizableTerminalPanel(componentProps: { children: JSXElement })
 
     return () => window.removeEventListener("resize", onResize);
   }, () => []);
-
-  createDependencyEffect(() => { const capturedHeight = height();
-
-    try { localStorage.setItem(HEIGHT_KEY, String(capturedHeight)); } catch { }
-  }, () => [height()]);
 
   createDependencyEffect(() => { const capturedDragging = dragging();
 
