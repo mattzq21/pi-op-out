@@ -342,6 +342,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     for (name, content) in [
         ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
         ("../worktree-allocation.cjs", include_str!("../../resources/worktree-allocation.cjs")),
+        ("../worktree-creation.cjs", include_str!("../../resources/worktree-creation.bundle.mjs")),
         ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
         ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
         ("pin-checkpoints.ts", include_str!("../../../extensions/piop-diff-watch/pin-checkpoints.ts")),

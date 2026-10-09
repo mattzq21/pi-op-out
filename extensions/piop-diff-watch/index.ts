@@ -1,4 +1,5 @@
-import { GitError, runGit, acquireWorktreePublicationLock, markWorktreeAllocation, createWorktreeAllocation, cleanupCheckpointContainer } from "./git.ts";
+import { create as createRecoverableWorktree } from "../worktree-creation.cjs";
+import { GitError, runGit, acquireWorktreePublicationLock, cleanupCheckpointContainer } from "./git.ts";
 import { pinPromptHistory, removePinnedCheckpoints, type PinnedCheckpoint } from "./pin-checkpoints.ts";
 import { currentSnapshot } from "./snapshot-baseline.ts";
 import { registerPreparedCheckpoints } from "./fork-preparation.ts";
@@ -13,7 +14,7 @@ import { existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const REF_ROOT = "refs/pi-session-snapshots";
@@ -260,40 +261,12 @@ function resolvePromptCommit(root: string, owner: string, key: string) {
   return resolveRef(root, promptRef(owner, key)).catch(() => undefined);
 }
 
-async function checkpointWorktreeTarget(root: string, branch: string) {
-  const parentBranch = await runGit(root, ["symbolic-ref", "--quiet", "HEAD"]).then((value) => value.trim()).catch(() => null);
-  const listed = await runGit(root, ["worktree", "list", "--porcelain", "-z"]);
-  const worktrees = listed.split("\0").filter((entry) => entry.startsWith("worktree ")).map((entry) => entry.slice(9));
-
-  if (!worktrees.length) throw new Error("Could not locate the main checkout");
-  const project = basename(worktrees[0]);
-
-  if (!project) throw new Error("Git repository directory has no name");
-  const storage = join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "worktrees");
-  await mkdir(storage, { recursive: true, mode: 0o700 });
-  await markWorktreeAllocation(storage);
-  const container = join(storage, randomUUID().slice(0, 4));
-  const target = join(container, project);
-
-  if (worktrees.includes(target)) throw new Error(`Git worktree is already registered: ${target}`);
-
-  createWorktreeAllocation(container, target, branch, parentBranch);
-
-  return target;
-}
-
 async function createCheckpointWorktree(root: string, branch: string, commit: string) {
   const lock = await acquireWorktreePublicationLock();
-  let target: string | undefined;
 
   try {
-    target = await checkpointWorktreeTarget(root, branch);
-    await assertWorktreeAvailable(root, branch, target);
-    await runGit(root, ["worktree", "add", "-b", branch, target, commit], {}, undefined, lock.fd);
-
-    return target;
-  } catch (error) { if (target) await cleanupCheckpointContainer(target); throw error; }
-  finally { await lock.close(); }
+    return createRecoverableWorktree(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"), await realpath(root), branch, commit, false);
+  } finally { await lock.close(); }
 }
 
 async function branchCheckpoint(pi: ExtensionAPI, ctx: ExtensionContext, entryId: string, name: string, afterResponse = false) {
@@ -427,18 +400,6 @@ async function checkpointBranchName(root: string, name: string) {
   await runGit(root, ["check-ref-format", "--branch", branch]);
 
   return branch;
-}
-
-async function assertWorktreeAvailable(root: string, branch: string, target: string) {
-  const existingBranch = await runGit(root, ["show-ref", "--verify", `refs/heads/${branch}`]).catch(() => "");
-
-  if (existingBranch) throw new Error("Branch already exists");
-  const before = await runGit(root, ["worktree", "list", "--porcelain"]);
-
-  if (before.split("\n").includes(`worktree ${target}`)) throw new Error("Worktree already exists");
-
-  try { await lstat(target); throw new Error("Worktree directory already exists"); } catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error; }
-
 }
 
 async function branchSessionEntries(ctx: ExtensionContext, root: string, id: string, history: CheckpointHistory, owner: string, checkpoint: PromptCheckpoint, timestamp: string, target: string, afterResponse: boolean, entryId: string, createdRefs: PinnedCheckpoint[]) {

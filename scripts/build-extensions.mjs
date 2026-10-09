@@ -62,11 +62,12 @@ async function mcpBridge() {
 }
 
 async function backendScripts() {
-  const scripts = ["worktree-storage", "cleanup-ephemeral-session", "session-descendants", "archive-conversations", "archive-worktree", "restore-archived-worktree", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "preserve-archive-checkpoints", "capture-git-diff", "publish-fork", "embedded-diff-store", "session-registry", "recover-missing-session"];
+  const scripts = ["project-branches", "worktree-storage", "cleanup-ephemeral-session", "session-descendants", "archive-conversations", "archive-worktree", "restore-archived-worktree", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "preserve-archive-checkpoints", "capture-git-diff", "publish-fork", "embedded-diff-store", "session-registry", "recover-missing-session"];
 
   const commandInputs = await agentCommandInputs();
 
   await buildInParallel([
+    buildBundle({ entryPoints: ["daemon/resources/worktree-creation.cjs"], bundle: true, platform: "node", format: "cjs", target: "node22", minify: true, plugins: [storageSchemaImports()] }, "daemon/resources/worktree-creation.bundle.mjs", { script: import.meta.url, inputs: ["scripts/storage-schema-plugin.mjs"] }),
     ...scripts.map(async name => {
       await buildBundle({
         entryPoints: [`daemon/resources/${name}.${name === "capture-git-diff" ? "ts" : "cjs"}`],

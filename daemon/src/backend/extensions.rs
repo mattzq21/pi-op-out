@@ -241,6 +241,7 @@ fn remove_legacy_diff_assets(dir: &Path) -> Result<(), String> {
 fn prepare_diff_storage(dir: &Path) -> Result<(), String> {
     ensure_private_dir(dir)?;
     atomic_write_private(&dir.join("../worktree-allocation.cjs"), include_str!("../../resources/worktree-allocation.cjs").as_bytes())?;
+    atomic_write_private(&dir.join("../worktree-creation.cjs"), include_str!("../../resources/worktree-creation.bundle.mjs").as_bytes())?;
     atomic_write_private(&dir.join("../session-database.cjs"), include_str!("../../resources/session-database.cjs").as_bytes())
 }
 

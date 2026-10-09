@@ -347,6 +347,14 @@ function restoreRecord(transaction, record) {
 function prepareRollbackCopy(transaction, record) {
   if (record.rollbackIdentity) return;
 
+  if (!io.matches(record.backup, record.backupIdentity)) throw new Error('Archive backup changed; retained');
+
+  if (io.exists(record.rollbackCopy) && !io.sameContents(record.rollbackCopy, record.backupIdentity)) {
+    if (!fs.lstatSync(record.rollbackCopy).isFile()) throw new Error('Archive rollback copy is not a regular file');
+    fs.unlinkSync(record.rollbackCopy);
+    io.sync(transaction.container);
+  }
+
   if (!io.exists(record.rollbackCopy)) fs.copyFileSync(record.backup, record.rollbackCopy, fs.constants.COPYFILE_EXCL);
 
   if (!io.sameContents(record.rollbackCopy, record.backupIdentity)) throw new Error(`Archive rollback copy is ambiguous; retained: ${record.rollbackCopy}`);

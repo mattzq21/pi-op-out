@@ -1,7 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { randomUUID } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 const [cwd, storage, selected] = process.argv.slice(1);
@@ -29,32 +28,6 @@ function worktrees() {
   });
 }
 
-function checkout(branch, trees, descriptor) {
-  const existing = trees.find((tree) => tree.branch === branch);
-
-  if (existing) {
-    if (!existing.path || !fs.existsSync(existing.path)) throw new Error('The branch worktree is unavailable');
-
-    return existing.path;
-  }
-
-  const root = path.join(os.homedir(), storage, 'worktrees');
-  const project = path.basename(trees[0].path);
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  require('./session-database.cjs').markCleanup(path.dirname(root), 'worktree');
-  const container = path.join(root, randomUUID().slice(0, 4));
-
-  const target = path.join(container, project);
-  require('./worktree-allocation.cjs').create(container, target, branch, null);
-
-  try {
-    git(['worktree', 'add', '--', target, branch], descriptor);
-
-    return target;
-  } catch (error) { require('./worktree-allocation.cjs').cleanup(target);
-
-  throw error; }
-}
 
 try {
   let root;
@@ -69,6 +42,6 @@ try {
 
   if (selected && !branches.includes(selected)) throw new Error('Branch no longer exists');
   const trees = worktrees();
-  const directory = selected ? withCreationLock(descriptor => checkout(selected, worktrees(), descriptor)) : root;
+  const directory = selected ? withCreationLock(() => require('./worktree-creation.cjs').checkout(path.join(os.homedir(), storage), fs.realpathSync(root), selected)) : root;
   process.stdout.write(JSON.stringify({ branches, current: selected || current, path: directory, mainPath: trees[0].path }));
 } catch (error) { console.error(error.message); process.exitCode = 1; }

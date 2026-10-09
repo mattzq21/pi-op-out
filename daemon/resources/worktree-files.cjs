@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const io = require('./session-transactions.cjs');
+const references = require('./worktree-references.cjs');
 
 function git(plan, args, options = {}) {
   return execFileSync('git', ['-C', plan.source, '-c', 'core.fsync=all', '-c', 'core.fsyncMethod=fsync', ...args], { encoding: 'buffer', maxBuffer: 256 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], ...options });
@@ -111,14 +112,14 @@ function captureEntry(plan, name, files, submodules, excludedFiles, lock) {
 
   if (files.has(key)) return;
 
-  if (submodules.has(key)) {
+  const file = join(plan.source, name);
+  const metadata = info(file);
+
+  if (submodules.has(key) && metadata?.isDirectory()) {
     files.set(key, submodules.get(key));
 
     return;
   }
-
-  const file = join(plan.source, name);
-  const metadata = info(file);
 
   if (!metadata) {
     if (excludedFiles.has(key)) files.set(key, excludedFiles.get(key));
@@ -129,15 +130,19 @@ function captureEntry(plan, name, files, submodules, excludedFiles, lock) {
   if (metadata.isDirectory()) {
     files.set(key, { name: key, mode: '040000', object: null });
 
-    for (const child of fs.readdirSync(file, { encoding: 'buffer' })) {
-      if (!child.equals(Buffer.from('.git'))) captureEntry(plan, Buffer.concat([name, Buffer.from('/'), child]), files, submodules, excludedFiles, lock);
-    }
+    captureChildren(plan, name, file, files, submodules, excludedFiles, lock);
 
     return;
   }
 
   const mode = metadata.isSymbolicLink() ? '120000' : metadata.mode & 0o111 ? '100755' : '100644';
   files.set(key, { name: key, mode, object: blob(plan, file, metadata, lock) });
+}
+
+function captureChildren(plan, name, file, files, submodules, excludedFiles, lock) {
+  for (const child of fs.readdirSync(file, { encoding: 'buffer' })) {
+    if (!child.equals(Buffer.from('.git'))) captureEntry(plan, Buffer.concat([name, Buffer.from('/'), child]), files, submodules, excludedFiles, lock);
+  }
 }
 
 function tree(plan, files, lock) {
@@ -192,11 +197,18 @@ function capture(plan, lock) {
     files = [...captured.values()];
   }
 
+  let symlinks = true;
+
+  try { symlinks = git(plan, ['config', '--bool', 'core.symlinks']).toString('ascii').trim() !== 'false'; }
+  catch (error) { if (error.status !== 1) throw error; }
+
+  if (!symlinks) for (const file of files) { if (file.mode === '120000') { file.mode = '100644'; delete file.checkout; } }
+
   const object = tree(plan, files, lock);
-  git(plan, ['update-ref', `refs/piop-worktree-content/${plan.id}`, object], { stdio: ['ignore', 'pipe', 'pipe', lock] });
+  references.update(plan, 'content', object, lock);
   convertCheckout(plan, files, object, lock);
   const converted = tree(plan, files, lock);
-  git(plan, ['update-ref', `refs/piop-worktree-content/${plan.id}`, converted], { stdio: ['ignore', 'pipe', 'pipe', lock] });
+  references.update(plan, 'content', converted, lock);
 
   return files;
 }
