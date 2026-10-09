@@ -17,19 +17,20 @@ function open(root) {
   } catch (error) { db.close(); throw error; }
 }
 
-function read(root) {
-  const db = open(root);
+function readFile(file) {
+  const db = open(path.dirname(file));
+  const name = path.basename(file);
 
   try {
     db.exec('BEGIN IMMEDIATE');
-    const row = db.prepare("SELECT body FROM application_settings WHERE name='settings.json'").get();
+    const row = db.prepare('SELECT body FROM application_settings WHERE name=?').get(name);
     let body = row?.body ?? null;
 
     if (!row) {
-      try { body = fs.readFileSync(path.join(root, 'settings.json')); }
+      try { body = fs.readFileSync(file); }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
 
-      db.prepare("INSERT INTO application_settings (name, body) VALUES ('settings.json', ?)").run(body);
+      db.prepare('INSERT INTO application_settings (name, body) VALUES (?, ?)').run(name, body);
     }
 
     db.exec('COMMIT');
@@ -38,4 +39,16 @@ function read(root) {
   } finally { db.close(); }
 }
 
-module.exports = { read };
+function read(root) { return readFile(path.join(root, 'settings.json')); }
+
+function write(file, body) {
+  JSON.parse(body);
+  const db = open(path.dirname(file));
+
+  try {
+    db.prepare('INSERT INTO application_settings VALUES (?, ?, 1) ON CONFLICT(name) DO UPDATE SET body=excluded.body, legacy_imported=1')
+      .run(path.basename(file), Buffer.from(body));
+  } finally { db.close(); }
+}
+
+module.exports = { read, readFile, write };

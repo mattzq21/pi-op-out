@@ -40,8 +40,15 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     atomic_write_private(&dir.join("sdk-storage.mjs"), include_str!("../../resources/sdk-storage.mjs").as_bytes())?;
     atomic_write_private(&dir.join("provider-accounts.mjs"), include_str!("../../resources/provider-accounts.bundle.mjs").as_bytes())?;
     atomic_write_private(&path, include_str!("../../../extensions/piop-runtime-settings/index.ts").as_bytes())?;
-    atomic_write_private(&dir.join("runtime-settings.json"), &serde_json::to_vec(&runtime_settings(settings)).map_err(|error| error.to_string())?)?;
+    save_runtime_settings(&dir, settings)?;
     Ok(path)
+}
+
+fn save_runtime_settings(dir: &std::path::Path, settings: &AppSettings) -> Result<(), String> {
+    atomic_write_private(&dir.join("app-settings.cjs"), include_str!("../../resources/session-broker/app-settings.cjs").as_bytes())?;
+    let body = serde_json::to_vec(&runtime_settings(settings)).map_err(|error| error.to_string())?;
+    crate::settings_storage::records::publish(&dir.join("runtime-settings.json"), &body)?;
+    Ok(())
 }
 
 pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 51] = [

@@ -29,7 +29,8 @@ pub(crate) fn debug_runtime() -> Result<Value, String> {
             "daemonDirectory":directory()?,
             "daemonLog":directory()?.join("daemon.log"),
             "extensionRoot":extension_root,
-            "runtimeSettingsPath":extension_root.join("runtime-settings.json")
+            "runtimeSettingsDatabase":extension_root.join("sessions.sqlite"),
+            "runtimeSettingsRecord":"runtime-settings.json"
         }))
     }).clone()
 }

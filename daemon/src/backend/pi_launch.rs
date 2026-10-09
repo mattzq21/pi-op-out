@@ -218,6 +218,8 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let runtime_configuration = shell_quote(include_str!("../../resources/runtime-configuration.cjs"));
     let sdk_storage = shell_quote(include_str!("../../resources/sdk-storage.mjs"));
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
+    let settings_storage = shell_quote(include_str!("../../resources/session-broker/app-settings.cjs"));
+    let save_runtime_settings = shell_quote("require(process.argv[1]).write(process.argv[2], process.argv[3])");
     let broker = shell_quote(include_str!("../../resources/session-broker.ts"));
     let session_diff_store = shell_quote(include_str!("../../resources/session-diff-store.cjs"));
     let session_database = shell_quote(include_str!("../../resources/session-database.cjs"));
@@ -246,7 +248,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = if DEVELOPMENT { remote } else { format!(r#"{remote} && flock --exclusive --wait 10 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/config.lock" sh -c {} && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#, shell_quote(&config_migration)) };
      let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode" && printf %s {fast_mode} > "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts""#);
      let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit" && printf %s {session_cost_limit} > "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts""#);
-    let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json""#);
+    let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" && printf %s {settings_storage} > "$HOME/{STORAGE_DIRECTORY}/app-settings.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" "$HOME/{STORAGE_DIRECTORY}/app-settings.cjs" && node -e {save_runtime_settings} "$HOME/{STORAGE_DIRECTORY}/app-settings.cjs" "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json" {runtime_settings_config}"#);
     let remote = format!(r#"{remote} && printf %s {provider_accounts} > "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs""#);
     let remote = format!(r#"{remote} && printf %s {app_rpc} > "$HOME/{STORAGE_DIRECTORY}/runtime-bridge.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-bridge.cjs""#);
     let remote = format!(r#"{remote} && printf %s {runtime_configuration} > "$HOME/{STORAGE_DIRECTORY}/runtime-configuration.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-configuration.cjs""#);

@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
-import { readFile } from "node:fs/promises";
+import { readFile as readSettings } from "./app-settings.cjs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionContext, ExtensionCommandContext, InputEvent, InputEventResult } from "@earendil-works/pi-coding-agent";
@@ -245,7 +245,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
 
   await refreshAccounts();
 
-  if (!storedSettings()) setGlobal(key, validate(JSON.parse(await readFile(process.env.PIOP_RUNTIME_SETTINGS_PATH || join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"), "utf8"))));
+  if (!storedSettings()) setGlobal(key, validate(readSettings(process.env.PIOP_RUNTIME_SETTINGS_PATH || join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"))));
 
   const current = () => { const value = storedSettings();
 

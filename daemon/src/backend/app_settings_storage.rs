@@ -5,7 +5,7 @@ use std::path::Path;
 mod storage;
 
 pub(crate) use storage::read;
-pub(super) use storage::{publish, Publication};
+pub(crate) use storage::{publish, Publication};
 use storage::{open, name, old_body};
 
 pub(super) fn needs_legacy(path: &Path) -> Result<bool, String> {
