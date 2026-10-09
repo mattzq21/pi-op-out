@@ -116,12 +116,28 @@ function protectedSources(root, directories, warnings) {
     for (const session of require('./session-database.cjs').paths(root)) sources.stores.add(session.replace(/\.jsonl$/, '.diffs.json'));
   } catch (error) { sources.unknown = true; warn(warnings, root, error); }
 
+  try { protectDatabaseComparisons(root, sources); }
+  catch (error) { sources.unknown = true; warn(warnings, root, error); }
+
   try { require('./snapshot-operation-stores.cjs').collect(root, sources.stores); }
   catch (error) { sources.unknown = true; warn(warnings, root, error); }
 
   for (const file of sources.stores) protectStore(file, sources, warnings);
 
   return sources;
+}
+
+function protectDatabaseComparisons(root, sources) {
+  const db = require('./session-database.cjs').open(root);
+
+  try {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_diff_records'").get()) return;
+
+    const rows = db.prepare(`SELECT json_remove(record_json, '$.snapshot') AS record_json FROM session_diff_records WHERE kind='pending'
+      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(session_diff_records.session_id))`).iterate();
+
+    for (const row of rows) protectComparison(JSON.parse(row.record_json), sources);
+  } finally { db.close(); }
 }
 
 function protectStore(file, sources, warnings) {

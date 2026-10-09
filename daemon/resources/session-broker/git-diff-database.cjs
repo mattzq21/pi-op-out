@@ -9,6 +9,7 @@ function open(root) {
         session_id TEXT NOT NULL REFERENCES session_diff_state(session_id) ON DELETE CASCADE,
         kind TEXT NOT NULL, record_id TEXT NOT NULL, record_json TEXT NOT NULL, digest TEXT,
         PRIMARY KEY(session_id, kind, record_id));
+      CREATE INDEX IF NOT EXISTS session_diff_pending ON session_diff_records(session_id, record_id) WHERE kind='pending';
       CREATE TABLE IF NOT EXISTS session_diff_preparations (
         session_id TEXT PRIMARY KEY REFERENCES session_diff_state(session_id) ON DELETE CASCADE, owner TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_diff_locations (
