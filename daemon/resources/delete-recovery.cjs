@@ -226,7 +226,12 @@ function reconcileOwnership(journal) {
 function rollback(root, directory, journal) {
   for (const repository of journal.repositories) restoreRepository(repository);
 
-  for (const file of journal.files) restoreFile(directory, file);
+  for (const file of journal.files) {
+    if (file.path.endsWith('.jsonl')) require('./transcript-metadata.cjs').invalidate(file.path);
+    restoreFile(directory, file);
+
+    if (file.path.endsWith('.jsonl')) require('./transcript-metadata.cjs').remember(file.path);
+  }
 
   for (const repository of journal.repositories) releaseReservations(repository);
   removeLocks(root, directory, journal);

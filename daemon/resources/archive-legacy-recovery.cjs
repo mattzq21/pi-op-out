@@ -95,6 +95,7 @@ function restoreRecord(record) {
     const temporary = `${record.backup}.${randomUUID()}.recover`;
     fs.copyFileSync(record.backup, temporary, fs.constants.COPYFILE_EXCL);
     sync(temporary);
+    require('./transcript-metadata.cjs').invalidate(record.file);
     rename(temporary, record.file);
   }
 
@@ -160,6 +161,8 @@ function recoverLegacy(root, directory, transaction) {
   releaseReferences(transaction.groups);
   retainDirectoryBackups(root, directory, transaction.groups);
   require('./session-database.cjs').movePaths(root, transaction.records.map(record => ({ source: record.destination, destination: record.file })));
+
+  for (const record of transaction.records) require('./transcript-metadata.cjs').remember(record.file);
   complete(root, directory, transaction);
 }
 
