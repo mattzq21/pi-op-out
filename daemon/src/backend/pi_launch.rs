@@ -185,6 +185,10 @@ pub(super) fn enabled_tool_names(settings: &AppSettings) -> Vec<&str> {
 pub(super) fn session_identity(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
     let registered = if host_id == "local" { local_registered_identity(path)? } else { remote_registered_identity(remote_host(settings, host_id)?, path)? };
     if let Some(id) = registered { return Ok(id); }
+    temporary_session_identity(settings, host_id, path)
+}
+
+fn temporary_session_identity(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
     let header = if host_id == "local" {
         let mut line = String::new();
         BufReader::new(fs::File::open(path).map_err(|error| error.to_string())?).take(64 * 1024).read_line(&mut line).map_err(|error| error.to_string())?;
@@ -202,8 +206,10 @@ fn local_registered_identity(path: &str) -> Result<Option<String>, String> {
     let id: Option<String> = db.query_row("SELECT session_id FROM sessions WHERE session_path=?
         AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))", [path], |row| row.get(0))
         .optional().map_err(|error| error.to_string())?;
-    let root = root.canonicalize().map_err(|error| error.to_string())?;
-    if id.is_none() && ["sessions", "archived"].iter().any(|area| Path::new(path).starts_with(root.join(area))) { return Err("Session path is not registered".into()); }
+    let canonical_root = root.canonicalize().map_err(|error| error.to_string())?;
+    if id.is_none() && [&root, &canonical_root].iter().any(|directory| ["sessions", "archived"].iter().any(|area| Path::new(path).starts_with(directory.join(area)))) {
+        return Err("Session path is not registered".into());
+    }
     Ok(id)
 }
 

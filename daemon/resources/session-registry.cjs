@@ -155,11 +155,15 @@ function metadata() {
 
 function identity() {
   sessionTables.importSessions(db, root);
+
   const id = db.prepare(`SELECT session_id FROM sessions WHERE session_path=?
     AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`).get(request.path)?.session_id;
-  const managed = ['sessions', 'archived'].some(area => request.path.startsWith(path.join(fs.realpathSync(root), area) + path.sep));
+
+  const roots = [path.resolve(root), fs.realpathSync(root)];
+  const managed = roots.some(directory => ['sessions', 'archived'].some(area => path.resolve(request.path).startsWith(path.join(directory, area) + path.sep)));
 
   if (!id && managed) throw new Error('Session path is not registered');
+
   process.stdout.write(JSON.stringify(id ?? null));
 }
 
