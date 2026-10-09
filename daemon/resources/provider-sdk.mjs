@@ -47,6 +47,8 @@ async function loadRuntime() {
       if (!sdk?.ModelRuntime?.create) break;
       const { FileAuthStorageBackend, AuthStorage } = await import(pathToFileURL(join(directory, 'dist/core/auth-storage.js')).href);
       installAuthStorage(FileAuthStorageBackend, AuthStorage);
+      const { FileModelsStore } = await import(pathToFileURL(join(directory, 'dist/core/models-store.js')).href);
+      installModelsStorage(FileModelsStore);
       const config = await import(pathToFileURL(join(directory, 'dist/config.js')).href);
       const { SettingsManager } = await import(pathToFileURL(join(directory, 'dist/core/settings-manager.js')).href);
       const settings = SettingsManager.create(process.cwd(), config.getAgentDir());

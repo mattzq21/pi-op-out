@@ -308,6 +308,30 @@ export function storedAuthRevision(path) {
   return withStoredAuth(path, (database, key) => database.prepare("SELECT revision FROM provider_credentials WHERE auth_file=?").get(key).revision);
 }
 
+export function installModelsStorage(FileModelsStore) {
+  if (installedStorageClasses.has(FileModelsStore)) return;
+  const prototype = FileModelsStore.prototype;
+  requireStorageMethods(prototype, ["readLatest", "reloadFromStorage", "parse", "updateReadState"]);
+
+  prototype.reloadFromStorage = function (readState, options) {
+    return this.storage.withLockAsync(async (content) => {
+      const data = this.parse(content);
+      this.updateReadState(readState, data, storedAuthRevision(this.path));
+
+      return { result: data };
+    }, options);
+  };
+
+  prototype.readLatest = async function (readState, options) {
+    options?.signal?.throwIfAborted();
+    const revision = storedAuthRevision(this.path);
+
+    return revision === readState.revision ? readState.data : this.reloadFromStorage(readState, options);
+  };
+
+  installedStorageClasses.add(FileModelsStore);
+}
+
 function requireStorageMethods(prototype, names) {
   if (names.some(name => !(prototype[name] instanceof Function))) throw new Error("This Pi SDK does not support Piop's storage protection. Update Piop before using this SDK.");
 }
