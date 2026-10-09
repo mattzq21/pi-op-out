@@ -54,6 +54,14 @@ function checkpointRepositoryRecord(repositories, root) {
 }
 
 async function inspectSession(file, includeArchiveDetails) {
+  const { header, explicitName, firstPrompt, malformed, checkpointError, result } = await require('./storage-transcript-cache.cjs').read(piopRoot, file, () => inspectTranscript(file));
+
+  if (!includeArchiveDetails) return result;
+
+  return archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result);
+}
+
+async function inspectTranscript(file) {
   let header;
   let explicitName = "";
   let firstPrompt = "";
@@ -122,9 +130,7 @@ async function inspectSession(file, includeArchiveDetails) {
 
   const result = sessionDetails(header, malformed, observation, checkpointRepositories);
 
-  if (!includeArchiveDetails) return result;
-
-  return archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result);
+  return { header, explicitName, firstPrompt, malformed, checkpointError, result };
 }
 
 function sessionDetails(header, malformed, observation, repositories) {

@@ -53,6 +53,8 @@ function write(root, record) {
       }
 
       if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='transcript_references'").get()) db.prepare('DELETE FROM transcript_references WHERE session_id=lower(?) AND session_path=?').run(record.sessionId, record.path);
+
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='storage_transcript_summaries'").get()) db.prepare('DELETE FROM storage_transcript_summaries WHERE session_path=?').run(record.path);
       db.prepare('DELETE FROM sessions WHERE session_id=lower(?) AND session_path=?').run(record.sessionId, record.path);
     }
 
