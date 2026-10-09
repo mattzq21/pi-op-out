@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const storage = require('./git-diff-transfer-storage.cjs');
 
 const hash = body => crypto.createHash('sha256').update(body).digest('hex');
 
@@ -50,32 +51,13 @@ function validReceipt(part, last, hooks) {
   if (![true, false].includes(part.final) || part.final && !last) throw new Error('Invalid staged diff final receipt; preserved');
 }
 
-function sync(directory) {
-  const fd = fs.openSync(directory, 'r');
-
-  try { fs.fsyncSync(fd); }
-  finally { fs.closeSync(fd); }
-}
-
-function directory(root) {
-  if (!fs.existsSync(root)) {
-    fs.mkdirSync(root, { mode: 0o700 });
-    sync(path.dirname(root));
-  }
-
-  if (!fs.lstatSync(root).isDirectory() || fs.realpathSync(root) !== root) throw new Error(`Invalid diff transfer directory; preserved: ${root}`);
-}
-
 function transferPath(transfer, hooks) {
   if (!hooks.string(transfer.owner) || !/^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$/.test(transfer.owner)) throw new Error('Invalid diff transfer owner');
 
   if (!hooks.string(transfer.transferId) || !/^[a-f0-9]{64}$/.test(transfer.transferId) || !hooks.string(transfer.messageId)) throw new Error('Invalid diff transfer provenance');
   const root = path.join(fs.realpathSync(hooks.profile()), 'git-diff-transfers');
 
-  directory(root);
   const owner = path.join(root, transfer.owner);
-
-  directory(owner);
 
   return path.join(owner, `${hash(transfer.messageId)}-${transfer.transferId}.part`);
 }
@@ -99,42 +81,28 @@ function initialTransfer(filename, part, key, state, hooks) {
   const transfer = { owner: hooks.owner(filename), messageId: part.messageId, transferId: part.transferId, digest: part.digest, nextIndex: 0, offset: 0, parts: [], committed: false };
   const file = transferPath(transfer, hooks);
 
-  if (fs.existsSync(file)) throw new Error(`Unattributed diff transfer contents preserved: ${file}`);
+  if (storage.exists(transfer, hooks, file)) throw new Error(`Unattributed diff transfer contents preserved: ${file}`);
   hooks.save([ownerRecord(key, transfer)]);
 
   return transfer;
 }
 
-function openTransfer(file, transfer) {
-  const flags = fs.constants.O_RDWR | fs.constants.O_NOFOLLOW;
-  let fd;
+function openTransfer(transfer, hooks) {
+  const body = storage.read(transfer, hooks, transferPath(transfer, hooks));
 
-  try { fd = fs.openSync(file, flags); }
-  catch (error) {
-    if (error.code !== 'ENOENT' || transfer.offset !== 0) throw error;
-    fd = fs.openSync(file, flags | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
-    fs.fsyncSync(fd); sync(path.dirname(file));
-  }
+  if (body !== null) return body;
 
-  if (!fs.fstatSync(fd).isFile() || fs.fstatSync(fd).nlink !== 1) { fs.closeSync(fd); throw new Error(`Diff transfer is not a private regular file: ${file}`); }
+  if (transfer.offset !== 0) throw new Error('Staged diff prefix is missing; preserved');
 
-  return fd;
+  return Buffer.alloc(0);
 }
 
-function verifyPrefix(fd, transfer) {
-  if (fs.fstatSync(fd).size < transfer.offset) throw new Error('Staged diff prefix is incomplete; preserved');
+function verifyPrefix(body, transfer) {
+  if (body.length < transfer.offset) throw new Error('Staged diff prefix is incomplete; preserved');
   let offset = 0;
 
   for (const part of transfer.parts) {
-    const bytes = Buffer.alloc(part.length);
-    let count = 0;
-
-    while (count < bytes.length) {
-      const read = fs.readSync(fd, bytes, count, bytes.length - count, offset + count);
-
-      if (!read) throw new Error('Staged diff prefix ended unexpectedly; preserved');
-      count += read;
-    }
+    const bytes = body.subarray(offset, offset + part.length);
 
     if (hash(bytes) !== part.digest) throw new Error('Staged diff prefix changed; preserved');
     offset += bytes.length;
@@ -143,13 +111,7 @@ function verifyPrefix(fd, transfer) {
   if (offset !== transfer.offset) throw new Error('Invalid staged diff progress; preserved');
 }
 
-function appendBytes(fd, body, offset) {
-  let written = 0;
-
-  while (written < body.length) written += fs.writeSync(fd, body, written, body.length - written, offset + written);
-}
-
-function acceptPart(fd, transfer, part, key, hooks) {
+function acceptPart(saved, transfer, part, key, hooks) {
   const body = Buffer.from(part.content);
   const description = { digest: hash(body), length: body.length, final: part.final };
 
@@ -162,8 +124,7 @@ function acceptPart(fd, transfer, part, key, hooks) {
   if (part.index !== transfer.nextIndex || transfer.parts.at(-1)?.final) throw new Error('Diff part is out of order; staged contents preserved');
 
   if (transfer.offset + body.length > hooks.maxBytes) throw new Error('Permanent diff limit: staged snapshot is too large; contents preserved');
-  fs.ftruncateSync(fd, transfer.offset);
-  appendBytes(fd, body, transfer.offset); fs.fsyncSync(fd);
+  storage.write(transfer, hooks, Buffer.concat([saved.subarray(0, transfer.offset), body]));
   const updated = { ...transfer, nextIndex: transfer.nextIndex + 1, offset: transfer.offset + body.length, parts: [...transfer.parts, description] };
 
   hooks.save([ownerRecord(key, updated)]);
@@ -171,18 +132,9 @@ function acceptPart(fd, transfer, part, key, hooks) {
   return updated;
 }
 
-function completedSnapshot(fd, transfer, hooks) {
-  verifyPrefix(fd, transfer);
-  const body = Buffer.alloc(transfer.offset);
-
-  let count = 0;
-
-  while (count < body.length) {
-    const read = fs.readSync(fd, body, count, body.length - count, count);
-
-    if (!read) throw new Error('Staged diff ended before completion; preserved');
-    count += read;
-  }
+function completedSnapshot(saved, transfer, hooks) {
+  verifyPrefix(saved, transfer);
+  const body = saved.subarray(0, transfer.offset);
 
   if (hash(body) !== transfer.digest) throw new Error('Diff transfer digest mismatch; staged contents preserved');
   const snapshot = JSON.parse(body.toString('utf8'));
@@ -192,8 +144,8 @@ function completedSnapshot(fd, transfer, hooks) {
   return snapshot;
 }
 
-function commitTransfer(fd, transfer, key, state, hooks) {
-  const snapshot = completedSnapshot(fd, transfer, hooks);
+function commitTransfer(body, transfer, key, state, hooks) {
+  const snapshot = completedSnapshot(body, transfer, hooks);
   const previous = state.digests[transfer.messageId];
 
   if (previous !== undefined && previous !== hooks.digest(snapshot)) throw new Error('Immutable diff message already has different contents; transfer preserved');
@@ -207,18 +159,12 @@ function commitTransfer(fd, transfer, key, state, hooks) {
 }
 
 function retire(transfer, hooks) {
-  const file = transferPath(transfer, hooks);
-  let fd;
+  const body = storage.read(transfer, hooks, transferPath(transfer, hooks));
 
-  try { fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); }
-  catch (error) { if (error.code === 'ENOENT') return; throw error; }
-
-  try {
-    validFinalFile(fd, transfer, hooks);
-    completedSnapshot(fd, transfer, hooks);
-  } finally { fs.closeSync(fd); }
-
-  fs.unlinkSync(file); sync(path.dirname(file));
+  if (body === null) return;
+  validFinalBody(body, transfer, hooks);
+  completedSnapshot(body, transfer, hooks);
+  storage.write(transfer, hooks, null);
 }
 
 function appendPart(filename, part, state, hooks) {
@@ -235,16 +181,11 @@ function appendPart(filename, part, state, hooks) {
     return { complete: true };
   }
 
-  const file = transferPath(transfer, hooks);
-  const fd = openTransfer(file, transfer);
-  let updated;
+  const body = openTransfer(transfer, hooks);
+  verifyPrefix(body, transfer);
+  const updated = acceptPart(body, transfer, part, key, hooks);
 
-  try {
-    verifyPrefix(fd, transfer);
-    updated = acceptPart(fd, transfer, part, key, hooks);
-
-    if (updated.parts.at(-1)?.final) commitTransfer(fd, updated, key, state, hooks);
-  } finally { fs.closeSync(fd); }
+  if (updated.parts.at(-1)?.final) commitTransfer(openTransfer(updated, hooks), updated, key, state, hooks);
 
   if (!updated.parts.at(-1)?.final) return { complete: false };
   retire(updated, hooks);
@@ -252,20 +193,14 @@ function appendPart(filename, part, state, hooks) {
   return { complete: true };
 }
 
-function validFinalFile(fd, transfer, hooks) {
-  const metadata = fs.fstatSync(fd);
-
-  if (!metadata.isFile() || metadata.nlink !== 1 || metadata.size !== transfer.offset || transfer.offset > hooks.maxBytes) throw new Error('Completed diff transfer is not its private staged file; preserved');
+function validFinalBody(body, transfer, hooks) {
+  if (body.length !== transfer.offset || transfer.offset > hooks.maxBytes) throw new Error('Completed diff transfer has an invalid size; preserved');
 }
 
 function recoverFinalTransfer(key, transfer, hooks) {
-  const fd = fs.openSync(transferPath(transfer, hooks), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-
-  try {
-    validFinalFile(fd, transfer, hooks);
-    commitTransfer(fd, transfer, key, hooks.load(), hooks);
-  } finally { fs.closeSync(fd); }
-
+  const body = openTransfer(transfer, hooks);
+  validFinalBody(body, transfer, hooks);
+  commitTransfer(body, transfer, key, hooks.load(), hooks);
   retire(transfer, hooks);
 }
 

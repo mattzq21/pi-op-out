@@ -4,6 +4,7 @@ const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { readStore } = require('./session-broker/git-diff-store.cjs');
 const files = require('./ephemeral-cleanup-files.cjs');
+const transferStorage = require('./session-broker/git-diff-transfer-storage.cjs');
 const { inspectTransfer } = require('./diff-transfer-provenance.cjs');
 
 const captureSchema = Type.Union([
@@ -65,14 +66,22 @@ function inspect(file, sessionId, profile) {
   return records;
 }
 
+function hasDatabaseContents(profile, transfer) {
+  const stored = transferStorage.status(transfer, { profile: () => profile });
+
+  return stored?.size !== null && stored?.size !== undefined;
+}
+
 function retainedTransfers(state, source, sessionId, profile, records) {
   for (const [key, value] of Object.entries(state.transfers)) {
     const { transfer, file, metadata } = inspectTransfer(profile, key, value);
 
-    if (transfer.committed && !metadata) continue;
+    const databaseContents = hasDatabaseContents(profile, transfer);
+
+    if (transfer.committed && !metadata && !databaseContents) continue;
 
     if (transfer.owner !== sessionId) throw new Error('Pending diff transfer belongs to another conversation; source log and staging retained');
-    records.push({ source, id: transfer.messageId, transferId: transfer.transferId, path: file, offset: transfer.offset, committed: transfer.committed, available: Boolean(metadata), identity: metadata?.identity ?? null });
+    records.push({ source, id: transfer.messageId, transferId: transfer.transferId, path: file, offset: transfer.offset, committed: transfer.committed, available: Boolean(metadata) || databaseContents, database: databaseContents, identity: metadata?.identity ?? null });
   }
 }
 

@@ -51,7 +51,7 @@ fn save_runtime_settings(dir: &std::path::Path, settings: &AppSettings) -> Resul
     Ok(())
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 52] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 53] = [
     ("subagent-usage-storage.cjs", include_str!("../../resources/session-broker/subagent-usage-storage.cjs")),
     ("app-settings.cjs", include_str!("../../resources/session-broker/app-settings.cjs")),
     ("review-prompt.txt", include_str!("../../resources/session-broker/review-prompt.txt")),
@@ -74,6 +74,7 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 52] = [
     ("git-diff-store.cjs", include_str!("../../resources/session-broker/git-diff-store.cjs")),
     ("git-diff-migration.cjs", include_str!("../../resources/session-broker/git-diff-migration.cjs")),
     ("git-diff-pages.cjs", include_str!("../../resources/session-broker/git-diff-pages.cjs")),
+    ("git-diff-transfer-storage.cjs", include_str!("../../resources/session-broker/git-diff-transfer-storage.cjs")),
     ("git-diff-transfer.cjs", include_str!("../../resources/session-broker/git-diff-transfer.cjs")),
     ("subagents.ts", include_str!("../../resources/session-broker/subagents.ts")),
     ("subagent-state.ts", include_str!("../../resources/session-broker/subagent-state.ts")),

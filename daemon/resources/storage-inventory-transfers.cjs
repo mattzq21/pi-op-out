@@ -1,6 +1,8 @@
 const { addRoot } = require('./storage-inventory-roots.cjs');
 const { validateTransfer, transferPath, inspectStage } = require('./diff-transfer-provenance.cjs');
 
+const transferStorage = require('./session-broker/git-diff-transfer-storage.cjs');
+
 const categories = ['diff-transfer-staging', 'unattributed-diff-transfer-staging'];
 
 function stageRecord(profile, key, value, owner, source, discovery) {
@@ -11,7 +13,7 @@ function stageRecord(profile, key, value, owner, source, discovery) {
   try { metadata = inspectStage(file); }
   catch (error) { discovery.warnings.push(file + ': diff transfer staging unavailable: ' + error.message + '; retained'); }
 
-  if (transfer.committed && metadata === null) return;
+  if (noFileRecord(metadata, profile, transfer, source, discovery)) return;
   const proven = transfer.owner === owner.sessionId;
   const ownership = proven && metadata ? 'owned' : 'unattributed';
   const owners = [{ ...owner, kind: proven ? 'diff-transfer-source-log-provenance' : 'copied-diff-transfer-log-provenance' }];
@@ -26,6 +28,22 @@ function stageRecord(profile, key, value, owner, source, discovery) {
   record.available = Boolean(metadata);
   record.directory = false;
   stageWarnings(record, transfer, metadata, proven, discovery.warnings);
+}
+
+function noFileRecord(metadata, profile, transfer, source, discovery) {
+  return metadata === null && (databaseStage(profile, transfer, source, discovery) || transfer.committed);
+}
+
+function databaseStage(profile, transfer, source, discovery) {
+  const row = transferStorage.status(transfer, { profile: () => profile });
+
+  if (!row) return false;
+
+  if (!transfer.committed && (row.size === null || row.size < transfer.offset)) discovery.warnings.push(source + ': database transfer contents are shorter than the saved progress; retained');
+
+  if (row.size > transfer.offset) discovery.warnings.push(source + ': database transfer has bytes beyond the saved progress; retained for retry');
+
+  return true;
 }
 
 function stageWarnings(record, transfer, metadata, proven, warnings) {
