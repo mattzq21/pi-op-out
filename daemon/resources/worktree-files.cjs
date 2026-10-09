@@ -91,7 +91,7 @@ function blob(plan, file, metadata, lock) {
   } finally { fs.closeSync(fd); }
 }
 
-function captureFile(plan, raw, files, submodules, excludedFiles, lock) {
+function captureFile(plan, raw, files, submodules, excludedFiles, lock, nested = false) {
   const name = raw.at(-1) === 47 ? raw.subarray(0, -1) : raw;
   const components = parts(name);
 
@@ -104,10 +104,10 @@ function captureFile(plan, raw, files, submodules, excludedFiles, lock) {
     return;
   }
 
-  captureEntry(plan, name, files, submodules, excludedFiles, lock);
+  captureEntry(plan, name, files, submodules, excludedFiles, lock, nested);
 }
 
-function captureEntry(plan, name, files, submodules, excludedFiles, lock) {
+function captureEntry(plan, name, files, submodules, excludedFiles, lock, nested) {
   const key = name.toString('base64');
 
   if (files.has(key)) return;
@@ -128,13 +128,35 @@ function captureEntry(plan, name, files, submodules, excludedFiles, lock) {
   }
 
   if (metadata.isDirectory()) {
-    files.set(key, { name: key, mode: '040000', object: null });
+    captureDirectory(plan, name, files, submodules, excludedFiles, lock, nested);
 
     return;
   }
 
   const mode = metadata.isSymbolicLink() ? '120000' : metadata.mode & 0o111 ? '100755' : '100644';
   files.set(key, { name: key, mode, object: blob(plan, file, metadata, lock) });
+}
+
+function captureDirectory(plan, name, files, submodules, excludedFiles, lock, nested) {
+  files.set(name.toString('base64'), { name: name.toString('base64'), mode: '040000', object: null });
+  const file = join(plan.source, name);
+
+  if (!nested && !info(Buffer.concat([file, Buffer.from('/.git')]))) return;
+
+  for (const child of fs.readdirSync(file, { encoding: 'buffer' })) {
+    if (child.equals(Buffer.from('.git'))) continue;
+    const relative = Buffer.concat([name, Buffer.from('/'), child]);
+
+    if (!ignored(plan, relative, lock)) captureFile(plan, relative, files, submodules, excludedFiles, lock, true);
+  }
+}
+
+function ignored(plan, name, lock) {
+  try {
+    git(plan, ['check-ignore', '--no-index', '--stdin', '-z'], { input: Buffer.concat([name, Buffer.from([0])]), stdio: ['pipe', 'pipe', 'pipe', lock] });
+
+    return true;
+  } catch (error) { if (error.status === 1) return false; throw error; }
 }
 
 function tree(plan, files, lock) {

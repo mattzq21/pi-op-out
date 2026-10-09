@@ -191,12 +191,11 @@ function repairRegistration(root, plan, registration) {
   save(root, plan);
   completeRegistrationPath(path.join(registration, 'gitdir'), path.join(plan.target, '.git'));
   completeRegistrationPath(path.join(registration, 'commondir'), plan.common);
-  completeRegistrationFile(path.join(registration, 'HEAD'), `ref: refs/heads/${plan.branch}`, false);
+  repairHead(root, plan, registration);
   const locked = path.join(registration, 'locked');
 
   if (io.exists(locked)) {
     if (fs.readFileSync(locked, 'utf8').trim() !== `piop-creation:${plan.id}`) throw new Error('Worktree was locked by another operation; retained');
-    removeCreationHeadLock(plan, registration);
     fs.unlinkSync(locked);
   }
 
@@ -204,18 +203,39 @@ function repairRegistration(root, plan, registration) {
   io.sync(path.dirname(registration));
 }
 
-function removeCreationHeadLock(plan, registration) {
-  const file = path.join(registration, 'HEAD.lock');
+function repairHead(root, plan, registration) {
+  const lock = path.join(registration, 'HEAD.lock');
+  const seed = path.join(registration, `piop-head-${plan.id}`);
 
-  if (!io.exists(file)) return;
+  if (!plan.headLock) {
+    if (io.exists(lock)) throw new Error('Worktree HEAD is locked by an unverified operation; retained');
+    io.write(seed, '');
+    plan.headLock = io.describe(seed);
+    save(root, plan);
+  }
 
-  if (!fs.lstatSync(file).isFile()) throw new Error('Worktree HEAD lock changed; retained');
-  const contents = fs.readFileSync(file, 'utf8');
-  const expected = `ref: refs/heads/${plan.branch}\n`;
+  if (!io.matches(seed, plan.headLock)) throw new Error('Worktree HEAD lock preparation changed; retained');
 
-  if (!expected.startsWith(contents)) throw new Error('Worktree HEAD lock belongs to another branch; retained');
-  fs.unlinkSync(file);
+  try { fs.linkSync(seed, lock); }
+  catch (error) {
+    if (error.code !== 'EEXIST' || !io.matches(lock, plan.headLock)) throw new Error('Worktree HEAD is locked by another operation; retained');
+  }
+
   io.sync(registration);
+
+  try { completeRegistrationFile(path.join(registration, 'HEAD'), `ref: refs/heads/${plan.branch}`, false); }
+  finally {
+    if (io.matches(lock, plan.headLock)) { fs.unlinkSync(lock); io.sync(registration); }
+  }
+}
+
+function cleanupHeadLock(plan) {
+  if (!plan.headLock || !plan.registration) return;
+  const seed = path.join(plan.registration.path, `piop-head-${plan.id}`);
+
+  if (!io.matches(seed, plan.headLock)) return;
+  fs.unlinkSync(seed);
+  io.sync(plan.registration.path);
 }
 
 function completeRegistrationPath(file, expected) {
@@ -342,6 +362,7 @@ function finish(root, plan, fd) {
   fs.rmSync(path.join(plan.container, 'copy-gitdir'), { force: true });
   publishIndex(root, plan, fd);
   fileContents.sync(plan.target);
+  cleanupHeadLock(plan);
 
   if (plan.base) references.update(plan, 'creations', null, fd);
   references.update(plan, 'content', null, fd);

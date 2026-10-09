@@ -116,6 +116,17 @@ function finish(plan, record) {
 }
 
 function verifyBranch(plan, record, destination) {
+  try {
+    execFileSync('git', ['-C', plan.common, 'symbolic-ref', '--quiet', record.ref], { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    if (error.status === 1) return verifyDirectBranch(plan, record, destination);
+    throw error;
+  }
+
+  throw new Error('Worktree branch was replaced with a symbolic reference; retained');
+}
+
+function verifyDirectBranch(plan, record, destination) {
   let current;
 
   try { current = execFileSync('git', ['-C', plan.common, 'rev-parse', '--verify', '--quiet', record.ref], { encoding: 'utf8' }).trim(); }
