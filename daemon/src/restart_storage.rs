@@ -24,6 +24,7 @@ fn open(directory: &Path) -> Result<Connection, String> {
     db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
         CREATE TABLE IF NOT EXISTS daemon_restart_records (directory TEXT NOT NULL, name TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(directory, name));
         CREATE TABLE IF NOT EXISTS daemon_restart_imports (directory TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS daemon_plugin_imports (directory TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS daemon_restart_backups (directory TEXT NOT NULL, id TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, id));
         CREATE TABLE IF NOT EXISTS daemon_restart_backup_imports (directory TEXT PRIMARY KEY);").map_err(|error| error.to_string())?;
     import(&mut db, directory)?;
@@ -111,13 +112,25 @@ fn import(db: &mut Connection, directory: &Path) -> Result<(), String> {
     transaction.commit().map_err(|error| error.to_string())
 }
 
+fn import_plugins(db: &mut Connection, directory: &Path) -> Result<(), String> {
+    let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+    let imported: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM daemon_plugin_imports WHERE directory=?)", [directory.to_string_lossy()], |row| row.get(0)).map_err(|error| error.to_string())?;
+    if !imported {
+        import_record(&transaction, directory, "plugins.json")?;
+        transaction.execute("INSERT INTO daemon_plugin_imports VALUES (?)", [directory.to_string_lossy()]).map_err(|error| error.to_string())?;
+    }
+    transaction.commit().map_err(|error| error.to_string())
+}
+
 fn import_record(db: &Connection, directory: &Path, name: &str) -> Result<(), String> {
+    let saved: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM daemon_restart_records WHERE directory=? AND name=?)", rusqlite::params![directory.to_string_lossy(), name], |row| row.get(0)).map_err(|error| error.to_string())?;
+    if saved { return Ok(()); }
     let body = match fs::read_to_string(directory.join(name)) {
         Ok(body) => body,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.to_string()),
     };
-    db.execute("INSERT INTO daemon_restart_records VALUES (?, ?, ?)", rusqlite::params![directory.to_string_lossy(), name, body]).map_err(|error| error.to_string())?;
+    db.execute("INSERT INTO daemon_restart_records VALUES (?, ?, ?) ON CONFLICT(directory, name) DO NOTHING", rusqlite::params![directory.to_string_lossy(), name, body]).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -130,7 +143,8 @@ fn location(path: &Path) -> Result<(PathBuf, &str), String> {
 
 pub(crate) fn read(path: &Path) -> Result<Option<Value>, String> {
     let (directory, name) = location(path)?;
-    let db = open(&directory)?;
+    let mut db = open(&directory)?;
+    if name == "plugins.json" { import_plugins(&mut db, &directory)?; }
     let body: Option<String> = db.query_row("SELECT record_json FROM daemon_restart_records WHERE directory=? AND name=?",
         rusqlite::params![directory.to_string_lossy(), name], |row| row.get(0)).optional().map_err(|error| error.to_string())?;
     body.map(|body| serde_json::from_str(&body).map_err(|error| error.to_string())).transpose()

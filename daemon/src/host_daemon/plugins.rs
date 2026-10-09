@@ -147,10 +147,9 @@ fn validate(enabled: &[String]) -> Result<()> {
 fn configuration_path() -> Result<PathBuf> { Ok(crate::daemon_endpoint::directory()?.join("plugins.json")) }
 
 fn configuration() -> Result<Configuration> {
-    match std::fs::read(configuration_path()?) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| format!("Could not read plugin configuration: {error}")),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Configuration { enabled: BUNDLED.iter().map(|id| (*id).into()).collect(), previous: Vec::new() }),
-        Err(error) => Err(error.to_string()),
+    match crate::restart_storage::read(&configuration_path()?)? {
+        Some(value) => serde_json::from_value(value).map_err(|error| format!("Could not read plugin configuration: {error}")),
+        None => Ok(Configuration { enabled: BUNDLED.iter().map(|id| (*id).into()).collect(), previous: Vec::new() }),
     }
 }
 
