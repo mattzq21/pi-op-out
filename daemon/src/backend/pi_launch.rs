@@ -203,7 +203,7 @@ fn temporary_session_identity(settings: &AppSettings, host_id: &str, path: &str)
 
 fn local_registered_identity(path: &str) -> Result<Option<String>, String> {
     let root = home_dir()?.join(STORAGE_DIRECTORY);
-    let db = crate::session_registry::open(&root)?;
+    let mut db = crate::session_registry::open(&root)?;
     let id: Option<String> = db.query_row("SELECT session_id FROM sessions WHERE session_path=?
         AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))", [path], |row| row.get(0))
         .optional().map_err(|error| error.to_string())?;
@@ -212,9 +212,40 @@ fn local_registered_identity(path: &str) -> Result<Option<String>, String> {
         return Err("Session path is not registered".into());
     }
     if id.is_some() { return Ok(id); }
-    db.query_row("SELECT json_extract(record_json, '$.sessionId') FROM external_transcripts
-        WHERE record_id=? AND json_extract(record_json, '$.path')=?", rusqlite::params![format!("{:x}", sha2::Sha256::digest(path.as_bytes())), path], |row| row.get(0))
-        .optional().map(|id: Option<Option<String>>| id.flatten()).map_err(|error| error.to_string())
+    local_external_identity(&mut db, path)
+}
+
+fn local_external_identity(db: &mut rusqlite::Connection, path: &str) -> Result<Option<String>, String> {
+    let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+    let key = format!("{:x}", sha2::Sha256::digest(path.as_bytes()));
+    let saved: Option<Option<String>> = transaction.query_row("SELECT json_extract(record_json, '$.sessionId') FROM external_transcripts
+        WHERE record_id=? AND json_extract(record_json, '$.path')=?", rusqlite::params![key, path], |row| row.get(0))
+        .optional().map_err(|error| error.to_string())?;
+    let id = match saved {
+        Some(None) => {
+            let id = import_external_identity(path)?;
+            transaction.execute("UPDATE external_transcripts SET record_json=json_set(record_json, '$.sessionId', ?) WHERE record_id=?", rusqlite::params![id, key])
+                .map_err(|error| error.to_string())?;
+            Some(id)
+        }
+        value => value.flatten(),
+    };
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(id)
+}
+
+fn import_external_identity(path: &str) -> Result<String, String> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    { use std::os::unix::fs::OpenOptionsExt; options.custom_flags(libc::O_NONBLOCK); }
+    let file = options.open(path).map_err(|error| error.to_string())?;
+    if !file.metadata().map_err(|error| error.to_string())?.is_file() { return Err("Session transcript is not a regular file".into()); }
+    let mut line = String::new();
+    BufReader::new(file).take(64 * 1024).read_line(&mut line).map_err(|error| error.to_string())?;
+    let header: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
+    if header["type"] != "session" { return Err("Invalid session header".into()); }
+    header["id"].as_str().filter(|id| !id.is_empty()).map(str::to_owned).ok_or("Missing session identity".into())
 }
 
 fn remote_registered_identity(host: &RemoteHost, path: &str) -> Result<Option<String>, String> {

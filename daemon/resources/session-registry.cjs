@@ -154,6 +154,36 @@ function metadata() {
   }
 }
 
+function externalHeaderIdentity(file) {
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Session transcript is not a regular file');
+    const buffer = Buffer.alloc(64 * 1024);
+    const length = fs.readSync(descriptor, buffer, 0, buffer.length, 0);
+    const header = JSON.parse(buffer.subarray(0, length).toString('utf8').split('\n')[0]);
+
+    if (header.type !== 'session' || !header.id || header.id !== String(header.id)) throw new Error('Missing session identity');
+
+    return header.id;
+  } finally { fs.closeSync(descriptor); }
+}
+
+function externalIdentity(file) {
+  const key = createHash('sha256').update(file).digest('hex');
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    const row = db.prepare("SELECT json_extract(record_json, '$.sessionId') AS id FROM external_transcripts WHERE record_id=? AND json_extract(record_json, '$.path')=?").get(key, file);
+    const id = row ? row.id ?? externalHeaderIdentity(file) : null;
+
+    if (row && row.id === null) db.prepare("UPDATE external_transcripts SET record_json=json_set(record_json, '$.sessionId', ?) WHERE record_id=?").run(id, key);
+    db.exec('COMMIT');
+
+    return id;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
 function identity() {
   sessionTables.importSessions(db, root);
 
@@ -165,10 +195,7 @@ function identity() {
 
   if (!id && managed) throw new Error('Session path is not registered');
 
-  const external = id ? undefined : db.prepare("SELECT json_extract(record_json, '$.sessionId') AS id FROM external_transcripts WHERE record_id=? AND json_extract(record_json, '$.path')=?")
-    .get(createHash('sha256').update(request.path).digest('hex'), request.path)?.id;
-
-  process.stdout.write(JSON.stringify(id ?? external ?? null));
+  process.stdout.write(JSON.stringify(id ?? externalIdentity(request.path)));
 }
 
 try {
