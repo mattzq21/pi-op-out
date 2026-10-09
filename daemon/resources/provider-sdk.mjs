@@ -45,8 +45,8 @@ async function loadRuntime() {
       const sdk = await import(pathToFileURL(join(directory, 'dist/core/model-runtime.js')).href).catch(() => undefined);
 
       if (!sdk?.ModelRuntime?.create) break;
-      const { FileAuthStorageBackend } = await import(pathToFileURL(join(directory, 'dist/core/auth-storage.js')).href);
-      installAuthStorage(FileAuthStorageBackend);
+      const { FileAuthStorageBackend, AuthStorage } = await import(pathToFileURL(join(directory, 'dist/core/auth-storage.js')).href);
+      installAuthStorage(FileAuthStorageBackend, AuthStorage);
       const config = await import(pathToFileURL(join(directory, 'dist/config.js')).href);
       const { SettingsManager } = await import(pathToFileURL(join(directory, 'dist/core/settings-manager.js')).href);
       const settings = SettingsManager.create(process.cwd(), config.getAgentDir());
@@ -281,6 +281,9 @@ async function handle(packet) {
   const loaded = await runtime();
 
   if (packet.method === 'initialize') return { authPath: loaded.authPath, builtinIds: loaded.builtinIds };
+
+  if (packet.method === 'auth_revision') return storedAuthRevision(loaded.authPath);
+
   await syncAccounts(loaded);
 
   return handleProviderRequest(loaded, packet);

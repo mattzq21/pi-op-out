@@ -270,27 +270,61 @@ function storagePublish(path, temporary, body, exclusive) {
   } finally { storageFs.rmSync(temporary, { force: true }); }
 }
 
-function storageWriteAuth(path, body) {
+function withStoredAuth(path, operation) {
   const target = storageTarget(path);
-  const temporary = storagePath.join(storagePath.dirname(target), `.${storagePath.basename(target)}.piop-pending`);
-  storagePublish(target, temporary, body, false);
+  const directory = storagePath.dirname(target);
+  storageFs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const file = storagePath.join(directory, "piop-accounts.sqlite");
+  storageFs.closeSync(storageFs.openSync(file, storageFs.constants.O_CREAT | storageFs.constants.O_RDWR | storageFs.constants.O_NOFOLLOW, 0o600));
+  storageFs.chmodSync(file, 0o600);
+  const database = new StorageDatabase(file);
+  const key = storagePath.basename(target);
+
+  try {
+    database.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+      CREATE TABLE IF NOT EXISTS provider_credentials (auth_file TEXT PRIMARY KEY, body TEXT, revision INTEGER NOT NULL);
+      BEGIN IMMEDIATE;`);
+
+    if (!database.prepare("SELECT 1 FROM provider_credentials WHERE auth_file=?").get(key)) {
+      database.prepare("INSERT INTO provider_credentials VALUES (?, ?, 0)").run(key, storageReadOptional(target) ?? null);
+    }
+
+    const result = operation(database, key);
+    database.exec("COMMIT");
+
+    return result;
+  } finally { database.close(); }
+}
+
+function storageReadAuth(path) {
+  return withStoredAuth(path, (database, key) => database.prepare("SELECT body FROM provider_credentials WHERE auth_file=?").get(key).body ?? undefined);
+}
+
+function storageWriteAuth(path, body) {
+  withStoredAuth(path, (database, key) => database.prepare("UPDATE provider_credentials SET body=?, revision=revision+1 WHERE auth_file=?").run(body, key));
+}
+
+export function storedAuthRevision(path) {
+  return withStoredAuth(path, (database, key) => database.prepare("SELECT revision FROM provider_credentials WHERE auth_file=?").get(key).revision);
 }
 
 function requireStorageMethods(prototype, names) {
   if (names.some(name => !(prototype[name] instanceof Function))) throw new Error("This Pi SDK does not support Piop's storage protection. Update Piop before using this SDK.");
 }
 
-export function installAuthStorage(FileAuthStorageBackend) {
+export function installAuthStorage(FileAuthStorageBackend, AuthStorage) {
   if (installedStorageClasses.has(FileAuthStorageBackend)) return;
   const prototype = FileAuthStorageBackend.prototype;
   requireStorageMethods(prototype, ["ensureParentDir", "acquireLockSyncWithRetry", "acquireLockAsync", "withLock", "withLockAsync"]);
+  requireStorageMethods(AuthStorage, ["create", "fromStorage"]);
+  AuthStorage.create = (path) => AuthStorage.fromStorage(new FileAuthStorageBackend(path));
 
   prototype.withLock = function (fn) {
     this.ensureParentDir();
     const release = this.acquireLockSyncWithRetry(this.authPath);
 
     try {
-      const { result, next } = fn(storageReadOptional(this.authPath));
+      const { result, next } = fn(storageReadAuth(this.authPath));
 
       if (next !== undefined) storageWriteAuth(this.authPath, next);
 
@@ -312,7 +346,7 @@ export function installAuthStorage(FileAuthStorageBackend) {
 
     try {
       check();
-      const { result, next } = await fn(storageReadOptional(this.authPath));
+      const { result, next } = await fn(storageReadAuth(this.authPath));
       check();
 
       if (next !== undefined) storageWriteAuth(this.authPath, next);
