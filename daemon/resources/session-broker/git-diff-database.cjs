@@ -9,6 +9,8 @@ function open(root) {
         session_id TEXT NOT NULL REFERENCES session_diff_state(session_id) ON DELETE CASCADE,
         kind TEXT NOT NULL, record_id TEXT NOT NULL, record_json TEXT NOT NULL, digest TEXT,
         PRIMARY KEY(session_id, kind, record_id));
+      CREATE TABLE IF NOT EXISTS session_diff_preparations (
+        session_id TEXT PRIMARY KEY REFERENCES session_diff_state(session_id) ON DELETE CASCADE, owner TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_diff_locations (
         path TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES session_diff_state(session_id) ON DELETE CASCADE);`);
 
@@ -172,7 +174,7 @@ function snapshots(state, operation) {
   } finally { db.close(); }
 }
 
-function copy(state, destination, destinationId, retainedIds) {
+function copy(state, destination, destinationId, retainedIds, owner) {
   if (!state.database || !/^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$/.test(destinationId)) throw new Error('Invalid fork history identity');
   const { root, id, revision } = state.database;
 
@@ -193,6 +195,8 @@ function copy(state, destination, destinationId, retainedIds) {
       WHERE session_id=? AND record_id=? AND kind IN ('set', 'done')`);
 
     for (const message of retainedIds) insert.run(target, id, message);
+
+    if (owner !== undefined) db.prepare('INSERT INTO session_diff_preparations VALUES (?, ?)').run(target, owner);
     db.exec('COMMIT');
   } finally { db.close(); }
 }
@@ -210,4 +214,23 @@ function revision(root, sessionId) {
   } finally { db.close(); }
 }
 
-module.exports = { load, save, snapshots, copy, revision };
+function discardPreparation(root, sessionId, owner) {
+  const db = open(root);
+
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    const id = sessionId.toLowerCase();
+
+    const row = db.prepare(`SELECT revision FROM session_diff_state JOIN session_diff_preparations USING(session_id)
+      WHERE session_id=? AND owner=?`).get(id, owner);
+
+    if (row) {
+      if (row.revision !== 1) throw new Error('Unpublished fork history changed; retained for recovery');
+      db.prepare('DELETE FROM session_diff_state WHERE session_id=?').run(id);
+    }
+
+    db.exec('COMMIT');
+  } finally { db.close(); }
+}
+
+module.exports = { load, save, snapshots, copy, revision, discardPreparation };

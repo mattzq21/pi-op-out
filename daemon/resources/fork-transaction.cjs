@@ -4,6 +4,8 @@ const { randomUUID } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { loadDiffs } = require('./session-diff-store.cjs');
+const { copyRetainedStoreLocked } = require('./session-broker/git-diff-store.cjs');
+const diffDatabase = require('./session-broker/git-diff-database.cjs');
 const records = require('./fork-transaction-records.cjs');
 
 const diffsSchema = Type.Record(Type.String(), Type.Union([Type.String(), Type.Object({ patch: Type.String(), toolPaths: Type.Optional(Type.Array(Type.Unknown())) })]));
@@ -60,15 +62,6 @@ function retainedIds(entries) {
   return retained;
 }
 
-function inheritedDiffs(source, entries) {
-  const diffs = loadDiffs(source);
-
-  if (!Check(diffsSchema, diffs)) throw new Error('Invalid saved fork diffs');
-  const ids = retainedIds(entries);
-
-  return JSON.stringify(Object.fromEntries(Object.entries(diffs).filter(([id]) => ids.has(id))));
-}
-
 function cleanup(directory) {
   const parent = path.dirname(directory);
   const removing = path.basename(directory).startsWith('.cleanup-') ? directory : path.join(parent, `.cleanup-${path.basename(directory)}`);
@@ -87,11 +80,21 @@ function readTransaction(root, directory) {
 
   if (transaction === undefined) return undefined;
 
-  if (transaction.version !== 1 || transaction.destination !== destinationPath(root, transaction.destination)) throw new Error('Invalid fork publication transaction');
+  if (![1, 2].includes(transaction.version) || transaction.destination !== destinationPath(root, transaction.destination)) throw new Error('Invalid fork publication transaction');
 
-  if (transaction.transcript !== identity(path.join(directory, 'session.jsonl')) || transaction.diffs !== identity(path.join(directory, 'diffs.json'))) throw new Error('Fork publication files changed');
+  if (transaction.transcript !== identity(path.join(directory, 'session.jsonl'))) throw new Error('Fork publication transcript changed');
+
+  verifyLegacyHistory(transaction, directory);
+
+  if (transaction.version === 2 && transaction.sessionId !== transcriptHeader(path.join(directory, 'session.jsonl')).id) throw new Error('Fork preparation session changed');
 
   return transaction;
+}
+
+function verifyLegacyHistory(transaction, directory) {
+  if (transaction.version === 1 && !transaction.diffs) throw new Error('Legacy fork history identity is missing');
+
+  if (transaction.diffs && transaction.diffs !== identity(path.join(directory, 'diffs.json'))) throw new Error('Fork publication history file changed');
 }
 
 function recoverTransaction(root, directory) {
@@ -108,10 +111,17 @@ function recoverTransaction(root, directory) {
 
   if (transaction.removing) {
     removeOwned(destination, transaction.transcript);
-    removeOwned(sidecar, transaction.diffs);
+
+    if (transaction.diffs) removeOwned(sidecar, transaction.diffs);
     sync(path.dirname(destination));
-    forgetPublished(root, destination);
+    forgetPublished(root, destination, transcriptHeader(path.join(directory, 'session.jsonl')).id);
     cleanup(directory);
+
+    return;
+  }
+
+  if (transaction.version === 2) {
+    recoverDatabaseFork(root, directory, transaction);
 
     return;
   }
@@ -130,6 +140,27 @@ function recoverTransaction(root, directory) {
   cleanup(directory);
 }
 
+function recoverDatabaseFork(root, directory, transaction) {
+  if (exists(transaction.destination)) {
+    if (!matches(transaction.destination, transaction.transcript) || !transaction.historyReady) throw new Error('Published fork does not match its preparation; retained');
+    diffDatabase.revision(root, transaction.sessionId);
+    sync(transaction.destination); sync(path.dirname(transaction.destination));
+    registerPublished(root, transaction.destination);
+  } else {
+    diffDatabase.discardPreparation(root, transaction.sessionId, directory);
+  }
+
+  cleanup(directory);
+}
+
+function transcriptHeader(file) {
+  const header = JSON.parse(fs.readFileSync(file, 'utf8').split('\n')[0]);
+
+  if (header.type !== 'session' || !Check(Type.String({ pattern: '^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$' }), header.id)) throw new Error('Invalid fork session identity');
+
+  return header;
+}
+
 function removeOwned(file, expected) {
   if (!exists(file)) return;
 
@@ -144,14 +175,17 @@ function registerPublished(root, destination) {
   require('./session-database.cjs').registerPath(root, header.id, destination);
 }
 
-function forgetPublished(root, destination) {
+function forgetPublished(root, destination, sessionId) {
   const database = require('./session-database.cjs').open(root);
 
   try {
     database.exec('BEGIN IMMEDIATE');
+    const registered = database.prepare('SELECT session_path FROM sessions WHERE lower(session_id)=lower(?)').get(sessionId);
+
+    if (registered?.session_path && registered.session_path !== destination) throw new Error('Removed fork moved to another location; database records retained');
 
     for (const table of ['session_diff_state', 'session_diff_transfers']) {
-      if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) database.prepare(`DELETE FROM ${table} WHERE session_id IN (SELECT lower(session_id) FROM sessions WHERE session_path=?)`).run(destination);
+      if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) database.prepare(`DELETE FROM ${table} WHERE session_id=lower(?)`).run(sessionId);
     }
 
     database.prepare('DELETE FROM sessions WHERE session_path=?').run(destination);
@@ -186,7 +220,8 @@ function prepare(root, request) {
 
   if (header.type !== 'session' || header.id !== request.sessionId) throw new Error('Fork session identity changed');
   header.parentSession = source;
-  const diffs = inheritedDiffs(source, lines.slice(1).map(line => JSON.parse(line)));
+  const sourceId = transcriptHeader(source).id;
+  const selected = retainedIds(lines.slice(1).map(line => JSON.parse(line)));
   const journals = path.join(root, 'fork-transactions');
   fs.mkdirSync(journals, { recursive: true, mode: 0o700 });
   sync(root);
@@ -197,21 +232,22 @@ function prepare(root, request) {
 
   try {
     write(path.join(directory, 'session.jsonl'), [JSON.stringify(header), ...lines.slice(1), ''].join('\n'));
-    write(path.join(directory, 'diffs.json'), diffs);
-    const transaction = { version: 1, destination, transcript: identity(path.join(directory, 'session.jsonl')), diffs: identity(path.join(directory, 'diffs.json')) };
+    const transaction = { version: 2, destination, sessionId: header.id, transcript: identity(path.join(directory, 'session.jsonl')), historyReady: false };
     sync(directory);
+    records.save(directory, transaction);
+    copyRetainedStoreLocked(source.replace(/\.jsonl$/, '.diffs.json'), destination.replace(/\.jsonl$/, '.diffs.json'), selected, sourceId, header.id, directory);
+    transaction.historyReady = true;
     records.save(directory, transaction);
 
     return { directory, transaction };
-  } catch (error) { cleanup(directory); throw error; }
+  } catch (error) { recoverTransaction(root, directory); throw error; }
 }
 
 function publish(root, request) {
   const { directory, transaction } = prepare(root, request);
 
   try {
-    fs.linkSync(path.join(directory, 'diffs.json'), transaction.destination.replace(/\.jsonl$/, '.diffs.json'));
-    sync(path.dirname(transaction.destination));
+    if (diffDatabase.revision(root, transaction.sessionId) !== 1) throw new Error('Prepared fork history changed; retained');
     fs.linkSync(path.join(directory, 'session.jsonl'), transaction.destination);
     sync(path.dirname(transaction.destination));
     registerPublished(root, transaction.destination);
@@ -243,8 +279,7 @@ function remove(root, request) {
     const sidecar = destination.replace(/\.jsonl$/, '.diffs.json');
 
     if (exists(sidecar)) fs.linkSync(sidecar, path.join(directory, 'diffs.json'));
-    else write(path.join(directory, 'diffs.json'), '{}');
-    const transaction = { version: 1, removing: true, destination, transcript: identity(path.join(directory, 'session.jsonl')), diffs: identity(path.join(directory, 'diffs.json')) };
+    const transaction = { version: 2, removing: true, destination, sessionId: transcriptHeader(destination).id, transcript: identity(path.join(directory, 'session.jsonl')), diffs: exists(sidecar) ? identity(path.join(directory, 'diffs.json')) : undefined };
     sync(directory);
     records.save(directory, transaction);
   } catch (error) { cleanup(directory); throw error; }
@@ -259,10 +294,11 @@ function published(root, request) {
   const header = JSON.parse(fs.readFileSync(destination, 'utf8').split('\n')[0]);
 
   if (header.type !== 'session' || header.id !== request.sessionId) throw new Error('Fork publication destination was replaced');
-  const sidecar = destination.replace(/\.jsonl$/, '.diffs.json');
 
-  if (!Check(diffsSchema, JSON.parse(fs.readFileSync(sidecar, 'utf8')))) throw new Error('Fork publication history is unavailable');
-  sync(sidecar); sync(destination); sync(path.dirname(destination));
+  if (!exists(destination.replace(/\.jsonl$/, '.diffs.json'))) diffDatabase.revision(root, header.id);
+
+  if (!Check(diffsSchema, loadDiffs(destination))) throw new Error('Fork publication history is unavailable');
+  sync(destination); sync(path.dirname(destination));
   registerPublished(root, destination);
 
   return true;

@@ -264,7 +264,7 @@ function recoverStore(filename, materialize, focus) {
   return readStore(filename, materialize, focus);
 }
 
-function copyRetainedStoreLocked(filename, destination, retainedIds, sessionId, destinationId) {
+function copyRetainedStoreLocked(filename, destination, retainedIds, sessionId, destinationId, preparationOwner) {
   validateRetainedSource(filename, sessionId);
 
   return withStoreLock(filename, () => {
@@ -277,7 +277,7 @@ function copyRetainedStoreLocked(filename, destination, retainedIds, sessionId, 
 
     if ([...pending, ...partial].some(id => retainedIds.has(id))) throw new Error('Selected source diffs are still pending; recover project changes before forking. Original comparisons were retained.');
 
-    diffDatabase.copy(state, destination, destinationId, retainedIds);
+    diffDatabase.copy(state, destination, destinationId, retainedIds, preparationOwner);
   });
 }
 
