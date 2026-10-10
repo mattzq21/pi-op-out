@@ -4,7 +4,9 @@ import { z } from "zod";
 export interface SavedMobileHost { name: string; url: string }
 
 
-const hostSchema = z.object({ name: z.string(), url: z.string(), position: z.number().int().nonnegative().optional() });
+const hostSchema = z.object({ name: z.string().trim().min(1), url: z.string(), position: z.number().int().nonnegative().optional() });
+
+let savedHostCache: SavedMobileHost[] = [];
 
 const hostListSchema = z.array(z.unknown()).catch([]);
 
@@ -41,6 +43,8 @@ async function storedHosts(change?: (hosts: SavedMobileHost[]) => SavedMobileHos
     if (result.connection) rememberConnection(result.connection);
 
 
+    savedHostCache = result.hosts;
+
     return result.hosts;
   } finally { database.close(); }
 }
@@ -66,13 +70,15 @@ function hostTransaction(database: IDBDatabase, change?: (hosts: SavedMobileHost
     {
       const request = hosts.getAll();
       request.onsuccess = () => {
-        result = parseHosts(hostListSchema.parse(request.result));
+        try {
+          result = parseHosts(hostListSchema.parse(request.result));
 
-        if (change) {
-          result = change(result);
-          hosts.clear();
-          result.forEach((host, position) => hosts.put({ ...host, position }));
-        }
+          if (change) {
+            result = change(result);
+            hosts.clear();
+            result.forEach((host, position) => hosts.put({ ...host, position }));
+          }
+        } catch (error) { transaction.abort(); reject(error); }
       };
     }
 
@@ -85,14 +91,30 @@ function hostTransaction(database: IDBDatabase, change?: (hosts: SavedMobileHost
 
 export function readMobileHosts(): Promise<SavedMobileHost[]> { return storedHosts(); }
 
-export function saveMobileHost(address: string, name: string): Promise<SavedMobileHost[]> {
+export function mobileDraftHostId(address: string) {
+  const host = savedHostCache.find(item => item.url === address);
+
+  if (!host) throw new Error("Save a named host before opening drafts");
+
+  return `mobile:${encodeURIComponent(host.name)}`;
+}
+
+export function validateMobileHost(address: string, name: string, hosts: SavedMobileHost[]): SavedMobileHost {
   const url = validateHost({ url: address.trim() });
+  const label = name.trim();
 
+  if (!label) throw new Error("Enter a host name");
+
+  if (hosts.some(host => host.url !== url && host.name === label)) throw new Error("Choose a different host name. This name is already saved.");
+
+  return { url, name: label };
+}
+
+export function saveMobileHost(address: string, name: string): Promise<SavedMobileHost[]> {
   return storedHosts(hosts => {
-    const previous = hosts.find(host => host.url === url);
-    const host = { url, name: name.trim() || previous?.name || new URL(url).hostname };
+    const host = validateMobileHost(address, name, hosts);
 
-    return [...hosts.filter(item => item.url !== url), host];
+    return [...hosts.filter(item => item.url !== host.url), host];
   });
 }
 

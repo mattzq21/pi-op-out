@@ -5,10 +5,18 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { App as AndroidApp } from "@capacitor/app";
 import App from "../App";
-import { cachedMobileHost, readMobileConnection, saveMobileConnection, readMobileHosts, removeMobileHost, saveMobileHost, type SavedMobileHost } from "../lib/mobileHosts";
+import { cachedMobileHost, readMobileConnection, saveMobileConnection, readMobileHosts, removeMobileHost, saveMobileHost, validateMobileHost, type SavedMobileHost } from "../lib/mobileHosts";
 import { remoteClient, validateHost } from "../lib/remoteClient";
 import { loadMobileDebugConnection } from "../lib/mobileDebug";
 import { MobileTailscaleStatus } from "./MobileTailscaleStatus";
+
+async function connectionHost(address: string, label: string | undefined, debug: boolean) {
+  const url = validateHost({ url: address.trim() });
+  const saved = await readMobileHosts();
+  const savedName = saved.find(host => host.url === url)?.name;
+
+  return validateMobileHost(url, label ?? savedName ?? (debug ? "Development" : ""), saved);
+}
 
 export function MobileApp() {
   const [url, setUrl] = createSignal(cachedMobileHost());
@@ -75,20 +83,22 @@ export function MobileApp() {
     await saveMobileConnection({ lastHost: cleanUrl });
 
     if (attempt !== generation.current) return;
-    applyHosts(savedHosts); setUrl(cleanUrl); setConnected(true); setWorkspaceOpen(true); retryDelay.current = 2000; restartUntil.current = 0;
+    applyHosts(savedHosts); setUrl(cleanUrl); setName(label); setConnected(true); setWorkspaceOpen(true); retryDelay.current = 2000; restartUntil.current = 0;
   };
 
-  const connect = async (address: string, label = "") => {
+  const connect = async (address: string, label?: string) => {
     if (address !== activeDebugAddress.current) activeDebugAddress.current = undefined;
     const attempt = ++generation.current;
     clearTimeout(retry.current); setConnecting(true); setError("");
 
     try {
-      const cleanUrl = validateHost({ url: address.trim() });
-      await remoteClient.connect({ url: cleanUrl });
+      const host = await connectionHost(address, label, Boolean(activeDebugAddress.current));
 
       if (attempt !== generation.current) return;
-      await finishConnection(attempt, cleanUrl, label);
+      await remoteClient.connect({ url: host.url });
+
+      if (attempt !== generation.current) return;
+      await finishConnection(attempt, host.url, host.name);
     } catch (reason) {
       if (attempt !== generation.current) return;
       remoteClient.close(); setError(reason instanceof Error ? reason.message : String(reason));
@@ -116,14 +126,14 @@ export function MobileApp() {
 
     const startupGeneration = generation.current;
     const startupUrl = url();
-    void Promise.all([loadMobileDebugConnection(), readMobileConnection()]).then(([debugUrl, saved]) => {
+    void Promise.all([loadMobileDebugConnection(), readMobileConnection(), readMobileHosts()]).then(([debugUrl, saved, savedHosts]) => {
       if (disposed) return;
 
       if (!reconnectChanged) { reconnectEnabled.current = saved.autoReconnect; setAutoReconnect(saved.autoReconnect); }
 
       if (generation.current !== startupGeneration) return;
 
-      if (url() === startupUrl) setUrl(saved.lastHost);
+      if (url() === startupUrl) { setUrl(saved.lastHost); setName(savedHosts.find(host => host.url === saved.lastHost)?.name ?? ""); }
 
       if (debugUrl) {
         activeDebugAddress.current = debugUrl;
@@ -174,7 +184,7 @@ export function MobileApp() {
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
 
-  const saveDisabled = () => connecting() || !url().trim();
+  const saveDisabled = () => connecting() || !url().trim() || !name().trim();
   const showConnectionNotice = () => !restartGrace() && (!connected() || Boolean(error()));
   const renderConnectionNotice = () => showConnectionNotice() && <div class="mobile-reconnect-banner"><div role="status">{error() || "Reconnecting…"}<button disabled={connecting() || disconnecting()} onClick={() => { if (connected()) void disconnect(); else void connect(url()); }}>{connected() ? "Retry disconnect" : connecting() ? "Connecting…" : "Reconnect"}</button></div>{!connected() && <MobileTailscaleStatus />}</div>;
   const savedHostValue = () => hosts().some((host) => host.url === url()) ? url() : "";
@@ -182,7 +192,7 @@ export function MobileApp() {
   return <>{workspaceOpen() ? (<><div style={{ display: "contents" }} inert={disconnecting()}><App suppressConnectionNotices={restartGrace()} /></div>{renderConnectionNotice()}<button class="mobile-host-button" aria-label="Disconnect from host" disabled={disconnecting()} onClick={() => void disconnect()}>Host</button></>) : (<main class="mobile-connect dark"><form onSubmit={(event) => { event.preventDefault(); intentionalDisconnect.current = false; retryDelay.current = 2000; void connect(url(), name()); }}>
     {hosts().length > 0 && <label>Saved hosts<select disabled={connecting()} value={savedHostValue()} onChange={(event) => { disconnect(); const host = hosts().find((item) => item.url === event.target.value); setUrl(host?.url ?? ""); setName(host?.name ?? ""); }}><option value="">New host</option>{<Key each={hosts()} by={(host) => host.url}>{(host, _index) => <option  value={host().url}>{host().name}</option>}</Key>}</select></label>}
     <label>Host address<input type="url" required disabled={connecting()} placeholder="wss://your-host.your-tailnet.ts.net" autoCapitalize="none" autocorrect="off" spellcheck={false} value={url()} onInput={(event) => { generation.current++; clearTimeout(retry.current); intentionalDisconnect.current = true; setUrl(event.target.value); }} /></label>
-    <label>Host name (optional)<input disabled={connecting()} value={name()} placeholder="My PC" onInput={(event) => setName(event.target.value)} /></label>
+    <label>Host name<input required disabled={connecting()} value={name()} placeholder="My PC" onInput={(event) => setName(event.target.value)} /></label>
     <div class="mobile-host-actions"><button type="button" disabled={saveDisabled()} onClick={saveHost}>Save host</button>{hosts().some((host) => host.url === url()) && <button type="button" disabled={connecting()} onClick={forgetHost}>Remove host</button>}</div>
     <label class="mobile-auto-reconnect"><input type="checkbox" checked={autoReconnect()} onInput={(event) => { const enabled = event.target.checked; reconnectChanged = true; void saveMobileConnection({ autoReconnect: enabled }).catch(reason => setError(String(reason))); reconnectEnabled.current = enabled; setAutoReconnect(enabled);
 
@@ -190,7 +200,7 @@ export function MobileApp() {
     <p class="mobile-connect-hint">Connect this device and the host to the same Tailscale account, then enter the host’s Tailscale Serve wss:// address.</p>
     <MobileTailscaleStatus />
     {error() && <p role="alert">{error()}</p>}
-    <button class="primary-button" disabled={connecting()}>{connecting() ? "Connecting…" : "Connect to workspace"}</button>
+    <button class="primary-button" disabled={saveDisabled()}>{connecting() ? "Connecting…" : "Connect to workspace"}</button>
     {connecting() && <button type="button" onClick={disconnect}>Cancel</button>}
   </form></main>)}</>;
 }
