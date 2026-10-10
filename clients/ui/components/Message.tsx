@@ -167,6 +167,7 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
       const delay = nextLoadAt - Date.now();
 
       if (delay > 0) {
+        setLoading(true);
         clearTimeout(timer);
         timer = setTimeout(refresh, delay);
         return;
