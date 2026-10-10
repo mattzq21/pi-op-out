@@ -593,6 +593,9 @@ pub(super) async fn queue_command(session: &Session, mut command: Value) -> Resu
         return session.queue.change_pending(&text(&command, "id"), command["action"].clone()).await;
     }
     let message = text(&command, "message");
+    if message.split_whitespace().next() == Some("/goal") && command["images"].as_array().is_some_and(|images| !images.is_empty()) {
+        return Err("Goals do not accept attachments. Remove the files and images before sending.".into());
+    }
     let review = matches!(message.split_whitespace().next(), Some("/review" | "/rs"));
     if kind(&command) == "prompt" && (!message.starts_with('/') || review) && !session.queue.held() {
         command["type"] = json!(if !review && command["streamingBehavior"] == "steer" {

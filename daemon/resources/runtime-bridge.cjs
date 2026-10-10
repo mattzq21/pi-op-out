@@ -239,14 +239,8 @@ function dispatchPrompt(command, session, output) {
   }).catch(error => { if (!preflightSucceeded) promptError(command, error, output); });
 }
 
-function goalObjective(text, images) {
-  const value = text.trimStart().match(/^\/goal\s+([\s\S]*)$/)?.[1].trim();
-
-  return Boolean(value && !["edit", "clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget ")) || Boolean(images?.length && text.trim() === "/goal");
-}
-
 async function prepareGoalPrompt(text, session, goalSubmissionId, images, prepared) {
-  if (!goalObjective(text, images) && !prepared) return { message: text };
+  if (!/^\/goal(?:\s|$)/.test(text.trimStart()) && !prepared) return { message: text };
 
   try {
     const result = await runtimeRequest(session, "prepare_goal_prompt", { message: text, goalSubmissionId, images, prepared });
