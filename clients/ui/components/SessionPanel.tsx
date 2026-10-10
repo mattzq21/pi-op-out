@@ -7,7 +7,7 @@ import { createDependencyEffect,createMemoFields,createRef,cssPixels,type Keyboa
 import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderOpen,LoaderCircle,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
 import { openGroupDirectory } from "../lib/nativeTransport";
 import { isMobile } from "../lib/platform";
-import type { SessionGroup } from "../lib/sessionGroups";
+import { DIRLESS_KEY, type SessionGroup } from "../lib/sessionGroups";
 import { groupLayoutToken,isFixedGroup,RECENT_KEY,sessionKey,sessionLayoutToken,type DraggedSession,type SidebarState } from "../lib/sidebarState";
 import type { SessionSummary } from "../types";
 import { GroupProjectPicker, type GroupProject } from "./GroupProjectPicker";
@@ -26,6 +26,10 @@ interface DropTarget { projectKey: string; sessionKey: string; edge: "before" | 
 type DraggedItem = DraggedSession | { projectKey: string };
 
 type MouseDrag = DraggedItem & { startX: number; startY: number; active: boolean; };
+
+function isManualDirlessMove(drag: MouseDrag, target?: DropTarget) {
+  return "session" in drag && target?.projectKey === DIRLESS_KEY && drag.projectKey !== DIRLESS_KEY;
+}
 
 const actions: ReadonlyArray<readonly [SessionAction, typeof AppWindow, string]> = [
   ["new-window", AppWindow, "Open in new window"], ["rename", Pencil, "Rename conversation"], ["open-directory", FolderOpen, "Open project directory"], ["copy-id", Copy, "Copy session ID"], ["open-rollout", FileText, "Open rollout file"]
@@ -198,7 +202,7 @@ export function SessionPanel(props: Props) {
       const destinationKeys = keyboardSidebarEntries().filter((token) => token.startsWith("group:")).map((token) => token.slice("group:".length));
       const sourceIndex = destinationKeys.indexOf(drag.projectKey); const destinationKey = destinationKeys[sourceIndex + direction];
 
-      if (!destinationKey) return;
+      if (!destinationKey || destinationKey === DIRLESS_KEY) return;
       void moveSession(drag, destinationKey)?.then(restoreFocus); expandProject(destinationKey);
 
       return;
@@ -295,6 +299,8 @@ export function SessionPanel(props: Props) {
       } else if (!sessionElement) {
         nextTarget = emptyProjectDrop(hit);
       }
+
+      if (isManualDirlessMove(current, nextTarget)) nextTarget = undefined;
 
       mouseDropTargetRef.current = nextTarget;
       setDropTarget(nextTarget);

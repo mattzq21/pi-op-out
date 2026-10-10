@@ -119,7 +119,7 @@ fn load_at(path: &Path, seeds: Vec<SessionSeed>) -> Result<SessionGroups, String
     }
     let ids: HashSet<_> = state.groups.iter().map(|group| group.id.clone()).collect();
     for destination in state.assignments.values_mut() {
-        if destination.as_ref().is_some_and(|id| id != DIRLESS_KEY && !ids.contains(id)) { *destination = None; dirty = true; }
+        if destination.as_ref().is_some_and(|id| id == DIRLESS_KEY || !ids.contains(id)) { *destination = None; dirty = true; }
     }
     if dirty { write(path, &state)?; }
     Ok(state)
@@ -230,7 +230,8 @@ fn remove_group(state: &mut SessionGroups, id: String) -> Result<(), String> {
 }
 
 fn assign_group(state: &mut SessionGroups, key: String, group: Option<String>) -> Result<(), String> {
-    if group.as_ref().is_some_and(|id| id != DIRLESS_KEY && !state.groups.iter().any(|item| &item.id == id)) { return Err("Group no longer exists".into()); }
+    if group.as_deref() == Some(DIRLESS_KEY) { return Err("Dirless is assigned automatically when a chat's working directory is missing".into()); }
+    if group.as_ref().is_some_and(|id| !state.groups.iter().any(|item| &item.id == id)) { return Err("Group no longer exists".into()); }
     state.assignments.insert(key, group);
     Ok(())
 }

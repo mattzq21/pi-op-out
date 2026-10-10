@@ -12,7 +12,7 @@ type SidebarGroup = readonly [key: string, name: string, hostId: string, hostNam
 
 export const RECENT_KEY = "__pi-desktop-ungrouped__";
 
-const RECENT_LABEL = "Chit chats";
+const RECENT_LABEL = "Recents";
 
 export const isFixedGroup = (key: string) => key === RECENT_KEY || key === DIRLESS_KEY;
 
@@ -182,6 +182,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   };
 
   const moveSession = (drag: DraggedSession, destinationKey: string, targetKey?: string, edge: "before" | "after" = "after") => {
+    if (destinationKey === DIRLESS_KEY && drag.projectKey !== DIRLESS_KEY) return;
     const destinationSessions = displayedSessions().get(destinationKey);
 
     if (!destinationSessions) return;
@@ -200,6 +201,8 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     if (customGroupsByKey().has(destinationKey)) {
       placeSessionEntry(destinationKey, drag.sessionKey, targetKey, edge);
     }
+
+    if (destinationKey === DIRLESS_KEY) return Promise.resolve();
 
     return storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
   };
@@ -232,7 +235,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     if (session.cwdExists === false) return DIRLESS_KEY;
     const destination = storedGroups.state?.assignments[sessionKey(session)] ?? draftProjectGroup(session);
 
-    if (!destination) return RECENT_KEY;
+    if (!destination || destination === DIRLESS_KEY) return RECENT_KEY;
     const group = savedGroupsById().get(destination);
 
     return group?.cwd && isTemporaryChatCwd(group.cwd) ? RECENT_KEY : destination;
