@@ -166,7 +166,7 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
     refresh();
 
     return () => { active = false; };
-  }, () => [open(), retry(), isSubagent(), componentProps.message.toolPayloadVersion, componentProps.message.loadToolPayload]);
+  }, () => [open(), retry(), isSubagent(), componentProps.message.toolPayloadVersion, componentProps.message.loadedToolPayloadVersion, componentProps.message.toolPayloadLoaded, componentProps.message.loadToolPayload]);
   const status = createMemo(() => (componentProps.status ?? componentProps.message.toolStatus ?? "done"));
   const label = createMemo(() => (<ToolLabel message={componentProps.message} toolCount={componentProps.toolCount ?? 1} status={status()} />));
 

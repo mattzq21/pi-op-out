@@ -18,8 +18,11 @@ export function SubagentPane(props: { target: SubagentTarget; onClose: () => voi
   createDependencyEffect(() => {
     let closed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const unsubscribe = transport.subscribe(session.handleEvent);
-    transport.setVisible(true);
+    const scheduleRefresh = (delay: number) => {
+      if (closed) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => void refresh(), delay);
+    };
 
     const refresh = async () => {
       try {
@@ -32,10 +35,16 @@ export function SubagentPane(props: { target: SubagentTarget; onClose: () => voi
         if (!closed) { setLoaded(true); setError(undefined); }
       } catch (reason) {
         if (!closed) setError(reason instanceof Error ? reason.message : String(reason));
-        if (!closed) timer = setTimeout(() => void refresh(), 1000);
+        scheduleRefresh(1000);
       }
     };
 
+    const unsubscribe = transport.subscribe(event => {
+      session.handleEvent(event);
+
+      if (event.type === "disconnected" || event.type === "connection_restored") scheduleRefresh(50);
+    });
+    transport.setVisible(true);
     void refresh();
 
     return () => { closed = true; clearTimeout(timer); unsubscribe(); transport.setVisible(false); };
