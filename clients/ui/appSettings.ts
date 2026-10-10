@@ -9,6 +9,7 @@ import { restoreAgentConfiguration, saveAgentConfiguration } from "./lib/agentCo
 import { applyClientPreferences, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "./lib/clientPreferenceMerge";
 import { ConversationChangedError } from "./lib/conversationChanged";
 import { recordSeenModels } from "./lib/modelVisibility";
+import { clearDraftCatalogs } from "./lib/draftRuntime";
 import { NativeTransport } from "./lib/nativeTransport";
 import { listen } from "./lib/platform";
 import { SessionRuntimePool } from "./lib/sessionRuntimePool";
@@ -95,14 +96,19 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     };
 
     const pending = listen("pi://settings-changed", ({ payload }) => {
+      clearDraftCatalogs();
       update(payload);
     }, settingsChangeSchema);
+
+    const catalogListeners = ["pi://host-settings-changed", "pi://provider-auth-changed", "pi://daemon-restarting"].map(event => listen(event, clearDraftCatalogs, z.unknown()));
 
     const clientPending = listen("pi://client-settings-changed", () => { const current = pendingSettings ?? settings();
 
     if (current) update({ ...latestChange, settings: current }); }, z.unknown());
 
-    return () => { revision++; void pending.then((unlisten) => unlisten()); void clientPending.then((unlisten) => unlisten()); };
+    return () => { revision++; clearDraftCatalogs(); void pending.then((unlisten) => unlisten()); void clientPending.then((unlisten) => unlisten());
+
+      for (const listener of catalogListeners) void listener.then(unlisten => unlisten()); };
   }, () => [applyRuntimeSettings]);
 
   const loadSettings = async () => { const owner = transport(); const request = owner.loadSettingsChange(); preloadChat(); const change = await request;

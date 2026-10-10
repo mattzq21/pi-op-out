@@ -67,7 +67,7 @@ export function newChatAgent(agents: DefinedAgentsCapability | undefined, defaul
 export function inheritGroupControls(controls: WeakMap<NativeTransport, ProjectControls>, target: NativeTransport, grouped: boolean, state: AgentState, agents: DefinedAgentsCapability | undefined, statuses: Record<string, string>, settings?: AppSettings) {
   if (!grouped) return;
   const agent = newChatAgent(agents, settings?.defaultAgent);
-  const thinking = agents?.config.agents.find(profile => profile.name === agent)?.effort.trim() || state.thinkingLevel;
+  const thinking = state.thinkingLevel;
   controls.set(target, { agent, model: state.model, thinking, fastMode: statuses["pi-desktop-fast-mode"] === "Fast mode on", contextWindow: state.contextUsage?.contextWindow ?? state.model?.contextWindow });
 }
 
