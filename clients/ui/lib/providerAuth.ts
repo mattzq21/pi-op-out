@@ -103,9 +103,12 @@ export function useProviderAuth(hostId: Accessor<string>) {
     let cancelled = false;
     void listen("pi://provider-auth-changed", ({ payload }) => {
       if (cancelled || payload.hostId !== capturedHostId) return;
+      if (payload.flow && payload.flow.flowId === flow()?.flowId && payload.flow.status !== "pending") {
+        receive(payload.flow);
+      }
       setTick((value) => value + 1);
       setRevision((value) => value + 1);
-    }, z.object({ hostId: z.string() })).then((stop) => {
+    }, z.object({ hostId: z.string(), flow: authFlowSchema.nullish() })).then((stop) => {
       if (cancelled) void stop(); else unlisten = stop;
     }).catch(() => undefined);
 
@@ -113,6 +116,8 @@ export function useProviderAuth(hostId: Accessor<string>) {
   }, () => [hostId()]);
 
   const receive = (next: AuthFlow) => {
+    const current = flow();
+    if (current?.flowId === next.flowId && current.status !== "pending" && next.status === "pending") return;
     setFlow(next);
 
     if (next.status === "pending") active.current = { hostId: hostId(), flowId: next.flowId };

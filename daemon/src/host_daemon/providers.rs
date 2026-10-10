@@ -134,13 +134,17 @@ impl ProviderService {
     }
 
     fn changed(&self) {
+        self.flow_changed(None);
+    }
+
+    fn flow_changed(&self, flow: Option<Value>) {
         self.revision.fetch_add(1, Ordering::SeqCst);
         if let Some(host) = self.host.get().and_then(Weak::upgrade) {
             let sessions: Vec<_> = host.registry().sessions.values().cloned().collect();
             for session in sessions {
                 session.publish(json!({"type":"session_info_changed"}), None);
             }
-            host.output(json!({"type":"provider_auth_changed"}));
+            host.output(json!({"type":"provider_auth_changed","flow":flow}));
         }
     }
 
@@ -316,7 +320,7 @@ impl ProviderService {
                     flow.notices.clear();
                 }
             }
-            service.changed();
+            service.flow_changed(service.snapshot(&id).ok());
         });
         Ok(())
     }
