@@ -63,9 +63,7 @@ function firstLine(file) {
 }
 
 function deferReference(file, reason) {
-  console.error(`Temporary folder cleanup deferred: cannot read the working folder from ${file}: ${reason}`);
-
-  return null;
+  return { deferred: `Temporary folder cleanup deferred: cannot read the working folder from ${file}: ${reason}` };
 }
 
 function references(db, excluded) {
@@ -103,9 +101,11 @@ function inUse(snapshot, directory) {
 
 function removeChecked(db, directory, id) {
   const snapshot = references(db, id);
+
+  if (snapshot.deferred) console.error(snapshot.deferred);
   db.exec('BEGIN IMMEDIATE');
 
-  if (!snapshot || db.prepare('PRAGMA data_version').get().data_version !== snapshot.version || inUse(snapshot, directory)) return;
+  if (snapshot.deferred || db.prepare('PRAGMA data_version').get().data_version !== snapshot.version || inUse(snapshot, directory)) return;
   remove(db, directory, id);
 }
 
@@ -120,9 +120,15 @@ function cleanupDeleted(root) {
     if (!candidates.length) return;
     const snapshot = references(db);
 
-    if (!snapshot) return;
+    if (snapshot.deferred) throw new Error(snapshot.deferred);
     db.exec('BEGIN IMMEDIATE');
-    const failures = db.prepare('PRAGMA data_version').get().data_version === snapshot.version ? removeCandidates(db, root, snapshot, candidates) : [];
+
+    if (db.prepare('PRAGMA data_version').get().data_version !== snapshot.version) {
+      db.exec('ROLLBACK');
+      throw new Error('Temporary folder cleanup deferred: session storage changed while references were checked');
+    }
+
+    const failures = removeCandidates(db, root, snapshot, candidates);
     db.exec('COMMIT');
 
     if (failures.length) throw new Error(`Temporary folder cleanup failed: ${failures.join('; ')}`);
