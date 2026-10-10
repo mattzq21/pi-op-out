@@ -146,10 +146,12 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const [retry, setRetry] = createSignal(0);
+  let nextLoadAt = 0;
   createDependencyEffect(() => {
     if (!open() && !isSubagent()) return;
     let active = true; let pending = false;
     let failed: { version?: number } | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const refresh = () => {
       const message = componentProps.message;
@@ -162,17 +164,27 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
       }
 
       if (!message.loadToolPayload || failed && failed.version === message.toolPayloadVersion) return;
+      const delay = nextLoadAt - Date.now();
+
+      if (delay > 0) {
+        clearTimeout(timer);
+        timer = setTimeout(refresh, delay);
+        return;
+      }
+
+      nextLoadAt = Date.now() + 300;
       pending = true;
       setLoading(true); setError(undefined);
       void message.loadToolPayload().catch((reason) => { if (active) { failed = { version: message.toolPayloadVersion }; setError(reason instanceof Error ? reason.message : String(reason)); } })
         .finally(() => { pending = false;
+        nextLoadAt = Date.now() + 300;
 
         if (active) { setLoading(false); refresh(); } });
     };
 
     refresh();
 
-    return () => { active = false; };
+    return () => { active = false; clearTimeout(timer); };
   }, () => [open(), retry(), isSubagent(), componentProps.message.toolPayloadVersion, componentProps.message.loadedToolPayloadVersion, componentProps.message.toolPayloadLoaded, componentProps.message.loadToolPayload]);
   const status = createMemo(() => (componentProps.status ?? componentProps.message.toolStatus ?? "done"));
   const label = createMemo(() => (<ToolLabel message={componentProps.message} toolCount={componentProps.toolCount ?? 1} status={status()} />));

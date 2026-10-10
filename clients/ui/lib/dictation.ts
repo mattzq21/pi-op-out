@@ -16,9 +16,13 @@ export function useDictationEnabled() {
   let disposed = false;
   let revision = 0;
   let unlisten: (() => void) | undefined;
+  let listenerFailed = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   const apply = (state: Configuration) => {
+    clearTimeout(timer);
     setEnabled(state.enabled === true && !!navigator.mediaDevices?.getUserMedia && typeof AudioContext !== "undefined");
+    if (listenerFailed && state.loading) timer = setTimeout(() => void refresh(), 1500);
   };
 
   const refresh = async () => {
@@ -40,10 +44,14 @@ export function useDictationEnabled() {
       if (disposed) { stop(); return; }
       unlisten = stop;
       void refresh();
-    }).catch(() => { if (!disposed) void refresh(); });
+    }).catch(() => {
+      if (disposed) return;
+      listenerFailed = true;
+      void refresh();
+    });
     window.addEventListener("focus", focus);
   });
-  onCleanup(() => { disposed = true; unlisten?.(); window.removeEventListener("focus", focus); });
+  onCleanup(() => { disposed = true; clearTimeout(timer); unlisten?.(); window.removeEventListener("focus", focus); });
 
   return enabled;
 }
