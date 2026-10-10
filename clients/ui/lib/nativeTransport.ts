@@ -55,7 +55,6 @@ export const loadStorageReport = async (hostId?: string) => {
   return hostId === undefined ? report : { hosts: report.hosts.map((host) => ({ ...host, hostId })) };
 };
 
-export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call("delete_archived_session", { sessionPath, hostId }, z.array(z.string()));
 
 export const deleteArchivedConversations = (sessionPaths: string[], hostId = "local") => call("delete_archived_session", { sessionPath: sessionPaths[0], sessionPaths, hostId }, z.array(z.string()));
 

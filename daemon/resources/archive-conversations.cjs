@@ -44,12 +44,6 @@ function main() {
   if (request.transaction) return executeArchive(archiveTransaction.load(root, request.transaction));
   const records = prepareArchive();
 
-  if (request.inspect) {
-    process.stdout.write(JSON.stringify([]));
-
-    return;
-  }
-
   const transaction = archiveTransaction.plan(root, records);
 
   if (request.action === 'plan') {
