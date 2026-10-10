@@ -214,7 +214,7 @@ function archivePending(root) {
 function pending(root, ignoredJournal) {
   if (require('./restore-records.cjs').list(root).some(file => file !== ignoredJournal)) return true;
 
-  if (archivePending(root) || require('./deletion-records.cjs').list(root).length) return true;
+  if (archivePending(root) || require('./deletion-records.cjs').list(root).length || require('./storage-transaction.cjs').pending(root)) return true;
 
   return false;
 }
@@ -270,45 +270,15 @@ function discardRolledBack(root, transaction, journal) {
   return removeReceipt(snapshot);
 }
 
-function previousReceipt(root, file, receipt, active) {
-  const previous = readRecord(file);
-
-  if (!previous) return;
-
-  if (!ownsReceipt(root, previous)) throw new Error(`Existing restore receipt has ambiguous ownership; retained: ${file}`);
-
-  if (isDeepStrictEqual(previous.value, receipt)) return;
-
-  if (previous.value.operationId === receipt.operationId) throw new Error('Restore receipt operation identity was reused with different contents');
-
-  if (pending(root, active.file)) throw new Error('Existing restore receipt is protected by unresolved session transactions');
-  const state = destinationState(previous.value);
-
-  if (state.kind !== 'stale' || !unchanged(previous)) throw new Error(`Existing restore receipt is still valid or uncertain; retained: ${file}`);
-  const current = destinationState(previous.value);
-
-  if (current.kind !== 'stale' || current.proof !== state.proof) throw new Error('Restore receipt destination changed during publication');
-}
-
-function publish(root, transaction) {
+function record(root, journal) {
   assertLocked(root);
-  const receipt = parse(JSON.stringify({ version: 1, operationId: transaction.receiptId, trace: transaction.trace, result: transaction.result }));
+  const receipt = parse(JSON.stringify({ version: 1, operationId: journal.id, trace: journal.trace, result: journal.result }));
 
   if (!Check(publishedSchema, receipt) || !validReceipt(root, receipt)) throw new Error('Invalid restore receipt publication');
-  const key = createHash('sha256').update(receipt.result.sessionId.toLowerCase()).digest('hex').slice(0, 40);
 
-  const active = operationJournal(root, transaction, path.join(root, 'restore-transactions', `${key}.json`));
+  if (destinationState(receipt).kind !== 'valid') return;
 
-  if (!active) throw new Error('Restore receipt publication requires its persisted operation journal');
-  const source = fileState(receipt.trace.source, receipt.trace.identity, receipt.result.sessionId);
-
-  if (source.kind !== 'valid' || io.exists(receipt.trace.destination)) throw new Error('Restore receipt source or destination changed before publication');
-  const file = receiptPath(root, receipt.trace.source);
-
-  previousReceipt(root, file, receipt, active);
-
-  if (!unchanged(active) || !sameEntry(receipt.trace.source, source.proof) || io.exists(receipt.trace.destination)) throw new Error('Restore operation changed before receipt publication');
-  require('./restore-records.cjs').write(file, JSON.stringify(receipt));
+  require('./restore-records.cjs').write(receiptPath(root, receipt.trace.source), JSON.stringify(receipt));
 }
 
 function pruneReceipt(root, file) {
@@ -337,4 +307,4 @@ function prune(root) {
   return { removed, retained: files.length - removed, deferred: false };
 }
 
-module.exports = { publish, result, discardRolledBack, prune };
+module.exports = { record, result, discardRolledBack, prune };

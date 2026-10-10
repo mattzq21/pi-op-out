@@ -78,6 +78,18 @@ function deletionFiles(root, observation) {
       if (assets.exists(file)) observe(root, file, observation, false);
     }
   }
+
+  stagedFiles(root, observation);
+}
+
+function stagedFiles(root, observation) {
+  for (const staged of require('./storage-transaction.cjs').stagedTranscripts(root)) {
+    if (staged.state !== 'prepared') continue;
+
+    if (path.dirname(staged.file) !== staged.staging) throw new Error('Ambiguous goal asset transaction references retained');
+
+    if (assets.exists(staged.file)) observe(root, staged.file, observation, false);
+  }
 }
 
 function transactionFiles(root, kind, observation) {

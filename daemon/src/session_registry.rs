@@ -15,7 +15,7 @@ pub(crate) fn reserve(root: &Path) -> Result<String, String> {
     let db = open(root)?;
     loop {
         let id = uuid::Uuid::new_v4().to_string();
-        let inserted = db.execute("INSERT INTO sessions (session_id) SELECT ?1 WHERE NOT EXISTS (SELECT 1 FROM deletion_records d, json_each(d.record_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) ON CONFLICT(session_id) DO NOTHING", [&id]).map_err(|error| error.to_string())?;
+        let inserted = db.execute("INSERT INTO sessions (session_id) SELECT ?1 WHERE NOT EXISTS (SELECT 1 FROM deletion_records d, json_each(d.record_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) AND NOT EXISTS (SELECT 1 FROM storage_transactions s, json_each(s.journal_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) ON CONFLICT(session_id) DO NOTHING", [&id]).map_err(|error| error.to_string())?;
         if inserted == 1 { return Ok(id); }
     }
 }

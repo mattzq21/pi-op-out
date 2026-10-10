@@ -1,13 +1,6 @@
 const path = require('node:path');
 const database = require('./session-database.cjs');
 
-function allocate(root, directory) {
-  const db = database.open(root);
-
-  try { db.prepare('INSERT INTO deletion_records (directory) VALUES (?)').run(directory); }
-  finally { db.close(); }
-}
-
 function save(record) {
   const db = database.open(record.root);
 
@@ -46,4 +39,4 @@ function list(root) {
   finally { db.close(); }
 }
 
-module.exports = { allocate, save, remove, list };
+module.exports = { save, remove, list };

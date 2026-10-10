@@ -4,13 +4,6 @@ const database = require('./session-database.cjs');
 
 function open(directory) { return database.open(path.dirname(path.dirname(directory))); }
 
-function allocate(directory) {
-  const db = open(directory);
-
-  try { db.prepare('INSERT INTO archive_records (directory) VALUES (?)').run(directory); }
-  finally { db.close(); }
-}
-
 function save(directory, record) {
   const descriptor = fs.openSync(directory, 'r');
 
@@ -58,4 +51,4 @@ function list(root) {
   finally { db.close(); }
 }
 
-module.exports = { allocate, save, read, remove, list };
+module.exports = { save, read, remove, list };

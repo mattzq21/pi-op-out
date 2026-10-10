@@ -127,6 +127,8 @@ async function discoverGoalDiagnostics(profile, discovery) {
     catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(directory + ': diagnostic goal ownership unavailable: ' + error.message); }
   }
 
+  await discoverTransactionDiagnostics(profile, discovery);
+
   const archives = require('./archive-records.cjs');
 
   for (const directory of archives.list(profile)) {
@@ -136,6 +138,28 @@ async function discoverGoalDiagnostics(profile, discovery) {
       if (record) await inspectDirectory(profile, 'archive-transactions', directory, discovery, record);
     } catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(directory + ': diagnostic goal ownership unavailable: ' + error.message); }
   }
+}
+
+async function discoverTransactionDiagnostics(profile, discovery) {
+  const storageTransactions = require('./storage-transaction.cjs');
+  let staged = [];
+
+  try { staged = storageTransactions.stagedTranscripts(profile); }
+  catch (error) { discovery.warnings.push('Storage transaction diagnostics unavailable: ' + error.message); }
+
+  for (const entry of staged) {
+    if (entry.root !== profile || path.dirname(entry.file) !== entry.staging) {
+      discovery.warnings.push(entry.file + ': diagnostic transcript is outside its journal staging folder');
+      continue;
+    }
+
+    try { await transcript(entry.file, { identity: entry.identity, sessionId: entry.sessionId }, discovery, 'diagnostic-' + entry.kind + '-' + entry.state); }
+    catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(entry.file + ': diagnostic goal reference coverage unavailable: ' + error.message); }
+  }
+
+  for (const journal of storageTransactions.stuck(profile)) discovery.warnings.push('Storage transaction ' + journal.id + ' (' + journal.kind + ') is pending: ' + journal.error);
+
+  if (storageTransactions.temporaryCleanupPending(profile)) discovery.warnings.push('Temporary folder cleanup for deleted sessions is pending');
 }
 
 module.exports = { discoverGoalDiagnostics };

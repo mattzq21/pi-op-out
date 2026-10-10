@@ -57,12 +57,12 @@ fn report(host: &Host, recovery: &Recovery, reported: &mut HashSet<String>) {
 }
 
 async fn replay_transactions(root: &Path) -> Result<()> {
-    run_recovery(root, include_str!("../../../resources/restore-session.bundle.mjs"), &["--", "--recover"]).await
+    collect_retention(root).await
 }
 
 pub(super) async fn collect_retention(root: &Path) -> Result<()> {
-    let request = json!({"retentionOnly":true,"root":root}).to_string();
-    run_recovery(root, include_str!("../../../resources/delete-session.bundle.mjs"), &[&request]).await
+    let request = json!({"action":"recover","root":root}).to_string();
+    run_recovery(root, include_str!("../../../resources/storage-transaction.bundle.mjs"), &[&request]).await
 }
 
 async fn run_recovery(root: &Path, script: &str, arguments: &[&str]) -> Result<()> {
