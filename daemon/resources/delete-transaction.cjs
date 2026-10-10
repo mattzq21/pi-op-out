@@ -41,16 +41,7 @@ function create(root, files, sources) {
   records.allocate(root, container);
   io.mkdir(container);
 
-  const targets = sources.map(file => {
-    const saved = files.find(saved => saved.file === file);
-    const temporaryPath = path.join(root, 'tmp', saved.sessionId);
-
-    const target = { path: file, sessionId: saved.sessionId };
-
-    if (saved.cwd === temporaryPath) target.temporaryPath = temporaryPath;
-
-    return target;
-  });
+  const targets = sources.map(file => ({ path: file, sessionId: files.find(saved => saved.file === file).sessionId }));
 
   const transaction = {
     version: 3, kind: 'delete', id, root, container, containerIdentity: io.identity(container), state: 'pending',
@@ -104,10 +95,6 @@ function validate(transaction, root, directory) {
   validateIdentity(transaction, root, directory);
   transaction.files.forEach(file => validateFile(transaction, file));
   goalAssets.validate(root, transaction.goalAssets ?? []);
-
-  for (const target of transaction.targets) {
-    if (target.temporaryPath !== undefined && (!uuid.test(target.sessionId) || target.temporaryPath !== path.join(root, 'tmp', target.sessionId))) throw new Error('Invalid temporary chat cleanup path');
-  }
 
   for (const owner of transaction.ownership) {
     const key = createHash('sha256').update(owner.sessionId.toLowerCase()).digest('hex').slice(0, 40);
@@ -216,9 +203,7 @@ function finish(transaction) {
   require('./registry-deletion.cjs').forget(transaction.root, transaction.targets);
   goalAssets.finish(transaction, save);
 
-  for (const target of transaction.targets) {
-    if (target.temporaryPath) require('./temporary-chat.cjs').main({ action: 'remove', root: transaction.root, id: target.sessionId, path: target.temporaryPath });
-  }
+  require('./temporary-chat.cjs').cleanupDeleted(transaction.root);
 
   for (const file of transaction.files.filter(file => !file.skipped)) {
     const staged = stagedPath(transaction, file);

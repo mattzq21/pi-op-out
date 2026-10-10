@@ -39,28 +39,98 @@ function create(db, root, directory, id) {
   process.stdout.write(directory);
 }
 
-function referencedDirectory(db, directory, id) {
-  const rows = db.prepare('SELECT session_path FROM sessions WHERE session_id != ? AND session_path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))').all(id);
+function firstLine(file) {
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) return null;
+    const chunks = [];
+    const buffer = Buffer.alloc(4096);
+
+    for (let total = 0; total < 65536;) {
+      const size = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+
+      if (!size) return null;
+      total += size;
+      const newline = buffer.subarray(0, size).indexOf(10);
+      chunks.push(Buffer.from(buffer.subarray(0, newline < 0 ? size : newline)));
+
+      if (newline >= 0) return Buffer.concat(chunks).toString('utf8');
+    }
+
+    return null;
+  } finally { fs.closeSync(descriptor); }
+}
+
+function references(db, excluded) {
+  const version = db.prepare('PRAGMA data_version').get().data_version;
+  const rows = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))').all();
+  const directories = [];
 
   for (const row of rows) {
-    let header;
+    if (row.session_id === excluded) continue;
 
-    try { header = JSON.parse(fs.readFileSync(row.session_path, 'utf8').split('\n', 1)[0]); }
-    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    try {
+      const line = firstLine(row.session_path);
 
-    const cwd = path.resolve(header.cwd);
+      if (line === null) return null;
+      const cwd = JSON.parse(line).cwd;
 
-    if (cwd === directory || cwd.startsWith(directory + path.sep)) return true;
+      if (!path.isAbsolute(cwd)) return null;
+      directories.push(path.resolve(cwd));
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+
+      return null;
+    }
   }
 
-  return db.prepare('SELECT record_json FROM queued_inputs WHERE session_id != ?').all(id).some(row => row.record_json.includes(directory));
+  const queued = db.prepare('SELECT session_id, record_json FROM queued_inputs').all().filter(row => row.session_id !== excluded).map(row => row.record_json);
+
+  return { version, directories, queued };
+}
+
+function inUse(snapshot, directory) {
+  return snapshot.directories.some(cwd => cwd === directory || cwd.startsWith(directory + path.sep))
+    || snapshot.queued.some(body => body.includes(directory));
+}
+
+function removeChecked(db, directory, id) {
+  const snapshot = references(db, id);
+  db.exec('BEGIN IMMEDIATE');
+
+  if (!snapshot || db.prepare('PRAGMA data_version').get().data_version !== snapshot.version || inUse(snapshot, directory)) return;
+  remove(db, directory, id);
+}
+
+function cleanupDeleted(root) {
+  if (!directoryExists(path.join(root, 'tmp'))) return;
+  const db = database.open(root);
+
+  try {
+    db.exec('CREATE TABLE IF NOT EXISTS temporary_chat_allocations (session_id TEXT PRIMARY KEY, original_path TEXT NOT NULL UNIQUE)');
+    const candidates = db.prepare('SELECT a.session_id, a.original_path FROM temporary_chat_allocations a JOIN session_deletion_tombstones d ON d.session_id=lower(a.session_id)').all();
+
+    if (!candidates.length) return;
+    const snapshot = references(db);
+
+    if (!snapshot) return;
+    db.exec('BEGIN IMMEDIATE');
+
+    if (db.prepare('PRAGMA data_version').get().data_version === snapshot.version) {
+      for (const candidate of candidates) {
+        const directory = path.join(root, 'tmp', candidate.session_id);
+
+        if (candidate.original_path !== directory || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(candidate.session_id) || inUse(snapshot, directory)) continue;
+        remove(db, directory, candidate.session_id);
+      }
+    }
+
+    db.exec('COMMIT');
+  } finally { db.close(); }
 }
 
 function remove(db, directory, id) {
-  db.exec('BEGIN IMMEDIATE');
-
-  if (referencedDirectory(db, directory, id)) return;
-
   const allocation = db.prepare('SELECT original_path FROM temporary_chat_allocations WHERE session_id=?').get(id);
   const deleted = db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(id);
 
@@ -101,9 +171,9 @@ function main(request) {
     db.exec('CREATE TABLE IF NOT EXISTS temporary_chat_allocations (session_id TEXT PRIMARY KEY, original_path TEXT NOT NULL UNIQUE)');
 
     if (request.action === 'create') create(db, root, directory, request.id);
-    else remove(db, directory, request.id);
+    else removeChecked(db, directory, request.id);
     db.exec('COMMIT');
   } finally { db.close(); }
 }
 
-module.exports = { main };
+module.exports = { main, cleanupDeleted };
