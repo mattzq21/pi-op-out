@@ -63,6 +63,7 @@ export function registerGoals(pi: ExtensionAPI) {
   let runGoalId: string | undefined;
   let responseGoalId: string | undefined;
   let runSignal: AbortSignal | undefined;
+  let rateLimited = false;
   const resetAudit = () => { emptyTurns = 0; failedTurns = 0; automatic = false; };
 
   const allowed = () => ["get_goal", "create_goal", "update_goal"].every(name => pi.getActiveTools().includes(name));
@@ -100,6 +101,7 @@ export function registerGoals(pi: ExtensionAPI) {
 
   const restore = async (ctx: ExtensionContext) => {
     context = ctx; starting = false; pendingStart = false; resetAudit(); runGoalId = undefined;
+    rateLimited = false;
 
     try {
       state.restore(ctx);
@@ -147,6 +149,7 @@ export function registerGoals(pi: ExtensionAPI) {
   pi.on("agent_start", (_event, ctx) => coordination.run(ctx, () => {
     context = ctx; starting = false;
     runSignal = ctx.signal;
+    rateLimited = false;
     activity = false; emptyFinal = false; successfulTool = false; failedTool = false;
     runGoalId = state.goal?.status === "active" ? state.goal.id : undefined;
 
@@ -170,13 +173,19 @@ export function registerGoals(pi: ExtensionAPI) {
     if (event.message.role !== "assistant") return;
     emptyFinal ||= event.message.stopReason === "stop" && !event.message.content.some(part => part.type === "text" && part.text.trim());
 
-    if (event.message.stopReason !== "error") return;
+    const wasRateLimited = rateLimited;
+    rateLimited = false;
+
+    if (event.message.stopReason !== "error" && !wasRateLimited) return;
+    const message = wasRateLimited && event.message.stopReason !== "error"
+      ? { ...event.message, stopReason: "error" as const, errorMessage: "HTTP 429: Too many requests. The model provider limited this request. Try again later." }
+      : event.message;
 
     try {
-      if (state.usageGoalId()) state.setStatus(ctx, providerErrorStatus(event.message.errorMessage));
+      if (state.usageGoalId()) state.setStatus(ctx, wasRateLimited ? "usage_limited" : providerErrorStatus(message.errorMessage));
     } finally { pause(ctx); }
 
-    return { message: { ...event.message, stopReason: "aborted", errorMessage: "Response paused" } };
+    return { message };
   }));
   pi.on("tool_result", (event, ctx) => coordination.run(ctx, () => {
     activity = true;
@@ -195,6 +204,7 @@ export function registerGoals(pi: ExtensionAPI) {
   pi.on("agent_end", (_event, ctx) => coordination.run(ctx, () => { state.flushClock(); state.save(ctx); }));
   pi.on("after_provider_response", (event, ctx) => coordination.run(ctx, () => {
     if (event.status !== 429) return;
+    rateLimited = true;
 
     try {
       if (state.usageGoalId()) state.setStatus(ctx, "usage_limited");

@@ -69,8 +69,8 @@ export interface PauseController {
   stop(ctx: ExtensionContext): Promise<void>;
 }
 
-function wasAborted(message: AssistantMessage, ctx: ExtensionContext) {
-  return message.stopReason === "aborted" || (message.stopReason === "error" && (ctx.signal?.aborted || message.errorMessage === "This operation was aborted"));
+function wasAborted(message: AssistantMessage) {
+  return message.stopReason === "aborted" || (message.stopReason === "error" && message.errorMessage === "This operation was aborted");
 }
 
 export function registerPauseControl(pi: ExtensionAPI): PauseController {
@@ -132,12 +132,12 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
 
     if (block) completedBlocks.set(update.contentIndex, structuredClone(block));
   });
-  pi.on("message_end", (event, ctx) => {
+  pi.on("message_end", (event) => {
     if (event.message.role !== "assistant") return;
     const content = [...completedBlocks].sort(([left], [right]) => left - right).map(([, block]) => block);
     completedBlocks.clear();
 
-    if ((isPausing || pauseStopped) && wasAborted(event.message, ctx)) {
+    if ((isPausing || pauseStopped) && wasAborted(event.message)) {
       if (isPausing && !pauseStopped) return { message: { ...event.message, stopReason: "aborted", errorMessage: "Response paused" } };
       const message: StoppedAssistantMessage = { ...event.message, stopReason: "aborted", errorMessage: undefined, content, piopCompletedBlocks: true };
 
