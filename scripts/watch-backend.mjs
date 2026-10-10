@@ -111,8 +111,6 @@ export async function watchBackend(command, args, options, root, { port, watch =
       const desktop = compiledInputs("piop");
 
       if (!desktop || desktop.has(path)) return true;
-
-      if (path.startsWith(join(root, "clients/desktop/src") + sep)) return !compiledInputs("piopd")?.has(path);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
 

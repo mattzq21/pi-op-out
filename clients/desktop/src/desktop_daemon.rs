@@ -253,9 +253,9 @@ fn ensure_development_daemon() -> Result<(), String> {
         if !manifest.join("Cargo.toml").is_file() { return Ok(()); }
         let prepared = std::env::var_os("PIOP_PREBUILT_DAEMON_FOR").is_some_and(|path| Path::new(&path) == manifest);
         if prepared && manifest.join("target/debug").join(format!("piopd{}", std::env::consts::EXE_SUFFIX)).is_file() { return Ok(()); }
-        let output = Command::new("cargo")
-            .args(["build", "--locked", "-p", "piop-daemon", "--bin", "piopd", "--target-dir"])
-            .arg(manifest.join("target")).current_dir(manifest).output()
+        let output = Command::new("node")
+            .args(["scripts/build-daemon.mjs", "--debug", "--skip-extensions", "--skip-copy"])
+            .current_dir(manifest).output()
             .map_err(|error| format!("Could not rebuild the development daemon: {error}"))?;
         if !output.status.success() {
             return Err(format!("Could not rebuild the development daemon:\n{}", String::from_utf8_lossy(&output.stderr)));

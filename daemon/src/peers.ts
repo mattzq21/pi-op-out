@@ -1,0 +1,453 @@
+import { spawn, type ChildProcess } from 'node:child_process';
+import { request as httpRequest } from 'node:http';
+import { randomUUID } from 'node:crypto';
+import { MAX_AGENT_OUTPUT_BYTES } from './config';
+import { homeDir } from './environment';
+import { loadAppSettings } from './settings';
+import { remoteHost, remoteLoginCommand, sshBase } from './pi_launch';
+import { ensureDesktopSessionsDir, shellQuote, spawnOptions } from './process_io';
+import { collectHostSessions, listLocalSessions, type SessionIndexRuntime } from './session_index';
+import * as sessionGroups from './session_groups';
+import * as daemonEndpoint from './daemon_endpoint';
+import { brokerEnvironment } from './broker';
+import { failedStorage, inspectStorage } from './archives';
+import { parseSession, serializeSession, type SessionSummary } from './types';
+import { Mutex, withTimeout } from './util/sync';
+import type { RemoteHost } from './settings_types';
+import type { App } from './app';
+
+const REQUEST_TIMEOUT = 660_000;
+
+/** One SSH connection to the Piop daemon on another machine. */
+export class Connection {
+  alive = true;
+  sequence = 1;
+  pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
+  readonly prefix = 'peer-' + randomUUID() + ':';
+  constructor(readonly daemonId: string, readonly child: ChildProcess) {}
+
+  invoke(command: string, args: any): Promise<any> {
+    if (!this.alive) return Promise.reject(new Error('Remote daemon disconnected; reconnect before retrying'));
+    const id = this.sequence++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Peer request timed out; it may have completed. Reconnect and refresh before retrying.')); }, REQUEST_TIMEOUT);
+      this.pending.set(id, { resolve: value => { clearTimeout(timer); resolve(value); }, reject: error => { clearTimeout(timer); reject(error); } });
+      this.child.stdin!.write(JSON.stringify({ id, command, args: args ?? {} }) + '\n', error => {
+        if (!error) return;
+        this.pending.delete(id); clearTimeout(timer); reject(error);
+      });
+    });
+  }
+
+  close(): void { try { this.child.kill('SIGKILL'); } catch {} }
+
+  disconnected(app: App): void {
+    if (!this.alive) return;
+    this.alive = false;
+    for (const pending of this.pending.values()) pending.reject(new Error('SSH disconnected; the remote command may have completed. Running sessions remain on the remote daemon.'));
+    this.pending.clear();
+    for (const [key, route] of app.peers.routes) {
+      if (route.connection !== this) continue;
+      const [kind, id] = splitKey(key);
+      if (kind === 'runtimeId') app.emit('pi://event', { runtimeId: id, hostId: route.hostId, _peer: true, event: { type: 'disconnected' } });
+      if (kind === 'terminalId') app.emit('pi://event', { _peer: true, type: 'terminal_exit', terminalId: id });
+    }
+    app.emit('pi://sessions-changed', { _peer: true });
+  }
+
+  private mapResources(state: PeerRuntime, payload: any): string | undefined | false {
+    let hostId: string | undefined;
+    for (const kind of ['runtimeId', 'terminalId']) {
+      const wireId = payload[kind];
+      if (typeof wireId !== 'string') continue;
+      if (kind === 'terminalId' && wireId.startsWith('shared-terminal-')) continue;
+      if (!wireId.startsWith(this.prefix)) return false;
+      const id = wireId.slice(this.prefix.length);
+      const route = state.routes.get(routeKey(kind, id));
+      if (!route || route.connection !== this) return false;
+      hostId = route.hostId;
+      payload[kind] = id;
+    }
+    return hostId;
+  }
+
+  receive(app: App, packet: any): void {
+    if (typeof packet?.id === 'number') {
+      const pending = this.pending.get(packet.id);
+      if (pending) {
+        this.pending.delete(packet.id);
+        if (typeof packet.error === 'string') pending.reject(new Error(packet.error)); else pending.resolve(packet.result ?? null);
+      }
+      return;
+    }
+    let event = packet?.event;
+    if (typeof event !== 'string') return;
+    if (event === 'pi://groups-changed' || event === 'pi://dictation' || packet.payload?._peer === true) return;
+    if (event === 'pi://settings-changed') event = 'pi://host-settings-changed';
+    let payload = packet.payload;
+    payload = payload && typeof payload === 'object' && !Array.isArray(payload) ? { ...payload } : {};
+    const hostId = this.mapResources(app.peers, payload);
+    if (hostId === false) return;
+    payload._peer = true;
+    if (hostId !== undefined) { payload.hostId = hostId; app.emit(event, payload); return; }
+    for (const [alias, [, connection]] of app.peers.connections) {
+      if (connection !== this) continue;
+      app.emit(event, { ...payload, hostId: alias });
+    }
+  }
+}
+
+interface Route { owner: string; hostId: string; connection: Connection }
+
+function routeKey(kind: string, id: string): string { return kind + '\u0000' + id; }
+function splitKey(key: string): [string, string] { const index = key.indexOf('\u0000'); return [key.slice(0, index), key.slice(index + 1)]; }
+
+/** State for connections to Piop daemons on other machines. */
+export class PeerRuntime {
+  connections = new Map<string, [RemoteHost, Connection]>();
+  starting = new Map<string, Mutex>();
+  routes = new Map<string, Route>();
+  messages = new Map<string, Connection>();
+  running = new Set<string>();
+  errors = new Map<string, string>();
+}
+
+function executable(host: RemoteHost): string {
+  const path = host.piPath === 'pi' ? 'piopd' : host.piPath.endsWith('/pi') ? host.piPath.slice(0, -2) + 'piopd' : host.piPath;
+  return path.startsWith('~/') ? '"$HOME"/' + shellQuote(path.slice(2)) : shellQuote(path);
+}
+
+async function configuredHost(app: App, hostId: string): Promise<RemoteHost> {
+  return remoteHost(await loadAppSettings(app), hostId);
+}
+
+function cachedConnection(state: PeerRuntime, hostId: string, host: RemoteHost): Connection | undefined {
+  const saved = state.connections.get(hostId);
+  if (saved && saved[0].target === host.target && saved[0].piPath === host.piPath && saved[1].alive) return saved[1];
+  return undefined;
+}
+
+export async function connect(app: App, hostId: string): Promise<Connection> {
+  const host = await configuredHost(app, hostId);
+  const state = app.peers;
+  let startup = state.starting.get(hostId);
+  if (!startup) { startup = new Mutex(); state.starting.set(hostId, startup); }
+  return startup.run(async () => {
+    const cached = cachedConnection(state, hostId, host);
+    if (cached) return cached;
+    const base = sshBase();
+    const args = [...base.args!, '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', host.target, remoteLoginCommand('exec ' + executable(host) + ' --stdio-client')];
+    let child: ChildProcess;
+    try { child = spawn(base.program, args, spawnOptions(base, { stdio: ['pipe', 'pipe', 'pipe'] })); }
+    catch (error: any) { throw new Error('Could not connect to ' + host.name + ': ' + error.message); }
+    child.stdin!.on('error', () => {});
+    let diagnostics = '';
+    child.stderr!.on('data', (chunk: Buffer) => { if (diagnostics.length < 8192) diagnostics += chunk.toString('utf8'); });
+    const lines = lineReader(child);
+    let ready: any;
+    try {
+      const line = await withTimeout(lines.next(), daemonEndpoint.STARTUP_TIMEOUT + 30_000, 'timeout');
+      ready = line === undefined ? undefined : JSON.parse(line);
+    } catch { ready = undefined; }
+    if (ready?.peerProtocol !== 1 || typeof ready?.daemonId !== 'string') {
+      child.kill('SIGKILL');
+      throw new Error('Could not attach to ' + host.name + '. Install or upgrade piopd on that machine. ' + diagnostics.trim());
+    }
+    if (ready.daemonId === daemonEndpoint.identity()) { child.kill('SIGKILL'); throw new Error('This SSH target is the current daemon; use Local'); }
+    const connection = new Connection(ready.daemonId, child);
+    const existing = [...state.connections.values()].map(([, other]) => other).find(other => other.daemonId === connection.daemonId && other.alive);
+    if (existing) {
+      connection.close();
+      state.connections.set(hostId, [host, existing]);
+      return existing;
+    }
+    const previous = state.connections.get(hostId);
+    state.connections.set(hostId, [host, connection]);
+    previous?.[1].close();
+    app.emit('pi://plugins-changed', { hostId, _peer: true });
+    void (async () => {
+      for (;;) {
+        const line = await lines.next();
+        if (line === undefined) break;
+        let packet: any;
+        try { packet = JSON.parse(line); } catch { break; }
+        connection.receive(app, packet);
+      }
+      connection.disconnected(app);
+      connection.close();
+    })();
+    return connection;
+  });
+}
+
+/** Splits a child's stdout into lines. Lines longer than 128 MiB end the stream. */
+function lineReader(child: ChildProcess): { next(): Promise<string | undefined> } {
+  const lines: string[] = [];
+  const waiters: Array<(line: string | undefined) => void> = [];
+  let buffer: Buffer[] = []; let length = 0; let ended = false;
+  const push = (line: string | undefined) => { const waiter = waiters.shift(); if (waiter) waiter(line); else if (line !== undefined) lines.push(line); };
+  child.stdout!.on('data', (chunk: Buffer) => {
+    let start = 0;
+    for (let index = chunk.indexOf(10); index >= 0; index = chunk.indexOf(10, start)) {
+      buffer.push(chunk.subarray(start, index));
+      push(Buffer.concat(buffer).toString('utf8'));
+      buffer = []; length = 0; start = index + 1;
+    }
+    if (start < chunk.length) { buffer.push(chunk.subarray(start)); length += chunk.length - start; }
+    if (length > 128 * 1024 * 1024) child.kill('SIGKILL');
+  });
+  const end = () => { if (ended) return; ended = true; for (const waiter of waiters.splice(0)) waiter(undefined); };
+  child.stdout!.on('close', end);
+  child.on('error', end);
+  return { next: () => lines.length ? Promise.resolve(lines.shift()) : ended ? Promise.resolve(undefined) : new Promise(resolve => waiters.push(resolve)) };
+}
+
+function activeLocalSessions(app: App): Set<string> {
+  return new Set([...app.pi.activeAgents.values()].filter(agent => agent.hostId === 'local' && agent.working).map(agent => agent.sessionId).filter((id): id is string => id !== undefined));
+}
+
+export async function localSessions(app: App): Promise<any[]> {
+  if (!(await loadAppSettings(app)).localEnabled) return [];
+  const root = ensureDesktopSessionsDir(homeDir());
+  const sessions = await listLocalSessions(app.sessionIndex, root);
+  await sessionGroups.attachAssignments(sessions);
+  const id = daemonEndpoint.identity();
+  const active = activeLocalSessions(app);
+  return sessions.map(session => ({ ...serializeSession(session), daemonId: id, isRunning: active.has(session.id) }));
+}
+
+export async function allSummaries(app: App, index: SessionIndexRuntime): Promise<SessionSummary[]> {
+  const settings = await loadAppSettings(app);
+  const sessions = settings.localEnabled ? await listLocalSessions(index, ensureDesktopSessionsDir(homeDir())) : [];
+  const successful = new Map<string, string>();
+  const result = await collectHostSessions(sessions, settings.hosts, async host => {
+    let connection: Connection; let value: any;
+    try {
+      connection = await connect(app, host.id);
+      value = await connection.invoke('list_sessions', {});
+      app.peers.errors.delete(host.id);
+    } catch (error: any) {
+      const message = error?.message ?? String(error);
+      if (app.peers.errors.get(host.id) !== message) { app.peers.errors.set(host.id, message); app.emit('pi://daemon-error', { hostId: host.id, line: message, _peer: true }); }
+      throw error;
+    }
+    if (!Array.isArray(value)) throw new Error('Invalid peer session list');
+    for (const key of [...app.peers.running]) if (key.startsWith(connection.daemonId + '\u0000')) app.peers.running.delete(key);
+    for (const row of value) if (row?.isRunning === true && typeof row.id === 'string') app.peers.running.add(connection.daemonId + '\u0000' + row.id);
+    const rows = value.map(parseSession);
+    for (const row of rows) { row.hostId = host.id; row.hostName = host.name; row.groupId = null; }
+    successful.set(host.id, connection.daemonId);
+    return rows;
+  }, sessionGroups.attachAssignments);
+  const canonical = new Map<string, string>();
+  for (const host of settings.hosts) { const daemonId = successful.get(host.id); if (daemonId !== undefined && !canonical.has(daemonId)) canonical.set(daemonId, host.id); }
+  return result.filter(session => session.hostId === 'local' || (successful.has(session.hostId) && canonical.get(successful.get(session.hostId)!) === session.hostId));
+}
+
+function register(state: PeerRuntime, kind: string, id: string, route: Route): void {
+  const key = routeKey(kind, id);
+  const previous = state.routes.get(key);
+  if (previous && previous.owner !== route.owner) throw new Error('Resource belongs to another connection');
+  if (previous && previous.connection.alive && previous.connection !== route.connection) throw new Error('Detach the resource before moving it to another daemon');
+  state.routes.set(key, route);
+}
+
+async function routeStorageReport(app: App): Promise<any> {
+  let local: any;
+  try { local = await inspectStorage(undefined); } catch (error: any) { local = failedStorage('local', 'Local', error?.message ?? String(error)); }
+  const hosts: any[] = [local];
+  const seen = new Set([daemonEndpoint.identity()]);
+  for (const host of (await loadAppSettings(app)).hosts.filter(host => host.enabled)) {
+    try {
+      const connection = await connect(app, host.id);
+      if (seen.has(connection.daemonId)) continue;
+      seen.add(connection.daemonId);
+      const report = await connection.invoke('storage_report', {});
+      const entry = Array.isArray(report?.hosts) ? report.hosts[0] : undefined;
+      if (!entry) throw new Error('Peer returned no local storage report');
+      hosts.push({ ...entry, hostId: host.id, hostName: host.name });
+    } catch (error: any) { hosts.push(failedStorage(host.id, host.name, error?.message ?? String(error))); }
+  }
+  return { hosts };
+}
+
+async function routeListSessions(app: App): Promise<any> {
+  const sessions = await allSummaries(app, app.sessionIndex);
+  const localId = daemonEndpoint.identity();
+  const localRunning = activeLocalSessions(app);
+  return sessions.map(session => {
+    const row: any = serializeSession(session);
+    row.daemonId = app.peers.connections.get(session.hostId)?.[1].daemonId ?? localId;
+    row.isRunning = row.daemonId === localId ? localRunning.has(session.id) : app.peers.running.has(row.daemonId + '\u0000' + session.id);
+    return row;
+  });
+}
+
+function existingRoute(state: PeerRuntime, owner: string, args: any): Route | undefined {
+  let existing: Route | undefined;
+  for (const kind of ['runtimeId', 'terminalId', 'flowId']) {
+    const id = args?.[kind];
+    if (typeof id !== 'string') continue;
+    const route = state.routes.get(routeKey(kind, id));
+    if (!route) continue;
+    if (route.owner !== owner) throw new Error('Resource belongs to another connection');
+    if (existing && existing.connection !== route.connection) throw new Error('Resources belong to different daemons');
+    existing = route;
+  }
+  return existing;
+}
+
+const LOCAL_ONLY = ['save_app_settings', 'load_app_settings', 'load_settings_change', 'change_session_groups', 'load_session_groups'];
+
+export async function route(app: App, owner: string, command: string, rawArgs: any): Promise<any | undefined> {
+  const args = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? { ...rawArgs } : {};
+  if (command === 'provider_auth' && typeof args.request?.flowId === 'string') args.flowId = args.request.flowId;
+  const state = app.peers;
+  if (command === 'storage_report') return routeStorageReport(app);
+  if (command === 'list_sessions') return routeListSessions(app);
+  const existing = existingRoute(state, owner, args);
+  const explicit = typeof args.hostId === 'string' && args.hostId !== 'local' ? args.hostId : undefined;
+  let selected: Route;
+  if (explicit !== undefined) {
+    if (LOCAL_ONLY.includes(command)) throw new Error('Settings belong to the local daemon');
+    selected = { owner, hostId: explicit, connection: await connect(app, explicit) };
+  } else if (existing) selected = existing;
+  else return undefined;
+  const staleTerminals = new Set<string>();
+  for (const kind of ['runtimeId', 'terminalId']) {
+    const creating = (command === 'start_pi' && kind === 'runtimeId') || (command === 'start_terminal' && kind === 'terminalId');
+    const id = args[kind];
+    if (typeof id !== 'string' || creating) continue;
+    const saved = state.routes.get(routeKey(kind, id));
+    if (!saved || saved.owner !== owner || saved.connection !== selected.connection) throw new Error('Reconnect to the resource on its owning daemon');
+  }
+  if (Array.isArray(args.terminalIds)) {
+    for (const id of args.terminalIds) {
+      if (typeof id !== 'string' || id.startsWith('shared-terminal-')) continue;
+      const saved = state.routes.get(routeKey('terminalId', id));
+      if (!saved || saved.owner !== owner) throw new Error('Terminal belongs to another connection');
+      if (saved.connection !== selected.connection) {
+        if (saved.connection.alive || saved.connection.daemonId !== selected.connection.daemonId) throw new Error('Terminal belongs to another connection');
+        staleTerminals.add(id);
+      }
+    }
+  }
+  for (const kind of ['runtimeId', 'terminalId']) {
+    const id = args[kind];
+    if (typeof id !== 'string') continue;
+    const collision = kind === 'runtimeId' ? app.pi.containsProcess(id) : app.terminals.containsProcess(id);
+    if (collision) throw new Error('Resource is already attached locally');
+  }
+  if (command === 'start_pi') { if (typeof args.runtimeId !== 'string') throw new Error('Missing runtimeId'); register(state, 'runtimeId', args.runtimeId, selected); }
+  if (command === 'start_terminal') { if (typeof args.terminalId !== 'string') throw new Error('Missing terminalId'); register(state, 'terminalId', args.terminalId, selected); }
+  const forwarded: any = { ...args, hostId: 'local' };
+  for (const kind of ['runtimeId', 'terminalId']) if (typeof args[kind] === 'string') forwarded[kind] = selected.connection.prefix + args[kind];
+  if (Array.isArray(args.terminalIds)) {
+    forwarded.terminalIds = args.terminalIds.filter((id: any) => typeof id === 'string' && !staleTerminals.has(id))
+      .map((id: string) => id.startsWith('shared-terminal-') ? id : selected.connection.prefix + id);
+  }
+  if (command === 'shared_terminal') forwarded.terminalConnectionId = owner;
+  const result = !selected.connection.alive && (command === 'stop_pi' || command === 'close_terminal') ? false : await selected.connection.invoke(command, forwarded);
+  const closing = command === 'stop_pi' ? 'runtimeId' : command === 'close_terminal' ? 'terminalId' : undefined;
+  if (closing && typeof args[closing] === 'string') state.routes.delete(routeKey(closing, args[closing]));
+  if (command === 'provider_auth' && typeof result?.flowId === 'string') {
+    if (result.status === 'pending') register(state, 'flowId', result.flowId, selected);
+    else state.routes.delete(routeKey('flowId', result.flowId));
+  }
+  return result;
+}
+
+export async function detachOwner(app: App, owner: string): Promise<void> {
+  const state = app.peers;
+  const connections = new Set([...state.connections.values()].map(([, connection]) => connection));
+  for (const connection of connections) {
+    try { await connection.invoke('shared_terminal', { action: 'discard_drafts', terminalConnectionId: owner, hostId: 'local' }); } catch {}
+  }
+  const owned: Array<[string, Route]> = [];
+  for (const [key, route] of [...state.routes]) if (route.owner === owner) { owned.push([key, route]); state.routes.delete(key); }
+  for (const [key, route] of owned) {
+    const [kind, id] = splitKey(key);
+    try {
+      if (kind === 'flowId') { await route.connection.invoke('provider_auth', { hostId: 'local', request: { action: 'cancel', flowId: id } }); continue; }
+      const command = kind === 'runtimeId' ? 'stop_pi' : kind === 'terminalId' ? 'close_terminal' : undefined;
+      if (!command) continue;
+      await route.connection.invoke(command, { discardBlank: false, preserveRunning: true, [kind]: route.connection.prefix + id });
+    } catch {}
+  }
+}
+
+export async function invalidate(app: App): Promise<void> {
+  let settings;
+  try { settings = await loadAppSettings(app); } catch { return; }
+  const state = app.peers;
+  const removed: Connection[] = [];
+  for (const [id, [previous, connection]] of [...state.connections]) {
+    const keep = settings.hosts.some(host => host.enabled && host.id === id && host.target === previous.target && host.piPath === previous.piPath);
+    if (!keep) { state.connections.delete(id); removed.push(connection); }
+  }
+  const retained = new Set([...state.connections.values()].map(([, connection]) => connection));
+  for (const connection of removed) if (!retained.has(connection)) connection.close();
+}
+
+export function shutdown(app: App): void {
+  for (const [, connection] of app.peers.connections.values()) connection.close();
+}
+
+export async function ensureRestartSafe(app: App): Promise<void> {
+  const local = daemonEndpoint.identity();
+  const checked = new Set<string>();
+  for (const [host, connection] of [...app.peers.connections.values()]) {
+    if (connection.daemonId === local || !connection.alive || checked.has(connection.daemonId)) continue;
+    checked.add(connection.daemonId);
+    try { await connection.invoke('check_daemon_idle', {}); }
+    catch (error: any) { throw new Error('Cannot restart while ' + host.name + ' may have active work: ' + (error?.message ?? error)); }
+  }
+}
+
+export async function forwardBroker(app: App, hostId: string, path: string, body: any): Promise<any> {
+  const connection = await connect(app, hostId);
+  body = { ...(body ?? {}), hostId: 'local' };
+  const requestId = path === '/message' && typeof body.requestId === 'string' ? body.requestId as string : undefined;
+  if (requestId !== undefined) {
+    app.broker.withUncancelledRequest(requestId, () => {
+      if (app.peers.messages.has(requestId)) throw new Error('This agent message is already in progress');
+      app.peers.messages.set(requestId, connection);
+    });
+  }
+  try { return await connection.invoke('broker_request', { path, body }); }
+  finally { if (requestId !== undefined) app.peers.messages.delete(requestId); }
+}
+
+export async function cancelMessage(app: App, requestId: string): Promise<void> {
+  const connection = app.peers.messages.get(requestId);
+  if (connection) await connection.invoke('broker_request', { path: '/cancel', body: { requestId } });
+}
+
+export function localBrokerRequest(app: App, path: string, body: any): Promise<any> {
+  if (!['/message', '/cancel', '/orchestration', '/terminals'].includes(path) || (typeof body?.hostId === 'string' && body.hostId !== 'local')) {
+    return Promise.reject(new Error('Peer broker requests must target this machine'));
+  }
+  const [port, token] = brokerEnvironment(app.broker);
+  const payload = Buffer.from(JSON.stringify(body ?? null));
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({ host: '127.0.0.1', port, method: 'POST', path, timeout: 610_000,
+      headers: { Host: 'localhost', Authorization: 'Bearer ' + token, 'Content-Length': payload.length, Connection: 'close' } }, response => {
+      const chunks: Buffer[] = []; let length = 0;
+      response.on('data', (chunk: Buffer) => {
+        length += chunk.length;
+        if (length > MAX_AGENT_OUTPUT_BYTES + 65536) { response.destroy(); reject(new Error('Broker response is too large')); return; }
+        chunks.push(chunk);
+      });
+      response.on('end', () => {
+        try {
+          const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          if (typeof value?.error === 'string') reject(new Error(value.error)); else resolve(value?.data ?? null);
+        } catch (error: any) { reject(new Error(error?.message ?? 'Invalid broker response')); }
+      });
+      response.on('error', reject);
+    });
+    request.on('timeout', () => request.destroy(new Error('Broker request timed out')));
+    request.on('error', reject);
+    request.end(payload);
+  });
+}
