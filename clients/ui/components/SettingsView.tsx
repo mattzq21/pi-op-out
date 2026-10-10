@@ -280,8 +280,6 @@ export function SettingsView(props: SettingsViewProps) {
     const hiddenModels = new Set(draft().hiddenModels);
     const modelChoices = [...settingsProps().models.map((model) => ({ id: `${model.provider}/${model.id}`, name: (model.name || model.id) }))];
 
-    for (const id of new Set([...(draft().knownModels ?? []), ...settingsProps().settings.hiddenModels, ...hiddenModels])) if (!availableModelIds.has(id)) modelChoices.push({ id, name: id });
-
     return { availableModelIds, hiddenModels, modelChoices };
   });
 
@@ -414,11 +412,11 @@ export function SettingsView(props: SettingsViewProps) {
 
       const renderModels = () => (formValidation().visibleSection === "models" && <SettingsSection title="Models" description="Choose which models appear in chat pickers. Existing conversations and default models are unchanged. Newly arrived models start hidden." headerAction={<label class="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter()} onInput={(event) => setModelFilter(event.target.value)} /></label>}>
         <div class="model-bulk-actions" role="group" aria-label="All model visibility">
-          <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().hiddenModels.size} onClick={() => patch({ hiddenModels: [] })}>Enable all models</button>
-          <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => !agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: agentValidation().modelChoices.map(model => model.id) })}>Disable all models</button>
+          <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: draft().hiddenModels.filter(id => !agentValidation().availableModelIds.has(id)) })}>Enable all models</button>
+          <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => !agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: [...new Set([...draft().hiddenModels, ...agentValidation().modelChoices.map(model => model.id)])] })}>Disable all models</button>
         </div>
         <div class="config-list">{<Key each={filteredModelChoices()} by={(model) => model.id}>{(model, _index) => <div class="config-row model-row" ><span class="config-icon"><Cpu size={16} /></span><span><strong>{model().name}</strong><small>{model().id}{!agentValidation().availableModelIds.has(model().id) ? " · Currently unavailable" : ""}</small></span><Toggle label={`Show ${model().id}`} checked={!agentValidation().hiddenModels.has(model().id)} onChange={(visible) => setDraft((current) => ({ ...current, hiddenModels: visible ? current.hiddenModels.filter((id) => id !== model().id) : [...current.hiddenModels, model().id] }))} /></div>}</Key>}</div>
-        {!filteredModelChoices().length && <div class="empty-small">{agentValidation().modelChoices.length ? "No models match your search." : "No models discovered. Connect to a session to manage model visibility."}</div>}
+        {!filteredModelChoices().length && <div class="empty-small">{agentValidation().modelChoices.length ? "No models match your search." : "No models available. Sign in to a provider to see its models."}</div>}
       </SettingsSection>);
 
       const renderAgents = () => {
