@@ -7,7 +7,7 @@ const transactions = require('./session-transactions.cjs');
 const archiveTransaction = require('./archive-transaction.cjs');
 const goalAssets = require('./session-broker/goal-assets.cjs');
 const { recoverStorage } = require('./storage-recovery.cjs');
-const { lockStorage } = require('./restore-transaction.cjs');
+const { lockStorage } = require('./storage-transaction-lock.cjs');
 
 const request = process.argv[1] === '--recover' ? null : JSON.parse(process.argv[1]);
 

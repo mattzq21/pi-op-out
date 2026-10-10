@@ -201,7 +201,7 @@ function lock(root) { return require('./storage-transaction-lock.cjs').lockStora
 function recover(root) {
   const failures = [];
 
-  for (const replay of [recoverPublications, require('./archive-transaction.cjs').recover, require('./legacy-delete-transaction.cjs').recover, require('./restore-transaction.cjs').recover, require('./storage-transaction.cjs').recoverJournals, require('./restore-receipts.cjs').prune]) {
+  for (const replay of [recoverPublications, require('./archive-transaction.cjs').recover, require('./legacy-delete-transaction.cjs').recover, require('./legacy-restore-transaction.cjs').recover, require('./storage-transaction.cjs').recoverJournals, require('./restore-receipts.cjs').prune]) {
     try { replay(root); }
     catch (error) { failures.push(error.message); }
   }

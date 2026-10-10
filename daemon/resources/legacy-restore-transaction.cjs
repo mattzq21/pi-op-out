@@ -1,14 +1,10 @@
 const conversationStorage = require('./conversation-storage.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash, randomUUID } = require('node:crypto');
+const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
-const { validReceipt } = require('./deletion-retention.cjs');
 const transactionIO = require('./session-transactions.cjs');
-const goalAssets = require('./session-broker/goal-assets.cjs');
 const receipts = require('./restore-receipts.cjs');
-const ownerLocks = require('./transaction-owner-locks.cjs');
-const { lockStorage } = require('./storage-transaction-lock.cjs');
 
 function exists(file) {
   try { return fs.lstatSync(file); }
@@ -19,15 +15,6 @@ function sync(file) {
   const fd = fs.openSync(file, 'r');
 
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-}
-
-function syncTree(file) {
-  const metadata = fs.lstatSync(file);
-
-  if (metadata.isSymbolicLink()) return;
-
-  if (metadata.isDirectory()) for (const name of fs.readdirSync(file)) syncTree(path.join(file, name));
-  sync(file);
 }
 
 function rename(source, destination) {
@@ -47,17 +34,6 @@ function identity(file) {
 
 function matches(file, expected) { return Boolean(exists(file)) && identity(file) === expected; }
 
-function move(source, destination) {
-  if (exists(destination)) throw new Error(`Restoration destination already exists: ${destination}`);
-
-  return { source, destination, identity: identity(source) };
-}
-
-function performMove(item) {
-  if (!matches(item.source, item.identity) || exists(item.destination)) throw new Error(`Restoration files changed: ${item.source}`);
-  rename(item.source, item.destination);
-}
-
 function undoMove(item) {
   if (matches(item.source, item.identity) && !exists(item.destination)) return;
 
@@ -68,18 +44,6 @@ function undoMove(item) {
 function ownerships(transaction) { return transaction.ownerships ?? [transaction.ownership]; }
 
 function committed(transaction) { return matches(transaction.trace.destination, transaction.trace.identity); }
-
-function receiptPath(root, source) {
-  return path.join(root, 'restore-receipts', `${createHash('sha256').update(source).digest('hex')}.json`);
-}
-
-function restoredResult(root, source) {
-  const result = receipts.result(root, source);
-
-  if (result?.sessions && !validReceipt(receiptPath(root, source), new Set())) return null;
-
-  return result;
-}
 
 function rollback(transaction) {
   validateRollbackSource(transaction);
@@ -125,93 +89,9 @@ function recover(root) {
 
     validateTransaction(root, transaction, journal);
 
-    const ids = [];
-    ownerLocks.withOwners(root, ids, [], () => {
-      if (transaction.committed || committed(transaction)) finishCommit(transaction, journal);
-      else { finishRollback(root, transaction, journal); }
-    });
+    if (transaction.committed || committed(transaction)) finishCommit(transaction, journal);
+    else finishRollback(root, transaction, journal);
   }
-}
-
-function sessionTransaction(root, { header, file, destination, result }) {
-  const key = createHash('sha256').update(header.id.toLowerCase()).digest('hex').slice(0, 40);
-  const ownershipPath = path.join(root, 'conversation-ownership', `${key}.json`);
-  const record = JSON.parse(conversationStorage.required(ownershipPath));
-
-  return {
-    result: { ...result, sessionId: header.id },
-    trace: move(file, destination),
-    moves: [
-      [file.replace(/\.jsonl$/, '.snapshots'), destination.replace(/\.jsonl$/, '.snapshots')],
-      [`${file}.loop-detection.json`, `${destination}.loop-detection.json`],
-    ].flatMap(([source, target]) => exists(source) ? [move(source, target)] : []),
-    ownership: {
-      initial: conversationStorage.required(ownershipPath),
-      path: ownershipPath,
-      before: JSON.stringify({ ...record, path: file, deleted: true, client: null }),
-      after: JSON.stringify({ ...record, path: destination, deleted: false, client: null }),
-    },
-  };
-}
-
-function publishRestoration(root, transaction) {
-  for (const item of transaction.moves) { syncTree(item.source); performMove(item); }
-
-  for (const ownership of transaction.ownerships) conversationStorage.write(ownership.path, ownership.after);
-  syncTree(transaction.trace.source);
-  receipts.publish(root, transaction);
-  performMove(transaction.trace);
-}
-
-function restoreGroup(root, records) {
-  const ids = [];
-
-  return ownerLocks.withOwners(root, ids, records.map(record => record.header.id), () => restoreGroupLocked(root, records));
-}
-
-function restoreGroupLocked(root, records) {
-  const sessions = records.map(record => sessionTransaction(root, record));
-  const primary = sessions[0];
-
-  const transaction = {
-    version: 3, root, receiptId: randomUUID(),
-    ownership: primary.ownership,
-    result: { ...primary.result, sessions: sessions.map(session => ({ ...session.result, sourcePath: session.trace.source })) },
-    trace: primary.trace,
-    moves: [...sessions.flatMap(session => session.moves), ...sessions.slice(1).map(session => session.trace)],
-    ownerships: sessions.map(session => session.ownership),
-  };
-
-  if (Buffer.byteLength(JSON.stringify(transaction.result)) + 1 > 64 * 1024 * 1024) throw new Error('Restore group is too large; restore fewer conversations at a time');
-
-  const journalDirectory = path.join(root, 'restore-transactions');
-  fs.mkdirSync(journalDirectory, { recursive: true, mode: 0o700 });
-  sync(root);
-
-  const key = createHash('sha256').update(primary.result.sessionId.toLowerCase()).digest('hex').slice(0, 40);
-
-  const journal = path.join(journalDirectory, `${key}.json`);
-
-  require('./restore-records.cjs').write(journal, JSON.stringify(transaction));
-
-  try {
-    for (const record of records) goalAssets.retainHistory(root, record.entries, record.header.id, record.destination);
-
-    for (const ownership of transaction.ownerships) conversationStorage.write(ownership.path, ownership.before);
-    publishRestoration(root, transaction);
-  } catch (error) {
-    if (!committed(transaction)) {
-      try { finishRollback(root, transaction, journal); }
-      catch (failure) { throw new Error(`${error.message}\nRestore recovery is pending: ${failure.message}`); }
-
-      throw error;
-    }
-  }
-
-  try { finishCommit(transaction, journal); }
-  catch (error) { console.error(`Restore committed; recovery will retry: ${error.message}`); }
-
-  return transaction.result;
 }
 
 function finishRollback(root, transaction, journal) {
@@ -250,4 +130,4 @@ function restoreMappings(source, destination) {
     .concat([[`${source}.loop-detection.json`, `${destination}.loop-detection.json`]]);
 }
 
-module.exports = { exists, recover, restoreGroup, restoredResult, lockStorage };
+module.exports = { recover };

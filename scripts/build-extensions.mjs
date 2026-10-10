@@ -62,7 +62,7 @@ async function mcpBridge() {
 }
 
 async function backendScripts() {
-  const scripts = ["session-descendants", "archive-conversations", "restore-session", "relocate-session", "index-sessions", "storage-inventory", "session-registry", "recover-missing-session"].map(name => [name, name]);
+  const scripts = ["session-descendants", "archive-conversations", "relocate-session", "index-sessions", "storage-inventory", "session-registry", "recover-missing-session"].map(name => [name, name]);
   scripts.push(["storage-transaction", "storage-transaction-command"]);
 
   const commandInputs = await agentCommandInputs();

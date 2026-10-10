@@ -382,15 +382,16 @@ pub(super) fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>,
     delete_stored_sessions(app, &runtime, paths, host_id, true, client_id)
 }
 
-fn restore_session_command(settings: &AppSettings, host_id: &str, arguments: &[&str]) -> Result<Command, String> {
-    let script = include_str!("../../resources/restore-session.bundle.mjs");
+fn restore_session_command(settings: &AppSettings, host_id: &str, request: serde_json::Value) -> Result<Command, String> {
+    let script = include_str!("../../resources/storage-transaction.bundle.mjs");
+    let request = request.to_string();
     let command = if host_id == "local" {
         let mut command = node_command();
-        command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, "--"]).args(arguments);
+        command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, &request]);
         command
     } else {
         let mut command = ssh(remote_host(settings, host_id)?);
-        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} -- {}", shell_quote(script), arguments.iter().map(|argument| shell_quote(argument)).collect::<Vec<_>>().join(" "))));
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&request))));
         command
     };
     Ok(command)
@@ -400,7 +401,7 @@ pub(super) fn restore_archived_session(app: AppHandle, session_path: String, hos
 }
 
 fn restore_result(settings: &AppSettings, host_id: &str, path: &str) -> Result<serde_json::Value, String> {
-    let mut command = restore_session_command(settings, host_id, &["--result", path])?;
+    let mut command = restore_session_command(settings, host_id, json!({"action":"result","path":path}))?;
     let result = run_session_restoration(&mut command)?;
     if result.is_null() { return Err("No committed restoration is available".into()); }
     Ok(result)
@@ -442,8 +443,8 @@ fn perform_restore(app: &AppHandle, settings: &AppSettings, host_id: &str, sessi
         Err(error) => return restore_result(settings, host_id, &path).map_err(|_| error),
     };
     let mutations = restore_mutations(app, host_id, &path, client_id, mutation)?;
-    let paths = json!(mutations.iter().map(|(source, _)| source).collect::<Vec<_>>()).to_string();
-    let mut command = restore_session_command(settings, host_id, &["--group", &paths])?;
+    let paths = mutations.iter().map(|(source, _)| source).collect::<Vec<_>>();
+    let mut command = restore_session_command(settings, host_id, json!({"action":"restore","paths":paths}))?;
     let result = run_session_restoration(&mut command).or_else(|error| restore_result(settings, host_id, &path).map_err(|_| error))?;
     finish_restore_mutations(mutations, &result)?;
     Ok(result)
@@ -464,7 +465,9 @@ pub(super) fn restore_archived_session_result(app: AppHandle, session_path: Stri
 fn run_session_restoration(command: &mut Command) -> Result<serde_json::Value, String> {
     let output = run_limited(command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not restore archived chat")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid chat restoration response: {error}"))
+    if !output.stderr.is_empty() { eprintln!("{}", String::from_utf8_lossy(&output.stderr).trim()); }
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid chat restoration response: {error}"))?;
+    Ok(response.get("result").cloned().unwrap_or(serde_json::Value::Null))
 }
 pub(super) fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
     let runtime = app.state::<PiRuntime>();

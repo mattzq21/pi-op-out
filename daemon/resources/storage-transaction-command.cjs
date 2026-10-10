@@ -48,8 +48,30 @@ async function deleteBlank(target) {
   }, true);
 }
 
+function storageRoot(request) {
+  const configured = request.root || process.env.PIOP_RESTORE_ROOT || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop');
+
+  return fs.existsSync(configured) ? fs.realpathSync(configured) : path.resolve(configured);
+}
+
+async function restore(request) {
+  const root = storageRoot(request);
+
+  if (!lockStorage(root)) return;
+
+  return withReferencePublicationLock(root, () => transaction.restoreSessions(root, request));
+}
+
+async function restoredResult(request) {
+  const root = storageRoot(request);
+
+  if (!lockStorage(root)) return;
+
+  return withReferencePublicationLock(root, () => transaction.restoredResult(root, request.path));
+}
+
 async function recover(request) {
-  const root = fs.realpathSync(request.root || process.env.PIOP_RESTORE_ROOT || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop'));
+  const root = storageRoot(request);
 
   if (!lockStorage(root, true)) return;
 
@@ -62,6 +84,10 @@ async function start() {
   if (request.action === 'delete') return request.blank ? deleteBlank(request.blank) : deleteSessions(request);
 
   if (request.action === 'recover') return recover(request);
+
+  if (request.action === 'restore') return restore(request);
+
+  if (request.action === 'result') return restoredResult(request);
   throw new Error(`Unknown storage transaction action: ${request.action}`);
 }
 

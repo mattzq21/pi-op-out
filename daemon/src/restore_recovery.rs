@@ -3,9 +3,9 @@ use std::path::Path;
 pub(crate) fn recover_remote(host: &crate::RemoteHost) -> Result<(), String> {
     use crate::pi_launch::{remote_login_command, ssh};
     use crate::process_io::{run_limited, shell_quote};
-    let script = include_str!("../resources/restore-session.bundle.mjs");
+    let script = include_str!("../resources/storage-transaction.bundle.mjs");
     let storage = crate::STORAGE_DIRECTORY;
-    let command = format!("PIOP_STORAGE_DIRECTORY={storage} node -e {} -- --recover", shell_quote(script));
+    let command = format!("PIOP_STORAGE_DIRECTORY={storage} node -e {} {}", shell_quote(script), shell_quote(r#"{"action":"recover"}"#));
     let output = run_limited(ssh(host).arg(remote_login_command(&command)), 256 * 1024, "Could not recover session transactions")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().into()); }
     if !output.stderr.is_empty() { eprintln!("{}", String::from_utf8_lossy(&output.stderr).trim()); }
@@ -22,7 +22,7 @@ pub(crate) fn recover(root: &Path) -> Result<(), String> {
     if !recovery_pending(root)? { return Ok(()); }
     let output = crate::node_command()
         .env("PIOP_RESTORE_ROOT", root)
-        .args(["-e", include_str!("../resources/restore-session.bundle.mjs"), "--", "--recover"])
+        .args(["-e", include_str!("../resources/storage-transaction.bundle.mjs"), r#"{"action":"recover"}"#])
         .output().map_err(|error| error.to_string())?;
     if !output.status.success() { return Err(format!("Session transaction recovery is pending: {}", String::from_utf8_lossy(&output.stderr).trim())); }
     if !output.stderr.is_empty() { eprintln!("{}", String::from_utf8_lossy(&output.stderr).trim()); }

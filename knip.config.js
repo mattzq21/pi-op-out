@@ -30,7 +30,7 @@ export default {
     "extensions/piop-openai-fast-mode/src/index.ts",
     "extensions/piop-define-agents/{daemon-loader,mcp-schema}.ts",
     "daemon/resources/mcp-bridge.ts",
-    "daemon/resources/{session-descendants,archive-conversations,restore-session,relocate-session,index-sessions,storage-inventory,storage-transaction-command}.cjs",
+    "daemon/resources/{session-descendants,archive-conversations,relocate-session,index-sessions,storage-inventory,storage-transaction-command}.cjs",
     "scripts/{mutation-node-runner,oxlint-local}.mjs",
     "tools/oxlint/anti-slop/index.ts",
     "test/**/*.test.mjs",

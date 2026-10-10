@@ -9,6 +9,8 @@ const { Check } = require('typebox/value');
 
 const labels = { archive: 'Archive', delete: 'Deletion', restore: 'Restore' };
 
+const outcomes = { archive: 'archived', delete: 'deleted', restore: 'restored' };
+
 const stepSchema = Type.Object({ type: Type.String() });
 
 const moveSchema = Type.Object({ type: Type.Literal('move'), source: Type.String(), staged: Type.String(), identity: Type.Object({ identity: Type.String() }) });
@@ -16,7 +18,7 @@ const moveSchema = Type.Object({ type: Type.Literal('move'), source: Type.String
 const journalSchema = Type.Object({
   version: Type.Literal(1), id: Type.String(), kind: Type.Union([Type.Literal('archive'), Type.Literal('delete'), Type.Literal('restore')]),
   state: Type.Union([Type.Literal('prepared'), Type.Literal('committed')]), root: Type.String(), staging: Type.String(),
-  targets: Type.Array(Type.Object({ path: Type.String(), sessionId: Type.String({ minLength: 1 }) })), steps: Type.Array(stepSchema), finish: Type.Array(stepSchema),
+  targets: Type.Array(Type.Object({ path: Type.String(), sessionId: Type.String({ minLength: 1 }), destination: Type.Optional(Type.String()) })), steps: Type.Array(stepSchema), finish: Type.Array(stepSchema),
 });
 
 class Rejected extends Error {}
@@ -92,6 +94,14 @@ const steps = {
     },
     done(step) { return !io.exists(step.source) && io.matches(step.staged, step.identity); },
   },
+  place: {
+    run(step) { io.syncTree(step.source); io.move(step); },
+    undo(step) {
+      if (!step.applied || !io.exists(step.destination)) return;
+      io.undo(step);
+    },
+    done(step) { return !io.exists(step.source) && io.matches(step.destination, step.identity); },
+  },
   'write-record': {
     run(step) {
       const storage = require('./conversation-storage.cjs');
@@ -117,6 +127,9 @@ const finishSteps = {
   'goal-assets'(journal) { require('./goal-asset-cleanup.cjs').finish(journal, save); },
   'record-retention'(journal, step) { require('./retention-candidates.cjs').recordRetention(journal.root, journal.id, step.pending); },
   'temporary-chats'(journal) { database.markCleanup(journal.root, 'temporary-chat'); },
+  'move-paths'(journal) { database.movePaths(journal.root, journal.targets.map(target => ({ source: target.path, destination: target.destination }))); },
+  'remember-metadata'(journal) { for (const target of journal.targets) require('./transcript-metadata.cjs').remember(target.destination); },
+  'publish-receipt'(journal) { require('./restore-receipts.cjs').record(journal.root, journal); },
   'remove-staged'(journal) {
     for (const step of journal.steps.filter(step => step.type === 'move')) {
       if (!io.exists(step.staged)) continue;
@@ -305,23 +318,92 @@ function planDelete(root, request) {
   };
 }
 
-function deleteSessions(root, request) {
-  let journal;
+function placements(target) {
+  const destinations = supportingPaths(target.destination);
 
+  return supportingPaths(target.path).map((source, index) => [source, destinations[index]]);
+}
+
+function placeSteps(targets) {
+  const steps = targets.flatMap(target => placements(target).filter(([source]) => io.exists(source)).map(([source, destination]) => ({ type: 'place', source, destination, identity: io.describe(source) })));
+
+  return [...steps.filter(step => !step.source.endsWith('.jsonl')), ...steps.filter(step => step.source.endsWith('.jsonl'))];
+}
+
+function restoreRecord(root, sessionId, destination) {
+  const file = ownershipFile(root, sessionId);
+  const before = require('./conversation-storage.cjs').read(file);
+
+  if (before === null) throw new Rejected(`Conversation ownership record is missing: ${sessionId}`);
+
+  return { type: 'write-record', file, before, after: JSON.stringify({ ...JSON.parse(before), path: destination, deleted: false, client: null }) };
+}
+
+function planRestore(root, request) {
+  const files = request.paths;
+
+  if (!Check(Type.Array(Type.String(), { minItems: 1 }), files)) throw new Rejected('No archived conversations selected');
+  const planned = require('./restore-plan.cjs').planTargets(root, [...new Set(files.map(file => fs.realpathSync(file)))]);
+  const targets = planned.map(target => ({ path: target.path, sessionId: target.sessionId, destination: target.destination }));
+  const sessions = planned.map(target => ({ path: target.cwd, sessionPath: target.destination, sessionId: target.sessionId, sourcePath: target.path }));
+  const result = { path: sessions[0].path, sessionPath: sessions[0].sessionPath, sessionId: sessions[0].sessionId, sessions };
+
+  if (Buffer.byteLength(JSON.stringify(result)) + 1 > 64 * 1024 * 1024) throw new Rejected('Restore group is too large; restore fewer conversations at a time');
+  const steps = [...placeSteps(targets), ...targets.map(target => restoreRecord(root, target.sessionId, target.destination))];
+
+  for (const target of planned) require('./session-broker/goal-assets.cjs').retainHistory(root, target.entries, target.sessionId, target.destination);
+  const id = randomUUID();
+
+  return {
+    version: 1, id, kind: 'restore', state: 'prepared', root, staging: path.join(root, 'storage-transactions', id), targets, result,
+    trace: { source: targets[0].path, destination: targets[0].destination, identity: steps.find(step => step.source === targets[0].path).identity.identity },
+    steps, finish: [{ type: 'move-paths' }, { type: 'remember-metadata' }, { type: 'publish-receipt' }],
+  };
+}
+
+function recoverEarlier(root, kind) {
   try {
     io.recover(root);
     require('./storage-recovery.cjs').recoverStorage(root);
   }
-  catch (error) { return { state: 'rolled-back', error: `Deletion failed: earlier storage recovery is pending: ${error.message}\nNothing was deleted.` }; }
+  catch (error) { return { state: 'rolled-back', error: `${labels[kind]} failed: earlier storage recovery is pending: ${error.message}\nNothing was ${outcomes[kind]}.` }; }
+}
 
-  try { journal = planDelete(root, request); }
-  catch (error) { return rejected('delete', error); }
+function run(root, kind, plan, resultOf) {
+  const earlier = recoverEarlier(root, kind);
+  let journal;
+
+  if (earlier) return earlier;
+
+  try { journal = plan(); }
+  catch (error) { return rejected(kind, error); }
 
   const outcome = execute(journal);
 
-  if (outcome.state === 'committed') afterCommit(root, outcome);
+  if (outcome.state !== 'committed') return outcome;
+  afterCommit(root, outcome);
 
-  return { ...outcome, result: outcome.state === 'committed' ? { sessionIds: journal.targets.map(target => target.sessionId) } : undefined };
+  return { ...outcome, result: resultOf(journal) };
+}
+
+function deleteSessions(root, request) {
+  return run(root, 'delete', () => planDelete(root, request), journal => ({ sessionIds: journal.targets.map(target => target.sessionId) }));
+}
+
+function restoreSessions(root, request) {
+  return run(root, 'restore', () => planRestore(root, request), journal => journal.result);
+}
+
+function restoredResult(root, source) {
+  const earlier = recoverEarlier(root, 'restore');
+
+  if (earlier) return { state: 'pending', error: earlier.error };
+  const result = require('./restore-receipts.cjs').result(root, source);
+  const receipt = path.join(root, 'restore-receipts', `${createHash('sha256').update(source).digest('hex')}.json`);
+
+  if (result?.sessions && !require('./deletion-retention.cjs').validReceipt(receipt, new Set())) return { state: 'committed', result: null };
+
+  return { state: 'committed', result };
 }
 
 function afterCommit(root, outcome) {
@@ -352,13 +434,21 @@ function cleanupTemporaryChats(root) {
 }
 
 function validTargets(root, journal) {
-  return journal.targets.every(target => path.extname(target.path) === '.jsonl' && inside(root, target.path) && !inside(journal.staging, target.path));
+  return journal.targets.every(target => path.extname(target.path) === '.jsonl' && inside(root, target.path) && !inside(journal.staging, target.path) && validDestination(root, journal.kind, target));
+}
+
+function validDestination(root, kind, target) {
+  if (kind !== 'restore') return target.destination === undefined;
+
+  return Boolean(target.destination?.endsWith('.jsonl')) && inside(path.join(root, 'sessions'), target.destination) && inside(path.join(root, 'archived'), target.path);
 }
 
 function validStep(journal, step) {
   if (!steps[step.type]) return false;
 
-  if (step.type === 'move') return path.dirname(step.staged) === journal.staging && journal.targets.some(target => supportingPaths(target.path).includes(step.source));
+  if (step.type === 'move') return journal.kind !== 'restore' && path.dirname(step.staged) === journal.staging && journal.targets.some(target => supportingPaths(target.path).includes(step.source));
+
+  if (step.type === 'place') return journal.kind === 'restore' && journal.targets.some(target => placements(target).some(([source, destination]) => step.source === source && step.destination === destination));
 
   return journal.targets.some(target => step.file === ownershipFile(journal.root, target.sessionId));
 }
@@ -428,4 +518,4 @@ function stagedTranscripts(root) {
     .map(step => ({ id: row.id, kind: row.kind, state: row.state, root: row.journal.root, staging: row.journal.staging, file: step.staged, identity: step.identity.identity, sessionId: row.journal.targets.find(target => target.path === step.source)?.sessionId })));
 }
 
-module.exports = { deleteSessions, recover, recoverJournals, pending, stuck, temporaryCleanupPending, stagedTranscripts };
+module.exports = { deleteSessions, restoreSessions, restoredResult, recover, recoverJournals, pending, stuck, temporaryCleanupPending, stagedTranscripts };
