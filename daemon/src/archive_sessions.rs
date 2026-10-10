@@ -6,22 +6,16 @@ use crate::pi_launch::{remote_host, remote_login_command, ssh};
 use crate::settings::{load_app_settings};
 
 pub(crate) fn archive_conversations(app: &AppHandle, host_id: &str, paths: &[String]) -> Result<(), String> {
-
     let _invalidate = app.state::<SessionIndexRuntime>().projects.invalidate_after(host_id);
     let settings = load_app_settings(app.clone())?;
-    let mut arguments = serde_json::json!({ "paths": paths, "action": "plan" });
-    let inspected = archive_command(&settings, host_id, &arguments)?;
-    let plan: serde_json::Value = serde_json::from_slice(&inspected.stdout).map_err(|error| format!("Invalid archive transaction plan: {error}"))?;
-    arguments["transaction"] = plan["transaction"].as_str().ok_or("Archive transaction identity is missing")?.into();
-    arguments["action"] = "execute".into();
-    archive_command(&settings, host_id, &arguments)?;
+    archive_command(&settings, host_id, &serde_json::json!({ "action": "archive", "paths": paths }))?;
     Ok(())
 }
 
 
 fn archive_command(settings: &AppSettings, host_id: &str, arguments: &serde_json::Value) -> Result<LimitedOutput, String> {
     let arguments = arguments.to_string();
-    let script = include_str!("../resources/archive-conversations.bundle.mjs");
+    let script = include_str!("../resources/storage-transaction.bundle.mjs");
     let mut command = if host_id == "local" {
         let mut command = node_command();
         command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, &arguments]); command

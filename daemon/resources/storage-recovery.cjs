@@ -1,4 +1,4 @@
-const { recover: recoverArchives } = require('./archive-transaction.cjs');
+const { recover: recoverArchives } = require('./legacy-archive-transaction.cjs');
 const { recover: recoverRestorations } = require('./legacy-restore-transaction.cjs');
 const { pruneReceipts } = require('./deletion-retention.cjs');
 

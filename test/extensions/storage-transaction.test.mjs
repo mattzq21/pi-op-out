@@ -183,3 +183,72 @@ test('rejected restore leaves storage unchanged', t => {
   assert.equal(existsSync(join(current.profile, 'storage-transactions')), false);
   assert.equal(journals(current.profile), 0);
 });
+
+function activeFixture(t) {
+  const current = fixture(t);
+  const archived = join(current.profile, 'archived');
+  const database = new DatabaseSync(join(current.profile, 'sessions.sqlite'));
+
+  mkdirSync(archived);
+
+  try {
+    database.exec('CREATE TABLE conversation_ownership (record_id TEXT PRIMARY KEY, record_json TEXT)');
+    database.prepare('INSERT INTO conversation_ownership VALUES (?, ?)').run(ownershipKey, JSON.stringify({ path: current.target, deleted: false, client: 'one' }));
+  } finally { database.close(); }
+
+  return { ...current, archived, name: 'session-' + sessionId };
+}
+
+function archivedState(current) {
+  const header = JSON.parse(readFileSync(current.target, 'utf8'));
+  const archivedHeader = { ...header, archiveSessionPath: current.target, goalAssets: { version: 1, policy: 'shared-profile', directories: [] } };
+
+  return {
+    archived: [current.name + '.jsonl=' + JSON.stringify(archivedHeader) + '\n', current.name + '.jsonl.loop-detection.json={}', current.name + '.snapshots/', current.name + '.snapshots/one.json={}'],
+    sessions: tree(current.sessions).filter(line => line.startsWith('other.jsonl')),
+    ownership: { path: current.target, deleted: true, client: null },
+  };
+}
+
+test('archive fully happens or fully rolls back after a crash at any write', t => {
+  const outcomes = new Set();
+
+  for (let crashAfter = 0; ; crashAfter += 1) {
+    const current = activeFixture(t);
+    const before = restoreState(current);
+    const after = archivedState(current);
+    const result = run({ action: 'archive', paths: [current.target], root: current.profile }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
+
+    if (result.status === 0) {
+      assert.deepEqual(JSON.parse(result.stdout), { state: 'committed', result: { sessions: [{ sessionId, sourcePath: current.target, sessionPath: join(current.archived, current.name + '.jsonl') }] } });
+      assert.deepEqual(restoreState(current), after);
+      settled(current.profile);
+      break;
+    }
+
+    assert.equal(result.stdout, '', 'crash ' + crashAfter + ' wrote a result: ' + result.stderr);
+    const recovery = run({ action: 'recover', root: current.profile });
+    assert.equal(recovery.status, 0, recovery.stderr);
+    const state = restoreState(current);
+    assert.ok([before, after].some(expected => JSON.stringify(expected) === JSON.stringify(state)), 'crash ' + crashAfter + ' left ' + JSON.stringify(state));
+    outcomes.add(JSON.stringify(state) === JSON.stringify(before) ? 'before' : 'after');
+    settled(current.profile);
+  }
+
+  assert.deepEqual([...outcomes].sort(), ['after', 'before']);
+});
+
+test('rejected archive leaves storage unchanged', t => {
+  const current = activeFixture(t);
+  const taken = join(current.archived, current.name + '.jsonl');
+  writeFileSync(taken, 'taken');
+  const before = restoreState(current);
+  const result = run({ action: 'archive', paths: [current.target], root: current.profile });
+
+  assert.equal(result.status, 1);
+  assert.equal(JSON.parse(result.stdout).state, 'rolled-back');
+  assert.equal(result.stderr.trim(), 'Archive failed: Archive destination already exists: ' + taken + '\nArchive was rolled back.');
+  assert.deepEqual(restoreState(current), before);
+  assert.equal(existsSync(join(current.profile, 'storage-transactions')), false);
+  assert.equal(journals(current.profile), 0);
+});

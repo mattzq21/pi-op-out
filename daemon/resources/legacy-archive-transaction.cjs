@@ -1,48 +1,14 @@
 const conversationStorage = require('./conversation-storage.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash, randomUUID } = require('node:crypto');
+const { createHash } = require('node:crypto');
 const io = require('./session-transactions.cjs');
-const { canonicalTranscriptBasename } = require('./transcript-identity.cjs');
 const records = require('./archive-records.cjs');
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
 function save(transaction) {
   records.save(transaction.container, transaction);
-}
-
-function sidecars(file, destination) {
-  return sidecarPaths(file, destination).flatMap(([source, target]) => io.exists(source) ? [{ source, destination: target, identity: io.describe(source) }] : []);
-}
-
-function archiveDestinations(root, records) {
-  const selected = new Set();
-
-  return records.map(record => {
-    const destination = path.join(root, 'archived', canonicalTranscriptBasename(record.header));
-
-    if (selected.has(destination)) throw new Error(`Duplicate archive transcript mapping: ${destination}`);
-    selected.add(destination);
-
-    for (const target of [destination, ...sidecarPaths(record.file, destination).map(([, target]) => target)]) {
-      if (io.exists(target)) throw new Error(`Archive destination already exists: ${target}`);
-    }
-
-    return destination;
-  });
-}
-
-function archiveOwnership(root, id) {
-  const key = createHash('sha256').update(id.toLowerCase()).digest('hex').slice(0, 40);
-  const file = path.join(root, 'conversation-ownership', key + '.json');
-
-  const before = conversationStorage.read(file);
-
-  if (before === null) return [];
-  const record = JSON.parse(before);
-
-  return [{ sessionId: id, file, before, after: JSON.stringify({ ...record, deleted: true, client: null }) }];
 }
 
 function finishOwnership(transaction) {
@@ -52,32 +18,6 @@ function finishOwnership(transaction) {
     if (current !== owner.before && current !== owner.after) throw new Error('Archived conversation ownership changed');
     conversationStorage.write(owner.file, owner.after);
   }
-}
-
-function plan(root, records) {
-  const destinations = archiveDestinations(root, records);
-  const id = randomUUID();
-
-  const container = path.join(root, 'archive-transactions', id);
-
-  require('./archive-records.cjs').allocate(container);
-  io.mkdir(container);
-
-  const plannedRecords = records.map((record, index) => {
-    const destination = destinations[index];
-
-    return {
-      file: record.file, sessionId: record.header.id,
-      original: io.describe(record.file), mode: fs.statSync(record.file).mode & 0o777, destination,
-      backup: path.join(container, `${index}.original`), prepared: path.join(container, `${index}.prepared`),
-      rollbackCopy: path.join(container, `${index}.rollback`), moves: sidecars(record.file, destination),
-    };
-  });
-
-  const transaction = { version: 3, kind: 'archive', id, root, container, containerIdentity: io.identity(container), state: 'planned', records: plannedRecords, ownerships: records.flatMap(record => archiveOwnership(root, record.header.id)) };
-  save(transaction);
-
-  return transaction;
 }
 
 function validateRecord(transaction, record) {
@@ -133,53 +73,6 @@ function validateOwnership(transaction, root) {
 
     if (owner.file !== path.join(root, 'conversation-ownership', key + '.json') || !transaction.records.some(record => record.sessionId === owner.sessionId)) throw new Error('Invalid archive ownership mapping');
   }
-}
-
-function prepare(transaction) {
-  if (transaction.state !== 'planned') throw new Error('Archive transaction is no longer awaiting preparation');
-  transaction.state = 'preparing';
-  save(transaction);
-}
-
-function begin(transaction) {
-  if (transaction.state !== 'preparing') throw new Error('Archive transaction is no longer awaiting execution');
-
-  for (const record of transaction.records) {
-    if (!io.matches(record.file, record.original)) throw new Error(`Conversation changed before archiving: ${record.file}`);
-  }
-
-  transaction.state = 'pending';
-  save(transaction);
-  io.mkdir(path.join(transaction.root, 'archived'));
-}
-
-function publishRecord(transaction, record) {
-  if (!io.matches(record.file, record.original) || !io.matches(record.backup, record.backupIdentity) || !io.matches(record.prepared, record.preparedIdentity)) throw new Error(`Archive publication files changed: ${record.file}`);
-  require('./transcript-metadata.cjs').invalidate(record.file);
-  fs.renameSync(record.prepared, record.file);
-  io.sync(path.dirname(record.file));
-  record.trace = { source: record.file, destination: record.destination, identity: record.preparedIdentity };
-  save(transaction);
-
-  for (const move of [...record.moves, record.trace]) {
-    io.syncTree(move.source);
-    io.move(move);
-    save(transaction);
-  }
-}
-
-function commit(transaction) {
-
-  for (const record of transaction.records) {
-    if (!io.matches(record.destination, record.preparedIdentity) || io.exists(record.file)) throw new Error(`Archive commit could not be verified: ${record.file}`);
-
-    for (const move of record.moves) {
-      if (!io.matches(move.destination, move.identity) || io.exists(move.source)) throw new Error(`Archive sidecar commit could not be verified: ${move.source}`);
-    }
-  }
-
-  transaction.state = 'committed';
-  save(transaction);
 }
 
 function restoreRecord(transaction, record) {
@@ -364,4 +257,4 @@ function recover(root) {
   if (failures.length) throw new Error(failures.join('\n'));
 }
 
-module.exports = { prepare, plan, load, begin, save, publishRecord, commit, rollback, finish, recover };
+module.exports = { recover };

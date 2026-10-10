@@ -95,12 +95,40 @@ const steps = {
     done(step) { return !io.exists(step.source) && io.matches(step.staged, step.identity); },
   },
   place: {
-    run(step) { io.syncTree(step.source); io.move(step); },
+    run(step, journal) {
+      io.syncTree(step.source);
+
+      if (!step.identity) {
+        step.identity = io.describe(step.source);
+        save(journal);
+      }
+
+      io.move(step);
+    },
     undo(step) {
-      if (!step.applied || !io.exists(step.destination)) return;
+      if (!step.applied || !step.identity || !io.exists(step.destination)) return;
       io.undo(step);
     },
     done(step) { return !io.exists(step.source) && io.matches(step.destination, step.identity); },
+  },
+  'prepare-transcript': {
+    run(step) {
+      const entries = fs.readFileSync(step.source, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
+
+      if (entries[0]?.id !== step.sessionId) throw new Error(`Archive conversation identity changed: ${step.source}`);
+      entries[0] = { ...entries[0], ...step.header };
+      fs.writeFileSync(step.prepared, entries.map(entry => JSON.stringify(entry)).join('\n') + '\n', { flag: 'wx', mode: step.mode });
+      io.syncTree(step.prepared);
+      io.sync(path.dirname(step.prepared));
+    },
+    undo(step) {
+      if (!step.applied || !io.exists(step.prepared)) return;
+
+      if (!fs.lstatSync(step.prepared).isFile()) throw new Error(`Prepared archive copy is not a regular file: ${step.prepared}`);
+      fs.unlinkSync(step.prepared);
+      io.sync(path.dirname(step.prepared));
+    },
+    done(step) { return !io.exists(step.prepared); },
   },
   'write-record': {
     run(step) {
@@ -196,7 +224,7 @@ function execute(journal) {
     for (const step of journal.steps) {
       step.applied = true;
       save(journal);
-      steps[step.type].run(step);
+      steps[step.type].run(step, journal);
       point();
     }
 
@@ -325,9 +353,46 @@ function placements(target) {
 }
 
 function placeSteps(targets) {
-  const steps = targets.flatMap(target => placements(target).filter(([source]) => io.exists(source)).map(([source, destination]) => ({ type: 'place', source, destination, identity: io.describe(source) })));
+  const steps = targets.flatMap(target => existingPlacements(placements(target)));
 
   return [...steps.filter(step => !step.source.endsWith('.jsonl')), ...steps.filter(step => step.source.endsWith('.jsonl'))];
+}
+
+function existingPlacements(pairs) {
+  return pairs.filter(([source]) => io.exists(source)).map(([source, destination]) => ({ type: 'place', source, destination, identity: io.describe(source) }));
+}
+
+function selectedFiles(files, message) {
+  if (!Check(Type.Array(Type.String(), { minItems: 1 }), files)) throw new Rejected(message);
+
+  return [...new Set(files.map(file => fs.realpathSync(file)))];
+}
+
+function archiveSteps(root, staging, target, index) {
+  const prepared = path.join(staging, `${index}.prepared`);
+  const goalAssets = require('./session-broker/goal-assets.cjs').retainHistory(root, target.entries, target.sessionId, target.destination);
+
+  return [
+    { type: 'prepare-transcript', source: target.path, sessionId: target.sessionId, prepared, mode: target.mode, header: { archiveSessionPath: target.path, goalAssets } },
+    { type: 'move', source: target.path, staged: path.join(staging, `${index}.staged`), identity: io.describe(target.path) },
+    ...existingPlacements(placements(target).slice(1)),
+    { type: 'place', source: prepared, destination: target.destination },
+  ];
+}
+
+function planArchive(root, request) {
+  const planned = require('./archive-plan.cjs').planTargets(root, selectedFiles(request.paths, 'No conversations selected'));
+  const targets = planned.map(target => ({ path: target.path, sessionId: target.sessionId, destination: target.destination }));
+  const id = randomUUID();
+  const staging = path.join(root, 'storage-transactions', id);
+
+  io.mkdir(path.join(root, 'archived'));
+
+  return {
+    version: 1, id, kind: 'archive', state: 'prepared', root, staging, targets,
+    steps: [...planned.flatMap((target, index) => archiveSteps(root, staging, target, index)), ...targets.flatMap(target => ownershipRecord(root, target.sessionId))],
+    finish: [{ type: 'move-paths' }, { type: 'remember-metadata' }, { type: 'remove-staged' }],
+  };
 }
 
 function restoreRecord(root, sessionId, destination) {
@@ -340,10 +405,7 @@ function restoreRecord(root, sessionId, destination) {
 }
 
 function planRestore(root, request) {
-  const files = request.paths;
-
-  if (!Check(Type.Array(Type.String(), { minItems: 1 }), files)) throw new Rejected('No archived conversations selected');
-  const planned = require('./restore-plan.cjs').planTargets(root, [...new Set(files.map(file => fs.realpathSync(file)))]);
+  const planned = require('./restore-plan.cjs').planTargets(root, selectedFiles(request.paths, 'No archived conversations selected'));
   const targets = planned.map(target => ({ path: target.path, sessionId: target.sessionId, destination: target.destination }));
   const sessions = planned.map(target => ({ path: target.cwd, sessionPath: target.destination, sessionId: target.sessionId, sourcePath: target.path }));
   const result = { path: sessions[0].path, sessionPath: sessions[0].sessionPath, sessionId: sessions[0].sessionId, sessions };
@@ -394,6 +456,10 @@ function restoreSessions(root, request) {
   return run(root, 'restore', () => planRestore(root, request), journal => journal.result);
 }
 
+function archiveSessions(root, request) {
+  return run(root, 'archive', () => planArchive(root, request), journal => ({ sessions: journal.targets.map(target => ({ sessionId: target.sessionId, sourcePath: target.path, sessionPath: target.destination })) }));
+}
+
 function restoredResult(root, source) {
   const earlier = recoverEarlier(root, 'restore');
 
@@ -437,21 +503,31 @@ function validTargets(root, journal) {
   return journal.targets.every(target => path.extname(target.path) === '.jsonl' && inside(root, target.path) && !inside(journal.staging, target.path) && validDestination(root, journal.kind, target));
 }
 
+const areas = { archive: ['sessions', 'archived'], restore: ['archived', 'sessions'] };
+
 function validDestination(root, kind, target) {
-  if (kind !== 'restore') return target.destination === undefined;
+  if (!areas[kind]) return target.destination === undefined;
+  const [from, to] = areas[kind];
 
-  return Boolean(target.destination?.endsWith('.jsonl')) && inside(path.join(root, 'sessions'), target.destination) && inside(path.join(root, 'archived'), target.path);
+  return Boolean(target.destination?.endsWith('.jsonl')) && inside(path.join(root, to), target.destination) && inside(path.join(root, from), target.path);
 }
 
-function validStep(journal, step) {
-  if (!steps[step.type]) return false;
-
-  if (step.type === 'move') return journal.kind !== 'restore' && path.dirname(step.staged) === journal.staging && journal.targets.some(target => supportingPaths(target.path).includes(step.source));
-
-  if (step.type === 'place') return journal.kind === 'restore' && journal.targets.some(target => placements(target).some(([source, destination]) => step.source === source && step.destination === destination));
-
-  return journal.targets.some(target => step.file === ownershipFile(journal.root, target.sessionId));
+function preparedPlacement(journal, target, step) {
+  return journal.kind === 'archive' && step.destination === target.destination && journal.steps.some(other => other.type === 'prepare-transcript' && other.prepared === step.source && other.source === target.path);
 }
+
+function validPlacement(journal, target, step) {
+  return placements(target).some(([source, destination]) => step.source === source && step.destination === destination) || preparedPlacement(journal, target, step);
+}
+
+const stepChecks = {
+  move: (journal, step) => journal.kind !== 'restore' && path.dirname(step.staged) === journal.staging && journal.targets.some(target => supportingPaths(target.path).includes(step.source)),
+  place: (journal, step) => journal.kind !== 'delete' && journal.targets.some(target => validPlacement(journal, target, step)),
+  'prepare-transcript': (journal, step) => journal.kind === 'archive' && path.dirname(step.prepared) === journal.staging && journal.targets.some(target => target.path === step.source),
+  'write-record': (journal, step) => journal.targets.some(target => step.file === ownershipFile(journal.root, target.sessionId)),
+};
+
+function validStep(journal, step) { return Boolean(stepChecks[step.type]?.(journal, step)); }
 
 function validJournal(root, row) {
   const journal = row.journal;
@@ -518,4 +594,4 @@ function stagedTranscripts(root) {
     .map(step => ({ id: row.id, kind: row.kind, state: row.state, root: row.journal.root, staging: row.journal.staging, file: step.staged, identity: step.identity.identity, sessionId: row.journal.targets.find(target => target.path === step.source)?.sessionId })));
 }
 
-module.exports = { deleteSessions, restoreSessions, restoredResult, recover, recoverJournals, pending, stuck, temporaryCleanupPending, stagedTranscripts };
+module.exports = { archiveSessions, deleteSessions, restoreSessions, restoredResult, recover, recoverJournals, pending, stuck, temporaryCleanupPending, stagedTranscripts };

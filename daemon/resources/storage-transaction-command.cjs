@@ -54,20 +54,12 @@ function storageRoot(request) {
   return fs.existsSync(configured) ? fs.realpathSync(configured) : path.resolve(configured);
 }
 
-async function restore(request) {
+async function locked(request, operation) {
   const root = storageRoot(request);
 
   if (!lockStorage(root)) return;
 
-  return withReferencePublicationLock(root, () => transaction.restoreSessions(root, request));
-}
-
-async function restoredResult(request) {
-  const root = storageRoot(request);
-
-  if (!lockStorage(root)) return;
-
-  return withReferencePublicationLock(root, () => transaction.restoredResult(root, request.path));
+  return withReferencePublicationLock(root, () => operation(root));
 }
 
 async function recover(request) {
@@ -85,9 +77,11 @@ async function start() {
 
   if (request.action === 'recover') return recover(request);
 
-  if (request.action === 'restore') return restore(request);
+  if (request.action === 'archive') return locked(request, root => transaction.archiveSessions(root, request));
 
-  if (request.action === 'result') return restoredResult(request);
+  if (request.action === 'restore') return locked(request, root => transaction.restoreSessions(root, request));
+
+  if (request.action === 'result') return locked(request, root => transaction.restoredResult(root, request.path));
   throw new Error(`Unknown storage transaction action: ${request.action}`);
 }
 
