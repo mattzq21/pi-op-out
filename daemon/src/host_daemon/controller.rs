@@ -58,20 +58,12 @@ pub(super) struct Host {
     output: std::sync::mpsc::Sender<Value>,
     weak: Weak<Self>,
     tool_payloads: Arc<ToolPayloadCache>,
-    tool_failures: super::tool_failures::Writer,
 }
 
 pub(super) struct Callbacks(Weak<Host>);
 
 impl Callbacks {
     pub(super) fn queue_root(&self) -> Option<PathBuf> { self.0.upgrade().map(|host| host.home.join(&host.storage).join("queued-input")) }
-    pub(super) fn record_tool_failure(&self, record: Value) {
-        if let Some(host) = self.0.upgrade() {
-            if let Err(error) = host.tool_failures.record(record) {
-                host.output(json!({"type":"diagnostic","line":format!("Could not record tool failure: {error}")}));
-            }
-        }
-    }
     pub(super) fn output(&self, packet: Value) {
         if let Some(host) = self.0.upgrade() {
             host.output(packet);
@@ -156,7 +148,6 @@ impl Host {
     ) -> Result<Arc<Self>> {
         let settings = crate::settings::read_settings_at(&home.join(storage).join("settings.json"))?;
         let definitions = super::agents::load(&home, storage, &crate::extensions::runtime_settings(&settings), true).await?;
-        let tool_failures = super::tool_failures::Writer::start(home.join(storage).join("tool-failures.sqlite"), output.clone())?;
         let host = Arc::new_cyclic(|weak| Self {
             home,
             storage: storage.into(),
@@ -167,7 +158,6 @@ impl Host {
             output,
             weak: weak.clone(),
             tool_payloads: Arc::new(ToolPayloadCache::default()),
-            tool_failures,
         });
         let ownership = ConversationOwnership::new(&host.home, storage, Arc::new(Callbacks(Arc::downgrade(&host)))).await?;
         let _ = host.ownership.set(ownership);
@@ -580,9 +570,6 @@ impl Host {
         self.services.shutdown().await;
         let sessions: Vec<_> = self.registry().sessions.values().cloned().collect();
         futures_util::future::join_all(sessions.iter().map(|session| session.stop())).await;
-        if let Err(error) = self.tool_failures.shutdown().await {
-            self.output(json!({"type":"diagnostic","line":error}));
-        }
         self.ownership().shutdown();
         self.registry().guards.clear();
     }

@@ -31,7 +31,6 @@ impl Session {
             if event["sessionId"] == self.identity { self.queue.consumed(&text(&event, "queueId")); }
             return;
         }
-        self.record_tool_failure(&event);
         if kind(&event) == "agent_settled" || (kind(&event) == "message_end" && event["message"]["role"] == "assistant") {
             crate::session_registry::record(&self.state().state, self.cwd.as_deref());
         }
@@ -52,29 +51,6 @@ impl Session {
                 .insert(command.into(), event["error"].as_str().unwrap_or("Extension command failed").into());
         }
         self.queue.receive(event);
-    }
-
-    fn record_tool_failure(&self, event: &Value) {
-        let (call, result) = match kind(event) {
-            "tool_execution_end" if flag(event, "isError") => (event, &event["result"]),
-            "message_end" if event["message"]["role"] == "toolResult" && flag(&event["message"], "isError") => {
-                (&event["message"], &event["message"])
-            }
-            _ => return,
-        };
-        let Some(id) = call["toolCallId"].as_str().filter(|id| !id.is_empty()) else { return; };
-        let record = {
-            let state = self.state();
-            let running = state.tools.iter().find(|(key, _)| key == id).map(|(_, tool)| tool);
-            let requested = state.tool_calls.get(id);
-            let input = call.get("args").filter(|value| !value.is_null())
-                .or_else(|| running.and_then(|tool| tool.get("args")))
-                .or_else(|| requested.and_then(|tool| tool.get("arguments")));
-            json!({"sessionId":state.key,"epoch":self.epoch,"cwd":self.cwd,"model":state.state["model"],
-                "toolCallId":id,"toolName":call.get("toolName").or_else(|| running.and_then(|tool| tool.get("toolName"))).or_else(|| requested.and_then(|tool| tool.get("name"))),
-                "input":input,"result":result,"failureKind":super::super::payload::tool_failure_kind(result)})
-        };
-        self.host.record_tool_failure(record);
     }
 
     fn retain_live(&self, event: &Value) {

@@ -7,9 +7,6 @@ pub(super) fn client_payload(mut value: Value) -> Value {
         return client_history(value);
     }
     if value["role"] == "toolResult" {
-        if value["isError"] == true {
-            value["toolFailureKind"] = json!(tool_failure_kind(&value));
-        }
         value["content"] = json!("");
         value["deferredToolPayload"] = value["toolCallId"].clone();
         remove(&mut value, &["details", "toolInput", "structuredContent", "nestedCalls"]);
@@ -58,35 +55,12 @@ fn client_tool_payload(mut value: Value) -> Value {
 }
 
 fn defer_tool_result(value: &mut Value) {
-    if value["isError"] == true {
-        value["toolFailureKind"] = json!(tool_failure_kind(&value["result"]));
-    }
     remove(value, &["args"]);
     let deferred = json!({"content":"","deferredToolPayload":value["toolCallId"]});
     for field in ["result", "partialResult"] {
         if value.get(field).is_some_and(|item| !item.is_null()) {
             value[field] = deferred.clone();
         }
-    }
-}
-
-pub(super) fn tool_failure_kind(result: &Value) -> &'static str {
-    let invalid_use = |text: &str| {
-        let text = text.trim();
-        text.starts_with("Validation failed for tool ")
-            || (text.starts_with("Tool ") && text.ends_with(" not found") && !text.contains('\n'))
-            || text.starts_with("MCP error -32602:")
-            || text.starts_with("McpError: MCP error -32602:")
-    };
-    let content = &result["content"];
-    if content.as_str().is_some_and(invalid_use)
-        || content.as_array().into_iter().flatten().any(|part| {
-            part["type"] == "text" && part["text"].as_str().is_some_and(invalid_use)
-        })
-    {
-        "invalid-use"
-    } else {
-        "other"
     }
 }
 

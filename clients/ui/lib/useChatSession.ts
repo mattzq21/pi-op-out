@@ -474,7 +474,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     const handleToolExecutionEnd = () => {
       if (event.parentToolCallId) return;
       flush();
-      session.setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done", toolFailureKind: event.isError ? (event.toolFailureKind === "invalid-use" ? "invalid-use" : "other") : undefined } : item));
+      session.setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done" } : item));
     };
 
     const handleQueueUpdate = () => {

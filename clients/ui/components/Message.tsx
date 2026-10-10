@@ -11,9 +11,7 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 import { Check, ChevronRight, CircleAlert, Copy, Pause, Split, Undo2, Wrench } from "lucide-solid";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, isContextInjection } from "../lib/messages";
-import { ToolFailureMeter } from "./ToolFailureMeter";
 import { CacheIcon } from "./CacheIcon";
-import type { ToolFailureStats } from "../lib/toolFailureStats";
 import type { ChatMessage } from "../types";
 import { IconButton } from "./IconButton";
 import { Markdown } from "./Markdown";
@@ -22,7 +20,7 @@ import { ZoomableImage } from "./ZoomableImage";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
 import type { FileReference } from "../lib/projectFiles";
 
-interface Props { toolFailures?: ToolFailureStats; message: ChatMessage; onOpenFile?: (file: FileReference) => void; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; onOpenFile?: (file: FileReference) => void; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
 
 function cacheTokenDigits(tokens: number) {
   const groups = String(tokens).match(/\d{1,3}(?=(?:\d{3})*$)/g) ?? [];
@@ -272,7 +270,6 @@ export function Message(componentProps: Props) {
       const renderStreamCaret = () => (streaming() && !componentProps.paused && <WorkingIndicator />);
 
       const renderMessageActions = () => {
-        const renderToolFailureRate = () => componentProps.debug && <ToolFailureMeter stats={componentProps.toolFailures} />;
         const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={copy}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
         const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label="Fork" data-tooltip="Fork" disabled={branching() || forgetting()} onClick={() => void branch()}><Split size={14} /></button>);
         const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button fork-and-forget-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} data-tooltip="Fork from here and archive original chat" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
@@ -286,7 +283,6 @@ export function Message(componentProps: Props) {
           {renderBranchAction()}
 
           {renderCacheHitRate()}
-          {renderToolFailureRate()}
           {metadata().responseTime && <span class="message-time">{required((metadata().responseTime)).short}</span>}
           {renderForkAndForgetAction()}
         </div>);

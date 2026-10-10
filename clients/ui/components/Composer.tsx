@@ -1,4 +1,3 @@
-import { ToolFailureMeter } from "./ToolFailureMeter";
 import { CacheIcon } from "./CacheIcon";
 import { required } from "../lib/required";
 import { trackToastMessage } from "../lib/toastHistory";
@@ -48,7 +47,6 @@ interface Props {
   thinkingLevel: string;
   thinkingLevels: string[];
   sessionCache?: { rate: number; low: boolean; cachedTokens: number; promptTokens: number };
-  toolFailures?: import("../lib/toolFailureStats").ToolFailureStats;
   contextUsage?: ContextUsage;
   controlsDisabled?: boolean;
   submissionDisabled?: boolean;
@@ -525,7 +523,7 @@ export function Composer(props: Props) {
       </div>);
 
     const ComposerBar = () => {
-      const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled && !props.ownershipRequired} onClick={(composer().onOpenTerminal)}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`} aria-label={`Cache ${cache().rate}%, ${cache().cachedTokens}/${cache().promptTokens}`} tabIndex={0} data-tooltip={`${cache().cachedTokens.toLocaleString()} / ${cache().promptTokens.toLocaleString()} tokens cached`}><CacheIcon rate={cache().rate} />{cache().rate}%</span>}</Show><ToolFailureMeter stats={props.toolFailures} /></div>);
+      const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled && !props.ownershipRequired} onClick={(composer().onOpenTerminal)}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`} aria-label={`Cache ${cache().rate}%, ${cache().cachedTokens}/${cache().promptTokens}`} tabIndex={0} data-tooltip={`${cache().cachedTokens.toLocaleString()} / ${cache().promptTokens.toLocaleString()} tokens cached`}><CacheIcon rate={cache().rate} />{cache().rate}%</span>}</Show></div>);
 
       const renderComposerActions = () => {
         const agentSelectionDisabled = () => composer().agentLocked || composer().streaming || controls().inputDisabled;

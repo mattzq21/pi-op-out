@@ -188,11 +188,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .cache-fraction-tooltip > span:first-child { border-bottom: 1px solid currentColor; padding-bottom: 2px; }
 .cache-fraction-tooltip > span:last-child { padding-top: 2px; }
 .cache-hit-rate:hover .cache-fraction-tooltip, .cache-hit-rate:focus-visible .cache-fraction-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
-.tool-failure-rate { white-space: nowrap; }
-.tool-failure-icon { width: 20px; height: 20px; flex: 0 0 auto; }
-.tool-failure-tooltip { position: absolute; z-index: 10; bottom: calc(100% + 6px); right: 0; display: none; width: max-content; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font: 14px/1.4 "DM Sans"; font-variant-numeric: tabular-nums; pointer-events: none; }
-.tool-failure-tooltip > span { display: block; }
-.tool-failure-rate:hover .tool-failure-tooltip, .tool-failure-rate:focus-visible .tool-failure-tooltip { display: block; }
 .message-failure { display: flex; align-items: center; gap: 7px; color: #c64f38; font-size: 12px; }.message-failure button { margin-left: 5px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; padding: 4px 9px; font: inherit; cursor: pointer; }.message-failure button:hover { background: #c64f3812; }
 .message-paused { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
 .reasoning-text, .reasoning-text strong { font-size: 13px; font-weight: 400; }

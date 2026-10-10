@@ -14,7 +14,6 @@ mod reference_publication;
 mod services;
 mod session;
 mod tool_payload;
-mod tool_failures;
 mod worker;
 
 pub(crate) use plugins::{preserve_leases_for_restart, validate_configuration};

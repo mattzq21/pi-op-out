@@ -10,8 +10,6 @@ export interface NestedToolCalls { calls: Array<{ id: string; name: string; argu
 
 export interface ChatMessage { nestedCalls?: NestedToolCalls; }
 
-export interface ChatMessage { toolFailureKind?: "invalid-use" | "other"; }
-
 export type ContentPart = ImageAttachment | { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "toolCall"; id: string; name: string; arguments: ToolArguments; partialArgs?: string };
 
 export interface ChatMessage { deliveryBehavior?: "steer" | "followUp"; id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred"; errorMessage?: string; toolName?: string; toolInput?: unknown; toolStatus?: "running" | "done" | "error"; promptContext?: PromptContextInfo; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
