@@ -21,7 +21,6 @@ html[data-mobile] .conversation-unowned .composer-interaction { opacity: 1; }
 }
 .mobile-connect { height: var(--mobile-height, 100dvh); overflow-y: auto; display: grid; align-items: safe center; justify-items: center; padding: max(28px, env(safe-area-inset-top)) 24px; background: #181817; color: #e8e5dd; }
 .mobile-connect form { width: min(100%, 420px); display: grid; gap: 20px; }
-.mobile-connect h1 { margin: 0; font: 38px/1.12 "Instrument Serif", Georgia, serif; }
 .mobile-connect p { margin: 0; line-height: 1.55; color: #aaa69e; }
 .mobile-connect label { display: grid; gap: 8px; font-size: 14px; }
 .mobile-connect input, .mobile-connect select { width: 100%; min-height: 48px; border: 1px solid #48453e; border-radius: 9px; padding: 12px; background: #24231f; color: #eee; font-size: 16px; }
