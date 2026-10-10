@@ -1,3 +1,4 @@
+import { DraftRuntime } from "./draftRuntime";
 import { sessionGroupsSchema, voidResultSchema, storageReportSchema, rpcEventSchema, sessionSummarySchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
 import { z } from "zod";
 import { jsonResultSchema } from "./transportSchemas";
@@ -152,6 +153,35 @@ export class NativeTransport {
   private daemonId?: string;
   private running = false;
   private connectionAttempted = false;
+  private readonly draftRuntime = new DraftRuntime(() => this.hostId, event => this.emit(event));
+  private startingDraft?: Promise<void>;
+  private draftOnly() { return this.cwd === undefined && this.sessionPath === undefined && this.sessionId === undefined; }
+  async startDraft() {
+    if (this.startingDraft) return this.startingDraft;
+
+    if (!this.draftOnly()) return;
+    const pending = this.materializeDraft(); this.startingDraft = pending;
+
+    try { await pending; } finally { if (this.startingDraft === pending) this.startingDraft = undefined; }
+  }
+  private async materializeDraft() {
+    if (!await this.ensureConnectionDirectory(this.connectionVersion)) throw new Error("The draft was closed before sending");
+
+    try {
+      await this.connect();
+
+      for (const command of this.draftRuntime.changes.values()) await this.command(command);
+      await this.setFastMode(this.draftRuntime.fastMode);
+      this.emit({ type: "session_info_changed" });
+    } catch (reason) {
+      const path = this.cwd;
+      await this.disconnect(true);
+
+      if (path) await call("remove_temporary_chat", { path, hostId: this.hostId }, voidResultSchema);
+      this.cwd = undefined; this.sessionId = undefined; this.sessionPath = undefined; this.owns = true;
+      throw reason;
+    }
+  }
   private temporaryChat = false;
   private temporaryChatUsed = false;
   private terminalActivity = false;
@@ -322,6 +352,11 @@ export class NativeTransport {
     if (this.running) return;
 
     if (this.connectPromise) return this.connectPromise;
+
+    if (this.draftOnly() && !forkPath) { await this.draftRuntime.load(); this.temporaryChat = true; this.owns = !this.readOnly;
+
+      return; }
+
     this.connectionAttempted = true;
     const pending = this.establishConnection(forkPath); this.connectPromise = pending;
 
@@ -430,8 +465,21 @@ export class NativeTransport {
 
     return this.disposal;
   }
-  toggleFastMode() { return this.fastMode.toggle(); }
-  setFastMode(enabled: boolean) { return this.fastMode.set(enabled); }
+  async toggleFastMode() {
+    if (this.draftOnly()) { await this.setFastMode(!this.draftRuntime.fastMode);
+
+      return; }
+
+    await this.fastMode.toggle();
+  }
+  async setFastMode(enabled: boolean) {
+    if (this.draftOnly()) { this.draftRuntime.fastMode = enabled;
+      this.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: enabled ? "Fast mode on" : "" });
+
+      return; }
+
+    await this.fastMode.set(enabled);
+  }
   command<S extends z.ZodType>(command: RpcCommand, schema: S): Promise<z.output<S>>;
   command(command: RpcCommand): Promise<z.output<typeof jsonResultSchema>>;
   command(command: RpcCommand, schema: z.ZodType = jsonResultSchema) { return this.executeCommand(command, schema); }
@@ -442,6 +490,7 @@ export class NativeTransport {
     return this.settings.runCommand(() => this.executeCommandNow(command, schema));
   }
   private async executeCommandNow<S extends z.ZodType>(command: RpcCommand, schema: S) {
+    if (this.draftOnly()) return schema.parse(await this.draftRuntime.command(command));
     command = this.fastMode.normalize(command);
 
     try {
@@ -489,9 +538,9 @@ export class NativeTransport {
   homeDirectory(hostId: string) { return call("home_directory", { hostId }, z.string()); }
   validateProjectDirectory(path: string, hostId: string, allowStorage = false) { return call("validate_project_directory", { path, hostId, allowStorage }, z.string()); }
   listDirectories(hostId: string, path?: string) { return call("list_directories", { hostId, path }, directoryListingSchema); }
-  async prepareTemporaryChat(hostId: string) { const chat = await call("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" }, z.object({ cwd: z.string(), sessionId: z.string() })); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false;
+  async prepareTemporaryChat(hostId: string) { this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false;
 
-  return chat.cwd; }
+    return undefined; }
   startTerminal(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId = this.hostId, preparation = false) {
     if (preparation) this.preparedTerminalIds.add(terminalId);
     else this.markTerminalActivity(cwd, hostId);

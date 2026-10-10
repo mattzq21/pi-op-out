@@ -7,7 +7,7 @@ const fastKey = "pi-desktop-fast-mode";
 
 const effortLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
-function modelLevels(model: Model) {
+export function modelLevels(model: Model) {
   if (!model.reasoning) return ["off"];
 
   return effortLevels.filter(level => model.thinkingLevelMap?.[level] !== null && (!(level === "xhigh" || level === "max") || model.thinkingLevelMap?.[level] !== undefined));

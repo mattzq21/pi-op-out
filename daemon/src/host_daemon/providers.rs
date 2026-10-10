@@ -206,6 +206,7 @@ impl ProviderService {
         }
         match request["action"].as_str() {
             Some("fast_capabilities") => return self.fast_capabilities().await,
+            Some("draft_catalog") => return self.sdk.request(json!({"method":"draft_catalog"})).await,
             Some("list") => return self.listing(flag(&request, "refreshModels")).await,
             Some("begin") => return self.begin(owner, request).await,
             Some("logout") => return self.logout(&text(&request, "providerId")).await,
