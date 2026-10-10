@@ -154,13 +154,20 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
     const refresh = () => {
       const message = componentProps.message;
 
-      if (pending || !message.loadToolPayload || failed && failed.version === message.toolPayloadVersion || message.toolPayloadLoaded && message.loadedToolPayloadVersion === message.toolPayloadVersion) return;
+      if (!active || pending) return;
+
+      if (message.toolPayloadLoaded && message.loadedToolPayloadVersion === message.toolPayloadVersion) {
+        setLoading(false); setError(undefined);
+        return;
+      }
+
+      if (!message.loadToolPayload || failed && failed.version === message.toolPayloadVersion) return;
       pending = true;
       setLoading(true); setError(undefined);
       void message.loadToolPayload().catch((reason) => { if (active) { failed = { version: message.toolPayloadVersion }; setError(reason instanceof Error ? reason.message : String(reason)); } })
         .finally(() => { pending = false;
 
-        if (active) setLoading(false); });
+        if (active) { setLoading(false); refresh(); } });
     };
 
     refresh();
