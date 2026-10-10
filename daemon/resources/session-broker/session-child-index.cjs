@@ -31,7 +31,7 @@ function read(root, sessionId) {
     if (!saved) return;
 
     const children = db.prepare(`SELECT c.child_id AS sessionId, coalesce(s.session_path, '') AS sessionPath, c.kind
-      FROM session_children c JOIN sessions s ON s.session_id=c.child_id WHERE c.parent_id=? ORDER BY c.child_id`).all(sessionId);
+      FROM session_children c JOIN sessions s ON s.session_id=c.child_id WHERE c.parent_id=?`).all(sessionId);
 
     return { version: 1, sessionId, sessionPath: saved.session_path ?? '', complete: Boolean(saved.complete), children };
   } finally { db.close(); }
