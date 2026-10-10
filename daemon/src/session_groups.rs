@@ -112,9 +112,6 @@ fn load_at(path: &Path, seeds: Vec<SessionSeed>) -> Result<SessionGroups, String
     let stored = read(path)?;
     let mut dirty = stored.is_none();
     let mut state = stored.unwrap_or_default();
-    let deleted = deletions::known(path)?;
-    dirty |= deletions::prune(&mut state, &deleted);
-    let seeds: Vec<_> = seeds.into_iter().filter(|seed| !deletions::contains(&deleted, &seed.session_key)).collect();
     dirty |= restore_suppressed_projects(&mut state, &seeds);
     for seed in seeds {
         dirty |= update_seed_metadata(&mut state, &seed);
@@ -165,9 +162,6 @@ fn change_with(change: GroupChange, path: impl FnOnce() -> Result<PathBuf, Strin
 fn change_at(path: &Path, change: GroupChange) -> Result<SessionGroups, String> {
     let _file_lock = lock_storage(path)?;
     let mut state = read(path)?.ok_or("Session groups have not loaded yet")?;
-    let deleted = deletions::known(path)?;
-    deletions::prune(&mut state, &deleted);
-    if deletions::change_key(&change).is_some_and(|key| deletions::contains(&deleted, key)) { return Err("Conversation was permanently deleted".into()); }
     apply_group_change(&mut state, change)?;
     write(path, &state)?;
     Ok(state)

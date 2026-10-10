@@ -79,12 +79,23 @@ fn recover_contents(root: &Path, id: &str) -> Result<bool> {
     let pending = storage.load()?;
     if pending.is_empty() { return Ok(false); }
     let journal = storage.record()?.ok_or("Queued input is no longer available")?;
-    let cwd = journal["origin"]["cwd"].as_str().filter(|cwd| Path::new(cwd).is_absolute())
-        .ok_or("Queued input retained: recovery working directory is missing")?;
+    let cwd = recovery_directory(&journal["origin"])?;
     let target = recovery_path(root, id, &journal["origin"])?;
     let name = pending.first().and_then(|item| item["message"].as_str()).unwrap_or("Recovered queued input");
-    let created = create_transcript(&target, id, cwd, name)?;
-    register_recovered(root, &target, id)?;
+    recover_transcript(root, &target, id, cwd, name)
+}
+
+fn recovery_directory(origin: &Value) -> Result<&str> {
+    origin["cwd"].as_str().filter(|cwd| Path::new(cwd).is_absolute())
+        .ok_or_else(|| "Queued input retained: recovery working directory is missing".into())
+}
+
+fn recover_transcript(root: &Path, target: &Path, id: &str, cwd: &str, name: &str) -> Result<bool> {
+    let db = crate::session_registry::open(root)?;
+    let bound = db.execute("UPDATE sessions SET session_path=?1 WHERE session_id=?2 AND (session_path IS NULL OR session_path=?1)", rusqlite::params![target.to_string_lossy(), id]).map_err(|error| error.to_string())?;
+    if bound != 1 { return Err("Queued input no longer belongs to this session path".into()); }
+    let created = create_transcript(target, id, cwd, name)?;
+    register_recovered(root, target, id)?;
     Ok(created)
 }
 
@@ -99,8 +110,9 @@ fn register_recovered(root: &Path, target: &Path, id: &str) -> Result<()> {
     let (modified, size) = recovered_file_metadata(target)?;
     let mut database = crate::session_registry::open(root)?;
     let transaction = database.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
-    transaction.execute("INSERT INTO sessions (session_id, session_path) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path",
-        rusqlite::params![id, target.to_string_lossy()]).map_err(|error| error.to_string())?;
+    let registered: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=? AND session_path=?)",
+        rusqlite::params![id, target.to_string_lossy()], |row| row.get(0)).map_err(|error| error.to_string())?;
+    if !registered { return Err("Recovered transcript does not own its session ID".into()); }
     transaction.execute("INSERT INTO session_file_metadata VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, modified_ns=excluded.modified_ns, size=excluded.size",
         rusqlite::params![id, target.to_string_lossy(), modified, size]).map_err(|error| error.to_string())?;
     transaction.execute("DELETE FROM session_file_writes WHERE session_id=?", [id]).map_err(|error| error.to_string())?;
@@ -151,7 +163,10 @@ fn recovery_path(root: &Path, id: &str, origin: &Value) -> Result<PathBuf> {
     let directory = root.join("sessions");
     crate::ensure_private_dir(&directory)?;
     let directory = directory.canonicalize().map_err(|error| error.to_string())?;
-    if let Some(path) = origin["sessionPath"].as_str().map(Path::new) {
+    let db = crate::session_registry::open(root)?;
+    let registered: Option<String> = db.query_row("SELECT session_path FROM sessions WHERE session_id=?", [id], |row| row.get(0))
+        .optional().map_err(|error| error.to_string())?.flatten();
+    if let Some(path) = registered.as_deref().or_else(|| origin["sessionPath"].as_str()).map(Path::new) {
         let parent = path.parent().ok_or("Queued-input transcript has no directory")?;
         if parent.canonicalize().map_err(|error| error.to_string())? != directory || path.extension().is_none_or(|extension| extension != "jsonl") {
             return Err("Queued-input recovery path is outside active session storage".into());

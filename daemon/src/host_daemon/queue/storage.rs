@@ -63,7 +63,7 @@ impl QueueStorage {
     fn write_items(&self, db: &rusqlite::Connection, items: &[Value]) -> Result<()> {
         let origin = self.origin.as_ref().ok_or("Queued-input recovery is missing its working directory")?;
         let body = json!({"version":1,"origin":origin,"items":items}).to_string();
-        let written = db.execute("INSERT INTO queued_inputs SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))
+        let written = db.execute("INSERT INTO queued_inputs SELECT ?, ? WHERE EXISTS (SELECT 1 FROM sessions WHERE session_id=lower(?))
             ON CONFLICT(session_id) DO UPDATE SET record_json=excluded.record_json", rusqlite::params![self.id()?, body, self.id()?]).map_err(|error| error.to_string())?;
         if written == 0 { return Err("Cannot queue input for a deleted session".into()); }
         Ok(())

@@ -6,7 +6,7 @@ function initialize(db) {
 
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
-      CREATE TABLE IF NOT EXISTS session_deletion_tombstones (session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL, session_path TEXT NOT NULL); CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE); CREATE TRIGGER IF NOT EXISTS session_file_metadata_moved AFTER UPDATE ON sessions WHEN OLD.session_path IS NOT NEW.session_path BEGIN DELETE FROM session_file_metadata WHERE session_id=OLD.session_id; END;`);
+      CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE); CREATE TRIGGER IF NOT EXISTS session_file_metadata_moved AFTER UPDATE ON sessions WHEN OLD.session_path IS NOT NEW.session_path BEGIN DELETE FROM session_file_metadata WHERE session_id=OLD.session_id; END;`);
 
     db.exec(`      CREATE TABLE IF NOT EXISTS session_sidebar (
         session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
@@ -40,7 +40,6 @@ function initialize(db) {
         host_id TEXT, host_name TEXT);
       CREATE TABLE IF NOT EXISTS session_group_assignments (session_key TEXT PRIMARY KEY, group_id TEXT);
       CREATE TABLE IF NOT EXISTS session_group_removed_projects (project_id TEXT PRIMARY KEY);
-      CREATE TABLE IF NOT EXISTS session_group_deletions (session_key TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS session_publications (publication_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_restorations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_restore_receipts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
@@ -90,16 +89,29 @@ function movePaths(root, moves) {
   } finally { db.close(); }
 }
 
+function reserve(root) {
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const db = open(root);
+
+  try {
+    const insert = db.prepare("INSERT INTO sessions (session_id) SELECT ? WHERE NOT EXISTS (SELECT 1 FROM deletion_records d, json_each(d.record_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?) ON CONFLICT(session_id) DO NOTHING");
+
+    for (;;) {
+      const id = require('node:crypto').randomUUID();
+
+      if (insert.run(id, id).changes === 1) return id;
+    }
+  } finally { db.close(); }
+}
+
+function bind(db, sessionId, sessionPath) {
+  const changed = db.prepare('UPDATE sessions SET session_path=? WHERE session_id=? AND (session_path IS NULL OR session_path=?)').run(sessionPath, sessionId, sessionPath);
+
+  if (changed.changes !== 1) throw new Error('Session ID is not reserved or already belongs to another session');
+}
+
 function register(db, sessionId, sessionPath) {
-  if (db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(sessionId)) return;
-  const previous = db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId);
-
-  if (previous?.session_path && previous.session_path !== sessionPath && require('node:fs').existsSync(previous.session_path)) {
-    throw new Error(`Conversation identity has more than one transcript: ${sessionId}`);
-  }
-
-  db.prepare(`INSERT INTO sessions (session_id, session_path) VALUES (?, ?)
-    ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path`).run(sessionId, sessionPath);
+  if (!db.prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path=?').get(sessionId, sessionPath)) throw new Error('Session path does not match its reserved ID');
 }
 
 function registerPath(root, sessionId, sessionPath) {
@@ -206,14 +218,14 @@ function lookup(root, sessionId) {
   const db = open(root);
 
   try {
-    return db.prepare('SELECT session_path FROM sessions WHERE session_id=? AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))').get(sessionId, sessionId)?.session_path;
+    return db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId)?.session_path;
   } finally { db.close(); }
 }
 
 function paths(root, directory) {
   const prefix = directory === undefined ? null : path.resolve(directory) + path.sep;
 
-  return rows(root, 'SELECT session_path FROM sessions WHERE session_path IS NOT NULL AND (? IS NULL OR substr(session_path, 1, length(?))=?) AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))', prefix, prefix, prefix).map(row => row.session_path);
+  return rows(root, 'SELECT session_path FROM sessions WHERE session_path IS NOT NULL AND (? IS NULL OR substr(session_path, 1, length(?))=?)', prefix, prefix, prefix).map(row => row.session_path);
 }
 
 function storageRoot(file) {
@@ -227,5 +239,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { initialize, directoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+module.exports = { initialize, reserve, bind, directoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
   recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };

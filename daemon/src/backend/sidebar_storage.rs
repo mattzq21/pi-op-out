@@ -8,8 +8,7 @@ pub(super) fn open(root: &Path) -> Result<Connection, String> {
 
 pub(super) fn load(connection: &Connection) -> Result<HashMap<PathBuf, CachedSession>, String> {
     let mut statement = connection.prepare("SELECT s.session_id, s.session_path, c.fingerprint, c.modified_at, c.summary_json
-        FROM session_sidebar c JOIN sessions s USING(session_id)
-        WHERE NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(s.session_id))")
+        FROM session_sidebar c JOIN sessions s USING(session_id)")
         .map_err(|error| error.to_string())?;
     let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?,
         row.get::<_, String>(2)?, row.get::<_, u64>(3)?, row.get::<_, String>(4)?))).map_err(|error| error.to_string())?;
@@ -40,9 +39,6 @@ pub(super) fn save(connection: &mut Connection, cache: &HashMap<PathBuf, CachedS
 
 fn save_row(transaction: &rusqlite::Transaction<'_>, cached: &CachedSession) -> Result<(), String> {
     let summary = &cached.summary;
-    let deleted: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))",
-        [&summary.id], |row| row.get(0)).map_err(|error| error.to_string())?;
-    if deleted { return Ok(()); }
     let mut value = serde_json::to_value(summary).map_err(|error| error.to_string())?;
     if let Some(object) = value.as_object_mut() { object.remove("id"); object.remove("path"); }
     let registered: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=? AND session_path=?)",

@@ -113,8 +113,7 @@ fn local_session_candidates(root: &Path, cache: &HashMap<PathBuf, CachedSession>
     let mut seen = HashSet::new(); let mut changed = Vec::new();
     let mut database = crate::session_registry::open(root.parent().ok_or("Session storage root missing")?)?;
     let prefix = format!("{}{}", root.to_string_lossy().trim_end_matches(std::path::MAIN_SEPARATOR), std::path::MAIN_SEPARATOR);
-    let mut statement = database.prepare("SELECT s.session_path, m.modified_ns, m.size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?1))=?1
-        AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(s.session_id))")
+    let mut statement = database.prepare("SELECT s.session_path, m.modified_ns, m.size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?1))=?1")
         .map_err(|error| error.to_string())?;
     let paths = statement.query_map([prefix], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<u64>>(2)?))).map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
@@ -142,7 +141,6 @@ fn capture_local_candidate(database: &mut rusqlite::Connection, path: &Path) -> 
         let modified = fingerprint.split(':').next().ok_or("Invalid transcript file details")?;
         transaction.execute("INSERT INTO session_file_metadata SELECT session_id, session_path, ?, ? FROM sessions WHERE session_path=?
             AND NOT EXISTS (SELECT 1 FROM session_file_writes w WHERE w.session_id=sessions.session_id)
-            AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(sessions.session_id))
             ON CONFLICT(session_id) DO NOTHING", rusqlite::params![modified, size, file]).map_err(|error| error.to_string())?;
     }
     transaction.commit().map_err(|error| error.to_string())?;
@@ -267,7 +265,8 @@ pub(super) fn validate_remote_project_directory(path: String, host_name: &str, c
     Ok(path)
 }
 pub(super) fn create_temporary_chat(app: AppHandle, host_id: String, _e2e: Option<bool>) -> Result<TemporaryChat, String> {
-    let session_id = Uuid::new_v4().to_string();
+    let settings = load_app_settings(app.clone())?;
+    let session_id = super::pi_runtime::reserve_session_id(&settings, &host_id)?;
     let cwd = if host_id == "local" {
         let cwd = create_local_temporary_chat(&home_dir()?, &session_id)?;
         cwd.to_string_lossy().into_owned()

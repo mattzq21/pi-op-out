@@ -9,7 +9,9 @@ use std::process::Stdio;
 use std::sync::atomic::Ordering;
 use crate::platform::AppHandle;
 use crate::platform::State;
-use uuid::Uuid;
+use crate::{home_dir, STORAGE_DIRECTORY};
+use crate::pi_launch::{ssh, remote_login_command};
+use crate::process_io::shell_quote;
 use crate::{AgentAddress, AppSettings, BlankSessionCleanup, BrokerRuntime, BusyAgent, RemoteHost, cleanup_blank_session, daemon};
 use crate::archives::{archived_session_file, desktop_session_file};
 use crate::pi_launch::{PiLaunch, build_pi_command, remote_host, session_identity};
@@ -53,8 +55,20 @@ impl PreparedPiSession {
     }
 }
 
+pub(super) fn reserve_session_id(settings: &AppSettings, host_id: &str) -> Result<String, String> {
+    if host_id == "local" { return crate::session_registry::reserve(&home_dir()?.join(STORAGE_DIRECTORY)); }
+    let host = remote_host(settings, host_id)?;
+    let mut command = ssh(host);
+    command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(&crate::session_registry::source()), shell_quote(r#"{"action":"reserve"}"#))));
+    let output = command.output().map_err(|error| error.to_string())?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
+    serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+}
+
 fn prepare_pi_session(settings: &AppSettings, host_id: String, options: &StartPiOptions) -> Result<PreparedPiSession, String> {
-    let session_id = options.session_id.clone().or_else(|| (options.session_path.is_none() && options.fork_path.is_none()).then(|| Uuid::new_v4().to_string()));
+    let session_id = if options.session_id.is_none() && options.session_path.is_none() {
+        Some(reserve_session_id(settings, &host_id)?)
+    } else { options.session_id.clone() };
     let session_path = saved_pi_path(settings, &host_id, options)?;
     let fork_path = options.fork_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()?;
     Ok(PreparedPiSession { host_id, session_id, session_path, fork_path })

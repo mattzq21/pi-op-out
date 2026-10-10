@@ -27,14 +27,21 @@ function forget(root, targets) {
     require('./session-database.cjs').initialize(db);
     db.exec('BEGIN IMMEDIATE');
 
-    const mark = db.prepare('INSERT INTO session_deletion_tombstones VALUES (?, ?, ?) ON CONFLICT(session_id) DO NOTHING');
+    targets = targets.filter(target => {
+      const current = db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(target.sessionId);
 
-    for (const target of targets) {
-      mark.run(target.sessionId.toLowerCase(), Date.now(), target.path);
-      db.prepare('DELETE FROM queued_inputs WHERE session_id=lower(?)').run(target.sessionId);
-    }
+      return !current || current.session_path === target.path;
+    });
+
+    for (const target of targets) db.prepare('DELETE FROM queued_inputs WHERE session_id=?').run(target.sessionId);
 
     removeSessionRecords(db, targets);
+
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_ownership'").get()) {
+      const removeOwner = db.prepare('DELETE FROM conversation_ownership WHERE record_id=?');
+
+      for (const target of targets) removeOwner.run(require('node:crypto').createHash('sha256').update(target.sessionId.toLowerCase()).digest('hex').slice(0, 40));
+    }
 
     for (const target of targets) db.prepare('DELETE FROM sessions WHERE lower(session_id) = ?').run(target.sessionId.toLowerCase());
 

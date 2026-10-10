@@ -3,7 +3,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { AgentProfilesRequest, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { writeSessionFile } from "./session-file.ts";
+import { writeSessionFile, reserveSessionId } from "./session-file.ts";
 import { currentHost } from "./client.ts";
 
 export async function resolveAgentProfile(pi: ExtensionAPI, agent?: string) {
@@ -23,7 +23,7 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
 
   if (!header) throw new Error("Save this conversation before creating another chat");
   const state = await resolveAgentProfile(pi, agent);
-  const sessionId = randomUUID();
+  const sessionId = reserveSessionId();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   const nameId = randomUUID().slice(0, 8);

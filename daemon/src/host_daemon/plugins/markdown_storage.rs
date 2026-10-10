@@ -15,7 +15,7 @@ fn open(path: &Path) -> Result<(Connection, String), String> {
 }
 
 fn deleted(db: &Connection, id: &str) -> Result<bool, String> {
-    db.query_row("SELECT EXISTS(SELECT 1 FROM session_deletion_tombstones WHERE session_id=?)", [id], |row| row.get(0)).map_err(|error| error.to_string())
+    db.query_row("SELECT NOT EXISTS(SELECT 1 FROM sessions WHERE session_id=?)", [id], |row| row.get(0)).map_err(|error| error.to_string())
 }
 
 

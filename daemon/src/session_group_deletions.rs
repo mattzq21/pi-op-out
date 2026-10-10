@@ -1,28 +1,9 @@
 use std::{collections::HashSet, path::Path};
 use super::{SessionGroups, SessionSeed};
 
-fn normalize(key: &str) -> String {
-    match key.rsplit_once(':') {
-        Some((host, id)) => format!("{host}:{}", id.to_lowercase()),
-        None => key.to_owned(),
-    }
-}
-
-pub(super) fn known(path: &Path) -> Result<HashSet<String>, String> {
-    super::storage::deleted(path)
-}
-
-pub(super) fn contains(deleted: &HashSet<String>, key: &str) -> bool { deleted.contains(&normalize(key)) }
-
-pub(super) fn prune(state: &mut SessionGroups, deleted: &HashSet<String>) -> bool {
-    let previous = state.assignments.len();
-    state.assignments.retain(|key, _| !contains(deleted, key));
-    previous != state.assignments.len()
-}
-
 fn command(settings: &crate::AppSettings, host_id: &str) -> Result<std::process::Command, String> {
     let script = crate::session_registry::source();
-    let request = r#"{"action":"deleted"}"#;
+    let request = r#"{"action":"ids"}"#;
     if host_id == "local" {
         let mut command = crate::node_command();
         command.args(["-e", &script, request]);
@@ -36,7 +17,7 @@ fn command(settings: &crate::AppSettings, host_id: &str) -> Result<std::process:
 }
 
 fn discover(settings: &crate::AppSettings, host_id: &str) -> Result<Vec<String>, String> {
-    let output = crate::run_limited(&mut command(settings, host_id)?, 16 * 1024 * 1024, "Could not read permanent deletion metadata")?;
+    let output = crate::run_limited(&mut command(settings, host_id)?, 16 * 1024 * 1024, "Could not read current session IDs")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
     serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
 }
@@ -52,23 +33,19 @@ fn hosts(state: &SessionGroups, seeds: &[SessionSeed], key: Option<&str>) -> Has
 pub(super) fn refresh(path: &Path, settings: &crate::AppSettings, seeds: &[SessionSeed], key: Option<&str>) -> Result<(), String> {
     let _lock = super::lock_storage(path)?;
     let mut state = super::read(path)?.unwrap_or_default();
-    let mut deleted = known(path)?;
-    let previous = deleted.len();
-    learn(settings, hosts(&state, seeds, key), &mut deleted);
-    if deleted.len() != previous {
-        super::storage::remember_deleted(path, &deleted)?;
-    }
-    if prune(&mut state, &deleted) { super::write(path, &state)?; }
-    Ok(())
-}
-
-fn learn(settings: &crate::AppSettings, hosts: HashSet<String>, deleted: &mut HashSet<String>) {
-    for host in hosts {
+    let previous = state.assignments.len();
+    for host in hosts(&state, seeds, key) {
         match discover(settings, &host) {
-            Ok(ids) => deleted.extend(ids.into_iter().map(|id| normalize(&format!("{host}:{id}")))),
-            Err(error) => eprintln!("Permanent deletion metadata for {host} will be retried: {error}"),
+            Ok(ids) => {
+                let live: HashSet<_> = ids.into_iter().collect();
+                let prefix = format!("{host}:");
+                state.assignments.retain(|key, _| key.strip_prefix(&prefix).is_none_or(|id| live.contains(id)));
+            }
+            Err(error) => eprintln!("Session group cleanup for {host} will retry: {error}"),
         }
     }
+    if previous != state.assignments.len() { super::write(path, &state)?; }
+    Ok(())
 }
 
 pub(super) fn change_key(change: &super::GroupChange) -> Option<&str> {

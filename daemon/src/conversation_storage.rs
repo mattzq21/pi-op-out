@@ -33,3 +33,9 @@ pub(crate) fn write(root: &Path, key: &str, body: &str) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     Ok(())
 }
+
+pub(crate) fn remove(root: &Path, key: &str) -> Result<(), String> {
+    validate_key(key)?;
+    open(root)?.execute("DELETE FROM conversation_ownership WHERE record_id=?", [key]).map_err(|error| error.to_string())?;
+    Ok(())
+}

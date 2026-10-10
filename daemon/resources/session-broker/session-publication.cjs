@@ -91,6 +91,11 @@ function prepare(root, target, body, options) {
 
   if (!Check(io.uuid, id)) throw new Error('Invalid session publication identity');
   const prepared = prepareBody(body, id);
+  const db = database.open(root);
+
+  try { database.bind(db, prepared.header.id, target); }
+  finally { db.close(); }
+
 
   if (!path.basename(target).endsWith(`_${prepared.header.id}.jsonl`) || io.exists(target)) throw new Error('Session publication target is occupied or does not bind its session identity');
   const lock = io.lockPath(root, target);
@@ -261,7 +266,7 @@ function moveQuarantine(journal, destination) {
 }
 
 function recoverUnlinked(journal) {
-  if (io.deleted(journal.root, journal.sessionId)) return quarantine(journal, 'This session was permanently deleted; the captured publication was retained without resurrecting it');
+  if (io.unregistered(journal.root, journal.sessionId, journal.target)) return quarantine(journal, 'This session no longer owns its reserved path; the captured publication was retained');
 
   if (journal.phase === 'linked' || journal.phase === 'parent-pending') return quarantine(journal, 'Previously published session no longer has an authoritative owned location');
 

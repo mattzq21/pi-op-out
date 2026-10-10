@@ -31,7 +31,6 @@ function remember(file) {
     db.exec('BEGIN IMMEDIATE');
     const metadata = savedFile(file);
     db.prepare(`INSERT INTO session_file_metadata SELECT session_id, session_path, ?, ? FROM sessions WHERE session_path=?
-      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))
       ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, modified_ns=excluded.modified_ns, size=excluded.size`)
       .run(String(metadata.mtimeNs), metadata.size, file);
     db.prepare("DELETE FROM session_file_writes WHERE session_id IN (SELECT session_id FROM sessions WHERE session_path=?)").run(file);

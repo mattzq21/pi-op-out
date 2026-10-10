@@ -38,12 +38,7 @@ function read(root, sessionId) {
 }
 
 function identity(db, sessionId, sessionPath) {
-  if (db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(sessionId)) return false;
-  db.prepare(`INSERT INTO sessions (session_id, session_path) VALUES (?, ?) ON CONFLICT(session_id)
-    DO UPDATE SET session_path=coalesce(sessions.session_path, excluded.session_path)`)
-    .run(sessionId, sessionPath || null);
-
-  return true;
+  return Boolean(db.prepare("SELECT 1 FROM sessions WHERE session_id=? AND (? = '' OR session_path=?)").get(sessionId, sessionPath, sessionPath));
 }
 
 function write(db, value) {

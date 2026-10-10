@@ -123,7 +123,7 @@ fn note_path(session: &str) -> Result<PathBuf, String> {
 fn has_conversation(session: &str) -> Result<bool, String> {
     let storage = crate::home_dir()?.join(crate::STORAGE_DIRECTORY);
     let db = crate::session_registry::open(&storage)?;
-    let deleted: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM session_deletion_tombstones WHERE session_id=?)", [session], |row| row.get(0)).map_err(|error| error.to_string())?;
+    let deleted: bool = db.query_row("SELECT NOT EXISTS(SELECT 1 FROM sessions WHERE session_id=?)", [session], |row| row.get(0)).map_err(|error| error.to_string())?;
     if deleted { return Ok(false); }
     let key = super::super::ownership::ConversationOwnership::key(session)?;
     let Some(body) = crate::conversation_storage::read(&storage, &key)? else { return Ok(true); };

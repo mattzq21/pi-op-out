@@ -1,3 +1,4 @@
+import * as sessionTables from "./session-database.cjs";
 import { DatabaseSync as StorageDatabase } from "node:sqlite";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
@@ -56,19 +57,10 @@ function registerManagedTranscript(manager, saved = false) {
   const header = manager.fileEntries[0];
 
   if (header?.type !== "session" || !header.id || header.id !== String(header.id)) throw new Error("Cannot register a session without its saved identity");
-  const databasePath = storagePath.join(root, "sessions.sqlite");
-  storageFs.closeSync(storageFs.openSync(databasePath, "a", 0o600));
-  const database = new StorageDatabase(databasePath);
+  const database = sessionTables.open(root);
 
   try {
-    storageFs.chmodSync(databasePath, 0o600);
-    database.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-      CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT);
-      CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
-      CREATE TABLE IF NOT EXISTS session_deletion_tombstones (session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL, session_path TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
-      BEGIN IMMEDIATE;`);
+    database.exec("BEGIN IMMEDIATE;");
     registerManagedPath(database, header.id, file);
     saveManagedMetadata(database, header.id, file, saved);
     database.exec("COMMIT");
@@ -100,11 +92,84 @@ function finishManagedTranscript(manager, entries, entry) {
 }
 
 function registerManagedPath(database, sessionId, file) {
-  if (database.prepare("SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)").get(sessionId)) throw new Error("Cannot save a deleted session");
-  const previous = database.prepare("SELECT session_path FROM sessions WHERE session_id=?").get(sessionId);
+  sessionTables.register(database, sessionId, file);
+}
 
-  if (previous?.session_path && previous.session_path !== file && storageFs.existsSync(previous.session_path)) throw new Error("Session identity has more than one transcript");
-  database.prepare("INSERT INTO sessions VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path").run(sessionId, file);
+function bindNewSession(manager) {
+  const database = sessionTables.open(sessionReferenceRoot());
+
+  try { sessionTables.bind(database, manager.getSessionId(), manager.sessionFile); }
+  finally { database.close(); }
+}
+
+function installSessionCreation(SessionManager) {
+  const prototype = SessionManager.prototype;
+  requireStorageMethods(prototype, ["newSession", "_loadEntries"]);
+  const create = prototype.newSession;
+  const load = prototype._loadEntries;
+
+  prototype.newSession = function (options) {
+    if (!this.persist) return create.call(this, options);
+    const id = options?.id ?? sessionTables.reserve(sessionReferenceRoot());
+    const result = create.call(this, { ...options, id });
+    bindNewSession(this);
+    sessionStoragePublish(this, this.fileEntries, true);
+    this.flushed = true;
+
+    return result;
+  };
+
+  prototype._loadEntries = function (entries, options) {
+    const header = entries.find(entry => entry.type === "session");
+
+    if (this.persist && header) {
+      const database = sessionTables.open(sessionReferenceRoot());
+
+      try { sessionTables.register(database, header.id, this.sessionFile); }
+      finally { database.close(); }
+    }
+
+    return load.call(this, entries, options);
+  };
+
+  SessionManager.forkFrom = function (sourcePath, targetCwd, sessionDir, options) {
+    const source = this.open(sourcePath);
+    const session = this.create(targetCwd, sessionDir, { ...options, parentSession: sourcePath });
+    session.fileEntries = [session.fileEntries[0], ...structuredClone(source.fileEntries.filter(entry => entry.type !== "session"))];
+    session._buildIndex();
+    sessionStoragePublish(session, session.fileEntries, false);
+    session.flushed = true;
+
+    return session;
+  };
+
+  installSessionBranching(prototype);
+}
+
+function installSessionBranching(prototype) {
+  requireStorageMethods(prototype, ["createBranchedSession"]);
+  const branch = prototype.createBranchedSession;
+
+  prototype.createBranchedSession = function (...args) {
+    if (!this.persist) return branch.apply(this, args);
+    const parent = this.sessionFile;
+    this.persist = false;
+
+    try { branch.apply(this, args); }
+    finally { this.persist = true; }
+
+    const id = sessionTables.reserve(sessionReferenceRoot());
+    const header = this.fileEntries[0];
+    this.sessionId = id;
+    header.id = id;
+    header.parentSession = parent;
+    this.sessionFile = storagePath.join(this.getSessionDir(), `${header.timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
+    bindNewSession(this);
+    sessionStoragePublish(this, this.fileEntries, true);
+    this.flushed = true;
+
+    return this.sessionFile;
+  };
 }
 
 function textGoalReferences(text, root, found) {
@@ -615,8 +680,7 @@ function registeredSessionPath(id, directory) {
   try {
     database.exec("PRAGMA busy_timeout=10000;");
 
-    const row = database.prepare(`SELECT session_path FROM sessions WHERE session_id=?
-      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))`).get(id, id);
+    const row = database.prepare(`SELECT session_path FROM sessions WHERE session_id=?`).get(id);
 
     return row?.session_path && storageTarget(storagePath.dirname(row.session_path)) === directory ? row.session_path : undefined;
   } finally { database.close(); }
@@ -658,6 +722,7 @@ export function installSessionStorage(SessionManager, recordReferences) {
   const prototype = SessionManager.prototype;
   requireStorageMethods(prototype, ["_appendEntry", "_persist", "_rewriteFile", "_hasConversation"]);
   installSessionLookup(SessionManager);
+  installSessionCreation(SessionManager);
 
   if (recordReferences) sessionReferenceRecorders.set(prototype, recordReferences);
 
@@ -673,20 +738,6 @@ export function installSessionStorage(SessionManager, recordReferences) {
     sessionStorageState(this);
 
     if (this.persist && this.sessionFile) sessionStoragePublish(this, this.fileEntries, false);
-  };
-
-  const fork = SessionManager.forkFrom;
-
-  if (fork instanceof Function) SessionManager.forkFrom = function (...args) {
-    const release = acquireSessionReferencePublication();
-
-    try {
-      const session = fork.apply(this, args);
-      registerExternalTranscript(sessionReferenceRoot(), session.sessionFile, session.getSessionId());
-      registerManagedTranscript(session, true);
-
-      return session;
-    } finally { release(); }
   };
 
   installedStorageClasses.add(SessionManager);

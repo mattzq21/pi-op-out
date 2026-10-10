@@ -6,9 +6,8 @@ use std::path::{Path, PathBuf};
 
 pub(super) fn registered_path(root: &Path, id: &str) -> Result<Option<PathBuf>> {
     let database = crate::session_registry::open(root)?;
-    let path: Option<String> = database.query_row("SELECT session_path FROM sessions WHERE session_id=?
-        AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))",
-        [id, id], |row| row.get(0)).optional().map_err(|error| error.to_string())?.flatten();
+    let path: Option<String> = database.query_row("SELECT session_path FROM sessions WHERE session_id=?",
+        [id], |row| row.get(0)).optional().map_err(|error| error.to_string())?.flatten();
     Ok(path.map(PathBuf::from))
 }
 

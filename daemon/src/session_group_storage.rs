@@ -66,23 +66,3 @@ fn string_set(database: &Connection, sql: &str) -> Result<HashSet<String>, Strin
     let rows = statement.query_map([], |row| row.get(0)).map_err(|error| error.to_string())?;
     rows.collect::<rusqlite::Result<_>>().map_err(|error| error.to_string())
 }
-
-pub(super) fn deleted(path: &Path) -> Result<HashSet<String>, String> {
-    string_set(&database(path)?, "SELECT session_key FROM session_group_deletions")
-}
-
-fn save_deleted(transaction: &Transaction<'_>, deleted: &HashSet<String>) -> Result<(), String> {
-    for key in deleted {
-        transaction.execute("INSERT OR IGNORE INTO session_group_deletions VALUES (?)", [key]).map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-pub(super) fn remember_deleted(path: &Path, deleted: &HashSet<String>) -> Result<(), String> {
-    let mut database = database(path)?;
-    let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
-    save_deleted(&transaction, deleted)?;
-    transaction.execute("DELETE FROM session_group_assignments WHERE session_key IN (SELECT session_key FROM session_group_deletions)", [])
-        .map_err(|error| error.to_string())?;
-    transaction.commit().map_err(|error| error.to_string())
-}

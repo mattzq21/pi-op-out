@@ -1,3 +1,6 @@
+import { reserve } from "../session-database.cjs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { acquireSessionReferencePublication, validateSessionReferencePublication } from "../sdk-storage.mjs";
 import { publish, SessionPublicationError, type PublicationOptions } from "./session-publication.cjs";
 
@@ -17,4 +20,8 @@ export async function writeSessionFile(path: string, entries: unknown[], options
 
     return await publish(path, entries.map(entry => JSON.stringify(entry)).join("\n") + "\n", options);
   } finally { release(); }
+}
+
+export function reserveSessionId(): string {
+  return reserve(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"));
 }

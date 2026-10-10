@@ -37,8 +37,7 @@ function registeredTraces(needle: string) {
 
   try {
     return db.prepare(`SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL
-      AND (instr(lower(session_path), ?)>0 OR instr(lower(session_id), ?)>0)
-      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`)
+      AND (instr(lower(session_path), ?)>0 OR instr(lower(session_id), ?)>0)`)
       .all(needle, needle).map(row => Parse(registeredTraceSchema, row));
   } finally { db.close(); }
 }
@@ -47,8 +46,7 @@ function registeredIdentity(path: string) {
   const db = openDatabase(profile());
 
   try {
-    const row = db.prepare(`SELECT session_id, session_path FROM sessions WHERE session_path=?
-      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`).get(path);
+    const row = db.prepare(`SELECT session_id, session_path FROM sessions WHERE session_path=?`).get(path);
 
     if (!row) throw new Error("This conversation is not registered or was deleted");
 

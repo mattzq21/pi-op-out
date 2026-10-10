@@ -28,8 +28,7 @@ function candidates(db, directory, recursive) {
     FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path
     LEFT JOIN sdk_session_summaries c ON c.session_id=s.session_id AND c.session_path=s.session_path
     WHERE substr(s.session_path, 1, length(?))=?
-    AND (? OR instr(substr(s.session_path, length(?) + 1), ?)=0)
-    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(s.session_id))`)
+    AND (? OR instr(substr(s.session_path, length(?) + 1), ?)=0)`)
     .all(prefix, prefix, Number(recursive), prefix, sep);
 
   return rows.sort((a, b) => basename(b.session_path).localeCompare(basename(a.session_path)));

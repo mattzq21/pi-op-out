@@ -83,7 +83,9 @@ impl Guard {
     }
 
     pub fn release(mut self, ownership: &ConversationOwnership, deleted: bool) -> Result<()> {
-        if (deleted || self.archived) && self.owned && self.lock.is_some() {
+        if deleted && self.owned && self.lock.is_some() {
+            crate::conversation_storage::remove(&ownership.root, &ConversationOwnership::key(&self.id)?)?;
+        } else if self.archived && self.owned && self.lock.is_some() {
             self.record["deleted"] = json!(true);
             self.record["client"] = Value::Null;
             ownership.write(&self.id, &self.record)?;
@@ -353,7 +355,9 @@ impl ConversationOwnership {
     }
 
     pub fn removed(&self, id: &str) -> Result<bool> {
-        Ok(self.read(id)?.is_some_and(|record| flag(&record, "deleted")))
+        let db = crate::session_registry::open(&self.root)?;
+        let exists: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=?)", [id], |row| row.get(0)).map_err(|error| error.to_string())?;
+        Ok(!exists || self.read(id)?.is_some_and(|record| flag(&record, "deleted")))
     }
 
     async fn serve(&self, mut stream: TcpStream) {

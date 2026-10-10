@@ -1,3 +1,4 @@
+import { reserveSessionId } from "./session-file.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -61,7 +62,7 @@ async function createReview(ctx: ExtensionContext, agentState: SessionAgentState
   await requireSavedReviewParent(ctx);
   signal?.throwIfAborted();
   const timestamp = new Date().toISOString();
-  const sessionId = randomUUID();
+  const sessionId = reserveSessionId();
   const record = { sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(), publicationId: randomUUID() };
   const metadataId = randomUUID().slice(0, 8);
 

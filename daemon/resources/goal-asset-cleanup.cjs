@@ -198,19 +198,18 @@ function plan(root, targets) {
 
 function confirmedDeletions(root) {
   const deleted = new Set();
-  const file = path.join(root, 'sessions.sqlite');
-
-  if (!assets.exists(file)) return deleted;
-  const database = new DatabaseSync(file, { readOnly: true });
+  const database = new DatabaseSync(path.join(root, 'sessions.sqlite'), { readOnly: true });
 
   try {
-    const table = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_deletion_tombstones'").get();
+    const current = database.prepare('SELECT 1 FROM sessions WHERE session_id=?');
 
-    if (!table) return deleted;
+    for (const directory of require('./session-broker/goal-ownership.cjs').directories(root)) {
+      try {
+        const record = assets.readOwners(root, directory);
+        const ids = [...record.owners.map(owner => owner.sessionId), ...record.retiredOwners ?? [], preparedOwner(root, directory)];
 
-    for (const row of database.prepare('SELECT session_id FROM session_deletion_tombstones').all()) {
-      if (!Check(Type.String(), row.session_id)) throw new Error('Damaged deletion evidence prevents goal asset cleanup');
-      deleted.add(row.session_id);
+        for (const id of ids) if (id && !current.get(id)) deleted.add(id);
+      } catch (error) { console.error(`${directory}: goal ownership could not be established; retained: ${error.message}`); }
     }
   } finally { database.close(); }
 

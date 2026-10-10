@@ -153,14 +153,7 @@ fn exec_session_worker() -> Result<(), String> {
     let mut arguments = std::env::args_os().skip(2);
     let program = arguments.next().ok_or("Missing Pi executable")?;
     let mut arguments: Vec<_> = arguments.collect();
-    let value = |flag: &str| arguments.iter().rposition(|arg| arg == flag).and_then(|index| arguments.get(index + 1)).map(|arg| arg.to_string_lossy().into_owned());
-    let id = if let Some(path) = value("--session") {
-        worker_session_identity(&path)?
-    } else if let Some(id) = value("--session-id") { id } else {
-        let id = Uuid::new_v4().to_string();
-        arguments.extend(["--session-id".into(), id.clone().into()]);
-        id
-    };
+    let id = session_worker_id(&mut arguments)?;
     let claim = claim_session_id(&id)?;
     let fd = claim.as_raw_fd();
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
@@ -171,6 +164,18 @@ fn exec_session_worker() -> Result<(), String> {
         command
     } else { Command::new(program) };
     Err(command.args(arguments).exec().to_string())
+}
+
+#[cfg(unix)]
+fn session_worker_id(arguments: &mut Vec<std::ffi::OsString>) -> Result<String, String> {
+    let value = |flag: &str| arguments.iter().rposition(|arg| arg == flag).and_then(|index| arguments.get(index + 1)).map(|arg| arg.to_string_lossy().into_owned());
+    if let Some(path) = value("--session") {
+        worker_session_identity(&path)
+    } else if let Some(id) = value("--session-id") { Ok(id) } else {
+        let id = crate::session_registry::reserve(&home_dir()?.join(STORAGE_DIRECTORY))?;
+        arguments.extend(["--session-id".into(), id.clone().into()]);
+        Ok(id)
+    }
 }
 
 #[cfg(not(unix))]

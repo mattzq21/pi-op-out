@@ -292,23 +292,22 @@ function cleanupRegistry(root, sessionIds) {
   try {
     require('./session-database.cjs').initialize(db);
     db.exec('BEGIN IMMEDIATE');
-    const completed = removeRegistryRows(root, db, sessionIds);
+    const completed = removeRegistryRows(db, sessionIds);
     db.exec('COMMIT');
 
     return completed;
   } finally { db.close(); }
 }
 
-function removeRegistryRows(root, db, sessionIds) {
-  const remove = db.prepare('DELETE FROM sessions WHERE lower(session_id) = ?');
+function removeRegistryRows(db, sessionIds) {
+
   const read = db.prepare('SELECT session_id, session_path FROM sessions WHERE lower(session_id) = ?');
   const completed = [];
 
   for (const id of sessionIds) {
     const record = read.get(id.toLowerCase());
 
-    if (record?.session_path && survivingSession(root, record.session_path, record.session_id, new Set(), db)) continue;
-    remove.run(id.toLowerCase());
+    if (record) continue;
     completed.push(id);
   }
 

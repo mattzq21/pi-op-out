@@ -303,7 +303,7 @@ function locate(root, id, nonce) {
   if (value?.id === id && (!nonce || value.piopPublicationId === nonce)) return { path: file, header: value };
 }
 
-function deleted(root, id) {
+function unregistered(root, id, target) {
   const file = path.join(root, 'sessions.sqlite');
 
   if (!exists(file)) return false;
@@ -312,10 +312,8 @@ function deleted(root, id) {
   const database = new DatabaseSync(file, { readOnly: true });
 
   try {
-    const table = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_deletion_tombstones'").get();
-
-    return Boolean(table && database.prepare('SELECT session_id FROM session_deletion_tombstones WHERE session_id = ?').get(id.toLowerCase()));
+    return !database.prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path=?').get(id, target);
   } finally { database.close(); }
 }
 
-module.exports = { uuid, headerSchema, writerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, writer, writerDead, lockPath, journalPath, matches, verified, locate, deleted };
+module.exports = { uuid, headerSchema, writerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, writer, writerDead, lockPath, journalPath, matches, verified, locate, unregistered };

@@ -31,9 +31,8 @@ function directoryExists(cwd) {
 function registeredSession(session) {
   if (!path.isAbsolute(session.sessionPath || '')) return false;
 
-  return Boolean(db.prepare(`SELECT 1 FROM sessions WHERE session_id=? AND session_path=?
-    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))`)
-    .get(session.sessionId, session.sessionPath, session.sessionId));
+  return Boolean(db.prepare(`SELECT 1 FROM sessions WHERE session_id=? AND session_path=?`)
+    .get(session.sessionId, session.sessionPath));
 }
 
 function insertRecord(session, checked, exists) {
@@ -64,7 +63,6 @@ function registeredMetadata(row) {
 
     if (stat) db.prepare(`INSERT INTO session_file_metadata SELECT session_id, session_path, ?, ? FROM sessions WHERE session_path=?
       AND NOT EXISTS (SELECT 1 FROM session_file_writes w WHERE w.session_id=sessions.session_id)
-      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(sessions.session_id))
       ON CONFLICT(session_id) DO NOTHING`).run(String(stat.mtimeNs), stat.size, row.session_path);
     db.exec('COMMIT');
 
@@ -84,8 +82,7 @@ function readMetadata(file) {
 function metadata() {
   const directory = path.join(root, 'sessions') + path.sep;
 
-  const rows = db.prepare(`SELECT s.session_path, m.modified_ns, m.size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?))=?
-    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones t WHERE t.session_id=lower(s.session_id))`).all(directory, directory);
+  const rows = db.prepare(`SELECT s.session_path, m.modified_ns, m.size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?))=?`).all(directory, directory);
 
   for (const row of rows) {
     const stat = registeredMetadata(row);
@@ -128,8 +125,7 @@ function externalIdentity(file) {
 
 function identity() {
 
-  const id = db.prepare(`SELECT session_id FROM sessions WHERE session_path=?
-    AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))`).get(request.path)?.session_id;
+  const id = db.prepare(`SELECT session_id FROM sessions WHERE session_path=?`).get(request.path)?.session_id;
 
   const roots = [path.resolve(root), fs.realpathSync(root)];
   const managed = roots.some(directory => ['sessions', 'archived'].some(area => path.resolve(request.path).startsWith(path.join(directory, area) + path.sep)));
@@ -141,10 +137,11 @@ function identity() {
 
 try {
   if (request.action === 'initialize') sessionTables.initialize(db);
+  else if (request.action === 'reserve') process.stdout.write(JSON.stringify(sessionTables.reserve(root)));
   else if (request.action === 'metadata') metadata();
   else if (request.action === 'identity') identity();
   else if (request.action === 'get') process.stdout.write(JSON.stringify(db.prepare('SELECT r.*, s.session_path FROM session_directories r JOIN sessions s USING(session_id) WHERE r.session_id = ?').get(request.sessionId) || null));
-  else if (request.action === 'deleted') process.stdout.write(JSON.stringify(db.prepare('SELECT session_id FROM session_deletion_tombstones').all().map(record => record.session_id)));
+  else if (request.action === 'ids') process.stdout.write(JSON.stringify(db.prepare('SELECT session_id FROM sessions').all().map(record => record.session_id)));
   else if (request.action === 'record') record(request);
   else throw new Error('Unknown session registry action');
 } finally { db.close(); }

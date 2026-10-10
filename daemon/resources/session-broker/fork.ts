@@ -1,3 +1,4 @@
+import { reserveSessionId } from "./session-file.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
@@ -31,7 +32,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   if (!header || !source) throw new Error("Save this conversation before forking it");
   const cwd = await forkDirectory(ctx.cwd, options);
 
-  const sessionId = randomUUID();
+  const sessionId = reserveSessionId();
   const timestamp = new Date().toISOString();
   inheritGoal(ctx, retained, timestamp);
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);

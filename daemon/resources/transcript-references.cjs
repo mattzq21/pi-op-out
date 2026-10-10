@@ -103,10 +103,9 @@ function publishReceipts(db, file, stamp, previous, entries, entry) {
   if (addition) saved.set(...addition);
   db.prepare(`INSERT INTO session_mailbox_receipt_cache
     SELECT session_id, session_path, ?, ? FROM sessions WHERE session_id=? AND session_path=?
-      AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?))
     ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path,
       fingerprint=excluded.fingerprint, deliveries_json=excluded.deliveries_json`)
-    .run(fingerprint, JSON.stringify([...saved]), id, file, id);
+    .run(fingerprint, JSON.stringify([...saved]), id, file);
 }
 
 function appendReceipts(db, file, id, previous, fingerprint, addition) {

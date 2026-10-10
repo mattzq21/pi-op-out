@@ -1,3 +1,4 @@
+import { reserveSessionId } from "./session-file.ts";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft } from "@earendil-works/pi-coding-agent";
 import type { SubagentLimitsRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type } from "@earendil-works/pi-ai";
@@ -114,7 +115,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
 
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before delegating work");
   const profile = await resolveAgentProfile(pi, task.agent);
-  const sessionId = randomUUID();
+  const sessionId = reserveSessionId();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let retained = inheritedHistory(ctx, task);

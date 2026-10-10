@@ -37,7 +37,7 @@ async fn switch_destination(host: &Arc<Host>, session: &Arc<Session>, runtime: &
             .ok_or("The conversation has no session file")?;
         return fork(host, session, runtime, command.clone(), &state, path).await;
     }
-    let mut destination = destination(session, &command, &state)?;
+    let mut destination = destination(host, session, &command)?;
     let guard = destination_ownership(host, session, &destination).await?;
     destination.resolve_cwd(host, &guard)?;
     if !guard.owned {
@@ -47,32 +47,19 @@ async fn switch_destination(host: &Arc<Host>, session: &Arc<Session>, runtime: &
     guard.release(host.ownership(), false).and(result)
 }
 
-fn destination(session: &Session, command: &Value, state: &Value) -> Result<Destination> {
-    let mut key = Uuid::new_v4().to_string();
-    let flag = match kind(command) {
-        "new_session" => "--session-id",
-        "switch_session" => "--session",
-        _ => "--fork",
+fn destination(host: &Host, session: &Session, command: &Value) -> Result<Destination> {
+    let existing = kind(command) == "switch_session";
+    let (flag, value) = if existing {
+        ("--session", text(command, "sessionPath"))
+    } else if kind(command) == "new_session" {
+        ("--session-id", crate::session_registry::reserve(&host.storage_root())?)
+    } else {
+        return Err("Unknown session destination".into());
     };
-    let value = match kind(command) {
-        "new_session" => key.clone(),
-        "switch_session" => text(command, "sessionPath"),
-        _ => text(state, "sessionFile"),
-    };
-    if value.is_empty() {
-        return Err("The conversation has no session file".into());
-    }
+    if value.is_empty() { return Err("The conversation has no session file".into()); }
     let spec = session.spec.session(flag, &value);
-    if kind(command) == "switch_session" {
-        key = spec.identity(&key)?;
-    }
-    Ok(Destination {
-        key,
-        spec,
-        path: value,
-        existing: kind(command) == "switch_session",
-        cwd: session.cwd.clone(),
-    })
+    let key = if existing { spec.identity("")? } else { value.clone() };
+    Ok(Destination { key, spec, path: value, existing, cwd: session.cwd.clone() })
 }
 
 impl Destination {

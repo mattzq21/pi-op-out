@@ -70,7 +70,7 @@ function deferReference(file, reason) {
 
 function references(db, excluded) {
   const version = db.prepare('PRAGMA data_version').get().data_version;
-  const rows = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))').all();
+  const rows = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL').all();
   const directories = [];
 
   for (const row of rows) {
@@ -115,7 +115,7 @@ function cleanupDeleted(root) {
 
   try {
     db.exec('CREATE TABLE IF NOT EXISTS temporary_chat_allocations (session_id TEXT PRIMARY KEY, original_path TEXT NOT NULL UNIQUE)');
-    const candidates = db.prepare('SELECT a.session_id, a.original_path FROM temporary_chat_allocations a JOIN session_deletion_tombstones d ON d.session_id=lower(a.session_id)').all();
+    const candidates = db.prepare('SELECT a.session_id, a.original_path FROM temporary_chat_allocations a WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.session_id=a.session_id)').all();
 
     if (!candidates.length) return;
     const snapshot = references(db);
@@ -140,7 +140,7 @@ function cleanupDeleted(root) {
 
 function remove(db, directory, id) {
   const allocation = db.prepare('SELECT original_path FROM temporary_chat_allocations WHERE session_id=?').get(id);
-  const deleted = db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(id);
+  const deleted = !db.prepare('SELECT 1 FROM sessions WHERE session_id=?').get(id);
 
   if (directoryExists(directory)) {
     try {
@@ -156,6 +156,7 @@ function remove(db, directory, id) {
 
   if (directoryExists(path.dirname(directory))) sync(path.dirname(directory));
   db.prepare('DELETE FROM temporary_chat_allocations WHERE session_id=? AND original_path=?').run(id, directory);
+  db.prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
 }
 
 function main(request) {

@@ -80,8 +80,7 @@ fn transcript_session_identity(settings: &AppSettings, host_id: &str, path: &str
 fn local_registered_identity(path: &str) -> Result<Option<String>, String> {
     let root = home_dir()?.join(STORAGE_DIRECTORY);
     let mut db = crate::session_registry::open(&root)?;
-    let id: Option<String> = db.query_row("SELECT session_id FROM sessions WHERE session_path=?
-        AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))", [path], |row| row.get(0))
+    let id: Option<String> = db.query_row("SELECT session_id FROM sessions WHERE session_path=?", [path], |row| row.get(0))
         .optional().map_err(|error| error.to_string())?;
     let canonical_root = root.canonicalize().map_err(|error| error.to_string())?;
     if id.is_none() && [&root, &canonical_root].iter().any(|directory| ["sessions", "archived"].iter().any(|area| Path::new(path).starts_with(directory.join(area)))) {

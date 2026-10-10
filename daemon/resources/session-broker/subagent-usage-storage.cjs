@@ -7,7 +7,7 @@ function withDatabase(file, sessionId, operation) {
     db.exec(`CREATE TABLE IF NOT EXISTS session_usage_channels (
       session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
       record_json TEXT); BEGIN IMMEDIATE;`);
-    const deleted = Boolean(db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(sessionId));
+    const deleted = !db.prepare('SELECT 1 FROM sessions WHERE session_id=?').get(sessionId);
 
     const session = db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId);
     const result = operation(db, deleted, session?.session_path);

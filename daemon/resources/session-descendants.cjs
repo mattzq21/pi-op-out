@@ -20,20 +20,7 @@ async function validatedParent(root, source) {
   return parent;
 }
 
-function allowedPath(root, file) {
-  return io.inside(path.join(root, "sessions"), file) || io.inside(path.join(root, "archived"), file);
-}
-
 function resolveChild(root, child) {
-  if (io.deleted(root, child.sessionId)) return;
-  const indexed = childIndex.read(root, child.sessionId);
-
-  for (const file of new Set([indexed?.sessionPath, child.sessionPath])) {
-    if (!file || !allowedPath(root, file)) continue;
-
-    if (io.header(file)?.id === child.sessionId) return file;
-  }
-
   const located = io.locate(root, child.sessionId);
 
   if (located) childIndex.ensure(root, child.sessionId, located.path);
