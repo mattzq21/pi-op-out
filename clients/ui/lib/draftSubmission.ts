@@ -50,7 +50,7 @@ export function bindDraftStaging(owner: NativeTransport, stage: StageDraftSubmis
 export function stageDraftSubmission(owner: NativeTransport, payload: DraftSubmissionPayload) {
   const stage = stages.get(owner);
 
-  if (!stage) throw new Error("Draft storage is still loading. Wait before sending.");
+  if (!stage) throw new Error("The draft is not ready to send.");
 
   return stage(payload);
 }
@@ -64,10 +64,10 @@ export function releaseDraftSubmission(handle: DraftSubmissionHandle, owner = ha
   if (active.get(owner) === handle) active.delete(owner);
 }
 
-export async function submitDurablePrompt(owner: NativeTransport, command: RpcCommand) {
+export async function submitDraftPrompt(owner: NativeTransport, command: RpcCommand) {
   const submission = active.get(owner);
 
-  if (!submission) throw new Error("The submission has not been saved durably");
+  if (!submission) throw new Error("The message is not ready to send");
 
   if (owner.promptControls.hasPending()) await owner.promptControls.flush(value => owner.command(value), enabled => owner.setFastMode(enabled));
   await submission.dispatch();

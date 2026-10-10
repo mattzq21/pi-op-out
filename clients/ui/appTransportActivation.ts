@@ -31,14 +31,13 @@ export function createConversationViewKey<T>(transport: Accessor<T>, conversatio
   });
 }
 
-export function useWorkspaceDisconnect(hasDrafts: () => boolean, pool: () => SessionRuntimePool, draftTerminalIds: () => string[], owner: () => NativeTransport, flushDrafts: () => Promise<void> = async () => undefined) {
+export function useWorkspaceDisconnect(hasDrafts: () => boolean, pool: () => SessionRuntimePool, draftTerminalIds: () => string[], owner: () => NativeTransport) {
   const beforeDisconnect = (event: WindowEventMap["piop-mobile-before-disconnect"]) => {
-    if (hasDrafts() && !window.confirm("Disconnect? Draft messages and attachments will be kept on this device; unsaved settings will be discarded.")) { event.preventDefault();
+    if (hasDrafts() && !window.confirm("Disconnect? Draft messages, attachments, and unsaved settings will be discarded.")) { event.preventDefault();
 
     return; }
 
     const close = async () => {
-      await flushDrafts();
       await flushAllPlugins();
       await Promise.all(draftTerminalIds().map(id => owner().closeTerminal(id)));
       await pool().disconnectAll(true);

@@ -17,7 +17,7 @@ import type { MissingDirectoryRequest } from "./components/MissingDirectoryDialo
 import { isConversationChanged } from "./lib/conversationChanged";
 import { initialWindowTarget,NativeTransport,openSessionWindow } from "./lib/nativeTransport";
 import { chatSubmission,waitForConversationReady } from "./lib/chatSubmission";
-import { promptWasAccepted, submitDurablePrompt } from "./lib/draftSubmission";
+import { promptWasAccepted, submitDraftPrompt } from "./lib/draftSubmission";
 import { isMobile,listen } from "./lib/platform";
 import { sessionDebugAction } from "./lib/sessionDebugAction";
 import { updateSessionGroups,type SessionGroup } from "./lib/sessionGroups";
@@ -167,7 +167,7 @@ export function createAppConversations(preloadChat: () => void) {
   useSessionResume(() => {
     const saved = chatSession().state.messageCount > 0;
 
-    return { ready: connected() && drafts.loaded(), saved, target: { sessionId: chatSession().state.sessionId, sessionPath: chatSession().state.sessionFile, cwd: !saved && transport().isTemporaryChat() ? undefined : activeCwd(), hostId: activeHostId(), draftKey: transportHasDraft(transport(), activeConversationKey()) ? activeConversationKey() : undefined } };
+    return { ready: connected(), saved, target: { sessionId: chatSession().state.sessionId, sessionPath: chatSession().state.sessionFile, cwd: !saved && transport().isTemporaryChat() ? undefined : activeCwd(), hostId: activeHostId(), draftKey: transportHasDraft(transport(), activeConversationKey()) ? activeConversationKey() : undefined } };
   });
   const splitSessionId = createMemo(() => splitConversationKey(splitPane()));
 
@@ -306,13 +306,13 @@ export function createAppConversations(preloadChat: () => void) {
 
     return () => window.removeEventListener("pagehide", shutdown); }, () => [runtimePool(), transport()]);
   createDependencyEffect(() => {
-    const capturedSettingsDirty = settingsDirty() || drafts.isSaving() || Boolean(drafts.saveError());
+    const capturedSettingsDirty = settingsDirty() || drafts.draftSummaries().length > 0 || drafts.submissions().length > 0;
 
     if (!capturedSettingsDirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
 
     window.addEventListener("beforeunload", warn);
 
-    return () => window.removeEventListener("beforeunload", warn); }, () => [settingsDirty(), drafts.isSaving(), drafts.saveError()]);
+    return () => window.removeEventListener("beforeunload", warn); }, () => [settingsDirty(), drafts.draftSummaries(), drafts.submissions()]);
   createDependencyEffect(() => {
     const capturedRuntimePool = runtimePool(); const capturedView = view(); const capturedTransport = transport();
     capturedRuntimePool.activate(capturedView === "chat" ? capturedTransport : undefined); }, () => [runtimePool(), transport(), view()]);
@@ -327,11 +327,11 @@ export function createAppConversations(preloadChat: () => void) {
     if (/^\/(?:review|rs)(?:\s|$)/.test(text.trim())) reviewImages.set(capturedTransport, images);
 
     try {
-      if (behavior) { const result = await submitDurablePrompt(ownerTransport, { type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload });
+      if (behavior) { const result = await submitDraftPrompt(ownerTransport, { type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload });
 
         return promptWasAccepted(result); }
 
-      const result = await submitDurablePrompt(capturedTransport, { type: "prompt", message: text, ...imagePayload });
+      const result = await submitDraftPrompt(capturedTransport, { type: "prompt", message: text, ...imagePayload });
 
       return promptWasAccepted(result);
     } catch (reason) { addNotice({ title: "Could not send message", message: reason instanceof Error ? reason.message : String(reason) }); throw reason; }
@@ -351,7 +351,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const canLeaveSettings = () => view() !== "settings" || !settingsDirty() || window.confirm("Discard unsaved settings changes?");
   const activateTransport = createTransportActivation({ savedSessions: sessions, transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, discardDraft: drafts.discard, forgetTerminals: terminals.forgetConversation });
-  useWorkspaceDisconnect(() => settingsDirty() || drafts.draftSummaries().length > 0 || drafts.legacyRecoveries().length > 0, runtimePool, terminals.draftTerminalIds, () => activeTransportRef.current, drafts.flush);
+  useWorkspaceDisconnect(() => settingsDirty() || drafts.draftSummaries().length > 0, runtimePool, terminals.draftTerminalIds, () => activeTransportRef.current);
 
   const rekeyConversationUi = (previousKey: string, nextKey: string, ownerTransport: NativeTransport, moveTerminals = true, copyDraft = false) => {
     if (previousKey === nextKey) return;
@@ -498,7 +498,6 @@ export function createAppConversations(preloadChat: () => void) {
     newSessionPending.current = true;
 
     try {
-      await drafts.ready;
       setPanelOpen(false); setArchivesOpen(false);
 
       if (!clearProject && !group && !project) {
@@ -618,12 +617,6 @@ export function createAppConversations(preloadChat: () => void) {
     setSessions, setActiveCwd, activateTransport, activateConversationKey, updateConnected,
     closeSplitPane, syncSessionIndex, addNotice, reuseSessionDraft,
   });
-
-  createDependencyEffect(() => {
-    if (!drafts.loaded() || initialTarget.sessionId || initialTarget.sessionPath || initialTarget.draftKey) return;
-
-    if (activeConversationKey() === initialConversationKey.current && currentSessionIsDraft() && !drafts.hasDraft(initialConversationKey.current)) reuseSessionDraft();
-  }, () => [drafts.loaded()]);
 
   const archiveSession = archives.archiveSession;
 

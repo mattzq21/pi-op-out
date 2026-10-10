@@ -7,8 +7,6 @@ export interface SavedMobileHost { name: string; url: string }
 
 const hostSchema = z.object({ name: z.string().trim().min(1), url: z.string(), position: z.number().int().nonnegative().optional() });
 
-let savedHostCache: SavedMobileHost[] = [];
-
 const hostListSchema = z.array(z.unknown()).catch([]);
 
 function parseHosts(stored: z.infer<typeof hostListSchema>): SavedMobileHost[] {
@@ -43,8 +41,6 @@ async function storedHosts(change?: (hosts: SavedMobileHost[]) => SavedMobileHos
 
     if (result.connection) rememberConnection(result.connection);
 
-
-    savedHostCache = result.hosts;
 
     return result.hosts;
   } finally { database.close(); }
@@ -92,14 +88,6 @@ function hostTransaction(database: IDBDatabase, change?: (hosts: SavedMobileHost
 
 export function readMobileHosts(): Promise<SavedMobileHost[]> { return storedHosts(); }
 
-export function mobileDraftHostId(address: string) {
-  const host = savedHostCache.find(item => item.url === address);
-
-  if (!host) throw new Error("Save a named host before opening drafts");
-
-  return hostIdentity(host.name);
-}
-
 export function validateMobileHost(address: string, name: string, hosts: SavedMobileHost[]): SavedMobileHost {
   const url = validateHost({ url: address.trim() });
   const label = name.trim();
@@ -119,14 +107,7 @@ export function saveMobileHost(address: string, name: string): Promise<SavedMobi
   });
 }
 
-export async function removeMobileHost(url: string): Promise<SavedMobileHost[]> {
-  const host = (await readMobileHosts()).find(item => item.url === url);
-
-  if (host) {
-    const { removeHostSessionDrafts } = await import("./draftStorage");
-    await removeHostSessionDrafts(hostIdentity(host.name));
-  }
-
+export function removeMobileHost(url: string): Promise<SavedMobileHost[]> {
   return storedHosts(hosts => hosts.filter(host => host.url !== url), url);
 }
 

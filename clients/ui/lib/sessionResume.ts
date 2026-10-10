@@ -13,13 +13,9 @@ export const nativeConnectionTargetSchema = z.object({
 
 const savedSessionTargetSchema = nativeConnectionTargetSchema.omit({ readOnly: true, draftKey: true }).required();
 
-const draftTargetSchema = nativeConnectionTargetSchema.pick({ cwd: true, hostId: true, draftKey: true }).required({ hostId: true, draftKey: true });
+const targetCache = new Map<string, z.infer<typeof savedSessionTargetSchema> | null>();
 
-const restoredTargetSchema = z.union([savedSessionTargetSchema, draftTargetSchema]);
-
-const targetCache = new Map<string, z.infer<typeof restoredTargetSchema> | null>();
-
-const pendingTargets = new Map<string, z.infer<typeof restoredTargetSchema> | null>();
+const pendingTargets = new Map<string, z.infer<typeof savedSessionTargetSchema> | null>();
 
 let saving = false;
 
@@ -44,7 +40,7 @@ function openTargets(): Promise<IDBDatabase> {
   });
 }
 
-const targetRecordsSchema = z.array(z.object({ key: z.string(), target: restoredTargetSchema.nullable() }));
+const targetRecordsSchema = z.array(z.object({ key: z.string(), target: savedSessionTargetSchema.nullable() }));
 
 function readTargets(database: IDBDatabase): Promise<z.infer<typeof targetRecordsSchema>> {
   return new Promise((resolve, reject) => {
@@ -103,7 +99,7 @@ function refreshTargetCache() {
 
 if (channel) channel.onmessage = refreshTargetCache;
 
-async function writeTargets(entries: [string, z.infer<typeof restoredTargetSchema> | null][]) {
+async function writeTargets(entries: [string, z.infer<typeof savedSessionTargetSchema> | null][]) {
   const database = await openTargets();
 
   try {
@@ -136,7 +132,7 @@ function flushTargets() {
 
 window.addEventListener("focus", () => { flushTargets(); refreshTargetCache(); });
 
-function saveTarget(key: string, target: z.infer<typeof restoredTargetSchema> | null) {
+function saveTarget(key: string, target: z.infer<typeof savedSessionTargetSchema> | null) {
   targetCache.set(key, target); pendingTargets.set(key, target); flushTargets();
 }
 
@@ -189,7 +185,6 @@ export function useSessionResume(selection: Accessor<{ target: NativeConnectionT
 
     try {
       if (current.saved && current.target.sessionId && current.target.sessionPath) saveTarget(key, savedSessionTargetSchema.parse(current.target));
-      else if (current.target.draftKey) saveTarget(key, draftTargetSchema.parse(current.target));
       else saveTarget(key, null);
     } catch { }
   }, () => [selection()]);

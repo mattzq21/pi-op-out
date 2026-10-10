@@ -22,7 +22,7 @@ import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgent
 import { textOf } from "../lib/content";
 import { ChatView } from "./ChatView";
 import type { createConversationDrafts } from "../appDrafts";
-import { draftUploadsFromImages, stageDraftSubmission, submitDurablePrompt } from "../lib/draftSubmission";
+import { draftUploadsFromImages, stageDraftSubmission, submitDraftPrompt } from "../lib/draftSubmission";
 import { trackChatSubmission, updateChatPreparation, waitForConversationReady } from "../lib/chatSubmission";
 
 interface Props { drafts: ReturnType<typeof createConversationDrafts>; onArchiveOriginal: (session: SessionSummary) => Promise<void>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; freshReview?: boolean; inheritedReviewParent?: string; archivedReview?: boolean; onShowArchive: () => void; initialPrompt?: string; initialImages?: ImageAttachment[]; onMessageMain?: (message: string) => Promise<void>; onReady?: () => void; onFailed?: (cause: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
@@ -127,7 +127,7 @@ export function SplitChatPane(componentProps: Props) {
         const images = componentProps.initialImages ?? [];
         const uploads = draftUploadsFromImages(images);
         const staged = await stageDraftSubmission(capturedTransport, { rawText: capturedInitialPrompt2, uploads, consume: false });
-        await trackChatSubmission(capturedTransport, capturedInitialPrompt2, images, staged, () => submitDurablePrompt(capturedTransport, { type: "prompt", message: capturedInitialPrompt2, images }));
+        await trackChatSubmission(capturedTransport, capturedInitialPrompt2, images, staged, () => submitDraftPrompt(capturedTransport, { type: "prompt", message: capturedInitialPrompt2, images }));
       }
 
       if (initial) setInitialPromptPending(false);
@@ -288,7 +288,7 @@ export function SplitChatPane(componentProps: Props) {
     updateChatPreparation(capturedTransport, "Sending message…");
 
     const command = { type: behavior ? behavior === "steer" ? "steer" : "follow_up" : "prompt", message: text };
-    const result = await submitDurablePrompt(capturedTransport, images.length ? { ...command, images } : command);
+    const result = await submitDraftPrompt(capturedTransport, images.length ? { ...command, images } : command);
 
     return result === false ? false : true;
   };
@@ -350,7 +350,7 @@ export function SplitChatPane(componentProps: Props) {
 
   const agentDefinitionHost = () => componentProps.session.hostName || ((componentProps.session.hostId ?? "local") === "local" ? "Local" : componentProps.session.hostId);
 
-  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView followConversation={followSource} readOnly={Boolean(componentProps.inheritedReviewParent || componentProps.archivedReview)} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), definedAgents()?.config.fastModeModels)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected() || !componentProps.drafts.loaded()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={branch} onForkAndForget={forkAndForget} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
+  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView followConversation={followSource} readOnly={Boolean(componentProps.inheritedReviewParent || componentProps.archivedReview)} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), definedAgents()?.config.fastModeModels)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={branch} onForkAndForget={forkAndForget} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
 
   return session().refresh(); }).catch(reportControlError)} onModel={(model) => transport().promptControls.model(model, transport().promptControls.state(session().state).thinkingLevel)} onToggleFastMode={() => transport().promptControls.toggle(statuses())} onThinking={(level) => transport().promptControls.thinking(level)} />);
 
