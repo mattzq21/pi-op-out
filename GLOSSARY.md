@@ -8,4 +8,6 @@
 **Auxiliary agent/session** - owned by root agent/session. E.g. subagents, reviewing agent.  
 **Subagents** - root agent and (grand/)children agents.  
 **Turn** - what's commonly known as agent turn: a reasoning, tool call etc.  
-**Task** - from agent prompted to agent settled.
+**Task** - from agent prompted to agent settled.  
+**Session tree** - a root session and all its subagent sessions. Avoid: conversation.  
+**Storage transaction** - an archive, delete or restore of one or more sessions that fully happens or fully rolls back, also after a crash.
