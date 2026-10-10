@@ -22,10 +22,10 @@ function report(outcome) {
 async function deleteSessions(request) {
   const targets = request.targets ?? [];
 
-  if (!Array.isArray(targets) || !targets.length) throw new Error('Invalid conversation deletion targets');
+  if (!Array.isArray(targets) || !targets.length) throw new Error('Invalid session deletion targets');
   const roots = new Set(targets.map(target => path.dirname(areaRoot(target))));
 
-  if (roots.size !== 1) throw new Error('Conversation deletion targets must share storage');
+  if (roots.size !== 1) throw new Error('Session deletion targets must share storage');
   const [root] = roots;
 
   if (!lockStorage(root)) return;

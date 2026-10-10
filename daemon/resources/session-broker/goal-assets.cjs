@@ -216,12 +216,32 @@ function claim(root, directory, sessionId, sessionPath, objective) {
 
 function retainHistory(root, entries, sessionId, sessionPath) {
   return locked(root, () => {
-    verifyContract(root, entries[0]?.goalAssets);
-    const referencesToKeep = references(entries, root);
-    ownedDirectories(root, sessionId).forEach(directory => referencesToKeep.add(directory));
-    const snapshots = claimSnapshots(root, dependencyClosure(root, referencesToKeep));
+    const snapshots = historySnapshots(root, entries, sessionId);
 
     return publishClaims(root, snapshots, sessionId, sessionPath);
+  });
+}
+
+function historySnapshots(root, entries, sessionId) {
+  verifyContract(root, entries[0]?.goalAssets);
+  const referencesToKeep = references(entries, root);
+  ownedDirectories(root, sessionId).forEach(directory => referencesToKeep.add(directory));
+
+  return claimSnapshots(root, dependencyClosure(root, referencesToKeep));
+}
+
+function claimHistory(root, entries, sessionId, sessionPath, remember) {
+  return locked(root, () => {
+    const snapshots = historySnapshots(root, entries, sessionId);
+    remember(snapshots);
+
+    return publishClaims(root, snapshots, sessionId, sessionPath);
+  });
+}
+
+function undoHistory(root, snapshots, sessionId, sessionPath) {
+  return locked(root, () => {
+    for (const snapshot of [...snapshots].reverse()) undoClaim(root, snapshot, sessionId, sessionPath);
   });
 }
 
@@ -368,4 +388,4 @@ function endReclamation(root, directory, expected) {
   updateReclamation(root, directory, expected, true);
 }
 
-module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, directReferences, references, claim, retainHistory, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };
+module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, directReferences, references, claim, retainHistory, claimHistory, undoHistory, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };
