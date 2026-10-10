@@ -2,7 +2,7 @@ import { createSignal } from "solid-js";
 import { z } from "zod";
 import { invoke } from "../lib/platform";
 import type { PluginModule } from "./types";
-import { flushPlugins } from "./lifecycle";
+import { flushPlugins, waitForClientPlugins } from "./lifecycle";
 
 export const plugins = [
   { id: "chatgpt", scope: "client", name: "ChatGPT", description: "Client-owned ChatGPT chats with context from any agent host.", load: (): Promise<PluginModule> => import("./chatgpt/plugin") },
@@ -45,6 +45,9 @@ export async function refreshPlugins(host: string) {
 }
 
 export async function restartPlugins(host: string, enabled: string[], revision: string, closeTerminals = false) {
+  const previous = await refreshPlugins(host);
+
+  if (previous.revision !== revision) throw new Error("Plugin setup changed in another client. Reload the plugin setup before restarting.");
   await flushPlugins(host, enabled);
 
   for (const id of enabled) {
@@ -53,6 +56,45 @@ export async function restartPlugins(host: string, enabled: string[], revision: 
     if (plugin) await plugin.load();
   }
 
+  const response = await restartDaemon(host, enabled, revision, closeTerminals);
+
+  if ("confirmationRequired" in response) return response;
+  const { status, result } = response;
+
+  try { await waitForClientPlugins(host); }
+  catch (reason) {
+    if (result.phase !== "complete") throw new Error(`Client plugins could not load after daemon recovery: ${String(reason)}`);
+
+    return restorePlugins(host, previous.enabled, status.revision, String(reason));
+  }
+
+  const error = result.error ?? status.error;
+  setPluginError(host, error ?? undefined);
+
+  return { ...status, error };
+}
+
+async function restorePlugins(host: string, enabled: string[], revision: string, reason: string) {
+  try {
+    await flushPlugins(host, enabled);
+    const restored = await restartDaemon(host, enabled, revision, false);
+
+    if ("confirmationRequired" in restored) throw new Error("Close running terminals before restoring the previous plugin setup.");
+
+    if (restored.result.phase !== "complete" || restored.status.error) throw new Error(restored.result.error ?? restored.status.error ?? "The previous plugin setup could not start.");
+    await waitForClientPlugins(host);
+    const error = `Client plugins could not load: ${reason}. Restored the previous setup.`;
+    setPluginError(host, error);
+
+    return { ...restored.status, error };
+  } catch (recoveryError) {
+    const error = `Client plugins could not load: ${reason}. Could not restore the previous setup: ${String(recoveryError)}`;
+    setPluginError(host, error);
+    throw new Error(error);
+  }
+}
+
+async function restartDaemon(host: string, enabled: string[], revision: string, closeTerminals: boolean) {
   const response = await invoke("restart_daemon", { hostId: host, enabled, revision, closeTerminals }, z.union([
     z.object({ restartId: z.string() }),
     z.object({ confirmationRequired: z.literal("terminals"), terminalCount: z.number() }),
@@ -64,10 +106,8 @@ export async function restartPlugins(host: string, enabled: string[], revision: 
   if (host === "local") window.dispatchEvent(new Event("piop-daemon-restarting"));
   const result = await waitForRestart(host, restartId);
   const status = await refreshPlugins(host);
-  const error = result.error ?? status.error;
-  setPluginError(host, error ?? undefined);
 
-  return { ...status, error };
+  return { status, result };
 }
 
 const restartStatusSchema = z.object({ phase: z.string(), error: z.string().nullable() });

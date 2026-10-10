@@ -7,6 +7,7 @@ import { pluginError, pluginStatus, plugins, refreshPlugins, setPluginError } fr
 import type { PluginConversation, PluginInstance } from "./types";
 import { Sidepane } from "./Sidepane";
 import { PluginTabPicker } from "./PluginTabPicker";
+import { registerPluginReadiness } from "./lifecycle";
 import "./workspace.css";
 
 interface RunningPlugin { id: string; name: string; instance: PluginInstance; dispose: () => void }
@@ -21,6 +22,8 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const owner = getOwner();
   let generation = 0;
   let disposed = false;
+  let loading: Promise<void> = Promise.resolve();
+  let loadingFailures: { host: string; message: string }[] = [];
   const host = createMemo(() => source().hostId);
   const runtimeHost = (scope: string) => scope === "client" ? "local" : host();
   const hosts = createMemo(() => [...new Set(plugins.map(plugin => runtimeHost(plugin.scope)))]);
@@ -56,6 +59,16 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
 
   onCleanup(() => { void reconnected.then(stop => stop()); });
 
+  onCleanup(registerPluginReadiness(async target => {
+    let pending: Promise<void>;
+
+    do { pending = loading; await pending; } while (pending !== loading);
+
+    const failures = loadingFailures.filter(failure => failure.host === target);
+
+    if (!disposed && failures.length) throw new Error(failures.map(failure => failure.message).join("\n"));
+  }));
+
   createEffect(() => {
     const enabled = enabledPlugins();
     const current = ++generation;
@@ -66,9 +79,9 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
     for (const item of previous) if (!retained.includes(item)) item.dispose();
     const stale = () => disposed || current !== generation;
 
-    void (async () => {
+    loading = (async () => {
       const next: RunningPlugin[] = [];
-      const failures: string[] = [];
+      const failures: { host: string; message: string }[] = [];
 
       for (const definition of enabled) {
         if (stale()) return;
@@ -87,15 +100,19 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
             } catch (reason) { dispose(); throw reason; }
           }, owner));
           setRunning([...next, ...retained.filter(item => !next.includes(item))]);
-        } catch (reason) { failures.push(`${definition.name}: ${String(reason)}`); }
+        } catch (reason) { failures.push({ host: runtimeHost(definition.scope), message: `${definition.name}: ${String(reason)}` }); }
       }
 
       if (stale()) return;
+      loadingFailures = failures;
       setRunning(next);
 
       if (!next.length) setOpen(false);
-      setLoadError(failures.length ? `Plugins could not load: ${failures.join("\n")}` : undefined);
-    })().catch(reason => { if (current === generation) setLoadError(`Plugins could not load: ${String(reason)}`); });
+      setLoadError(failures.length ? `Plugins could not load: ${failures.map(failure => failure.message).join("\n")}` : undefined);
+    })().catch(reason => { if (current === generation) {
+      loadingFailures = hosts().map(target => ({ host: target, message: String(reason) }));
+      setLoadError(`Plugins could not load: ${String(reason)}`);
+    } });
   });
   createEffect(() => { if (!tabs().some(item => item.id === active())) setActive(tabs()[0]?.id ?? ""); });
   createEffect(() => { if (open()) running().find(item => item.id === active())?.instance.show?.(); });
