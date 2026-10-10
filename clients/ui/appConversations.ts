@@ -426,6 +426,8 @@ export function createAppConversations(preloadChat: () => void) {
     return true;
   };
 
+  const closeMobileSidebar = () => { if (window.matchMedia("(max-width: 700px)").matches) setPanelOpen(false); };
+
   const reusableDraftSource = () => {
     const draft = existingSessionDraft();
 
@@ -437,7 +439,7 @@ export function createAppConversations(preloadChat: () => void) {
   const newDraftKey = (hostId: string, previous?: string) => `${hostId}:${previous ? previous.slice(previous.indexOf(":") + 1) : `draft-${crypto.randomUUID()}`}`;
 
   const createNewSessionDraft = async (clearProject: boolean, group?: SessionGroup, project?: { cwd: string; hostId: string }) => {
-    setPanelOpen(false);
+    closeMobileSidebar();
     setArchivesOpen(false);
     const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;
     const request = projectOpenRequest.current;
@@ -498,7 +500,7 @@ export function createAppConversations(preloadChat: () => void) {
     newSessionPending.current = true;
 
     try {
-      setPanelOpen(false); setArchivesOpen(false);
+      closeMobileSidebar(); setArchivesOpen(false);
 
       if (!clearProject && !group && !project) {
         if (reuseSessionDraft()) return true;

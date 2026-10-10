@@ -446,9 +446,11 @@ export function SessionPanel(props: Props) {
   const contextMenu = () => {
     const activeMenu = groupMenu() ?? menu();
     const groupDirectory = groupMenu() ? groupDestination(required(groupMenu()).projectKey) : undefined;
+    const customGroup = groupMenu() ? customGroupsByKey().get(required(groupMenu()).projectKey) : undefined;
 
     const menuItems = groupMenu() ? [
-      { label: "Open directory", Icon: FolderOpen, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) { setGroupActionError(undefined); void openGroupDirectory(groupDirectory.cwd, groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } } },
+      ...(customGroup ? [{ label: "Rename group", Icon: Pencil, disabled: false, run: () => { closeMenu(); editGroup(customGroup); } }] : []),
+      ...(groupDirectory?.cwd ? [{ label: "Open directory", Icon: FolderOpen, disabled: false, run: () => { setGroupActionError(undefined); void openGroupDirectory(required(groupDirectory.cwd), groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } }] : []),
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: required((groupMenu())).projectKey, name: required((groupMenu())).label }) },
     ] : menu() ? actions.flatMap(([action, Icon, label]) => (!isMobile || action !== "new-window") && (!["copy-id", "open-rollout"].includes(action) || panel().debug) ? [{ label, Icon, disabled: props.isArchiving(required(menu()).session) || (required(menu()).session.isDraft === true && action !== "open-directory") || (action === "open-rollout" && !required(menu()).session.path), run: () => panel().onAction(required((menu())).session, action) }] : []) : [];
 
@@ -486,7 +488,6 @@ export function SessionPanel(props: Props) {
             return (isEditingGroup(projectKey) ? <div class="project-label">{renderGroupNameInput()}{groupDraftError() && <small id="rename-group-error" class="group-error">{(groupDraftError())}</small>}</div> : <>
               <button class="project-disclosure" aria-label={disclosureLabel()} aria-expanded={!collapsed()} aria-controls={groupId} onClick={() => toggleProject(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} /></button><button class="project-label" disabled={Boolean(normalizedQuery())} {...projectDragProps(projectKey)}>{projectDetails().get(projectKey)?.cwd && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
               {!isFixedGroup(projectKey) && <div class="project-actions">
-                {customGroupsByKey().has(projectKey) && <button aria-label={`Rename group ${label()}`} data-tooltip="Rename group" onClick={() => editGroup(required(customGroupsByKey().get(projectKey)))}><Pencil size={12} /></button>}
                 <button aria-label={`New chat in ${label()}`} data-tooltip="New chat in group" onClick={() => {
                   const destination = groupDestination(projectKey);
 
