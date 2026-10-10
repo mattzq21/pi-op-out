@@ -165,7 +165,7 @@ function subagentReviewTask(state: SessionAgentState, count: number | null, prom
   state.locked = true;
 
   const delegation = count === null
-    ? "First assess the size, complexity, and risk of the changes, then choose a proportionate number of review subagents. Use only as many subagents as the task warrants, avoiding redundant work."
+    ? "First assess the scope, complexity, and risk of the requested review, then choose a proportionate number of review subagents. Use only as many subagents as the task warrants, avoiding redundant work."
     : `You must spawn exactly ${count} review subagents.`;
 
   return `${prompt}\n\nFor this review: ${delegation} Spawn them using spawn_agent with unique task names. Omit agent to inherit your reviewer profile. Divide the review into complementary scopes and give each child the review instructions above, including the files and behavior to inspect. Children must not delegate further, modify files, or run tests. Launch children concurrently, with at most ${limit} active at once; for larger counts, launch the remaining children as slots become available. Collect every subagent's results before giving your final review. Verify and deduplicate their findings, then report one consolidated review.`;

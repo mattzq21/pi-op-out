@@ -353,7 +353,7 @@ fn handle_restore_archived_session(app: AppHandle, _owner: String, args: Value) 
 
 fn handle_recover_missing_session(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || archives::recover_missing_session(app, argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "action")?, argument(&args, "repository")?, argument(&args, "branch")?, argument(&args, "clientId")?)).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || archives::recover_missing_session(app, argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "action")?, argument(&args, "clientId")?)).await.map_err(|error| error.to_string())?
     })
 }
 

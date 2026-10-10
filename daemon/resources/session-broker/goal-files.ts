@@ -14,7 +14,8 @@ import { read as readPreparation } from "./goal-prepared-files.cjs";
 import { save as savePreparation } from "./goal-preparations.cjs";
 import { allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
 import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
-import { acquireReferencePublicationLock } from "./reference-publication-lock.ts";
+import { acquireReferencePublicationLockAsync } from "./reference-publication-lock.cjs";
+import { homedir } from "node:os";
 
 const imageSchema = Type.Object({ data: Type.String(), mimeType: Type.Union([Type.Literal("image/png"), Type.Literal("image/jpeg"), Type.Literal("image/gif"), Type.Literal("image/webp")]) });
 
@@ -37,10 +38,10 @@ const hash = (value: string) => createHash("sha256").update(value).digest("hex")
 const preparationDirectory = (ctx: ExtensionContext, id: string) => join(ctx.sessionManager.getSessionDir(), "attachments", `goal-${hash(id)}`);
 
 async function withGoalPublication<T>(operation: () => Promise<T>) {
-  const publication = await acquireReferencePublicationLock();
+  const publication = await acquireReferencePublicationLockAsync(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"));
 
   try { return await operation(); }
-  finally { await publication.close(); }
+  finally { publication(); }
 }
 
 function ownGoalDirectory(directory: string) {

@@ -89,19 +89,6 @@ pub fn load_session_groups(app: AppHandle, seeds: Vec<SessionSeed>) -> Result<Se
     load_at(&path, seeds)
 }
 
-fn migrate_group_names(state: &mut SessionGroups) -> bool {
-    let mut dirty = false;
-    for group in &mut state.groups {
-        if group.name != "Workspace" { continue; }
-        let Some(cwd) = group.cwd.as_deref() else { continue; };
-        if !cwd.ends_with('/') || group.id != format!("{}:{cwd}", group.host_id.as_deref().unwrap_or("local")) { continue; }
-        if let Some(name) = cwd.rsplit('/').find(|part| !part.is_empty()) {
-            if name != group.name { group.name = name.to_owned(); dirty = true; }
-        }
-    }
-    dirty
-}
-
 fn update_seed_metadata(state: &mut SessionGroups, seed: &SessionSeed) -> bool {
     let mut dirty = false;
     for group in state.groups.iter_mut().filter(|group| group.host_id == seed.project.host_id) {
@@ -129,7 +116,6 @@ fn load_at(path: &Path, seeds: Vec<SessionSeed>) -> Result<SessionGroups, String
     dirty |= deletions::prune(&mut state, &deleted);
     let seeds: Vec<_> = seeds.into_iter().filter(|seed| !deletions::contains(&deleted, &seed.session_key)).collect();
     dirty |= restore_suppressed_projects(&mut state, &seeds);
-    dirty |= migrate_group_names(&mut state);
     for seed in seeds {
         dirty |= update_seed_metadata(&mut state, &seed);
         dirty |= assign_seed(&mut state, seed);

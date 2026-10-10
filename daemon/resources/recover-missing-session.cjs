@@ -19,19 +19,6 @@ function registry(action, details) {
   return JSON.parse(execFileSync(process.execPath, ['-e', process.argv[3], JSON.stringify({ action, root: profileRoot, ...details })], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 }) || 'null');
 }
 
-if (request.action === 'inspect') {
-  const current = storage.current(header, request.sessionPath);
-
-  process.stdout.write(JSON.stringify({
-    cwd: header.cwd,
-    managedRoot: storage.root,
-    currentRecovery: current ?? null,
-    retainedDirectories: storage.retained(header, request.sessionPath).map(record => ({ directory: record.directory, state: record.state, mode: record.mode })),
-  }));
-
-  process.exit(0);
-}
-
 function assertMissingDirectory() {
   try {
     fs.lstatSync(header.cwd);

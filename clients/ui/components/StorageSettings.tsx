@@ -16,7 +16,6 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
   "other-storage": { name: "Other storage", description: "Settings, caches, logs, and other piop files", icon: HardDrive, item: "file" },
   "recovery-storage": { name: "Managed recovery", description: "Durable recovery containers with ownership records", icon: FolderClock, item: "recovery" },
   "unattributed-recovery-storage": { name: "Unresolved recovery storage", description: "Loose recovery files or unverified ownership records", icon: ShieldAlert, item: "recovery" },
-  "legacy-recovery-storage": { name: "Legacy temporary recovery", description: "Temporary recovery candidates and retained migration sources", icon: FolderClock, item: "directory" },
   "chatgpt-storage": { name: "ChatGPT storage", description: "Stored chats and support files across auth-directory accounts", icon: MessageSquare, item: "chat" },
   "goal-attachments": { name: "Goal assets", description: "Objective files and attachments owned by surviving history and forks", icon: Archive, item: "asset directory" },
   "unattributed-goal-attachments": { name: "Unattributed goal assets", description: "No readable surviving owner found · ownership unresolved", icon: ShieldAlert, item: "asset directory" },
@@ -27,7 +26,7 @@ const storageSections: { title: string; categories: StorageCategory["id"][] }[] 
   { title: "Active sessions", categories: ["active-conversations"] },
   { title: "Archived sessions", categories: ["archived-conversations"] },
   { title: "Managed directories", categories: ["temporary-chats", "recovery-storage"] },
-  { title: "Unresolved and temporary storage", categories: ["unattributed-recovery-storage", "legacy-recovery-storage", "unattributed-goal-attachments"] },
+  { title: "Unresolved and temporary storage", categories: ["unattributed-recovery-storage", "unattributed-goal-attachments"] },
 ];
 
 function formatBytes(bytes: number) {

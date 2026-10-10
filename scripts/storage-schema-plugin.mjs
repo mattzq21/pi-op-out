@@ -41,7 +41,7 @@ const canonicalModules = new Set([
 
   "archive-transaction.cjs",
   "delete-transaction.cjs", "deletion-retention.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
-  "restore-receipts.cjs", "restore-transaction.cjs", "retention-candidates.cjs", "retention-collection.cjs", "session-transactions.cjs", "storage-lock.cjs", "storage-recovery.cjs", "storage-transaction-lock.cjs",
+  "restore-receipts.cjs", "restore-transaction.cjs", "retention-candidates.cjs", "retention-collection.cjs", "session-transactions.cjs", "storage-lock.cjs", "reference-publication-lock.cjs", "storage-recovery.cjs", "storage-transaction-lock.cjs",
   "transaction-owner-locks.cjs", "transcript-identity.cjs",
   "session-publication.cjs", "session-publication-io.cjs", "session-publication-dependencies.cjs", "session-child-index.cjs", "review-publication.cjs", "goal-assets.cjs",
 ]);

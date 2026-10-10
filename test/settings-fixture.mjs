@@ -1,6 +1,6 @@
 export function appSettings(extra = {}) {
   return {
-    worktreeSetupScripts: [], defaultModel: '', hiddenModels: [], knownModels: [],
+    defaultModel: '', hiddenModels: [], knownModels: [],
     defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 0,
     contextWindowCapEnabled: false, autoRetry: true, debugMode: false,
     keybindings: { newConversation: '', toggleConversations: '', toggleTerminal: '', toggleDebugMode: '', focusComposer: '', openSettings: '' },

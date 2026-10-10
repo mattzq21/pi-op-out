@@ -480,42 +480,27 @@ pub(super) fn relocate_session(app: AppHandle, session_path: String, cwd: String
     mutation.finish()
 }
 
-pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host_id: Option<String>, action: String, repository: Option<String>, branch: Option<String>, client_id: String) -> Result<serde_json::Value, String> {
+pub(super) fn recover_missing_session(app: AppHandle, session_path: String, host_id: Option<String>, action: String, client_id: String) -> Result<serde_json::Value, String> {
     validate_recovery_action(&action)?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let runtime = app.state::<PiRuntime>();
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let settings = load_app_settings(app.clone())?;
-    let (path, archived) = recovery_session_location(&settings, &host_id, &session_path, &action)?;
-    let mutation = recovery_mutation(&app, &host_id, &path, &client_id, archived, &action)?;
-    let arguments = json!({"sessionPath":path,"action":action,"repository":repository,"branch":branch,"storage":STORAGE_DIRECTORY}).to_string();
+    let path = desktop_session_file(&settings, &host_id, &session_path)?;
+    let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &path, &client_id, false, "relocate")?;
+    let arguments = json!({"sessionPath":path,"action":action,"storage":STORAGE_DIRECTORY}).to_string();
     let script = include_str!("../../resources/recover-missing-session.bundle.mjs");
     let relocate = include_str!("../../resources/relocate-session.bundle.mjs");
     let registry = crate::session_registry::source();
     let mut command = directory_recovery_command(&settings, &host_id, script, &arguments, relocate, &registry)?;
     let result = run_directory_recovery(&mut command)?;
-    if let Some(mutation) = mutation {
-        mutation.finish()?;
-        let _ = app.emit("pi://sessions-changed", ());
-    }
+    mutation.finish()?;
+    let _ = app.emit("pi://sessions-changed", ());
     Ok(result)
 }
 
 fn validate_recovery_action(action: &str) -> Result<(), String> {
-    if matches!(action, "inspect" | "empty") { Ok(()) } else { Err("Unknown recovery action".into()) }
-}
-
-fn recovery_mutation(app: &AppHandle, host_id: &str, path: &str, client_id: &str, archived: bool, action: &str) -> Result<Option<conversation_ownership::MutationGuard>, String> {
-    if action == "inspect" { return Ok(None); }
-    conversation_ownership::MutationGuard::acquire(app, host_id, path, client_id, archived, "relocate").map(Some)
-}
-
-fn recovery_session_location(settings: &AppSettings, host_id: &str, session_path: &str, action: &str) -> Result<(String, bool), String> {
-    match desktop_session_file(settings, host_id, session_path) {
-        Ok(path) => Ok((path, false)),
-        Err(error) if action == "inspect" => archived_session_file(settings, host_id, session_path).map(|path| (path, true)).map_err(|_| error),
-        Err(error) => Err(error),
-    }
+    if action == "empty" { Ok(()) } else { Err("Unknown recovery action".into()) }
 }
 
 fn directory_recovery_command(settings: &AppSettings, host_id: &str, script: &str, arguments: &str, relocate: &str, registry: &str) -> Result<Command, String> {

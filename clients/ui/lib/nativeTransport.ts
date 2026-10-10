@@ -14,7 +14,7 @@ import { htmlPreviewSize, listen, type UnlistenFn } from "./platform";
 import { restoredSessionTarget, targetedWindowSession } from "./sessionResume";
 import { recoverSessionDirectory } from "./sessionRecovery";
 import type { GroupChange, SessionGroupSeed } from "./sessionGroups";
-import type { AppSettings, RpcCommand, RpcEvent, StorageReport } from "../types";
+import type { AppSettings, RpcCommand, RpcEvent } from "../types";
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call("new_window", { target }, z.string());
 
@@ -39,20 +39,9 @@ export const openExternalUrl = (url: string) => call("open_external_url", { url 
 
 export const loadStorageReport = async (hostId?: string) => {
   if (hostId === undefined) return call("storage_report", undefined, storageReportSchema);
-  let report: StorageReport;
+  const report = await call("host_storage_report", { hostId }, storageReportSchema);
 
-  try { report = await call("host_storage_report", { hostId }, storageReportSchema); }
-  catch (reason) {
-    if (!String(reason).includes("Command is not available on the daemon: host_storage_report")) throw reason;
-    const legacy = await call("storage_report", undefined, storageReportSchema);
-    const hosts = legacy.hosts.filter((host) => host.hostId === hostId);
-
-    if (!hosts.length) throw new Error("This daemon did not return storage information for the selected machine. Update its Piop daemon and retry.");
-
-    return { hosts };
-  }
-
-  return hostId === undefined ? report : { hosts: report.hosts.map((host) => ({ ...host, hostId })) };
+  return { hosts: report.hosts.map((host) => ({ ...host, hostId })) };
 };
 
 
