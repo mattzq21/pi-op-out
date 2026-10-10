@@ -1,8 +1,9 @@
+import { DraftHostStorage } from "./lib/draftHostStorage";
 import { createMemo, createSignal, onCleanup } from "solid-js";
 import { NativeTransport, type NativeConnectionTarget } from "./lib/nativeTransport";
 import type { StateUpdate } from "./lib/solid";
 import type { ComposerUpload, SessionSummary } from "./types";
-import { DraftStorage, draftEndpoint, durableDraftId, type DraftDestination, type DraftStorageIssue, type DurableDraft, type DurableSubmission } from "./lib/draftStorage";
+import { draftEndpoint, durableDraftId, type DraftDestination, type DraftStorageIssue, type DurableDraft, type DurableSubmission } from "./lib/draftStorage";
 import { bindDraftStaging, goalPreparationSchema, submissionFingerprint, type DraftSubmissionHandle, type DraftSubmissionPayload } from "./lib/draftSubmission";
 import type { DraftConflictSnapshot } from "./lib/draftStorage";
 
@@ -22,7 +23,7 @@ function restoredDraft(record: DurableDraft, current: DurableDraft, textChanged:
 
 export function createConversationDrafts() {
   const endpoint = draftEndpoint();
-  const storage = new DraftStorage();
+  const storage = new DraftHostStorage();
   const [records, setRecords] = createSignal<Map<string, DurableDraft>>(new Map());
   const [submissions, setSubmissions] = createSignal<DurableSubmission[]>([]);
   const [uploadsByTransport, setUploadsByTransport] = createSignal<Map<NativeTransport, ComposerUpload[]>>(new Map());

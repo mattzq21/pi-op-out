@@ -1,3 +1,4 @@
+import { hostIdentity } from "./hostIdentity";
 import { cachedMobileHost, mobileDraftHostId } from "./mobileHosts";
 import { z } from "zod";
 import { imageAttachmentSchema } from "./responseSchemas";
@@ -37,7 +38,7 @@ const identitySchema = z.object({ id: z.string(), endpoint: z.string().optional(
 const endpointSchema = z.union([z.object({ endpoint: z.string() }), z.object({ destination: z.object({ endpoint: z.string() }) }).transform(record => ({ endpoint: record.destination.endpoint }))]);
 
 export function draftEndpoint() {
-  if (!isMobile) return "desktop";
+  if (!isMobile) return hostIdentity("Local");
 
   return mobileDraftHostId(remoteClient.connectionIdentity() || cachedMobileHost());
 }

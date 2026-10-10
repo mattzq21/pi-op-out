@@ -1,3 +1,4 @@
+import { hostIdentity } from "./hostIdentity";
 import { validateHost } from "./remoteClient";
 import { z } from "zod";
 
@@ -96,7 +97,7 @@ export function mobileDraftHostId(address: string) {
 
   if (!host) throw new Error("Save a named host before opening drafts");
 
-  return `mobile:${encodeURIComponent(host.name)}`;
+  return hostIdentity(host.name);
 }
 
 export function validateMobileHost(address: string, name: string, hosts: SavedMobileHost[]): SavedMobileHost {
@@ -105,7 +106,7 @@ export function validateMobileHost(address: string, name: string, hosts: SavedMo
 
   if (!label) throw new Error("Enter a host name");
 
-  if (hosts.some(host => host.url !== url && host.name === label)) throw new Error("Choose a different host name. This name is already saved.");
+  if (hosts.some(host => host.url !== url && hostIdentity(host.name) === hostIdentity(label))) throw new Error("Choose a different host name. This name is already saved.");
 
   return { url, name: label };
 }
