@@ -155,7 +155,11 @@ export class NativeTransport {
   private connectionAttempted = false;
   private readonly draftRuntime = new DraftRuntime(() => this.hostId, event => this.emit(event));
   private startingDraft?: Promise<void>;
-  private draftOnly() { return this.cwd === undefined && this.sessionPath === undefined && this.sessionId === undefined; }
+  private draftTarget = false;
+  private initializingChat = false;
+  private sentMessage = false;
+  hasSentMessage() { return this.sentMessage; }
+  private draftOnly() { return !this.initializingChat && !this.sessionPath && !this.sessionId && (this.draftTarget || this.cwd === undefined); }
   async startDraft() {
     if (this.startingDraft) return this.startingDraft;
 
@@ -167,8 +171,12 @@ export class NativeTransport {
   private async materializeDraft() {
     if (!await this.ensureConnectionDirectory(this.connectionVersion)) throw new Error("The draft was closed before sending");
 
+    const project = this.temporaryChat ? undefined : this.cwd;
+    this.initializingChat = true;
+
     try {
       await this.connect();
+      await this.command({ type: "get_state" });
 
       for (const command of this.draftRuntime.changes.values()) await this.command(command);
       await this.setFastMode(this.draftRuntime.fastMode);
@@ -177,10 +185,10 @@ export class NativeTransport {
       const path = this.cwd;
       await this.disconnect(true);
 
-      if (path) await call("remove_temporary_chat", { path, hostId: this.hostId }, voidResultSchema);
-      this.cwd = undefined; this.sessionId = undefined; this.sessionPath = undefined; this.owns = true;
+      if (path && !project) await call("remove_temporary_chat", { path, hostId: this.hostId }, voidResultSchema);
+      this.cwd = project; this.sessionId = undefined; this.sessionPath = undefined; this.owns = true;
       throw reason;
-    }
+    } finally { this.initializingChat = false; }
   }
   private temporaryChat = false;
   private temporaryChatUsed = false;
@@ -197,7 +205,7 @@ export class NativeTransport {
     emit: event => this.emit(event),
   });
   private readOnly: boolean;
-  constructor(target: NativeConnectionTarget = {}) { this.readOnly = target.readOnly === true; this.fresh = !target.sessionPath && !target.sessionId; this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
+  constructor(target: NativeConnectionTarget = {}) { this.draftTarget = Boolean(target.draftKey); this.sentMessage = Boolean(target.sessionId || target.sessionPath); this.readOnly = target.readOnly === true; this.fresh = !target.sessionPath && !target.sessionId; this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
   currentHostId() { return this.hostId; }
   currentDaemonId() { return this.daemonId; }
   reloadAgentDefinitions(sessionId: string) {
@@ -256,7 +264,7 @@ export class NativeTransport {
   return result; }
   private queueView(): RpcEvent { return this.queueSnapshot; }
   private trackSessionActivity(event: RpcEvent) {
-    if (event.type === "agent_start" || (event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success)) this.temporaryChatUsed = true;
+    if (event.type === "agent_start" || (event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success)) { this.temporaryChatUsed = true; this.sentMessage = true; }
   }
   private retainWidget(event: RpcEvent) {
     if (event.type === "extension_ui_request" && event.method === "setWidget" && event.widgetKey !== undefined) {
@@ -353,7 +361,7 @@ export class NativeTransport {
 
     if (this.connectPromise) return this.connectPromise;
 
-    if (this.draftOnly() && !forkPath) { await this.draftRuntime.load(); this.temporaryChat = true; this.owns = !this.readOnly;
+    if (this.draftOnly() && !forkPath) { await this.draftRuntime.load(); this.temporaryChat = this.cwd === undefined; this.owns = !this.readOnly;
 
       return; }
 
@@ -542,6 +550,8 @@ export class NativeTransport {
 
     return undefined; }
   startTerminal(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId = this.hostId, preparation = false) {
+    if (!this.sentMessage) return Promise.reject(new Error("Send the first message before opening a terminal"));
+
     if (preparation) this.preparedTerminalIds.add(terminalId);
     else this.markTerminalActivity(cwd, hostId);
 

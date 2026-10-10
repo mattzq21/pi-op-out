@@ -16,6 +16,7 @@ export function createConversationDrafts() {
   const [records, setRecords] = createSignal<Map<string, DraftRecord>>(new Map());
   const [submissions, setSubmissions] = createSignal<DraftSubmission[]>([]);
   const [uploadsByTransport, setUploadsByTransport] = createSignal<Map<NativeTransport, ComposerUpload[]>>(new Map());
+  const destinations = new Map<string, DraftDestination>();
   const owners = new Map<NativeTransport, string>();
   const aliases = new Map<string, string>();
   const redirected = new WeakMap<NativeTransport, NativeTransport>();
@@ -23,11 +24,25 @@ export function createConversationDrafts() {
 
   const keyFor = (key: string): string => aliases.has(key) ? keyFor(aliases.get(key) ?? key) : key;
   const ownerFor = (owner: NativeTransport): NativeTransport => redirected.has(owner) ? ownerFor(redirected.get(owner) ?? owner) : owner;
-  const empty = (key: string): DraftRecord => ({ key, text: "", uploads: [], updatedAt: Date.now() });
+  const empty = (key: string): DraftRecord => ({ key, destination: destinations.get(key), text: "", uploads: [], updatedAt: Date.now() });
   const recordFor = (key: string) => records().get(keyFor(key)) ?? empty(keyFor(key));
 
   const publishUploads = () => setUploadsByTransport(new Map([...owners].map(([owner, key]) => [owner, recordFor(key).uploads])));
-  const publish = (record: DraftRecord) => { if (!allows(record.key, record.destination)) return; setRecords(current => new Map(current).set(record.key, record)); publishUploads(); };
+
+  const publish = (record: DraftRecord) => {
+    if (!allows(record.key, record.destination)) return;
+
+    if (record.destination) destinations.set(record.key, record.destination);
+    setRecords(current => {
+      const next = new Map(current);
+
+      if (record.text || record.uploads.length) next.set(record.key, record);
+      else next.delete(record.key);
+
+      return next;
+    });
+    publishUploads();
+  };
 
   const update = (key: string, transform: (record: DraftRecord) => DraftRecord) => {
     const next = transform(recordFor(key));
@@ -164,6 +179,7 @@ export function createConversationDrafts() {
     publish(next);
 
     if (!copy) {
+      destinations.delete(previousKey);
       aliases.set(previousKey, nextKey);
       setRecords(current => { const next = new Map(current); next.delete(previousKey);
 
@@ -197,6 +213,7 @@ export function createConversationDrafts() {
   }));
 
   const removeMatchingDrafts = (matches: (key: string, destination?: DraftDestination) => boolean) => {
+    for (const [key, destination] of destinations) if (matches(key, destination)) destinations.delete(key);
     setRecords(current => new Map([...current].filter(([key, record]) => !matches(key, record.destination))));
     setSubmissions(current => current.filter(item => !matches(item.destination.key, item.destination)));
     publishUploads();

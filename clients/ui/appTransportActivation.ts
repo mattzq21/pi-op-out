@@ -106,8 +106,8 @@ export function createTransportActivation(context: ActivationContext) {
     const nextIsDraft = Boolean(nextKey?.includes(":draft-"));
     const leavingEmpty = previousTransport !== nextTransport && emptyConversation();
 
-    if (leavingEmpty && previousKey && !nextIsDraft) retainDraft(previousTransport, previousKey);
-    const discardPrevious = leavingEmpty && nextIsDraft && previousKey !== nextKey && !hasUnsentWork;
+    if (leavingEmpty && hasUnsentWork && previousKey && !nextIsDraft) retainDraft(previousTransport, previousKey);
+    const discardPrevious = leavingEmpty && previousKey !== nextKey && !hasUnsentWork;
     activeTransportRef.current = nextTransport; runtimePool().activate(nextTransport); setTransport(nextTransport);
 
     if (discardPrevious) discardTransport(previousTransport, previousKey);

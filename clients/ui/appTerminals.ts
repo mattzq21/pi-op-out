@@ -73,13 +73,16 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
   const terminalState = () => state;
   const [owned, setOwned] = createSignal(false);
+  const [chatStarted, setChatStarted] = createSignal(false);
   createEffect(() => {
     const owner = sessionTransport(terminalSessionId());
-    setOwned(owner?.hasConfirmedOwnership() ?? false);
+    setChatStarted(owner?.hasSentMessage() ?? false);
+    setOwned(Boolean(owner?.hasConfirmedOwnership() && owner.hasSentMessage()));
 
     const stop = owner?.subscribe(event => {
-      if (event.type === "ownership_acquired" || event.type === "ownership_lost" || event.type === "disconnected") {
-        setOwned(owner.hasConfirmedOwnership());
+      if (event.type === "ownership_acquired" || event.type === "ownership_lost" || event.type === "disconnected" || event.type === "message_start" || event.type === "agent_start") {
+        setChatStarted(owner.hasSentMessage());
+        setOwned(owner.hasConfirmedOwnership() && owner.hasSentMessage());
         void refreshShared();
       }
     });
@@ -87,14 +90,14 @@ export function createTerminalController({ transport, sessionTransport, conversa
     onCleanup(() => stop?.());
   });
   const [readySession, setReadySession] = createSignal<string>();
-  const ready = () => readySession() === terminalSessionId();
+  const ready = () => chatStarted() && readySession() === terminalSessionId();
   let refreshShared = async () => {};
 
   createEffect(() => {
     const key = terminalSessionId();
     const hostId = terminalLocationState().terminalHostId;
 
-    if (!terminalLocationState().terminalCwd) return;
+    if (!terminalLocationState().terminalCwd || !chatStarted()) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     let dirty = false;
@@ -232,7 +235,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const takeOwnership = async () => {
     try { const owner = sessionTransport(terminalSessionId());
 
-      if (!owner) throw new Error("Session is unavailable"); await owner.takeOwnership(); setOwned(owner.hasConfirmedOwnership()); await refreshShared(); }
+      if (!owner) throw new Error("Session is unavailable"); await owner.takeOwnership(); setOwned(owner.hasConfirmedOwnership() && owner.hasSentMessage()); await refreshShared(); }
     catch (reason) { addNotice({ title: "Could not take session ownership", message: String(reason) }); }
   };
 
@@ -376,6 +379,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
   };
 
   const toggleFor = (target: TerminalTarget) => {
+    if (!sessionTransport(target.sessionKey)?.hasSentMessage()) return;
     const close = terminalOpen() && terminalSessionId() === target.sessionKey;
     terminalPanelRevision.current += 1;
     setTerminalTarget(target); setTerminalOpen(!close);
@@ -384,7 +388,13 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const toggle = (target: () => TerminalTarget) => {
     terminalPanelRevision.current += 1;
 
-    if (!terminalOpen()) setTerminalTarget(target());
+    if (!terminalOpen()) {
+      const next = target();
+
+      if (!sessionTransport(next.sessionKey)?.hasSentMessage()) return;
+      setTerminalTarget(next);
+    }
+
     setTerminalOpen(open => !open);
   };
 

@@ -65,7 +65,7 @@ export function createAppConversations(preloadChat: () => void) {
   const liveSessionRevision = createSubscription(() => (listener) => runtimePool().subscribe(listener), () => () => runtimePool().liveSessionRevision());
 
   const liveSessions = createMemo(() => { liveSessionRevision();
-    const live = runtimePool().liveSessionSummaries();
+    const live = runtimePool().liveSessionSummaries().filter(session => !session.isDraft || drafts.hasDraft(`${session.hostId ?? "local"}:${session.id}`));
 
     return [...live, ...drafts.draftSummaries().filter(draft => !live.some(session => (session.hostId ?? "local") === (draft.hostId ?? "local") && (session.id === draft.id || Boolean(draft.path && draft.path === session.path))))]; });
 
@@ -407,7 +407,7 @@ export function createAppConversations(preloadChat: () => void) {
   const assignNewSessionGroup = (owner: NativeTransport, group?: SessionGroup) => { if (group) pendingSessionGroups.current.set(owner, group); };
 
   const existingSessionDraft = () => {
-    const candidates = [...draftSessions(), ...liveSessions()];
+    const candidates = draftSessions();
 
     return candidates.find(draft => draft.isDraft && (!isSelectedSession(draft) || currentSessionIsDraft()) && !runningSessions().has(`${draft.hostId ?? "local"}:${draft.id}`) && ![...sessions(), ...liveSessions()].some(saved => saved.messageCount > 0 && (saved.hostId ?? "local") === (draft.hostId ?? "local") && (saved.id === draft.id || Boolean(draft.path && saved.path === draft.path))));
   };

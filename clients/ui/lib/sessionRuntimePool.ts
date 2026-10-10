@@ -145,7 +145,7 @@ export class SessionRuntimePool {
   }
 
   create(target?: NativeConnectionTarget) {
-    const transport = new NativeTransport(target); this.transports.add(transport);
+    const transport = new NativeTransport({ ...target, draftKey: target?.sessionId || target?.sessionPath ? undefined : target?.draftKey ?? "draft" }); this.transports.add(transport);
 
     transport.subscribe((event) => {
       this.retainMcpSession(transport, event);
