@@ -32,7 +32,6 @@ export function SubagentPane(props: { target: SubagentTarget; onClose: () => voi
         if (!closed) { setLoaded(true); setError(undefined); }
       } catch (reason) {
         if (!closed) setError(reason instanceof Error ? reason.message : String(reason));
-      } finally {
         if (!closed) timer = setTimeout(() => void refresh(), 1000);
       }
     };

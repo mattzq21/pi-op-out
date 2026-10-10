@@ -15,14 +15,10 @@ export function useDictationEnabled() {
   const [enabled, setEnabled] = createSignal(false);
   let disposed = false;
   let revision = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let unlisten: (() => void) | undefined;
 
   const apply = (state: Configuration) => {
-    clearTimeout(timer);
     setEnabled(state.enabled === true && !!navigator.mediaDevices?.getUserMedia && typeof AudioContext !== "undefined");
-
-    if (state.loading) timer = setTimeout(() => void refresh(), 1500);
   };
 
   const refresh = async () => {
@@ -40,11 +36,14 @@ export function useDictationEnabled() {
     void listen("pi://dictation", ({ payload }) => {
       if (disposed) return;
       revision++; apply(payload);
-    }, dictationConfigurationSchema).then((stop) => { if (disposed) stop(); else unlisten = stop; }).catch(() => undefined);
-    void refresh();
+    }, dictationConfigurationSchema).then((stop) => {
+      if (disposed) { stop(); return; }
+      unlisten = stop;
+      void refresh();
+    }).catch(() => { if (!disposed) void refresh(); });
     window.addEventListener("focus", focus);
   });
-  onCleanup(() => { disposed = true; clearTimeout(timer); unlisten?.(); window.removeEventListener("focus", focus); });
+  onCleanup(() => { disposed = true; unlisten?.(); window.removeEventListener("focus", focus); });
 
   return enabled;
 }
