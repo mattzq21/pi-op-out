@@ -51,7 +51,7 @@ async function loadRuntime() {
       const builtin = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
       const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
 
-      return { runtime, settings, authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id) };
+      return { runtime, settings, authPath: runtimeAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id) };
     }
 
     directory = dirname(directory);
@@ -275,9 +275,9 @@ async function handle(packet) {
 }
 
 function storedProviderRequest(loaded, packet) {
-  if (packet.method === 'auth_revision') return storedAuthRevision(loaded.authPath);
+  if (packet.method === 'auth_revision') return storedFileRevision(loaded.authPath);
 
-  if (packet.method === 'model_revision') return storedAuthRevision(loaded.modelsPath);
+  if (packet.method === 'model_revision') return storedFileRevision(loaded.modelsPath);
 
   if (packet.method === 'model_config') return loaded.parseModels(storedModelText(loaded.modelsPath) ?? '{"providers":{}}');
 

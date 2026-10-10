@@ -116,6 +116,7 @@ impl Sdk {
         );
         let encoded = STANDARD.encode(source);
         let mut child = Command::new("node")
+            .env("PIOP_STORAGE_DIRECTORY", crate::STORAGE_DIRECTORY)
             .args(["--input-type=module", "-e", SOURCE_LOADER, "--", &self.executable])
             .args(source_arguments(&encoded))
             .stdin(Stdio::piped())

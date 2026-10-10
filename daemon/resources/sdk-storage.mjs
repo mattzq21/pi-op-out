@@ -3,13 +3,15 @@ import * as sessionTables from "./session-database.cjs";
 import { DatabaseSync as StorageDatabase } from "node:sqlite";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
-import { homedir as storageHome, tmpdir as storageTemporaryDirectory } from "node:os";
+import { homedir as storageHome } from "node:os";
 import { spawnSync as storageSpawn } from "node:child_process";
 import { createHash as storageHash } from "node:crypto";
 import { isDeepStrictEqual as sameStorageValue } from "node:util";
 import { pathToFileURL as storageFileUrl } from "node:url";
 
 const installedStorageClasses = new WeakSet();
+
+let modelFileStorage;
 
 const failedSessionStorage = new WeakSet();
 
@@ -18,10 +20,10 @@ const sessionReferenceBaselines = new WeakMap();
 const sessionReferenceRecorders = new WeakMap();
 
 export async function installRuntimeStorage(directory) {
-  const modules = ["core/auth-storage.js", "core/models-store.js", "core/model-config.js", "core/settings-manager.js", "core/trust-manager.js", "utils/paths.js"];
-  const [auth, models, config, settings, trust, paths] = await Promise.all(modules.map(file => import(storageFileUrl(storagePath.join(directory, "dist", file)).href)));
-  installAuthStorage(auth.FileAuthStorageBackend, auth.AuthStorage);
-  installModelsStorage(models.FileModelsStore, config.ModelConfig);
+  const modules = ["core/auth-storage.js", "core/settings-manager.js", "core/trust-manager.js", "utils/paths.js"];
+  const [auth, settings, trust, paths] = await Promise.all(modules.map(file => import(storageFileUrl(storagePath.join(directory, "dist", file)).href)));
+  modelFileStorage = auth.FileAuthStorageBackend;
+  usePiopAuthFile(auth.AuthStorage);
   installSettingsStorage(settings.FileSettingsStorage);
   installTrustStorage(trust.ProjectTrustStore, path => paths.canonicalizePath(paths.resolvePath(path)));
 }
@@ -338,126 +340,54 @@ function storagePublish(path, temporary, body, exclusive) {
   } finally { storageFs.rmSync(temporary, { force: true }); }
 }
 
-function withStoredAuth(path, operation) {
-  const target = storageTarget(path);
-  const directory = storagePath.dirname(target);
-  storageFs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const file = storagePath.join(directory, "piop-accounts.sqlite");
-  storageFs.closeSync(storageFs.openSync(file, storageFs.constants.O_CREAT | storageFs.constants.O_RDWR | storageFs.constants.O_NOFOLLOW, 0o600));
-  storageFs.chmodSync(file, 0o600);
-  const database = new StorageDatabase(file);
-  const key = storagePath.basename(target);
+export function runtimeAuthPath() {
+  return storagePath.join(sessionReferenceRoot(), "auth.json");
+}
 
+export function storedFileRevision(path) {
   try {
-    database.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-      CREATE TABLE IF NOT EXISTS provider_credentials (auth_file TEXT PRIMARY KEY, body TEXT, revision INTEGER NOT NULL);
-      BEGIN IMMEDIATE;`);
+    const stat = storageFs.statSync(path, { bigint: true });
 
-    if (!database.prepare("SELECT 1 FROM provider_credentials WHERE auth_file=?").get(key)) {
-      database.prepare("INSERT INTO provider_credentials VALUES (?, ?, 0)").run(key, null);
-    }
-
-    const result = operation(database, key);
-    database.exec("COMMIT");
-
-    return result;
-  } finally { database.close(); }
-}
-
-function storageReadAuth(path) {
-  return withStoredAuth(path, (database, key) => database.prepare("SELECT body FROM provider_credentials WHERE auth_file=?").get(key).body ?? undefined);
-}
-
-function storageWriteAuth(path, body) {
-  withStoredAuth(path, (database, key) => database.prepare("UPDATE provider_credentials SET body=?, revision=revision+1 WHERE auth_file=?").run(body, key));
-}
-
-export function storedAuthRevision(path) {
-  return withStoredAuth(path, (database, key) => database.prepare("SELECT revision FROM provider_credentials WHERE auth_file=?").get(key).revision);
+    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 export function storedModelText(path) {
-  return storageReadAuth(path);
+  try { return storageFs.readFileSync(path, "utf8"); } catch (error) {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function modelProviderData(body, parse) {
+  const data = body ? parse(body) : {};
+
+  if (!data || Object.getPrototypeOf(data) !== Object.prototype) throw new Error("Invalid saved provider settings");
+
+  if (!Object.hasOwn(data, "providers")) data.providers = {};
+
+  if (!data.providers || Object.getPrototypeOf(data.providers) !== Object.prototype) throw new Error("Invalid saved provider settings");
+
+  return data;
 }
 
 export function saveStoredModelProvider(path, id, config, previous, parse) {
-  return withStoredAuth(path, (database, key) => {
-    const body = database.prepare("SELECT body FROM provider_credentials WHERE auth_file=?").get(key).body;
-    const data = body ? parse(body) : { providers: {} };
-
-    if (!data.providers || Object.getPrototypeOf(data.providers) !== Object.prototype) throw new Error("Invalid saved provider settings");
+  return new modelFileStorage(path).withLock(body => {
+    const data = modelProviderData(body, parse);
     const current = data.providers[id];
 
     if (previous === undefined && Object.hasOwn(data.providers, id)) throw new Error("That provider ID already exists");
 
     if (previous !== undefined && !sameStorageValue(current, previous)) throw new Error("Provider settings changed. Refresh before saving.");
 
-    if (sameStorageValue(current, config)) return true;
+    if (sameStorageValue(current, config)) return { result: true };
     Object.defineProperty(data.providers, id, { value: config, enumerable: true, writable: true, configurable: true });
-    database.prepare("UPDATE provider_credentials SET body=?, revision=revision+1 WHERE auth_file=?").run(JSON.stringify(data), key);
 
-    return true;
+    return { result: true, next: JSON.stringify(data, null, 2) };
   });
-}
-
-function installModelConfiguration(ModelConfig) {
-  if (installedStorageClasses.has(ModelConfig)) return;
-  requireStorageMethods(ModelConfig, ["load"]);
-  const load = ModelConfig.load.bind(ModelConfig);
-  let cached;
-
-  ModelConfig.load = async (path) => {
-    if (!path) return load(path);
-    const body = storedModelText(path);
-
-    if (cached?.path === path && cached.body === body) return cached.value;
-    const value = body === undefined ? await load(undefined) : await loadModelCopy(load, path, body);
-    cached = { path, body, value };
-
-    return value;
-  };
-
-  installedStorageClasses.add(ModelConfig);
-}
-
-async function loadModelCopy(load, path, body) {
-  const directory = storageFs.mkdtempSync(storagePath.join(storageTemporaryDirectory(), "piop-model-config-"));
-  const file = storagePath.join(directory, "models.json");
-
-  try {
-    storageFs.writeFileSync(file, body, { mode: 0o600 });
-    const result = await load(file);
-
-    if (result.error) result.error = result.error.replaceAll(file, path);
-
-    return result;
-  } finally { storageFs.rmSync(directory, { recursive: true, force: true }); }
-}
-
-export function installModelsStorage(FileModelsStore, ModelConfig) {
-  installModelConfiguration(ModelConfig);
-
-  if (installedStorageClasses.has(FileModelsStore)) return;
-  const prototype = FileModelsStore.prototype;
-  requireStorageMethods(prototype, ["readLatest", "reloadFromStorage", "parse", "updateReadState"]);
-
-  prototype.reloadFromStorage = function (readState, options) {
-    return this.storage.withLockAsync(async (content) => {
-      const data = this.parse(content);
-      this.updateReadState(readState, data, storedAuthRevision(this.path));
-
-      return { result: data };
-    }, options);
-  };
-
-  prototype.readLatest = async function (readState, options) {
-    options?.signal?.throwIfAborted();
-    const revision = storedAuthRevision(this.path);
-
-    return revision === readState.revision ? readState.data : this.reloadFromStorage(readState, options);
-  };
-
-  installedStorageClasses.add(FileModelsStore);
 }
 
 function requireStorageMethods(prototype, names) {
@@ -554,51 +484,12 @@ function withStoredSettings(path, operation) {
   } finally { database.close(); }
 }
 
-export function installAuthStorage(FileAuthStorageBackend, AuthStorage) {
-  if (installedStorageClasses.has(FileAuthStorageBackend)) return;
-  const prototype = FileAuthStorageBackend.prototype;
-  requireStorageMethods(prototype, ["ensureParentDir", "acquireLockSyncWithRetry", "acquireLockAsync", "withLock", "withLockAsync"]);
-  requireStorageMethods(AuthStorage, ["create", "fromStorage"]);
-  AuthStorage.create = (path) => AuthStorage.fromStorage(new FileAuthStorageBackend(path));
-
-  prototype.withLock = function (fn) {
-    this.ensureParentDir();
-    const release = this.acquireLockSyncWithRetry(this.authPath);
-
-    try {
-      const { result, next } = fn(storageReadAuth(this.authPath));
-
-      if (next !== undefined) storageWriteAuth(this.authPath, next);
-
-      return result;
-    } finally { release(); }
-  };
-
-  prototype.withLockAsync = async function (fn, options) {
-    options?.signal?.throwIfAborted();
-    this.ensureParentDir();
-    let compromised;
-
-    const check = () => {
-      if (compromised) throw compromised;
-      options?.signal?.throwIfAborted();
-    };
-
-    const release = await this.acquireLockAsync(options?.signal, error => { compromised = error; });
-
-    try {
-      check();
-      const { result, next } = await fn(storageReadAuth(this.authPath));
-      check();
-
-      if (next !== undefined) storageWriteAuth(this.authPath, next);
-      check();
-
-      return result;
-    } finally { try { await release(); } catch {} }
-  };
-
-  installedStorageClasses.add(FileAuthStorageBackend);
+function usePiopAuthFile(AuthStorage) {
+  if (installedStorageClasses.has(AuthStorage)) return;
+  requireStorageMethods(AuthStorage, ["create"]);
+  const create = AuthStorage.create.bind(AuthStorage);
+  AuthStorage.create = () => create(runtimeAuthPath());
+  installedStorageClasses.add(AuthStorage);
 }
 
 function sessionStorageState(manager) {
