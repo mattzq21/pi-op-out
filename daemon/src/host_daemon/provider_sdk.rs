@@ -124,7 +124,7 @@ impl Sdk {
         let source = format!(
             "{}\n{}\n{}\n{}",
             format!(
-                "const {{ installRuntimeStorage }} = await import('data:text/javascript;base64,{}');",
+                "const {{ installRuntimeStorage, storedModelText, saveStoredModelProvider }} = await import('data:text/javascript;base64,{}');",
                 STANDARD.encode(include_str!("../../resources/sdk-storage.bundle.mjs"))
             ),
             include_str!("../../resources/fast-capabilities.mjs"),
