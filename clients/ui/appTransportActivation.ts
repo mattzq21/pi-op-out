@@ -74,12 +74,12 @@ type ActivationContext = {
 export function createTransportActivation(context: ActivationContext) {
   const { transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, discardDraft, forgetTerminals } = context;
   const savedConversation = () => context.savedSessions().some(session => !session.isDraft && session.messageCount > 0 && (session.hostId ?? "local") === transport().currentHostId() && session.path === transport().currentSessionPath());
-  const emptyConversation = () => !savedConversation() && chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
+  const emptyConversation = () => !savedConversation() && chatSession().state.messageCount === 0 && chatSession().messages.length === 0 && !chatSession().state.isStreaming && chatSession().state.pendingMessageCount === 0;
 
   const retainDraft = (previousTransport: NativeTransport, previousKey: string) => {
       const hostId = previousTransport.currentHostId(); const id = previousKey.slice(hostId.length + 1); const draft = composerDrafts()[previousKey] ?? ""; const cwd = previousTransport.currentCwd() ?? "";
       runtimePool().bind(hostId, id, previousTransport);
-      runtimePool().setLiveSession(previousTransport, { id, hostId, isDraft: transportHasDraft(previousTransport, previousKey), path: previousTransport.currentSessionPath() ?? "", cwd, project: cwd.split("/").filter(Boolean).at(-1) ?? "Workspace", name: hasVisibleText(draft) ? draft.slice(0, 60) : "Unsent draft", preview: draft, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0 });
+      runtimePool().setLiveSession(previousTransport, { id, hostId, isDraft: true, path: previousTransport.currentSessionPath() ?? "", cwd, project: cwd.split("/").filter(Boolean).at(-1) ?? "Workspace", name: hasVisibleText(draft) ? draft.slice(0, 60) : "Unsent draft", preview: draft, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0 });
   };
 
   const discardTransport = (previousTransport: NativeTransport, previousKey: string | undefined) => {
@@ -96,7 +96,6 @@ export function createTransportActivation(context: ActivationContext) {
       void closingTerminals.then(() => runtimePool().release(previousTransport)).finally(() => transportConversationKeys.current.delete(previousTransport));
   };
 
-  const shouldDiscard = (previous: NativeTransport, next: NativeTransport, hasUnsentWork: boolean) => previous !== next && !runtimePool().isRetained(previous) && !chatSession().state.isStreaming && emptyConversation() && !hasUnsentWork;
   const hasDraftWork = (owner: NativeTransport, key: string | undefined) => transportHasDraft(owner, key) || owner.hasTerminalActivity() || Boolean(key && conversationTerminalIds(key).some(id => !owner.isPreparedTerminal(id)));
 
   return (nextTransport: NativeTransport) => {
@@ -104,8 +103,12 @@ export function createTransportActivation(context: ActivationContext) {
     const previousKey = transportConversationKeys.current.get(previousTransport);
     const hasUnsentWork = hasDraftWork(previousTransport, previousKey);
 
-    if (previousTransport !== nextTransport && previousKey && hasUnsentWork && !runtimePool().isRetained(previousTransport) && emptyConversation()) retainDraft(previousTransport, previousKey);
-    const discardPrevious = shouldDiscard(previousTransport, nextTransport, hasUnsentWork);
+    const nextKey = transportConversationKeys.current.get(nextTransport);
+    const nextIsDraft = Boolean(nextKey?.includes(":draft-"));
+    const leavingEmpty = previousTransport !== nextTransport && emptyConversation();
+
+    if (leavingEmpty && previousKey && !nextIsDraft) retainDraft(previousTransport, previousKey);
+    const discardPrevious = leavingEmpty && nextIsDraft && previousKey !== nextKey && !hasUnsentWork;
     activeTransportRef.current = nextTransport; runtimePool().activate(nextTransport); setTransport(nextTransport);
 
     if (discardPrevious) discardTransport(previousTransport, previousKey);

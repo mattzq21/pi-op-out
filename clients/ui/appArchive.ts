@@ -7,6 +7,7 @@ import type { SessionSummary } from "./types";
 import { isTemporaryChatCwd } from "./lib/sessionGroups";
 
 type ArchiveContext = {
+  reuseSessionDraft: () => boolean;
   runtimePool: Accessor<SessionRuntimePool>;
   transport: Accessor<NativeTransport>;
   chatSession: Accessor<ReturnType<typeof useChatSession>>;
@@ -130,6 +131,10 @@ export function createConversationArchive(context: ArchiveContext) {
     };
 
     const replaceArchivedConversation = async () => {
+      if (context.reuseSessionDraft()) { await capturedRuntimePool.release(ownerTransport);
+
+      return; }
+
       const hostId = capturedActiveHostId; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`;
       capturedSession.discardPendingUpdates(); capturedSession.setMessages([]);
       capturedSession.setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, isPaused: false, isPausing: false, activity: undefined, contextUsage: undefined }));
@@ -187,6 +192,11 @@ export function createConversationArchive(context: ArchiveContext) {
 
   const replaceRemovedConversation = (pool: SessionRuntimePool, hostId: string) => {
     const previous = transport();
+
+    if (context.reuseSessionDraft()) { void pool.release(previous);
+
+    return; }
+
     const key = hostId + ":draft-" + crypto.randomUUID();
     const replacement = pool.create({ hostId });
     removeDraft(hostId + ":" + chatSession().state.sessionId);
