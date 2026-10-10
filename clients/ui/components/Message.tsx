@@ -147,10 +147,13 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
   const [error, setError] = createSignal<string>();
   const [retry, setRetry] = createSignal(0);
   let nextLoadAt = 0;
+  let failed: { version?: number; retry: number } | undefined;
   createDependencyEffect(() => {
+    const retryAttempt = retry();
+    if (failed && (failed.version !== componentProps.message.toolPayloadVersion || failed.retry !== retryAttempt)) failed = undefined;
+
     if (!open() && !isSubagent()) return;
     let active = true; let pending = false;
-    let failed: { version?: number } | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const refresh = () => {
@@ -176,7 +179,8 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
       nextLoadAt = Date.now() + 300;
       pending = true;
       setLoading(true); setError(undefined);
-      void message.loadToolPayload().catch((reason) => { if (active) { failed = { version: message.toolPayloadVersion }; setError(reason instanceof Error ? reason.message : String(reason)); } })
+      const version = message.toolPayloadVersion;
+      void message.loadToolPayload().catch((reason) => { if (active) { failed = { version, retry: retryAttempt }; setError(reason instanceof Error ? reason.message : String(reason)); } })
         .finally(() => { pending = false;
         nextLoadAt = Date.now() + 300;
 
