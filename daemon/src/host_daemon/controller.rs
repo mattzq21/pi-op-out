@@ -357,6 +357,7 @@ impl Host {
             );
         }
         session.publish(json!({"type":"ownership_lost"}), None);
+        if intent == "transfer-local" { return Ok(()); }
         if released_session_needs_abort(intent, &session) {
             let _ = session.raw(json!({"type":"abort"})).await;
         }
