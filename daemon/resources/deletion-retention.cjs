@@ -230,7 +230,8 @@ function pruneReceipts(root) {
 
 function recoveryPending(root) {
   return require('./restore-records.cjs').list(root).length > 0
-    || require('./deletion-records.cjs').list(root).length > 0;
+    || require('./deletion-records.cjs').list(root).length > 0
+    || require('./storage-transaction.cjs').pending(root);
 }
 
 function collectRetention(root, sources, savedFiles, deferred = { directories: [], sessionIds: [] }, unpublishedGoals = false) {

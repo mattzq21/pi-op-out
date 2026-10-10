@@ -127,6 +127,8 @@ async function discoverGoalDiagnostics(profile, discovery) {
     catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(directory + ': diagnostic goal ownership unavailable: ' + error.message); }
   }
 
+  await discoverTransactionDiagnostics(profile, discovery);
+
   const archives = require('./archive-records.cjs');
 
   for (const directory of archives.list(profile)) {
@@ -136,6 +138,22 @@ async function discoverGoalDiagnostics(profile, discovery) {
       if (record) await inspectDirectory(profile, 'archive-transactions', directory, discovery, record);
     } catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(directory + ': diagnostic goal ownership unavailable: ' + error.message); }
   }
+}
+
+async function discoverTransactionDiagnostics(profile, discovery) {
+  const storageTransactions = require('./storage-transaction.cjs');
+
+  for (const staged of storageTransactions.stagedTranscripts(profile)) {
+    if (staged.root !== profile || path.dirname(staged.file) !== staged.staging) {
+      discovery.warnings.push(staged.file + ': diagnostic transcript is outside its journal staging folder');
+      continue;
+    }
+
+    try { await transcript(staged.file, { identity: staged.identity, sessionId: staged.sessionId }, discovery, 'diagnostic-' + staged.kind + '-' + staged.state); }
+    catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(staged.file + ': diagnostic goal reference coverage unavailable: ' + error.message); }
+  }
+
+  for (const journal of storageTransactions.stuck(profile)) discovery.warnings.push('Storage transaction ' + journal.id + ' (' + journal.kind + ') is pending: ' + journal.error);
 }
 
 module.exports = { discoverGoalDiagnostics };

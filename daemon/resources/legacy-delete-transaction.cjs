@@ -1,7 +1,7 @@
 const conversationStorage = require('./conversation-storage.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash, randomUUID } = require('node:crypto');
+const { createHash } = require('node:crypto');
 const io = require('./session-transactions.cjs');
 const goalAssets = require('./goal-asset-cleanup.cjs');
 
@@ -15,59 +15,6 @@ function location(transaction) {
 
 function save(transaction) {
   records.save(transaction);
-}
-
-function ownership(root, targets) {
-  return targets.flatMap(target => {
-    const key = createHash('sha256').update(target.sessionId.toLowerCase()).digest('hex').slice(0, 40);
-
-    const file = path.join(root, 'conversation-ownership', `${key}.json`);
-
-    const before = conversationStorage.read(file);
-
-    if (before === null) return [];
-
-    const record = JSON.parse(before);
-
-    return [{ file, before, after: JSON.stringify({ ...record, deleted: true, client: null }), sessionId: target.sessionId }];
-  });
-}
-
-function create(root, files, sources) {
-  const id = randomUUID();
-
-  const container = path.join(root, 'delete-transactions', id);
-
-  records.allocate(root, container);
-  io.mkdir(container);
-
-  const targets = sources.map(file => ({ path: file, sessionId: files.find(saved => saved.file === file).sessionId }));
-
-  const transaction = {
-    version: 3, kind: 'delete', id, root, container, containerIdentity: io.identity(container), state: 'pending',
-    garbagePath: path.join(root, 'deleted-sessions', id), targets, ownership: ownership(root, targets),
-    goalAssets: goalAssets.plan(root, targets),
-    files: files.flatMap((saved, index) => plannedFile(saved, index, container)),
-  };
-
-  validate(transaction, root, container);
-  save(transaction);
-
-  return transaction;
-}
-
-function plannedFile(saved, index, container) {
-  const metadata = io.exists(saved.file);
-
-  if (!metadata && saved.note) return [];
-
-  if (!metadata || ['dev', 'ino', 'mode', 'size', 'mtimeMs', 'ctimeMs'].some(key => metadata[key] !== saved.metadata[key])) throw new Error(`Deletion source changed before journaling: ${saved.file}`);
-
-  const identity = io.describe(saved.file);
-
-  if (saved.body && !fs.readFileSync(saved.file).equals(saved.body)) throw new Error(`Deletion contents changed before journaling: ${saved.file}`);
-
-  return [{ source: saved.file, staged: path.join(container, `${index}.staged`), identity, optional: Boolean(saved.note) }];
 }
 
 function validSource(root, source) {
@@ -105,35 +52,6 @@ function validate(transaction, root, directory) {
 
 function stagedPath(transaction, file) {
   return path.join(location(transaction), path.basename(file.staged));
-}
-
-function stageFile(transaction, file) {
-  if (!io.matches(file.source, file.identity)) {
-    if (!file.optional || io.exists(file.source)) throw new Error(`Deletion source changed: ${file.source}`);
-    file.skipped = true;
-    save(transaction);
-
-    return;
-  }
-
-  io.syncTree(file.source);
-  io.move({ source: file.source, destination: file.staged, identity: file.identity });
-  file.stagedComplete = true;
-  save(transaction);
-}
-
-function stage(transaction) {
-  for (const file of transaction.files) stageFile(transaction, file);
-
-}
-
-function commit(transaction) {
-  io.mkdir(path.dirname(transaction.garbagePath));
-  transaction.state = 'commit-intent';
-  save(transaction);
-  io.move({ source: transaction.container, destination: transaction.garbagePath, identity: io.describe(transaction.container) });
-  transaction.state = 'committed';
-  save(transaction);
 }
 
 function committed(transaction) {
@@ -272,4 +190,4 @@ function recover(root) {
   if (failures.length) throw new Error(failures.join('\n'));
 }
 
-module.exports = { create, stage, commit, committed, rollback, finish, recover };
+module.exports = { recover };

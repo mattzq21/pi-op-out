@@ -88,6 +88,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS session_directories (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, cwd TEXT NOT NULL, checked_at INTEGER NOT NULL, directory_exists INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS archive_records (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS deletion_records (directory TEXT PRIMARY KEY, record_json TEXT);
+      CREATE TABLE IF NOT EXISTS storage_transactions (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('archive', 'delete', 'restore')), state TEXT NOT NULL CHECK(state IN ('prepared', 'committed')), journal_json TEXT NOT NULL);
 `);
 
     db.exec('COMMIT');
@@ -127,12 +128,12 @@ function reserve(root) {
   const db = open(root);
 
   try {
-    const insert = db.prepare("INSERT INTO sessions (session_id) SELECT ? WHERE NOT EXISTS (SELECT 1 FROM deletion_records d, json_each(d.record_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?) ON CONFLICT(session_id) DO NOTHING");
+    const insert = db.prepare("INSERT INTO sessions (session_id) SELECT ?1 WHERE NOT EXISTS (SELECT 1 FROM deletion_records d, json_each(d.record_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) AND NOT EXISTS (SELECT 1 FROM storage_transactions s, json_each(s.journal_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) ON CONFLICT(session_id) DO NOTHING");
 
     for (;;) {
       const id = require('node:crypto').randomUUID();
 
-      if (insert.run(id, id).changes === 1) return id;
+      if (insert.run(id).changes === 1) return id;
     }
   } finally { db.close(); }
 }

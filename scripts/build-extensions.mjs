@@ -62,14 +62,15 @@ async function mcpBridge() {
 }
 
 async function backendScripts() {
-  const scripts = ["session-descendants", "archive-conversations", "restore-session", "relocate-session", "index-sessions", "storage-inventory", "delete-session", "session-registry", "recover-missing-session"];
+  const scripts = ["session-descendants", "archive-conversations", "restore-session", "relocate-session", "index-sessions", "storage-inventory", "session-registry", "recover-missing-session"].map(name => [name, name]);
+  scripts.push(["storage-transaction", "storage-transaction-command"]);
 
   const commandInputs = await agentCommandInputs();
 
   await buildInParallel([
-    ...scripts.map(async name => {
+    ...scripts.map(async ([name, entry]) => {
       await buildBundle({
-        entryPoints: [`daemon/resources/${name}.cjs`],
+        entryPoints: [`daemon/resources/${entry}.cjs`],
         bundle: true,
         platform: "node",
         format: "iife",

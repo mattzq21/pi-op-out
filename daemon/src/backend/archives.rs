@@ -348,8 +348,8 @@ fn delete_session_targets(runtime: &PiRuntime, targets: &[serde_json::Value], ho
     }
     let active_session_ids: Vec<String> = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
         .filter(|agent| !agent.messageable && agent.host_id == host_id).filter_map(|agent| agent.session_id.clone()).collect();
-    let arguments = json!({ "targets": targets, "activeSessionIds": active_session_ids }).to_string();
-    let script = include_str!("../../resources/delete-session.bundle.mjs");
+    let arguments = json!({ "action": "delete", "targets": targets, "activeSessionIds": active_session_ids }).to_string();
+    let script = include_str!("../../resources/storage-transaction.bundle.mjs");
     let mut command = if host_id == "local" {
         let mut command = node_command();
         command.args(["-e", script, &arguments]);

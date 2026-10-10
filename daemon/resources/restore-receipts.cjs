@@ -214,7 +214,7 @@ function archivePending(root) {
 function pending(root, ignoredJournal) {
   if (require('./restore-records.cjs').list(root).some(file => file !== ignoredJournal)) return true;
 
-  if (archivePending(root) || require('./deletion-records.cjs').list(root).length) return true;
+  if (archivePending(root) || require('./deletion-records.cjs').list(root).length || require('./storage-transaction.cjs').pending(root)) return true;
 
   return false;
 }
