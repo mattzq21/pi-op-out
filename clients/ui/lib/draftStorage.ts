@@ -363,3 +363,11 @@ function draftMutations(drafts: DurableDraft[], submissions: DurableSubmission[]
 
   return [...changes.values()];
 }
+
+export async function removeHostSessionDrafts(endpoint: string) {
+  const storage = new DraftStorage();
+  const saved = await storage.load(endpoint);
+  const drafts = saved.drafts.filter(draft => !draft.destination?.sessionPath);
+  const submissions = saved.submissions.filter(submission => !submission.destination.sessionPath);
+  await storage.commit([], [], drafts.map(draft => draft.id), submissions.map(submission => submission.id));
+}

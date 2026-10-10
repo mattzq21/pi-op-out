@@ -119,7 +119,14 @@ export function saveMobileHost(address: string, name: string): Promise<SavedMobi
   });
 }
 
-export function removeMobileHost(url: string): Promise<SavedMobileHost[]> {
+export async function removeMobileHost(url: string): Promise<SavedMobileHost[]> {
+  const host = (await readMobileHosts()).find(item => item.url === url);
+
+  if (host) {
+    const { removeHostSessionDrafts } = await import("./draftStorage");
+    await removeHostSessionDrafts(hostIdentity(host.name));
+  }
+
   return storedHosts(hosts => hosts.filter(host => host.url !== url), url);
 }
 

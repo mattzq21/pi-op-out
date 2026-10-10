@@ -2,7 +2,7 @@ import { DraftHostStorage } from "./lib/draftHostStorage";
 import { createMemo, createSignal, onCleanup } from "solid-js";
 import { NativeTransport, type NativeConnectionTarget } from "./lib/nativeTransport";
 import type { StateUpdate } from "./lib/solid";
-import type { ComposerUpload, SessionSummary } from "./types";
+import type { AppSettings, ComposerUpload, SessionSummary } from "./types";
 import { draftEndpoint, durableDraftId, type DraftDestination, type DraftStorageIssue, type DurableDraft, type DurableSubmission } from "./lib/draftStorage";
 import { bindDraftStaging, goalPreparationSchema, submissionFingerprint, type DraftSubmissionHandle, type DraftSubmissionPayload } from "./lib/draftSubmission";
 import type { DraftConflictSnapshot } from "./lib/draftStorage";
@@ -49,7 +49,7 @@ export function createConversationDrafts() {
   const recordFor = (key: string) => records().get(keyFor(key)) ?? empty(keyFor(key));
 
   const publishUploads = () => setUploadsByTransport(new Map([...owners].map(([owner, key]) => [owner, recordFor(key).uploads])));
-  const publish = (record: DurableDraft) => { setRecords(current => new Map(current).set(record.key, record)); publishUploads(); };
+  const publish = (record: DurableDraft) => { if (!storage.allows(record.key, record.destination)) return; setRecords(current => new Map(current).set(record.key, record)); publishUploads(); };
 
   const enqueue = (operation: () => Promise<void>) => {
     setPendingWrites(current => current + 1);
@@ -69,7 +69,10 @@ export function createConversationDrafts() {
   const save = (record: DurableDraft) => enqueue(async () => { const current = recordFor(record.key); await storage.commit([current]); });
 
   const update = (key: string, transform: (record: DurableDraft) => DurableDraft) => {
-    const next = transform(recordFor(key)); publish(next);
+    const next = transform(recordFor(key));
+
+    if (!storage.allows(next.key, next.destination)) return recordFor(key);
+    publish(next);
     void save(next).catch(() => undefined);
 
     return next;
@@ -339,6 +342,14 @@ export function createConversationDrafts() {
     }).catch(() => undefined);
   };
 
+  const configureHosts = (settings: AppSettings) => {
+    storage.configure(settings);
+    const enabled = new Set(settings.hosts.filter(host => host.enabled !== false).map(host => host.id));
+
+    if (settings.localEnabled !== false) enabled.add("local");
+    removeMatchingDrafts((key, destination) => !destination?.sessionPath && !enabled.has(destination?.hostId ?? key.slice(0, key.lastIndexOf(":"))));
+  };
+
   const removeDraft = (key: string) => removeMatchingDrafts(candidate => candidate === key);
 
   const removeSessionDrafts = (hostId: string, sessionPath?: string, sessionId?: string) => removeMatchingDrafts((key, destination) =>
@@ -363,5 +374,5 @@ export function createConversationDrafts() {
     return ownerFor(owner).command({ type: "get_goal_preparation", goalSubmissionId: submission.id }, goalPreparationSchema.nullable());
   };
 
-  return { endpoint, ready, loaded, isReady: loaded, isSaving: () => pendingWrites() > 0, saveError: persistenceError, flush, records: draftRecords, hasDraft: transportHasDraftForKey, uploadsFor: (key: string) => recordFor(key).uploads, setDraftTarget, keyForTransport, removeSessionDrafts, composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, setTransportDraft, transportHasDraft, inspectGoalPreparation, rekeyDraft, removeDraft, discard, bindTransport, draftSummaries, legacyRecoveries, submissions, persistenceError, storageIssues, retryPersistence, restoreSubmission, retireSubmission, conflictCount, reloadConflicts, copyLegacyDraft };
+  return { configureHosts, endpoint, ready, loaded, isReady: loaded, isSaving: () => pendingWrites() > 0, saveError: persistenceError, flush, records: draftRecords, hasDraft: transportHasDraftForKey, uploadsFor: (key: string) => recordFor(key).uploads, setDraftTarget, keyForTransport, removeSessionDrafts, composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, setTransportDraft, transportHasDraft, inspectGoalPreparation, rekeyDraft, removeDraft, discard, bindTransport, draftSummaries, legacyRecoveries, submissions, persistenceError, storageIssues, retryPersistence, restoreSubmission, retireSubmission, conflictCount, reloadConflicts, copyLegacyDraft };
 }

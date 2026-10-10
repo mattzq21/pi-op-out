@@ -1,3 +1,4 @@
+import type { AppSettings } from "../types";
 import { z } from "zod";
 import { DraftStorage, durableDraftId, type DraftConflictSnapshot, type DraftDestination, type DurableDraft, type DurableSubmission } from "./draftStorage";
 import { hostIdentity } from "./hostIdentity";
@@ -9,9 +10,22 @@ const draftIdSchema = z.tuple([z.string(), z.string()]);
 export class DraftHostStorage {
   private readonly storage = new DraftStorage();
   private readonly names = new Map<string, string>([["local", hostIdentity("Local")]]);
+  private enabled: Set<string> | undefined;
   private readonly conflicts = new WeakMap<DraftConflictSnapshot, DraftConflictSnapshot>();
 
   conflictCount() { return this.storage.conflictCount(); }
+
+  configure(settings: AppSettings) {
+    this.enabled = new Set(settings.hosts.filter(host => host.enabled !== false).map(host => host.id));
+
+    if (settings.localEnabled !== false) this.enabled.add("local");
+
+    for (const host of settings.hosts) if (!this.names.has(host.id)) this.names.set(host.id, hostIdentity(host.name));
+  }
+
+  allows(key: string, destination?: DraftDestination) {
+    return Boolean(destination?.sessionPath) || !this.enabled || this.enabled.has(destination?.hostId ?? key.slice(0, key.lastIndexOf(":")));
+  }
 
   private host(id: string, saving: boolean) {
     if (saving) {
@@ -69,7 +83,14 @@ export class DraftHostStorage {
     this.names.set("local", hostIdentity("Local"));
 
     for (const host of settings.hosts) this.names.set(host.id, hostIdentity(host.name));
+    this.configure(settings);
     const restored = await this.storage.load(endpoint);
+    const enabledNames = new Set([...this.enabled ?? []].map(id => this.names.get(id)));
+    const removedDrafts = restored.drafts.filter(draft => !draft.destination?.sessionPath && !enabledNames.has(draft.destination?.hostId ?? draft.key.slice(0, draft.key.lastIndexOf(":"))));
+    const removedSubmissions = restored.submissions.filter(submission => !submission.destination.sessionPath && !enabledNames.has(submission.destination.hostId));
+    await this.storage.commit([], [], removedDrafts.map(draft => draft.id), removedSubmissions.map(submission => submission.id));
+    restored.drafts = restored.drafts.filter(draft => !removedDrafts.includes(draft));
+    restored.submissions = restored.submissions.filter(submission => !removedSubmissions.includes(submission));
 
     return { ...restored, drafts: restored.drafts.flatMap(draft => this.draft(draft, false)), submissions: restored.submissions.flatMap(submission => this.submission(submission, false)), emptyDrafts: [] };
   }
@@ -82,6 +103,9 @@ export class DraftHostStorage {
   }
 
   async commit(drafts: DurableDraft[] = [], submissions: DurableSubmission[] = [], removeDrafts: string[] = [], removeSubmissions: string[] = []) {
+    drafts = drafts.filter(draft => this.allows(draft.key, draft.destination));
+
+    if (submissions.some(submission => !this.allows(submission.destination.key, submission.destination))) throw new Error("This machine was removed or disabled. Start a new chat on an enabled machine.");
     await this.includeHosts([...drafts.map(draft => draft.key), ...submissions.map(submission => submission.destination.key)]);
     await this.storage.commit(drafts.flatMap(draft => this.draft(draft, true)), submissions.flatMap(submission => this.submission(submission, true)), removeDrafts.map(id => this.id(id, true)), removeSubmissions);
   }

@@ -128,6 +128,11 @@ export function createAppConversations(preloadChat: () => void) {
   const projectOpenRequest = createRef(0);
   const { composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, transportHasDraft } = drafts;
   const draftSessions = drafts.draftSummaries;
+  createDependencyEffect(() => {
+    const current = settings();
+
+    if (current) drafts.configureHosts(current);
+  }, () => [settings()]);
   drafts.bindTransport(transport(), initialConversationKey.current);
   createDependencyEffect(() => drafts.bindTransport(transport(), activeConversationKey()), () => [transport(), activeConversationKey(), activeCwd(), connected()]);
   const newSessionPending = createRef(false);
