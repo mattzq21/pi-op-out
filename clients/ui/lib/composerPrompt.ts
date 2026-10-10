@@ -67,9 +67,12 @@ function expandSkillReference(value: string, commands: SlashCommand[]) {
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]));
 
 export function buildComposerPrompt(value: string, uploads: ComposerUpload[], commands: SlashCommand[]) {
+  const prompt = expandSkillReference(expandInlineCommand(value.trim(), commands), commands);
+
+  if (/^\/goal(?:\s|$)/.test(prompt) && uploads.length) throw new Error("Goals do not accept attachments. Remove the files and images before sending.");
   const textFiles = uploads.filter((upload) => upload.kind === "text");
   const escapeFileContent = (text: string) => text.replace(/<\/file>/gi, "<\\/file>");
-  const message = [expandSkillReference(expandInlineCommand(value.trim(), commands), commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${escapeFileContent(file.text ?? "")}\n</file>`)].filter(Boolean).join("\n\n");
+  const message = [prompt, ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${escapeFileContent(file.text ?? "")}\n</file>`)].filter(Boolean).join("\n\n");
   const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
 
   return { message, images };

@@ -243,7 +243,9 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
   const input = value.startsWith("__piop_draft ") ? JSON.parse(value.slice(13)) : { objective: value, attachments: [] };
 
   const parsed = Parse(draftSchema, input);
-  const draft = Parse(draftSchema, { ...parsed, attachments: [...parsed.attachments, ...images.map((image, index) => ({ name: image.name ?? `Image ${index + 1}`, image }))] });
+
+  if (parsed.attachments.length || images.length) throw new Error("Goals do not accept attachments. Remove the files and images before sending.");
+  const draft = parsed;
 
   if (!draft.objective.trim()) throw new Error("Goal objective must not be empty.");
   const digest = hash(JSON.stringify(draft));

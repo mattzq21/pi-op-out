@@ -386,7 +386,11 @@ export function Composer(props: Props) {
   const submit = async (behavior: "steer" | "followUp" = "followUp") => { const capturedUploads = uploads(); const capturedValue = value(); const capturedComposer = { ...composer() };
 
     if (controlsBlocked()) return;
-    const { message, images } = buildComposerPrompt(capturedValue, capturedUploads, capturedComposer.commands);
+    let prompt: ReturnType<typeof buildComposerPrompt>;
+
+    try { prompt = buildComposerPrompt(capturedValue, capturedUploads, capturedComposer.commands); }
+    catch (reason) { setUploadError(reason instanceof Error ? reason.message : String(reason)); return; }
+    const { message, images } = prompt;
 
     if (!canSubmit(message, images)) return;
     const rememberPrompt = promptHistory.captureRemember();

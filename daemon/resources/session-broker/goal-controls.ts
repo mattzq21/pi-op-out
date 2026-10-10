@@ -257,6 +257,7 @@ export function registerGoalControls(pi: ExtensionAPI, controls: GoalControls) {
   registerGoalTool(pi, controls);
 
   const preparePrompt = async (message: string, ctx: ExtensionContext, submissionId?: string, images: Static<typeof goalImagesSchema> = [], saved = false) => {
+    if (/^\/goal(?:\s|$)/.test(message.trimStart()) && images.length) throw new Error("Goals do not accept attachments. Remove the files and images before sending.");
     const value = promptGoalObjective(message, images);
 
     if (value === undefined && !saved) return { message };
