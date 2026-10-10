@@ -38,7 +38,7 @@ impl<'a> Holding<'a> {
         {
             let mut state = self.queue.state();
             let originals = self.surviving(&state);
-            state.held = Some(held_messages(cleared, &originals));
+            state.held = Some(held_messages(cleared, &originals, || self.queue.next_item_id())?);
             state.changing = false;
         }
         self.active = false;
@@ -98,19 +98,17 @@ fn validate_hold(state: &QueueState) -> Result<()> {
     Ok(())
 }
 
-fn held_messages(cleared: &Value, originals: &[Value]) -> Vec<Value> {
+fn held_messages(cleared: &Value, originals: &[Value], mut next_id: impl FnMut() -> Result<String>) -> Result<Vec<Value>> {
     let mut held = Vec::new();
     for (field, behavior) in [("steering", "steer"), ("followUp", "followUp")] {
         let texts = array(cleared, field);
         let mut matches = hold_matches(&texts, originals, behavior);
         for message in texts {
             let original = matches.get_mut(&message.to_string()).and_then(Vec::pop);
-            held.push(original.unwrap_or_else(|| {
-                json!({"id":Uuid::new_v4().to_string(),"message":message,"behavior":behavior,"retry":true})
-            }));
+            held.push(match original { Some(item) => item, None => json!({"id":next_id()?,"message":message,"behavior":behavior,"retry":true}) });
         }
     }
-    held
+    Ok(held)
 }
 
 fn hold_matches(texts: &[Value], originals: &[Value], behavior: &str) -> std::collections::HashMap<String, Vec<Value>> {

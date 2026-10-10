@@ -24,7 +24,7 @@ fn recover_storage(root: &Path, ownership: &ConversationOwnership) -> Result<Rec
     let Some(_storage_locks) = storage_locks(root)? else { return Ok(Recovery { retry: true, ..Recovery::default() }); };
     if transactions_pending(root)? { return Ok(Recovery { retry: true, transactions_pending: true, ..Recovery::default() }); }
     let db = crate::session_registry::open(root)?;
-    let mut statement = db.prepare("SELECT session_id FROM queued_inputs ORDER BY session_id").map_err(|error| error.to_string())?;
+    let mut statement = db.prepare("SELECT DISTINCT session_id FROM queue_items").map_err(|error| error.to_string())?;
     let entries = statement.query_map([], |row| row.get::<_, String>(0)).map_err(|error| error.to_string())?
         .collect::<std::result::Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
     Ok(recover_entries(root, ownership, entries))

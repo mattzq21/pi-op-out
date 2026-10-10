@@ -2,7 +2,7 @@ use super::*;
 
 impl SessionQueue {
     pub(super) async fn execute_held_prompt(&self, mut command: Value) -> Result<Value> {
-        let id = Uuid::new_v4().to_string();
+        let id = self.next_item_id()?;
         let mut item = json!({"id":id,"message":command["message"],"behavior":"followUp","deliveryStarted":true});
         if let Some(images) = command.get("images") { item["images"] = images.clone(); }
         self.retain_item(&item)?;
@@ -27,6 +27,7 @@ impl SessionQueue {
     }
 
     fn save_retained(&self, retained: &[Value]) -> Result<()> {
+        if retained.len() > 100 { return Err("A session can have at most 100 queued items".into()); }
         if let Some(storage) = &self.storage { storage.save(retained)?; }
         Ok(())
     }

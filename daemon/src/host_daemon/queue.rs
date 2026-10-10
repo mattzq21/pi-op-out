@@ -14,9 +14,9 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 use tokio::sync::Mutex as AsyncMutex;
-use uuid::Uuid;
 
 mod storage;
+mod storage_rows;
 mod temporary;
 mod durability;
 mod holding;
@@ -628,7 +628,7 @@ impl SessionQueue {
 
     async fn replace_live(&self, id: &str, behavior: &str, neighbor: Option<&str>, action: &Value, originals: Vec<Value>) -> Result<Value> {
         let cleared = self.execute(json!({"type":"clear_queue"})).await?;
-        let mut remaining = cleared_messages(&cleared, &originals, id, behavior);
+        let mut remaining = cleared_messages(&cleared, &originals, id, behavior, || self.next_item_id())?;
         if let Some(neighbor) = neighbor {
             move_item(&mut remaining, id, neighbor, action);
         }
@@ -651,6 +651,10 @@ impl SessionQueue {
             self.mark_retry(&remaining);
             return Err("Another source changed the queue while switching. Pending text has been kept for retry; reattach any images from messages sent outside this window.".into());
         }
+        self.deliver_remaining(&remaining).await
+    }
+
+    async fn deliver_remaining(&self, remaining: &[Value]) -> Result<Value> {
         for (index, item) in remaining.iter().enumerate() {
             if let Err(error) = self.deliver(item, false).await {
                 self.mark_retry(&remaining[index..]);

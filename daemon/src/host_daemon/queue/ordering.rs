@@ -1,21 +1,21 @@
-use super::{array, flag, json, text, Value, Uuid};
+use super::{array, flag, json, text, Value, Result};
 
-pub(super) fn cleared_messages(cleared: &Value, originals: &[Value], id: &str, behavior: &str) -> Vec<Value> {
+pub(super) fn cleared_messages(cleared: &Value, originals: &[Value], id: &str, behavior: &str, mut next_id: impl FnMut() -> Result<String>) -> Result<Vec<Value>> {
     let mut remaining = Vec::new();
     for (field, mode) in [("steering", "steer"), ("followUp", "followUp")] {
         for message in array(cleared, field) {
-            let mut item = originals
+            let original = originals
                 .iter()
                 .find(|item| !flag(item, "retry") && item["behavior"] == mode && item["message"] == message)
-                .cloned()
-                .unwrap_or_else(|| json!({"id":Uuid::new_v4().to_string(),"message":message,"behavior":mode,"retry":true}));
+                .cloned();
+            let mut item = match original { Some(item) => item, None => json!({"id":next_id()?,"message":message,"behavior":mode,"retry":true}) };
             if item["id"] == id && matches!(behavior, "steer" | "followUp") {
                 item["behavior"] = json!(behavior);
             }
             remaining.push(item);
         }
     }
-    remaining
+    Ok(remaining)
 }
 
 pub(super) fn queue_neighbor(pending: &[Value], target: &Value, action: &Value, behavior: &str) -> Option<String> {

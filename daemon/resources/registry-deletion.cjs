@@ -33,7 +33,7 @@ function forget(root, targets) {
       return !current || current.session_path === target.path;
     });
 
-    for (const target of targets) db.prepare('DELETE FROM queued_inputs WHERE session_id=?').run(target.sessionId);
+    for (const target of targets) db.prepare('DELETE FROM queue_origins WHERE session_id=?').run(target.sessionId);
 
     removeSessionRecords(db, targets);
 

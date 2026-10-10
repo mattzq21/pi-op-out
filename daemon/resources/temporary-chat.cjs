@@ -91,7 +91,7 @@ function references(db, excluded) {
     }
   }
 
-  const queued = db.prepare('SELECT session_id, record_json FROM queued_inputs').all().filter(row => row.session_id !== excluded).map(row => row.record_json);
+  const queued = db.prepare(`SELECT session_id, cwd || COALESCE(session_path, '') AS text FROM queue_origins UNION ALL SELECT session_id, message || details_json AS text FROM queue_items UNION ALL SELECT q.session_id, a.details_json AS text FROM queue_attachments a JOIN queue_items q USING(queue_item_id)`).all().filter(row => row.session_id !== excluded).map(row => row.text);
 
   return { version, directories, queued };
 }

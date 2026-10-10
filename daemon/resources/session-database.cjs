@@ -63,7 +63,28 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS goal_asset_dependencies (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity));
       CREATE TABLE IF NOT EXISTS goal_asset_reclamations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS queued_inputs (session_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS queue_item_sequence (id INTEGER PRIMARY KEY CHECK(id=1), last_id INTEGER NOT NULL);
+      INSERT OR IGNORE INTO queue_item_sequence VALUES (1, 0);
+      CREATE TABLE IF NOT EXISTS queue_origins (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+        cwd TEXT NOT NULL, session_path TEXT);
+      CREATE TABLE IF NOT EXISTS queue_items (
+        queue_item_id INTEGER PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        queue_position INTEGER NOT NULL CHECK(queue_position BETWEEN 1 AND 100),
+        message TEXT NOT NULL, behavior TEXT NOT NULL CHECK(behavior IN ('steer', 'followUp')),
+        details_json TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS queue_items_order ON queue_items(session_id, queue_position);
+      CREATE TRIGGER IF NOT EXISTS queue_items_limit BEFORE INSERT ON queue_items
+        WHEN NOT EXISTS(SELECT 1 FROM queue_items WHERE queue_item_id=NEW.queue_item_id)
+          AND (SELECT count(*) FROM queue_items WHERE session_id=NEW.session_id)>=100
+        BEGIN SELECT RAISE(ABORT, 'A session can have at most 100 queued items'); END;
+      CREATE TABLE IF NOT EXISTS queue_attachments (
+        attachment_id INTEGER PRIMARY KEY,
+        queue_item_id INTEGER NOT NULL REFERENCES queue_items(queue_item_id) ON DELETE CASCADE,
+        attachment_position INTEGER NOT NULL CHECK(attachment_position>=1),
+        media_type TEXT NOT NULL, data BLOB NOT NULL, details_json TEXT NOT NULL,
+        UNIQUE(queue_item_id, attachment_position));
       CREATE TABLE IF NOT EXISTS session_directories (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, cwd TEXT NOT NULL, checked_at INTEGER NOT NULL, directory_exists INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS archive_records (directory TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS deletion_records (directory TEXT PRIMARY KEY, record_json TEXT);
@@ -146,16 +167,46 @@ function rows(root, sql, ...parameters) {
   finally { db.close(); }
 }
 
-function queuedInputs(root) { return rows(root, 'SELECT session_id, record_json FROM queued_inputs'); }
+function queueRecord(db, id) {
+  const origin = db.prepare('SELECT cwd, session_path AS sessionPath FROM queue_origins WHERE session_id=?').get(id);
+
+  if (!origin) return undefined;
+
+  const items = db.prepare('SELECT * FROM queue_items WHERE session_id=? ORDER BY queue_position').all(id).map(row => {
+    const item = { ...JSON.parse(row.details_json), id: String(row.queue_item_id), message: row.message, behavior: row.behavior };
+
+    const images = db.prepare('SELECT * FROM queue_attachments WHERE queue_item_id=? ORDER BY attachment_position').all(row.queue_item_id)
+      .map(image => ({ ...JSON.parse(image.details_json), mimeType: image.media_type, data: Buffer.from(image.data).toString('base64') }));
+
+    if (images.length) item.images = images;
+
+    return item;
+  });
+
+  return items.length ? { version: 1, origin, items } : undefined;
+}
+
+function queuedInputs(root) {
+  const db = open(root);
+
+  try {
+    db.exec('BEGIN');
+
+    return db.prepare('SELECT session_id FROM queue_origins').all().flatMap(row => {
+      const record = queueRecord(db, row.session_id);
+
+      return record ? [{ session_id: row.session_id, record_json: JSON.stringify(record) }] : [];
+    });
+  } finally { db.close(); }
+}
 
 function queuedInput(root, id) {
   const db = open(root);
 
-  try {
-    const row = db.prepare('SELECT record_json FROM queued_inputs WHERE session_id=lower(?)').get(id);
+  try { db.exec('BEGIN');
 
-    return row ? JSON.parse(row.record_json) : undefined;
-  } finally { db.close(); }
+    return queueRecord(db, id.toLowerCase()); }
+  finally { db.close(); }
 }
 
 function recoveryRecords(root) { return rows(root, 'SELECT record_id, record_json FROM recovery_directories ORDER BY record_id'); }

@@ -1,4 +1,4 @@
-use super::{json, text, Result, SessionQueue, Uuid, Value};
+use super::{json, text, Result, SessionQueue, Value};
 
 impl SessionQueue {
     pub fn question_response(&self, request: &str) -> Option<Value> {
@@ -7,10 +7,11 @@ impl SessionQueue {
     }
 
     pub(super) async fn enqueue(&self, command: Value, name: &str) -> Result<Value> {
+        if command["questionResponse"]["requestId"].as_str().is_some_and(|request| self.question_response(request).is_some()) { return Ok(Value::Null); }
+        self.check_capacity()?;
         let Some(command) = self.prepare_submission(command).await? else { return Ok(json!(false)); };
         let question = command["questionResponse"]["requestId"].as_str();
-        let id = question.map(|request| format!("question:{request}")).unwrap_or_else(|| Uuid::new_v4().to_string());
-        if self.state().retained.iter().any(|item| text(item, "id") == id || item["questionResponse"]["requestId"].as_str().is_some_and(|request| Some(request) == question)) { return Ok(Value::Null); }
+        let id = self.next_item_id()?;
         let pending = submission_payload(&command, &id, name);
         let held = self.save_submission(&id, &pending)?;
         if held {
@@ -30,6 +31,17 @@ impl SessionQueue {
             return Ok(Value::Null);
         }
         result
+    }
+
+    pub(super) fn next_item_id(&self) -> Result<String> {
+        if let Some(storage) = &self.storage { return storage.reserve_id(); }
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Ok(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed).to_string())
+    }
+
+    fn check_capacity(&self) -> Result<()> {
+        if self.state().durable_messages().len() >= 100 { return Err("A session can have at most 100 queued items".into()); }
+        Ok(())
     }
 
     async fn prepare_submission(&self, mut command: Value) -> Result<Option<Value>> {
