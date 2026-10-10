@@ -97,10 +97,7 @@ const finishSteps = {
   'forget-registry'(journal) { require('./registry-deletion.cjs').forget(journal.root, journal.targets); },
   'goal-assets'(journal) { require('./goal-asset-cleanup.cjs').finish(journal, save); },
   'record-retention'(journal, step) { require('./retention-candidates.cjs').recordRetention(journal.root, journal.id, step.pending); },
-  'temporary-chats'(journal) {
-    try { require('./temporary-chat.cjs').cleanupDeleted(journal.root); }
-    catch (error) { console.error(`Temporary folder cleanup will retry: ${error.message}`); }
-  },
+  'temporary-chats'(journal) { require('./temporary-chat.cjs').cleanupDeleted(journal.root); },
   'remove-staged'(journal) {
     for (const step of journal.steps.filter(step => step.type === 'move')) {
       if (!io.exists(step.staged)) continue;
@@ -130,23 +127,29 @@ function rollback(journal) {
 }
 
 function finish(journal) {
-  for (const step of journal.finish) {
-    if (step.done) continue;
+  try {
+    for (const step of journal.finish) {
+      if (step.done) continue;
 
-    try { finishSteps[step.type](journal, step); }
-    catch (error) {
-      journal.lastError = `${step.type}: ${error.message}`;
+      try { finishSteps[step.type](journal, step); }
+      catch (error) { return keepPending(journal, `${step.type}: ${error.message}`); }
+
+      step.done = true;
+      delete journal.lastError;
       save(journal);
-
-      return journal.lastError;
     }
 
-    step.done = true;
-    delete journal.lastError;
-    save(journal);
-  }
+    retire(journal);
+  } catch (error) { return keepPending(journal, error.message); }
+}
 
-  retire(journal);
+function keepPending(journal, message) {
+  journal.lastError = message;
+
+  try { save(journal); }
+  catch (error) { return `${message}\nRecovery record could not be updated: ${error.message}`; }
+
+  return message;
 }
 
 function execute(journal) {

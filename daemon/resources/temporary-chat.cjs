@@ -122,20 +122,26 @@ function cleanupDeleted(root) {
 
     if (!snapshot) return;
     db.exec('BEGIN IMMEDIATE');
-
-    if (db.prepare('PRAGMA data_version').get().data_version === snapshot.version) {
-      for (const candidate of candidates) {
-        const directory = path.join(root, 'tmp', candidate.session_id);
-
-        if (candidate.original_path !== directory || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(candidate.session_id) || inUse(snapshot, directory)) continue;
-
-        try { remove(db, directory, candidate.session_id); }
-        catch (error) { console.error(`Temporary folder cleanup will retry ${directory}: ${error.message}`); }
-      }
-    }
-
+    const failures = db.prepare('PRAGMA data_version').get().data_version === snapshot.version ? removeCandidates(db, root, snapshot, candidates) : [];
     db.exec('COMMIT');
+
+    if (failures.length) throw new Error(`Temporary folder cleanup failed: ${failures.join('; ')}`);
   } finally { db.close(); }
+}
+
+function removeCandidates(db, root, snapshot, candidates) {
+  const failures = [];
+
+  for (const candidate of candidates) {
+    const directory = path.join(root, 'tmp', candidate.session_id);
+
+    if (candidate.original_path !== directory || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(candidate.session_id) || inUse(snapshot, directory)) continue;
+
+    try { remove(db, directory, candidate.session_id); }
+    catch (error) { failures.push(`${directory}: ${error.message}`); }
+  }
+
+  return failures;
 }
 
 function remove(db, directory, id) {
