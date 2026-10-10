@@ -4,8 +4,20 @@ const { createHash, randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
 const database = require('./session-database.cjs');
 const { validSessionHeader } = require('./session-header.cjs');
+const { Type } = require('typebox');
+const { Check } = require('typebox/value');
 
 const labels = { archive: 'Archive', delete: 'Deletion', restore: 'Restore' };
+
+const stepSchema = Type.Object({ type: Type.String() });
+
+const moveSchema = Type.Object({ type: Type.Literal('move'), source: Type.String(), staged: Type.String(), identity: Type.Object({ identity: Type.String() }) });
+
+const journalSchema = Type.Object({
+  version: Type.Literal(1), id: Type.String(), kind: Type.Union([Type.Literal('archive'), Type.Literal('delete'), Type.Literal('restore')]),
+  state: Type.Union([Type.Literal('prepared'), Type.Literal('committed')]), root: Type.String(), staging: Type.String(),
+  targets: Type.Array(Type.Object({ path: Type.String(), sessionId: Type.String({ minLength: 1 }) })), steps: Type.Array(stepSchema), finish: Type.Array(stepSchema),
+});
 
 class Rejected extends Error {}
 
@@ -61,13 +73,23 @@ function retire(journal) {
 
 function rows(root) {
   return withDatabase(root, db => db.prepare('SELECT id, kind, state, journal_json FROM storage_transactions ORDER BY id').all())
-    .map(row => ({ ...row, journal: JSON.parse(row.journal_json) }));
+    .map(row => {
+      try {
+        const journal = JSON.parse(row.journal_json);
+
+        return Check(journalSchema, journal) ? { ...row, journal } : { ...row, damaged: 'Invalid storage transaction journal' };
+      }
+      catch (error) { return { ...row, damaged: `Damaged storage transaction journal: ${error.message}` }; }
+    });
 }
 
 const steps = {
   move: {
     run(step) { io.syncTree(step.source); io.move({ source: step.source, destination: step.staged, identity: step.identity }); },
-    undo(step) { if (io.exists(step.source) || io.exists(step.staged)) io.undo({ source: step.source, destination: step.staged, identity: step.identity }); },
+    undo(step) {
+      if (!step.applied || !io.exists(step.staged)) return;
+      io.undo({ source: step.source, destination: step.staged, identity: step.identity });
+    },
     done(step) { return !io.exists(step.source) && io.matches(step.staged, step.identity); },
   },
   'write-record': {
@@ -81,13 +103,10 @@ const steps = {
       storage.write(step.file, step.after);
     },
     undo(step) {
+      if (!step.applied) return;
       const storage = require('./conversation-storage.cjs');
-      const current = storage.read(step.file);
 
-      if (current === step.before) return;
-
-      if (current !== step.after) throw new Error(`Record changed during rollback: ${step.file}`);
-      storage.write(step.file, step.before);
+      if (storage.read(step.file) === step.after) storage.write(step.file, step.before);
     },
     done(step) { return require('./conversation-storage.cjs').read(step.file) === step.after; },
   },
@@ -97,7 +116,7 @@ const finishSteps = {
   'forget-registry'(journal) { require('./registry-deletion.cjs').forget(journal.root, journal.targets); },
   'goal-assets'(journal) { require('./goal-asset-cleanup.cjs').finish(journal, save); },
   'record-retention'(journal, step) { require('./retention-candidates.cjs').recordRetention(journal.root, journal.id, step.pending); },
-  'temporary-chats'(journal) { require('./temporary-chat.cjs').cleanupDeleted(journal.root); },
+  'temporary-chats'(journal) { database.markCleanup(journal.root, 'temporary-chat'); },
   'remove-staged'(journal) {
     for (const step of journal.steps.filter(step => step.type === 'move')) {
       if (!io.exists(step.staged)) continue;
@@ -162,6 +181,8 @@ function execute(journal) {
     point();
 
     for (const step of journal.steps) {
+      step.applied = true;
+      save(journal);
       steps[step.type].run(step);
       point();
     }
@@ -196,7 +217,7 @@ function deleteSource(root, target) {
   const parent = fs.realpathSync(target.root || path.join(root, area));
   const source = fs.realpathSync(target.path);
 
-  if (!inside(parent, source) || path.extname(source) !== '.jsonl' || ![path.join(root, 'sessions'), path.join(root, 'archived'), parent].some(directory => inside(directory, source))) {
+  if (!inside(parent, source) || path.extname(source) !== '.jsonl' || !inside(root, source)) {
     throw new Rejected('Only Piop sessions can have their supporting data deleted');
   }
 
@@ -236,9 +257,16 @@ function supportingFiles(source) {
   return files;
 }
 
-function ownershipRecord(root, sessionId) {
+function ownershipFile(root, sessionId) {
   const key = createHash('sha256').update(sessionId.toLowerCase()).digest('hex').slice(0, 40);
-  const file = path.join(root, 'conversation-ownership', `${key}.json`);
+
+  return path.join(root, 'conversation-ownership', `${key}.json`);
+}
+
+function supportingPaths(source) { return [source, source.replace(/\.jsonl$/, '.snapshots'), `${source}.loop-detection.json`]; }
+
+function ownershipRecord(root, sessionId) {
+  const file = ownershipFile(root, sessionId);
   const before = require('./conversation-storage.cjs').read(file);
 
   if (before === null) return [];
@@ -283,8 +311,10 @@ function deleteSessions(root, request) {
   try {
     io.recover(root);
     require('./storage-recovery.cjs').recoverStorage(root);
-    journal = planDelete(root, request);
   }
+  catch (error) { return { state: 'rolled-back', error: `Deletion failed: earlier storage recovery is pending: ${error.message}\nNothing was deleted.` }; }
+
+  try { journal = planDelete(root, request); }
   catch (error) { return rejected('delete', error); }
 
   const outcome = execute(journal);
@@ -303,16 +333,44 @@ function afterCommit(root, outcome) {
   try { require('./retention-collection.cjs').collectDeferredRetention(root); }
   catch (error) { warnings.push(`Deferred retention cleanup will retry: ${error.message}`); }
 
+  const temporary = cleanupTemporaryChats(root);
+
+  if (temporary) warnings.push(temporary);
+
   if (warnings.length) outcome.warning = warnings.join('\n');
+}
+
+function cleanupTemporaryChats(root) {
+  const revision = database.cleanupRequest(root, 'temporary-chat');
+
+  if (revision === undefined) return;
+
+  try {
+    require('./temporary-chat.cjs').cleanupDeleted(root);
+    database.finishCleanup(root, 'temporary-chat', revision);
+  } catch (error) { return `Temporary folder cleanup will retry: ${error.message}`; }
+}
+
+function validTargets(root, journal) {
+  return journal.targets.every(target => path.extname(target.path) === '.jsonl' && inside(root, target.path) && !inside(journal.staging, target.path));
+}
+
+function validStep(journal, step) {
+  if (!steps[step.type]) return false;
+
+  if (step.type === 'move') return path.dirname(step.staged) === journal.staging && journal.targets.some(target => supportingPaths(target.path).includes(step.source));
+
+  return journal.targets.some(target => step.file === ownershipFile(journal.root, target.sessionId));
 }
 
 function validJournal(root, row) {
   const journal = row.journal;
 
-  return journal.version === 1 && journal.id === row.id && journal.kind === row.kind && journal.state === row.state && labels[row.kind]
-    && journal.root === root && journal.staging === path.join(root, 'storage-transactions', row.id)
-    && journal.steps.every(step => steps[step.type] && (step.type !== 'move' || path.dirname(step.staged) === journal.staging))
-    && journal.finish.every(step => finishSteps[step.type]);
+  if (journal.id !== row.id || journal.kind !== row.kind || journal.state !== row.state) return false;
+
+  if (journal.root !== root || journal.staging !== path.join(root, 'storage-transactions', row.id) || !validTargets(root, journal)) return false;
+
+  return journal.steps.every(step => validStep(journal, step)) && journal.finish.every(step => finishSteps[step.type]);
 }
 
 function recoverJournals(root) {
@@ -320,7 +378,7 @@ function recoverJournals(root) {
 
   for (const row of rows(root)) {
     try {
-      if (!validJournal(root, row)) throw new Error('Unsupported storage transaction journal');
+      if (row.damaged || !validJournal(root, row)) throw new Error(row.damaged ?? 'Unsupported storage transaction journal');
 
       if (row.state === 'prepared') rollback(row.journal);
       else if (row.state === 'committed') {
@@ -346,19 +404,28 @@ function recover(root) {
 
   for (const journal of stuck(root)) failures.push(`${labels[journal.kind]} cleanup is pending: ${journal.error}`);
 
-  return failures.length ? { state: 'pending', error: failures.join('\n') } : { state: 'committed' };
+  const temporary = cleanupTemporaryChats(root);
+
+  return failures.length ? { state: 'pending', error: failures.join('\n'), warning: temporary } : { state: 'committed', warning: temporary };
 }
 
 function pending(root) { return rows(root).length > 0; }
 
 function stuck(root) {
-  return rows(root).filter(row => row.state === 'committed' && row.journal.lastError).map(row => ({ id: row.id, kind: row.kind, error: row.journal.lastError }));
+  return rows(root).filter(row => row.damaged || (row.state === 'committed' && row.journal.lastError)).map(row => ({ id: row.id, kind: row.kind, error: row.damaged ?? row.journal.lastError }));
 }
 
+function temporaryCleanupPending(root) { return database.cleanupRequest(root, 'temporary-chat') !== undefined; }
+
 function stagedTranscripts(root) {
-  return rows(root).flatMap(row => row.journal.steps
-    .filter(step => step.type === 'move' && step.source.endsWith('.jsonl'))
+  const list = rows(root);
+  const damaged = list.find(row => row.damaged);
+
+  if (damaged) throw new Error(`${damaged.id}: ${damaged.damaged}`);
+
+  return list.flatMap(row => row.journal.steps
+    .filter(step => Check(moveSchema, step) && step.source.endsWith('.jsonl'))
     .map(step => ({ id: row.id, kind: row.kind, state: row.state, root: row.journal.root, staging: row.journal.staging, file: step.staged, identity: step.identity.identity, sessionId: row.journal.targets.find(target => target.path === step.source)?.sessionId })));
 }
 
-module.exports = { deleteSessions, recover, recoverJournals, pending, stuck, stagedTranscripts };
+module.exports = { deleteSessions, recover, recoverJournals, pending, stuck, temporaryCleanupPending, stagedTranscripts };

@@ -142,18 +142,24 @@ async function discoverGoalDiagnostics(profile, discovery) {
 
 async function discoverTransactionDiagnostics(profile, discovery) {
   const storageTransactions = require('./storage-transaction.cjs');
+  let staged = [];
 
-  for (const staged of storageTransactions.stagedTranscripts(profile)) {
-    if (staged.root !== profile || path.dirname(staged.file) !== staged.staging) {
-      discovery.warnings.push(staged.file + ': diagnostic transcript is outside its journal staging folder');
+  try { staged = storageTransactions.stagedTranscripts(profile); }
+  catch (error) { discovery.warnings.push('Storage transaction diagnostics unavailable: ' + error.message); }
+
+  for (const entry of staged) {
+    if (entry.root !== profile || path.dirname(entry.file) !== entry.staging) {
+      discovery.warnings.push(entry.file + ': diagnostic transcript is outside its journal staging folder');
       continue;
     }
 
-    try { await transcript(staged.file, { identity: staged.identity, sessionId: staged.sessionId }, discovery, 'diagnostic-' + staged.kind + '-' + staged.state); }
-    catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(staged.file + ': diagnostic goal reference coverage unavailable: ' + error.message); }
+    try { await transcript(entry.file, { identity: entry.identity, sessionId: entry.sessionId }, discovery, 'diagnostic-' + entry.kind + '-' + entry.state); }
+    catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(entry.file + ': diagnostic goal reference coverage unavailable: ' + error.message); }
   }
 
   for (const journal of storageTransactions.stuck(profile)) discovery.warnings.push('Storage transaction ' + journal.id + ' (' + journal.kind + ') is pending: ' + journal.error);
+
+  if (storageTransactions.temporaryCleanupPending(profile)) discovery.warnings.push('Temporary folder cleanup for deleted sessions is pending');
 }
 
 module.exports = { discoverGoalDiagnostics };
