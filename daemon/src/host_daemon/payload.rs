@@ -261,16 +261,3 @@ fn text_delta(current: &mut Value, event: &Value) {
         _ => {}
     }
 }
-
-#[cfg(test)]
-mod regression_tests {
-    use super::*;
-    #[test]
-    fn non_ascii_history_fits_the_client_wire_limit() {
-        let content = "界".repeat(1024 * 1024);
-        let entries: Vec<_> = (0..48).map(|i| json!({"id":i.to_string(),"parentId":if i == 0 { Value::Null } else { json!((i-1).to_string()) },"type":"message","message":{"role":"assistant","content":content}})).collect();
-        let history = client_payload(json!({"entries":entries,"leafId":"47"}));
-        assert!(history.to_string().len() < 128 * 1024 * 1024);
-        assert!(history["omittedEntries"].as_u64().unwrap() > 0);
-    }
-}

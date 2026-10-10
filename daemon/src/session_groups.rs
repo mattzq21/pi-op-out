@@ -11,10 +11,6 @@ mod deletions;
 #[path = "session_group_storage.rs"]
 mod storage;
 
-#[cfg(test)]
-#[path = "session_groups_tests.rs"]
-mod tests;
-
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionGroup {

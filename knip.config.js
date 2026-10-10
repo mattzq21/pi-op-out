@@ -10,7 +10,7 @@ for (const directory of ["daemon/src", "clients/desktop/src"]) {
   for (const file of await readdir(new URL(directory, import.meta.url), { recursive: true })) {
     const normalized = file.replaceAll("\\", "/");
 
-    if (!normalized.endsWith(".rs") || normalized.split("/").includes("tests") || /(?:^|\/)\w*tests?\.rs$/.test(normalized)) continue;
+    if (!normalized.endsWith(".rs")) continue;
     const path = resolve(root, directory, file);
     const source = await readFile(path, "utf8");
 
@@ -31,14 +31,8 @@ export default {
     "extensions/piop-define-agents/{daemon-loader,mcp-schema}.ts",
     "daemon/resources/mcp-bridge.ts",
     "daemon/resources/{session-descendants,archive-conversations,restore-session,relocate-session,index-sessions,storage-inventory,delete-session}.cjs",
-    "scripts/{mutation-node-runner,oxlint-local}.mjs",
+    "scripts/{build,oxlint-local}.mjs",
     "tools/oxlint/anti-slop/index.ts",
-    "test/**/*.test.mjs",
-    "test/e2e/**/*.spec.ts",
-    "test/{chat-scroll-follow,chatgpt-recovery-proof,mobile-sidebar-scroll,mobile-terminal-scroll,terminal-cursor,register-typescript,mutation-coverage}.mjs",
-    "test/fixtures/{chat-scroll-follow,desktop-terminal-cursor,mobile-terminal-scroll}.tsx",
-    "test/isolated-node-home.mjs",
-    "stryker.remaining.config.mjs",
   ],
   project: [
     "*.{ts,mjs,js}",
@@ -47,7 +41,6 @@ export default {
     "daemon/resources/**/*.{ts,mjs,cjs}",
     "scripts/**/*.mjs",
     "tools/**/*.{ts,mjs}",
-    "test/**/*.{ts,tsx,mjs}",
   ],
   ignore: [
     "**/*.bundle.mjs",
@@ -57,11 +50,6 @@ export default {
     "@capacitor/android",
     "@earendil-works/pi-ai",
     "@earendil-works/pi-coding-agent",
-    "@types/mocha",
-    "@wdio/cli",
-    "@wdio/local-runner",
-    "@stryker-mutator/command-runner",
-    "@stryker-mutator/piop-node-runner",
   ],
   ignoreBinaries: ["flock", "rust-code-analysis-cli", "xwininfo"],
   paths: {

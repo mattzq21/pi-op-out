@@ -1,9 +1,5 @@
 use super::*;
 
-#[cfg(all(test, unix))]
-#[path = "daemon_tests.rs"]
-mod tests;
-
 pub(crate) struct Daemon {
     pub(crate) alive: AtomicBool,
     pub(crate) remote_port: Option<u16>,

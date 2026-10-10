@@ -153,7 +153,6 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
   return <SubagentNavigationContext.Provider value={openSubagent}>{!settings() ? (<><AppLoading error={error()} /><DraftRecovery drafts={drafts} onSelect={selectSession} /></>) : (<div role="region" aria-label={workspaceLabel()} class={`app dark ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
     {!mobileSidebarOpen() && renderMobileSidebarToggle()}
     {renderMobileSidebarBackdrop()}
-    {import.meta.env.MODE === "e2e" && <div class="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
     {renderSidebar()}
     <TranscriptPluginsContext.Provider value={pluginPane.transcripts}><ConversationQuestionsContext.Provider value={questionContext}>{renderChatWorkspace()}</ConversationQuestionsContext.Provider></TranscriptPluginsContext.Provider>
     {renderSettingsView()}

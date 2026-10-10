@@ -10,9 +10,6 @@ default-run = "piop"
 name = "piop_desktop"
 crate-type = ["rlib"]
 
-[features]
-webdriver = ["dep:tauri-plugin-wdio-webdriver"]
-
 [[bin]]
 name = "piop"
 path = "src/main.rs"
@@ -33,7 +30,6 @@ uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["io-util", "io-std", "macros", "process", "sync", "time", "net", "rt-multi-thread", "signal"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
-tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = { version = "0.18" }

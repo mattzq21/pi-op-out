@@ -2,7 +2,7 @@ import { z } from "zod";
 import { rpcEventSchema, rpcCommandSchema } from "./rpcSchemas";
 import { entrySchema, pendingMessageSchema } from "./chatSessionEventSchema";
 
-export { z, rpcEventSchema, rpcCommandSchema, entrySchema, pendingMessageSchema };
+export { rpcEventSchema, rpcCommandSchema, entrySchema, pendingMessageSchema };
 
 export const voidResultSchema = z.unknown().transform(() => undefined);
 

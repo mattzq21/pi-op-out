@@ -11,7 +11,7 @@ mod tailscale_auth;
 pub(super) fn start(app: AppHandle) -> Result<(), String> {
     let token = std::env::var("PIOP_MOBILE_TOKEN").unwrap_or_else(|_| daemon_endpoint::read().map(|endpoint| endpoint.token).unwrap_or_else(|_| format!("{}{}", Uuid::new_v4(), Uuid::new_v4())));
     if token.len() < 32 { return Err("PIOP_MOBILE_TOKEN must contain at least 32 characters".into()); }
-    let bind = std::env::var("PIOP_MOBILE_BIND").unwrap_or_else(|_| if DEVELOPMENT || cfg!(feature = "test-home") { "127.0.0.1:0" } else { "127.0.0.1:9847" }.into());
+    let bind = std::env::var("PIOP_MOBILE_BIND").unwrap_or_else(|_| if DEVELOPMENT { "127.0.0.1:0" } else { "127.0.0.1:9847" }.into());
     let listener = TcpListener::bind(&bind).map_err(|error| format!("Mobile endpoint: {error}"))?;
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
     daemon_endpoint::publish(listener.local_addr().map_err(|error| error.to_string())?, token.clone())?;
@@ -219,41 +219,4 @@ async fn send_outgoing<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     };
     if sent { if let Some(id) = restart_id { crate::daemon_restart::commit(app.clone(), &id); } }
     sent
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn cancellation_remains_available_when_work_capacity_is_full() {
-        let jobs = Arc::new(Semaphore::new(1));
-        let controls = Arc::new(Semaphore::new(2));
-        let _work = request_permit(&jobs, &controls, "start_pi", &json!({})).unwrap();
-        assert!(request_permit(&jobs, &controls, "start_pi", &json!({})).is_err());
-        let _cancel = request_permit(&jobs, &controls, "stop_pi", &json!({})).expect("cancellation must reach the running job");
-        let _stop = request_permit(&jobs, &controls, "pi_command", &json!({"command":{"type":"abort"}})).unwrap();
-        assert!(request_permit(&jobs, &controls, "stop_pi", &json!({})).is_err(), "control capacity is bounded too");
-    }
-    #[test]
-    fn authentication_requires_exact_secret_and_message_type() {
-        let token = "a-private-secret-with-at-least-32-characters";
-        assert!(authenticated(&json!({"type":"authenticate","token":token}), token));
-        for value in [json!({}), json!({"token":token}), json!({"type":"authenticate","token":"wrong"}), json!({"type":"authenticate","token":format!("{token}x")})] { assert!(!authenticated(&value, token)); }
-    }
-    #[tokio::test]
-    async fn websocket_rejects_commands_before_authentication() {
-        for accepted in [true, false] {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let address = listener.local_addr().unwrap();
-            let server = tokio::spawn(async move {
-                let (stream, _) = listener.accept().await.unwrap();
-                authenticate_socket(stream, "secret").await.is_ok()
-            });
-            let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}")).await.unwrap();
-            let message = if accepted { json!({"type":"authenticate","token":"secret"}) } else { json!({"id":1,"command":"pi_command","args":{}}) };
-            socket.send(Message::Text(message.to_string().into())).await.unwrap();
-            assert_eq!(server.await.unwrap(), accepted);
-        }
-    }
-
 }

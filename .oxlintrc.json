@@ -9,10 +9,6 @@
     "target/**",
     "clients/desktop/gen/**",
     "daemon/resources/*.bundle.mjs",
-    ".stryker-tmp/**",
-    "reports/**",
-    "**/mutants.out/**",
-    "**/mutants.out.old/**",
     "vite.config.js",
     "vite.config.d.ts",
     "tools/oxlint/anti-slop/**"

@@ -228,6 +228,4 @@ impl TerminalRuntime {
     pub(super) fn working_directories(&self, host_id: &str) -> Result<Vec<String>, String> {
         Ok(self.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.values().filter(|terminal| terminal.host_id == host_id).map(|terminal| terminal.cwd.clone()).collect())
     }
-    #[cfg(test)]
-    pub(super) fn test_processes(&self) -> &Mutex<HashMap<String, TerminalProcess>> { &self.processes }
 }

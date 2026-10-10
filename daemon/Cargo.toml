@@ -11,9 +11,6 @@ name = "piop_daemon"
 name = "piopd"
 path = "src/daemon_main.rs"
 
-[features]
-test-home = []
-
 [dependencies]
 piop-protocol = { path = "../crates/protocol" }
 libc = "0.2"

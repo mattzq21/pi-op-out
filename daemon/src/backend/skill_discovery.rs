@@ -40,11 +40,6 @@ pub(super) fn expand_skill_path(path: &str, home: &Path) -> PathBuf {
     path.strip_prefix("~/").map(|rest| home.join(rest)).unwrap_or_else(|| PathBuf::from(path))
 }
 
-#[cfg(test)]
-pub(super) fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
-    discover_inventory(root, include_root_markdown).unwrap_or_default()
-}
-
 fn discover_inventory(root: &Path, include_root_markdown: bool) -> Result<Vec<Value>, String> {
     if !root.try_exists().map_err(|error| error.to_string())? { return Ok(Vec::new()); }
 
@@ -124,11 +119,6 @@ pub(super) fn merge_discovered_skills(settings: &mut AppSettings) -> Result<(), 
     let skills = saved_skills(&home, false)?;
     merge_skills(settings, &home, skills);
     Ok(())
-}
-
-#[cfg(test)]
-pub(super) fn merge_discovered_skills_at(settings: &mut AppSettings, home: &Path) {
-    merge_skills(settings, home, discover_skills_in(&home.join(".agents/skills"), false));
 }
 
 fn merge_skills(settings: &mut AppSettings, home: &Path, skills: Vec<Value>) {

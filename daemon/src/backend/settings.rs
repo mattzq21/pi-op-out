@@ -2,19 +2,7 @@ pub(super) use crate::settings_types::default_agent;
 pub(super) use crate::settings_types::default_settings;
 pub(super) use crate::settings_types::session_operation_tools;
 pub(super) use crate::settings_types::codex_web_search_tool;
-#[cfg(test)]
-pub(super) use crate::skill_discovery::frontmatter_value;
-#[cfg(test)]
-pub(super) use crate::skill_discovery::codex_disables_implicit_invocation;
-#[cfg(test)]
-pub(super) use crate::skill_discovery::skill_path_is_within;
-#[cfg(test)]
-pub(super) use crate::skill_discovery::expand_skill_path;
-#[cfg(test)]
-pub(super) use crate::skill_discovery::discover_skills_in;
 pub(super) use crate::skill_discovery::merge_discovered_skills;
-#[cfg(test)]
-pub(super) use crate::skill_discovery::merge_discovered_skills_at;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashSet;

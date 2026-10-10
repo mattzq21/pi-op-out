@@ -1,5 +1,3 @@
-#[cfg(test)]
-pub(super) use crate::keybindings::canonical_shortcut;
 pub(super) use crate::keybindings::migrate_keybindings;
 pub(super) use crate::keybindings::validate_keybindings;
 pub(super) use crate::private_fs::set_private_file_permissions;

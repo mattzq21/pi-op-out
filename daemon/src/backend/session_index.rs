@@ -264,7 +264,7 @@ pub(super) fn validate_remote_project_directory(path: String, host_name: &str, c
     if !output.status.success() { return Err(format!("Could not open project directory on {host_name}: {}", String::from_utf8_lossy(&output.stderr).trim())); }
     Ok(path)
 }
-pub(super) fn create_temporary_chat(app: AppHandle, host_id: String, _e2e: Option<bool>) -> Result<TemporaryChat, String> {
+pub(super) fn create_temporary_chat(app: AppHandle, host_id: String) -> Result<TemporaryChat, String> {
     let settings = load_app_settings(app.clone())?;
     let session_id = super::pi_runtime::reserve_session_id(&settings, &host_id)?;
     let cwd = if host_id == "local" {

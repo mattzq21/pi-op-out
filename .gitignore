@@ -8,10 +8,6 @@ clients/desktop/binaries/
 clients/desktop/gen/
 logs/
 .trace/
-.stryker-tmp/
-reports/mutation/
-mutants.out/
-mutants.out.old/
 graphify-out/
 extensions/pi-orchestration/config.json
 extensions/piop-define-agents/config.json

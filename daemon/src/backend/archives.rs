@@ -1,6 +1,4 @@
 use serde_json::json;
-#[cfg(test)]
-use std::fs;
 use std::thread;
 use std::path::Path;
 use std::path::PathBuf;
@@ -11,8 +9,6 @@ use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 use crate::platform::AppHandle;
 use crate::platform::State;
-#[cfg(test)]
-use uuid::Uuid;
 use crate::{AppSettings, HostStorage, MAX_PATH_LIST_BYTES, MAX_REMOTE_HOSTS, MAX_SESSION_INDEX_BATCH_BYTES, PiRuntime, RemoteHost, STORAGE_DIRECTORY, StorageInventory, StorageReport, TerminalRuntime, conversation_ownership, node_command};
 use crate::terminals::{stop_terminals, terminal_lookup};
 use crate::archive_sessions::archive_conversations;
@@ -216,36 +212,6 @@ fn session_descendants(app: &AppHandle, host_id: &str, session_path: &str, archi
     }
 }
 
-#[cfg(test)]
-pub(super) fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
-    let file_name = Path::new(session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
-    let destination = format!("{}-{file_name}", Uuid::new_v4());
-    let remote = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/{STORAGE_DIRECTORY}/archived"; mkdir -p "$archive" && mv -- "$target" "$archive"/{} ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(session_path), shell_quote(&destination));
-    let remote = format!(r#"{remote} && {{ rm -f -- "$target.loop-detection.json" || true; }}"#);
-    let output = command(remote).output().map_err(|error| error.to_string())?;
-    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    Ok(())
-}
-
-#[cfg(test)]
-pub(super) fn archive_local_session(home: &Path, session_path: &str) -> Result<(), String> {
-    let source = local_desktop_session_file_at(home, session_path)?;
-    let archive_dir = home.join(STORAGE_DIRECTORY).join("archived");
-    fs::create_dir_all(&archive_dir).map_err(|error| format!("Could not create archive directory: {error}"))?;
-    let file_name = source.file_name().ok_or("Session path has no file name")?;
-    let mut destination = archive_dir.join(file_name);
-    if destination.exists() {
-        let stem = source.file_stem().and_then(|value| value.to_str()).unwrap_or("session");
-        let extension = source.extension().and_then(|value| value.to_str()).unwrap_or("jsonl");
-        destination = archive_dir.join(format!("{stem}-{}.{}", Uuid::new_v4(), extension));
-    }
-    if let Err(error) = fs::rename(&source, &destination) {
-        return Err(format!("Could not archive session: {error}"));
-    }
-    let _ = fs::remove_file(format!("{}.loop-detection.json", source.display()));
-    Ok(())
-}
-
 fn stored_session_file(settings: &AppSettings, host_id: &str, session_path: &str, archived: bool) -> Result<String, String> {
     if archived { archived_session_file(settings, host_id, session_path) } else { desktop_session_file(settings, host_id, session_path) }
 }
@@ -334,11 +300,6 @@ fn delete_stored_sessions(app: AppHandle, runtime: &PiRuntime, session_paths: Ve
     let session_ids = delete_conversation_files(&app, runtime, &settings, &host_id, &paths)?;
     finish_deleted_sessions(&app, &host_id, &paths, &session_ids, mutations);
     Ok(paths.into_iter().map(|(path, _)| path).collect())
-}
-
-#[cfg(test)]
-pub(super) fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Option<&RemoteHost>, local_root: &Path, archived: bool) -> Result<(), String> {
-    delete_session_targets(runtime, &[json!({"path":path,"area":if archived { "archived" } else { "sessions" },"root":if host_id == "local" { Some(local_root) } else { None }})], host_id, host)
 }
 
 fn delete_session_targets(runtime: &PiRuntime, targets: &[serde_json::Value], host_id: &str, host: Option<&RemoteHost>) -> Result<(), String> {

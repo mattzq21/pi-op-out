@@ -288,7 +288,7 @@ fn handle_home_directory(app: AppHandle, _owner: String, args: Value) -> Command
 
 fn handle_create_temporary_chat(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(create_temporary_chat(app.clone(), argument(&args, "hostId")?, argument(&args, "e2e")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || serde_json::to_value(create_temporary_chat(app.clone(), argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
     })
 }
 

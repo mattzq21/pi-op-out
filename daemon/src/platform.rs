@@ -8,10 +8,6 @@ mod headless {
     pub mod async_runtime {
         pub use tokio::spawn;
 
-        #[cfg(test)]
-        pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
-            tokio::runtime::Runtime::new().expect("Could not create test runtime").block_on(future)
-        }
     }
 
     type Listener = Arc<dyn Fn(Event) + Send + Sync>;

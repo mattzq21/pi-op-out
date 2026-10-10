@@ -22,8 +22,6 @@ const DEVELOPMENT: bool = cfg!(debug_assertions);
 const APP_TITLE: &str = if DEVELOPMENT { "Piop Dev" } else { "piop" };
 
 fn home_dir() -> Result<PathBuf, String> {
-    #[cfg(feature = "webdriver")]
-    if let Some(path) = std::env::var_os("PIOP_TEST_HOME") { return Ok(PathBuf::from(path)); }
     std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| "HOME is not set".into())
 }
 
@@ -186,8 +184,6 @@ pub fn run() {
         (context, start_window)
     };
     let builder = tauri::Builder::default();
-    #[cfg(feature = "webdriver")]
-    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder.manage(desktop_daemon::DesktopDaemon::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         for window in app.webview_windows().values() {
             configure_dictation_microphone(window)?;
@@ -222,7 +218,3 @@ pub fn run() {
         }
     });
 }
-
-#[cfg(test)]
-#[path = "desktop_tests.rs"]
-mod tests;

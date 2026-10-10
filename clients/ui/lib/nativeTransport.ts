@@ -284,7 +284,7 @@ export class NativeTransport {
   }
   private async ensureConnectionDirectory(version: number) {
 
-    if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" }, z.object({ cwd: z.string(), sessionId: z.string() }));
+    if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call("create_temporary_chat", { hostId: this.hostId }, z.object({ cwd: z.string(), sessionId: z.string() }));
 
     if (version !== this.connectionVersion) { await call("remove_temporary_chat", { path: chat.cwd, hostId: this.hostId }, voidResultSchema);
 

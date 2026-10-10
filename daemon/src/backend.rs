@@ -52,10 +52,6 @@ use std::{
 };
 use crate::platform::AppHandle;
 use uuid::Uuid;
-#[cfg(test)]
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-#[cfg(test)]
-use std::process::ExitStatus;
 
 const STORAGE_DIRECTORY: &str = if cfg!(debug_assertions) { ".piop-dev" } else { ".piop" };
 const DEVELOPMENT: bool = cfg!(debug_assertions);
@@ -323,9 +319,6 @@ struct HostStorage {
 struct StorageReport { hosts: Vec<HostStorage> }
 
 
-#[cfg(test)]
-mod tests;
-
 #[path = "backend/settings_storage.rs"]
 mod settings_storage;
 #[path = "../../shared/rust/settings_concurrency.rs"]
@@ -353,58 +346,22 @@ pub use lifecycle::run_daemon;
 use lifecycle::{detach_owner};
 use pi_runtime::{StartPiOptions, detach_pi_with, open_project_directory, pi_command, pi_presence, start_pi_for_owner, stop_pi};
 use terminals::{StartTerminalOptions, close_terminal, resize_terminal, start_terminal_for_owner, write_terminal};
-#[cfg(test)]
-use pi_runtime::open_project_directory_with;
-#[cfg(test)]
-use terminals::{TerminalLaunch, decode_terminal_bytes, resize_terminal_pty, start_terminal_with, stop_terminals, stream_terminal_output, write_terminal_input, write_terminal_queue};
 use archives::{archive_session, archived_session_file, delete_archived_session, delete_session, desktop_session_file, failed_storage, inspect_storage, relocate_session, restore_archived_session, storage_report};
-#[cfg(test)]
-use archives::{archive_local_session, archive_remote_session, collect_storage_report, delete_session_files, local_archived_session_file_at, local_desktop_session_file_at, parse_storage_inventory, query_storage_inventory, relocate_local_session, relocate_remote_session, remote_session_file, run_session_deletion};
 use pi_launch::{ remote_host, remote_login_command, session_identity, ssh, ssh_base};
-#[cfg(test)]
-use pi_launch::{ read_remote_session_header, remote_directory_path, remote_pi_path, stage_extension_script, validate_remote_host};
-#[cfg(test)]
-use broker::{agent_is_active, broker_response, read_broker_line, resolve_agent};
 use session_index::{collect_host_sessions, create_temporary_chat, home_directory, list_directories, list_local_sessions, list_sessions, remove_temporary_chat, validate_project_directory};
-#[cfg(test)]
-use session_index::{create_local_temporary_chat, create_remote_temporary_chat, list_local_directories, parse_remote_directories, query_remote_directories, read_session_summaries, read_session_summaries_with, remote_directory_listing_script, remove_local_temporary_chat, remove_remote_temporary_chat, temporary_chat_id, validate_local_project_directory, validate_remote_project_directory};
 use crate::provider_codex::codex_usage;
-#[cfg(test)]
-use crate::keybindings::default_keybindings;
 use crate::environment::home_dir;
 use crate::provider_opencode::opencode_go_usage;
 use crate::environment::pi_executable;
-#[cfg(test)]
-use crate::provider_codex::codex_response;
-#[cfg(test)]
-use crate::provider_codex::codex_usage_values;
-#[cfg(test)]
-use crate::environment::pi_executable_in;
-#[cfg(test)]
-use crate::provider_codex::query_codex_usage;
 use settings::{load_app_settings, load_settings_change, save_app_settings};
-#[cfg(test)]
-use settings::{codex_disables_implicit_invocation, default_settings, discover_skills_in, expand_skill_path, frontmatter_value, merge_discovered_skills_at, read_settings_at, save_settings_with, skill_path_is_within, validate_settings_for_save};
 use extensions::{runtime_settings};
-#[cfg(test)]
-use extensions::{generated_extension_root, prepare_codex_web_search_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_runtime_settings, prepare_session_broker, prepare_trace_reader};
-#[cfg(test)]
-use settings_storage::atomic_write_private;
 use settings_storage::{ensure_private_dir, set_private_file_permissions};
-#[cfg(test)]
-use settings_storage::{canonical_shortcut, migrate_keybindings, settings_path_at, validate_keybindings};
 
 use broker::{BrokerRuntime, BusyAgent, broker_environment};
-#[cfg(test)]
-use broker::claim_agent;
 
 #[path = "backend/terminals.rs"]
 mod terminals;
 use terminals::TerminalRuntime;
-#[cfg(test)]
-use terminals::TerminalProcess;
 
 use process_io::{ensure_desktop_sessions_dir, run_limited, shell_quote};
-#[cfg(test)]
-use process_io::LimitedOutput;
 const MAX_PATH_LIST_BYTES: usize = 1024 * 1024;

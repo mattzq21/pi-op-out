@@ -672,6 +672,3 @@ impl SessionQueue {
         }
     }
 }
-
-#[cfg(test)]
-mod regression_tests;

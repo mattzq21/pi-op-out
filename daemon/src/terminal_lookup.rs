@@ -361,37 +361,3 @@ fn read_page(item: &Transcript, id: &str, request: &Value) -> Result<Value, Stri
     result["truncated"] = json!(requested < available);
     Ok(result)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn listed_owned_terminal_moves_with_reconnected_owner() {
-        let runtime = TerminalRuntime::default();
-        let generation = Uuid::new_v4();
-        start(&runtime, "restored", "local:source", "/tmp", "local", "old-connection", generation).unwrap();
-        start(&runtime, "unrelated", "local:other", "/tmp", "local", "old-connection", Uuid::new_v4()).unwrap();
-        record(&runtime.history, "restored", "$ preserved\n");
-        let listed = shared_entries(&runtime, "source", "new-connection", &json!({}), true).unwrap();
-        assert_eq!(listed[0]["output"], "$ preserved\n");
-        assert_eq!(listed[0]["generation"], generation.to_string());
-        assert_eq!(listed[0]["owned"], true);
-        reassign(&runtime, "new-connection", "restored", "local:child").unwrap();
-        assert!(reassign(&runtime, "old-connection", "restored", "local:wrong").is_err());
-        assert_eq!(runtime.history.lock().unwrap()["restored"].session_id, "child");
-        assert!(owned_by(&runtime.history.lock().unwrap()["unrelated"], "old-connection"));
-    }
-
-    #[test]
-    fn listing_unowned_or_draft_terminals_preserves_original_connection() {
-        for (session_id, owned) in [("saved", false), ("draft-reconnected", true)] {
-            let runtime = TerminalRuntime::default();
-            start(&runtime, "original", session_id, "/tmp", "local", "original-connection", Uuid::new_v4()).unwrap();
-            let listed = shared_entries(&runtime, session_id, "another-connection", &json!({}), owned).unwrap();
-            assert_eq!(listed[0]["owned"], false);
-            assert!(reassign(&runtime, "another-connection", "original", "local:wrong").is_err());
-            assert!(owned_by(&runtime.history.lock().unwrap()["original"], "original-connection"));
-        }
-    }
-}

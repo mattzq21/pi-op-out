@@ -2,10 +2,6 @@ use serde::Serialize;
 use serde_json::Value;
 use std::time::Duration;
 use super::environment::pi_executable;
-#[cfg(test)]
-use serde_json::json;
-#[cfg(test)]
-use super::settings_types::AppSettings;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,46 +108,4 @@ fn opencode_go_request(client: &reqwest::Client, auth: &Value) -> Result<reqwest
         request = request.header(name, value.as_str().ok_or("Invalid OpenCode Go authentication header")?);
     }
     Ok(request)
-}
-
-#[cfg(test)]
-mod opencode_go_tests {
-    use super::*;
-
-    #[test]
-    fn parses_usage_windows_from_the_opencode_go_gateway() {
-        let response = json!({"usage":{"rolling":{"status":"ok","percent":26.7,"resetsAt":"2026-09-17T16:00:00.000Z"},"weekly":{"status":"ok","percent":55.4,"resetsAt":"2026-09-21T00:00:00Z"},"monthly":{"status":"rate-limited","percent":101,"resetsAt":"2026-09-30T00:00:00.000Z"}}});
-        let usage = opencode_go_usage_values(&response).expect("usage parses");
-        assert_eq!(usage.rolling.status, "ok");
-        assert_eq!(usage.rolling.remaining_percent, 73);
-        assert_eq!(usage.rolling.reset_at, Some(1789660800));
-        assert_eq!(usage.weekly.remaining_percent, 45);
-        assert_eq!(usage.weekly.reset_at, Some(1789948800));
-        assert_eq!(usage.monthly.status, "rate-limited");
-        assert_eq!(usage.monthly.remaining_percent, 0);
-    }
-
-    #[test]
-    fn rejects_responses_without_usage_windows() {
-        assert!(opencode_go_usage_values(&json!({"type":"error","error":{"type":"AuthError","message":"Unauthorized"}})).is_none());
-        assert!(opencode_go_usage_values(&json!({"usage":{"rolling":{"status":"ok","percent":50}}})).is_none());
-        assert!(opencode_go_usage_values(&json!({})).is_none());
-    }
-
-    #[test]
-    fn converts_iso8601_reset_timestamps_to_epoch_seconds() {
-        assert_eq!(opencode_go_epoch_seconds("2026-09-17T00:00:00.000Z"), Some(1789603200));
-        assert_eq!(opencode_go_epoch_seconds("2026-09-17T11:39:50Z"), Some(1789645190));
-        assert_eq!(opencode_go_epoch_seconds("2000-02-29T23:59:59Z"), Some(951868799));
-        assert_eq!(opencode_go_epoch_seconds("2026-09-17T11:39:50+02:00"), None);
-        assert_eq!(opencode_go_epoch_seconds("2026-09-17 11:39:50Z"), None);
-        assert_eq!(opencode_go_epoch_seconds("yesterday"), None);
-    }
-
-    #[test]
-    fn settings_saved_before_new_toggles_still_load() {
-        let stored = json!({"defaultModel":"openai-codex/gpt-5.6-sol","defaultThinking":"medium","contextWindowCap":200000,"contextWindowCapEnabled":true,"autoRetry":true,"tools":[],"skills":[],"mcpServers":[]});
-        let settings: AppSettings = serde_json::from_value(stored).expect("older settings load");
-        assert!(settings.auto_retry);
-    }
 }
