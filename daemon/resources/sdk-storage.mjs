@@ -23,7 +23,6 @@ export async function installRuntimeStorage(directory) {
   const modules = ["core/auth-storage.js", "core/settings-manager.js", "core/trust-manager.js", "utils/paths.js"];
   const [auth, settings, trust, paths] = await Promise.all(modules.map(file => import(storageFileUrl(storagePath.join(directory, "dist", file)).href)));
   modelFileStorage = auth.FileAuthStorageBackend;
-  usePiopAuthFile(auth.AuthStorage);
   installSettingsStorage(settings.FileSettingsStorage);
   installTrustStorage(trust.ProjectTrustStore, path => paths.canonicalizePath(paths.resolvePath(path)));
 }
@@ -340,10 +339,6 @@ function storagePublish(path, temporary, body, exclusive) {
   } finally { storageFs.rmSync(temporary, { force: true }); }
 }
 
-export function runtimeAuthPath() {
-  return storagePath.join(sessionReferenceRoot(), "auth.json");
-}
-
 export function storedModelText(path) {
   try { return storageFs.readFileSync(path, "utf8"); } catch (error) {
     if (error.code === "ENOENT") return undefined;
@@ -471,14 +466,6 @@ function withStoredSettings(path, operation) {
     if (next !== undefined) database.prepare("UPDATE sdk_settings SET body=? WHERE path=?").run(next, key);
     database.exec("COMMIT");
   } finally { database.close(); }
-}
-
-function usePiopAuthFile(AuthStorage) {
-  if (installedStorageClasses.has(AuthStorage)) return;
-  requireStorageMethods(AuthStorage, ["create"]);
-  const create = AuthStorage.create.bind(AuthStorage);
-  AuthStorage.create = () => create(runtimeAuthPath());
-  installedStorageClasses.add(AuthStorage);
 }
 
 function sessionStorageState(manager) {

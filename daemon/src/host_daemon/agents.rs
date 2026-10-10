@@ -10,6 +10,7 @@ pub(super) async fn load(home: &Path, storage: &str, settings: &Value, initial: 
         .args(["--input-type=module", "-", &settings.to_string()])
         .env("HOME", home)
         .env("PIOP_STORAGE_DIRECTORY", storage)
+        .env("PI_CODING_AGENT_DIR", home.join(storage))
         .env("PIOP_AGENT_CONFIG_PATH", &path)
         .env("PIOP_AGENT_RESPONSE_ID", &response)
         .env("PIOP_GENERATED_EXTENSION_ROOT", crate::extensions::generated_extension_root()?)

@@ -99,6 +99,20 @@ impl Sdk {
         sdk
     }
 
+    fn spawn(&self, encoded: &str) -> Result<tokio::process::Child> {
+        Command::new("node")
+            .env("PIOP_STORAGE_DIRECTORY", crate::STORAGE_DIRECTORY)
+            .env("PI_CODING_AGENT_DIR", crate::environment::home_dir()?.join(crate::STORAGE_DIRECTORY))
+            .args(["--input-type=module", "-e", SOURCE_LOADER, "--", &self.executable])
+            .args(source_arguments(encoded))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|error| format!("Could not start Pi provider SDK: {error}"))
+    }
+
     async fn connect(&self) -> Result<Arc<Connection>> {
         let mut current = self.connection.lock().await;
         if self.stopped.load(Ordering::SeqCst) {
@@ -115,16 +129,7 @@ impl Sdk {
             include_str!("../../resources/provider-sdk.mjs")
         );
         let encoded = STANDARD.encode(source);
-        let mut child = Command::new("node")
-            .env("PIOP_STORAGE_DIRECTORY", crate::STORAGE_DIRECTORY)
-            .args(["--input-type=module", "-e", SOURCE_LOADER, "--", &self.executable])
-            .args(source_arguments(&encoded))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|error| format!("Could not start Pi provider SDK: {error}"))?;
+        let mut child = self.spawn(&encoded)?;
         let stdin = child.stdin.take().ok_or("Provider SDK input unavailable")?;
         let stdout = child.stdout.take().ok_or("Provider SDK output unavailable")?;
         let (stop, mut stopping) = mpsc::unbounded_channel();
