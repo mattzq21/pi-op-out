@@ -54,6 +54,7 @@ fn failed_group_changes_do_not_notify_and_release_the_storage_lock() {
 fn assignment_lookup_is_host_specific_and_preserves_other_session_fields() {
     let directory = TestDirectory::new(); let path = directory.0.join("groups.json");
     let state = SessionGroups {
+        parents: HashMap::new(),
         groups: vec![project("first", "First", None), project("second", "Second", None)],
         assignments: HashMap::from([("local:shared".into(), Some("first".into())), ("remote:shared".into(), Some("second".into())), ("local:ungrouped".into(), None)]),
         removed_projects: HashSet::new(),
@@ -139,6 +140,7 @@ fn project_metadata_updates_keep_user_names_and_do_not_duplicate_groups() {
 fn loading_migrates_legacy_groups_and_preserves_explicit_assignments() {
     let directory = TestDirectory::new(); let path = directory.0.join("groups.json");
     let legacy = SessionGroups {
+        parents: HashMap::new(),
         groups: vec![project("local:/repo/", "Workspace", Some("/repo/"))],
         assignments: HashMap::from([("local:ungrouped".into(), None), ("local:stale".into(), Some("deleted".into()))]),
         removed_projects: HashSet::from(["local:/forgotten".into()]),

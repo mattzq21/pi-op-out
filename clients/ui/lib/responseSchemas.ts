@@ -26,7 +26,7 @@ export const sessionSummarySchema = z.object({ id: z.string(), isDraft: z.boolea
 
 export const sessionGroupSchema = z.object({ id: z.string(), name: z.string(), cwd: z.union([z.string(), z.null()]).optional(), hostId: z.union([z.string(), z.null()]).optional(), hostName: z.union([z.string(), z.null()]).optional() });
 
-export const sessionGroupsSchema = z.object({ groups: z.array(sessionGroupSchema), assignments: z.record(z.string(), z.union([z.string(), z.null()])), removedProjects: z.array(z.string()) });
+export const sessionGroupsSchema = z.object({ groups: z.array(sessionGroupSchema), parents: z.record(z.string(), z.string()), assignments: z.record(z.string(), z.union([z.string(), z.null()])), removedProjects: z.array(z.string()) });
 
 export const storageOwnershipSchema = z.enum(["owned", "referenced", "shared", "unattributed"]);
 

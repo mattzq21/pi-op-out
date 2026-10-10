@@ -5,6 +5,7 @@ import { z } from "zod";
 
 const sessionGroupsSchema = z.object({
   groups: z.array(z.looseObject({ id: z.string(), name: z.string() })),
+  parents: z.record(z.string(), z.string()),
   removedProjects: z.array(z.string()),
   assignments: z.record(z.string(), z.string().nullable()),
 });
