@@ -48,6 +48,7 @@ async function collectDeletionFiles(sources, request, files) {
     const header = entries[0];
     validateHeader(header, request);
     trace.sessionId = header.id;
+    trace.cwd = header.cwd;
   }
 }
 

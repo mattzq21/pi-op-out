@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, watch as watchFiles } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
-export async function watchBackend(command, args, options, root, { port, branchLabel, watch = true }) {
+export async function watchBackend(command, args, options, root, { port, watch = true }) {
   root = resolve(root);
   let child;
   let task;
@@ -193,10 +193,8 @@ export async function watchBackend(command, args, options, root, { port, branchL
 
     const define = {
       "import.meta.env.VITE_PIOP_DEBUG": JSON.stringify(options.env.VITE_PIOP_DEBUG),
-      __PIOP_CUSTOM_DEVELOPMENT_LABEL__: branchLabel !== undefined,
     };
 
-    if (branchLabel !== undefined) define.__PIOP_DEVELOPMENT_BRANCH__ = JSON.stringify(branchLabel);
     vite = await createServer({
       root,
       define,

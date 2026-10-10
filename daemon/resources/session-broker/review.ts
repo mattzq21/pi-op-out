@@ -138,12 +138,7 @@ async function reviewSettings() {
 }
 
 function reviewSubagentCount(args: string, command: string, ctx: ExtensionContext) {
-  if (command === "review") {
-    if (!args.trim()) return 0;
-    ctx.ui.notify("Usage: /review — reviews files in the current directory", "warning");
-
-    return;
-  }
+  if (command === "review") return 0;
 
   if (!args.trim()) return null;
   const count = Number(args.trim());
@@ -218,7 +213,12 @@ export function registerReview(pi: ExtensionAPI) {
     const profile = await reviewProfile(pi, settings.agent);
     signal?.throwIfAborted();
 
-    const task = subagentReviewTask(profile, count, settings.prompt);
+    const prompt = command === "review" && args.trim() ? `${settings.prompt}
+
+Review scope supplied by the user:
+${args.trim()}` : settings.prompt;
+
+    const task = subagentReviewTask(profile, count, prompt);
     const { record, publication } = await createReview(ctx, profile, signal);
     await publishReview(pi, ctx, record, publication);
     signal?.throwIfAborted();

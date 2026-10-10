@@ -54,7 +54,7 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .app > .icon-rail { position: absolute; top: env(safe-area-inset-top); bottom: env(safe-area-inset-bottom); left: 0; width: min(85vw, 340px); z-index: 19; }
   .app > .icon-rail.compact { display: none; }
   .mobile-sidebar-backdrop { display: block; position: absolute; inset: 0; z-index: 18; border: 0; background: #0008; }
-  .sidebar-resizer, .rail-branch { display: none; }
+  .sidebar-resizer { display: none; }
   .chat-panes.split { flex-direction: column; overflow-y: auto; }
   .chat-panes > .chat-shell, .chat-panes > .split-chat { width: 100%; }
   .chat-panes.split > * { flex: 0 0 80%; min-height: 380px; }

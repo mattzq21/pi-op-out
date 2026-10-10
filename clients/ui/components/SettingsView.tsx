@@ -18,13 +18,14 @@ import { isMobile } from "../lib/platform";
 import type { AgentConfig, AgentProfile, AppSettings, Model, RemoteHost, SessionSummary } from "../types";
 import { IconButton } from "./IconButton";
 import { ProviderSettings } from "./ProviderSettings";
+import { ReviewSettings } from "./ReviewSettings";
 import { StorageSettings } from "./StorageSettings";
 import { PluginSettings } from "./PluginSettings";
 import { ToastHistory } from "./ToastHistory";
 import { Toggle } from "./Toggle";
 import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
-export type Section = "providers" | "general" | "dictation" | "models" | "storage" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
+export type Section = "review" | "providers" | "general" | "dictation" | "models" | "storage" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
 
 type SettingsSection = { id: Section; label: string; icon: typeof Settings2 };
 
@@ -35,6 +36,7 @@ export const sections: SettingsSection[] = [
   { id: "dictation", label: "Dictation", icon: Mic },
   { id: "models", label: "Models", icon: Cpu },
   { id: "providers", label: "Providers", icon: ShieldCheck },
+  { id: "review", label: "Review", icon: ClipboardCheck },
   { id: "storage", label: "Storage", icon: HardDrive },
   { id: "keybinds", label: "Keybinds", icon: Keyboard },
   { id: "toasts", label: "Toast history", icon: ClipboardCheck },
@@ -465,6 +467,7 @@ export function SettingsView(props: SettingsViewProps) {
         {renderModels()}
         {formValidation().visibleSection === "connections" && <SettingsSection title="Hosts" description="Saved daemon connections are stored on this device."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Manage saved hosts</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
         {renderAgents()}
+        <Show when={formValidation().visibleSection === "review"}><SettingsSection title="Review" description="Choose the agent and instructions for code reviews."><ReviewSettings settings={draft()} agents={agentDrafts()} onChange={patch} /></SettingsSection></Show>
         {formValidation().visibleSection === "storage" && <StorageSettings hostId={settingsProps().providerHostId} />}
         {formValidation().visibleSection === "machines" && <SettingsSection title="Machines" description="Connect to Piop daemons over SSH. Sessions and configuration stay on each machine."><div class="mcp-list"><div class="mcp-card"><div class="mcp-card-head"><span class="config-icon mcp"><Server size={16} /></span><strong>Local</strong><Toggle label="Enable local machine" checked={draft().localEnabled !== false} onChange={(localEnabled) => setDraft((current) => ({ ...current, localEnabled }))} /></div></div>{<Key each={draft().hosts} by={(host) => host.id}>{(host, _index) => <div class="mcp-card" ><div class="mcp-card-head"><span class="config-icon mcp"><Server size={16} /></span><input aria-label="Machine name" aria-invalid={!host().name.trim() || host().name.trim().toLowerCase() === "local" || nameValidation().duplicateHostNames.has(host().name.trim().toLowerCase())} value={host().name} onInput={(event) => updateHost(host().id, { name: event.target.value })} /><Toggle label={`Enable ${host().name}`} checked={host().enabled !== false} onChange={(enabled) => updateHost(host().id, { enabled })} /><IconButton label={`Remove ${host().name}`} onClick={() => removeHost(host())}><Trash2 size={15} /></IconButton></div><div class="command-fields"><label><span>SSH target</span><input aria-label={`${host().name} SSH target`} aria-invalid={!host().target.trim()} placeholder="user@example.com" value={host().target} onInput={(event) => updateHost(host().id, { target: event.target.value })} /></label><label><span>Piop daemon executable</span><input aria-label={`${host().name} Piop daemon executable`} aria-invalid={!host().piPath.trim()} placeholder="piopd" value={host().piPath === "pi" ? "piopd" : host().piPath.endsWith("/pi") ? `${host().piPath.slice(0, -2)}piopd` : host().piPath} onInput={(event) => updateHost(host().id, { piPath: event.target.value })} /></label></div></div>}</Key>}</div><button class="secondary-button" disabled={draft().hosts.length >= 16} onClick={addHost}><CirclePlus size={15} />Add machine</button></SettingsSection>}
         {formValidation().visibleSection === "keybinds" && <SettingsSection title="Keybinds" description="Customize global application shortcuts."><div class="keybind-list">{<Key each={keybindDefinitions} by={(binding) => binding.action}>{(binding, _index) => <label class="keybind-row" ><span><strong>{binding().label}</strong><small>{binding().description}</small></span><KeybindInput action={binding().action} value={draft().keybindings[binding().action]} invalid={shortcutValidation().duplicateShortcuts.has(draft().keybindings[binding().action].trim().toLowerCase())} onChange={(shortcut) => setDraft((current) => ({ ...current, keybindings: { ...current.keybindings, [binding().action]: shortcut } }))} /></label>}</Key>}</div><button class="secondary-button" onClick={() => patch({ keybindings: { ...defaultKeybindings } })}><RotateCcw size={15} />Restore defaults</button></SettingsSection>}

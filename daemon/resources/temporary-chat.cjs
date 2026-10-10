@@ -39,11 +39,36 @@ function create(db, root, directory, id) {
   process.stdout.write(directory);
 }
 
+function referencedDirectory(db, directory, id) {
+  const rows = db.prepare('SELECT session_path FROM sessions WHERE session_id != ? AND session_path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))').all(id);
+
+  for (const row of rows) {
+    let header;
+
+    try { header = JSON.parse(fs.readFileSync(row.session_path, 'utf8').split('\n', 1)[0]); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+
+    const cwd = path.resolve(header.cwd);
+
+    if (cwd === directory || cwd.startsWith(directory + path.sep)) return true;
+  }
+
+  return db.prepare('SELECT record_json FROM queued_inputs WHERE session_id != ?').all(id).some(row => row.record_json.includes(directory));
+}
+
 function remove(db, directory, id) {
   db.exec('BEGIN IMMEDIATE');
 
+  if (referencedDirectory(db, directory, id)) return;
+
+  const allocation = db.prepare('SELECT original_path FROM temporary_chat_allocations WHERE session_id=?').get(id);
+  const deleted = db.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(?)').get(id);
+
   if (directoryExists(directory)) {
-    try { fs.rmdirSync(directory); }
+    try {
+      if (deleted && allocation?.original_path === directory) fs.rmSync(directory, { recursive: true });
+      else fs.rmdirSync(directory);
+    }
     catch (error) {
       if (['ENOTEMPTY', 'EEXIST'].includes(error.code)) return;
 
@@ -81,5 +106,4 @@ function main(request) {
   } finally { db.close(); }
 }
 
-try { main(JSON.parse(process.argv[1])); }
-catch (error) { console.error(error.message); process.exitCode = 1; }
+module.exports = { main };

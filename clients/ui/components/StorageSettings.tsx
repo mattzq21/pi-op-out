@@ -154,7 +154,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
   const deleteOne = (host: HostStorage, archive: ArchivedConversation) => {
     if (!archive.deletable) return;
 
-    if (!window.confirm(`Permanently delete “${archive.name}” and its attached reviews and subagents? Any archived directory no other chat uses will also be removed. Forks will be kept.`)) return;
+    if (!window.confirm(`Permanently delete “${archive.name}” and its attached reviews and subagents? Forks will be kept.`)) return;
 
     void removeArchives(host, [archive]);
   };

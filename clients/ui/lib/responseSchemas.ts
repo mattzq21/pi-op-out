@@ -12,7 +12,7 @@ export const skillConfigSchema = z.object({ name: z.string(), path: z.string(), 
 
 export const remoteHostSchema = z.object({ enabled: z.boolean().optional(), id: z.string(), name: z.string(), target: z.string(), piPath: z.string() });
 
-export const appSettingsSchema = z.object({ settingsRevision: z.string().optional(), clientSettingsRevision: z.string().optional(), settingsDurabilityError: z.string().optional(), clientSettingsDurabilityError: z.string().optional(), dictationModelPath: z.string().optional(), localEnabled: z.boolean().optional(), defaultAgent: z.string().optional(), defaultModel: z.string(), hiddenModels: z.array(z.string()), knownModels: z.array(z.string()).optional(), defaultThinking: z.string(), defaultFastMode: z.boolean(), contextWindowCap: z.number(), contextWindowCapEnabled: z.boolean(), autoRetry: z.boolean(), debugMode: z.boolean(), keybindings: z.object({ newConversation: z.string(), toggleConversations: z.string(), toggleTerminal: z.string(), toggleDebugMode: z.string(), focusComposer: z.string(), openSettings: z.string() }), tools: z.array(toolConfigSchema), skills: z.array(skillConfigSchema), hosts: z.array(remoteHostSchema) });
+export const appSettingsSchema = z.object({ settingsRevision: z.string().optional(), clientSettingsRevision: z.string().optional(), settingsDurabilityError: z.string().optional(), clientSettingsDurabilityError: z.string().optional(), dictationModelPath: z.string().optional(), localEnabled: z.boolean().optional(), defaultAgent: z.string().optional(), reviewAgent: z.string().optional(), reviewPrompt: z.string().optional(), defaultModel: z.string(), hiddenModels: z.array(z.string()), knownModels: z.array(z.string()).optional(), defaultThinking: z.string(), defaultFastMode: z.boolean(), contextWindowCap: z.number(), contextWindowCapEnabled: z.boolean(), autoRetry: z.boolean(), debugMode: z.boolean(), keybindings: z.object({ newConversation: z.string(), toggleConversations: z.string(), toggleTerminal: z.string(), toggleDebugMode: z.string(), focusComposer: z.string(), openSettings: z.string() }), tools: z.array(toolConfigSchema), skills: z.array(skillConfigSchema), hosts: z.array(remoteHostSchema) });
 
 export const clientSettingsSchema = appSettingsSchema.pick({ "keybindings": true, "hiddenModels": true, "knownModels": true, "debugMode": true });
 
@@ -38,7 +38,7 @@ export const storageCategorySchema = z.object({ id: z.enum(["active-conversation
 
 export const archivedConversationSchema = z.object({ id: z.string(), path: z.string(), name: z.string(), cwd: z.string(), modifiedAt: z.number(), byteSize: z.number(), deletable: z.boolean(), deleteError: z.string().optional(), byteSizeCoverage: z.string().optional() });
 
-export const hostStorageSchema = z.object({ hostId: z.string(), hostName: z.string(), categories: z.array(z.unknown()).transform(categories => categories.filter(category => storageCategorySchema.shape.id.safeParse(z.object({ id: z.string() }).parse(category).id).success).map(category => storageCategorySchema.parse(category))), archives: z.array(archivedConversationSchema), warnings: z.array(z.string()), error: z.string().optional() });
+export const hostStorageSchema = z.object({ hostId: z.string(), hostName: z.string(), categories: z.array(storageCategorySchema), archives: z.array(archivedConversationSchema), warnings: z.array(z.string()), error: z.string().optional() });
 
 export const storageReportSchema = z.object({ hosts: z.array(hostStorageSchema) });
 

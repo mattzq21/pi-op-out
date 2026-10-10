@@ -41,7 +41,7 @@ export function SplitChatPane(componentProps: Props) {
   const session = createMemo(() => (runtime)); const [error, setError] = createSignal<string>(); const [connected, setConnected] = createSignal(false);
   const followSource = () => followConversation(componentProps.runtimePool, transport(), session().state);
   createDependencyEffect(() => componentProps.drafts.bindTransport(transport(), `${componentProps.session.hostId ?? "local"}:${componentProps.session.id}`), () => [componentProps.session.id, componentProps.session.cwd, connected()]);
-  const chatCommands = createMemo(() => session().commands.filter(command => command.name !== "review"));
+  const chatCommands = createMemo(() => session().commands);
   const [controlError, setControlError] = createSignal<string>();
   const draftRef = createRef(componentProps.draft); createComputed(() => { draftRef.current = componentProps.draft; });
   const connectedRef = createRef(connected()); createComputed(() => { connectedRef.current = connected(); });

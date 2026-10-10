@@ -171,7 +171,8 @@ pub(super) fn home_directory(app: AppHandle, host_id: String) -> Result<String, 
 }
 
 fn temporary_chat_script() -> String {
-    crate::session_registry::with_database(include_str!("../../resources/temporary-chat.cjs"))
+    let script = crate::session_registry::with_database(include_str!("../../resources/temporary-chat.cjs"));
+    format!("{script}\ntry {{ main(JSON.parse(process.argv[1])); }} catch (error) {{ console.error(error.message); process.exitCode = 1; }}")
 }
 
 fn temporary_chat_output(mut command: Command) -> Result<String, String> {
