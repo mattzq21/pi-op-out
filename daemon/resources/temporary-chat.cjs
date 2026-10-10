@@ -62,6 +62,12 @@ function firstLine(file) {
   } finally { fs.closeSync(descriptor); }
 }
 
+function deferReference(file, reason) {
+  console.error(`Temporary folder cleanup deferred: cannot read the working folder from ${file}: ${reason}`);
+
+  return null;
+}
+
 function references(db, excluded) {
   const version = db.prepare('PRAGMA data_version').get().data_version;
   const rows = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM session_deletion_tombstones WHERE session_id=lower(sessions.session_id))').all();
@@ -73,15 +79,15 @@ function references(db, excluded) {
     try {
       const line = firstLine(row.session_path);
 
-      if (line === null) return null;
+      if (line === null) return deferReference(row.session_path, 'missing, oversized, or non-regular chat header');
       const cwd = JSON.parse(line).cwd;
 
-      if (!path.isAbsolute(cwd)) return null;
+      if (!path.isAbsolute(cwd)) return deferReference(row.session_path, 'working folder path is not absolute');
       directories.push(path.resolve(cwd));
     } catch (error) {
       if (error.code === 'ENOENT') continue;
 
-      return null;
+      return deferReference(row.session_path, error.message);
     }
   }
 
@@ -122,7 +128,9 @@ function cleanupDeleted(root) {
         const directory = path.join(root, 'tmp', candidate.session_id);
 
         if (candidate.original_path !== directory || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(candidate.session_id) || inUse(snapshot, directory)) continue;
-        remove(db, directory, candidate.session_id);
+
+        try { remove(db, directory, candidate.session_id); }
+        catch (error) { console.error(`Temporary folder cleanup will retry ${directory}: ${error.message}`); }
       }
     }
 

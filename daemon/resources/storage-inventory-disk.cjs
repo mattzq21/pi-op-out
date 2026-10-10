@@ -146,13 +146,9 @@ async function diskStorage(profile, discovery) {
       for (const row of require('./temporary-chat-inventory.cjs').list(root)) {
         if (!directories.has(row.original_path)) continue;
         addCount('temporary-chats');
-        register('temporary-chats', { path: row.original_path, ownership: 'owned', provenance: ['Saved temporary chat creation: ' + row.session_id], owners: [], available: !unavailable.has(row.original_path), directory: true });
+        register('temporary-chats', { path: row.original_path, ownership: 'owned', provenance: ['Saved temporary chat creation: ' + row.session_id], owners: [{ sessionId: row.session_id, kind: 'temporary-chat' }], available: !unavailable.has(row.original_path), directory: true });
       }
     } catch (error) { warnings.push(`${root}: temporary chat records unavailable: ${error.message}`); }
-  }
-
-  async function visitCandidates(records, category) {
-    for (const record of records.values()) { addCount(category); await visitRecord(category, record); }
   }
 
   async function visitRetainedArtifacts() {
@@ -177,7 +173,6 @@ async function diskStorage(profile, discovery) {
   for (const record of discovery.recovery.values()) await visitRecovery(record);
 
   for (const record of discovery.chatgpt.values()) await visitRecord('chatgpt-storage', record);
-  await visitCandidates(discovery.legacy, 'legacy-recovery-storage');
 
   for (const record of discovery.goals.values()) await visitRecord(goalOwner(record) ? 'goal-attachments' : 'unattributed-goal-attachments', record);
 

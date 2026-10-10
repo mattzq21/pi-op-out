@@ -203,7 +203,8 @@ function finish(transaction) {
   require('./registry-deletion.cjs').forget(transaction.root, transaction.targets);
   goalAssets.finish(transaction, save);
 
-  require('./temporary-chat.cjs').cleanupDeleted(transaction.root);
+  try { require('./temporary-chat.cjs').cleanupDeleted(transaction.root); }
+  catch (error) { console.error(`Deletion committed; temporary folder cleanup will retry: ${error.message}`); }
 
   for (const file of transaction.files.filter(file => !file.skipped)) {
     const staged = stagedPath(transaction, file);

@@ -9,6 +9,13 @@ import { Archive, Database, FolderClock, HardDrive, MessageSquare, RefreshCw, Sh
 import { deleteArchivedConversations, loadStorageReport, openGroupDirectory } from "../lib/nativeTransport";
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport, StorageRoot } from "../types";
 
+function includesTemporaryFolder(host: HostStorage, archives: ArchivedConversation[]) {
+  const roots = host.categories.find(category => category.id === "temporary-chats")?.roots ?? [];
+
+  return roots.some(root => archives.some(archive => root.owners.some(owner => owner.sessionId === archive.id)
+    || archive.cwd === root.path || archive.cwd.startsWith(root.path + "/")));
+}
+
 const categoryDetails: Record<StorageCategory["id"], { name: string; description: string; icon: typeof Archive; item: string }> = {
   "active-conversations": { name: "Conversations", description: "Saved chats", icon: MessageSquare, item: "conversation" },
   "archived-conversations": { name: "Conversations", description: "Saved chats", icon: MessageSquare, item: "conversation" },
@@ -154,7 +161,9 @@ export function StorageSettings(componentProps: { hostId?: string }) {
   const deleteOne = (host: HostStorage, archive: ArchivedConversation) => {
     if (!archive.deletable) return;
 
-    if (!window.confirm(`Permanently delete “${archive.name}” and its attached reviews and subagents? Temporary folders no remaining chat uses, and all files in those folders, will also be permanently deleted. Forks will be kept.`)) return;
+    const folderWarning = includesTemporaryFolder(host, [archive]) ? " Temporary folders that no other chat uses will also be deleted, with all their files." : "";
+
+    if (!window.confirm(`Permanently delete “${archive.name}” and its attached reviews and subagents?${folderWarning} Forks will be kept.`)) return;
 
     void removeArchives(host, [archive]);
   };
@@ -167,7 +176,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
   };
 
   return <div class="settings-section storage-settings">
-    <Show when={archiveDeletion()}>{deletion => <DeleteArchivesDialog count={deletion().archives.length} hostName={deletion().host.hostName} onCancel={() => setArchiveDeletion(undefined)} onConfirm={() => {
+    <Show when={archiveDeletion()}>{deletion => <DeleteArchivesDialog count={deletion().archives.length} hostName={deletion().host.hostName} includesTemporaryFolder={includesTemporaryFolder(deletion().host, deletion().archives)} onCancel={() => setArchiveDeletion(undefined)} onConfirm={() => {
       const selected = deletion();
       setArchiveDeletion(undefined);
       void removeArchives(selected.host, selected.archives);
