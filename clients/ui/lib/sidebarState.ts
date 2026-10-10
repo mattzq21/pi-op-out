@@ -4,7 +4,7 @@ import { hasVisibleText } from "./content";
 import { DIRLESS_KEY,projectGroupId,isTemporaryChatCwd,useSessionGroups, type SessionGroup } from "./sessionGroups";
 import { useSessionProjects } from "./sessionProjects";
 import { createDependencyEffect } from "./solid";
-import { createSidebarPersistence, moveSidebarToken, validateSidebarParents } from "./sidebarPersistence";
+import { createSidebarPersistence, moveSidebarToken } from "./sidebarPersistence";
 
 export interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
 
@@ -12,7 +12,7 @@ type SidebarGroup = readonly [key: string, name: string, hostId: string, hostNam
 
 export const RECENT_KEY = "__pi-desktop-ungrouped__";
 
-const RECENT_LABEL = "Chit chats";
+const RECENT_LABEL = "Recents";
 
 export const isFixedGroup = (key: string) => key === RECENT_KEY || key === DIRLESS_KEY;
 
@@ -75,12 +75,11 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const collapsedProjects = createMemo(() => new Set(persistence.layout().collapsed));
   const sessionOrders = createMemo(() => validSessionOrders(persistence.layout().sessions));
   const sidebarOrder = () => persistence.layout().sidebar;
-  const projectGroups = () => persistence.layout().parents;
+  const projectGroups = () => storedGroups.state?.parents ?? {};
   const groupChildOrders = () => persistence.layout().children;
   const setCollapsedProjects = (update: (current: Set<string>) => Set<string>) => persistence.change("collapsed", current => [...update(new Set(current))]);
   const setSessionOrders = (update: (current: Record<string, string[]>) => Record<string, string[]>) => persistence.change("sessions", current => update(validSessionOrders(current)));
   const setSidebarOrder = (update: (current: string[]) => string[]) => persistence.change("sidebar", update);
-  const setProjectGroups = (update: (current: Record<string, string>) => Record<string, string>) => persistence.change("parents", update);
   const setGroupChildOrders = (update: (current: Record<string, string[]>) => Record<string, string[]>) => persistence.change("children", update);
 
   const projectParent = (id: string) => {
@@ -123,17 +122,9 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   const moveProject = (id: string, parent?: string) => {
     if (!canMoveProject(id, parent)) return;
-    const customIds = new Set(customGroups().map(group => group.id));
-    setProjectGroups(current => {
-      const next = { ...current };
-
-      if (parent) next[id] = parent; else delete next[id];
-      validateSidebarParents(next, customIds);
-
-      return next;
-    });
-
-    if (parent) expandProject(parent);
+    void storedGroups.change({ type: "move", id, parent: parent ?? null }).then(() => {
+      if (parent) expandProject(parent);
+    }).catch(() => undefined);
   };
 
   const groupNameTaken = (name: string, excludedId?: string) => name.trim().toLowerCase() === "dirless" || sidebarCollator.compare(RECENT_LABEL, name.trim()) === 0 || storedGroups.state?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
@@ -182,6 +173,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   };
 
   const moveSession = (drag: DraggedSession, destinationKey: string, targetKey?: string, edge: "before" | "after" = "after") => {
+    if (destinationKey === DIRLESS_KEY && drag.projectKey !== DIRLESS_KEY) return;
     const destinationSessions = displayedSessions().get(destinationKey);
 
     if (!destinationSessions) return;
@@ -200,6 +192,8 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     if (customGroupsByKey().has(destinationKey)) {
       placeSessionEntry(destinationKey, drag.sessionKey, targetKey, edge);
     }
+
+    if (destinationKey === DIRLESS_KEY) return Promise.resolve();
 
     return storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
   };
@@ -232,7 +226,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     if (session.cwdExists === false) return DIRLESS_KEY;
     const destination = storedGroups.state?.assignments[sessionKey(session)] ?? draftProjectGroup(session);
 
-    if (!destination) return RECENT_KEY;
+    if (!destination || destination === DIRLESS_KEY) return RECENT_KEY;
     const group = savedGroupsById().get(destination);
 
     return group?.cwd && isTemporaryChatCwd(group.cwd) ? RECENT_KEY : destination;

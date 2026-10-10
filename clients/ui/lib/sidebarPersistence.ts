@@ -7,7 +7,6 @@ const layoutSchema = z.object({
   collapsed: z.array(z.string()),
   sessions: z.record(z.string(), z.array(z.string()).optional().catch(undefined)),
   sidebar: z.array(z.string()),
-  parents: z.record(z.string(), z.string()),
   children: z.record(z.string(), z.array(z.string())),
   removed: z.array(z.string()).default([]),
 });
@@ -52,7 +51,7 @@ function transactLayout(database: IDBDatabase, key: string, fallback: Layout, ch
 
 export function createSidebarPersistence() {
   const endpoint = captureDaemonTransport().identity;
-  const initial: Layout = { collapsed: [], sessions: {}, sidebar: [], parents: {}, children: {}, removed: [] };
+  const initial: Layout = { collapsed: [], sessions: {}, sidebar: [], children: {}, removed: [] };
   const [layout, setLayout] = createSignal(initial);
   const [error, setError] = createSignal<string>();
   const notificationKey = `piop-sidebar-revision:${endpoint}`;
@@ -131,10 +130,9 @@ function pruneRemovedGroups(current: Layout): Layout {
   const removed = new Set(current.removed);
   const tokens = new Set(current.removed.map(id => `group:${id}`));
   const sessions = Object.fromEntries(Object.entries(current.sessions).filter(([id]) => !removed.has(id)));
-  const parents = Object.fromEntries(Object.entries(current.parents).filter(([id, parent]) => !removed.has(id) && !removed.has(parent)));
   const children = Object.fromEntries(Object.entries(current.children).flatMap(([id, entries]) => removed.has(id) ? [] : [[id, entries.filter(token => !tokens.has(token))]]));
 
-  return { ...current, sessions, parents, children, collapsed: current.collapsed.filter(id => !removed.has(id)), sidebar: current.sidebar.filter(token => !tokens.has(token)) };
+  return { ...current, sessions, children, collapsed: current.collapsed.filter(id => !removed.has(id)), sidebar: current.sidebar.filter(token => !tokens.has(token)) };
 }
 
 export function moveSidebarToken(current: string[], token: string, before: string | null, available: string[] = []) {
@@ -143,22 +141,4 @@ export function moveSidebarToken(current: string[], token: string, before: strin
   entries.splice(index < 0 ? entries.length : index, 0, token);
 
   return entries;
-}
-
-export function validateSidebarParents(parents: Record<string, string>, customIds: Set<string>) {
-  for (const id of Object.keys(parents)) {
-    const seen = new Set<string>();
-    let cursor: string | undefined = id;
-    let depth = 0;
-
-    while (cursor) {
-      if (seen.has(cursor)) throw new Error("Groups changed in another window. This move would create a cycle.");
-      seen.add(cursor);
-
-      if (customIds.has(cursor)) depth++;
-
-      if (depth > 3) throw new Error("Groups changed in another window. This move would exceed three nested groups.");
-      cursor = parents[cursor];
-    }
-  }
 }

@@ -3,8 +3,8 @@ import { Check, Parse } from "typebox/value";
 import { readFile as readSettings } from "./app-settings.cjs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionContext, ExtensionCommandContext, InputEvent, InputEventResult } from "@earendil-works/pi-coding-agent";
-import { formatDimensionNote, formatSkillsForPrompt, resizeImage } from "@earendil-works/pi-coding-agent";
+import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionContext, ExtensionCommandContext, InputEvent, InputEventResult, ToolResultEvent, ToolResultEventResult } from "@earendil-works/pi-coding-agent";
+import { createReadToolDefinition, formatDimensionNote, formatSkillsForPrompt, resizeImage } from "@earendil-works/pi-coding-agent";
 
 type Settings = {
   tools: string[];
@@ -162,7 +162,7 @@ function updateProviderPrompt(payload: Static<typeof providerPayloadSchema>, pro
   return updated;
 }
 
-async function resizeLargeAttachment(image: NonNullable<InputEvent["images"]>[number], model: NonNullable<ExtensionContext["model"]>) {
+async function resizeLargeImage(image: NonNullable<InputEvent["images"]>[number], model: NonNullable<ExtensionContext["model"]>) {
   const resized = await resizeImage(Buffer.from(image.data, "base64"), image.mimeType, {
     ...model.inputLimits?.images?.resize, maxWidth: 2000, maxHeight: 2000,
   });
@@ -180,7 +180,7 @@ async function resizeLargeAttachments(event: InputEvent, ctx: ExtensionContext):
   const notes: string[] = [];
 
   for (const image of event.images) {
-    const resized = await resizeLargeAttachment(image, ctx.model);
+    const resized = await resizeLargeImage(image, ctx.model);
     images.push(resized?.image ?? image);
 
     if (resized?.note) notes.push(resized.note);
@@ -191,8 +191,40 @@ async function resizeLargeAttachments(event: InputEvent, ctx: ExtensionContext):
   return { action: "transform", text: [event.text, ...notes].filter(Boolean).join("\n\n"), images };
 }
 
+async function resizeLargeToolImages(event: ToolResultEvent, ctx: ExtensionContext): Promise<ToolResultEventResult | undefined> {
+  if (!ctx.model?.input.includes("image")) return;
+  const content: ToolResultEvent["content"] = [];
+  let changed = false;
+
+  for (const block of event.content) {
+    const resized = block.type === "image" ? await resizeLargeImage(block, ctx.model) : undefined;
+    content.push(resized?.image ?? block);
+
+    if (resized) {
+      changed = true;
+
+      if (resized.note) content.push({ type: "text", text: resized.note });
+    }
+  }
+
+  if (!changed) return;
+  const image = content.find(block => block.type === "image");
+  const structuredContent = event.toolName === "read" && image
+    ? { ...image, note: content.flatMap(block => block.type === "text" ? [block.text] : []).join("\n") }
+    : undefined;
+
+  return { content, structuredContent };
+}
+
 function configureImageLimits(pi: ExtensionAPI) {
   type Model = NonNullable<ExtensionContext["model"]>;
+
+  pi.registerTool(createReadToolDefinition(process.cwd(), { autoResizeImages: false }));
+  pi.on("tool_result", (event, ctx) => {
+    if (pi.getSettings().images?.autoResize === false) return;
+
+    return resizeLargeToolImages(event, ctx);
+  });
 
   const originals = new Map<Model, Model["inputLimits"]>();
 

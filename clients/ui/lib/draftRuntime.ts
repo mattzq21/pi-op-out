@@ -1,6 +1,7 @@
 import { modelLevels } from "./promptControls";
 import { z } from "zod";
 import { nativeCall } from "./nativeCall";
+import { captureDaemonTransport } from "./platform";
 import { agentConfigSchema } from "./agentSchemas";
 import { modelSchema } from "./responseSchemas";
 import { encodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./agentProtocol";
@@ -8,10 +9,31 @@ import type { AgentState, RpcCommand, RpcEvent } from "../types";
 
 const catalogSchema = z.object({ config: agentConfigSchema, models: z.array(modelSchema), commands: z.array(z.string()) });
 
+const catalogs = new Map<string, Promise<z.infer<typeof catalogSchema>>>();
+
+export function clearDraftCatalogs() { catalogs.clear(); }
+
+function loadCatalog(hostId: string) {
+  const connection = captureDaemonTransport();
+  const key = JSON.stringify([connection.identity, hostId]);
+  const cached = catalogs.get(key);
+
+  if (cached) return cached;
+
+  const pending = nativeCall("provider_auth", { hostId, request: { action: "draft_catalog" } }, catalogSchema).catch(reason => {
+    if (catalogs.get(key) === pending) catalogs.delete(key);
+
+    throw reason;
+  });
+
+  catalogs.set(key, pending);
+
+  return pending;
+}
+
 export class DraftRuntime {
   private state: AgentState = { model: null, thinkingLevel: "off", sessionId: "", messageCount: 0, pendingMessageCount: 0, isStreaming: false };
   private catalog?: z.infer<typeof catalogSchema>;
-  private loading?: Promise<void>;
   private agent = "general";
   private revision = 0;
   readonly changes = new Map<string, RpcCommand>();
@@ -19,8 +41,8 @@ export class DraftRuntime {
 
   constructor(private hostId: () => string, private emit: (event: RpcEvent) => void) {}
 
-  load() {
-    return this.loading ??= nativeCall("provider_auth", { hostId: this.hostId(), request: { action: "draft_catalog" } }, catalogSchema).then(catalog => { this.catalog = catalog; }).catch(reason => { this.loading = undefined; throw reason; });
+  async load() {
+    this.catalog = await loadCatalog(this.hostId());
   }
 
   async command(command: RpcCommand) {

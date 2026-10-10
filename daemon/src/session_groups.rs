@@ -25,6 +25,7 @@ pub struct SessionGroup {
 #[serde(rename_all = "camelCase")]
 pub struct SessionGroups {
     pub groups: Vec<SessionGroup>,
+    pub parents: HashMap<String, String>,
     pub assignments: HashMap<String, Option<String>>,
     pub removed_projects: HashSet<String>,
 }
@@ -45,6 +46,7 @@ pub enum GroupChange {
     Rename { id: String, name: String },
     Remove { id: String },
     Assign { key: String, group: Option<String> },
+    Move { id: String, parent: Option<String> },
 }
 
 fn storage_path() -> Result<PathBuf, String> {
@@ -115,7 +117,7 @@ fn load_at(path: &Path, seeds: Vec<SessionSeed>) -> Result<SessionGroups, String
     }
     let ids: HashSet<_> = state.groups.iter().map(|group| group.id.clone()).collect();
     for destination in state.assignments.values_mut() {
-        if destination.as_ref().is_some_and(|id| id != DIRLESS_KEY && !ids.contains(id)) { *destination = None; dirty = true; }
+        if destination.as_ref().is_some_and(|id| id == DIRLESS_KEY || !ids.contains(id)) { *destination = None; dirty = true; }
     }
     if dirty { write(path, &state)?; }
     Ok(state)
@@ -159,6 +161,7 @@ fn change_at(path: &Path, change: GroupChange) -> Result<SessionGroups, String> 
     let _file_lock = lock_storage(path)?;
     let mut state = read(path)?.ok_or("Session groups have not loaded yet")?;
     apply_group_change(&mut state, change)?;
+    validate_nesting(&state)?;
     write(path, &state)?;
     Ok(state)
 }
@@ -171,6 +174,7 @@ fn apply_group_change(state: &mut SessionGroups, change: GroupChange) -> Result<
         GroupChange::Rename { id, name } => rename_group(state, id, name),
         GroupChange::Remove { id } => remove_group(state, id),
         GroupChange::Assign { key, group } => assign_group(state, key, group),
+        GroupChange::Move { id, parent } => move_group(state, id, parent),
     }
 }
 
@@ -186,6 +190,7 @@ fn relocate_group(state: &mut SessionGroups, project: SessionGroup, key: String)
         if let Some(old_id) = old_id {
             if !state.assignments.values().any(|id| id.as_ref() == Some(&old_id)) {
                 state.groups.retain(|group| group.id != old_id);
+                state.parents.retain(|id, parent| id != &old_id && parent != &old_id);
             }
         }
     }
@@ -219,6 +224,7 @@ fn rename_group(state: &mut SessionGroups, id: String, name: String) -> Result<(
 fn remove_group(state: &mut SessionGroups, id: String) -> Result<(), String> {
     if !state.groups.iter().any(|group| group.id == id) { return Err("Group no longer exists".into()); }
     state.groups.retain(|group| group.id != id);
+    state.parents.retain(|child, parent| child != &id && parent != &id);
     for destination in state.assignments.values_mut() {
         if destination.as_ref() == Some(&id) { *destination = None; }
     }
@@ -226,7 +232,33 @@ fn remove_group(state: &mut SessionGroups, id: String) -> Result<(), String> {
 }
 
 fn assign_group(state: &mut SessionGroups, key: String, group: Option<String>) -> Result<(), String> {
-    if group.as_ref().is_some_and(|id| id != DIRLESS_KEY && !state.groups.iter().any(|item| &item.id == id)) { return Err("Group no longer exists".into()); }
+    if group.as_deref() == Some(DIRLESS_KEY) { return Err("Dirless is assigned automatically when a chat's working directory is missing".into()); }
+    if group.as_ref().is_some_and(|id| !state.groups.iter().any(|item| &item.id == id)) { return Err("Group no longer exists".into()); }
     state.assignments.insert(key, group);
+    Ok(())
+}
+
+fn move_group(state: &mut SessionGroups, id: String, parent: Option<String>) -> Result<(), String> {
+    if !state.groups.iter().any(|group| group.id == id) { return Err("Group no longer exists".into()); }
+    if let Some(parent) = parent { state.parents.insert(id, parent); }
+    else { state.parents.remove(&id); }
+    Ok(())
+}
+
+fn validate_nesting(state: &SessionGroups) -> Result<(), String> {
+    let groups: HashMap<_, _> = state.groups.iter().map(|group| (group.id.as_str(), group)).collect();
+    for (id, parent) in &state.parents {
+        if !groups.contains_key(id.as_str()) { return Err("Group no longer exists".into()); }
+        if !groups.get(parent.as_str()).is_some_and(|group| group.cwd.is_none()) { return Err("Groups can only nest inside custom groups".into()); }
+        let mut cursor = Some(id.as_str());
+        let mut seen = HashSet::new();
+        let mut depth = 0;
+        while let Some(id) = cursor {
+            if !seen.insert(id) { return Err("A group cannot be moved inside itself or its children".into()); }
+            if groups.get(id).is_some_and(|group| group.cwd.is_none()) { depth += 1; }
+            if depth > 3 { return Err("Groups cannot exceed three levels".into()); }
+            cursor = state.parents.get(id).map(String::as_str);
+        }
+    }
     Ok(())
 }

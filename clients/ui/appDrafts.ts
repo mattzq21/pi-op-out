@@ -20,7 +20,7 @@ export function createConversationDrafts() {
   const owners = new Map<NativeTransport, string>();
   const aliases = new Map<string, string>();
   const redirected = new WeakMap<NativeTransport, NativeTransport>();
-  const allows = (key: string, destination?: DraftDestination) => Boolean(destination?.sessionPath) || !enabledHosts || enabledHosts.has(destination?.hostId ?? key.slice(0, key.lastIndexOf(":")));
+  const allows = (key: string, destination?: DraftDestination) => !enabledHosts || enabledHosts.has(destination?.hostId ?? key.slice(0, key.lastIndexOf(":")));
 
   const keyFor = (key: string): string => aliases.has(key) ? keyFor(aliases.get(key) ?? key) : key;
   const ownerFor = (owner: NativeTransport): NativeTransport => redirected.has(owner) ? ownerFor(redirected.get(owner) ?? owner) : owner;
