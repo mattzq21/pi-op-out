@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 
 const emit = (packet) => process.stdout.write(JSON.stringify(packet) + '\n');
 
@@ -172,8 +173,60 @@ function providerModels(loaded, providers) {
   return providerModelMerge(previous, ids, entries);
 }
 
-function prompt(flowId, login, request) {
+async function prepareBrowserReturn(notice, login) {
+  if (notice.type !== 'auth_url' || !notice.url) return;
+  const authorization = new URL(notice.url);
+  const redirect = authorization.searchParams.get('redirect_uri');
+  if (!redirect) return;
+  const destination = new URL(redirect);
+  if (destination.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(destination.hostname)) return;
+  const expectedState = authorization.searchParams.get('state');
+  if (!expectedState) return;
+
+  const hosts = destination.hostname === 'localhost' ? ['127.0.0.1', '::1'] : [destination.hostname.replace(/^\[|\]$/g, '')];
+  for (const host of hosts) {
+    if (login.controller.signal.aborted) throw new Error('Login cancelled');
+    const server = createServer((request, response) => {
+      const returned = new URL(request.url || '/', destination.origin);
+      const valid = request.method === 'GET' && returned.origin === destination.origin && returned.pathname === destination.pathname
+        && returned.searchParams.get('state') === expectedState
+        && (returned.searchParams.has('code') || returned.searchParams.has('error'));
+      response.writeHead(valid ? 200 : 400, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      if (!valid) { response.end('Invalid login return.'); return; }
+      if (login.browserReturn !== undefined) { response.end('Login return already received. Return to Piop.'); return; }
+      login.browserReturn = returned.href;
+      login.browserError = returned.searchParams.has('error') ? 'The provider did not approve the login. Start again.' : undefined;
+      login.answer?.(login.browserReturn);
+      response.end('Login return received. Return to Piop to finish signing in.');
+    });
+    login.callbackServers.push(server);
+    try {
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen({ host, port: Number(destination.port || 80), ipv6Only: host === '::1' }, () => {
+          server.off('error', reject);
+          server.on('error', () => login.controller.abort());
+          resolve();
+        });
+      });
+      if (login.controller.signal.aborted) { server.close(); throw new Error('Login cancelled'); }
+    } catch (error) {
+      server.close();
+      if (error.code !== 'EADDRINUSE' && !(host === '::1' && ['EAFNOSUPPORT', 'EADDRNOTAVAIL'].includes(error.code))) {
+        throw new Error('Could not start the automatic browser return receiver. Cancel login and try again.');
+      }
+    }
+  }
+  login.automaticReturn = true;
+}
+
+async function prompt(flowId, login, request) {
   if (login.key !== undefined) return Promise.resolve(login.key);
+  if (request.type === 'manual_code') {
+    await login.callbackReady;
+    if (login.browserError) throw new Error(login.browserError);
+    if (login.browserReturn !== undefined) return login.browserReturn;
+  }
   const signals = [login.controller.signal, request.signal].filter(Boolean);
 
   if (signals.some((signal) => signal.aborted)) return Promise.reject(new Error('Login cancelled'));
@@ -188,7 +241,9 @@ function prompt(flowId, login, request) {
 
       emit({ event: 'prompt_resolved', flowId, promptId });
 
-      if (answer === null) reject(new Error('Login cancelled')); else resolve(answer);
+      if (answer === null) reject(new Error('Login cancelled'));
+      else if (login.browserError) reject(new Error(login.browserError));
+      else resolve(answer);
     };
 
     const abort = () => finish(null);
@@ -200,7 +255,7 @@ function prompt(flowId, login, request) {
 }
 
 async function login(packet) {
-  const state = { controller: new AbortController(), key: packet.key };
+  const state = { controller: new AbortController(), key: packet.key, callbackServers: [] };
   logins.set(packet.flowId, state);
 
   if (cancelled.delete(packet.flowId)) state.controller.abort();
@@ -210,14 +265,22 @@ async function login(packet) {
     await loaded.runtime.login(packet.providerId, packet.authType, {
       signal: state.controller.signal,
       prompt: (request) => prompt(packet.flowId, state, request),
-      notify: (notice) => { if (!state.controller.signal.aborted) emit({ event: 'notice', flowId: packet.flowId, notice }); },
+      notify: (notice) => {
+        if (state.controller.signal.aborted) return;
+        if (packet.providerId === 'anthropic' && notice.type === 'auth_url') {
+          state.callbackReady = prepareBrowserReturn(notice, state).then(() => {
+            if (!state.controller.signal.aborted) emit({ event: 'notice', flowId: packet.flowId, notice: state.automaticReturn ? { ...notice, instructions: 'Complete login in your browser. Piop receives the result automatically when the browser is on this computer.' } : notice });
+          });
+          void state.callbackReady.catch(() => undefined);
+        } else emit({ event: 'notice', flowId: packet.flowId, notice });
+      },
     }, { getDeviceId: () => loaded.settings.getOrCreateDeviceId() });
 
 
     return { status: 'complete' };
   } catch (error) {
     return loginFailure(error, state.controller.signal);
-  } finally { state.answer?.(null); logins.delete(packet.flowId); }
+  } finally { state.answer?.(null); for (const server of state.callbackServers) server.close(); logins.delete(packet.flowId); }
 }
 
 function loginFailure(error, signal) {
