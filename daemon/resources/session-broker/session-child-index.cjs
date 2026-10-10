@@ -31,7 +31,7 @@ function read(root, sessionId) {
     if (!saved) return;
 
     const children = db.prepare(`SELECT c.child_id AS sessionId, coalesce(s.session_path, '') AS sessionPath, c.kind
-      FROM session_children c JOIN sessions s ON s.session_id=c.child_id WHERE c.parent_id=? ORDER BY c.position, c.child_id`).all(sessionId);
+      FROM session_children c JOIN sessions s ON s.session_id=c.child_id WHERE c.parent_id=? ORDER BY c.child_id`).all(sessionId);
 
     return { version: 1, sessionId, sessionPath: saved.session_path ?? '', complete: Boolean(saved.complete), children };
   } finally { db.close(); }
@@ -51,10 +51,10 @@ function write(db, value) {
   db.prepare(`INSERT INTO session_child_state VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET complete=excluded.complete`)
     .run(value.sessionId, Number(value.complete));
   db.prepare('DELETE FROM session_children WHERE parent_id=?').run(value.sessionId);
-  const insert = db.prepare('INSERT INTO session_children VALUES (?, ?, ?, ?)');
+  const insert = db.prepare('INSERT INTO session_children (parent_id, child_id, kind) VALUES (?, ?, ?)');
 
-  for (const [position, child] of value.children.entries()) {
-    if (identity(db, child.sessionId, child.sessionPath)) insert.run(value.sessionId, child.sessionId, child.kind, position);
+  for (const child of value.children) {
+    if (identity(db, child.sessionId, child.sessionPath)) insert.run(value.sessionId, child.sessionId, child.kind);
   }
 }
 
@@ -93,9 +93,9 @@ function add(root, parentSessionId, parentSessionPath, child) {
 
     if (identity(db, parentSessionId, value.sessionPath) && identity(db, child.sessionId, child.sessionPath)) {
       db.prepare('INSERT INTO session_child_state VALUES (?, 0) ON CONFLICT(session_id) DO NOTHING').run(parentSessionId);
-      db.prepare(`INSERT INTO session_children SELECT ?, ?, ?, coalesce(max(position), -1) + 1 FROM session_children WHERE parent_id=?
+      db.prepare(`INSERT INTO session_children (parent_id, child_id, kind) VALUES (?, ?, ?)
         ON CONFLICT(parent_id, child_id) DO UPDATE SET kind=excluded.kind`)
-        .run(parentSessionId, child.sessionId, child.kind, parentSessionId);
+        .run(parentSessionId, child.sessionId, child.kind);
     }
 
     db.exec('COMMIT');

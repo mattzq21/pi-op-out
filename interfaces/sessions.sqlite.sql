@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS session_children (
   parent_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
   child_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK(kind IN ('subagent', 'review')),
-  position INTEGER NOT NULL,
   PRIMARY KEY(parent_id, child_id));
 CREATE INDEX IF NOT EXISTS session_children_child ON session_children(child_id);
 CREATE TABLE IF NOT EXISTS session_mailbox_state (
