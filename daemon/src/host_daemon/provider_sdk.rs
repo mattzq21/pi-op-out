@@ -107,7 +107,7 @@ impl Sdk {
             .args(source_arguments(encoded))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .kill_on_drop(true)
             .spawn()
             .map_err(|error| format!("Could not start Pi provider SDK: {error}"))
@@ -123,7 +123,10 @@ impl Sdk {
         }
         let source = format!(
             "{}\n{}\n{}\n{}",
-            include_str!("../../resources/sdk-storage.mjs"),
+            format!(
+                "const {{ installRuntimeStorage }} = await import('data:text/javascript;base64,{}');",
+                STANDARD.encode(include_str!("../../resources/sdk-storage.bundle.mjs"))
+            ),
             include_str!("../../resources/fast-capabilities.mjs"),
             self.plugin.unwrap_or("const bundledPlugin = null;"),
             include_str!("../../resources/provider-sdk.mjs")

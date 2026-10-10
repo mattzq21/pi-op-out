@@ -67,6 +67,11 @@ async function backendScripts() {
   const commandInputs = await agentCommandInputs();
 
   await buildInParallel([
+    buildBundle({
+      entryPoints: ["daemon/resources/sdk-storage.mjs"],
+      bundle: true, platform: "node", format: "esm", target: "node22", minify: true,
+      plugins: [storageSchemaImports()],
+    }, "daemon/resources/sdk-storage.bundle.mjs", { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))] }),
     ...scripts.map(async name => {
       await buildBundle({
         entryPoints: [`daemon/resources/${name}.cjs`],
