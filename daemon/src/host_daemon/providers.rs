@@ -13,7 +13,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::{watch, Mutex as AsyncMutex, OnceCell};
+use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 use uuid::Uuid;
 
 struct Flow {
@@ -71,7 +71,6 @@ impl Flow {
 struct AuthState {
     flows: HashMap<String, Flow>,
     busy: HashSet<String>,
-    credential_revision: Option<String>,
     catalog_warning: Option<String>,
     next_catalog: Option<Instant>,
 }
@@ -87,11 +86,9 @@ pub(super) struct ProviderService {
     weak: Weak<Self>,
     state: Mutex<AuthState>,
     runtime: AsyncMutex<Option<RuntimeInfo>>,
-    checking: AsyncMutex<()>,
     catalogs: AsyncMutex<()>,
     fast_capabilities: OnceCell<Result<Value>>,
     revision: AtomicU64,
-    shutdown: watch::Sender<bool>,
 }
 
 struct SdkEvents(Weak<ProviderService>);
@@ -105,33 +102,23 @@ impl Events for SdkEvents {
 
 impl ProviderService {
     pub fn new(executable: String) -> Arc<Self> {
-        let (shutdown, _) = watch::channel(false);
         Arc::new_cyclic(|weak| Self {
             sdk: Sdk::new(executable, Arc::new(SdkEvents(weak.clone()))),
             host: OnceLock::new(),
             weak: weak.clone(),
             state: Mutex::new(AuthState::default()),
             runtime: AsyncMutex::new(None),
-            checking: AsyncMutex::new(()),
             catalogs: AsyncMutex::new(()),
             fast_capabilities: OnceCell::new(),
             revision: AtomicU64::new(0),
-            shutdown,
         })
     }
 
     pub fn bind(self: &Arc<Self>, host: Weak<Host>) {
         let _ = self.host.set(host);
         let service = self.clone();
-        let mut stopped = self.shutdown.subscribe();
         tokio::spawn(async move {
             let _ = service.fast_capabilities().await;
-            loop {
-                tokio::select! {
-                    _ = async { let _ = stopped.wait_for(|stop| *stop).await; } => break,
-                    _ = tokio::time::sleep(Duration::from_secs(2)) => { let _ = service.check().await; }
-                }
-            }
         });
     }
 
@@ -173,22 +160,9 @@ impl ProviderService {
         Ok(info)
     }
 
-    pub async fn check(&self) -> Result<u64> {
-        let _checking = self.checking.lock().await;
+    pub async fn refresh(&self) -> Result<u64> {
         self.runtime().await?;
         self.refresh_catalogs(false).await?;
-        let credentials = self.sdk.request(json!({"method":"auth_revision"})).await?;
-        let models = self.sdk.request(json!({"method":"model_revision"})).await?;
-        let revision = format!("{credentials}|{models}");
-        let changed = {
-            let mut state = self.state();
-            let changed = state.credential_revision.as_ref() != Some(&revision);
-            state.credential_revision = Some(revision);
-            changed
-        };
-        if changed {
-            self.changed();
-        }
         Ok(self.revision.load(Ordering::SeqCst))
     }
 
@@ -488,7 +462,11 @@ impl ProviderService {
         let discovered = catalogs::discover(config, auth["apiKey"].as_str(), models, &auth["headers"]).await?;
         let mut next = config.clone();
         next["models"] = json!(catalogs::merge_models(config, discovered));
-        self.sdk.request(json!({"method":"save_model_provider","providerId":id,"config":next,"previous":config})).await.map(|_| ())
+        if next != *config {
+            self.sdk.request(json!({"method":"save_model_provider","providerId":id,"config":next,"previous":config})).await?;
+            self.changed();
+        }
+        Ok(())
     }
 
     fn receive(&self, packet: Value) {
@@ -520,7 +498,6 @@ impl ProviderService {
     }
 
     pub async fn shutdown(&self) {
-        self.shutdown.send_replace(true);
         {
             let mut state = self.state();
             for flow in state.flows.values_mut() {

@@ -268,17 +268,13 @@ async function handle(packet) {
 
   if (packet.method === 'initialize') return { builtinIds: loaded.builtinIds };
 
-  if (['auth_revision', 'model_revision', 'model_config', 'save_model_provider'].includes(packet.method)) return storedProviderRequest(loaded, packet);
+  if (['model_config', 'save_model_provider'].includes(packet.method)) return storedProviderRequest(loaded, packet);
 
 
   return handleProviderRequest(loaded, packet);
 }
 
 function storedProviderRequest(loaded, packet) {
-  if (packet.method === 'auth_revision') return storedFileRevision(loaded.authPath);
-
-  if (packet.method === 'model_revision') return storedFileRevision(loaded.modelsPath);
-
   if (packet.method === 'model_config') return loaded.parseModels(storedModelText(loaded.modelsPath) ?? '{"providers":{}}');
 
   if (packet.method === 'save_model_provider') return saveStoredModelProvider(loaded.modelsPath, packet.providerId, packet.config, packet.previous ?? undefined, loaded.parseModels);

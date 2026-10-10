@@ -344,17 +344,6 @@ export function runtimeAuthPath() {
   return storagePath.join(sessionReferenceRoot(), "auth.json");
 }
 
-export function storedFileRevision(path) {
-  try {
-    const stat = storageFs.statSync(path, { bigint: true });
-
-    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
 export function storedModelText(path) {
   try { return storageFs.readFileSync(path, "utf8"); } catch (error) {
     if (error.code === "ENOENT") return undefined;

@@ -38,7 +38,7 @@ impl HostServices {
         }
     }
     pub async fn refresh_providers(&self) -> Result<u64> {
-        self.providers.check().await
+        self.providers.refresh().await
     }
     pub async fn shutdown(&self) {
         self.plugins.shutdown().await;
