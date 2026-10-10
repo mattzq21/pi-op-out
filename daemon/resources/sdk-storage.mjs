@@ -1,3 +1,4 @@
+import { createRequire as storageRequire } from "node:module";
 import * as sessionTables from "./session-database.cjs";
 import { DatabaseSync as StorageDatabase } from "node:sqlite";
 import * as storageFs from "node:fs";
@@ -137,6 +138,7 @@ function installSessionCreation(SessionManager) {
     const session = this.create(targetCwd, sessionDir, { ...options, parentSession: sourcePath });
     session.fileEntries = [session.fileEntries[0], ...structuredClone(source.fileEntries.filter(entry => entry.type !== "session"))];
     session._buildIndex();
+    storageRequire(import.meta.url)("./session-broker/goal-storage.cjs").copy(sessionReferenceRoot(), source.getSessionId(), session.getSessionId());
     sessionStoragePublish(session, session.fileEntries, false);
     session.flushed = true;
 
@@ -153,6 +155,7 @@ function installSessionBranching(prototype) {
   prototype.createBranchedSession = function (...args) {
     if (!this.persist) return branch.apply(this, args);
     const parent = this.sessionFile;
+    const sourceId = this.getSessionId();
     this.persist = false;
 
     try { branch.apply(this, args); }
@@ -165,6 +168,7 @@ function installSessionBranching(prototype) {
     header.parentSession = parent;
     this.sessionFile = storagePath.join(this.getSessionDir(), `${header.timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
     bindNewSession(this);
+    storageRequire(import.meta.url)("./session-broker/goal-storage.cjs").copy(sessionReferenceRoot(), sourceId, this.getSessionId());
     sessionStoragePublish(this, this.fileEntries, true);
     this.flushed = true;
 

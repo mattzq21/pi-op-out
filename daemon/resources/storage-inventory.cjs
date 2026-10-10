@@ -133,7 +133,7 @@ async function collectUnreadableArchive(file, archives) {
 async function collectSession(candidate, discovery, archives, read) {
   try {
     const details = await inspectSession(candidate.file, candidate.archived, read);
-    recordSession(discovery, details, candidate);
+    recordSession(discovery, details, candidate, piopRoot);
 
     if (!details.readable) discovery.warnings.push(`${candidate.file}: session provenance is incomplete`);
 

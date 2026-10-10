@@ -38,7 +38,7 @@ function providerErrorStatus(message: string | undefined): "usage_limited" | "bl
 }
 
 export function registerGoals(pi: ExtensionAPI) {
-  const state = new GoalState(pi);
+  const state = new GoalState();
   const pauseController = registerPauseControl(pi);
   const pause = (ctx: ExtensionContext) => { void pauseController.pause(ctx).catch(error => ctx.ui.notify(String(error), "error")); };
 

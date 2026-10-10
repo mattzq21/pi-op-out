@@ -1,3 +1,5 @@
+const goalStorage = require("./session-broker/goal-storage.cjs");
+const sessionDatabase = require("./session-database.cjs");
 const { realpathSync, readFileSync, existsSync, openSync, closeSync, fsyncSync } = require("node:fs");
 const { dirname, join, isAbsolute } = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -334,15 +336,9 @@ const isReview = text => /^\/(?:review|rs)(?:\s|$)/.test(text);
 const reviewText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
 function currentGoal(session) {
-  const entries = session.sessionManager.getEntries();
+  const file = session.sessionManager.getSessionFile();
 
-  for (let index = entries.length - 1; index >= 0; index--) {
-    const entry = entries[index];
-
-    if (entry.type === "custom" && entry.customType === "piop-goal") return entry.data;
-  }
-
-  return null;
+  return file ? goalStorage.read(sessionDatabase.storageRoot(file), session.sessionManager.getSessionId()) : null;
 }
 
 const hasGoal = session => currentGoal(session) !== null;
@@ -524,16 +520,9 @@ function bindGoalQueue(session, prompt) {
     return peekQueuedGoalPrompt(session) ?? peek.call(this);
   };
 
-  const manager = session.sessionManager;
-  const appendCustomEntry = manager.appendCustomEntry;
-  manager.appendCustomEntry = function (customType, data, ...args) {
-    const release = customType === "piop-goal" && data === null && hasGoal(session);
-    const result = appendCustomEntry.call(this, customType, data, ...args);
-
-    if (release) releaseQueue();
-
-    return result;
-  };
+  process.on("piop:goal-cleared", sessionId => {
+    if (session.sessionManager.getSessionId() === sessionId) releaseQueue();
+  });
 }
 
 function bindFollowUpDrain(session) {

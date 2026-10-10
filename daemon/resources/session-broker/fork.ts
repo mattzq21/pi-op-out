@@ -1,6 +1,6 @@
 import { reserveSessionId } from "./session-file.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { randomUUID } from "node:crypto";
+import { copy as copyGoal, read as readGoal } from "./goal-storage.cjs";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "./client.ts";
@@ -18,12 +18,6 @@ function retainedFork(error: Error | undefined, publication?: SessionPublication
   return Boolean(publication) || error !== undefined && publicationRetainsDependencies(error);
 }
 
-function inheritGoal(ctx: ExtensionContext, retained: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, timestamp: string) {
-  const goal = [...ctx.sessionManager.getEntries()].reverse().find(entry => entry.type === "custom" && entry.customType === "piop-goal");
-
-  if (goal?.type === "custom") retained.push({ ...structuredClone(goal), id: randomUUID().slice(0, 8), parentId: retained.at(-1)?.id ?? null, timestamp });
-}
-
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions) {
   const retained = structuredClone(options.position ? positionedHistory(ctx, options.entryId, options.position) : forkHistory(ctx, options.entryId));
   const header = ctx.sessionManager.getHeader();
@@ -34,13 +28,15 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
 
   const sessionId = reserveSessionId();
   const timestamp = new Date().toISOString();
-  inheritGoal(ctx, retained, timestamp);
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let publication: SessionPublication | undefined;
   let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
   try {
-    goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source }, ...retained], sessionId, sessionPath);
+    const root = rootForDirectory(ctx.sessionManager.getSessionDir());
+    copyGoal(root, ctx.sessionManager.getSessionId(), sessionId);
+    const goal = readGoal(root, sessionId);
+    goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source, objective: goal?.objective }, ...retained], sessionId, sessionPath);
     publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...retained], {
       dependencies: { workspace: { path: cwd, kind: options.cwd === undefined ? "existing" : "created-directory" } },
     });

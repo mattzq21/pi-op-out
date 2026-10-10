@@ -1,10 +1,12 @@
+import { known } from "./goal-storage.cjs";
+import { storageRoot } from "../session-database.cjs";
 import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
-import { GoalState, GOAL_ENTRY, validateBudget, type Goal } from "./goal-state.ts";
+import { GoalState, validateBudget, type Goal } from "./goal-state.ts";
 import { goalImagesSchema, goalPreparationView, loadMaterializedGoal, materializeGoal, readGoalPreparation } from "./goal-files.ts";
 import type { GoalCoordination } from "./goal-coordination.ts";
 import { Type as Schema, type Static } from "typebox";
-import { Check, Parse } from "typebox/value";
+import { Parse } from "typebox/value";
 import { randomUUID } from "node:crypto";
 
 export type GoalControls = {
@@ -19,7 +21,7 @@ const USAGE = "/goal [objective|edit|pause|resume|clear|budget <tokens|clear>]";
 
 const promptSchema = Schema.Object({ message: Schema.String(), goalSubmissionId: Schema.Optional(Schema.String()), images: Schema.Optional(goalImagesSchema), prepared: Schema.Optional(Schema.Boolean()) });
 
-const goalIdentitySchema = Schema.Object({ id: Schema.String() });
+
 
 const preparationRequestSchema = Schema.Object({ goalSubmissionId: Schema.String() });
 
@@ -125,13 +127,21 @@ async function preparedGoalMatches(ctx: ExtensionContext, submissionId: string |
 
   if (previous.goalId && previous.goalId === goal?.id) return true;
 
-  if (previous.goalId && ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === GOAL_ENTRY && Check(goalIdentitySchema, entry.data) && entry.data.id === previous.goalId)) {
+  if (previous.goalId && knownGoal(ctx, previous.goalId)) {
     throw new Error(`This submission already prepared a goal (${previous.objective}), but the current goal changed. Inspect the prepared goal in saved input recovery before retrying.`);
   }
 
   if (previous.expectedState !== undefined && previous.expectedState !== captured) throw new Error("The goal changed after this submission was prepared. Inspect saved input recovery before submitting a new goal.");
 
   return false;
+}
+
+function knownGoal(ctx: ExtensionContext, goalId: string) {
+  const file = ctx.sessionManager.getSessionFile();
+
+  if (!file) throw new Error("Save this conversation before preparing a goal");
+
+  return known(storageRoot(file), ctx.sessionManager.getSessionId(), goalId);
 }
 
 async function goalInput(args: string, ctx: ExtensionContext, goal: Goal | null, editing: boolean, reused: boolean) {
@@ -159,9 +169,7 @@ function commitPreparedGoal(objective: string, ctx: ExtensionContext, controls: 
 }
 
 function newPreparedGoal(ctx: ExtensionContext, objective: string, id: string = randomUUID()): Goal {
-  const now = Date.now();
-
-  return { version: 1, id, sessionId: ctx.sessionManager.getSessionId(), objective, status: "active", tokenBudget: null, tokensUsed: 0, elapsedMs: 0, createdAt: now, updatedAt: now };
+  return { id, sessionId: ctx.sessionManager.getSessionId(), objective, status: "active", tokenBudget: null, tokensUsed: 0, elapsedMs: 0 };
 }
 
 async function bindPreparedGoal(draft: Awaited<ReturnType<typeof materializeGoal>>, ctx: ExtensionContext, controls: GoalControls, captured: string, editing: boolean, start: boolean, reused: boolean, stableIdentity: boolean) {

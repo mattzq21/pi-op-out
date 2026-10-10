@@ -12,7 +12,7 @@ function observeEntry(observation, entry) {
 }
 
 function observeGoals(observation, entry) {
-  if (!['custom', 'custom_message'].includes(entry.type) || !['piop-goal', 'piop-goal-context'].includes(entry.customType)) return;
+  if (!['custom', 'custom_message'].includes(entry.type) || entry.customType !== 'piop-goal-context') return;
   const objective = entry.data?.objective;
   const text = Check(Type.String(), objective) ? objective : JSON.stringify(entry.content ?? entry.data);
 
@@ -23,7 +23,7 @@ function observeGoals(observation, entry) {
 
 function createObservation() { return { goals: new Set(), goalContracts: new Map(), goalWarnings: [] }; }
 
-function recordSession(discovery, details, candidate) {
+function recordSession(discovery, details, candidate, root) {
   const id = details.sessionId;
   const kind = details.readable ? candidate.kind : 'unresolved';
   const owner = { sessionId: id || path.basename(candidate.file, '.jsonl'), sessionPath: candidate.file, kind };
@@ -42,7 +42,18 @@ function recordSession(discovery, details, candidate) {
     addRoot(discovery.legacy, root, source, 'unattributed', [owner]);
   }
 
+  observeSavedGoal(root, id, details);
+
   recordGoals(discovery, details, owner, candidate);
+}
+
+function observeSavedGoal(root, id, details) {
+  if (!id) return;
+  const goal = require('./session-broker/goal-storage.cjs').read(root, id);
+
+  if (!goal) return;
+
+  for (const directory of require('./session-broker/goal-assets.cjs').directReferences([goal], root)) details.observation.goals.add(directory);
 }
 
 function recordGoals(discovery, details, owner, candidate) {

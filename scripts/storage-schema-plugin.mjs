@@ -37,7 +37,7 @@ export function storageSchemaImports() {
 const canonicalModules = new Set([
   "archive-records.cjs", "deletion-records.cjs", "external-transcripts.cjs",
   "restore-records.cjs", "transcript-metadata.cjs", "conversation-storage.cjs",
-  "session-database.cjs", "temporary-chat.cjs", "transcript-references.cjs", "goal-dependencies.cjs", "goal-preparations.cjs", "goal-ownership.cjs",
+  "session-database.cjs", "goal-storage.cjs", "temporary-chat.cjs", "transcript-references.cjs", "goal-dependencies.cjs", "goal-preparations.cjs", "goal-ownership.cjs",
 
   "archive-transaction.cjs",
   "delete-transaction.cjs", "deletion-retention.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",

@@ -1,10 +1,12 @@
+import { acquireSessionReferencePublication, validateSessionReferencePublication } from "../sdk-storage.mjs";
 import { randomUUID } from "node:crypto";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { legacyReceiptSchema, legacyRecoveryReport, recoverLegacyUsage, saveLegacyRecovery, type LegacyUsageRecovery } from "./goal-legacy-usage.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { read, write } from "./goal-storage.cjs";
+import { storageRoot } from "../session-database.cjs";
 
-export const GOAL_ENTRY = "piop-goal";
+const GOAL_STATUS_KEY = "piop-goal";
 
 export const GOAL_CONTEXT = "piop-goal-context";
 
@@ -22,11 +24,10 @@ export const subagentUsageSchema = Type.Object({
 });
 
 const goalSchema = Type.Object({
-  version: Type.Literal(1), id: Type.String({ minLength: 1 }), sessionId: Type.String({ minLength: 1 }),
+  id: Type.String({ minLength: 1 }), sessionId: Type.String({ minLength: 1 }),
   objective: Type.String(), status: statusSchema, tokenBudget: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })]),
-  tokensUsed: accountingSchema, elapsedMs: accountingSchema, createdAt: accountingSchema, updatedAt: accountingSchema,
-  subagentUsage: Type.Optional(Type.Union([Type.Array(Type.Object({ runId: Type.String(), total: accountingSchema })), Type.Record(Type.String(), accountingSchema)])),
-  legacySubagentUsage: Type.Optional(Type.Array(legacyReceiptSchema)), legacyUsageUncertainTokens: Type.Optional(accountingSchema),
+  tokensUsed: accountingSchema, elapsedMs: accountingSchema,
+  subagentUsage: Type.Optional(Type.Record(Type.String(), accountingSchema)),
 });
 
 export type Goal = Static<typeof goalSchema>;
@@ -34,15 +35,12 @@ export type Goal = Static<typeof goalSchema>;
 function subagentConsumed(goal: Goal, sourceId: string) {
   const receipts = goal.subagentUsage;
 
-  if (Array.isArray(receipts)) return receipts.find(receipt => receipt.runId === sourceId)?.total;
-
   return receipts && Object.hasOwn(receipts, sourceId) ? receipts[sourceId] : undefined;
 }
 
 function saveSubagentReceipt(goal: Goal, sourceId: string, total: number) {
   const receipts = goal.subagentUsage;
-  const previous = Array.isArray(receipts) ? Object.fromEntries(receipts.map(receipt => [receipt.runId, receipt.total])) : receipts;
-  goal.subagentUsage = { ...previous, [sourceId]: total };
+  goal.subagentUsage = { ...receipts, [sourceId]: total };
 }
 
 type Usage = { input?: number; output?: number; cacheWrite?: number };
@@ -90,22 +88,18 @@ export class GoalState {
   private clock: number | undefined;
   private accountingGoalId: string | undefined;
   private saved = "";
-  private legacyUsageRecovery: LegacyUsageRecovery[] = [];
-  constructor(private pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext) {
     this.clock = undefined;
     this.accountingGoalId = undefined;
-    const entry = [...ctx.sessionManager.getEntries()].reverse().find(item => item.type === "custom" && item.customType === GOAL_ENTRY);
-    const data = entry?.type === "custom" ? entry.data : null;
+    const file = ctx.sessionManager.getSessionFile();
+    const data = file ? read(storageRoot(file), ctx.sessionManager.getSessionId()) : null;
 
     if (data !== null && !Check(goalSchema, data)) throw new Error("Invalid saved goal");
     this.goal = validateSaved(data);
     this.saved = JSON.stringify(this.goal);
-    this.legacyUsageRecovery = recoverLegacyUsage(ctx, this.goal);
     this.enforceBudget(true);
     this.save(ctx);
-    saveLegacyRecovery(this.pi, ctx, this.legacyUsageRecovery);
     this.replaySubagentUsage(ctx);
 
     if (this.goal?.status === "complete") { this.clear(ctx);
@@ -125,8 +119,7 @@ export class GoalState {
 
   create(ctx: ExtensionContext, objective: string, tokenBudget: number | null) {
     if (this.goal && this.goal.status !== "complete") throw new Error("This conversation has an unfinished goal. Use /goal edit or /goal clear first.");
-    const now = Date.now();
-    this.goal = { version: 1, id: randomUUID(), sessionId: ctx.sessionManager.getSessionId(), objective: validateObjective(objective), status: "active", tokenBudget: validateBudget(tokenBudget), tokensUsed: 0, elapsedMs: 0, createdAt: now, updatedAt: now };
+    this.goal = { id: randomUUID(), sessionId: ctx.sessionManager.getSessionId(), objective: validateObjective(objective), status: "active", tokenBudget: validateBudget(tokenBudget), tokensUsed: 0, elapsedMs: 0 };
     this.clock = ctx.isIdle() ? undefined : performance.now();
     this.accountingGoalId = ctx.isIdle() ? undefined : this.goal.id;
     this.save(ctx);
@@ -255,16 +248,23 @@ export class GoalState {
     const goal = this.goal && { ...this.goal, timeUsedSeconds: Math.floor(this.goal.elapsedMs / 1000) };
     const completionBudgetReport = completed && goal?.status === "complete" && (goal.tokenBudget !== null || goal.timeUsedSeconds > 0) ? "Goal achieved. Report final usage from this tool result's structured goal fields. If goal.tokenBudget is present, include goal.tokensUsed and goal.tokenBudget. If goal.timeUsedSeconds is greater than 0, summarize elapsed time in a concise, human-friendly form appropriate to the response language." : null;
 
-    return { goal, remainingTokens: goal?.tokenBudget == null ? null : Math.max(0, goal.tokenBudget - goal.tokensUsed), completionBudgetReport,
-      legacyUsageRecovery: legacyRecoveryReport(this.legacyUsageRecovery) };
+    return { goal, remainingTokens: goal?.tokenBudget == null ? null : Math.max(0, goal.tokenBudget - goal.tokensUsed), completionBudgetReport };
   }
 
   save(ctx: ExtensionContext) {
     const next = JSON.stringify(this.goal);
 
     if (next !== this.saved) {
-      if (this.goal) this.goal.updatedAt = Date.now();
-      this.pi.appendEntry(GOAL_ENTRY, this.goal && structuredClone(this.goal));
+      const file = ctx.sessionManager.getSessionFile();
+
+      if (!file) throw new Error("Save this conversation before setting a goal");
+      const release = acquireSessionReferencePublication(file, ctx.sessionManager.getSessionId());
+
+      try {
+        validateSessionReferencePublication(this.goal ? [this.goal] : [], []);
+        write(storageRoot(file), ctx.sessionManager.getSessionId(), this.goal);
+      } finally { release(); }
+
       this.saved = JSON.stringify(this.goal);
     }
 
@@ -273,7 +273,7 @@ export class GoalState {
 
   publish(ctx: ExtensionContext) {
     const goal = this.goal;
-    ctx.ui.setWidget(GOAL_ENTRY, undefined);
-    ctx.ui.setStatus(GOAL_ENTRY, goal ? JSON.stringify(goal) : undefined);
+    ctx.ui.setWidget(GOAL_STATUS_KEY, undefined);
+    ctx.ui.setStatus(GOAL_STATUS_KEY, goal ? JSON.stringify(goal) : undefined);
   }
 }

@@ -8,7 +8,19 @@ function initialize(db) {
     db.exec(`CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
       CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE); CREATE TRIGGER IF NOT EXISTS session_file_metadata_moved AFTER UPDATE ON sessions WHEN OLD.session_path IS NOT NEW.session_path BEGIN DELETE FROM session_file_metadata WHERE session_id=OLD.session_id; END;`);
 
-    db.exec(`      CREATE TABLE IF NOT EXISTS session_sidebar (
+    db.exec(`      CREATE TABLE IF NOT EXISTS session_goals (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+        objective TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'blocked', 'usage_limited', 'budget_limited', 'complete')),
+        token_budget INTEGER CHECK(token_budget > 0),
+        tokens_used INTEGER NOT NULL CHECK(tokens_used >= 0),
+        elapsed_ms INTEGER NOT NULL CHECK(elapsed_ms >= 0));
+      CREATE TABLE IF NOT EXISTS session_goal_accounting (
+        session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        goal_id TEXT NOT NULL, current INTEGER NOT NULL CHECK(current IN (0, 1)), usage_json TEXT NOT NULL,
+        PRIMARY KEY(session_id, goal_id));
+      CREATE UNIQUE INDEX IF NOT EXISTS session_goal_current ON session_goal_accounting(session_id) WHERE current=1;
+      CREATE TABLE IF NOT EXISTS session_sidebar (
         session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
         fingerprint TEXT NOT NULL, modified_at INTEGER NOT NULL, summary_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_child_state (
@@ -228,6 +240,19 @@ function paths(root, directory) {
   return rows(root, 'SELECT session_path FROM sessions WHERE session_path IS NOT NULL AND (? IS NULL OR substr(session_path, 1, length(?))=?)', prefix, prefix, prefix).map(row => row.session_path);
 }
 
+function copyGoal(root, sourceId, targetId) {
+  const db = open(root);
+
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    db.prepare(`INSERT INTO session_goals SELECT ?, objective, status, token_budget, tokens_used, elapsed_ms
+      FROM session_goals WHERE session_id=?`).run(targetId, sourceId);
+    db.prepare(`INSERT INTO session_goal_accounting SELECT ?, goal_id, current, usage_json
+      FROM session_goal_accounting WHERE session_id=? AND current=1`).run(targetId, sourceId);
+    db.exec('COMMIT');
+  } finally { db.close(); }
+}
+
 function storageRoot(file) {
   let directory = path.dirname(file);
 
@@ -239,5 +264,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { initialize, reserve, bind, directoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+module.exports = { copyGoal, initialize, reserve, bind, directoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
   recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };

@@ -88,7 +88,7 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 47] = [
     ("goals.ts", include_str!("../../resources/session-broker/goals.ts")),
     ("review.ts", include_str!("../../resources/session-broker/review.ts")),
     ("goal-state.ts", include_str!("../../resources/session-broker/goal-state.ts")),
-    ("goal-legacy-usage.ts", include_str!("../../resources/session-broker/goal-legacy-usage.ts")),
+    ("goal-storage.cjs", include_str!("../../resources/session-broker/goal-storage.cjs")),
     ("goal-controls.ts", include_str!("../../resources/session-broker/goal-controls.ts")),
     ("goal-coordination.ts", include_str!("../../resources/session-broker/goal-coordination.ts")),
     ("reference-publication-lock.cjs", include_str!("../../resources/session-broker/reference-publication-lock.cjs")),
