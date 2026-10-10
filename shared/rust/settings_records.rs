@@ -1,5 +1,5 @@
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-use std::{fs, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 #[derive(serde::Serialize)]
 pub(crate) struct Publication {
@@ -13,13 +13,8 @@ pub(super) fn open(path: &Path) -> Result<Connection, String> {
     let root = path.parent().ok_or("Settings have no storage directory")?;
     crate::private_fs::ensure_private_dir(root)?;
     let file = root.join("sessions.sqlite");
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600).custom_flags(libc::O_NOFOLLOW); }
-    options.open(&file).map_err(|error| error.to_string())?;
+    let database = Connection::open_with_flags(&file, rusqlite::OpenFlags::default() | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW).map_err(|error| error.to_string())?;
     crate::private_fs::set_private_file_permissions(&file)?;
-    let database = Connection::open(file).map_err(|error| error.to_string())?;
     database.busy_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
     database.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
         CREATE TABLE IF NOT EXISTS application_settings (name TEXT PRIMARY KEY, body BLOB);")

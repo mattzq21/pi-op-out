@@ -1,25 +1,18 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Serialize, de::DeserializeOwned};
-use std::{fs, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 fn database_file(root: &Path) -> Result<std::path::PathBuf, String> {
     crate::private_fs::ensure_private_dir(root)?;
     let file = root.join("sessions.sqlite");
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    options.open(&file).map_err(|error| error.to_string())?;
-    crate::private_fs::set_private_file_permissions(&file)?;
     Ok(file)
 }
 
 fn open(path: &Path) -> Result<Connection, String> {
     let root = path.parent().ok_or("Settings synchronization record has no directory")?;
-    let db = Connection::open(database_file(root)?).map_err(|error| error.to_string())?;
+    let file = database_file(root)?;
+    let db = Connection::open_with_flags(&file, rusqlite::OpenFlags::default() | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW).map_err(|error| error.to_string())?;
+    crate::private_fs::set_private_file_permissions(&file)?;
     db.busy_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
     db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
         CREATE TABLE IF NOT EXISTS settings_sync_records (name TEXT PRIMARY KEY, record_json TEXT);")

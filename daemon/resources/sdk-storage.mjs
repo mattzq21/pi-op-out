@@ -38,7 +38,7 @@ function registerExternalTranscript(root, transcript, sessionId) {
 
   if (["sessions", "archived"].some(area => relative.startsWith(area + storagePath.sep))) return;
   const databasePath = storagePath.join(root, "sessions.sqlite");
-  storageFs.closeSync(storageFs.openSync(databasePath, "a", 0o600));
+  if (storageFs.lstatSync(databasePath, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("Database path must not be a symbolic link");
   const database = new StorageDatabase(databasePath);
 
   try {
@@ -446,12 +446,12 @@ function withStoredSettings(path, operation) {
   const root = sessionReferenceRoot();
   storageFs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const file = storagePath.join(root, "sessions.sqlite");
-  storageFs.closeSync(storageFs.openSync(file, storageFs.constants.O_CREAT | storageFs.constants.O_RDWR | storageFs.constants.O_NOFOLLOW, 0o600));
-  storageFs.chmodSync(file, 0o600);
+  if (storageFs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("Database path must not be a symbolic link");
   const database = new StorageDatabase(file);
   const key = storagePath.resolve(path);
 
   try {
+    storageFs.chmodSync(file, 0o600);
     database.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS sdk_settings (path TEXT PRIMARY KEY, body TEXT);
       BEGIN IMMEDIATE;`);

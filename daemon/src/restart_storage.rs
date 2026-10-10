@@ -14,12 +14,8 @@ fn open(directory: &Path) -> Result<Connection, String> {
     let root = profile(directory);
     fs::create_dir_all(root).map_err(|error| error.to_string())?;
     let file = root.join("sessions.sqlite");
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
-    options.open(&file).map_err(|error| error.to_string())?;
-    let db = Connection::open(file).map_err(|error| error.to_string())?;
+    let db = Connection::open_with_flags(&file, rusqlite::OpenFlags::default() | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW).map_err(|error| error.to_string())?;
+    crate::private_fs::set_private_file_permissions(&file)?;
     db.busy_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
     db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
         CREATE TABLE IF NOT EXISTS daemon_restart_records (directory TEXT NOT NULL, name TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(directory, name));
