@@ -54,7 +54,6 @@ export default function agentMcp(pi: ExtensionAPI) {
   pi.on("session_start", event => { started = false; sessionStart = event; });
   pi.on("input", (_event, ctx) => ensureStarted(ctx));
   pi.on("before_agent_start", (_event, ctx) => ensureStarted(ctx));
-  // eslint-disable-next-line local/no-assertions -- Forward pi's overloaded event/handler pair unchanged.
   const subscribe = pi.on as (event: ExtensionEvent["type"], handler: ExtensionHandler<never, unknown>) => () => void;
   createMcpExtension()({
     ...pi,
@@ -64,7 +63,6 @@ export default function agentMcp(pi: ExtensionAPI) {
     },
     on(event, handler) {
       if (event === "session_start") {
-        // eslint-disable-next-line local/no-assertions -- The event discriminates pi's matching handler overload.
         start = handler as ExtensionHandler<SessionStartEvent>;
 
         return () => { start = undefined; };

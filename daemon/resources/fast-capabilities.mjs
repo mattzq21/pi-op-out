@@ -52,7 +52,6 @@ function fastCatalogEntry(entry, provider) {
   const tiers = fastCatalogField(entry, ['service_tiers', 'serviceTiers']);
   const speeds = fastCatalogField(entry, ['additional_speed_tiers', 'additionalSpeedTiers']);
 
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate the remote catalog identifier before exposing it to clients.
   if (typeof id !== 'string') return [];
 
   if (!Array.isArray(tiers) && !Array.isArray(speeds)) return [];

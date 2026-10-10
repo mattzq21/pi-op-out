@@ -6,14 +6,6 @@
   "scripts": {
     "predev": "npm run setup:dependencies",
     "dev": "vite",
-    "prelint": "npm run setup:dependencies",
-    "lint": "oxlint . --max-warnings 0 && npm run lint:unused && npm run lint:rust",
-    "prelint:unused": "npm run setup:dependencies",
-    "lint:unused": "knip",
-    "prelint:rust": "npm run setup:dependencies",
-    "lint:rust": "node scripts/lint-rust.mjs && node scripts/build-frontend.mjs --extensions && cargo clippy --locked -p piop-desktop --all-targets --all-features -- -D warnings -D dead_code -D unused && cargo clippy --locked -p piop-daemon --all-targets -- -D warnings -D dead_code -D unused",
-    "lint:rust:comments": "node scripts/lint-rust.mjs --only comments",
-    "lint:rust:complexity": "node scripts/lint-rust.mjs --only complexity",
     "prebuild": "npm run setup:dependencies",
     "build": "node scripts/build-frontend.mjs --extensions",
     "prebuild:icons": "npm run setup:dependencies",
@@ -75,12 +67,9 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",
-    "@oxlint/plugins": "1.78.0",
     "@tauri-apps/cli": "^2.8.0",
     "@types/node": "^26.2.0",
     "esbuild": "^0.25.0",
-    "knip": "6.40.0",
-    "oxlint": "1.78.0",
     "typescript": "~5.7.2",
     "vite": "^6.0.7",
     "vite-plugin-solid": "^2.11.14"

@@ -62,12 +62,10 @@ function chatGptPath(path) {
 }
 
 function chatGptAppend(previous, value) {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   if (typeof previous === 'string') return previous + value;
 
   if (Array.isArray(previous)) return previous.concat(value);
 
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   if (previous && typeof previous === 'object') return { ...previous, ...value };
 
   return value;

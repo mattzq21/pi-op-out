@@ -212,7 +212,6 @@ export async function chatGptOwnedOperation(identity, request, run) {
 }
 
 export function chatGptId(value) {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   if (typeof value !== 'string' || !/^[a-zA-Z0-9-]{1,100}$/.test(value)) throw new Error('Invalid chat ID.');
 
   return value;
@@ -242,12 +241,10 @@ export async function chatGptStoredChat(identity, id) {
 }
 
 export function chatGptRecordObject(value) {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate persisted ChatGPT records and remote catalogs before reading fields.
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function chatGptRecordString(value) {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate persisted ChatGPT records and remote catalogs before using strings.
   return typeof value === 'string';
 }
 

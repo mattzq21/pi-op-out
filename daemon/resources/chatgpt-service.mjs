@@ -142,7 +142,6 @@ async function chatGptHttp(identity, path, { body, headers, signal } = {}) {
 
 function chatGptConnectionError(error) {
   const code = error.cause?.code ?? error.code;
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   const detail = typeof code === 'string' && /^[A-Z][A-Z_0-9]{1,50}$/.test(code) ? ` (${code})` : '';
 
   return new Error(`Could not connect to ChatGPT${detail}. Check this host's network connection and try again.`, { cause: error });
@@ -153,7 +152,6 @@ async function chatGptHttpError(response) {
 
   try { const data = await response.json(); detail = data.detail?.message ?? data.error?.message ?? data.detail; } catch { }
 
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   const message = typeof detail === 'string' ? detail.slice(0, 400) : `ChatGPT request failed (${response.status}).`;
   const error = new Error(response.status === 401 ? 'ChatGPT login expired. Sign in again in Settings → Providers.' : message);
   error.status = response.status;
@@ -209,7 +207,6 @@ function chatGptAcceptSubmission(chat, id) {
 }
 
 async function chatGptPrepare(identity, request) {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   if (typeof request.p !== 'string' || request.p.length > 20000) throw new Error('Invalid chat preparation.');
   const requirements = await (await chatGptHttp(identity, '/sentinel/chat-requirements/prepare', { body: { p: request.p } })).json();
 
@@ -243,7 +240,6 @@ function chatGptIntegrity(identity, request) {
 function chatGptIntegrityToken(headers, name, value, required) {
   if (!required) return;
 
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   if (typeof value !== 'string' || !value || value.length > 50000 || /[\r\n]/.test(value)) throw new Error('ChatGPT verification did not complete.');
   headers[name] = value;
 }
@@ -276,10 +272,8 @@ function chatGptRequest(chat, request) {
 }
 
 function chatGptValidateSend(request) {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   if (typeof request.prompt !== 'string' || !request.prompt.trim() || request.prompt.length > 100000) throw new Error('Enter a message of at most 100,000 characters.');
 
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   if (request.context !== undefined && (typeof request.context !== 'string' || request.context.length > 125000)) throw new Error('Conversation context is too large.');
 
   if (request.model !== undefined && !/^[\w.-]{1,100}$/.test(request.model)) throw new Error('Invalid ChatGPT model.');
@@ -437,18 +431,14 @@ function chatGptText(message) {
 
   if (!content) return '';
 
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   if (Array.isArray(content.parts)) return content.parts.filter(part => typeof part === 'string').join('\n');
 
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   return typeof content.text === 'string' ? content.text : '';
 }
 
 function chatGptReceive(active, data) {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   if (!data || typeof data !== 'object') return;
 
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   if (data.error) { active.rejected = true; throw new Error(typeof data.error === 'string' ? data.error : 'ChatGPT could not complete this response.'); }
 
   if (data.conversation_id) active.chat.conversationId = chatGptId(data.conversation_id);

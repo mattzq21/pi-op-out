@@ -86,7 +86,6 @@ function challengeVm(dx, token) {
 }
 
 window.addEventListener('message', async event => {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate dynamic ChatGPT wire values at the protocol boundary.
   if (event.source !== parent || typeof event.data?.dx !== 'string' || typeof event.data?.token !== 'string') return;
 
   try { parent.postMessage({ nonce: event.data.nonce, result: await challengeVm(event.data.dx, event.data.token) }, '*'); }

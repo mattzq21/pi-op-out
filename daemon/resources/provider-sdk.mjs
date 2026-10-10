@@ -78,12 +78,10 @@ function providerMetadata(runtime, provider) {
 }
 
 function providerModelObject(value) {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate SDK model metadata before publishing a catalog snapshot.
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function providerModelString(value) {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate SDK model identifiers and metadata at the inspection boundary.
   return typeof value === 'string' && value.trim().length > 0;
 }
 
