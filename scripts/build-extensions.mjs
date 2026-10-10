@@ -86,19 +86,6 @@ async function backendScripts() {
       } });
     }),
 
-    buildBundle({
-      entryPoints: ["extensions/piop-runtime-settings/provider-accounts.mjs"],
-      bundle: true, platform: "node", format: "esm", target: "node22", minify: true,
-    }, "daemon/resources/provider-accounts.bundle.mjs", { script: import.meta.url, transform(content) {
-      const accountsPayload = gzipSync(content, { level: 9 }).toString("base64");
-      const accountExports = "providerAccountsPath, readProviderAccounts, allocateProviderAccount, accountProvider, loadAccountProviders";
-      const accountsModule = `import { gunzipSync as unpackProviderAccounts } from "node:zlib";\nconst { ${accountExports} } = await import("data:text/javascript;base64," + unpackProviderAccounts(Buffer.from("${accountsPayload}", "base64")).toString("base64"));\nexport { ${accountExports} };\n`;
-
-      if (Buffer.byteLength(accountsModule) > 96 * 1024) throw new Error("Provider accounts exceeds the embedded script argument budget");
-
-      return accountsModule;
-    } }),
-
     buildArtifact({
       output: "daemon/resources/agent-commands.json",
       inputs: [fileURLToPath(import.meta.url), fileURLToPath(new URL("./agent-command-inventory.mjs", import.meta.url)), ...commandInputs],

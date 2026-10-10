@@ -243,7 +243,6 @@ fn configuration_preparation_reports_failed_writes_and_cleans_temporary_files() 
         let expected_files = match kind { 0 => 1, 1 => 4, _ => 2 };
         assert_eq!(files.len(), expected_files, "failed writes must not leave temporary files: {files:?}");
         if kind == 1 {
-            assert!(files.contains(&std::ffi::OsString::from("provider-accounts.mjs")));
             assert!(files.contains(&std::ffi::OsString::from("runtime-bridge.cjs")));
         }
     }

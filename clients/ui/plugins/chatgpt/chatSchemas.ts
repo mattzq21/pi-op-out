@@ -18,7 +18,7 @@ export const chatModelsSchema = z.array(z.object({
   presets: z.array(z.object({ name: z.string(), model: z.string(), thinkingEffort: z.string().optional() })).min(1),
 }));
 
-export const chatAccountsSchema = z.array(z.object({ id: z.string(), name: z.string(), configured: z.boolean() }));
+export const chatAccountSchema = z.object({ configured: z.boolean() });
 
 export const chatRequirementsSchema = z.object({
   ticket: z.string(),

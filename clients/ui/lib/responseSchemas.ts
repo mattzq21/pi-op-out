@@ -68,6 +68,6 @@ export const authNoticeSchema = z.object({ type: z.union([z.literal("info"), z.l
 
 export const authFlowSchema = z.object({ flowId: z.string(), providerId: z.string(), name: z.string().optional(), status: z.union([z.literal("pending"), z.literal("complete"), z.literal("cancelled"), z.literal("failed")]), notices: z.array(authNoticeSchema), error: z.string().optional(), prompt: z.object({ id: z.string(), type: z.union([z.literal("text"), z.literal("secret"), z.literal("select"), z.literal("manual_code")]), message: z.string(), placeholder: z.string().optional(), options: z.array(z.object({ id: z.string(), label: z.string(), description: z.string().optional() })).optional() }).optional() });
 
-export const providerAccountSchema = z.object({ id: z.string(), name: z.string(), providerId: z.string(), number: z.number(), configured: z.boolean(), source: z.string().optional(), storedType: z.union([z.literal("oauth"), z.literal("api_key")]).optional(), methods: z.array(z.object({ type: z.union([z.literal("oauth"), z.literal("api_key")]), name: z.string(), interactive: z.boolean() })) });
+export const providerAccountSchema = z.object({ id: z.string(), name: z.string(), configured: z.boolean(), source: z.string().optional(), storedType: z.union([z.literal("oauth"), z.literal("api_key")]).optional(), methods: z.array(z.object({ type: z.union([z.literal("oauth"), z.literal("api_key")]), name: z.string(), interactive: z.boolean() })) });
 
 export const providerListingSchema = z.object({ providers: z.array(providerAccountSchema), warning: z.string().optional() });

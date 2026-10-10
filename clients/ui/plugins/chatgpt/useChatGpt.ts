@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { regularChatSchema, chatModelsSchema, chatAccountsSchema, chatRequirementsSchema, type RegularChat } from "./chatSchemas";
+import { regularChatSchema, chatModelsSchema, chatAccountSchema, chatRequirementsSchema, type RegularChat } from "./chatSchemas";
 import { createSignal, onCleanup, type Accessor } from "solid-js";
 import { createDependencyEffect } from "../../lib/solid";
 import { invoke } from "../../lib/platform";
@@ -79,16 +79,13 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 
   const loadCatalog = async (current: number) => {
     const started = Date.now();
-    const accounts = await call("accounts", chatAccountsSchema);
+    const account = await call("account", chatAccountSchema);
 
     if (generation !== current) return;
-    const selected = accounts.find(account => account.configured && account.id === provider) ?? accounts.find(account => account.configured);
 
-    if (!selected || selected.id !== provider && (desiredChat || busy())) throw new Error("Sign in to the chat's ChatGPT account in Settings → Providers.");
+    if (!account.configured) throw new Error("Sign in to ChatGPT in Settings → Providers.");
 
-    if (selected.id !== provider) { setChats([]); setModels([]); }
-
-    provider = selected.id; call = createChatGptCall(provider, leaseId);
+    provider = "openai-codex"; call = createChatGptCall(provider, leaseId);
     const catalogCall = call;
 
     await loadCatalogRecords(catalogCall, current, started);

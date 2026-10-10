@@ -4,7 +4,6 @@ import { pathToFileURL } from "node:url";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { loadAccountProviders } from "../piop-runtime-settings/provider-accounts.mjs";
 import { createFastModeDiscovery } from "../piop-openai-fast-mode/src/discovery.ts";
 import { piDirectory } from "./validation-runtime.ts";
 import { installRuntimeStorage } from "../../daemon/resources/sdk-storage.mjs";
@@ -51,9 +50,6 @@ export async function modelValidator() {
 
   return async (agent: Agent, defaultModel: string, activate: (registry: ModelRegistry, validate: () => Promise<void>) => Promise<void>) => {
     const runtime = await createRuntime();
-    const accounts = await loadAccountProviders(join(getAgentDir(), "auth.json"), createRuntime);
-
-    for (const provider of accounts.values()) runtime.registerNativeProvider(provider);
     const registry: ModelRegistry = new Registry(runtime);
     await activate(registry, async () => {
       const name = agent.model.trim() || (agent.fastMode ? defaultModel.trim() : "");

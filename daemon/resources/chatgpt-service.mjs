@@ -90,7 +90,7 @@ function chatGptRefreshCatalog(loaded, identity, catalog) {
 }
 
 async function chatGptIdentity(loaded, providerId = 'openai-codex') {
-  if (!/^openai-codex(?:--piop-account-\d+)?$/.test(providerId)) throw new Error('Choose a ChatGPT account.');
+  if (providerId !== 'openai-codex') throw new Error('Choose a ChatGPT account.');
   const resolution = await loaded.runtime.getAuth(providerId);
 
   if (!resolution?.auth.apiKey) throw new Error('Sign in to OpenAI Codex in Settings → Providers to use ChatGPT.');
@@ -713,10 +713,10 @@ function chatGptHistory(history) {
 }
 
 export async function handleChatGpt(loaded, request) {
-  if (request.action === 'accounts') {
+  if (request.action === 'account') {
     await loaded.runtime.refresh({ allowNetwork: false });
 
-    return loaded.runtime.getProviders().filter(provider => /^openai-codex(?:--piop-account-\d+)?$/.test(provider.id)).map(provider => ({ id: provider.id, name: provider.name, configured: loaded.runtime.getProviderAuthStatus(provider.id).configured }));
+    return { configured: loaded.runtime.getProviderAuthStatus('openai-codex').configured };
   }
 
   const identity = await chatGptIdentity(loaded, request.providerId);

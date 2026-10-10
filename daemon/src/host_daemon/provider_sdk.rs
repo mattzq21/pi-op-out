@@ -108,9 +108,8 @@ impl Sdk {
             return Ok(connection.clone());
         }
         let source = format!(
-            "{}\n{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}",
             include_str!("../../resources/sdk-storage.mjs"),
-            include_str!("../../resources/provider-accounts.bundle.mjs"),
             include_str!("../../resources/fast-capabilities.mjs"),
             self.plugin.unwrap_or("const bundledPlugin = null;"),
             include_str!("../../resources/provider-sdk.mjs")

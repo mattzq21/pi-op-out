@@ -115,7 +115,7 @@ async function inheritedLineage(ctx: ExtensionContext): Promise<string> {
 
 function usesOpenAIResponses(model: ExtensionContext["model"]): boolean {
   if (!Check(modelSchema, model)) return false;
-  const provider = model.provider.replace(/--piop-account-\d+$/, "");
+  const provider = model.provider;
 
   return (provider === "openai-codex" && model.api === "openai-codex-responses")
     || (provider === "openai" && model.api === "openai-responses");

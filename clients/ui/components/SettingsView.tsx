@@ -8,7 +8,6 @@ import { McpSettings, type McpEditorDraft } from "./McpSettings";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { accountModelNameLookup } from "../lib/providerAccounts";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
 import { Bot, Check, CircleGauge, CirclePlus, ClipboardCheck, Cpu, HardDrive, Keyboard, Mic, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Zap } from "lucide-solid";
@@ -86,7 +85,6 @@ function settingsViewDefaults({ selectedSection, embedded = false, resourceError
 export function SettingsView(props: SettingsViewProps) {
   const settingsFields = createMemoFields(() => settingsViewDefaults(props));
   const settingsProps = () => settingsFields;
-  const modelName = createMemo(() => accountModelNameLookup(settingsProps().models));
   const providerHostId = createMemo(() => settingsProps().providerHostId);
   const [saving, setSaving] = createSignal(false);
   const [mcpDrafts, setMcpDrafts] = createSignal<Array<McpEditorDraft | undefined>>([]);
@@ -280,7 +278,7 @@ export function SettingsView(props: SettingsViewProps) {
   const modelCatalog = createMemo(() => {
     const availableModelIds = new Set(settingsProps().models.map((model) => `${model.provider}/${model.id}`));
     const hiddenModels = new Set(draft().hiddenModels);
-    const modelChoices = [...settingsProps().models.map((model) => ({ id: `${model.provider}/${model.id}`, name: modelName()(model) }))];
+    const modelChoices = [...settingsProps().models.map((model) => ({ id: `${model.provider}/${model.id}`, name: (model.name || model.id) }))];
 
     for (const id of new Set([...(draft().knownModels ?? []), ...settingsProps().settings.hiddenModels, ...hiddenModels])) if (!availableModelIds.has(id)) modelChoices.push({ id, name: id });
 
@@ -429,7 +427,7 @@ export function SettingsView(props: SettingsViewProps) {
             const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => { renameAgent(event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "")); event.currentTarget.value = agent().name; }} /></label><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
 
             const renderAgentDefaults = () => {
-              const renderAgentModel = () => (<label class="field"><span>Default model</span><select aria-label="Agent default model" value={agent().model} onChange={(event) => updateAgent({ model: event.target.value })}><option value="">Use fallback ({draft().defaultModel})</option>{agent().model && !agentValidation().availableModelIds.has(agent().model) && <option value={agent().model} disabled>Unavailable: {agent().model}</option>}{<Key each={settingsProps().models} by={(model) => `${model.provider}/${model.id}`}>{(model, _index) => <option  value={`${model().provider}/${model().id}`}>{modelName()(model())}</option>}</Key>}</select></label>);
+              const renderAgentModel = () => (<label class="field"><span>Default model</span><select aria-label="Agent default model" value={agent().model} onChange={(event) => updateAgent({ model: event.target.value })}><option value="">Use fallback ({draft().defaultModel})</option>{agent().model && !agentValidation().availableModelIds.has(agent().model) && <option value={agent().model} disabled>Unavailable: {agent().model}</option>}{<Key each={settingsProps().models} by={(model) => `${model.provider}/${model.id}`}>{(model, _index) => <option  value={`${model().provider}/${model().id}`}>{(model().name || model().id)}</option>}</Key>}</select></label>);
               const renderAgentFastMode = () => (<div class="field general-fast-mode" data-tooltip={agent().fastMode === undefined ? "Using the fallback fast mode setting" : "Fast mode default for this agent"}><span>Fast mode</span><div><button type="button" class={`fast-mode-indicator${agentFastModeEnabled() ? " active" : ""}`} aria-label="Agent fast mode" aria-description={agent().fastMode === undefined ? "Using fallback setting" : agentFastModeEnabled() ? "Fast mode on" : "Fast mode off"} aria-pressed={agentFastModeEnabled()} aria-invalid={agent().fastMode === true && !supportsFastMode(agent().model || draft().defaultModel)} onClick={() => updateAgent({ fastMode: !agentFastModeEnabled() })}><Zap size={22} strokeWidth={1.5} fill={agentFastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button></div></div>);
               const renderAgentEffort = () => (<label class="field"><span>Default effort</span><select aria-label="Agent default effort" aria-invalid={Boolean(!agentValidation().thinkingDiscoveryUnavailable && agent().effort && !agentLevels(agent()).includes(agent().effort))} value={agent().effort} onChange={(event) => updateAgent({ effort: event.target.value })}><option value="">Use fallback ({draft().defaultThinking})</option>{agent().effort && !agentLevels(agent()).includes(agent().effort) && <option value={agent().effort} disabled>Unavailable: {agent().effort}</option>}{<Key each={agentLevels(agent())} by={(level) => level}>{(level, _index) => <option  value={level()}>{level().charAt(0).toUpperCase() + level().slice(1)}</option>}</Key>}</select></label>);
 

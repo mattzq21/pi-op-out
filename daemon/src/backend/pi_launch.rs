@@ -153,7 +153,6 @@ fn remote_broker_command(host: &RemoteHost, local_port: u16, remote_port: u16) -
 fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<(), String> {
     let rtk_extension = shell_quote(include_str!("../../../extensions/piop-rtk/rtk.ts"));
     let runtime_settings_extension = shell_quote(include_str!("../../../extensions/piop-runtime-settings/index.ts"));
-    let provider_accounts = shell_quote(include_str!("../../resources/provider-accounts.bundle.mjs"));
     let app_rpc = shell_quote(include_str!("../../resources/runtime-bridge.cjs"));
     let runtime_configuration = shell_quote(include_str!("../../resources/runtime-configuration.cjs"));
     let sdk_storage = shell_quote(include_str!("../../resources/sdk-storage.mjs"));
@@ -186,7 +185,6 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
      let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit" && printf %s {session_cost_limit} > "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts""#);
     let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" && printf %s {settings_storage} > "$HOME/{STORAGE_DIRECTORY}/app-settings.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" "$HOME/{STORAGE_DIRECTORY}/app-settings.cjs" && node -e {save_runtime_settings} "$HOME/{STORAGE_DIRECTORY}/app-settings.cjs" "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json" {runtime_settings_config}"#);
     let remote = format!(r#"{remote} && printf %s {settings_storage} > "$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/app-settings.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/app-settings.cjs" && node -e {save_runtime_settings} "$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/app-settings.cjs" "$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/config.json" {context_window_config}"#);
-    let remote = format!(r#"{remote} && printf %s {provider_accounts} > "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs""#);
     let remote = format!(r#"{remote} && printf %s {app_rpc} > "$HOME/{STORAGE_DIRECTORY}/runtime-bridge.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-bridge.cjs""#);
     let remote = format!(r#"{remote} && printf %s {runtime_configuration} > "$HOME/{STORAGE_DIRECTORY}/runtime-configuration.cjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-configuration.cjs""#);
     let remote = format!(r#"{remote} && printf %s {sdk_storage} > "$HOME/{STORAGE_DIRECTORY}/sdk-storage.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/sdk-storage.mjs""#);

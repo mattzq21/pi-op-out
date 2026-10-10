@@ -6,12 +6,9 @@ use reqwest::{
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashSet},
-    path::Path,
     time::Duration,
 };
 
-#[path = "catalog_accounts.rs"]
-mod accounts;
 
 pub(super) fn auth_url(value: &Value) -> Option<String> {
     Url::parse(value.as_str()?)
@@ -61,7 +58,6 @@ fn valid_provider_id(id: &str) -> bool {
         && id.len() <= 80
         && alphanumeric(id.as_bytes()[0])
         && id.bytes().all(|ch| alphanumeric(ch) || matches!(ch, b'_' | b'-'))
-        && !id.contains("--piop-account-")
 }
 
 pub(super) async fn discover(config: &Value, key: Option<&str>, known: &[Value], extra_headers: &Value) -> Result<Vec<Value>> {
@@ -227,13 +223,6 @@ fn discovered_model(entry: &Value, known: &[Value]) -> Result<Value> {
         }
     }
     Ok(model)
-}
-
-pub(super) fn read_accounts(auth: &Path) -> Result<Vec<Value>> { accounts::read(auth) }
-
-
-pub(super) async fn allocate_account(auth: &Path, id: &str, occupied: HashSet<String>) -> Result<Value> {
-    accounts::allocate(auth, id, occupied)
 }
 
 pub(super) fn merge_models(config: &Value, discovered: Vec<Value>) -> Vec<Value> {

@@ -29,7 +29,6 @@ export default {
     ...embeddedEntries,
     "extensions/piop-openai-fast-mode/src/index.ts",
     "extensions/piop-define-agents/{daemon-loader,mcp-schema}.ts",
-    "extensions/piop-runtime-settings/provider-accounts.mjs",
     "daemon/resources/mcp-bridge.ts",
     "daemon/resources/{session-descendants,archive-conversations,restore-session,relocate-session,index-sessions,storage-inventory,delete-session}.cjs",
     "scripts/{mutation-node-runner,oxlint-local}.mjs",

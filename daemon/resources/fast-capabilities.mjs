@@ -84,7 +84,7 @@ export async function discoverFastCapabilities(runtime) {
   const groups = new Map();
 
   for (const model of runtime.getModels()) {
-    if (!['openai', 'openai-codex'].includes(model.provider.replace(/--piop-account-\d+$/, ''))) continue;
+    if (!['openai', 'openai-codex'].includes(model.provider)) continue;
     groups.set(`${model.provider}:${model.baseUrl}:${model.api}`, model);
   }
 

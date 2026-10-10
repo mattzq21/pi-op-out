@@ -50,7 +50,7 @@ function record(value: unknown): value is RecordValue {
 
 function rankedModels(ctx: ExtensionContext) {
   const isCodex = (model: NonNullable<ExtensionContext["model"]>) =>
-    model.provider.replace(/--piop-account-\d+$/, "") === "openai-codex" && model.api === "openai-codex-responses";
+    model.provider === "openai-codex" && model.api === "openai-codex-responses";
 
   const override = process.env.PIOP_WEB_SEARCH_MODEL?.trim();
   const models = ctx.modelRegistry.getAll().filter(isCodex);

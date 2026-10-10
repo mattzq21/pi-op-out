@@ -11,11 +11,9 @@ const logins = new Map();
 
 const cancelled = new Set();
 
-const accounts = new Map();
-
 const providerModelCatalogs = new WeakMap();
 
-let initializing, syncing;
+let initializing;
 
 async function resolveExecutable() {
   const executable = process.argv[1] || 'pi';
@@ -53,7 +51,7 @@ async function loadRuntime() {
       const builtin = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
       const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
 
-      return { runtime, settings, authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id), createRuntime: () => sdk.ModelRuntime.create({ allowModelNetwork: false, refreshOnCreate: false }) };
+      return { runtime, settings, authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id) };
     }
 
     directory = dirname(directory);
@@ -66,16 +64,6 @@ function runtime() {
   initializing ??= loadRuntime().catch((error) => { initializing = undefined; throw error; });
 
   return initializing;
-}
-
-async function syncAccounts(loaded) {
-  syncing ??= (async () => {
-    const previous = new Map(accounts);
-    await loadAccountProviders(loaded.authPath, loaded.createRuntime, accounts);
-
-    for (const [id, provider] of accounts) if (previous.get(id) !== provider) loaded.runtime.registerNativeProvider(provider);
-  })().finally(() => { syncing = undefined; });
-  await syncing;
 }
 
 function providerMetadata(runtime, provider) {
@@ -221,14 +209,12 @@ async function login(packet) {
 
   try {
     const loaded = await runtime();
-    await syncAccounts(loaded);
     await loaded.runtime.login(packet.providerId, packet.authType, {
       signal: state.controller.signal,
       prompt: (request) => prompt(packet.flowId, state, request),
       notify: (notice) => { if (!state.controller.signal.aborted) emit({ event: 'notice', flowId: packet.flowId, notice }); },
     }, { getDeviceId: () => loaded.settings.getOrCreateDeviceId() });
 
-    if (accounts.has(packet.providerId)) await loaded.runtime.refresh({ providers: [packet.providerId], allowNetwork: true, signal: state.controller.signal });
 
     return { status: 'complete' };
   } catch (error) {
@@ -280,11 +266,10 @@ async function handle(packet) {
   if (packet.method === 'answer') return answerLogin(packet);
   const loaded = await runtime();
 
-  if (packet.method === 'initialize') return { authPath: loaded.authPath, builtinIds: loaded.builtinIds };
+  if (packet.method === 'initialize') return { builtinIds: loaded.builtinIds };
 
   if (['auth_revision', 'model_revision', 'model_config', 'save_model_provider'].includes(packet.method)) return storedProviderRequest(loaded, packet);
 
-  await syncAccounts(loaded);
 
   return handleProviderRequest(loaded, packet);
 }

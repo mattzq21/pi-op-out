@@ -19,7 +19,7 @@ export function toModelRef(model: ModelRef | undefined): ModelRef | undefined {
 }
 
 export function isSupportedProvider(provider: string): boolean {
-  return SUPPORTED_PROVIDER_SET.has(provider.replace(/--piop-account-\d+$/, ""));
+  return SUPPORTED_PROVIDER_SET.has(provider);
 }
 
 export function findMatchingTarget(

@@ -9,8 +9,6 @@ import { invoke, listen, type UnlistenFn } from "./platform";
 export interface ProviderAccount {
   id: string;
   name: string;
-  providerId: string;
-  number: number;
   configured: boolean;
   source?: string;
   storedType?: "oauth" | "api_key";
@@ -40,7 +38,7 @@ export interface CustomProviderInput {
 }
 
 type AuthFlowRequest =
-  | { action: "begin"; providerId: string; authType: string; addAccount: boolean }
+  | { action: "begin"; providerId: string; authType: string }
   | { action: "reply"; flowId: string; promptId: string; answer: string }
   | { action: "cancel" | "poll"; flowId: string };
 
@@ -220,7 +218,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
   return {
     get providers() { return providers(); }, get flow() { return flow(); }, get loading() { return loading(); }, get working() { return working(); }, get error() { return error(); },
     refresh: () => { refreshModels.current = true; setError(undefined); setRevision((value) => value + 1); },
-    begin: (providerId: string, authType: string, addAccount = false) => perform({ action: "begin", providerId, authType, addAccount }, true),
+    begin: (providerId: string, authType: string) => perform({ action: "begin", providerId, authType }, true),
     reply: (answer: string) => flow()?.prompt ? perform({ action: "reply", flowId: required((flow())).flowId, promptId: required(required((flow())).prompt).id, answer }) : Promise.resolve(),
     cancel: () => flow() ? perform({ action: "cancel", flowId: required((flow())).flowId }) : Promise.resolve(),
     get logout() { return logout; }, get createProvider() { return createProvider; },

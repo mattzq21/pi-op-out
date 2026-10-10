@@ -4,8 +4,7 @@ import { readFile as readSettings } from "./app-settings.cjs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionContext, ExtensionCommandContext, InputEvent, InputEventResult } from "@earendil-works/pi-coding-agent";
-import { formatDimensionNote, formatSkillsForPrompt, getAgentDir, ModelRuntime, resizeImage } from "@earendil-works/pi-coding-agent";
-import { loadAccountProviders } from "./provider-accounts.mjs";
+import { formatDimensionNote, formatSkillsForPrompt, resizeImage } from "@earendil-works/pi-coding-agent";
 
 type Settings = {
   tools: string[];
@@ -233,17 +232,7 @@ function configureImageLimits(pi: ExtensionAPI) {
 export default async function runtimeSettings(pi: ExtensionAPI) {
   configureImageLimits(pi);
   setGlobal(Symbol.for("piop.runtime-bridge"), (request: AppRequest) => pi.events.emit("piop:rpc", request));
-  const accountProviders = new Map();
   let promptOptions: BuildSystemPromptOptions | undefined;
-
-  const refreshAccounts = async () => {
-    const existing = new Map(accountProviders);
-    await loadAccountProviders(join(getAgentDir(), "auth.json"), () => ModelRuntime.create({ allowModelNetwork: false, refreshOnCreate: false }), accountProviders);
-
-    for (const [id, provider] of accountProviders) if (existing.get(id) !== provider) pi.registerProvider(provider);
-  };
-
-  await refreshAccounts();
 
   if (!storedSettings()) setGlobal(key, validate(readSettings(process.env.PIOP_RUNTIME_SETTINGS_PATH || join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"))));
 
@@ -371,7 +360,6 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     const ctx = request.ctx;
     request.ready = (async () => {
       try {
-        await refreshAccounts();
         await ctx.modelRegistry.refresh({ allowNetwork: false });
         pi.events.emit("piop:models-refreshed", { ctx });
       } catch {

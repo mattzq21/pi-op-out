@@ -13,31 +13,6 @@ import { CustomProviderForm } from "./CustomProviderForm";
 
 type AuthControls = ReturnType<typeof useProviderAuth>;
 
-type ProviderGroup = {
-  key: string; name: string; base: ProviderAccount;
-  method: ProviderAccount["methods"][number]; accounts: ProviderAccount[];
-};
-
-function providerGroups(providers: ProviderAccount[]): ProviderGroup[] {
-  const families = new Map<string, ProviderAccount[]>();
-
-  for (const provider of providers) {
-    const accounts = families.get(provider.providerId) ?? [];
-    accounts.push(provider); families.set(provider.providerId, accounts);
-  }
-
-  return [...families.values()].flatMap((accounts) => {
-    const base = accounts.find((account) => account.number === 1) ?? accounts[0];
-
-    return base.methods.map((method) => ({
-      key: `${base.providerId}:${method.type}`,
-      name: base.methods.length > 1 ? method.name : base.name.replace(/ #\d+$/, ""),
-      base, method,
-      accounts: accounts.filter((account) => account.storedType === method.type || (!account.storedType && account.configured && method.type === "api_key")).sort((a, b) => a.number - b.number),
-    }));
-  });
-}
-
 const localHostLabel = isMobile ? "Connected daemon" : "This computer";
 
 function selectedHostName(hosts: RemoteHost[], hostId: string) {
@@ -91,8 +66,7 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
  if (!(capturedFixedHost0 === undefined ? false : capturedFixedHost0) && capturedHostId !== "local" && !capturedHosts1.some((host) => host.id === capturedHostId)) setHostId("local"); }, () => [hostId(), componentProps.hosts, (componentProps.fixedHost === undefined ? false : componentProps.fixedHost)]);
   const hostName = createMemo(() => (selectedHostName(componentProps.hosts, hostId())));
 
-  const providers = createMemo(() => (providerGroups(auth.providers).filter((group) => `${group.name} ${group.base.providerId} ${group.accounts.map((account) => account.name).join(" ")}`.toLowerCase().includes(filter().toLowerCase().trim()))
-    .sort((left, right) => Number(right.accounts.length > 0) - Number(left.accounts.length > 0))));
+  const providers = createMemo(() => auth.providers.filter(provider => `${provider.name} ${provider.id}`.toLowerCase().includes(filter().toLowerCase().trim())).sort((left, right) => Number(right.configured) - Number(left.configured)));
 
   const loadingProviders = () => auth.loading && !auth.providers.length;
 
@@ -125,19 +99,17 @@ function LoginPanel(componentProps: { flow: AuthFlow; auth: AuthControls }) {
   </div>;
 }
 
-function ProviderList(componentProps: { providers: ProviderGroup[]; auth: AuthControls; disabled: boolean }) {
-  return <><div class="config-list">{<Key each={componentProps.providers} by={(group) => group.key}>{(group, _index) => <section class="provider-group"  aria-label={group().name}>
+function ProviderList(componentProps: { providers: ProviderAccount[]; auth: AuthControls; disabled: boolean }) {
+  return <><div class="config-list"><Key each={componentProps.providers} by={provider => provider.id}>{provider => <section class="provider-group" aria-label={provider().name}>
     <div class="provider-account provider-heading">
-      <div><strong>{group().name}</strong>{!group().accounts.length && <small>Not configured</small>}</div>
-      <div class="provider-account-actions">{group().method.interactive
-        ? <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.begin(group().base.id, group().method.type, group().base.configured || !!group().base.storedType)}>Add account</button>
-        : <small>Configured through the host environment</small>}</div>
+      <div><strong>{provider().name}</strong><small>{provider().configured ? "Configured" : "Not configured"}{provider().source && <> · <span class={provider().source === "stored" ? "provider-stored" : undefined}>{provider().source}</span></>}</small></div>
+      <div class="provider-account-actions"><Index each={provider().methods}>{method => method().interactive
+        ? <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.begin(provider().id, method().type)}>{provider().configured ? "Replace login" : "Sign in"} · {method().name}</button>
+        : <small>Configured through the host environment</small>}</Index>
+        {provider().storedType && <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.logout(provider().id)}>Remove saved login</button>}
+      </div>
     </div>
-    {<Key each={group().accounts} by={(account) => account.id}>{(account, _index) => <div class="provider-account provider-account-child" >
-      <div><strong>{group().name} #{account().number}</strong><small>Configured{account().source && <> · <span class={account().source === "stored" ? "provider-stored" : undefined}>{account().source}</span></>}</small></div>
-      <div class="provider-account-actions">{account().storedType && <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.logout(account().id)}>Remove saved login</button>}</div>
-    </div>}</Key>}
-  </section>}</Key>}</div>
+  </section>}</Key></div>
     {!componentProps.auth.loading && !componentProps.auth.error && !componentProps.providers.length && <div class="empty-small">No providers match.</div>}
   </>;
 }

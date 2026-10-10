@@ -38,7 +38,6 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     atomic_write_private(&dir.join("runtime-bridge.cjs"), include_str!("../../resources/runtime-bridge.cjs").as_bytes())?;
     atomic_write_private(&dir.join("runtime-configuration.cjs"), include_str!("../../resources/runtime-configuration.cjs").as_bytes())?;
     prepare_sdk_storage(&dir)?;
-    atomic_write_private(&dir.join("provider-accounts.mjs"), include_str!("../../resources/provider-accounts.bundle.mjs").as_bytes())?;
     atomic_write_private(&path, include_str!("../../../extensions/piop-runtime-settings/index.ts").as_bytes())?;
     save_runtime_settings(&dir, settings)?;
     Ok(path)

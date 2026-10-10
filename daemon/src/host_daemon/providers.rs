@@ -7,7 +7,6 @@ use super::{
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex, MutexGuard, OnceLock, Weak,
@@ -79,7 +78,6 @@ struct AuthState {
 
 #[derive(Clone)]
 struct RuntimeInfo {
-    auth_path: PathBuf,
     builtin_ids: HashSet<String>,
 }
 
@@ -165,12 +163,7 @@ impl ProviderService {
             return Ok(info.clone());
         }
         let info = self.sdk.request(json!({"method":"initialize"})).await?;
-        let auth_path = info["authPath"]
-            .as_str()
-            .filter(|path| !path.is_empty())
-            .ok_or("Pi provider SDK returned no authentication path")?;
         let info = RuntimeInfo {
-            auth_path: PathBuf::from(auth_path),
             builtin_ids: array(&info, "builtinIds")
                 .iter()
                 .filter_map(|id| id.as_str().map(str::to_owned))
@@ -182,12 +175,11 @@ impl ProviderService {
 
     pub async fn check(&self) -> Result<u64> {
         let _checking = self.checking.lock().await;
-        let info = self.runtime().await?;
+        self.runtime().await?;
         self.refresh_catalogs(false).await?;
         let credentials = self.sdk.request(json!({"method":"auth_revision"})).await?;
         let models = self.sdk.request(json!({"method":"model_revision"})).await?;
-        let accounts = serde_json::to_string(&catalogs::read_accounts(&info.auth_path)?).map_err(|error| error.to_string())?;
-        let revision = format!("{credentials}|{models}|{accounts}");
+        let revision = format!("{credentials}|{models}");
         let changed = {
             let mut state = self.state();
             let changed = state.credential_revision.as_ref() != Some(&revision);
@@ -247,23 +239,18 @@ impl ProviderService {
     }
 
     async fn listing(&self, refresh: bool) -> Result<Value> {
-        let info = self.runtime().await?;
+        self.runtime().await?;
         self.refresh_catalogs(refresh).await?;
-        let records = catalogs::read_accounts(&info.auth_path)?;
         let snapshot = self.sdk.request(json!({"method":"inspect"})).await?;
         let credentials = array(&snapshot, "credentials");
         let mut providers = Vec::new();
         for provider in array(&snapshot, "providers") {
-            let provider = listed_provider(provider, &records, &credentials);
+            let provider = listed_provider(provider, &credentials);
             if !array(&provider, "methods").is_empty() {
                 providers.push(provider);
             }
         }
-        providers.sort_by(|a, b| {
-            text(a, "providerId")
-                .cmp(&text(b, "providerId"))
-                .then(a["number"].as_u64().cmp(&b["number"].as_u64()))
-        });
+        providers.sort_by_key(|provider| text(provider, "id"));
         let mut result = json!({"providers":providers});
         let warnings: Vec<_> = [self.state().catalog_warning.clone(), provider_model_warning(&snapshot)].into_iter().flatten().collect();
         if !warnings.is_empty() {
@@ -273,18 +260,14 @@ impl ProviderService {
     }
 
     async fn begin(self: &Arc<Self>, owner: &str, request: Value) -> Result<Value> {
-        let info = self.runtime().await?;
+        self.runtime().await?;
         let snapshot = self.sdk.request(json!({"method":"inspect"})).await?;
-        let mut provider = array(&snapshot, "providers")
+        let provider = array(&snapshot, "providers")
             .into_iter()
             .find(|provider| provider["id"] == request["providerId"])
             .ok_or("Provider is unavailable on this host")?;
         self.validate_login(&provider, &request)?;
-        let records = catalogs::read_accounts(&info.auth_path)?;
-        if flag(&request, "addAccount") {
-            provider = self.add_account(&info, &provider, &records, &snapshot).await?;
-        }
-        let flow = new_flow(owner, &provider, &info.auth_path)?;
+        let flow = new_flow(owner, &provider);
         let snapshot = flow.snapshot();
         self.start_login(flow, request["authType"].clone())?;
         Ok(snapshot)
@@ -313,31 +296,6 @@ impl ProviderService {
         Ok(())
     }
 
-    async fn add_account(&self, info: &RuntimeInfo, provider: &Value, records: &[Value], snapshot: &Value) -> Result<Value> {
-        let id = text(provider, "id");
-        let base = records
-            .iter()
-            .find(|record| record["id"] == id)
-            .map(|record| text(record, "providerId"))
-            .unwrap_or(id);
-        let occupied = array(snapshot, "providers")
-            .iter()
-            .map(|provider| text(provider, "id"))
-            .chain(
-                array(snapshot, "credentials")
-                    .iter()
-                    .map(|credential| text(credential, "providerId")),
-            )
-            .collect();
-        let record = catalogs::allocate_account(&info.auth_path, &base, occupied).await?;
-        let refreshed = self.sdk.request(json!({"method":"inspect"})).await?;
-        let provider = array(&refreshed, "providers")
-            .into_iter()
-            .find(|provider| provider["id"] == record["id"])
-            .ok_or("Could not initialize the new provider account")?;
-        self.changed();
-        Ok(provider)
-    }
 
     fn start_login(self: &Arc<Self>, flow: Flow, auth_type: Value) -> Result<()> {
         let provider_id = flow.provider_id.clone();
@@ -601,33 +559,14 @@ fn custom_key(request: &Value) -> Result<Option<&str>> {
     Ok(key)
 }
 
-fn new_flow(owner: &str, provider: &Value, auth_path: &Path) -> Result<Flow> {
-    let provider_id = text(provider, "id");
-    let extra = catalogs::read_accounts(auth_path)?.iter().any(|record| record["id"] == provider_id);
-    Ok(Flow {
-        id: Uuid::new_v4().to_string(),
-        owner: owner.into(),
-        provider_id,
-        name: if extra {
-            text(provider, "name")
-        } else {
-            format!("{} #1", text(provider, "name"))
-        },
-        status: "pending".into(),
-        notices: Vec::new(),
-        prompt: None,
-        error: None,
-        created: Instant::now(),
-    })
+fn new_flow(owner: &str, provider: &Value) -> Flow {
+    Flow {
+        id: Uuid::new_v4().to_string(), owner: owner.into(), provider_id: text(provider, "id"), name: text(provider, "name"),
+        status: "pending".into(), notices: Vec::new(), prompt: None, error: None, created: Instant::now(),
+    }
 }
 
-fn listed_provider(mut provider: Value, records: &[Value], credentials: &[Value]) -> Value {
-    let account = records.iter().find(|record| record["id"] == provider["id"]);
-    provider["providerId"] = account.map(|record| record["providerId"].clone()).unwrap_or(provider["id"].clone());
-    provider["number"] = account.map(|record| record["number"].clone()).unwrap_or(json!(1));
-    if account.is_none() {
-        provider["name"] = json!(format!("{} #1", text(&provider, "name")));
-    }
+fn listed_provider(mut provider: Value, credentials: &[Value]) -> Value {
     if let Some(credential) = credentials.iter().find(|credential| credential["providerId"] == provider["id"]) {
         provider["storedType"] = credential["type"].clone();
     }
