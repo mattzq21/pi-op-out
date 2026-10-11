@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { required } from "../lib/required";
 import { Key } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSelector, createSignal, For } from "solid-js";
+import { createComputed, createMemo, createSelector, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type KeyboardEvent } from "../lib/solid";
 
 import { ArrowDown, ArrowUp, Folder, FolderOpen, Search } from "lucide-solid";
@@ -246,7 +246,7 @@ export function ProjectDialog(componentProps: Props) {
 
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.isComposing) { event.preventDefault(); void open(); }
   }}>
-    <header class="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2>{componentProps.hosts && <select aria-label="Machine" disabled={opening()} value={hostId()} onChange={(event) => setHostId(event.target.value)}><For each={componentProps.hosts}>{(host) => <option value={host.id} disabled={host.disabled}>{host.name}</option>}</For></select>}<button class="directory-palette-escape" disabled={opening()} onClick={componentProps.onCancel}>esc</button></header>
+    <header class="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2>{componentProps.hosts && <select aria-label="Machine" disabled={opening()} value={hostId()} onChange={(event) => setHostId(event.target.value)}><Key each={componentProps.hosts} by={host => host.id}>{(host) => <option value={host().id} disabled={host().disabled}>{host().name}</option>}</Key></select>}<button class="directory-palette-escape" disabled={opening()} onClick={componentProps.onCancel}>esc</button></header>
     {renderDirectoryPaletteSearch()}
     {renderDirectoryPaletteCaption()}
     {renderDirectoryPaletteResults()}

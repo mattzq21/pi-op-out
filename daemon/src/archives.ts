@@ -2,7 +2,7 @@ import { realpathSync, statSync } from 'node:fs';
 import { extname, join, sep } from 'node:path';
 import { MAX_PATH_LIST_BYTES, MAX_SESSION_INDEX_BATCH_BYTES, STORAGE_DIRECTORY } from './config';
 import { MAX_REMOTE_HOSTS } from './settings_types';
-import { homeDir } from './environment';
+import { homeDir, piExecutable } from './environment';
 import { sessionIdentity, ssh } from './pi_launch';
 import { desktopSessionsDir, runLimited, shellQuote, type CommandSpec } from './process_io';
 import { hostScript, runHostScript } from './host_script';
@@ -24,7 +24,7 @@ export interface HostStorage { hostId: string; hostName: string; categories: any
 
 type Inventory = { categories: any[]; archives: any[]; warnings: string[] };
 
-const storageInventory = hostScript<Record<string, never>, Inventory>('storage-inventory', MAX_SESSION_INDEX_BATCH_BYTES, (value: any) => {
+const storageInventory = hostScript<{ piPath: string }, Inventory>('storage-inventory', MAX_SESSION_INDEX_BATCH_BYTES, (value: any) => {
   if (!Array.isArray(value?.categories)) throw new Error('missing field `categories`');
   if (!Array.isArray(value?.archives)) throw new Error('missing field `archives`');
   return { categories: value.categories.map(normalizeCategory), archives: value.archives.map(normalizeArchive), warnings: Array.isArray(value.warnings) ? value.warnings : [] };
@@ -35,7 +35,7 @@ export async function inspectStorage(host: RemoteHost | undefined): Promise<Host
   else await restoreRecovery.recoverRemote(host);
   const label = host?.name ?? 'Local';
   let inventory: Inventory;
-  try { inventory = await runHostScript(host ? { kind: 'remote', host } : { kind: 'local' }, storageInventory, {}); }
+  try { inventory = await runHostScript(host ? { kind: 'remote', host } : { kind: 'local' }, storageInventory, { piPath: host?.piPath ?? piExecutable() }); }
   catch (error: any) { throw new Error(`Could not inspect storage on ${label}: ${error?.message ?? error}`); }
   return { hostId: host?.id ?? 'local', hostName: label, ...inventory };
 }

@@ -129,8 +129,8 @@ function piCandidates(selected) {
   return candidates;
 }
 
-async function selectedPiPath(profile, warnings) {
-  const hint = process.env.PIOP_INVENTORY_PI_PATH || process.argv[1];
+async function selectedPiPath(profile, warnings, piPath) {
+  const hint = process.env.PIOP_INVENTORY_PI_PATH || piPath;
 
   if (hint) return hint;
 
@@ -175,8 +175,8 @@ function authDirectory(metadata) {
   return { directory, configured };
 }
 
-async function chatGptRoots(profile, discovery) {
-  const selected = await selectedPiPath(profile, discovery.warnings);
+async function chatGptRoots(profile, discovery, piPath) {
+  const selected = await selectedPiPath(profile, discovery.warnings, piPath);
   const metadata = await piPackage(selected);
   const { directory, configured } = authDirectory(metadata);
   const root = path.join(directory, 'piop-chatgpt');
@@ -200,11 +200,11 @@ async function chatGptRoots(profile, discovery) {
   }
 }
 
-async function discoverRoots(profile) {
+async function discoverRoots(profile, piPath) {
   const discovery = { cwds: new Map(), recovery: new Map(), legacy: new Map(), retainedArtifacts: new Map(), chatgpt: new Map(), sessionPaths: new Set(), warnings: [] };
   await readRegistry(profile, discovery);
   await recoveryRoots(profile, discovery);
-  await chatGptRoots(profile, discovery);
+  await chatGptRoots(profile, discovery, piPath);
 
   return discovery;
 }

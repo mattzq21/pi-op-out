@@ -84,11 +84,28 @@ function run(command: CommandSpec, input: string, maxOutput: number, signal: Abo
     let started = false;
     const diagnostic = (text: string) => { stderr += text.slice(0, MAX_DIAGNOSTIC - stderr.length); };
     let failure: HostScriptError | undefined;
+    let settled = false;
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', abort);
+      child.removeListener('close', finish);
+      child.stdout!.removeAllListeners('data');
+      child.stderr!.removeAllListeners('data');
+      diagnostic(pendingStderr);
+      if (failure) { if (stderr.trim()) console.error(`Host script: ${stderr.trim()}`); reject(failure); return; }
+      resolve({ code, started, stdout: Buffer.concat(stdout), stderr: stderr.trim() });
+    };
     const stop = (error: HostScriptError) => {
       failure ??= error;
-      if (child.pid === undefined) return;
-      try { process.kill(-child.pid, 'SIGKILL'); }
-      catch (error: any) { if (error.code !== 'ESRCH') child.kill('SIGKILL'); }
+      if (child.pid !== undefined) {
+        try { process.kill(-child.pid, 'SIGKILL'); }
+        catch (error: any) { if (error.code !== 'ESRCH') child.kill('SIGKILL'); }
+      }
+      child.stdin!.destroy();
+      child.stdout!.destroy();
+      child.stderr!.destroy();
+      finish(null);
     };
     const abort = () => stop(new HostScriptError('unknown', 'Host script was stopped; its outcome is unknown'));
     signal?.addEventListener('abort', abort, { once: true });
@@ -113,13 +130,8 @@ function run(command: CommandSpec, input: string, maxOutput: number, signal: Abo
     });
     child.stdin!.on('error', () => {});
     child.stdin!.end(input);
-    child.on('error', error => { failure ??= new HostScriptError(child.pid === undefined ? 'not-started' : 'unknown', `Could not start host script: ${error.message}`); });
-    child.on('close', code => {
-      signal?.removeEventListener('abort', abort);
-      diagnostic(pendingStderr);
-      if (failure) { if (stderr.trim()) console.error(`Host script: ${stderr.trim()}`); reject(failure); return; }
-      resolve({ code, started, stdout: Buffer.concat(stdout), stderr: stderr.trim() });
-    });
+    child.once('error', error => { failure ??= new HostScriptError(child.pid === undefined ? 'not-started' : 'unknown', `Could not start host script: ${error.message}`); });
+    child.once('close', finish);
   });
 }
 

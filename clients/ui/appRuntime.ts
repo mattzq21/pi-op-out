@@ -79,6 +79,11 @@ export function reassignTerminals(transport: NativeTransport, terminals: readonl
 
 const modelKey = (model: { provider: string; id: string }) => `${model.provider}/${model.id}`;
 
+function useAvailableModel(transport: NativeTransport, model: Model | null, models: Model[]) {
+  if (model && models.some(available => modelKey(available) === modelKey(model))) transport.promptControls.useEffectiveModel(model);
+  else transport.promptControls.clearModel();
+}
+
 async function setStartModel(transport: NativeTransport, wanted: string | undefined, models: Model[]) {
   const model = models.find((model) => modelKey(model) === wanted);
 
@@ -86,8 +91,7 @@ async function setStartModel(transport: NativeTransport, wanted: string | undefi
   else {
     const state = await transport.command({ type: "get_state" }, agentStateSchema);
 
-    if (state.model && models.some(model => modelKey(model) === modelKey(required(state.model)))) transport.promptControls.useEffectiveModel(state.model);
-    else transport.promptControls.clearModel();
+    useAvailableModel(transport, state.model, models);
   }
 }
 
@@ -118,8 +122,7 @@ async function applyDefaults(transport: NativeTransport, value: AppSettings, mod
 
   if (!current()) return;
 
-  if (state.model && models.some(model => modelKey(model) === modelKey(required(state.model)))) transport.promptControls.useEffectiveModel(state.model);
-  else transport.promptControls.clearModel();
+  useAvailableModel(transport, state.model, models);
   transport.defaultsApplied();
 }
 

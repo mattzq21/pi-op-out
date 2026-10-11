@@ -49,25 +49,24 @@ const sessionSummarySchema = z.object({
   subagentParentId: z.string().min(1).optional(),
 });
 const indexSessions = hostScript<{ paths: string[] }, z.infer<typeof sessionSummarySchema>[]>('index-sessions', MAX_SESSION_INDEX_BATCH_BYTES, value => z.array(sessionSummarySchema).parse(value));
-const SESSION_INDEX_BATCH_SIZE = 128;
 
 export async function readSessionSummaries(candidates: SessionCandidate[], host: RemoteHost | undefined): Promise<Map<string, CachedSession>> {
   const result = new Map<string, CachedSession>();
   const items = new Map(candidates.map(item => [item[0], item]));
   const paths = [...items.keys()];
-  for (let offset = 0; offset < paths.length; offset += SESSION_INDEX_BATCH_SIZE) {
-    const values = await runHostScript(host ? { kind: 'remote', host } : { kind: 'local' }, indexSessions, { paths: paths.slice(offset, offset + SESSION_INDEX_BATCH_SIZE) });
-    for (const value of values) {
-      const item = items.get(value.path);
-      if (!item) throw new Error(`Unexpected session summary path: ${value.path}`);
-      const summary: SessionSummary = {
-        groupId: null, subagentParentId: value.subagentParentId,
-        id: value.id, path: value.path, name: value.name, project: basename(value.cwd) || 'Workspace', cwd: value.cwd, cwdExists: true,
-        modifiedAt: item[2], preview: value.preview, messageCount: value.messageCount, lastMessageAt: value.lastMessageAt, apiCost: value.apiCost,
-        hostId: host?.id ?? 'local', hostName: host?.name ?? 'Local',
-      };
-      result.set(value.path, { fingerprint: item[1], summary });
-    }
+  if (!paths.length) return result;
+  const maxOutput = Math.max(MAX_SESSION_INDEX_BATCH_BYTES, paths.length * 512 * 1024);
+  const values = await runHostScript(host ? { kind: 'remote', host } : { kind: 'local' }, { ...indexSessions, maxOutput }, { paths });
+  for (const value of values) {
+    const item = items.get(value.path);
+    if (!item) throw new Error(`Unexpected session summary path: ${value.path}`);
+    const summary: SessionSummary = {
+      groupId: null, subagentParentId: value.subagentParentId,
+      id: value.id, path: value.path, name: value.name, project: basename(value.cwd) || 'Workspace', cwd: value.cwd, cwdExists: true,
+      modifiedAt: item[2], preview: value.preview, messageCount: value.messageCount, lastMessageAt: value.lastMessageAt, apiCost: value.apiCost,
+      hostId: host?.id ?? 'local', hostName: host?.name ?? 'Local',
+    };
+    result.set(value.path, { fingerprint: item[1], summary });
   }
   return result;
 }

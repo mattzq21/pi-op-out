@@ -7,8 +7,7 @@ import script5 from './session-registry.bundle.mjs?raw';
 import script6 from './storage-transaction.bundle.mjs?raw';
 import script7 from './temporary-chat.bundle.mjs?raw';
 import script8 from './goal-text.bundle.mjs?raw';
-import script9 from './read-image.bundle.mjs?raw';
-import script10 from './agent-definitions.bundle.mjs?raw';
+import script9 from './agent-definitions.bundle.mjs?raw';
 
 export const HOST_SCRIPT_BUNDLES = {
   'session-descendants': script0,
@@ -20,6 +19,5 @@ export const HOST_SCRIPT_BUNDLES = {
   'storage-transaction': script6,
   'temporary-chat': script7,
   'goal-text': script8,
-  'read-image': script9,
-  'agent-definitions': script10,
+  'agent-definitions': script9,
 };

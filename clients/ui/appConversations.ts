@@ -717,9 +717,7 @@ export function createAppConversations(preloadChat: () => void) {
 
     return { agents: (definedAgents()?.config.agents ?? []), activeAgent: composerControls.agent(definedAgents()?.active), agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
 
-  const chatModels = createMemo(() => { const hidden = modelVisibility.hidden(activeHostId());
-
-    return hidden ? chatSession().models.filter(model => !hidden.includes(`${model.provider}/${model.id}`)) : []; });
+  const chatModels = createMemo(() => modelVisibility.visibleModels(activeHostId(), chatSession().models));
   const chatCommands = createMemo<SlashCommand[]>(() => chatSession().commands);
   const chatWidgets = createMemo(() => extensionStateIsCurrent() ? Object.values(widgets()).flat() : []);
   const dirlessPending = new Set<string>();

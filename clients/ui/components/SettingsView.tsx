@@ -1,3 +1,4 @@
+import { mergeModelIds } from "../lib/modelVisibility";
 import { RefreshSkills } from "./RefreshSkills";
 import { stableSnapshot, settingsSnapshot, agentEditsSnapshot, settingKeys } from "../lib/settingsSnapshots";
 import { applyClientPreferences, clientPreferenceKeys, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "../lib/clientPreferenceMerge";
@@ -65,6 +66,11 @@ function mergeSettingsDraft(incoming: AppSettings, baseline: AppSettings, local:
 
   for (const key of settingKeys) {
     if (clientPreferenceKeys.has(key) || !Object.hasOwn(local, key)) continue;
+
+    if (key === "hiddenModels" || key === "knownModels") {
+      Object.assign(merged, { [key]: mergeModelIds(incoming[key], baseline[key], local[key]) });
+      continue;
+    }
 
     const same = (left: AppSettings[keyof AppSettings], right: AppSettings[keyof AppSettings]) => stableSnapshot(left) === stableSnapshot(right);
 
