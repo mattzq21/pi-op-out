@@ -512,11 +512,10 @@ function afterCommit(root, outcome) {
 }
 
 function cleanupTemporaryChats(root) {
-  const revision = database.cleanupRequest(root, 'temporary-chat');
-
-  if (revision === undefined) return;
-
   try {
+    const revision = database.cleanupRequest(root, 'temporary-chat');
+
+    if (revision === undefined) return;
     require('./temporary-chat.cjs').cleanupDeleted(root);
     database.finishCleanup(root, 'temporary-chat', revision);
   } catch (error) { return `Temporary folder cleanup will retry: ${error.message}`; }
