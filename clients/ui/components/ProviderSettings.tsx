@@ -1,3 +1,4 @@
+import { localHostLabel } from "../lib/mobileHosts";
 import { required } from "../lib/required";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createMemo, createSignal, Index } from "solid-js";
@@ -13,10 +14,9 @@ import { CustomProviderForm } from "./CustomProviderForm";
 
 type AuthControls = ReturnType<typeof useProviderAuth>;
 
-const localHostLabel = isMobile ? "Connected daemon" : "Local";
 
 function selectedHostName(hosts: RemoteHost[], hostId: string) {
-  return hostId === "local" ? localHostLabel : hosts.find((host) => host.id === hostId)?.name || hostId;
+  return hostId === "local" ? localHostLabel() : hosts.find((host) => host.id === hostId)?.name || hostId;
 }
 
 function LoginLink(componentProps: { url: string; label: string }) {
@@ -73,7 +73,7 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
   return <div class="settings-section provider-settings">
     <div class="section-title"><div><h2>Providers</h2><p>Sign in to providers on the machine running Pi. Credentials stay on that host and remain available after you disconnect.</p></div></div>
     <div class="provider-toolbar">
-      {!(componentProps.fixedHost === undefined ? false : componentProps.fixedHost) && <label>Host <select aria-label="Provider host" value={hostId()} disabled={disabled()} onChange={(event) => setHostId(event.target.value)}><option value="local">{localHostLabel}</option>{<Key each={componentProps.hosts.filter((host) => host.enabled !== false)} by={(host) => host.id}>{(host, _index) => <option  value={host().id}>{host().name}</option>}</Key>}</select></label>}
+      {!(componentProps.fixedHost === undefined ? false : componentProps.fixedHost) && <label>Host <select aria-label="Provider host" value={hostId()} disabled={disabled()} onChange={(event) => setHostId(event.target.value)}><option value="local">{localHostLabel()}</option>{<Key each={componentProps.hosts.filter((host) => host.enabled !== false)} by={(host) => host.id}>{(host, _index) => <option  value={host().id}>{host().name}</option>}</Key>}</select></label>}
       <label class="section-filter"><Search size={14} /><input aria-label="Filter providers" placeholder="Filter providers" value={filter()} onInput={(event) => setFilter(event.target.value)} /></label>
       <button class="section-toggle-all" disabled={auth.loading || disabled()} onClick={auth.refresh}><RefreshCw size={14} />Refresh</button>
       <button class="section-toggle-all provider-add-custom" disabled={disabled() || adding()} onClick={() => setAdding(true)}>Add custom provider</button>

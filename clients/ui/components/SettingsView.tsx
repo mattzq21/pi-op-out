@@ -28,7 +28,7 @@ export type Section = "review" | "inference" | "general" | "dictation" | "storag
 
 type SettingsSection = { id: Section; label: string; icon: typeof Settings2 };
 
-const mobileSections: SettingsSection[] = isMobile ? [{ id: "connections", label: "Hosts", icon: Server }] : [];
+const mobileSections: SettingsSection[] = isMobile ? [{ id: "connections", label: "Anchor host", icon: Server }] : [];
 
 export const sections: SettingsSection[] = [
   { id: "general", label: "General", icon: Settings2 },
@@ -465,7 +465,7 @@ export function SettingsView(props: SettingsViewProps) {
         {renderGeneral()}
         {renderDictation()}
         {renderModels()}
-        {formValidation().visibleSection === "connections" && <SettingsSection title="Hosts" description="Saved daemon connections are stored on this device."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Manage saved hosts</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
+        {formValidation().visibleSection === "connections" && <SettingsSection title="Anchor host" description="This device connects to one host. You can use the machines that this host has added."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Change anchor host</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
         {renderAgents()}
         <Show when={formValidation().visibleSection === "review"}><SettingsSection title="Review" description="Choose the agent and instructions for code reviews."><ReviewSettings settings={draft()} agents={agentDrafts()} onChange={patch} /></SettingsSection></Show>
         {formValidation().visibleSection === "storage" && <StorageSettings hostId={settingsProps().providerHostId} />}
