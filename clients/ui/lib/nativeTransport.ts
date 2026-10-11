@@ -493,6 +493,7 @@ export class NativeTransport {
   }
   async setFastMode(enabled: boolean) {
     if (this.draftOnly()) { this.draftRuntime.fastMode = enabled;
+      if (this.fresh) this.draftRuntime.defaultFastMode = enabled;
       this.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: enabled ? "Fast mode on" : "" });
 
       return; }

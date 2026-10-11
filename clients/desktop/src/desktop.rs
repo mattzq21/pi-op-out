@@ -80,9 +80,17 @@ fn open_system_resource(target: &std::ffi::OsStr) -> Result<(), String> {
 #[tauri::command(async)]
 fn read_dropped_file(path: String) -> Result<Value, String> {
     let path = Path::new(&path);
-    let file = fs::File::open(path).map_err(|error| error.to_string())?;
+    if !fs::metadata(path).map_err(|error| error.to_string())?.is_file() { return Err("Drop regular files only".to_string()); }
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path).map_err(|error| error.to_string())?;
     let metadata = file.metadata().map_err(|error| error.to_string())?;
-    if !metadata.is_file() { return Err("Drop files, not folders".to_string()); }
+    if !metadata.is_file() { return Err("Drop regular files only".to_string()); }
     let limit = 10 * 1024 * 1024;
     if metadata.len() > limit { return Err("Attachment is larger than 10 MB".to_string()); }
     let mut data = Vec::new();

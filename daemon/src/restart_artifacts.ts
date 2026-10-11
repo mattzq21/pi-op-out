@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, copyFileSync, chmodSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, constants } from 'node:fs';
+import { closeSync, copyFileSync, chmodSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync, constants } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
@@ -10,6 +10,8 @@ import { daemonScript } from './session_worker';
 import { lockPathSync, type FileLock } from './util/flock';
 
 const SERVE_MODES = ['--serve', '--exit-on-disconnect', '--restart-candidate', '--restart-coordinator'];
+const RUNNING_EXECUTABLE = Bun.isStandaloneExecutable && process.platform === 'linux' ? '/proc/self/exe' : undefined;
+let runningBytes: Buffer | undefined;
 
 function mode(): string | undefined { return process.argv[2]; }
 
@@ -72,7 +74,11 @@ export class Backup {
   }
 
   private copy(root: string): void {
-    copyFileSync(daemonScript(), this.path);
+    if (RUNNING_EXECUTABLE) copyFileSync(RUNNING_EXECUTABLE, this.path);
+    else {
+      if (!runningBytes) throw new Error('Running daemon backup is unavailable');
+      writeFileSync(this.path, runningBytes);
+    }
     chmodSync(this.path, 0o700);
     const fd = openSync(this.path, 'r');
     try { fsyncSync(fd); } finally { closeSync(fd); }
@@ -199,6 +205,7 @@ let leases: FileLock[] | undefined;
 let started = false;
 
 export function initialize(): void {
+  if (!RUNNING_EXECUTABLE && SERVE_MODES.includes(mode() ?? '')) runningBytes ??= readFileSync(daemonScript());
   if (!needsLease()) return;
   if (!leases) leases = currentLeases(directory());
   if (!SERVE_MODES.includes(mode() ?? '')) return;

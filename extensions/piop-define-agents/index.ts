@@ -472,7 +472,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     return prompt;
   }
 
-  const validateFastMode = (agent: Agent, modelName: string | undefined, currentModel: string | undefined) => fastModeError(agent, agent.model.trim() || runtimeDefaults?.model || currentModel) || fastModeError(agent, modelName || currentModel);
+  const validateFastMode = (agent: Agent, modelName: string | undefined, currentModel: string | undefined) => fastModeError(agent, modelName || currentModel);
 
   const selectAgentModel = async (agent: Agent, ctx: ExtensionContext, modelName: string) => {
     const [provider, ...parts] = modelName.split("/"); const model = ctx.modelRegistry.find(provider, parts.join("/"));
@@ -700,7 +700,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!agent) throw new Error(`Unknown defined agent: ${name}`);
     restore(ctx);
     await refreshFastMode(ctx);
-    const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model, agent.fastMode === true);
+    const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model || (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined), agent.fastMode === true);
 
     if (error) throw new Error(error);
     await extensions.prepare(extensionPaths(agent.extensions));

@@ -27,6 +27,7 @@ type Registration = { method: "registerTool"; name: string; tool: Tool }
 
 type Group = {
   key: string;
+  paths: string[];
   registrations: Map<Registration["method"], Map<string, Registration>>;
   listeners: Array<{ name: string; handler: BusHandler; removed?: boolean; unsubscribe?: () => void }>;
   stops: Array<() => void>;
@@ -189,7 +190,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     const cached = prepared.get(key);
 
     if (cached) return cached;
-    const group: Group = { key, registrations: new Map(), listeners: [], stops: [], ready: false };
+    const group: Group = { key, paths: [...paths], registrations: new Map(), listeners: [], stops: [], ready: false };
     const loaded = new Set<string>();
     const visiting: string[] = [];
 
@@ -484,10 +485,6 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     } finally { current = active; }
   }
 
-  function republishTools(group: Group | undefined) {
-    for (const item of group?.registrations.get("registerTool")?.values() ?? []) publishRegistration(item);
-  }
-
   async function activate(group: Group, ctx: ExtensionContext) {
     const session = ctx.sessionManager.getSessionId();
 
@@ -500,6 +497,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     prepared.delete(group.key);
     const previous = current;
     await shutdown(previous, ctx);
+    stop(previous);
     current = group; group.ready = true;
 
     try {
@@ -509,20 +507,15 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
       listen(group);
       await start(group, ctx);
       group.session = session;
-      stop(previous);
       hideInactiveTools(previous, group);
     } catch (error) {
       await shutdown(group, ctx);
-      stop(group); current = previous;
+      stop(group); current = undefined;
       hideInactiveTools(group, previous);
 
-      republishTools(previous);
-
       if (previous) {
-        previous.session = undefined;
-
-        try { await start(previous, ctx); previous.session = session; }
-        catch (error) { ctx.ui.notify(`piop extension restart failed: ${String(error)}`, "error"); }
+        try { await activate(await prepare(previous.paths), ctx); }
+        catch (error) { hideInactiveTools(group, undefined); hideInactiveTools(previous, undefined); ctx.ui.notify(`piop extension restart failed: ${String(error)}`, "error"); }
       }
 
       throw error;

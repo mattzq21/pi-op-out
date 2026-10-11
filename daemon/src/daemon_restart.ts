@@ -230,7 +230,7 @@ async function launch(plan: Plan, executable: string, mode: string): Promise<Chi
     PIOP_DEBUG_MOBILE_BIND: plan.debug_bind ?? process.env.PIOP_DEBUG_MOBILE_BIND,
     PIOP_RESTART_AUTOMATIC: plan.automatic ? '1' : undefined,
   } };
-  const logger = mode === '--restart-candidate' ? executable : daemonLog.runningExecutable();
+  const logger = mode === '--restart-candidate' ? executable : plan.fallback;
   await daemonLog.configure(command, logger);
   return daemonLog.spawnDaemon(command);
 }

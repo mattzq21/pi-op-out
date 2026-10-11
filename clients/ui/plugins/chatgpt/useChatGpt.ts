@@ -167,6 +167,15 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 
     if (!acquired && !wasOwned) value = observingChat(value);
     value = preserveStopping(value);
+
+    if (previous?.id === value.id) {
+      const messages = new Map(previous.messages.map(message => [message.id, message]));
+      value = { ...value, messages: value.messages.map(message => {
+        const existing = messages.get(message.id);
+
+        return existing?.role === message.role && existing.text === message.text ? existing : message;
+      }) };
+    }
     setChat(value); remember(value);
   };
 
