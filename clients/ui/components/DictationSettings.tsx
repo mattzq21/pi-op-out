@@ -7,7 +7,7 @@ import type { AppSettings, DictationEngine, DictationEngineSettings, DictationMo
 import { IconButton } from "./IconButton";
 
 const engines: Record<DictationEngine, { label: string; program: string; extension: string }> = {
-  "transcribe.cpp": { label: "transcribe.cpp", program: "python3 with transcribe.cpp", extension: ".gguf" },
+  "transcribe.cpp": { label: "Transcribe.cpp", program: "python3 with transcribe.cpp", extension: ".gguf" },
   "needle": { label: "Needle", program: "needle", extension: ".cact" },
 };
 const engineTypes = Object.keys(engines) as DictationEngine[];
