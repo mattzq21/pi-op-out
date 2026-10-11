@@ -28,7 +28,7 @@ let runtime: any;
 /** Development details about this daemon process. */
 export function debugRuntime(): any {
   if (runtime) return runtime;
-  const executable = resolve(process.argv[1] ?? process.execPath);
+  const executable = Bun.isStandaloneExecutable ? process.execPath : resolve(process.argv[1] ?? process.execPath);
   const extensionRoot = generatedExtensionRoot();
   runtime = {
     processId: process.pid,
