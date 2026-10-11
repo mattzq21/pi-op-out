@@ -13,6 +13,13 @@ pub(crate) struct SavedDictationModel {
     language: Option<String>,
 }
 
+/// A speech program the user saved. The path identifies it.
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub(crate) struct SavedDictationEngine {
+    engine: String,
+    path: String,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClientSettings {
@@ -31,6 +38,8 @@ pub(crate) struct ClientSettings {
     dictation_language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dictation_models: Option<Vec<SavedDictationModel>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dictation_engines: Option<Vec<SavedDictationEngine>>,
 }
 
 impl ClientSettings {
@@ -74,13 +83,13 @@ fn merge_memberships(latest: &[String], baseline: &[String], intended: &[String]
     merged
 }
 
-/// Keeps saved models from other windows. This window's removals, additions and changes win for the paths it edited.
-fn merge_saved_models(latest: &[SavedDictationModel], baseline: &[SavedDictationModel], intended: &[SavedDictationModel]) -> Vec<SavedDictationModel> {
-    let has = |models: &[SavedDictationModel], path: &str| models.iter().any(|model| model.path == path);
-    let mut merged: Vec<SavedDictationModel> = latest.iter().filter(|model| !has(baseline, &model.path) || has(intended, &model.path)).cloned().collect();
+/// Keeps saved models or engines from other windows. This window's removals, additions and changes win for the paths it edited.
+fn merge_saved<T: Clone + PartialEq>(latest: &[T], baseline: &[T], intended: &[T], path: impl Fn(&T) -> &str) -> Vec<T> {
+    let has = |entries: &[T], key: &str| entries.iter().any(|entry| path(entry) == key);
+    let mut merged: Vec<T> = latest.iter().filter(|entry| !has(baseline, path(entry)) || has(intended, path(entry))).cloned().collect();
     for model in intended {
         if baseline.contains(model) { continue; }
-        match merged.iter_mut().find(|item| item.path == model.path) {
+        match merged.iter_mut().find(|item| path(item) == path(model)) {
             Some(item) => *item = model.clone(),
             None => merged.push(model.clone()),
         }
@@ -116,7 +125,10 @@ fn merge_preferences(mut latest: ClientSettings, baseline: &ClientSettings, inte
     if intended.dictation_model_path != baseline.dictation_model_path { latest.dictation_model_path = intended.dictation_model_path.clone(); }
     if intended.dictation_language != baseline.dictation_language { latest.dictation_language = intended.dictation_language.clone(); }
     if latest.dictation_models.is_some() || intended.dictation_models.is_some() {
-        latest.dictation_models = Some(merge_saved_models(latest.dictation_models.as_deref().unwrap_or_default(), baseline.dictation_models.as_deref().unwrap_or_default(), intended.dictation_models.as_deref().unwrap_or_default()));
+        latest.dictation_models = Some(merge_saved(latest.dictation_models.as_deref().unwrap_or_default(), baseline.dictation_models.as_deref().unwrap_or_default(), intended.dictation_models.as_deref().unwrap_or_default(), |model| &model.path));
+    }
+    if latest.dictation_engines.is_some() || intended.dictation_engines.is_some() {
+        latest.dictation_engines = Some(merge_saved(latest.dictation_engines.as_deref().unwrap_or_default(), baseline.dictation_engines.as_deref().unwrap_or_default(), intended.dictation_engines.as_deref().unwrap_or_default(), |engine| &engine.path));
     }
     Ok(latest)
 }

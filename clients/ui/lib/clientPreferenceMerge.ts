@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { AppSettings, SavedDictationModel, SettingsChange } from "../types";
-import { savedDictationModelSchema } from "./responseSchemas";
+import type { AppSettings, SettingsChange } from "../types";
+import { savedDictationEngineSchema, savedDictationModelSchema } from "./responseSchemas";
 
 export const clientPreferencesSchema = z.object({
   keybindings: z.record(z.string(), z.string()),
@@ -12,6 +12,7 @@ export const clientPreferencesSchema = z.object({
   dictationModelPath: z.string().optional(),
   dictationLanguage: z.string().optional(),
   dictationModels: z.array(savedDictationModelSchema).optional(),
+  dictationEngines: z.array(savedDictationEngineSchema).optional(),
 });
 
 export type ClientPreferences = z.infer<typeof clientPreferencesSchema>;
@@ -19,25 +20,27 @@ export type ClientPreferences = z.infer<typeof clientPreferencesSchema>;
 /** Dictation preferences hold one value each. A save changes one only when this client edited it. */
 const dictationKeys = ["dictationEngine", "dictationEnginePath", "dictationModelPath", "dictationLanguage"] as const;
 
-export const clientPreferenceKeys = new Set<keyof AppSettings>(["keybindings", "hiddenModels", "knownModels", "debugMode", "dictationModels", ...dictationKeys]);
+export const clientPreferenceKeys = new Set<keyof AppSettings>(["keybindings", "hiddenModels", "knownModels", "debugMode", "dictationModels", "dictationEngines", ...dictationKeys]);
 
 export function clientPreferences(settings: AppSettings): ClientPreferences {
-  return { keybindings: { ...settings.keybindings }, hiddenModels: [...settings.hiddenModels], knownModels: settings.knownModels && [...settings.knownModels], debugMode: settings.debugMode, dictationEngine: settings.dictationEngine, dictationEnginePath: settings.dictationEnginePath, dictationModelPath: settings.dictationModelPath, dictationLanguage: settings.dictationLanguage, dictationModels: settings.dictationModels?.map(model => ({ ...model })) };
+  return { keybindings: { ...settings.keybindings }, hiddenModels: [...settings.hiddenModels], knownModels: settings.knownModels && [...settings.knownModels], debugMode: settings.debugMode, dictationEngine: settings.dictationEngine, dictationEnginePath: settings.dictationEnginePath, dictationModelPath: settings.dictationModelPath, dictationLanguage: settings.dictationLanguage, dictationModels: settings.dictationModels?.map(model => ({ ...model })), dictationEngines: settings.dictationEngines?.map(engine => ({ ...engine })) };
 }
 
-function sameSavedModel(left?: SavedDictationModel, right?: SavedDictationModel) {
+type SavedEntry = { engine: string; path: string; language?: string };
+
+function sameSavedEntry(left?: SavedEntry, right?: SavedEntry) {
   return left?.engine === right?.engine && left?.path === right?.path && left?.language === right?.language;
 }
 
-/** Keeps saved models from other windows. This client's removals, additions and changes win for the paths it edited. */
-function mergeSavedModels(latest?: SavedDictationModel[], baseline?: SavedDictationModel[], intended?: SavedDictationModel[]) {
+/** Keeps saved models or engines from other windows. This client's removals, additions and changes win for the paths it edited. */
+function mergeSavedEntries<T extends SavedEntry>(latest?: T[], baseline?: T[], intended?: T[]) {
   if (latest === undefined && intended === undefined) return undefined;
   const before = new Map((baseline ?? []).map(model => [model.path, model]));
   const after = new Map((intended ?? []).map(model => [model.path, model]));
   const merged = (latest ?? []).filter(model => !before.has(model.path) || after.has(model.path));
 
   for (const model of intended ?? []) {
-    if (sameSavedModel(before.get(model.path), model)) continue;
+    if (sameSavedEntry(before.get(model.path), model)) continue;
     const index = merged.findIndex(item => item.path === model.path);
     if (index < 0) merged.push(model);
     else merged[index] = model;
@@ -93,7 +96,8 @@ export function mergeClientPreferences(latest: ClientPreferences, baseline: Clie
     dictationEnginePath: intended.dictationEnginePath === baseline.dictationEnginePath ? latest.dictationEnginePath : intended.dictationEnginePath,
     dictationModelPath: intended.dictationModelPath === baseline.dictationModelPath ? latest.dictationModelPath : intended.dictationModelPath,
     dictationLanguage: intended.dictationLanguage === baseline.dictationLanguage ? latest.dictationLanguage : intended.dictationLanguage,
-    dictationModels: mergeSavedModels(latest.dictationModels, baseline.dictationModels, intended.dictationModels),
+    dictationModels: mergeSavedEntries(latest.dictationModels, baseline.dictationModels, intended.dictationModels),
+    dictationEngines: mergeSavedEntries(latest.dictationEngines, baseline.dictationEngines, intended.dictationEngines),
   };
 
   return { preferences, conflicts };

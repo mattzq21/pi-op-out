@@ -90,9 +90,11 @@ export interface ComposerUpload { id: string; name: string; kind: "image" | "tex
 
  /** The speech-to-text program the daemon runs: transcribe.cpp or Cactus Needle. */
  export type DictationEngine = "transcribe.cpp" | "needle";
+ /** A speech program the user saved. The path identifies it. */
+ export interface SavedDictationEngine { engine: DictationEngine; path: string; }
  /** A model file the user saved, with the engine and language to use it with. The path identifies it. */
  export interface SavedDictationModel { engine: DictationEngine; path: string; language?: string; }
- export interface AppSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; dictationEngine?: DictationEngine; dictationEnginePath?: string; dictationModelPath?: string; dictationLanguage?: string; dictationModels?: SavedDictationModel[]; localEnabled?: boolean; defaultAgent?: string; reviewAgent?: string; reviewPrompt?: string; defaultModel: string; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
+ export interface AppSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; dictationEngine?: DictationEngine; dictationEnginePath?: string; dictationModelPath?: string; dictationLanguage?: string; dictationModels?: SavedDictationModel[]; dictationEngines?: SavedDictationEngine[]; localEnabled?: boolean; defaultAgent?: string; reviewAgent?: string; reviewPrompt?: string; defaultModel: string; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
 
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 
