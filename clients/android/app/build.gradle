@@ -1,8 +1,15 @@
 apply plugin: 'com.android.application'
 
+// transcribe.cpp is built from a local checkout. Set transcribe.cpp.dir in local.properties or TRANSCRIBE_CPP_DIR.
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) localPropertiesFile.withInputStream { localProperties.load(it) }
+def transcribeCppDir = localProperties.getProperty('transcribe.cpp.dir') ?: System.getenv('TRANSCRIBE_CPP_DIR') ?: ''
+
 android {
     namespace = "dev.pi.mobile"
     compileSdk = rootProject.ext.compileSdkVersion
+    ndkVersion = "27.3.13750724"
     buildFeatures {
         buildConfig true
     }
@@ -12,6 +19,15 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        ndk {
+            // Cactus Needle ships an Android library for arm64 only.
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments "-DTRANSCRIBE_CPP_DIR=${transcribeCppDir}", "-DANDROID_STL=c++_static", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON", "-DCMAKE_BUILD_TYPE=Release"
+            }
+        }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -22,6 +38,11 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
         }
     }
 }

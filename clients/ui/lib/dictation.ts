@@ -13,7 +13,7 @@ let recordingOwner: symbol | undefined;
 
 const microphoneAvailable = () => !!navigator.mediaDevices?.getUserMedia && typeof AudioContext !== "undefined";
 
-/** Follows the speech-to-text engine status of the connected daemon. */
+/** Follows the status of the speech engine on this device. */
 export function useDictationConfiguration() {
   const [configuration, setConfiguration] = createSignal<Configuration>({ enabled: false, loading: true }, { equals: (left, right) => JSON.stringify(left) === JSON.stringify(right) });
   let disposed = false;
@@ -113,7 +113,7 @@ function pcmBase64(samples: number[]) {
 
 export type DictationText = { committed: string; tentative: string };
 
-/** One live dictation: it sends microphone audio to the daemon while the user speaks and gets text back as it changes. */
+/** One live dictation: it sends microphone audio to the speech engine on this device while the user speaks and gets text back as it changes. */
 export class DictationRecording {
   private owner = Symbol("dictation");
   private stream?: MediaStream;
@@ -164,7 +164,7 @@ export class DictationRecording {
 
       if (this.stopped) { this.cancel(); return; }
 
-      // Start the daemon stream only after the microphone is granted, so a permission prompt cannot hit the stream idle timeout.
+      // Start the engine stream only after the microphone is granted, so a permission prompt does not hold the engine.
       // Audio recorded while the stream starts waits in `pending` and is sent when the stream ID arrives.
       started = invoke("dictation_stream_start", undefined, z.object({ id: z.string() }));
       const downsampler = new Downsampler(context.sampleRate / 16000);
@@ -198,7 +198,7 @@ export class DictationRecording {
     }
   }
 
-  /** Sends the waiting samples. Sends run one after another, so the daemon gets the audio in order. */
+  /** Sends the waiting samples. Sends run one after another, so the engine gets the audio in order. */
   private flush(fail: (error: Error) => void) {
     const id = this.id;
 

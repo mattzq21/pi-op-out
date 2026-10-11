@@ -15,6 +15,7 @@ import org.json.JSONObject;
 @CapacitorPlugin(name = "ClientPreferences")
 public class ClientPreferencesPlugin extends Plugin {
     private static final Object STORAGE_LOCK = new Object();
+    private static final String[] DICTATION_FIELDS = {"dictationEngine", "dictationEnginePath", "dictationModelPath", "dictationLanguage"};
 
     @PluginMethod
     public void load(PluginCall call) {
@@ -56,6 +57,9 @@ public class ClientPreferencesPlugin extends Plugin {
         memberships(settings, "hiddenModels");
         memberships(settings, "knownModels");
         if (!(settings.get("debugMode") instanceof Boolean)) throw new JSONException("Invalid client preference debugMode");
+        for (String field : DICTATION_FIELDS) {
+            if (settings.has(field) && !(settings.get(field) instanceof String)) throw new JSONException("Invalid client preference " + field);
+        }
     }
 
     private static void mergeMemberships(JSONObject latest, JSONObject baseline, JSONObject intended, String field) throws JSONException {
@@ -92,6 +96,13 @@ public class ClientPreferencesPlugin extends Plugin {
         mergeMemberships(latest, baseline, intended, "hiddenModels");
         mergeMemberships(latest, baseline, intended, "knownModels");
         if (!intended.get("debugMode").equals(baseline.get("debugMode"))) latest.put("debugMode", intended.get("debugMode"));
+        for (String field : DICTATION_FIELDS) {
+            Object before = baseline.opt(field);
+            Object after = intended.opt(field);
+            if (java.util.Objects.equals(before, after)) continue;
+            if (after == null) latest.remove(field);
+            else latest.put(field, after);
+        }
         return latest;
     }
 
@@ -112,6 +123,8 @@ public class ClientPreferencesPlugin extends Plugin {
                 String revision = java.util.UUID.randomUUID().toString();
                 storage.write(serialized, revision);
                 storage.commit();
+                com.getcapacitor.PluginHandle dictation = getBridge().getPlugin("Dictation");
+                if (dictation != null) ((DictationPlugin) dictation.getInstance()).reload();
                 JSObject publication = new JSObject();
                 publication.put("committed", true);
                 publication.put("durable", true);

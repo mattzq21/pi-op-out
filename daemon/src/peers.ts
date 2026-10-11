@@ -82,7 +82,7 @@ export class Connection {
     }
     let event = packet?.event;
     if (typeof event !== 'string') return;
-    if (event === 'pi://groups-changed' || event === 'pi://dictation' || event === 'pi://dictation-stream' || event === 'pi://dictation-models' || packet.payload?._peer === true) return;
+    if (event === 'pi://groups-changed' || packet.payload?._peer === true) return;
     if (event === 'pi://settings-changed') event = 'pi://host-settings-changed';
     let payload = packet.payload;
     payload = payload && typeof payload === 'object' && !Array.isArray(payload) ? { ...payload } : {};

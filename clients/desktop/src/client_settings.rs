@@ -12,6 +12,37 @@ pub(crate) struct ClientSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     known_models: Option<Vec<String>>,
     debug_mode: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dictation_engine: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dictation_engine_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dictation_model_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dictation_language: Option<String>,
+}
+
+impl ClientSettings {
+    fn dictation(&self) -> crate::dictation::DictationSettings {
+        let field = |value: &Option<String>| value.as_deref().unwrap_or_default().trim().to_owned();
+        let engine = field(&self.dictation_engine);
+        crate::dictation::DictationSettings {
+            engine: if engine.is_empty() { "transcribe.cpp".into() } else { engine },
+            program: field(&self.dictation_engine_path),
+            model: field(&self.dictation_model_path),
+            language: field(&self.dictation_language).to_lowercase(),
+        }
+    }
+}
+
+/// The dictation settings saved on this computer. Missing preferences use the defaults.
+pub(crate) fn stored_dictation_settings() -> Result<crate::dictation::DictationSettings, String> {
+    let path = storage_path()?;
+    let _guard = lock_settings(&path)?;
+    Ok(match read_preferences(&path)? {
+        Some(settings) => settings.dictation(),
+        None => crate::dictation::DictationSettings { engine: "transcribe.cpp".into(), program: String::new(), model: String::new(), language: String::new() },
+    })
 }
 
 fn storage_path() -> Result<PathBuf, String> {
@@ -55,6 +86,10 @@ fn merge_preferences(mut latest: ClientSettings, baseline: &ClientSettings, inte
         latest.known_models = Some(merge_memberships(latest.known_models.as_deref().unwrap_or_default(), baseline.known_models.as_deref().unwrap_or_default(), intended.known_models.as_deref().unwrap_or_default()));
     }
     if intended.debug_mode != baseline.debug_mode { latest.debug_mode = intended.debug_mode; }
+    if intended.dictation_engine != baseline.dictation_engine { latest.dictation_engine = intended.dictation_engine.clone(); }
+    if intended.dictation_engine_path != baseline.dictation_engine_path { latest.dictation_engine_path = intended.dictation_engine_path.clone(); }
+    if intended.dictation_model_path != baseline.dictation_model_path { latest.dictation_model_path = intended.dictation_model_path.clone(); }
+    if intended.dictation_language != baseline.dictation_language { latest.dictation_language = intended.dictation_language.clone(); }
     Ok(latest)
 }
 
@@ -86,6 +121,7 @@ pub(crate) fn save_client_settings(app: AppHandle, settings: ClientSettings, bas
     let settings = intended_preferences(&path, &baseline, settings, initialize.unwrap_or(false))?;
     let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
     let publication = records::publish(&path, &body)?;
+    crate::dictation::reload(&app, settings.dictation());
     for window in app.webview_windows().values() { let _ = window.emit("pi://client-settings-changed", ()); }
     Ok(json!({"settings":settings,"revision":settings_revision(Some(&body)),"publication":publication}))
 }

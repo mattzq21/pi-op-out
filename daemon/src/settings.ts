@@ -8,7 +8,6 @@ import type { App } from './app';
 import type { PiRuntime } from './pi_runtime';
 import * as daemon from './daemon';
 import * as peers from './peers';
-import * as dictation from './dictation';
 
 export { mergeDiscoveredSkills };
 
@@ -67,14 +66,6 @@ export function readSettingsAt(path: string): AppSettings {
 }
 
 export async function saveAppSettings(app: App, settings: AppSettings, agentHostId: string | undefined): Promise<any> {
-  const previousDictation = dictation.settingsKey(readSettingsAt(await settingsPath()));
-  const model = settings.dictationModelPath?.trim();
-  settings.dictationModelPath = model ? model : undefined;
-  const program = settings.dictationEnginePath?.trim();
-  settings.dictationEnginePath = program ? program : undefined;
-  const language = settings.dictationLanguage?.trim().toLowerCase();
-  settings.dictationLanguage = language ? language : undefined;
-  const reloadDictation = previousDictation !== dictation.settingsKey(settings);
   migrateQuestionTool(settings);
   migrateGoalTools(settings);
   for (const tool of sessionOperationTools()) if (!settings.tools.some(existing => existing?.name === tool.name)) settings.tools.push(tool);
@@ -87,7 +78,6 @@ export async function saveAppSettings(app: App, settings: AppSettings, agentHost
   try { await synchronization.publishCurrent(app, change); }
   catch (error: any) { appendSynchronizationWarning(change, `Settings were saved; their notification will retry automatically: ${error.message ?? error}`); }
   if (typeof change.publication?.error === 'string') change.settings.settingsDurabilityError = change.publication.error;
-  if (reloadDictation) dictation.start(app);
   return change;
 }
 

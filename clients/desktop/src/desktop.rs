@@ -2,6 +2,7 @@ mod platform;
 mod daemon_endpoint;
 mod desktop_daemon;
 mod client_settings;
+mod dictation;
 #[path = "../../../shared/rust/settings_concurrency.rs"]
 mod settings_concurrency;
 #[path = "../../../shared/rust/private_fs.rs"]
@@ -10,6 +11,7 @@ use private_fs::ensure_private_dir;
 mod clipboard_image;
 use clipboard_image::{configure_image_copy, read_clipboard_image};
 use client_settings::{load_client_settings, save_client_settings, sync_prompt_history};
+use dictation::{dictation_configuration, dictation_model_cancel, dictation_model_remove, dictation_model_save, dictation_models, dictation_stream_cancel, dictation_stream_feed, dictation_stream_finish, dictation_stream_start};
 use desktop_daemon::daemon_invoke;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -184,7 +186,11 @@ pub fn run() {
         (context, start_window)
     };
     let builder = tauri::Builder::default();
-    builder.manage(desktop_daemon::DesktopDaemon::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
+    builder.manage(desktop_daemon::DesktopDaemon::default()).manage(dictation::Dictation::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
+        match client_settings::stored_dictation_settings() {
+            Ok(settings) => dictation::reload(app.handle(), settings),
+            Err(error) => eprintln!("Could not read the dictation settings: {error}"),
+        }
         for window in app.webview_windows().values() {
             configure_dictation_microphone(window)?;
             configure_image_copy(window)?;
@@ -209,8 +215,9 @@ pub fn run() {
             window.show()?;
         }
         Ok(())
-    }).invoke_handler(tauri::generate_handler![daemon_invoke, reload_development_window, load_client_settings, save_client_settings, sync_prompt_history, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![daemon_invoke, reload_development_window, load_client_settings, save_client_settings, sync_prompt_history, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file, read_clipboard_image, dictation_configuration, dictation_stream_start, dictation_stream_feed, dictation_stream_finish, dictation_stream_cancel, dictation_models, dictation_model_save, dictation_model_cancel, dictation_model_remove]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
+            dictation::close_window(app, label);
             let app = app.clone(); let label = label.clone();
             tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&app, &label).await; });
         }

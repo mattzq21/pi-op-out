@@ -26,7 +26,26 @@ const clientPreferences = registerPlugin<{
   save(options: { settings: unknown; baseline: unknown; initialize: boolean }): Promise<{ settings: unknown; revision: string; publication: SettingsPublication }>;
 }>("ClientPreferences");
 
-export const listen = <S extends z.ZodType>(event: string, handler: EventCallback<z.output<S>>, schema: S): Promise<UnlistenFn> => isMobile ? remoteClient.listen(event, handler, schema) : nativeListen(event, value => handler({ ...value, payload: schema.parse(value.payload) }), { target: { kind: "WebviewWindow", label: getCurrentWebviewWindow().label } });
+/** The on-device speech engine of the Android app. */
+const dictationPlugin = registerPlugin<{
+  addListener(event: string, listener: (payload: unknown) => void): Promise<{ remove(): Promise<void> }>;
+}>("Dictation");
+
+/** Dictation commands run on this device. On Android they map to the Dictation plugin methods. */
+const dictationCommands: Record<string, string> = {
+  dictation_configuration: "configuration", dictation_stream_start: "start", dictation_stream_feed: "feed", dictation_stream_finish: "finish", dictation_stream_cancel: "cancel",
+  dictation_models: "models", dictation_model_save: "saveModel", dictation_model_cancel: "cancelModel", dictation_model_remove: "removeModel",
+};
+
+const dictationEvents: Record<string, string> = { "pi://dictation": "dictation", "pi://dictation-stream": "dictation-stream", "pi://dictation-models": "dictation-models" };
+
+export const listen = <S extends z.ZodType>(event: string, handler: EventCallback<z.output<S>>, schema: S): Promise<UnlistenFn> => {
+  const dictationEvent = dictationEvents[event];
+
+  if (isMobile && dictationEvent) return dictationPlugin.addListener(dictationEvent, payload => handler({ event, id: 0, payload: schema.parse(payload) })).then(handle => () => void handle.remove());
+
+  return isMobile ? remoteClient.listen(event, handler, schema) : nativeListen(event, value => handler({ ...value, payload: schema.parse(value.payload) }), { target: { kind: "WebviewWindow", label: getCurrentWebviewWindow().label } });
+};
 
 export function captureDaemonTransport() {
   const identity = isMobile ? remoteClient.connectionIdentity() : "desktop";
@@ -58,7 +77,7 @@ async function invokeDaemon(command: string, args: NativeArguments | undefined, 
   if (!isMobile) {
     const local = ["load_client_settings", "save_client_settings", "sync_prompt_history", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file"];
 
-    const response = await (local.includes(command) ? nativeInvoke(command, args) : invokeWithBackpressure(() => nativeInvoke("daemon_invoke", { command, args })));
+    const response = await (local.includes(command) || command in dictationCommands ? nativeInvoke(command, args) : invokeWithBackpressure(() => nativeInvoke("daemon_invoke", { command, args })));
 
     return schema.parse(response);
   }
@@ -68,6 +87,10 @@ async function invokeDaemon(command: string, args: NativeArguments | undefined, 
 
 function invokeMobile(command: string, args: NativeArguments, schema: z.ZodType, destination: string | undefined) {
   if (command === "load_client_settings") return clientPreferences.load().then(result => schema.parse(result));
+
+  const dictationMethod = dictationCommands[command];
+
+  if (dictationMethod) return (dictationPlugin as unknown as Record<string, (options: NativeArguments) => Promise<unknown>>)[dictationMethod](args).then(result => schema.parse(result));
 
   if (command === "save_client_settings") return clientPreferences.save({ settings: args.settings, baseline: args.baseline, initialize: z.boolean().default(false).parse(args.initialize) }).then(result => schema.parse(result));
 

@@ -1,6 +1,7 @@
 import { createSignal, createUniqueId, For, Show } from "solid-js";
 import { useDictationConfiguration } from "../lib/dictation";
 import { cancelDictationModel, type DictationModel, removeDictationModel, saveDictationModel, useDictationModels } from "../lib/dictationModels";
+import { isMobile } from "../lib/platform";
 import type { AppSettings, DictationEngine } from "../types";
 
 const engines: Array<{ id: DictationEngine; label: string; program: string; model: string; language: string }> = [
@@ -8,14 +9,14 @@ const engines: Array<{ id: DictationEngine; label: string; program: string; mode
   { id: "needle", label: "Cactus Needle (Whistle)", program: "needle", model: "~/Models/whistle.cact", language: "Detect automatically" },
 ];
 
-/** Shows the saved engine status of the connected daemon. */
+/** Shows the status of the speech engine on this device. */
 function DictationStatus() {
   const configuration = useDictationConfiguration();
   const language = () => configuration().language || (configuration().detectLanguage ? "detected automatically" : "model default");
 
   return <Show when={configuration().loading} fallback={
     <Show when={configuration().error} fallback={<Show when={configuration().enabled}>
-      <p role="status">Ready: {configuration().engine} at {configuration().executable}. Language: {language()}.</p>
+      <p role="status">Ready: {configuration().engine}{configuration().executable ? ` at ${configuration().executable}` : ""}. Language: {language()}.</p>
       <Show when={configuration().languages?.length}><p>The model knows: {configuration().languages?.join(", ")}</p></Show>
     </Show>}>
       {(error) => <p role="alert" class="dictation-settings-error">{error()}</p>}
@@ -25,7 +26,7 @@ function DictationStatus() {
 
 const megabytes = (bytes: number) => `${Math.round(bytes / 1_000_000)} MB`;
 
-/** One model that the daemon can save: its state and the actions for it. */
+/** One model that this device can save: its state and the actions for it. */
 function DictationModelRow(props: { model: DictationModel; selected: boolean; onUse: (model: DictationModel) => void }) {
   const [actionError, setActionError] = createSignal<string>();
   const act = (action: () => Promise<void>) => { setActionError(undefined); action().catch(reason => setActionError(reason instanceof Error ? reason.message : String(reason))); };
@@ -52,7 +53,7 @@ function DictationModelRow(props: { model: DictationModel; selected: boolean; on
   </li>;
 }
 
-/** The models that the daemon can save for the selected engine. */
+/** The models that this device can save for the selected engine. */
 function DictationModels(props: { engine: DictationEngine; modelPath: string | undefined; onUse: (model: DictationModel) => void }) {
   const models = useDictationModels();
 
@@ -65,7 +66,7 @@ function DictationModels(props: { engine: DictationEngine; modelPath: string | u
   </div>;
 }
 
-export function DictationSettings(props: { settings: AppSettings; showStatus: boolean; onChange: (patch: Partial<AppSettings>) => void }) {
+export function DictationSettings(props: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {
   const configuration = useDictationConfiguration();
   const languageList = createUniqueId();
   const engine = () => engines.find(item => item.id === (props.settings.dictationEngine ?? "transcribe.cpp")) ?? engines[0];
@@ -74,11 +75,11 @@ export function DictationSettings(props: { settings: AppSettings; showStatus: bo
 
   return <>
     <label class="field"><span>Engine</span><select aria-label="Dictation engine" value={engine().id} onChange={event => props.onChange({ dictationEngine: event.currentTarget.value as DictationEngine })}>{engines.map(item => <option value={item.id}>{item.label}</option>)}</select></label>
-    <label class="field"><span>Program path</span><input aria-label="Dictation program path" placeholder={`Find ${engine().program} automatically`} value={props.settings.dictationEnginePath ?? ""} onInput={event => props.onChange({ dictationEnginePath: event.currentTarget.value })} /></label>
-    <label class="field"><span>Model file path</span><input aria-label="Dictation model file path" placeholder={engine().model} value={props.settings.dictationModelPath ?? ""} onInput={event => props.onChange({ dictationModelPath: event.currentTarget.value })} /></label>
+    <Show when={!isMobile}><label class="field"><span>Program path</span><input aria-label="Dictation program path" placeholder={`Find ${engine().program} automatically`} value={props.settings.dictationEnginePath ?? ""} onInput={event => props.onChange({ dictationEnginePath: event.currentTarget.value })} /></label></Show>
+    <label class="field"><span>Model file path</span><input aria-label="Dictation model file path" placeholder={isMobile ? "Save a model below, then select Use" : engine().model} value={props.settings.dictationModelPath ?? ""} onInput={event => props.onChange({ dictationModelPath: event.currentTarget.value })} /></label>
     <label class="field"><span>Language</span><input aria-label="Dictation language" list={languageList} placeholder={engine().language} value={props.settings.dictationLanguage ?? ""} onInput={event => props.onChange({ dictationLanguage: event.currentTarget.value })} /></label>
     <datalist id={languageList}><For each={languages()}>{item => <option value={item} />}</For></datalist>
-    <Show when={props.showStatus}><DictationModels engine={engine().id} modelPath={props.settings.dictationModelPath} onUse={model => props.onChange({ dictationEngine: model.engine, dictationModelPath: model.path })} /></Show>
-    <Show when={props.showStatus}><DictationStatus /></Show>
+    <DictationModels engine={engine().id} modelPath={props.settings.dictationModelPath} onUse={model => props.onChange({ dictationEngine: model.engine, dictationModelPath: model.path })} />
+    <DictationStatus />
   </>;
 }

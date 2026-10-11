@@ -5,8 +5,6 @@ import { TerminalRuntime } from './terminals';
 import { SessionIndexRuntime } from './session_index';
 import { BrokerRuntime } from './broker';
 import { PeerRuntime } from './peers';
-import { DictationRuntime } from './dictation';
-import { DictationModels } from './dictation_models';
 
 type Listener = (payload: any) => void;
 
@@ -19,8 +17,6 @@ export class App {
   sessionIndex = new SessionIndexRuntime();
   broker = new BrokerRuntime();
   peers = new PeerRuntime();
-  dictation = new DictationRuntime();
-  dictationModels = new DictationModels();
   private listeners = new Map<string, Listener[]>();
 
   emit(name: string, payload?: unknown): void {

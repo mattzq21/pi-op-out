@@ -6,14 +6,21 @@ export const clientPreferencesSchema = z.object({
   hiddenModels: z.array(z.string()),
   knownModels: z.array(z.string()).optional(),
   debugMode: z.boolean(),
+  dictationEngine: z.enum(["transcribe.cpp", "needle"]).optional(),
+  dictationEnginePath: z.string().optional(),
+  dictationModelPath: z.string().optional(),
+  dictationLanguage: z.string().optional(),
 });
 
 export type ClientPreferences = z.infer<typeof clientPreferencesSchema>;
 
-export const clientPreferenceKeys = new Set<keyof AppSettings>(["keybindings", "hiddenModels", "knownModels", "debugMode"]);
+/** Dictation preferences hold one value each. A save changes one only when this client edited it. */
+const dictationKeys = ["dictationEngine", "dictationEnginePath", "dictationModelPath", "dictationLanguage"] as const;
+
+export const clientPreferenceKeys = new Set<keyof AppSettings>(["keybindings", "hiddenModels", "knownModels", "debugMode", ...dictationKeys]);
 
 export function clientPreferences(settings: AppSettings): ClientPreferences {
-  return { keybindings: { ...settings.keybindings }, hiddenModels: [...settings.hiddenModels], knownModels: settings.knownModels && [...settings.knownModels], debugMode: settings.debugMode };
+  return { keybindings: { ...settings.keybindings }, hiddenModels: [...settings.hiddenModels], knownModels: settings.knownModels && [...settings.knownModels], debugMode: settings.debugMode, dictationEngine: settings.dictationEngine, dictationEnginePath: settings.dictationEnginePath, dictationModelPath: settings.dictationModelPath, dictationLanguage: settings.dictationLanguage };
 }
 
 function mergeMemberships(latest: string[], baseline: string[], intended: string[]) {
@@ -59,6 +66,10 @@ export function mergeClientPreferences(latest: ClientPreferences, baseline: Clie
     hiddenModels: mergeMemberships(latest.hiddenModels, baseline.hiddenModels, intended.hiddenModels),
     knownModels: mergeKnownModels(latest.knownModels, baseline.knownModels, intended.knownModels),
     debugMode: intended.debugMode === baseline.debugMode ? latest.debugMode : intended.debugMode,
+    dictationEngine: intended.dictationEngine === baseline.dictationEngine ? latest.dictationEngine : intended.dictationEngine,
+    dictationEnginePath: intended.dictationEnginePath === baseline.dictationEnginePath ? latest.dictationEnginePath : intended.dictationEnginePath,
+    dictationModelPath: intended.dictationModelPath === baseline.dictationModelPath ? latest.dictationModelPath : intended.dictationModelPath,
+    dictationLanguage: intended.dictationLanguage === baseline.dictationLanguage ? latest.dictationLanguage : intended.dictationLanguage,
   };
 
   return { preferences, conflicts };

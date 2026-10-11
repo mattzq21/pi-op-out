@@ -4,7 +4,6 @@ import * as daemonEndpoint from './daemon_endpoint';
 import * as daemonStdio from './daemon_stdio';
 import * as daemonRestart from './daemon_restart';
 import * as daemonLog from './daemon_log';
-import * as dictation from './dictation';
 import * as mobile from './mobile';
 import * as peers from './peers';
 import * as providerAuth from './provider_auth';
@@ -33,7 +32,6 @@ export async function runDaemon(): Promise<void> {
 
 async function runBackend(): Promise<void> {
   const app = new App();
-  dictation.start(app);
   await startSessionBroker(app, app.broker);
   const settings = await loadAppSettings(app);
   await prepareDefinedAgentsExtension();

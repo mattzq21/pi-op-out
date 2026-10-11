@@ -13,6 +13,10 @@ const clientSettingsSchema = z.object({
   hiddenModels: z.array(z.string()).optional().catch(undefined),
   knownModels: z.array(z.string()).optional().catch(undefined),
   debugMode: z.boolean().optional().catch(undefined),
+  dictationEngine: z.enum(["transcribe.cpp", "needle"]).optional().catch(undefined),
+  dictationEnginePath: z.string().optional().catch(undefined),
+  dictationModelPath: z.string().optional().catch(undefined),
+  dictationLanguage: z.string().optional().catch(undefined),
 }).catch({});
 
 type StoredPreferences = z.infer<typeof clientSettingsSchema>;
@@ -40,6 +44,10 @@ function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): 
     hiddenModels: stored.hiddenModels ?? settings.hiddenModels,
     knownModels: stored.knownModels ?? (stored.hiddenModels ? undefined : settings.knownModels),
     debugMode: stored.debugMode ?? settings.debugMode,
+    dictationEngine: stored.dictationEngine,
+    dictationEnginePath: stored.dictationEnginePath,
+    dictationModelPath: stored.dictationModelPath,
+    dictationLanguage: stored.dictationLanguage,
   };
 }
 

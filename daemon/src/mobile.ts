@@ -19,7 +19,7 @@ import { errorText, withTimeout } from './util/sync';
 import type { App } from './app';
 
 const MAX_MESSAGE = MAX_REQUEST_BYTES;
-const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://groups-changed', 'pi://dictation', 'pi://dictation-stream', 'pi://dictation-models', 'pi://sessions-changed', 'pi://daemon-error', 'pi://provider-auth-changed', 'pi://chatgpt-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://daemon-restarting'];
+const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://groups-changed', 'pi://sessions-changed', 'pi://daemon-error', 'pi://provider-auth-changed', 'pi://chatgpt-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://daemon-restarting'];
 
 /** A counter that limits how many items may run at once. */
 class Slots {
