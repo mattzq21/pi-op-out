@@ -748,11 +748,12 @@ export class SessionQueue {
     command.type = 'queue_prompt';
     command.queueId = id;
     command.streamingBehavior = 'followUp';
+    command.discardOnRejection = true;
     this.s.pending.push(item);
     this.s.sending.add(id);
     let result: any;
     try { await this.retainItem(item); result = await this.execute(command); } catch (error) {
-      this.s.remove(id);
+      this.s.failedSubmission(id);
       this.s.sending.delete(id);
       await this.reportStorageError(() => this.publish());
       throw error;

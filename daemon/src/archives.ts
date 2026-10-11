@@ -163,9 +163,16 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
       const invalidate = app.sessionIndex.projects.invalidateAfter(hostId);
       try { await storageTransactions.archive(hostFor(settings, hostId), paths); }
       finally { invalidate(); }
+      const warnings: string[] = [];
       for (let index = 0; index < paths.length; index++) {
-        await mutations[index]!.finish();
+        try { await mutations[index]!.finishCommitted(); }
+        catch (error: any) { warnings.push(`Archive committed, but ownership cleanup failed for ${paths[index]}: ${error?.message ?? error}`); }
         app.emit('pi://session-removed', { hostId, sessionPath: paths[index], sessionId: sessionIds[index] });
+      }
+      if (warnings.length) {
+        const line = warnings.join('\n');
+        console.error(line);
+        app.emit('pi://daemon-error', { hostId, line });
       }
     } finally { await releaseAll(mutations); }
   });

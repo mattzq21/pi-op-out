@@ -16,6 +16,8 @@ const microphoneAvailable = () => !!navigator.mediaDevices?.getUserMedia && type
 /** Follows the status of the speech engine on this device. */
 export function useDictationConfiguration() {
   const [configuration, setConfiguration] = createSignal<Configuration>({ enabled: false, loading: true }, { equals: (left, right) => JSON.stringify(left) === JSON.stringify(right) });
+  const [error, setError] = createSignal<string>();
+  const [listenerError, setListenerError] = createSignal<string>();
   let disposed = false;
   let revision = 0;
   let unlisten: (() => void) | undefined;
@@ -34,36 +36,41 @@ export function useDictationConfiguration() {
     try {
       const state = await invoke("dictation_configuration", undefined, dictationConfigurationSchema);
 
-      if (!disposed && request === revision) apply(state);
+      if (!disposed && request === revision) { apply(state); setError(undefined); }
     } catch (reason) { if (!disposed && request === revision) apply({ enabled: false, loading: false, error: `Could not read the dictation status: ${reason instanceof Error ? reason.message : String(reason)}` }); }
   };
 
   const focus = () => void refresh();
-  onMount(() => {
-    void listen("pi://dictation", ({ payload }) => {
+  const subscribe = () => {
+    listenerFailed = false;
+    return listen("pi://dictation", ({ payload }) => {
       if (disposed) return;
-      revision++; apply(payload);
+      revision++; apply(payload); setError(undefined);
     }, dictationConfigurationSchema).then((stop) => {
       if (disposed) { stop(); return; }
-      unlisten = stop;
-      void refresh();
-    }).catch(() => {
+      unlisten = stop; setListenerError(undefined);
+      return refresh();
+    }).catch(reason => {
       if (disposed) return;
       listenerFailed = true;
-      void refresh();
+      setListenerError(`Could not receive dictation settings: ${reason instanceof Error ? reason.message : String(reason)}`);
+      return refresh();
     });
+  };
+  onMount(() => {
+    void subscribe();
     window.addEventListener("focus", focus);
   });
   onCleanup(() => { disposed = true; clearTimeout(timer); unlisten?.(); window.removeEventListener("focus", focus); });
 
-  return configuration;
+  return Object.assign(configuration, { error: () => error() ?? listenerError() ?? configuration().error, retry: () => listenerFailed ? subscribe() : refresh() });
 }
 
 export function useDictationEnabled() {
   const configuration = useDictationConfiguration();
   const enabled = createMemo(() => configuration().enabled && microphoneAvailable());
 
-  return enabled;
+  return { enabled, error: configuration.error, retry: configuration.retry };
 }
 
 const streamUpdateSchema = z.object({ id: z.string(), committed: z.string().optional(), tentative: z.string().optional(), error: z.string().optional() });

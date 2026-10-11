@@ -3,7 +3,8 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { DictationRecording, useDictationEnabled } from "../lib/dictation";
 
 export function DictationControls(props: { disabled: boolean; compact?: boolean; onText: (text: string) => void }) {
-  const enabled = useDictationEnabled();
+  const configuration = useDictationEnabled();
+  const enabled = configuration.enabled;
   const [phase, setPhase] = createSignal<"idle" | "starting" | "recording" | "transcribing">("idle");
   const [error, setError] = createSignal<string>();
   const [committed, setCommitted] = createSignal("");
@@ -60,6 +61,7 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
       <Show when={phase() !== "idle"}><button type="button" aria-label="Cancel dictation" onClick={cancel}><X size={14} /></button></Show>
     </Show>
     <Show when={committed() || tentative()}><span class="dictation-live" aria-live="polite">{committed().length > 160 ? "…" + committed().slice(-160) : committed()}<span class="dictation-tentative">{committed() && tentative() ? " " : ""}{tentative()}</span></span></Show>
+    <Show when={configuration.error()}><span class="dictation-error" role="alert">{configuration.error()} <button type="button" onClick={() => void configuration.retry()}>Retry</button></span></Show>
     <Show when={error()}><span class="dictation-error" role="alert">{error()}</span></Show>
   </span>;
 }

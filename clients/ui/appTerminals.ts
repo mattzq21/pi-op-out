@@ -46,7 +46,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const [terminalsBySession, setTerminalsBySession] = createSignal<Record<string, SessionTerminals>>({});
   const closingTerminals = createRef(new Set<string>());
   const startingTerminals = createRef(new Set<string>());
-  const draftRevisions = new Map<string, symbol>();
+  const draftRevisions = new Map<string, { data: string }>();
   const terminalPanelRevision = createRef(0);
   const terminalSessionId = createMemo(() => terminalConversationKey(terminalTarget(), conversationKey()));
   const terminalSessionIdRef = createRef(terminalSessionId());
@@ -284,13 +284,13 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
     if (!cwd) { startingTerminals.current.delete(terminalId); setTerminalsBySession((current) => { const session = current[sessionKey];
 
-    return session ? { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: false, exited: true } : terminal) } } : current; }); queueTerminalOutput(terminalId, "\r\nCould not determine this session's working directory.\r\n");
+    return session ? { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: false, exited: true } : terminal) } } : current; }); addNotice({ title: "Could not start terminal", message: "Could not determine this session's working directory." }); queueTerminalOutput(terminalId, "\r\nCould not determine this session's working directory.\r\n");
 
     return; }
 
     try { await capturedTransport.startTerminal(terminalId, sessionKey, cwd, cols, rows, capturedTerminalLocationState.terminalHostId, preparation); await refreshShared(); } catch (reason) { setTerminalsBySession((current) => { const session = current[sessionKey];
 
-    return session ? { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: false, exited: true } : terminal) } } : current; }); queueTerminalOutput(terminalId, `\r\nCould not start terminal: ${String(reason)}\r\n`); } finally { startingTerminals.current.delete(terminalId); }
+    return session ? { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: false, exited: true } : terminal) } } : current; }); addNotice({ title: "Could not start terminal", message: String(reason) }); queueTerminalOutput(terminalId, `\r\nCould not start terminal: ${String(reason)}\r\n`); } finally { startingTerminals.current.delete(terminalId); }
   };
 
   const addTerminal = () => { if (!owned()) return; const sessionKey = terminalSessionId(); setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey);
@@ -403,16 +403,16 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const close = () => { terminalPanelRevision.current += 1; setTerminalOpen(false); };
 
   const syncDraft = (id: string, data: string) => {
-    draftRevisions.set(id, Symbol());
+    draftRevisions.set(id, { data });
     void nativeTerminals.write(id, data, "draft").catch(reason => addNotice({ title: "Could not sync terminal input", message: String(reason) }));
   };
 
-  const clearAcceptedDraft = (key: string, id: string, generation: string | undefined, revision: symbol | undefined) => {
+  const clearAcceptedDraft = (key: string, id: string, generation: string | undefined, revision: { data: string } | undefined) => {
     const target = terminalsBySession()[key]?.tabs.find(tab => tab.id === id);
 
     if (!target || target.generation !== generation || !sessionTransport(key)?.hasConfirmedOwnership()) return;
 
-    if (revision === draftRevisions.get(id)) syncDraft(id, "");
+    if (revision === draftRevisions.get(id)) draftRevisions.delete(id);
   };
 
   const write = async (data: string, clearDraft = false) => {
@@ -421,7 +421,10 @@ export function createTerminalController({ transport, sessionTransport, conversa
     const key = terminalSessionId();
     const revision = draftRevisions.get(id);
 
-    try { await transport().writeTerminal(id, data); }
+    try {
+      if (clearDraft) await nativeTerminals.writeAndClearDraft(id, data, revision?.data ?? state.activeTerminal.inputDraft ?? "");
+      else await transport().writeTerminal(id, data);
+    }
     catch (reason) { addNotice({ title: "Terminal input failed", message: String(reason) }); void refreshShared();
 
       return false; }

@@ -2,6 +2,7 @@ import { spawn, type SpawnOptions } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
+import { signalProcessGroup } from './process_cleanup';
 
 export function shellQuote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
@@ -22,6 +23,7 @@ export interface CommandSpec {
   env?: Record<string, string | undefined>;
   input?: string | Buffer;
   stdin?: 'ignore' | 'pipe';
+  timeout?: number;
 }
 
 export interface Output { status: ExitStatus; stdout: Buffer; stderr: Buffer }
@@ -42,46 +44,53 @@ export function spawnOptions(spec: CommandSpec, extra: SpawnOptions = {}): Spawn
   return { cwd: spec.cwd, env: environment(spec.env), ...extra };
 }
 
-/** Runs a command and keeps at most maxStdout bytes of output and 64 KiB of errors. */
 export function runLimited(spec: CommandSpec, maxStdout: number, context: string): Promise<Output> {
-  return new Promise((resolve, reject) => {
-    let child;
-    try {
-      child = spawn(spec.program, spec.args ?? [], spawnOptions(spec, { stdio: [spec.input !== undefined || spec.stdin === 'pipe' ? 'pipe' : 'ignore', 'pipe', 'pipe'] }));
-    } catch (error: any) { reject(new Error(`${context}: ${error.message}`)); return; }
-    const stdout: Buffer[] = []; let stdoutLength = 0; let oversized = false;
-    const stderr: Buffer[] = []; let stderrLength = 0;
-    child.stdout!.on('data', (chunk: Buffer) => {
-      if (oversized) return;
-      stdout.push(chunk); stdoutLength += chunk.length;
-      if (stdoutLength > maxStdout) { oversized = true; child.kill('SIGKILL'); }
-    });
-    child.stderr!.on('data', (chunk: Buffer) => {
-      const remaining = 64 * 1024 - stderrLength;
-      if (remaining <= 0) return;
-      const kept = chunk.subarray(0, remaining); stderr.push(kept); stderrLength += kept.length;
-    });
-    child.on('error', error => reject(new Error(`${context}: ${error.message}`)));
-    if (spec.input !== undefined) { child.stdin!.on('error', () => {}); child.stdin!.end(spec.input); }
-    child.on('close', (code, signal) => {
-      if (oversized) { reject(new Error(`${context}: output exceeded ${Math.floor(maxStdout / 1024 / 1024)} MiB`)); return; }
-      resolve({ status: { code, signal, success: code === 0 }, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
-    });
-  });
+  return collect(spec, maxStdout, 64 * 1024, context);
 }
 
-/** Runs a command and collects all output. */
 export function output(spec: CommandSpec): Promise<Output> {
+  return collect(spec, Infinity, Infinity, spec.program);
+}
+
+function collect(spec: CommandSpec, maxStdout: number, maxStderr: number, context: string): Promise<Output> {
   return new Promise((resolve, reject) => {
+    const timeout = spec.timeout ?? 60_000;
+    if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 2_147_483_647) { reject(new Error(`${context}: invalid command timeout`)); return; }
     let child;
     try {
-      child = spawn(spec.program, spec.args ?? [], spawnOptions(spec, { stdio: [spec.input !== undefined || spec.stdin === 'pipe' ? 'pipe' : 'ignore', 'pipe', 'pipe'] }));
-    } catch (error) { reject(error); return; }
-    const stdout: Buffer[] = []; const stderr: Buffer[] = [];
-    child.stdout!.on('data', (chunk: Buffer) => stdout.push(chunk));
-    child.stderr!.on('data', (chunk: Buffer) => stderr.push(chunk));
-    child.on('error', reject);
-    if (spec.input !== undefined) { child.stdin!.on('error', () => {}); child.stdin!.end(spec.input); }
-    child.on('close', (code, signal) => resolve({ status: { code, signal, success: code === 0 }, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) }));
+      child = spawn(spec.program, spec.args ?? [], spawnOptions(spec, { detached: true, stdio: [spec.input !== undefined || spec.stdin === 'pipe' ? 'pipe' : 'ignore', 'pipe', 'pipe'] }));
+    } catch (error: any) { reject(new Error(`${context}: ${error.message}`)); return; }
+    const stdout: Buffer[] = []; let stdoutLength = 0;
+    const stderr: Buffer[] = []; let stderrLength = 0; let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      if (child.pid !== undefined) signalProcessGroup(child.pid, 'SIGKILL');
+      child.stdin?.destroy(); child.stdout?.destroy(); child.stderr?.destroy();
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new Error(`${context}: command ${spec.program} timed out after ${timeout} ms`)), timeout);
+    child.stdout!.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      stdoutLength += chunk.length;
+      if (stdoutLength > maxStdout) { fail(new Error(`${context}: output exceeded ${Math.floor(maxStdout / 1024 / 1024)} MiB`)); return; }
+      stdout.push(chunk);
+    });
+    child.stderr!.on('data', (chunk: Buffer) => {
+      const remaining = maxStderr - stderrLength;
+      if (settled || remaining <= 0) return;
+      const kept = chunk.subarray(0, remaining); stderr.push(kept); stderrLength += kept.length;
+    });
+    child.on('error', error => fail(new Error(`${context}: ${error.message}`)));
+    child.stdin?.on('error', error => fail(new Error(`${context}: could not write command input: ${error.message}`)));
+    child.stdout!.on('error', error => fail(new Error(`${context}: ${error.message}`)));
+    child.stderr!.on('error', error => fail(new Error(`${context}: ${error.message}`)));
+    if (spec.input !== undefined) child.stdin!.end(spec.input);
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      resolve({ status: { code, signal, success: code === 0 }, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
+    });
   });
 }

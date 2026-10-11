@@ -54,6 +54,7 @@ function migrateBuiltinTools(settings: AppSettings): void {
 export function readSettingsAt(path: string): AppSettings {
   const body = records.read(path);
   const settings = body ? parseAppSettings(JSON.parse(body.toString('utf8'))) : defaultSettings();
+  validateHostIds(settings);
   settings.settingsRevision = settingsRevision(body);
   migrateQuestionTool(settings);
   migrateGoalTools(settings);
@@ -74,6 +75,7 @@ export async function saveAppSettings(app: App, settings: AppSettings, agentHost
     () => settingsPath(),
     settings => daemon.invalidateChanged(app, runtime, settings),
     settings => daemon.updateSettings(app, runtime, settings));
+  synchronization.changed(app);
   peers.invalidate(app);
   try { await synchronization.publishCurrent(app, change); }
   catch (error: any) { appendSynchronizationWarning(change, `Settings were saved; their notification will retry automatically: ${error.message ?? error}`); }
@@ -81,9 +83,14 @@ export async function saveAppSettings(app: App, settings: AppSettings, agentHost
   return change;
 }
 
+function validateHostIds(settings: AppSettings): void {
+  if (settings.hosts.some(host => host.id.trim().toLowerCase() === 'local')) throw new Error("Remote machine id 'local' is reserved for the local machine");
+}
+
 export function validateSettingsForSave(settings: AppSettings): void {
   if (settings.contextWindowCap < 1000) throw new Error('Context window cap must be a whole number of at least 1000');
   validateKeybindings(settings);
+  validateHostIds(settings);
   if (settings.hosts.length > MAX_REMOTE_HOSTS) throw new Error(`At most ${MAX_REMOTE_HOSTS} remote machines can be configured`);
   const hostIds = new Set<string>();
   const hostNames = new Set(['local']);

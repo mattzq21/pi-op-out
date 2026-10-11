@@ -1,6 +1,6 @@
 import { createSignal, onCleanup, onMount, type Accessor } from "solid-js";
 import { z } from "zod";
-import { captureDaemonTransport } from "../../lib/platform";
+import { captureDaemonTransport, listen, type UnlistenFn } from "../../lib/platform";
 import { required } from "../../lib/required";
 import { registerPluginFlush } from "../lifecycle";
 import { createDependencyEffect } from "../../lib/solid";
@@ -38,7 +38,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const [recoveryError, setRecoveryError] = createSignal("");
   const [recoveryReadError, setRecoveryReadError] = createSignal("");
   const [storagePending, setStoragePending] = createSignal(0);
-  const error = () => readError() || saveError() || recoveryError() || recoveryReadError();
+  const error = () => subscriptionError() || readError() || saveError() || recoveryError() || recoveryReadError();
   const leaseId = crypto.randomUUID();
   const recovery = createNoteRecovery(transport.identity, target.hostId, target.sessionId, leaseId);
   const [recoveredSource, setRecoveredSource] = createSignal<NoteRecovery>();
@@ -54,6 +54,8 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   let acquisition: Promise<void> | undefined;
   let operations = Promise.resolve();
   let checking = false;
+  const [syncPending, setSyncPending] = createSignal(false);
+  const [subscriptionError, setSubscriptionError] = createSignal("");
   const dirty = () => !!local();
   const conflict = () => !!local() && !!document() && (local()?.baseVersion !== document()?.version);
   const editable = () => visible() && !loading() && !flushing() && !releasing() && !conflict() && leaseValid() && ownership().owned;
@@ -272,7 +274,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     if (!dirty()) return Promise.resolve(true);
 
     if (!ownership().owned || conflict()) return Promise.resolve(false);
-    inFlight = drain().finally(() => { inFlight = undefined; });
+    inFlight = drain().finally(() => { inFlight = undefined; if (syncPending()) void sync(); });
 
     return inFlight;
   };
@@ -318,19 +320,20 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const releaseIfHidden = () => { if (!visible()) void release(); };
 
   const sync = async () => {
-    if (checking || syncUnavailable()) return;
-    checking = true;
+    if (disposed) return;
+    if (checking || syncUnavailable()) { setSyncPending(true); return; }
+    setSyncPending(false); checking = true;
     const current = generation;
     const note = document();
 
     try {
       const next = await readCurrent();
 
-      if (current !== generation || syncUnavailable() || document() !== note) return;
+      if (current !== generation || syncUnavailable() || document() !== note) { setSyncPending(true); return; }
       setReadError(""); receiveUpdate(next); releaseIfHidden();
     } catch (reason) {
       if (!disposed && current === generation) setReadError(reason instanceof Error ? reason.message : String(reason));
-    } finally { checking = false; }
+    } finally { checking = false; if (syncPending() && !syncUnavailable()) void sync(); }
   };
 
   const relinquishHidden = (current: number) => {
@@ -412,12 +415,28 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     void save();
   };
 
-  onMount(() => { void load(visible() ? "claim" : "read"); });
-  const updates = setInterval(() => void sync(), 1000);
+  createDependencyEffect(() => {
+    if (syncPending() && !syncUnavailable()) void sync();
+  }, () => [syncPending(), loading(), releasing(), saving(), document()]);
+
+  let stopUpdates: UnlistenFn | undefined;
+  onMount(() => {
+    void (async () => {
+      try {
+        const stop = await listen("pi://event", ({ payload }) => {
+          if (!transport.active() || disposed) return;
+          if (payload.type === "connection_restored" || payload.type === "note_changed" && payload.hostId === target.hostId && payload.sessionId === target.sessionId) void sync();
+        }, z.object({ type: z.string().optional(), hostId: z.string().optional(), sessionId: z.string().optional() }));
+        if (disposed) { stop(); return; }
+        stopUpdates = stop;
+      } catch (reason) { setSubscriptionError("Could not listen for note changes. " + String(reason)); }
+      if (!disposed) await load(visible() ? "claim" : "read");
+    })();
+  });
   window.addEventListener("focus", resume);
   window.document.addEventListener("visibilitychange", resume);
   window.addEventListener("beforeunload", beforeUnload);
-  onCleanup(() => { disposed = true; clearTimeout(leaseTimer); clearInterval(updates); window.removeEventListener("focus", resume); window.document.removeEventListener("visibilitychange", resume); window.removeEventListener("beforeunload", beforeUnload); void release(); });
+  onCleanup(() => { disposed = true; clearTimeout(leaseTimer); stopUpdates?.(); window.removeEventListener("focus", resume); window.document.removeEventListener("visibilitychange", resume); window.removeEventListener("beforeunload", beforeUnload); void release(); });
 
   const ready = () => !!document() && !document()?.deleted && !document()?.disabled;
   const pending = () => loading() || saving() || releasing() || dirty() || !durable() || storagePending() > 0 || !!recoveryError() || ownership().owned;

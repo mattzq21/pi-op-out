@@ -1,3 +1,4 @@
+import { Key } from "@solid-primitives/keyed";
 import { For, Show, createEffect, onCleanup, onMount } from "solid-js";
 import { Square } from "lucide-solid";
 import { Markdown } from "../../components/Markdown";
@@ -49,9 +50,9 @@ export function QuickChat(props: { request?: QuickChatRequest; open: boolean; on
 
   const renderMessages = () => <div class="quick-chat-messages" ref={messages} onScroll={() => { if (messages) follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80; }} aria-busy={active()}>
       <Show when={state.chat()?.messages.length}>
-        <For each={state.chat()?.messages}>{message => <article class={`quick-chat-message ${message.role}`}>
-          <strong>{message.role === "user" ? "You" : "ChatGPT"}</strong><Markdown streaming={message.role === "assistant" && active()}>{message.text}</Markdown>
-        </article>}</For>
+        <Key each={state.chat()?.messages} by="id">{message => <article class={`quick-chat-message ${message().role}`}>
+          <strong>{message().role === "user" ? "You" : "ChatGPT"}</strong><Markdown streaming={message().role === "assistant" && active()}>{message().text}</Markdown>
+        </article>}</Key>
       </Show>
       <Show when={active()}><p role="status" class="quick-chat-status">{status()}</p></Show>
     </div>;

@@ -70,8 +70,8 @@ fn conversation_window_target(target: &Value) -> Result<(String, String), String
 }
 
 fn open_system_resource(target: &std::ffi::OsStr) -> Result<(), String> {
-    let mut child = Command::new("xdg-open").arg(target).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not open {}: {error}", target.to_string_lossy()))?;
-    thread::spawn(move || { let _ = child.wait(); });
+    let output = Command::new("xdg-open").arg(target).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).output().map_err(|error| format!("Could not open {}: {error}", target.to_string_lossy()))?;
+    if !output.status.success() { return Err(format!("Could not open {} ({}): {}", target.to_string_lossy(), output.status, String::from_utf8_lossy(&output.stderr).trim())); }
     Ok(())
 }
 #[tauri::command(async)]
@@ -96,8 +96,8 @@ fn read_dropped_file(path: String) -> Result<Value, String> {
     Ok(json!({ "name": name, "data": data }))
 }
 #[tauri::command(async)]
-fn open_external_url(url: String) -> Result<(), String> {
-    open_external_url_with(&url, open_system_resource)
+async fn open_external_url(url: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || open_external_url_with(&url, open_system_resource)).await.map_err(|error| error.to_string())?
 }
 
 fn open_external_url_with(url: &str, open: impl FnOnce(&std::ffi::OsStr) -> Result<(), String>) -> Result<(), String> {
@@ -107,19 +107,19 @@ fn open_external_url_with(url: &str, open: impl FnOnce(&std::ffi::OsStr) -> Resu
 }
 
 #[tauri::command(async)]
-fn open_project_directory(cwd: String, host_id: Option<String>) -> Result<(), String> {
+async fn open_project_directory(cwd: String, host_id: Option<String>) -> Result<(), String> {
     if std::env::var_os("PIOP_DAEMON_URL").is_some() || host_id.as_deref().unwrap_or("local") != "local" { return Err("Opening remote project directories is not supported by the local file manager".into()); }
     let path = PathBuf::from(cwd);
     if !path.is_dir() { return Err(format!("Project directory does not exist: {}", path.display())); }
-    open_system_resource(path.as_os_str())
+    tokio::task::spawn_blocking(move || open_system_resource(path.as_os_str())).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command(async)]
-fn open_rollout_file(path: String, host_id: Option<String>) -> Result<(), String> {
+async fn open_rollout_file(path: String, host_id: Option<String>) -> Result<(), String> {
     if std::env::var_os("PIOP_DAEMON_URL").is_some() || host_id.as_deref().unwrap_or("local") != "local" { return Err("Opening remote rollout files is not supported by the local file manager".into()); }
     let path = PathBuf::from(path);
     if path.extension().and_then(|value| value.to_str()) != Some("jsonl") || !path.is_file() { return Err("Session rollout file does not exist or is not a JSONL file".into()); }
-    open_system_resource(path.as_os_str())
+    tokio::task::spawn_blocking(move || open_system_resource(path.as_os_str())).await.map_err(|error| error.to_string())?
 }
 
 const LOAD_ERROR_HTML: &str = r#"<!doctype html>

@@ -228,10 +228,11 @@ export class ProviderService {
   private async cancel(id: string): Promise<void> {
     const flow = this.flows.get(id);
     if (!flow || flow.status !== 'pending') return;
+    await this.sdk.request({ method: 'cancel', flowId: id });
+    if (flow.status !== 'pending') return;
     flow.status = 'cancelled';
     flow.prompt = null;
     flow.notices = [];
-    try { await this.sdk.request({ method: 'cancel', flowId: id }); } catch {}
   }
 
   private async logout(id: string): Promise<any> {

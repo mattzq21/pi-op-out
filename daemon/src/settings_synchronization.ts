@@ -1,22 +1,26 @@
 import { createHash } from 'node:crypto';
 import { serializeAppSettings, type AppSettings } from './settings_types';
 import { publish as publishSettings, read as readSettingsRecord, type Publication as SettingsPublication } from './settings_records';
-import { readRecord, writeRecord } from './settings_sync_storage';
+import { readRecord, writeRecord as writeStoredRecord } from './settings_sync_storage';
 import { settingsPath, storageLock, withExtension } from './settings_storage';
 import * as settings from './settings';
 import * as daemon from './daemon';
 import * as daemonEndpoint from './daemon_endpoint';
 import * as daemonRestart from './daemon_restart';
 import * as peers from './peers';
-import { sleep } from './util/sync';
 import type { App } from './app';
 import type { PiRuntime } from './pi_runtime';
 
 const MAX_REVISION = 9_007_199_254_740_991;
 let started = false;
+let requestPass: () => void;
 
 interface Publication { revision: number; digest: string; agentHostId: string | null }
 interface Progress { revision: number; synchronized: boolean; notified: boolean; phase_revision: number }
+
+function writeRecord(path: string, value: unknown): void {
+  if (JSON.stringify(readRecord(path, () => null)) !== JSON.stringify(value)) writeStoredRecord(path, value);
+}
 
 function defaultProgress(): Progress { return { revision: 0, synchronized: false, notified: false, phase_revision: 0 }; }
 
@@ -213,7 +217,6 @@ interface Applied {
   revision?: number;
   notifiedRevision?: number;
   warnings: string[];
-  sweep?: number;
 }
 
 function newApplied(): Applied { return { warnings: [] }; }
@@ -235,8 +238,7 @@ async function retryLocked(app: App, runtime: PiRuntime, path: string, applied: 
   const ownerPath = progressPath(path);
   const progress = readProgress(ownerPath);
   if (!needsRetry(journal, progress, applied)) return false;
-  const phaseRevision = progress.revision === journal.revision ? progress.phase_revision : 0;
-  writeRecord(ownerPath, { ...defaultProgress(), revision: journal.revision, phase_revision: phaseRevision });
+  writeRecord(ownerPath, { ...progress, revision: journal.revision, synchronized: false, phase_revision: progress.revision === journal.revision ? progress.phase_revision : 0 });
   const current = settingsWithSkills(path);
   const change = currentChange(path, journal);
   const warnings = await applyCurrent(app, runtime, journal, current, change);
@@ -247,8 +249,7 @@ async function retryLocked(app: App, runtime: PiRuntime, path: string, applied: 
 }
 
 function needsRetry(journal: Journal, progress: Progress, applied: Applied): boolean {
-  const sweep = applied.sweep === undefined || Date.now() - applied.sweep >= 30_000;
-  return applied.revision !== journal.revision || progress.revision !== journal.revision || !progress.synchronized || !progress.notified || sweep;
+  return applied.revision !== journal.revision || progress.revision !== journal.revision || !progress.synchronized || !progress.notified;
 }
 
 function sameWarnings(left: string[], right: string[]): boolean { return left.length === right.length && left.every((value, index) => value === right[index]); }
@@ -270,7 +271,6 @@ function finishRetry(app: App, journal: Journal, ownerPath: string, change: any,
   progress.notified = true;
   writeRecord(ownerPath, progress);
   if (warnings.length === 0) applied.revision = journal.revision;
-  applied.sweep = Date.now();
   applied.warnings = [...warnings];
 }
 
@@ -281,45 +281,56 @@ function reportPhaseWarnings(app: App, warnings: string[]): void {
   app.emit('pi://daemon-error', { hostId: 'local', line: message });
 }
 
-async function retryCurrent(app: App, applied: Applied): Promise<boolean> {
+async function retryCurrent(app: App, applied: Applied): Promise<{ refreshed: boolean; pending: boolean }> {
   const gate = app.restart.gate.tryRead();
-  if (!gate) return false;
+  if (!gate) return { refreshed: false, pending: true };
   try {
-    if (await daemonRestart.blocking()) return false;
+    if (await daemonRestart.blocking()) return { refreshed: false, pending: true };
     const runtime = app.pi;
     const lifecycle = runtime.lifecycle.tryLock();
-    if (!lifecycle) return false;
+    if (!lifecycle) return { refreshed: false, pending: true };
     try {
       const path = await settingsPath();
       const storage = await storageLock(path);
-      try { return await retryLocked(app, runtime, path, applied); } finally { storage.release(); }
+      try { return { refreshed: await retryLocked(app, runtime, path, applied), pending: applied.warnings.length > 0 }; } finally { storage.release(); }
     } finally { lifecycle(); }
   } finally { gate(); }
 }
 
+export function changed(app: App): void { start(app); requestPass(); }
+
 export function start(app: App): void {
   if (started) return;
   started = true;
-  void (async () => {
-    let applied = newApplied();
-    let lastError: string | undefined;
-    for (;;) {
-      await sleep(2000);
-      let error: string | undefined;
-      try {
-        let refreshed = false;
-        try { refreshed = await retryCurrent(app, applied); } catch (failure: any) { error = failure?.message ?? String(failure); }
-        applyEffects(app, applied, refreshed);
-      } catch (failure: any) { applied = newApplied(); error = failure?.message ?? String(failure); }
-      if (lastError !== error) {
-        if (error !== undefined) {
-          console.error(`Saved settings synchronization will retry automatically: ${error}`);
-          app.emit('pi://daemon-error', { hostId: 'local', line: `Saved settings synchronization will retry automatically: ${error}` });
-        }
-        lastError = error;
-      }
+  let applied = newApplied();
+  let lastError: string | undefined;
+  let running = false, requested = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const run = async () => {
+    if (running) return;
+    running = true;
+    requested = false;
+    let pending = false, error: string | undefined;
+    try {
+      const result = await retryCurrent(app, applied);
+      pending = result.pending;
+      applyEffects(app, applied, result.refreshed);
+    } catch (failure: any) { applied = newApplied(); pending = true; error = failure?.message ?? String(failure); }
+    if (lastError !== error) {
+      if (error !== undefined) reportPhaseWarnings(app, [`Saved settings synchronization will retry automatically: ${error}`]);
+      lastError = error;
     }
-  })();
+    running = false;
+    if (requested || pending) timer = setTimeout(() => { timer = undefined; void run(); }, requested ? 0 : 2000);
+  };
+  requestPass = () => {
+    requested = true;
+    if (running) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => { timer = undefined; void run(); }, 0);
+  };
+  app.listenAny('pi://settings-changed', requestPass);
+  requestPass();
 }
 
 function applyEffects(app: App, applied: Applied, refreshed: boolean): void {

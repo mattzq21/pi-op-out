@@ -71,6 +71,9 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
   let imageRoot: HTMLDivElement | undefined;
   const blocks = markdownBlocks();
   const images = markdownImages();
+  let imageBlocks = new Map<string, HTMLElement[]>();
+  let imageSlots: HTMLElement[] = [];
+  let imageProject: string | undefined;
   createEffect(() => {
     let html: string[];
 
@@ -82,18 +85,31 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
 
     if (!root || !imageRoot) return;
 
-    const container = document.createElement("div");
+    const nextBlocks = new Map<string, HTMLElement[]>();
+    const slots = html.flatMap(value => {
+      let cached = imageBlocks.get(value) ?? nextBlocks.get(value);
 
-    const sections = html.map(value => {
-      const section = document.createElement("div");
-      section.innerHTML = value;
-      container.append(section);
+      if (!cached) {
+        const section = document.createElement("div");
+        section.innerHTML = value;
+        cached = [...section.querySelectorAll<HTMLElement>("[data-file-reference]")].filter(slot => imageFileReference(slot.dataset.fileReference ?? ""));
+      }
 
-      return section;
+      nextBlocks.set(value, cached);
+
+      return cached;
     });
+    const project = JSON.stringify(props.imageProject);
 
-    images.update(container, imageRoot, props.imageProject);
-    blocks.update(root, sections.map(section => section.innerHTML));
+    if (project !== imageProject || slots.length !== imageSlots.length || slots.some((slot, index) => slot !== imageSlots[index])) {
+      const container = document.createElement("div");
+      container.append(...slots.map(slot => slot.cloneNode(true)));
+      images.update(container, imageRoot, props.imageProject);
+      imageSlots = slots; imageProject = project;
+    }
+
+    imageBlocks = nextBlocks;
+    blocks.update(root, html);
   });
   onCleanup(() => { images.dispose(); blocks.dispose(); });
   const [menuElement, setMenuElement] = createSignal<HTMLDivElement>();

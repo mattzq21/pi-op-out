@@ -46,7 +46,7 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
   });
 
   return {
-    get state() { return runtime().state; }, get setState() { return runtime().setState; },
+    get error() { return runtime().error; }, get state() { return runtime().state; }, get setState() { return runtime().setState; },
     get messages() { return runtime().messages; }, get setMessages() { return runtime().setMessages; },
     get models() { return runtime().models; }, get commands() { return runtime().commands; },
     get thinkingLevels() { return runtime().thinkingLevels; }, get refresh() { return runtime().refresh; },
@@ -74,6 +74,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   const capabilityRequest = createRef(0);
   const capabilityKey = createRef<string | undefined>(undefined);
   const [capabilityErrors, setCapabilityErrors] = createSignal<string[]>([]);
+  const [refreshError, setRefreshError] = createSignal<string>();
   const [capabilitiesLoading, setCapabilitiesLoading] = createSignal(false);
   const sessionEpoch = createRef("");
   const statsOperation = createRef<{ sessionId: string; revision: number; promise: Promise<void> } | undefined>(undefined);
@@ -324,26 +325,43 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     return promise;
   };
 
+  const refreshView = async () => {
+    try { await refresh();
+
+      if (owner.current === transport()) setRefreshError(undefined);
+    } catch (reason) {
+      if (owner.current === transport() && !(reason instanceof ConversationChangedError)) setRefreshError(`Could not refresh conversation: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
+  };
+
   createDependencyEffect(() => { const capturedTransport = transport();
 
     if (options.poll === false) return;
     let stopped = false;
     let viewing = capturedTransport.ownsConversation?.() === false;
+    let pending = false;
+    let dirty = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const poll = async () => {
-      try { await refresh(); } catch { }
-
-      if (!stopped && viewing) timer = setTimeout(() => void poll(), 2000);
+    const update = async () => {
+      if (pending) { dirty = true; return; }
+      pending = true;
+      do { dirty = false; await refreshView(); } while (dirty && viewing && !stopped);
+      pending = false;
+      // The owning daemon runs elsewhere; this daemon only reads the saved file, so no change event exists for a read-only view.
+      clearTimeout(timer);
+      if (viewing && !stopped) timer = setTimeout(() => void update(), 2000);
     };
 
     const unsubscribe = capturedTransport.subscribe((event) => {
-      if (event.type === "ownership_lost" && !viewing) { viewing = true; void poll(); }
+      if (event.type === "ownership_acquired" || event.type === "disconnected") { viewing = false; clearTimeout(timer); return; }
 
-      if (event.type === "ownership_acquired" || event.type === "disconnected") { viewing = false; clearTimeout(timer); }
+      if (event.type === "ownership_lost") viewing = true;
+
+      if (viewing && ["ownership_lost", "connection_restored", "session_info_changed", "session_switched", "settings_applied", "entry_appended", "message_end", "agent_settled", "runtime_presence"].includes(event.type)) void update();
     });
 
-    if (viewing) void poll();
+    if (viewing) void update();
 
     return () => { stopped = true; clearTimeout(timer); unsubscribe(); };
   }, () => [refresh, transport()]);
@@ -523,7 +541,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       session.setState((current) => ({ ...current, isCompacting: false, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
       session.setMessages(current => current.map(message => message.id === "live-compaction" ? { ...message, content: event.aborted ? "Compaction cancelled" : event.errorMessage ? `Compaction failed: ${String(event.errorMessage)}` : "Context compacted" } : message));
 
-      if (!event.aborted && !event.errorMessage) void refresh().catch(() => undefined);
+      if (!event.aborted && !event.errorMessage) void refreshView();
     };
 
     const handleAutoRetryStart = () => {
@@ -566,5 +584,5 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
   createComputed(() => { eventHandler.current = handleEvent; });
 
-  return { get capabilityErrors() { return capabilityErrors(); }, get capabilitiesLoading() { return capabilitiesLoading(); }, get retryCapabilities() { return refreshCapabilities; }, get state() { return session.state; }, get setState() { return session.setState; }, get messages() { return session.messages; }, get setMessages() { return session.setMessages; }, get models() { return session.models; }, get commands() { return session.commands; }, get thinkingLevels() { return session.thinkingLevels; }, get refresh() { return refresh; }, get handleEvent() { return handleEvent; }, get discardPendingUpdates() { return discardPendingUpdates; } };
+  return { get error() { return refreshError(); }, get capabilityErrors() { const error = refreshError(); return error ? [...capabilityErrors(), error] : capabilityErrors(); }, get capabilitiesLoading() { return capabilitiesLoading(); }, get retryCapabilities() { return () => { refreshCapabilities(); void refreshView(); }; }, get state() { return session.state; }, get setState() { return session.setState; }, get messages() { return session.messages; }, get setMessages() { return session.setMessages; }, get models() { return session.models; }, get commands() { return session.commands; }, get thinkingLevels() { return session.thinkingLevels; }, get refresh() { return refresh; }, get handleEvent() { return handleEvent; }, get discardPendingUpdates() { return discardPendingUpdates; } };
 }

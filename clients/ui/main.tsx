@@ -1,4 +1,4 @@
-import { initializeSessionResume } from "./lib/sessionResume";
+import { ignoreSessionResume, initializeSessionResume } from "./lib/sessionResume";
 import { required } from "./lib/required";
 import { render } from "solid-js/web";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -25,16 +25,18 @@ let stopped = false;
 
 let dispose = render(() => <p role="status">Restoring workspace…</p>, root);
 
-void initializeSessionResume().then(() => {
+const startApp = () => {
   if (stopped) return;
   dispose();
   dispose = render(() => isMobile ? <MobileApp /> : <App />, root);
-}, error => {
+};
+
+void initializeSessionResume().then(startApp, error => {
   console.error("Could not restore saved conversations", error);
 
   if (stopped) return;
   dispose();
-  dispose = render(() => <main><p role="alert">Could not restore the last conversation.</p><button onClick={() => window.location.reload()}>Retry</button></main>, root);
+  dispose = render(() => <main><p role="alert">Could not restore the last conversation.</p><button onClick={() => window.location.reload()}>Retry</button><button onClick={() => { ignoreSessionResume(); startApp(); }}>Start without restoring</button></main>, root);
 });
 
 if (import.meta.hot) {

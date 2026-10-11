@@ -23,6 +23,10 @@ const channel = "BroadcastChannel" in globalThis ? new BroadcastChannel("piop-se
 
 let cacheReady = false;
 
+let ignored = false;
+
+export function ignoreSessionResume() { ignored = true; targetCache.clear(); refreshAgain = false; cacheReady = true; }
+
 let refreshing = false;
 
 let refreshAgain = false;
@@ -86,6 +90,7 @@ async function readTargetCache() {
 }
 
 function refreshTargetCache() {
+  if (ignored) return;
   refreshAgain = true;
 
   if (!cacheReady || refreshing) return;

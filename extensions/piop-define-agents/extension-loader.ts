@@ -288,8 +288,13 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     const group: Group = { key, paths: [...paths], registrations: new Map(), providers: new Map(), mcpServers: new Map(), virtualModels: new Map(), listeners: [], stops: [], ready: false };
     const loaded = new Set<string>();
     const visiting: string[] = [];
+    let failed = false;
+    const ensurePreparing = () => {
+      if (failed) throw new Error("piop extension initialization has failed");
+    };
 
     const register = (registration: Registration) => {
+      ensurePreparing();
       if (group.ready) throw new Error("piop extensions must register resources during initialization");
       const items = group.registrations.get(registration.method) ?? new Map<string, Registration>();
 
@@ -463,6 +468,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     const api = (entry: string) => new Proxy(pi, {
       get(_target, property) {
         if (property === "on") return <K extends keyof EventHandlers>(event: K, handler: EventHandlers[K]) => {
+          ensurePreparing();
           if (event !== "session_start" && event !== "session_shutdown") return eventRegistrations[event].add(group, handler);
           const owned = new Proxy(handler, {});
           handlerExtensions.set(owned, entry);
@@ -472,6 +478,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
 
         if (property === "events") return {
           on(name: string, handler: BusHandler) {
+            ensurePreparing();
             const listener: Group["listeners"][number] = { name, handler, removed: false }; group.listeners.push(listener);
             let unsubscribe: (() => void) | undefined;
 
@@ -509,10 +516,10 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
 
         if (loaded.has(entry)) return;
         visiting.push(entry);
-        const module = await importExtension(entry, importer);
+        const module = await runHandler(entry, "import", ctx, () => importExtension(entry, importer));
 
         for (const dependency of extensionPaths(module.extensions)) await load(dependency, dirname(entry));
-        await module.default(api(entry));
+        await runHandler(entry, "initialization", ctx, () => module.default(api(entry)));
         visiting.pop(); loaded.add(entry);
       } catch (error) {
         throw new Error(`Could not load piop extension ${absolute}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
@@ -523,6 +530,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
       for (const path of paths) await load(path, baseDirectory);
       validateConflicts(group);
     } catch (error) {
+      failed = true;
       group.ready = true;
       await shutdown(group, ctx);
       stop(group, ctx);
@@ -589,9 +597,9 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     else pi.registerEntryRenderer(registration.name, registration.renderer);
   }
 
-  async function runHandler(extension: string, phase: "startup" | "shutdown", ctx: ExtensionContext, run: (ctx: ExtensionContext) => unknown) {
+  async function runHandler<T>(extension: string, phase: "import" | "initialization" | "startup" | "shutdown", ctx: ExtensionContext, run: (ctx: ExtensionContext) => T) {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = phase === "startup" ? 60000 : 10000;
+    const timeout = phase === "shutdown" ? 10000 : 60000;
     const controller = new AbortController();
     const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
 
@@ -600,10 +608,10 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     })));
 
     try {
-      await Promise.race([
+      return await Promise.race([
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => {
-            const error = new Error(`handler timed out after ${timeout} ms`);
+            const error = new Error(`${phase === "import" || phase === "initialization" ? phase : "handler"} timed out after ${timeout} ms`);
             reject(error);
             controller.abort(error);
           }, timeout);
@@ -611,6 +619,9 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
         pending,
       ]);
     } catch (error) {
+      if ((phase === "import" || phase === "initialization") && controller.signal.aborted) {
+        void pending.catch(error => ctx.ui.notify(`piop extension ${extension} ${phase} failed after timeout: ${String(error)}`, "error"));
+      }
       if (phase === "startup" && controller.signal.aborted) {
         clearTimeout(timer);
         const settled = await Promise.race([

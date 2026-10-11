@@ -13,7 +13,19 @@ export async function dispatch(app: App, operation: string, args: any): Promise<
   }
   const connected = await connection(app);
   args.type = operation;
-  return connected.request(args);
+  const result = await connected.request(args);
+  if (operation === 'plugin_call' && args.pluginId === 'markdown') notifyNoteChange(app, args, result);
+  return result;
+}
+
+const NOTE_MUTATIONS = new Set(['save', 'claim', 'takeover', 'release']);
+
+/** Tells every client that a chat note or its ownership changed, so viewers refresh without polling. */
+function notifyNoteChange(app: App, args: any, result: any): void {
+  const sessionId = args.request?.sessionId;
+  if (typeof sessionId !== 'string') return;
+  if (!NOTE_MUTATIONS.has(args.request?.action) && result?.deleted !== true && result?.disabled !== true) return;
+  app.emit('pi://event', { type: 'note_changed', hostId: typeof args.hostId === 'string' ? args.hostId : 'local', sessionId });
 }
 
 export async function connection(app: App): Promise<daemon.Daemon> {

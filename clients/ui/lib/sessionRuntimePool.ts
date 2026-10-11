@@ -28,6 +28,9 @@ function retainedPreview(prompt: string | undefined, previous: SessionSummary | 
 
 export class SessionRuntimePool {
   private readonly transports = new Set<NativeTransport>();
+  private readonly detaching = new Map<NativeTransport, Promise<void>>();
+  private readonly deferredDetaches = new Map<NativeTransport, () => boolean>();
+  private readonly queuedTransports = new Set<NativeTransport>();
   private readonly releasing = new Map<NativeTransport, Promise<void>>();
   private readonly sessions = new Map<string, NativeTransport>();
   private readonly runningTransports = new Set<NativeTransport>();
@@ -128,6 +131,9 @@ export class SessionRuntimePool {
   }
 
   private updateActivity(transport: NativeTransport, event: RpcEvent) {
+    if (event.type === "queue_update") {
+      if ([event.steering, event.followUp, event.pendingMessages].some(value => Array.isArray(value) && value.length)) this.queuedTransports.add(transport); else this.queuedTransports.delete(transport);
+    }
     const running = this.runningTransports.size;
     const unseen = this.unseenTransports.size;
 
@@ -205,6 +211,19 @@ export class SessionRuntimePool {
   this.publishSessionStates(); }
 
   setErrorHandler(handler?: (message: string) => void) { this.errorHandler = handler; }
+  reportError(message: string) { if (this.errorHandler) this.errorHandler(message); else console.error(message); }
+
+  detachIdle(transport: NativeTransport, canDetach: () => boolean) {
+    if (!this.transports.has(transport) || this.releasing.has(transport) || this.detaching.has(transport) || this.isActive(transport) || this.isInteractive(transport) || this.isRunning(transport) || this.queuedTransports.has(transport) || transport.hasTerminalActivity() || transport.hasPendingSettings() || transport.promptControls.hasPending() || !canDetach()) return;
+
+    if (this.observers.has(transport)) { this.deferredDetaches.set(transport, canDetach);
+
+    return; }
+
+    this.deferredDetaches.delete(transport);
+    const pending = transport.disconnect().then(() => undefined).catch(reason => this.reportError(`Could not detach conversation: ${String(reason)}`)).finally(() => this.detaching.delete(transport));
+    this.detaching.set(transport, pending);
+  }
   setInteractive(transport: NativeTransport, interactive: boolean) {
     if (interactive) { this.interactiveTransports.add(transport); this.unseenTransports.delete(transport); } else this.interactiveTransports.delete(transport);
     this.notify();
@@ -255,9 +274,13 @@ export class SessionRuntimePool {
       return; }
 
       this.observers.delete(transport);
+      const canDetach = this.deferredDetaches.get(transport);
+      this.deferredDetaches.delete(transport);
+
+      if (canDetach) queueMicrotask(() => this.detachIdle(transport, canDetach));
 
       if (this.deferredReleases.delete(transport)) queueMicrotask(() => {
-        if (transport !== this.activeTransport) void this.release(transport).catch(reason => this.errorHandler?.(`Could not release viewed conversation: ${String(reason)}`));
+        if (transport !== this.activeTransport) void this.release(transport).catch(reason => this.reportError(`Could not release viewed conversation: ${String(reason)}`));
       });
     };
   }
@@ -274,7 +297,9 @@ export class SessionRuntimePool {
     return; }
 
     const release = Promise.resolve().then(async () => {
+      await this.detaching.get(transport);
       await transport.dispose();
+      this.deferredDetaches.delete(transport); this.queuedTransports.delete(transport);
       forgetSession(transport);
 
       for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key);

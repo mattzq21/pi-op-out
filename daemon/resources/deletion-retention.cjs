@@ -116,7 +116,12 @@ function storedTranscriptReferences(root, file, candidates, found, inventory) {
     else inventory.uncertain = true;
     references(entries, candidates, found);
     retainGoalReferences(require('./goal-cleanup-references.cjs').collect(root, entries), candidates, found, inventory);
-  } catch { inventory.uncertain = true; }
+  } catch (error) {
+    inventory.uncertain = true;
+    const warning = `Deferred cleanup blocked by transcript ${file}: ${error.message ?? error}`;
+    inventory.warnings.push(warning);
+    console.error(warning);
+  }
 }
 
 function survivingReferences(root, inventory, candidates, excluded) {
@@ -175,7 +180,7 @@ function survivingSession(root, file, id, excluded, connection) {
 }
 
 function collectRetention(root, sources, savedFiles, deferred = { directories: [], sessionIds: [] }, unpublishedGoals = false) {
-  const inventory = { goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: require('./storage-transaction.cjs').pending(root) };
+  const inventory = { warnings: [], goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: require('./storage-transaction.cjs').pending(root) };
 
   registeredGoals(root, inventory);
   registeredTranscripts(root, inventory);
@@ -184,7 +189,7 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
   const owned = new Set(deferred.directories.filter(file => candidates.has(file)));
 
   if (unpublishedGoals) for (const directory of inventory.goals) owned.add(directory);
-  const ignored = { sessionIds: new Set(), uncertain: false };
+  const ignored = { sessionIds: new Set(), uncertain: false, warnings: inventory.warnings };
   const deleted = savedFiles.filter(saved => saved.sessionId);
 
   for (const saved of deleted) storedTranscriptReferences(root, saved.file, candidates, owned, ignored);
@@ -197,7 +202,10 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
   goalReferences(root, retained, inventory.goals, candidates, inventory);
   const requestedIds = [...new Set([...deleted.map(saved => saved.sessionId), ...deferred.sessionIds])].filter(id => uuidPattern.test(id));
 
+  if (!sources.length && !savedFiles.length && inventory.warnings.length) throw new Error(inventory.warnings.join('; '));
+
   return {
+    warnings: inventory.warnings,
     uncertain: inventory.uncertain,
     pendingGoals,
     directories: inventory.uncertain ? [] : [...owned].filter(file => !retained.has(file)),
