@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { closeSync, constants, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, dirname, sep } from 'node:path';
 import * as ConversationStorage from '../conversation_storage';
@@ -115,7 +115,7 @@ export class ConversationOwnership {
 
   static key(id: string): string {
     if (id.length !== 36 || !UUID.test(id)) throw new Error('Invalid conversation identity');
-    return createHash('sha256').update(id.toLowerCase()).digest('hex').slice(0, 40);
+    return ConversationStorage.key(id);
   }
 
   private async lock(id: string, worker: boolean): Promise<FileLock> {

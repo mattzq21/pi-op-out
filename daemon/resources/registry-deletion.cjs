@@ -37,11 +37,7 @@ function forget(root, targets) {
 
     removeSessionRecords(db, targets);
 
-    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_ownership'").get()) {
-      const removeOwner = db.prepare('DELETE FROM conversation_ownership WHERE record_id=?');
-
-      for (const target of targets) removeOwner.run(require('node:crypto').createHash('sha256').update(target.sessionId.toLowerCase()).digest('hex').slice(0, 40));
-    }
+    for (const target of targets) require('./conversation-storage.cjs').forget(db, target.sessionId);
 
     for (const target of targets) db.prepare('DELETE FROM sessions WHERE lower(session_id) = ?').run(target.sessionId.toLowerCase());
 
