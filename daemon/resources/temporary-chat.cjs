@@ -36,7 +36,6 @@ function create(db, root, directory, id) {
   if (!directoryExists(directory)) fs.mkdirSync(directory);
   sync(path.join(root, 'tmp'));
   sync(root);
-  process.stdout.write(directory);
 }
 
 function firstLine(file) {
@@ -171,6 +170,7 @@ function remove(db, directory, id) {
   db.prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
 }
 
+/** Creates or removes one temporary chat directory. Returns the directory for create, or null for remove. */
 function main(request) {
   if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(request.id)) throw new Error('Invalid temporary chat session ID');
 
@@ -181,7 +181,7 @@ function main(request) {
   if (request.action === 'remove' && request.path !== directory) throw new Error('Refusing to remove a directory outside the temporary chat root');
 
   if (!directoryExists(root)) {
-    if (request.action === 'remove') return;
+    if (request.action === 'remove') return null;
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   }
 
@@ -195,6 +195,8 @@ function main(request) {
     else removeChecked(db, directory, request.id);
     db.exec('COMMIT');
   } finally { db.close(); }
+
+  return request.action === 'create' ? directory : null;
 }
 
 module.exports = { main, cleanupDeleted };

@@ -1,4 +1,5 @@
 const fs = require("node:fs/promises");
+const { hostScript } = require("./host-script.cjs");
 const { Type } = require("typebox");
 const { Check } = require("typebox/value");
 
@@ -64,17 +65,14 @@ function appendChildren(root, index, traversal, args) {
   }
 }
 
-async function main() {
-  const args = JSON.parse(process.argv[1]);
+async function main(args) {
   const area = args.archived ? "archived" : "sessions";
   const root = await fs.realpath(args.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", area));
   const source = await fs.realpath(args.path);
   const parent = await validatedParent(root, source);
   const profile = path.dirname(root);
 
-  const children = await io.lockedAsync(profile, () => descendants(profile, parent.id, args));
-
-  process.stdout.write(JSON.stringify(children));
+  return io.lockedAsync(profile, () => descendants(profile, parent.id, args));
 }
 
-main().catch(error => { console.error(error.message); process.exitCode = 1; });
+hostScript(main);

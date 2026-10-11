@@ -11,7 +11,7 @@ import { transaction } from './util/db';
 import { sessionWorkerCommand } from './session_worker';
 import type { BrokerRuntime } from './broker';
 import { brokerEnvironment } from './broker';
-import { remoteHost, remoteLoginCommand, ssh } from './host_connection';
+import { remoteHost, ssh } from './host_connection';
 
 export { validateRemoteHost };
 export { remoteHost, remoteLoginCommand, ssh, sshBase, userSshConfig } from './host_connection';
@@ -112,11 +112,8 @@ function importExternalIdentity(path: string): string {
 }
 
 async function remoteRegisteredIdentity(host: RemoteHost, path: string): Promise<string | undefined> {
-  const request = JSON.stringify({ action: 'identity', path });
-  const script = `PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(Registry.source())} ${shellQuote(request)}`;
-  const output = await runLimited(ssh(host, remoteLoginCommand(script)), 64 * 1024, 'Could not read registered session identity');
-  if (!output.status.success) throw new Error(output.stderr.toString().trim());
-  return JSON.parse(output.stdout.toString()) ?? undefined;
+  try { return await Registry.identityOn({ kind: 'remote', host }, path); }
+  catch (error: any) { throw new Error(`Could not read registered session identity: ${error?.message ?? error}`); }
 }
 
 export async function readRemoteSessionHeader(path: string, command: (script: string) => CommandSpec): Promise<string> {

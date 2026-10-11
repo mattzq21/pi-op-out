@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { homeDir, isDirectory } from './environment';
-import { ensureDesktopSessionsDir, runLimited, shellQuote } from './process_io';
-import { STORAGE_DIRECTORY } from './config';
-import { nodeCommand } from './node_command';
-import { remoteHost, remoteLoginCommand, ssh } from './pi_launch';
+import { ensureDesktopSessionsDir } from './process_io';
+import { hostFor } from './host_connection';
 import { withExtension } from './settings_storage';
 import { loadAppSettings } from './settings';
 import * as Registry from './session_registry';
@@ -130,14 +128,8 @@ function write(path: string, groups: SessionGroups): void {
 }
 
 async function discover(settings: AppSettings, hostId: string): Promise<string[]> {
-  const script = Registry.source();
-  const request = '{"action":"ids"}';
-  const command = hostId === 'local'
-    ? nodeCommand(['-e', script, request])
-    : ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${shellQuote(STORAGE_DIRECTORY)} bun -e ${shellQuote(script)} ${shellQuote(request)}`));
-  const result = await runLimited(command, 16 * 1024 * 1024, 'Could not read current session IDs');
-  if (!result.status.success) throw new Error(result.stderr.toString());
-  return JSON.parse(result.stdout.toString());
+  try { return await Registry.idsOn(hostFor(settings, hostId)); }
+  catch (error: any) { throw new Error(`Could not read current session IDs: ${error?.message ?? error}`); }
 }
 
 function hostOf(key: string): string | undefined { const index = key.lastIndexOf(':'); return index >= 0 ? key.slice(0, index) : undefined; }

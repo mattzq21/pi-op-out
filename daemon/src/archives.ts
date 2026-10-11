@@ -3,13 +3,11 @@ import { extname, join, sep } from 'node:path';
 import { MAX_PATH_LIST_BYTES, MAX_SESSION_INDEX_BATCH_BYTES, STORAGE_DIRECTORY } from './config';
 import { MAX_REMOTE_HOSTS } from './settings_types';
 import { homeDir } from './environment';
-import { recoverMissingSessionBundle, relocateSessionBundle, sessionDescendantsBundle, storageInventoryBundle } from './resources';
-import { nodeCommand } from './node_command';
-import { remoteHost, remoteLoginCommand, sessionIdentity, ssh } from './pi_launch';
-import { desktopSessionsDir, runLimited, shellQuote, type CommandSpec, type Output } from './process_io';
+import { sessionIdentity, ssh } from './pi_launch';
+import { desktopSessionsDir, runLimited, shellQuote, type CommandSpec } from './process_io';
+import { hostScript, runHostScript } from './host_script';
 import { loadAppSettings } from './settings';
 import * as restoreRecovery from './restore_recovery';
-import * as Registry from './session_registry';
 import * as storageTransactions from './storage_transactions';
 import { hostFor } from './host_connection';
 import { MutationGuard } from './conversation_ownership';
@@ -23,15 +21,22 @@ import type { App } from './app';
 
 export interface HostStorage { hostId: string; hostName: string; categories: any[]; archives: any[]; warnings: string[]; error?: string }
 
+type Inventory = { categories: any[]; archives: any[]; warnings: string[] };
+
+const storageInventory = hostScript<Record<string, never>, Inventory>('storage-inventory', MAX_SESSION_INDEX_BATCH_BYTES, (value: any) => {
+  if (!Array.isArray(value?.categories)) throw new Error('missing field `categories`');
+  if (!Array.isArray(value?.archives)) throw new Error('missing field `archives`');
+  return { categories: value.categories.map(normalizeCategory), archives: value.archives.map(normalizeArchive), warnings: Array.isArray(value.warnings) ? value.warnings : [] };
+});
+
 export async function inspectStorage(host: RemoteHost | undefined): Promise<HostStorage> {
   if (!host) await restoreRecovery.recover(join(homeDir(), STORAGE_DIRECTORY));
   else await restoreRecovery.recoverRemote(host);
-  const command = host
-    ? ssh(host, remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(storageInventoryBundle)}`))
-    : nodeCommand(['-e', storageInventoryBundle]);
   const label = host?.name ?? 'Local';
-  const result = await runLimited(command, MAX_SESSION_INDEX_BATCH_BYTES, `Could not inspect storage on ${label}`);
-  return parseStorageInventory(result, host);
+  let inventory: Inventory;
+  try { inventory = await runHostScript(host ? { kind: 'remote', host } : { kind: 'local' }, storageInventory, {}); }
+  catch (error: any) { throw new Error(`Could not inspect storage on ${label}: ${error?.message ?? error}`); }
+  return { hostId: host?.id ?? 'local', hostName: label, ...inventory };
 }
 
 function normalizeCategory(category: any): any {
@@ -42,21 +47,6 @@ function normalizeCategory(category: any): any {
 function normalizeArchive(archive: any): any {
   if (!archive || typeof archive !== 'object') throw new Error('invalid type: expected struct ArchivedConversation');
   return { ...archive, restorable: archive.restorable === true };
-}
-
-export function parseStorageInventory(result: Output, host: RemoteHost | undefined): HostStorage {
-  const label = host?.name ?? 'Local';
-  if (!result.status.success) {
-    const error = result.stderr.toString().trim();
-    throw new Error(error || `Could not inspect storage on ${label}`);
-  }
-  let inventory: any;
-  try {
-    inventory = JSON.parse(result.stdout.toString('utf8'));
-    if (!Array.isArray(inventory?.categories)) throw new Error('missing field `categories`');
-    if (!Array.isArray(inventory?.archives)) throw new Error('missing field `archives`');
-  } catch (error: any) { throw new Error(`Could not read storage inventory from ${label}: ${error.message}`); }
-  return { hostId: host?.id ?? 'local', hostName: label, categories: inventory.categories.map(normalizeCategory), archives: inventory.archives.map(normalizeArchive), warnings: Array.isArray(inventory.warnings) ? inventory.warnings : [] };
 }
 
 export function failedStorage(hostId: string, hostName: string, error: string): HostStorage {
@@ -179,18 +169,19 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
   });
 }
 
+type DescendantsRequest = { path: string; root: string | null; archived: boolean; includeOtherArea: boolean };
+
+const descendantsScript = hostScript<DescendantsRequest, unknown[]>('session-descendants', MAX_SESSION_INDEX_BATCH_BYTES, value => {
+  if (!Array.isArray(value)) throw new Error('expected a sequence');
+  return value;
+});
+
 async function sessionDescendants(app: App, hostId: string, sessionPath: string, archived: boolean, includeOtherArea: boolean): Promise<Array<[string, boolean]>> {
   const settings = await loadAppSettings(app);
   const root = hostId === 'local' ? join(homeDir(), STORAGE_DIRECTORY, archived ? 'archived' : 'sessions') : null;
-  const argumentsText = JSON.stringify({ path: sessionPath, root, archived, includeOtherArea });
-  const command = hostId === 'local'
-    ? nodeCommand(['-e', sessionDescendantsBundle, argumentsText])
-    : ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(sessionDescendantsBundle)} ${shellQuote(argumentsText)}`));
-  const result = await runLimited(command, MAX_SESSION_INDEX_BATCH_BYTES, 'Could not find subagent conversations');
-  if (!result.status.success) throw new Error(result.stderr.toString().trim());
-  let value: any;
-  try { value = JSON.parse(result.stdout.toString('utf8')); } catch (error: any) { throw new Error(`Invalid subagent conversation list: ${error.message}`); }
-  if (!Array.isArray(value)) throw new Error('Invalid subagent conversation list: expected a sequence');
+  let value: unknown[];
+  try { value = await runHostScript(hostFor(settings, hostId), descendantsScript, { path: sessionPath, root, archived, includeOtherArea }); }
+  catch (error: any) { throw new Error(`Could not find subagent conversations: ${error?.message ?? error}`); }
   if (includeOtherArea) return value.map((item: any) => {
     if (!Array.isArray(item) || typeof item[0] !== 'string' || typeof item[1] !== 'boolean') throw new Error('Invalid subagent conversation list: expected a tuple');
     return [item[0], item[1]];
@@ -330,14 +321,22 @@ export async function relocateSession(app: App, sessionPath: string, cwd: string
     const hostId = hostIdOption ?? 'local';
     const mutation = await MutationGuard.acquire(app, hostId, sessionPath, clientId, false, 'relocate');
     try {
-      if (hostId !== 'local') {
-        const settings = await loadAppSettings(app); const host = remoteHost(settings, hostId);
-        await relocateRemoteSession(sessionPath, cwd, host.name, script => ssh(host, remoteLoginCommand(script)));
-      } else await relocateLocalSession(homeDir(), sessionPath, cwd);
+      const settings = await loadAppSettings(app);
+      try { await runHostScript(hostFor(settings, hostId), relocateScript, { sessionPath, cwd }); }
+      catch (error: any) { throw new Error(`Could not relocate conversation: ${error?.message ?? error}`); }
       await mutation.finish();
     } finally { await mutation.release(); }
   });
 }
+
+const relocateScript = hostScript<{ sessionPath: string; cwd: string }, null>('relocate-session', 64 * 1024, () => null);
+
+type Recovery = { cwd: string; recovery: unknown; warnings: string[] };
+
+const recoverScript = hostScript<{ action: 'empty'; sessionPath: string }, Recovery>('recover-missing-session', 64 * 1024, (value: any) => {
+  if (typeof value?.cwd !== 'string' || !Array.isArray(value.warnings) || !value.warnings.every((item: unknown) => typeof item === 'string')) throw new Error('expected a recovery record');
+  return value;
+});
 
 export async function recoverMissingSession(app: App, sessionPath: string, hostIdOption: string | undefined | null, action: string, clientId: string): Promise<any> {
   if (action !== 'empty') throw new Error('Unknown recovery action');
@@ -347,38 +346,12 @@ export async function recoverMissingSession(app: App, sessionPath: string, hostI
     const path = await desktopSessionFile(settings, hostId, sessionPath);
     const mutation = await MutationGuard.acquire(app, hostId, path, clientId, false, 'relocate');
     try {
-      const argumentsText = JSON.stringify({ sessionPath: path, action, storage: STORAGE_DIRECTORY });
-      const registry = Registry.source();
-      const command = hostId === 'local'
-        ? nodeCommand(['-e', recoverMissingSessionBundle, argumentsText, relocateSessionBundle, registry])
-        : ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(recoverMissingSessionBundle)} ${shellQuote(argumentsText)} ${shellQuote(relocateSessionBundle)} ${shellQuote(registry)}`));
-      const result = await runLimited(command, 64 * 1024, 'Could not recover the session directory');
-      if (!result.status.success) throw new Error(result.stderr.toString().trim());
-      let value: any;
-      try { value = JSON.parse(result.stdout.toString('utf8')); } catch (error: any) { throw new Error(`Invalid recovery response: ${error.message}`); }
+      let value: Recovery;
+      try { value = await runHostScript(hostFor(settings, hostId), recoverScript, { action: 'empty', sessionPath: path }); }
+      catch (error: any) { throw new Error(`Could not recover the session directory: ${error?.message ?? error}`); }
       await mutation.finish();
       app.emit('pi://sessions-changed', null);
       return value;
     } finally { await mutation.release(); }
   });
-}
-
-export async function relocateRemoteSession(sessionPath: string, cwd: string, hostName: string, command: (script: string) => CommandSpec): Promise<void> {
-  const session = shellQuote(sessionPath); const replacement = shellQuote(cwd.trim());
-  const relocate = shellQuote(relocateSessionBundle);
-  const script = `root=$(cd "$HOME/${STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- ${session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement=${replacement}; [ -d "$replacement" ] || { printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }; PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${relocate} "$path" "$replacement"`;
-  const result = await runLimited(command(script), 64 * 1024, `Could not relocate conversation on ${hostName}`);
-  if (result.status.success) return;
-  throw new Error(result.stderr.toString().trim() || `Could not relocate conversation on ${hostName}`);
-}
-
-export async function relocateLocalSession(home: string, sessionPath: string, cwd: string): Promise<void> {
-  const replacement = cwd.trim();
-  let directory = false;
-  try { directory = statSync(replacement).isDirectory(); } catch {}
-  if (!directory) throw new Error(`Project directory does not exist: ${replacement}`);
-  const path = localDesktopSessionFileAt(home, sessionPath);
-  const result = await runLimited(nodeCommand(['-e', relocateSessionBundle, path, replacement]), 64 * 1024, 'Could not relocate conversation');
-  if (result.status.success) return;
-  throw new Error(result.stderr.toString().trim() || 'Could not relocate conversation');
 }

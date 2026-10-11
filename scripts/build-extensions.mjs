@@ -1,4 +1,3 @@
-import { packNodeScript } from "./pack-node-script.mjs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
@@ -62,8 +61,17 @@ async function mcpBridge() {
 }
 
 async function backendScripts() {
-  const scripts = ["session-descendants", "relocate-session", "index-sessions", "storage-inventory", "session-registry", "recover-missing-session"].map(name => [name, name]);
-  scripts.push(["storage-transaction", "storage-transaction-command"]);
+  const scripts = [
+    ["session-descendants", "session-descendants"],
+    ["index-sessions", "index-sessions"],
+    ["storage-inventory", "storage-inventory"],
+    ["recover-missing-session", "recover-missing-session"],
+    ["relocate-session", "relocate-session-command"],
+    ["session-registry", "session-registry-command"],
+    ["storage-transaction", "storage-transaction-command"],
+    ["temporary-chat", "temporary-chat-command"],
+    ["goal-text", "goal-text-command"],
+  ];
 
   const commandInputs = await agentCommandInputs();
 
@@ -83,13 +91,7 @@ async function backendScripts() {
         charset: "utf8",
         minify: true,
         plugins: [storageSchemaImports()],
-      }, `daemon/resources/${name}.bundle.mjs`, { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url)), fileURLToPath(new URL("./pack-node-script.mjs", import.meta.url))], transform(content) {
-        const script = packNodeScript(content);
-
-        if (Buffer.byteLength(script) > 112 * 1024) throw new Error(`${name} exceeds the embedded script argument budget`);
-
-        return script;
-      } });
+      }, `daemon/resources/${name}.bundle.mjs`, { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))] });
     }),
 
     buildArtifact({

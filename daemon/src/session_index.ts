@@ -2,10 +2,10 @@ import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
 import { MAX_SESSION_INDEX_BATCH_BYTES, STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
-import { indexSessionsBundle, temporaryChat } from './resources';
-import { nodeCommand } from './node_command';
-import { localLaunchDirectory, remoteDirectoryPath, remoteHost, remoteLoginCommand, ssh } from './pi_launch';
-import { output, runLimited, shellQuote, type CommandSpec } from './process_io';
+import { hostScript, runHostScript } from './host_script';
+import type { Host } from './host_connection';
+import { localLaunchDirectory, remoteDirectoryPath, remoteHost, ssh } from './pi_launch';
+import { output, runLimited, shellQuote } from './process_io';
 import { inspectSessionProjectsWith } from './folder_inspection';
 import { ProjectMetadataCache } from './project_metadata';
 import * as sidebarStorage from './sidebar_storage';
@@ -41,47 +41,35 @@ async function inspectSessionProjects(index: SessionIndexRuntime, sessions: Sess
   }));
 }
 
-export function readSessionSummaries(candidates: SessionCandidate[], host: RemoteHost | undefined): Promise<Map<string, CachedSession>> {
-  return readSessionSummariesWith(candidates, host, (script, batch) => {
-    if (host) return ssh(host, remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(script)} ${batch.map(item => shellQuote(item[0])).join(' ')}`));
-    return nodeCommand(['-e', script, ...batch.map(item => item[0])]);
-  });
-}
+const indexSessions = hostScript<{ paths: string[] }, any[]>('index-sessions', MAX_SESSION_INDEX_BATCH_BYTES, value => {
+  if (!Array.isArray(value)) throw new Error('expected a sequence');
+  return value;
+});
 
-export async function readSessionSummariesWith(candidates: SessionCandidate[], host: RemoteHost | undefined, command: (script: string, batch: SessionCandidate[]) => CommandSpec): Promise<Map<string, CachedSession>> {
+export async function readSessionSummaries(candidates: SessionCandidate[], host: RemoteHost | undefined): Promise<Map<string, CachedSession>> {
   const result = new Map<string, CachedSession>();
-  let cursor = 0;
-  while (cursor < candidates.length) {
-    let end = cursor; let argumentBytes = 0;
-    while (end < candidates.length && end - cursor < 128) {
-      const size = Buffer.byteLength(shellQuote(candidates[end]![0])) + 1;
-      if (end > cursor && argumentBytes + size > 16 * 1024) break;
-      argumentBytes += size; end += 1;
-    }
-    const batch = candidates.slice(cursor, end);
-    const out = await runLimited(command(indexSessionsBundle, batch), MAX_SESSION_INDEX_BATCH_BYTES, 'Could not read session summaries');
-    if (!out.status.success) throw new Error(out.stderr.toString());
-    for (const line of out.stdout.toString('utf8').split('\n')) {
-      let value: any;
-      try { value = JSON.parse(line); } catch { continue; }
-      const path = value?.path;
-      if (typeof path !== 'string') continue;
-      const item = batch.find(item => item[0] === path);
-      if (!item) continue;
-      const string = (key: string) => typeof value[key] === 'string' ? value[key] : '';
-      const cwd = string('cwd');
-      const project = basename(cwd) || 'Workspace';
-      const summary: SessionSummary = {
-        groupId: null, subagentParentId: typeof value.subagentParentId === 'string' ? value.subagentParentId : undefined,
-        id: string('id'), path, name: string('name'), project, cwd, cwdExists: true, modifiedAt: item[2], preview: string('preview'),
-        messageCount: Number.isInteger(value.messageCount) && value.messageCount >= 0 ? value.messageCount : 0,
-        lastMessageAt: Number.isInteger(value.lastMessageAt) && value.lastMessageAt >= 0 ? value.lastMessageAt : 0,
-        apiCost: typeof value.apiCost === 'number' ? value.apiCost : 0,
-        hostId: host?.id ?? 'local', hostName: host?.name ?? 'Local',
-      };
-      result.set(path, { fingerprint: item[1], summary });
-    }
-    cursor = end;
+  if (!candidates.length) return result;
+  const items = new Map(candidates.map(item => [item[0], item]));
+  let values: any[];
+  try { values = await runHostScript(host ? { kind: 'remote', host } : { kind: 'local' }, indexSessions, { paths: [...items.keys()] }); }
+  catch (error: any) { throw new Error(`Could not read session summaries: ${error?.message ?? error}`); }
+  for (const value of values) {
+    const path = value?.path;
+    if (typeof path !== 'string') continue;
+    const item = items.get(path);
+    if (!item) continue;
+    const string = (key: string) => typeof value[key] === 'string' ? value[key] : '';
+    const cwd = string('cwd');
+    const project = basename(cwd) || 'Workspace';
+    const summary: SessionSummary = {
+      groupId: null, subagentParentId: typeof value.subagentParentId === 'string' ? value.subagentParentId : undefined,
+      id: string('id'), path, name: string('name'), project, cwd, cwdExists: true, modifiedAt: item[2], preview: string('preview'),
+      messageCount: Number.isInteger(value.messageCount) && value.messageCount >= 0 ? value.messageCount : 0,
+      lastMessageAt: Number.isInteger(value.lastMessageAt) && value.lastMessageAt >= 0 ? value.lastMessageAt : 0,
+      apiCost: typeof value.apiCost === 'number' ? value.apiCost : 0,
+      hostId: host?.id ?? 'local', hostName: host?.name ?? 'Local',
+    };
+    result.set(path, { fingerprint: item[1], summary });
   }
   return result;
 }
@@ -172,21 +160,22 @@ export async function homeDirectory(app: App, hostId: string): Promise<string> {
   return path;
 }
 
-function temporaryChatScript(): string {
-  const script = Registry.withDatabase(temporaryChat);
-  return `${script}\ntry { main(JSON.parse(process.argv[1])); } catch (error) { console.error(error.message); process.exitCode = 1; }`;
+type TemporaryChatRequest = { action: 'create' | 'remove'; id: string; path?: string; root?: string };
+
+const temporaryChatScript = hostScript<TemporaryChatRequest, string | null>('temporary-chat', 64 * 1024, value => {
+  if (value !== null && typeof value !== 'string') throw new Error('expected a directory');
+  return value;
+});
+
+async function createTemporaryChatOn(host: Host, request: TemporaryChatRequest): Promise<string> {
+  const directory = await runHostScript(host, temporaryChatScript, request);
+  if (!directory) throw new Error('Temporary chat directory was unavailable');
+  return directory;
 }
 
-async function temporaryChatOutput(command: CommandSpec): Promise<string> {
-  let result;
-  try { result = await output(command); } catch (error: any) { throw new Error(`Could not update temporary chat directory: ${error.message}`); }
-  if (!result.status.success) throw new Error(result.stderr.toString().trim());
-  return result.stdout.toString().trim();
-}
-
-export function createLocalTemporaryChat(home: string, sessionId: string): Promise<string> {
-  const request = JSON.stringify({ action: 'create', id: sessionId, root: join(home, STORAGE_DIRECTORY) });
-  return temporaryChatOutput(nodeCommand(['-e', temporaryChatScript(), request]));
+export async function createLocalTemporaryChat(home: string, sessionId: string): Promise<string> {
+  try { return await createTemporaryChatOn({ kind: 'local' }, { action: 'create', id: sessionId, root: join(home, STORAGE_DIRECTORY) }); }
+  catch (error: any) { throw new Error(`Could not create temporary chat directory: ${error?.message ?? error}`); }
 }
 
 export function temporaryChatId(path: string): string | undefined {
@@ -202,17 +191,15 @@ export async function removeTemporaryChat(app: App, path: string, hostId: string
   const settings = await loadAppSettings(app); const host = remoteHost(settings, hostId);
   const id = temporaryChatId(path);
   if (!id) throw new Error('Refusing to remove a directory not created as a temporary chat');
-  const request = JSON.stringify({ action: 'remove', id, path });
-  const remote = `PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(temporaryChatScript())} ${shellQuote(request)}`;
-  try { await temporaryChatOutput(ssh(host, remoteLoginCommand(remote))); }
+  try { await runHostScript({ kind: 'remote', host }, temporaryChatScript, { action: 'remove', id, path }); }
   catch (error: any) { throw new Error(`Could not remove temporary chat directory on ${host.name}: ${error.message}`); }
 }
 
 export async function removeLocalTemporaryChat(home: string, path: string): Promise<void> {
   const id = temporaryChatId(path);
   if (!id) throw new Error('Refusing to remove a directory not created as a temporary chat');
-  const request = JSON.stringify({ action: 'remove', id, path, root: join(home, STORAGE_DIRECTORY) });
-  await temporaryChatOutput(nodeCommand(['-e', temporaryChatScript(), request]));
+  try { await runHostScript({ kind: 'local' }, temporaryChatScript, { action: 'remove', id, path, root: join(home, STORAGE_DIRECTORY) }); }
+  catch (error: any) { throw new Error(`Could not remove temporary chat directory: ${error?.message ?? error}`); }
 }
 
 export async function validateProjectDirectory(app: App, path: string, hostId: string, allowStorage: boolean | undefined): Promise<string> {
@@ -273,11 +260,8 @@ export async function createTemporaryChat(app: App, hostId: string): Promise<Tem
   else {
     const host = remoteHost(await loadAppSettings(app), hostId);
     if (!canonicalUuid(sessionId)) throw new Error('Invalid temporary chat session ID');
-    const request = JSON.stringify({ action: 'create', id: sessionId });
-    const remote = `PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(temporaryChatScript())} ${shellQuote(request)}`;
-    try { cwd = await temporaryChatOutput(ssh(host, remoteLoginCommand(remote))); }
+    try { cwd = await createTemporaryChatOn({ kind: 'remote', host }, { action: 'create', id: sessionId }); }
     catch (error: any) { throw new Error(`Could not create temporary chat directory on ${host.name}: ${error.message}`); }
-    if (!cwd) throw new Error('Remote temporary chat directory was unavailable');
   }
   return { cwd, sessionId };
 }
