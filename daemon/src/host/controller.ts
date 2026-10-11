@@ -244,10 +244,10 @@ export class Host implements SessionHost {
     return session;
   }
 
-  private async detachReadonly(runtime: string): Promise<any> {
+  private async detachReadonly(runtime: string, target: ReadonlyView): Promise<any> {
     this.readonlyMap.delete(runtime);
     this.attachments.delete(runtime);
-    const session = this.subscriptions.get(runtime);
+    const session = this.subscriptions.get(runtime) ?? this.findSession(target.id);
     this.subscriptions.delete(runtime);
     if (session) {
       session.detachView(runtime);
@@ -259,7 +259,7 @@ export class Host implements SessionHost {
 
   private async readonlyCommand(packet: any, target: ReadonlyView): Promise<any> {
     const runtime = text(packet, 'runtimeId');
-    if (kind(packet) === 'detach') return this.detachReadonly(runtime);
+    if (kind(packet) === 'detach') return this.detachReadonly(runtime, target);
     if (kind(packet) === 'presence') {
       this.findSession(target.id)?.presence(runtime, structuredClone(packet.presence ?? null));
       return null;
