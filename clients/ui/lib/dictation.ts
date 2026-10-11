@@ -126,6 +126,8 @@ export class DictationRecording {
   private vad?: DictationVad;
   private failure?: Error;
   private id?: string;
+  /** The engine stream whose text updates this recording shows. It stays set after the user stops, so text keeps arriving while the engine catches up. */
+  private streamId?: string;
   private unlisten?: () => void;
   private pending: number[] = [];
   private samples = 0;
@@ -147,9 +149,10 @@ export class DictationRecording {
 
     try {
       this.unlisten = await listen("pi://dictation-stream", ({ payload }) => {
-        if (payload.id !== this.id || this.stopped) return;
+        if (payload.id !== this.streamId) return;
 
-        if (payload.error !== undefined) fail(new Error(payload.error));
+        // After the user stops, finish() reports engine errors, so only text updates apply here.
+        if (payload.error !== undefined) { if (!this.stopped) fail(new Error(payload.error)); }
         else onText({ committed: payload.committed ?? "", tentative: payload.tentative ?? "" });
       }, streamUpdateSchema);
       const context = new AudioContext();
@@ -188,6 +191,7 @@ export class DictationRecording {
       this.source.connect(this.processor); this.processor.connect(this.gain); this.gain.connect(context.destination);
       this.timer = setTimeout(complete, MAX_SECONDS * 1000);
       this.id = (await started).id;
+      this.streamId = this.id;
 
       if (this.stopped) { this.cancelStream(); return; }
       this.flush(fail);
@@ -212,21 +216,26 @@ export class DictationRecording {
   async finish() {
     const id = this.id;
     this.release();
-    this.flush((error) => { this.failure ??= error; });
-    await this.sending;
 
-    if (!id) throw new Error("The microphone was not ready.");
+    try {
+      this.flush((error) => { this.failure ??= error; });
+      await this.sending;
 
-    if (this.failure) { this.cancelStream(); throw this.failure; }
+      if (!id) throw new Error("The microphone was not ready.");
 
-    if (!this.samples) { this.cancelStream(); throw new Error("No audio was recorded. Try again."); }
+      if (this.failure) { this.cancelStream(); throw this.failure; }
 
-    this.id = undefined;
+      if (!this.samples) { this.cancelStream(); throw new Error("No audio was recorded. Try again."); }
 
-    return invoke("dictation_stream_finish", { id }, z.object({ text: z.string() }));
+      this.id = undefined;
+
+      return await invoke("dictation_stream_finish", { id }, z.object({ text: z.string() }));
+    } finally { this.stopListening(); }
   }
 
-  cancel() { this.release(); this.cancelStream(); }
+  cancel() { this.release(); this.stopListening(); this.cancelStream(); }
+
+  private stopListening() { this.streamId = undefined; this.unlisten?.(); this.unlisten = undefined; }
 
   private cancelStream() {
     const id = this.id;
@@ -237,7 +246,6 @@ export class DictationRecording {
 
   private release() {
     this.stopped = true; clearTimeout(this.timer);
-    this.unlisten?.(); this.unlisten = undefined;
     this.vad?.close(); this.vad = undefined;
 
     if (recordingOwner === this.owner) recordingOwner = undefined;
