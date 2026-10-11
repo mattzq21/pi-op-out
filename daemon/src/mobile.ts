@@ -39,10 +39,11 @@ interface Broadcast { packet: any; text: string }
 type Subscriber = (event: Broadcast) => void;
 
 /** Values shared by all mobile listeners. */
-interface Shared { app: App; subscribers: Set<Subscriber>; connections: Slots; jobs: Slots }
+interface Shared { app: App; subscribers: Set<Subscriber>; handshakes: Slots; connections: Slots; jobs: Slots }
 
 const listeners = new WeakMap<App, Set<NetServer>>();
 const sockets = new WeakMap<App, Set<Socket>>();
+const published = new WeakMap<App, () => void>();
 
 function trackListener(app: App, server: NetServer): void {
   let active = listeners.get(app);
@@ -66,6 +67,13 @@ export function stopAccepting(app: App): void {
 
 export function closeConnections(app: App): void {
   for (const socket of sockets.get(app) ?? []) socket.destroy();
+}
+
+/** Removes the endpoint records this daemon published, if they still describe this daemon. */
+export function unpublish(app: App): void {
+  const remove = published.get(app);
+  published.delete(app);
+  if (remove) remove();
 }
 
 function splitBind(bind: string): [string, number] {
@@ -92,13 +100,14 @@ function listen(server: Server, bind: string): Promise<{ address: string; port: 
   });
 }
 
-/** An HTTP server that only answers WebSocket upgrades and limits open connections. */
+/** An HTTP server that only answers WebSocket upgrades and limits sockets that have not authenticated yet. */
 function upgradeServer(shared: Shared, onUpgrade: (request: IncomingMessage, socket: Duplex, head: Buffer) => void): Server {
   const server = createServer((_request, response) => { response.writeHead(426, { Connection: 'close' }); response.end(); });
   trackListener(shared.app, server);
   server.on('connection', (socket: Socket) => {
-    const release = shared.connections.tryAcquire();
-    if (!release) { socket.destroy(); return; }
+    const release = shared.handshakes.tryAcquire();
+    if (!release) { console.error('Rejected a connection from ' + socket.remoteAddress + ': too many connections are waiting to authenticate'); socket.destroy(); return; }
+    (socket as any).piopReleaseHandshake = release;
     socket.once('close', release);
     const timer = setTimeout(() => { if (!(socket as any).piopUpgraded) socket.destroy(); }, 10_000);
     timer.unref();
@@ -115,22 +124,28 @@ function upgradeServer(shared: Shared, onUpgrade: (request: IncomingMessage, soc
 export async function start(app: App): Promise<void> {
   daemonLog.listenStatus(failure => app.setLogStatus('local', failure));
   let token = process.env.PIOP_MOBILE_TOKEN;
-  if (token === undefined) {
-    try { token = endpoint.read().token; } catch { token = randomUUID() + randomUUID(); }
+  if (token === undefined && DEVELOPMENT) {
+    // Debug phones keep the token from debug-mobile.json between daemon restarts.
+    try { token = endpoint.read().token; }
+    catch (error) { if (errorText(error) !== 'Daemon connection is not available') console.error('Could not read the saved daemon endpoint; using a new token: ' + errorText(error)); }
   }
+  // Production clients read daemon.json before every connection, so each daemon gets its own token.
+  if (typeof token !== 'string') token = randomUUID() + randomUUID();
   if (token.length < 32) throw new Error('PIOP_MOBILE_TOKEN must contain at least 32 characters');
   const bind = process.env.PIOP_MOBILE_BIND ?? (DEVELOPMENT ? '127.0.0.1:0' : '127.0.0.1:9847');
-  const shared: Shared = { app, subscribers: new Set(), connections: new Slots(8), jobs: new Slots(16) };
+  const shared: Shared = { app, subscribers: new Set(), handshakes: new Slots(16), connections: new Slots(8), jobs: new Slots(16) };
   const secret = token;
   const server = upgradeServer(shared, (request, socket, head) => {
     const ws = acceptUpgrade(request, socket, head, MAX_MESSAGE);
     if (!ws) return;
     const local = isLoopback(request.socket.remoteAddress);
-    connection(shared, ws, secret, local).catch(() => undefined).finally(() => ws.terminate());
+    connection(shared, ws, secret, local, socket).catch(error => console.error('Connection from ' + request.socket.remoteAddress + ' ended: ' + errorText(error))).finally(() => ws.terminate());
   });
   let address: { address: string; port: number };
   try { address = await listen(server, bind); } catch (error) { throw new Error('Mobile endpoint: ' + errorText(error)); }
   endpoint.publish(address.address, address.port, secret);
+  const removals: Array<() => void> = [() => endpoint.unpublish(address.address, address.port, secret)];
+  published.set(app, () => { for (const remove of removals) { try { remove(); } catch (error) { console.error('Could not remove the daemon endpoint record: ' + errorText(error)); } } });
   for (const name of EVENTS) {
     app.listenAny(name, payload => {
       const packet = { event: name, payload };
@@ -139,7 +154,7 @@ export async function start(app: App): Promise<void> {
     });
   }
   await startTailscale(shared);
-  if (DEVELOPMENT) await startDebug(shared, secret);
+  if (DEVELOPMENT) removals.push(await startDebug(shared, secret));
   process.stderr.write('Piop daemon listening on ' + bind + ' (TLS proxy required)\n');
 }
 
@@ -149,16 +164,19 @@ function isLoopback(address: string | undefined): boolean {
   return address === '::1' || address.startsWith('127.');
 }
 
-async function startDebug(shared: Shared, token: string): Promise<void> {
+async function startDebug(shared: Shared, token: string): Promise<() => void> {
   const server = upgradeServer(shared, (request, socket, head) => {
     if (request.headers.origin !== undefined && request.headers.origin !== 'https://localhost') { reject(socket, 403, 'Forbidden'); return; }
     const ws = acceptUpgrade(request, socket, head, MAX_MESSAGE);
     if (!ws) return;
-    connection(shared, ws, token, isLoopback(request.socket.remoteAddress)).catch(() => undefined).finally(() => ws.terminate());
+    connection(shared, ws, token, isLoopback(request.socket.remoteAddress), socket).catch(error => console.error('Debug connection from ' + request.socket.remoteAddress + ' ended: ' + errorText(error))).finally(() => ws.terminate());
   });
   const address = await listen(server, process.env.PIOP_DEBUG_MOBILE_BIND ?? '127.0.0.1:0');
   const host = address.address.includes(':') ? '[' + address.address + ']' : address.address;
-  records.publish(join(endpoint.directory(), 'debug-mobile.json'), JSON.stringify({ url: 'ws://' + host + ':' + address.port, token, protocol: 1 }));
+  const path = join(endpoint.directory(), 'debug-mobile.json');
+  const record = JSON.stringify({ url: 'ws://' + host + ':' + address.port, token, protocol: PROTOCOL_VERSION });
+  records.publish(path, record);
+  return () => records.removeIfEqual(path, record);
 }
 
 function authenticated(value: any, expected: string): boolean {
@@ -177,15 +195,24 @@ async function firstText(ws: WebSocketConnection, timeoutMessage: string, invali
   try { return JSON.parse(first.data); } catch (error) { throw new Error(invalid === 'control' ? errorText(error) : 'Invalid authentication'); }
 }
 
-async function connection(shared: Shared, ws: WebSocketConnection, token: string, local: boolean): Promise<void> {
+async function connection(shared: Shared, ws: WebSocketConnection, token: string, local: boolean, socket: Duplex): Promise<void> {
   const value = await firstText(ws, 'Authentication timeout', 'authentication');
-  if (!authenticated(value, token)) { await ws.close(); throw new Error('Unauthorized'); }
+  if (!authenticated(value, token)) { await sendError(ws, 'Unauthorized'); await ws.close(); throw new Error('Unauthorized'); }
   ws.markAuthenticated();
+  const release = shared.connections.tryAcquire();
+  if (!release) { await sendError(ws, 'Too many connections'); await ws.close(); throw new Error('Too many connections'); }
+  (socket as any).piopReleaseHandshake?.();
+  try {
   if (value.scope === 'control') {
-    if (!local) throw new Error('Daemon control requires a local connection');
+    if (!local) { await sendError(ws, 'Daemon control requires a local connection'); throw new Error('Daemon control requires a local connection'); }
     return controlConnection(shared.app, ws);
   }
   return serveConnection(shared, ws, value.scope === 'peer');
+  } finally { release(); }
+}
+
+async function sendError(ws: WebSocketConnection, error: string): Promise<void> {
+  try { await withTimeout(ws.sendText(JSON.stringify({ type: 'error', error })), 2000, 'Send timeout'); } catch { /* the client is already gone */ }
 }
 
 async function controlConnection(app: App, ws: WebSocketConnection): Promise<void> {

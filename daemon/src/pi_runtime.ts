@@ -68,35 +68,60 @@ async function sessionLaunchSettings(app: App, hostId: string, cwd: string | nul
   return settings;
 }
 
-export async function startPiForOwner(app: App, owner: string, runtime: PiRuntime, broker: BrokerRuntime, options: StartPiOptions): Promise<any> {
-  if (typeof options?.runtimeId !== 'string' || typeof options?.clientId !== 'string') throw new Error('Invalid start options');
-  return runtime.lifecycle.run(async () => {
-    ensureRuntimeOwner(runtime, options.runtimeId, owner);
-    const hostId = options.hostId ?? 'local';
-    const readOnly = options.presence?.readOnly === true;
-    const settings = await sessionLaunchSettings(app, hostId, options.cwd, readOnly);
-    const existing = runtime.processes.get(options.runtimeId);
-    if (existing && existing.daemon.alive && existing.daemon.matchesConnection(settings, hostId)) return { attached: true };
-    const sessionId = options.sessionId == null && options.sessionPath == null ? await reserveSessionId(settings, hostId) : options.sessionId ?? undefined;
+interface PreparedStart { connection: daemon.Daemon; process: PiProcess; packet: any; claim: BusyAgent | undefined; hostId: string; sessionId: string | undefined; sessionPath: string | undefined; reserved: boolean }
+
+/** Checks, reserves and registers a Pi start under the lifecycle lock. Returns undefined when the runtime is already attached. */
+async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broker: BrokerRuntime, options: StartPiOptions): Promise<PreparedStart | undefined> {
+  ensureRuntimeOwner(runtime, options.runtimeId, owner);
+  const hostId = options.hostId ?? 'local';
+  const readOnly = options.presence?.readOnly === true;
+  const settings = await sessionLaunchSettings(app, hostId, options.cwd, readOnly);
+  const existing = runtime.processes.get(options.runtimeId);
+  if (existing && existing.daemon.alive && existing.daemon.matchesConnection(settings, hostId)) return undefined;
+  const reserved = options.sessionId == null && options.sessionPath == null;
+  const sessionId = reserved ? await reserveSessionId(settings, hostId) : options.sessionId ?? undefined;
+  const blankCleanup: BlankSessionCleanup = { id: sessionId, host: hostId === 'local' ? undefined : remoteHost(settings, hostId), submitted: false };
+  let claim: BusyAgent | undefined;
+  try {
     const archived = readOnly && options.presence?.archived === true;
     const sessionPath = options.sessionPath == null ? undefined
       : archived ? await archivedSessionFile(settings, hostId, options.sessionPath) : await desktopSessionFile(settings, hostId, options.sessionPath);
     const forkPath = options.forkPath == null ? undefined : await desktopSessionFile(settings, hostId, options.forkPath);
     const claimId = sessionId ?? (sessionPath !== undefined ? await sessionIdentity(settings, hostId, sessionPath) : undefined);
-    let claim: BusyAgent | undefined;
     if (readOnly) {
       if (sessionPath === undefined || forkPath !== undefined) throw new Error('A read-only view requires a saved conversation');
     } else if (claimId !== undefined) claim = claimAgent(broker, hostId, claimId);
-    try {
-      const connection = await daemon.connect(app, runtime, broker, settings, hostId);
-      const command = buildPiCommand(broker, settings, hostId, { kind: 'rpc', cwd: options.cwd, sessionPath, sessionId, forkPath }, connection.remotePort);
-      const result = await connection.request({ type: 'attach', clientId: options.clientId, runtimeId: options.runtimeId, sessionKey: claimId ?? options.runtimeId, spec: daemon.spec(command), timeout: 630_000, cwd: options.cwd ?? null, presence: options.presence ?? {} });
-      const blankCleanup: BlankSessionCleanup = { path: sessionPath, id: sessionId, host: hostId === 'local' ? undefined : remoteHost(settings, hostId), submitted: false };
-      runtime.processes.set(options.runtimeId, { daemon: connection, windowLabel: owner, blankCleanup });
-      runtime.activeAgents.set(options.runtimeId, { hostId, sessionId, sessionPath, working: false, messageable: result?.owned === false });
-      return result;
-    } finally { claim?.release(); }
-  });
+    const connection = await daemon.connect(app, runtime, broker, settings, hostId);
+    const command = buildPiCommand(broker, settings, hostId, { kind: 'rpc', cwd: options.cwd, sessionPath, sessionId, forkPath }, connection.remotePort);
+    blankCleanup.path = sessionPath;
+    const process: PiProcess = { daemon: connection, windowLabel: owner, blankCleanup };
+    runtime.processes.set(options.runtimeId, process);
+    const packet = { type: 'attach', clientId: options.clientId, runtimeId: options.runtimeId, sessionKey: claimId ?? options.runtimeId, spec: daemon.spec(command), timeout: 630_000, cwd: options.cwd ?? null, presence: options.presence ?? {} };
+    return { connection, process, packet, claim, hostId, sessionId, sessionPath, reserved };
+  } catch (error) {
+    claim?.release();
+    if (reserved) await cleanupBlankSession(blankCleanup);
+    throw error;
+  }
+}
+
+export async function startPiForOwner(app: App, owner: string, runtime: PiRuntime, broker: BrokerRuntime, options: StartPiOptions): Promise<any> {
+  if (typeof options?.runtimeId !== 'string' || typeof options?.clientId !== 'string') throw new Error('Invalid start options');
+  // The lifecycle lock covers the checks and registration only. The attach request can take minutes when pi starts slowly,
+  // and holding the lock for that long would block every other session start, switch, archive and settings change.
+  const prepared = await runtime.lifecycle.run(() => preparePiStart(app, owner, runtime, broker, options));
+  if (!prepared) return { attached: true };
+  const { connection, process, packet, claim, hostId, sessionId, sessionPath, reserved } = prepared;
+  try {
+    const result = await connection.request(packet);
+    if (runtime.processes.get(options.runtimeId) !== process) throw new Error('Pi runtime was detached while it started');
+    runtime.activeAgents.set(options.runtimeId, { hostId, sessionId, sessionPath, working: false, messageable: result?.owned === false });
+    return result;
+  } catch (error) {
+    if (runtime.processes.get(options.runtimeId) === process) runtime.processes.delete(options.runtimeId);
+    if (reserved) await cleanupBlankSession(process.blankCleanup);
+    throw error;
+  } finally { claim?.release(); }
 }
 
 export function detachPi(runtime: PiRuntime, runtimeId: string, discardBlank: boolean): Promise<boolean> {
@@ -106,17 +131,21 @@ export function detachPi(runtime: PiRuntime, runtimeId: string, discardBlank: bo
 export async function detachPiWith(runtime: PiRuntime, runtimeId: string, discardBlank: boolean, preserveRunning: boolean): Promise<boolean> {
   let stopped = false;
   const process = runtime.processes.get(runtimeId);
-  runtime.processes.delete(runtimeId);
-  try {
-    if (process) {
-      const result = await process.daemon.request({ type: 'detach', runtimeId, discardBlank, preserveRunning });
-      if (result?.stopped === true) {
-        stopped = true;
-        if (result.submitted === true) process.blankCleanup.submitted = true;
-        if (discardBlank) await cleanupBlankSession(process.blankCleanup);
-      }
-    }
-  } finally { runtime.activeAgents.delete(runtimeId); }
+  if (!process) { runtime.activeAgents.delete(runtimeId); return false; }
+  let result: any;
+  try { result = await process.daemon.request({ type: 'detach', runtimeId, discardBlank, preserveRunning }); }
+  catch (error) {
+    // Keep the runtime registered when the host is still alive so a later detach can try again.
+    if (!process.daemon.alive && runtime.processes.get(runtimeId) === process) { runtime.processes.delete(runtimeId); runtime.activeAgents.delete(runtimeId); }
+    throw error;
+  }
+  if (runtime.processes.get(runtimeId) === process) runtime.processes.delete(runtimeId);
+  runtime.activeAgents.delete(runtimeId);
+  if (result?.stopped === true) {
+    stopped = true;
+    if (result.submitted === true) process.blankCleanup.submitted = true;
+    if (discardBlank) await cleanupBlankSession(process.blankCleanup);
+  }
   return stopped;
 }
 
@@ -214,7 +243,15 @@ export async function openProjectDirectory(app: App, cwd: string, hostId: string
 
 export async function detachOwner(runtime: PiRuntime, owner: string, discardBlank: boolean): Promise<void> {
   const ids = [...runtime.processes].filter(([, process]) => process.windowLabel === owner).map(([id]) => id);
-  for (const id of ids) { try { await detachPiWith(runtime, id, discardBlank, !discardBlank); } catch {} }
+  const results = await Promise.allSettled(ids.map(id => detachPiWith(runtime, id, discardBlank, !discardBlank)));
+  results.forEach((result, index) => {
+    if (result.status !== 'rejected') return;
+    const id = ids[index]!;
+    console.error('Could not detach Pi runtime ' + id + ' of ' + owner + ': ' + (result.reason?.message ?? result.reason));
+    // The owner is gone, so nothing can retry; forget the runtime instead of keeping a registration nobody owns.
+    if (runtime.processes.get(id)?.windowLabel === owner) runtime.processes.delete(id);
+    runtime.activeAgents.delete(id);
+  });
 }
 
 export async function shutdown(runtime: PiRuntime): Promise<void> {

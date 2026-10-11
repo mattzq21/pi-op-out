@@ -103,6 +103,7 @@ async function shutdownBackend(app: App): Promise<void> {
   await ignore(() => dictation.stop(app));
   await ignore(() => app.clients.drain(10_000));
   mobile.closeConnections(app);
+  await ignore(() => mobile.unpublish(app));
   await ignore(() => peers.shutdown(app));
   await ignore(() => app.broker.shutdown());
   await ignore(() => terminals.shutdown(app.terminals));

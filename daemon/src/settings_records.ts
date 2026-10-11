@@ -38,6 +38,18 @@ export function publish(path: string, body: Buffer | string): Publication {
   return { committed: true, durable: true };
 }
 
+/** Deletes a record when its body still equals the expected value. Returns true when a row was removed. */
+export function removeIfEqual(path: string, expected: Buffer | string): boolean {
+  const wanted = typeof expected === 'string' ? Buffer.from(expected) : expected;
+  return withDatabase(open(path), database => transaction(database, 'IMMEDIATE', () => {
+    const row = database.prepare('SELECT body FROM application_settings WHERE name=?').get(name(path)) as { body: unknown } | undefined;
+    const current = blob(row?.body);
+    if (!current || !current.equals(wanted)) return false;
+    database.prepare('DELETE FROM application_settings WHERE name=?').run(name(path));
+    return true;
+  }));
+}
+
 export function readOrCreate(path: string, initial: Buffer | string): Buffer {
   const initialBody = typeof initial === 'string' ? Buffer.from(initial) : initial;
   return withDatabase(open(path), database => transaction(database, 'IMMEDIATE', () => {

@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
+import { PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
 import * as endpoint from './daemon_endpoint';
 import * as daemonLog from './daemon_log';
 import { daemonScript } from './session_worker';
@@ -8,7 +9,7 @@ import { sleep } from './util/sync';
 function validateEndpoint(protocol: number, token: string, address: string): void {
   let url: URL;
   try { url = new URL(address); } catch (error: any) { throw new Error(error.message); }
-  if (protocol !== 1 || typeof token !== 'string' || token.length < 32 || url.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '[::1]', '::1'].includes(url.hostname)) {
+  if (protocol !== PROTOCOL_VERSION || typeof token !== 'string' || token.length < 32 || url.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '[::1]', '::1'].includes(url.hostname)) {
     throw new Error('SSH must attach to a local Piop daemon endpoint');
   }
 }
@@ -70,7 +71,8 @@ async function openSocket(scope: string): Promise<[Socket, any]> {
     const reply = await socket.next();
     if (reply === undefined) throw new Error('Daemon closed during authentication');
     const ready = JSON.parse(reply);
-    if (ready?.type !== 'ready' || ready.peerProtocol !== 1 || typeof ready.daemonId !== 'string') throw new Error('Upgrade the running Piop daemon to enable peer connections');
+    if (ready?.type === 'error') throw new Error('Piop daemon rejected the connection: ' + (typeof ready.error === 'string' ? ready.error : 'unknown error'));
+    if (ready?.type !== 'ready' || ready.peerProtocol !== PEER_PROTOCOL_VERSION || typeof ready.daemonId !== 'string') throw new Error('Upgrade the running Piop daemon to enable peer connections');
     return [socket, ready];
   })();
   let timer: NodeJS.Timeout | undefined;

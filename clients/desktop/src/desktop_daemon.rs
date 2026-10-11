@@ -280,6 +280,7 @@ fn parse_handshake(message: &Message) -> Result<Value, String> {
 }
 
 fn validate_handshake(reply: &Value, build_id: &str) -> Result<(), String> {
+    if reply["type"] == "error" { return Err(format!("Piop daemon rejected the connection: {}", reply["error"].as_str().unwrap_or("unknown error"))); }
     if reply["type"] != "ready" || reply["backend"] != "daemon" || reply["protocol"] != piop_protocol::PROTOCOL_VERSION { return Err("Incompatible Piop daemon; restart it after upgrading".into()); }
     if reply["buildId"].as_str() != Some(build_id) {
         return Err(format!("Piop daemon is from another build; restart it. Bundled: {build_id}; running: {}", reply["buildId"].as_str().unwrap_or("unknown")));
