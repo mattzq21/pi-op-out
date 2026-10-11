@@ -111,7 +111,7 @@ public class DictationPlugin extends Plugin {
     private static String engineKind(String engine, String model) {
         String extension;
         String label;
-        if (engine.equals("needle")) { extension = ".cact"; label = "Cactus Needle"; }
+        if (engine.equals("needle")) { extension = ".cact"; label = "Needle"; }
         else if (engine.equals("transcribe.cpp")) { extension = ".gguf"; label = "transcribe.cpp"; }
         else throw new IllegalArgumentException("Unknown dictation engine " + engine);
         if (!model.toLowerCase(Locale.ROOT).endsWith(extension)) throw new IllegalArgumentException("The model file " + model + " is not a " + extension + " file. " + label + " needs a " + extension + " model.");

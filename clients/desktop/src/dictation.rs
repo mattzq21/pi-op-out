@@ -187,7 +187,7 @@ fn engine_kind(engine: &str, model: &str) -> Result<&'static str, String> {
     Ok(kind)
 }
 
-fn engine_label(kind: &str) -> &'static str { if kind == "needle" { "Cactus Needle" } else { "transcribe.cpp" } }
+fn engine_label(kind: &str) -> &'static str { if kind == "needle" { "Needle" } else { "transcribe.cpp" } }
 
 /// The Python module that the engine program must provide.
 fn engine_module(kind: &str) -> &'static str { if kind == "needle" { "needle" } else { "transcribe_cpp" } }
