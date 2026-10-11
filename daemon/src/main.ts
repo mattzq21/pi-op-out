@@ -2,13 +2,14 @@ import * as restartArtifacts from './restart_artifacts';
 import * as daemonLog from './daemon_log';
 import { runSessionClaim } from './session_worker';
 import { runDaemon } from './lifecycle';
+import { ALREADY_RUNNING_EXIT_CODE, DaemonAlreadyRunningError } from './daemon_endpoint';
 import { errorText } from './util/sync';
 
 const ACCEPTED = new Set(['start', 'stop', '--serve', '--exit-on-disconnect', '--stdio-client', '--restart-coordinator', '--validate-plugins', '--restart-candidate', '--daemon-log-writer']);
 
 function fail(prefix: string, error: unknown): never {
   process.stderr.write(prefix + errorText(error) + '\n');
-  process.exit(1);
+  process.exit(error instanceof DaemonAlreadyRunningError ? ALREADY_RUNNING_EXIT_CODE : 1);
 }
 
 async function main(): Promise<void> {

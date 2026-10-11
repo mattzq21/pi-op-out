@@ -1,7 +1,7 @@
 import { voidResultSchema } from "./responseSchemas";
 import { nativeCall, type NativeCall } from "./nativeCall";
 import { z } from "zod";
-import { isMobile, listen } from "./platform";
+import { captureDaemonTransport, isMobile, listen } from "./platform";
 import { whenBranchesSettled } from "./branchActivity";
 
 const terminalEventSchema = z.object({ type: z.string().optional(), hostId: z.string().optional(), sessionId: z.string().optional(), terminalId: z.string().optional(), generation: z.string().optional(), outputEnd: z.number().optional(), data: z.string().optional() }).catch({});
@@ -15,9 +15,10 @@ export type SharedTerminal = z.infer<typeof sharedTerminalsSchema>[number] & { o
 type TerminalCommandOptions = { sessionKey?: string; cwd?: string; cols?: number; rows?: number; data?: string };
 
 class NativeTerminals {
-  private writes = new Map<string, Promise<void>>();
+  private writes = new Map<string, { tail: Promise<void> }>();
   private starts = new Map<string, Promise<void>>();
   private hosts = new Map<string, string>();
+  private generations = new Map<string, string>();
   private transcripts = new Map<string, { generation: string; outputEnd: number; output: string; sessionKey: string; hostId: string }>();
   private cacheRevision = 0;
   private reassignments = new Map<string, Promise<void>>();
@@ -25,8 +26,26 @@ class NativeTerminals {
 
   constructor(private call: NativeCall) {}
 
+  invalidateWrites(hostId?: string) {
+    if (hostId === undefined) this.writes.clear();
+    else for (const terminalId of this.writes.keys()) {
+      if ((this.hosts.get(terminalId) ?? "local") === hostId) this.writes.delete(terminalId);
+    }
+  }
+
   listen(onEvent: (event: TerminalEvent) => void) {
-    return listen("pi://event", event => { if (event.payload.type?.startsWith("terminal_")) onEvent(event.payload); }, terminalEventSchema);
+    return listen("pi://event", event => {
+      const { type, terminalId, generation } = event.payload;
+
+      if (terminalId && type?.startsWith("terminal_")) {
+        const previous = this.generations.get(terminalId) ?? this.transcripts.get(terminalId)?.generation;
+
+        if (type === "terminal_exit" || generation !== undefined && previous !== undefined && generation !== previous) this.writes.delete(terminalId);
+        if (generation !== undefined) this.generations.set(terminalId, generation);
+      }
+
+      if (type?.startsWith("terminal_")) onEvent(event.payload);
+    }, terminalEventSchema);
   }
 
   private command(action: string, terminalId: string, args: TerminalCommandOptions = {}) {
@@ -46,12 +65,19 @@ class NativeTerminals {
 
     for (const [id, value] of this.transcripts) {
       if (value.sessionKey === sessionKey && value.hostId === hostId && !ids.has(id)) {
+        this.writes.delete(id);
         this.transcripts.delete(id);
         this.hosts.delete(id);
+        this.generations.delete(id);
       }
     }
 
     for (const terminal of terminals) {
+      const previous = this.generations.get(terminal.id) ?? this.transcripts.get(terminal.id)?.generation;
+      const previousHost = this.hosts.get(terminal.id);
+
+      if (previous !== undefined && previous !== terminal.generation || previousHost !== undefined && previousHost !== hostId) this.writes.delete(terminal.id);
+      this.generations.set(terminal.id, terminal.generation);
       this.transcripts.set(terminal.id, { ...terminal, sessionKey, hostId });
       this.hosts.set(terminal.id, hostId);
     }
@@ -60,6 +86,7 @@ class NativeTerminals {
   }
 
   start(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId: string) {
+    this.writes.delete(terminalId);
     this.hosts.set(terminalId, hostId);
     const pending = this.command("start", terminalId, { sessionKey, cwd, cols, rows });
     this.starts.set(terminalId, pending);
@@ -70,36 +97,34 @@ class NativeTerminals {
     return pending;
   }
 
-  write(terminalId: string, data: string, action = isMobile ? "write" : "write_with_draft") {
+  private enqueue(action: string, terminalId: string, args: TerminalCommandOptions) {
     const starting = this.starts.get(terminalId);
+    const connection = captureDaemonTransport();
+    const queue = this.writes.get(terminalId) ?? { tail: Promise.resolve() };
 
-    const next = (this.writes.get(terminalId) ?? Promise.resolve()).catch(() => undefined)
-      .then(() => starting).then(() => whenBranchesSettled())
+    const next = queue.tail.then(() => starting).then(() => whenBranchesSettled())
       .then(() => this.terminalReassignments.get(terminalId))
-      .then(() => this.command(action, terminalId, { data }));
+      .then(() => {
+        if (this.writes.get(terminalId) !== queue || !connection.active()) throw new Error("Terminal connection changed. Enter the input again.");
 
-    this.writes.set(terminalId, next);
-    const clear = () => { if (this.writes.get(terminalId) === next) this.writes.delete(terminalId); };
+        return this.command(action, terminalId, args);
+      });
+
+    queue.tail = next;
+    this.writes.set(terminalId, queue);
+    const clear = () => { if (this.writes.get(terminalId) === queue && queue.tail === next) this.writes.delete(terminalId); };
 
     void next.then(clear, clear);
 
     return next;
   }
 
+  write(terminalId: string, data: string, action = isMobile ? "write" : "write_with_draft") {
+    return this.enqueue(action, terminalId, { data });
+  }
+
   resize(terminalId: string, cols: number, rows: number) {
-    const starting = this.starts.get(terminalId);
-
-    const next = (this.writes.get(terminalId) ?? Promise.resolve()).catch(() => undefined)
-      .then(() => starting).then(() => whenBranchesSettled())
-      .then(() => this.terminalReassignments.get(terminalId))
-      .then(() => this.command("resize", terminalId, { cols, rows }));
-
-    this.writes.set(terminalId, next);
-    const clear = () => { if (this.writes.get(terminalId) === next) this.writes.delete(terminalId); };
-
-    void next.then(clear, clear);
-
-    return next;
+    return this.enqueue("resize", terminalId, { cols, rows });
   }
 
   reassign(terminalId: string, sessionKey: string) {
@@ -131,16 +156,19 @@ class NativeTerminals {
   }
 
   async close(terminalId: string) {
+    const pending = this.writes.get(terminalId)?.tail;
+    this.writes.delete(terminalId);
     await whenBranchesSettled();
     await this.terminalReassignments.get(terminalId)?.catch(() => undefined);
     await this.starts.get(terminalId)?.catch(() => undefined);
-    await this.writes.get(terminalId)?.catch(() => undefined);
+    await pending?.catch(() => undefined);
     this.writes.delete(terminalId);
 
     await this.command("close", terminalId);
     this.cacheRevision += 1;
     this.transcripts.delete(terminalId);
     this.hosts.delete(terminalId);
+    this.generations.delete(terminalId);
   }
 }
 

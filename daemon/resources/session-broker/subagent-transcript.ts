@@ -53,7 +53,7 @@ export async function transcriptUsage(run: { sessionPath: string; sessionId: str
   for await (const { line, offset } of transcriptLines(run.sessionPath, run.offset ?? 0, run.sessionId, run.offsetHeader)) {
     let entry;
 
-    try { entry = JSON.parse(line); } catch { continue; }
+    try { entry = JSON.parse(line); } catch { throw new Error(`Damaged chat record at byte ${offset}: ${run.sessionPath}`); }
 
     if (Check(descendantSchema, entry)) { tokens += entry.data.tokens; continue; }
 
@@ -120,6 +120,6 @@ export async function* transcriptLines(path: string, start = 0, sessionId?: stri
       }
     }
 
-    if (pending.length) yield { line: pending.toString("utf8"), offset, next: offset + pending.length };
+    if (pending.length) console.warn(`${path}: last write was interrupted; ignored ${pending.length} bytes`);
   } finally { input?.destroy(); await file.close(); }
 }

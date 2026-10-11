@@ -19,6 +19,7 @@ import { closeTerminal, resizeTerminal, startTerminalForOwner, writeTerminal } f
 import { codexUsage } from './provider_codex';
 import { opencodeGoUsage } from './provider_opencode';
 import type { App } from './app';
+import { detachOwner } from './lifecycle';
 
 const RESTARTING = 'The daemon is restarting. Reconnect before retrying.';
 
@@ -50,9 +51,18 @@ function argument(args: any, key: string, kind: Kind): any {
 function hostId(args: any): string { return argument(args, 'hostId', 'string?') ?? 'local'; }
 
 export async function dispatch(app: App, owner: string, command: string, args: any): Promise<any> {
+  const finish = app.clients.beginRequest();
+  try { return await dispatchRouted(app, owner, command, args); }
+  finally {
+    try { if (app.clients.closing()) await detachOwner(app, owner, false); } finally { finish(); }
+  }
+}
+
+async function dispatchRouted(app: App, owner: string, command: string, args: any): Promise<any> {
   const release = await app.restart.gate.read();
   try {
     if ((await daemonRestart.blocking()) && command !== 'daemon_restart_status') throw new Error(RESTARTING);
+    app.clients.ensureOpen();
     const routed = await peers.route(app, owner, command, args);
     if (routed !== undefined) return routed;
   } finally { release(); }
@@ -60,6 +70,14 @@ export async function dispatch(app: App, owner: string, command: string, args: a
 }
 
 export async function dispatchPeer(app: App, owner: string, command: string, args: any): Promise<any> {
+  const finish = app.clients.beginRequest();
+  try { return await dispatchPeerRequest(app, owner, command, args); }
+  finally {
+    try { if (app.clients.closing()) await detachOwner(app, owner, false); } finally { finish(); }
+  }
+}
+
+async function dispatchPeerRequest(app: App, owner: string, command: string, args: any): Promise<any> {
   if (typeof args?.hostId === 'string' && args.hostId !== 'local') throw new Error("Peer connections expose only this daemon's local machine");
   if (command === 'save_app_settings' || command === 'change_session_groups' || command === 'load_session_groups') throw new Error('Configure this machine through its own Piop settings');
   if (command === 'list_sessions') return peers.localSessions(app);
@@ -68,11 +86,12 @@ export async function dispatchPeer(app: App, owner: string, command: string, arg
 }
 
 async function dispatchLocal(app: App, owner: string, command: string, args: any): Promise<any> {
+  app.clients.ensureOpen();
   if (DEVELOPMENT && command === 'debug_runtime') return endpoint.debugRuntime();
   if (command === 'daemon_restart_status') return daemonRestart.status(argument(args, 'restartId', 'string'));
   if (command === 'restart_daemon') {
     const release = await app.restart.gate.writeWithin(10_000, 'Pending daemon requests did not finish within 10 seconds. Try restarting again once they finish.');
-    try { return await daemonRestart.prepare(app, args); } finally { release(); }
+    try { app.clients.ensureOpen(); return await daemonRestart.prepare(app, args); } finally { release(); }
   }
   if (command === 'plugin_call') {
     if (await daemonRestart.blocking()) throw new Error(RESTARTING);
@@ -90,6 +109,7 @@ async function dispatchLocal(app: App, owner: string, command: string, args: any
 }
 
 async function dispatchCommand(app: App, owner: string, command: string, args: any): Promise<any> {
+  app.clients.ensureOpen();
   if (typeof args?.runtimeId === 'string') ensureRuntimeOwner(app.pi, args.runtimeId, owner);
   if (typeof args?.terminalId === 'string') app.terminals.ensureOwner(args.terminalId, owner);
   const handler = Object.prototype.hasOwnProperty.call(COMMANDS, command) ? COMMANDS[command] : undefined;
@@ -157,6 +177,10 @@ const COMMANDS: Record<string, Handler> = {
       rows: argument(args, 'rows', 'number'),
       hostId: argument(args, 'hostId', 'string?'),
     });
+    if (app.clients.closing()) {
+      await closeTerminal(app.terminals, args.terminalId);
+      app.clients.ensureOpen();
+    }
     return null;
   },
   write_terminal: (app, _owner, args) => { writeTerminal(app.terminals, argument(args, 'terminalId', 'string'), argument(args, 'data', 'string')); return null; },

@@ -6,6 +6,7 @@ import { z } from "zod";
 export interface MobileAnchor { name: string; url: string }
 
 const anchorSchema = z.object({ name: z.string().trim().min(1), url: z.string() });
+const storageTimeoutMs = 10000;
 
 let anchorCache: MobileAnchor | undefined;
 
@@ -16,18 +17,44 @@ export function localHostLabel() { return isMobile ? anchorCache?.name ?? "Ancho
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open("piop-mobile-anchor", 1);
-    request.onupgradeneeded = () => { request.result.createObjectStore("state"); };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new Error("Opening anchor host storage timed out")), storageTimeoutMs);
+    request.onupgradeneeded = () => {
+      if (settled) { request.transaction?.abort(); return; }
+
+      try { request.result.createObjectStore("state"); }
+      catch (error) { fail(error); request.transaction?.abort(); }
+    };
+    request.onsuccess = () => {
+      if (settled) { request.result.close(); return; }
+      settled = true;
+      clearTimeout(timer);
+      request.result.onversionchange = () => request.result.close();
+      resolve(request.result);
+    };
+    request.onerror = () => fail(request.error ?? new Error("Could not open anchor host storage"));
+    request.onblocked = () => fail(new Error("Another window is preventing anchor host storage from opening"));
   });
 }
 
 async function anchorTransaction(change?: () => MobileAnchor | undefined): Promise<MobileAnchor | undefined> {
   const database = await openDatabase();
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   try {
     const anchor = await new Promise<MobileAnchor | undefined>((resolve, reject) => {
       const transaction = database.transaction("state", "readwrite", { durability: "strict" });
+      timer = setTimeout(() => {
+        try { transaction.abort(); }
+        catch (error) { reject(error); return; }
+        reject(new Error("Accessing anchor host storage timed out"));
+      }, storageTimeoutMs);
       const state = transaction.objectStore("state");
       let result: MobileAnchor | undefined;
 
@@ -44,11 +71,12 @@ async function anchorTransaction(change?: () => MobileAnchor | undefined): Promi
       }
       transaction.oncomplete = () => resolve(result);
       transaction.onabort = () => reject(transaction.error ?? new Error("Could not save the anchor host"));
+      transaction.onerror = () => reject(transaction.error ?? new Error("Could not access anchor host storage"));
     });
     anchorCache = anchor;
 
     return anchor;
-  } finally { database.close(); }
+  } finally { clearTimeout(timer); database.close(); }
 }
 
 export function readMobileAnchor() { return anchorTransaction(); }

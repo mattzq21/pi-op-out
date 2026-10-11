@@ -7,6 +7,8 @@ export interface HostConnection { url: string }
 
 export type RemoteEvent = { event: string; payload: JSONType | undefined };
 
+const handshakePacketSchema = remotePacketSchema.extend({ buildId: z.string().optional() });
+
 type Pending = { resolve: (value: JSONType | undefined) => void; reject: (error: Error) => void; timer?: ReturnType<typeof setTimeout>; retryTimer?: ReturnType<typeof setTimeout>; retries: number; retry: () => void };
 
 export function validateHost(connection: HostConnection): string {
@@ -29,6 +31,7 @@ export class RemoteClient {
   private listeners = new Map<string, Set<(event: RemoteEvent) => void>>();
   private logStatuses = new Map<string, RemoteEvent>();
   private heartbeat?: ReturnType<typeof setInterval>;
+  private heartbeatCleanup?: () => void;
   onDisconnect?: (message: string) => void;
   connectionIdentity() { return this.destination; }
   async connect(connection: HostConnection): Promise<void> {
@@ -50,9 +53,9 @@ export class RemoteClient {
 
       socket.onmessage = ({ data }) => {
         if (this.socket !== socket) return;
-        let message: RemotePacket;
+        let message: z.infer<typeof handshakePacketSchema>;
 
-        try { message = remotePacketSchema.parse(JSON.parse(String(data))); } catch { socket.close();
+        try { message = handshakePacketSchema.parse(JSON.parse(String(data))); } catch { socket.close();
 
         return; }
 
@@ -60,7 +63,13 @@ export class RemoteClient {
 
         return; }
 
-        if (message.type === "ready" && message.protocol === 1) {
+        if (message.type === "ready" && !ready) {
+          if (message.protocol !== 1) {
+            settleReject(new Error(`Incompatible Piop daemon protocol ${message.protocol ?? "unknown"} (build ${message.buildId || "unknown"}); this phone requires protocol 1. Update the app and daemon.`));
+            socket.close();
+
+            return;
+          }
           if (message.backend !== "daemon") {
             settleReject(new Error("Connect to a Piop daemon. This address belongs to an older desktop endpoint."));
             socket.close();
@@ -70,8 +79,20 @@ export class RemoteClient {
 
           ready = true; this.ready = true; clearTimeout(timer);
           lastHeartbeat = Date.now();
+          let lastTick = lastHeartbeat;
+          const resumeHeartbeat = () => {
+            if (document.hidden || this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
+            lastTick = lastHeartbeat = Date.now();
+            socket.send(JSON.stringify({ type: "ping" }));
+          };
+          document.addEventListener("visibilitychange", resumeHeartbeat);
+          this.heartbeatCleanup = () => document.removeEventListener("visibilitychange", resumeHeartbeat);
           this.heartbeat = setInterval(() => {
-            if (Date.now() - lastHeartbeat > 65000) {
+            if (this.socket !== socket) return;
+            const now = Date.now();
+            if (now - lastTick > 40000) lastHeartbeat = now;
+            lastTick = now;
+            if (now - lastHeartbeat > 65000) {
               this.socket = undefined; this.failPending(); socket.close();
               this.onDisconnect?.("Connection stopped responding. Reconnecting…");
             } else if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
@@ -184,6 +205,7 @@ export class RemoteClient {
 
     if (wasReady) this.receive({ event: "pi://event", payload: { type: "disconnected" } });
     clearInterval(this.heartbeat);
+    this.heartbeatCleanup?.(); this.heartbeatCleanup = undefined;
 
     for (const terminalId of this.terminals) this.receive({ event: "pi://event", payload: { type: "terminal_exit", terminalId } });
     this.terminals.clear();

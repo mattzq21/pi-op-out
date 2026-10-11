@@ -208,7 +208,25 @@ export class Host implements SessionHost {
   }
 
   async releaseUnused(session: Session): Promise<void> {
+    session.scheduleIdleStop();
     if (session.unused()) await this.ownership().releaseClient(session.identity, session.clientId(), () => session.unused());
+  }
+
+  canStopIdle(session: Session): boolean {
+    if (this.shuttingDown || this.sessions.get(session.key) !== session || this.deliveries.get(session.identity)?.size
+      || this.readonlyViews(session.identity).length
+      || [...this.attachments.values()].some(packet => packet.sessionKey === session.identity)) return false;
+    const database = Registry.open(this.storageRoot());
+    try {
+      const id = session.identity;
+      if (database.prepare("SELECT 1 FROM session_goals WHERE session_id=? AND status!='complete' LIMIT 1").get(id)) return false;
+      if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? LIMIT 1').get(id)) return false;
+      const runs = database.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=?').all(id);
+      return !runs.some(row => {
+        const run = JSON.parse(String(row.run_json));
+        return run.status === 'running' || run.accountingPending || run.resultDelivery === 'pending';
+      });
+    } finally { database.close(); }
   }
 
   reconcile(session: Session): void {
@@ -357,22 +375,31 @@ export class Host implements SessionHost {
   }
 
   private async sessionCommand(session: Session, runtime: string, command: any): Promise<any> {
-    if (kind(command) === 'abort') return queueCommand(session, command);
-    if (kind(command) === 'extension_ui_response') return this.answerDialog(session, runtime, command);
+    const client = text(this.attachments.get(runtime), 'clientId');
+    const assertOwner = () => {
+      if (this.readonlyMap.has(runtime) || this.subscriptions.get(runtime) !== session || !this.ownership().owns(session.identity, client, false)) {
+        throw new Error('Session ownership changed; take ownership before changing it');
+      }
+    };
+    if (!kind(command).startsWith('get_')) assertOwner();
+    if (kind(command) === 'abort') return queueCommand(session, command, assertOwner);
+    if (kind(command) === 'extension_ui_response') return this.answerDialog(session, runtime, command, assertOwner);
     if (!kind(command).startsWith('get_') || kind(command) === 'get_snapshot') await session.reconcile(false);
     if (!kind(command).startsWith('get_')) {
+      assertOwner();
       const error = session.configurationError();
       if (error !== null) throw new Error(error);
     }
     if (['fork', 'fork_after', 'clone', 'new_session', 'switch_session'].includes(kind(command))) return Branching.switchSession(this, session, runtime, command);
     if (typeof command?.clientHtmlPreviewSize === 'number') await session.raw({ type: 'html_preview_viewport', size: command.clientHtmlPreviewSize });
-    return queueCommand(session, command);
+    return queueCommand(session, command, kind(command).startsWith('get_') ? undefined : assertOwner);
   }
 
-  private async answerDialog(session: Session, runtime: string, command: any): Promise<any> {
+  private async answerDialog(session: Session, runtime: string, command: any, assertOwner: () => void): Promise<any> {
     const id = text(command, 'id');
     const release = await gate(this.dialogGates, session.epoch + ':' + id).lock();
     try {
+      assertOwner();
       const dialog = session.dialog(id);
       if (!dialog || dialog.owner !== runtime) throw new Error('This question is no longer owned by this view. Reopen the conversation to refresh it.');
       if (typeof dialog.event?.asyncQuestion !== 'string') {
@@ -387,13 +414,15 @@ export class Host implements SessionHost {
         const prepare = structuredClone(response);
         prepare.action = 'prepare';
         const prepared = await session.raw(prepare);
+        assertOwner();
         if (typeof prepared?.message === 'string' && prepared.message && !dialog.answerQueued) {
-          await session.queue.command({ type: session.working() ? 'steer' : 'follow_up', message: prepared.message, questionResponse: structuredClone(response) });
+          await session.queue.command({ type: session.working() ? 'steer' : 'follow_up', message: prepared.message, questionResponse: structuredClone(response) }, assertOwner);
           session.changeDialog(id, item => { item.answerQueued = true; item.queuedResponse = structuredClone(response); });
         }
         const resolve = structuredClone(response);
         resolve.action = 'resolve';
         resolve.queueId = prepared?.queueId ?? null;
+        assertOwner();
         await session.raw(resolve);
         return null;
       } finally { session.changeDialog(id, item => { item.answering = false; }); }
@@ -514,7 +543,7 @@ export class Host implements SessionHost {
       }
       if (!task) {
         const entry = { finished: false, promise: Promise.resolve() as Promise<any> };
-        entry.promise = session.queue.interruptDelegation().finally(() => { entry.finished = true; });
+        entry.promise = session.queue.interruptDelegation().finally(() => { entry.finished = true; this.maintenance(session.key); });
         entry.promise.catch(() => {});
         session.orchestrationTask = entry;
       }
@@ -529,6 +558,7 @@ export class Host implements SessionHost {
     if (!set) { set = new Set(); this.deliveries.set(id, set); }
     if (set.has(delivery)) throw new Error('Agent delivery is already pending');
     set.add(delivery);
+    this.findSession(id)?.cancelIdleStop();
   }
 
   private releaseDelivery(id: string, delivery: string): void {
@@ -536,6 +566,8 @@ export class Host implements SessionHost {
     if (!set) return;
     set.delete(delivery);
     if (!set.size) this.deliveries.delete(id);
+    const session = this.findSession(id);
+    if (session) this.maintenance(session.key);
   }
 
   private async attachHidden(packet: any, runtime: string, id: string): Promise<void> {
@@ -557,7 +589,7 @@ export class Host implements SessionHost {
     this.reserveDelivery(id, delivery);
     try {
       const runtime = 'orchestration-' + randomUUID();
-      const attached = !existing;
+      const attached = !existing || existing.stopping();
       if (attached) await this.attachHidden(packet, runtime, id);
       let result: any;
       let failure: unknown;
@@ -586,7 +618,7 @@ export class Host implements SessionHost {
   private async orchestrationRecoverUsage(packet: any, existing: Session | undefined): Promise<any> {
     const id = text(packet, 'sessionKey');
     const runtime = 'usage-recovery-' + randomUUID();
-    const attached = !existing;
+    const attached = !existing || existing.stopping();
     if (attached) await this.attachHidden(packet, runtime, id);
     let result: any;
     let failure: unknown;
@@ -725,11 +757,11 @@ export class Host implements SessionHost {
     void (async () => {
       let delay = 1000;
       while (recovery.retry && !ownership.stopped) {
-        await sleep(delay);
-        if (ownership.stopped) break;
-        delay = Math.min(delay * 2, 60_000);
         const pending = recovery.transactionsPending;
         try {
+          if (recovery.waiting) await recovery.waiting;
+          else { await sleep(delay); delay = Math.min(delay * 2, 60_000); }
+          if (ownership.stopped) break;
           if (pending) await collectRetention(root);
           recovery = recoverMissingTranscripts(root, ownership);
         } catch (error) {
@@ -820,10 +852,10 @@ class Attachment {
     try {
       const session = await this.session(guard);
       opened.session = session;
+      await session.setClientId(text(this.packet, 'clientId'));
       await session.execute({ type: 'get_state' });
       if (typeof this.packet.presence?.htmlPreviewSize === 'number') await session.raw({ type: 'html_preview_viewport', size: this.packet.presence.htmlPreviewSize });
       this.assertCurrent();
-      session.setClientId(text(this.packet, 'clientId'));
       this.host.readonlyMap.delete(this.runtime);
       this.host.attachView(this.runtime, session, structuredClone(this.packet.presence ?? null));
       this.host.remember(this.runtime, session);
@@ -867,7 +899,7 @@ class Attachment {
     if (this.stillAttached(opened)) return;
     if (opened) {
       if (!opened.views().length) {
-        if (!opened.submitted() && !opened.working()) await opened.stop();
+        if (!opened.submitted() && opened.idle() && this.host.canStopIdle(opened)) await opened.stop();
         else await this.host.releaseUnused(opened);
       }
     } else if (owned) {
@@ -877,9 +909,10 @@ class Attachment {
   }
 }
 
-export async function queueCommand(session: Session, original: any): Promise<any> {
+export async function queueCommand(session: Session, original: any, assertOwner?: () => void): Promise<any> {
+  assertOwner?.();
   const command = original;
-  if (kind(command) === 'change_pending') return session.queue.changePending(text(command, 'id'), command.action ?? null);
+  if (kind(command) === 'change_pending') return session.queue.changePending(text(command, 'id'), command.action ?? null, assertOwner);
   const message = text(command, 'message');
   const first = message.split(/\s+/).find(part => part) ?? '';
   if (first === '/goal' && Array.isArray(command.images) && command.images.length) throw new Error('Goals do not accept attachments. Remove the files and images before sending.');
@@ -887,7 +920,7 @@ export async function queueCommand(session: Session, original: any): Promise<any
   if (kind(command) === 'prompt' && (!message.startsWith('/') || review) && !session.queue.held()) {
     command.type = !review && command.streamingBehavior === 'steer' ? 'steer' : 'follow_up';
   }
-  return session.queue.command(command);
+  return session.queue.command(command, assertOwner);
 }
 
 async function retentionPass(root: string, initialize: boolean): Promise<void> {

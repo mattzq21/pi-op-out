@@ -6,6 +6,7 @@ import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { remoteLoginCommand, ssh, type Host } from './host_connection';
 import { shellQuote, spawnOptions, type CommandSpec } from './process_io';
+import { descendantProcesses, killVerified } from './process_cleanup';
 import { HOST_SCRIPT_BUNDLES, type HostScriptName } from './resources';
 
 /** A piop script that runs on a Host to read or change its stored data. read checks the result shape. */
@@ -45,6 +46,9 @@ export class HostScriptError extends Error {
 const MISSING = 97;
 const STARTED = 'piop-host-script-started\n';
 const MAX_DIAGNOSTIC = 64 * 1024;
+const DEFAULT_TIMEOUT = 2 * 60 * 1000;
+const STORAGE_TIMEOUT = 10 * 60 * 1000;
+const KILL_DELAY = 2000;
 
 const fileName = (bundle: string) => createHash('sha256').update(bundle).digest('hex') + '.cjs';
 
@@ -73,7 +77,7 @@ function copyCommand(host: Host, script: HostScript<unknown, unknown>): CommandS
 
 interface Run { code: number | null; started: boolean; stdout: Buffer; stderr: string }
 
-function run(command: CommandSpec, input: string, maxOutput: number, signal: AbortSignal | undefined): Promise<Run> {
+function run(command: CommandSpec, input: string, maxOutput: number, signal: AbortSignal | undefined, timeout = DEFAULT_TIMEOUT): Promise<Run> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new HostScriptError('not-started', 'Host script was stopped before it started')); return; }
     let child;
@@ -85,28 +89,54 @@ function run(command: CommandSpec, input: string, maxOutput: number, signal: Abo
     const diagnostic = (text: string) => { stderr += text.slice(0, MAX_DIAGNOSTIC - stderr.length); };
     let failure: HostScriptError | undefined;
     let settled = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let descendants: ReturnType<typeof descendantProcesses> = [];
     const finish = (code: number | null) => {
       if (settled) return;
       settled = true;
+      clearTimeout(killTimer);
+      killTimer = undefined;
+      clearTimeout(deadline);
       signal?.removeEventListener('abort', abort);
       child.removeListener('close', finish);
+      child.removeListener('exit', onExit);
+      if (failure) {
+        killVerified(descendants);
+        child.stdout!.destroy();
+        child.stderr!.destroy();
+      }
       child.stdout!.removeAllListeners('data');
       child.stderr!.removeAllListeners('data');
       diagnostic(pendingStderr);
       if (failure) { if (stderr.trim()) console.error(`Host script: ${stderr.trim()}`); reject(failure); return; }
       resolve({ code, started, stdout: Buffer.concat(stdout), stderr: stderr.trim() });
     };
-    const stop = (error: HostScriptError) => {
-      failure ??= error;
-      if (child.pid !== undefined) {
-        try { process.kill(-child.pid, 'SIGKILL'); }
-        catch (error: any) { if (error.code !== 'ESRCH') child.kill('SIGKILL'); }
+    const onExit = (code: number | null) => { if (killTimer !== undefined) finish(code); };
+    const killGroup = (signal: NodeJS.Signals) => {
+      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+        try { process.kill(-child.pid, signal); }
+        catch (error: any) {
+          if (error.code !== 'ESRCH') console.error(`Could not send ${signal} to host script process group: ${error?.message ?? error}`);
+        }
       }
-      child.stdin!.destroy();
-      child.stdout!.destroy();
-      child.stderr!.destroy();
-      finish(null);
     };
+    const stop = (error: HostScriptError) => {
+      if (settled || killTimer !== undefined) return;
+      failure ??= error;
+      clearTimeout(deadline);
+      if (child.exitCode !== null || child.signalCode !== null) { finish(child.exitCode); return; }
+      if (child.pid !== undefined) descendants = descendantProcesses(child.pid);
+      killGroup('SIGTERM');
+      killTimer = setTimeout(() => {
+        killGroup('SIGKILL');
+        killTimer = undefined;
+        child.stdout!.destroy();
+        child.stderr!.destroy();
+        finish(null);
+      }, KILL_DELAY);
+      child.stdin!.destroy();
+    };
+    const deadline = setTimeout(() => stop(new HostScriptError('unknown', `Host script timed out after ${timeout / 1000} seconds; its result is unknown (writes may or may not have completed)`)), timeout);
     const abort = () => stop(new HostScriptError('unknown', 'Host script was stopped; its outcome is unknown'));
     signal?.addEventListener('abort', abort, { once: true });
     child.stdout!.on('data', (chunk: Buffer) => {
@@ -132,6 +162,7 @@ function run(command: CommandSpec, input: string, maxOutput: number, signal: Abo
     child.stdin!.end(input);
     child.once('error', error => { failure ??= new HostScriptError(child.pid === undefined ? 'not-started' : 'unknown', `Could not start host script: ${error.message}`); });
     child.once('close', finish);
+    child.once('exit', onExit);
   });
 }
 
@@ -160,10 +191,11 @@ function reply<Result>(script: HostScript<unknown, Result>, result: Run): Result
 /** Runs the script on the host with the request as JSON on stdin. Copies the script to the host first when it is missing there. */
 export async function runHostScript<Request, Result>(host: Host, script: HostScript<Request, Result>, request: Request, options: { signal?: AbortSignal } = {}): Promise<Result> {
   const input = JSON.stringify(request);
-  let result = await run(runCommand(host, script), input, script.maxOutput, options.signal);
+  const timeout = ['storage-transaction', 'storage-inventory', 'index-sessions', 'session-descendants', 'session-registry', 'temporary-chat'].includes(script.name) ? STORAGE_TIMEOUT : DEFAULT_TIMEOUT;
+  let result = await run(runCommand(host, script), input, script.maxOutput, options.signal, timeout);
   if (result.code === MISSING && !result.started) {
     await copy(host, script, options.signal);
-    result = await run(runCommand(host, script), input, script.maxOutput, options.signal);
+    result = await run(runCommand(host, script), input, script.maxOutput, options.signal, timeout);
   }
   return reply(script, result);
 }

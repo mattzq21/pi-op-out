@@ -126,7 +126,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
 
   return next; });
 
-  const entry = (value: CustomEntryDraft | { type: "session_info"; name: string }) => { const id = randomUUID().slice(0, 8); const result = { ...value, id, parentId, timestamp }; parentId = id;
+  const entry = (value: CustomEntryDraft | { type: "session_info"; name: string }) => { const id = randomUUID(); const result = { ...value, id, parentId, timestamp }; parentId = id;
 
   return result; };
 
@@ -147,6 +147,7 @@ async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: Sub
   signal?.throwIfAborted();
 
   if (lifecycle.pendingDeliveries) throw new Error("Wait for this child's outstanding message delivery before sending another task");
+  if ((lifecycle.run ?? run).submission === "submitted") throw new Error("Wait for this child's saved task to be accepted before sending another task");
   lifecycle.revision++;
   lifecycle.pendingDeliveries++;
   const deliveryId = randomUUID();

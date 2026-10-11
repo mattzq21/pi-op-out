@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { MAX_AGENT_OUTPUT_BYTES } from './config';
+import { BUILD_ID, MAX_AGENT_OUTPUT_BYTES, PEER_PROTOCOL_VERSION } from './config';
 import { homeDir } from './environment';
 import { loadAppSettings } from './settings';
 import { remoteHost, remoteLoginCommand, sshBase } from './pi_launch';
@@ -27,11 +27,11 @@ export class Connection {
   readonly prefix = 'peer-' + randomUUID() + ':';
   constructor(readonly daemonId: string, readonly child: ChildProcess) {}
 
-  invoke(command: string, args: any): Promise<any> {
+  invoke(command: string, args: any, timeout = REQUEST_TIMEOUT): Promise<any> {
     if (!this.alive) return Promise.reject(new Error('Remote daemon disconnected; reconnect before retrying'));
     const id = this.sequence++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Peer request timed out; it may have completed. Reconnect and refresh before retrying.')); }, REQUEST_TIMEOUT);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Peer request timed out; it may have completed. Reconnect and refresh before retrying.')); }, timeout);
       this.pending.set(id, { resolve: value => { clearTimeout(timer); resolve(value); }, reject: error => { clearTimeout(timer); reject(error); } });
       this.child.stdin!.write(JSON.stringify({ id, command, args: args ?? {} }) + '\n', error => {
         if (!error) return;
@@ -159,9 +159,13 @@ export async function connect(app: App, hostId: string): Promise<Connection> {
       const line = await withTimeout(lines.next(), daemonEndpoint.STARTUP_TIMEOUT + 30_000, 'timeout');
       ready = line === undefined ? undefined : JSON.parse(line);
     } catch { ready = undefined; }
-    if (ready?.peerProtocol !== 1 || typeof ready?.daemonId !== 'string') {
+    if (ready?.peerProtocol !== PEER_PROTOCOL_VERSION || typeof ready?.daemonId !== 'string') {
       child.kill('SIGKILL');
       throw new Error('Could not attach to ' + host.name + '. Install or upgrade piopd on that machine. ' + diagnostics.trim());
+    }
+    if (!BUILD_ID || ready.buildId !== BUILD_ID) {
+      child.kill('SIGKILL');
+      throw new Error('Piop daemon build mismatch on ' + host.name + ': local ' + (BUILD_ID || 'unknown') + ', remote ' + (ready.buildId || 'unknown') + '. Install the same piopd build on both machines and restart the remote daemon.');
     }
     if (ready.daemonId === daemonEndpoint.identity()) { child.kill('SIGKILL'); throw new Error('This SSH target is the current daemon; use Local'); }
     const connection = new Connection(ready.daemonId, child);
@@ -372,21 +376,33 @@ export async function route(app: App, owner: string, command: string, rawArgs: a
 
 export async function detachOwner(app: App, owner: string): Promise<void> {
   const state = app.peers;
-  const connections = new Set([...state.connections.values()].map(([, connection]) => connection));
-  for (const connection of connections) {
-    try { await connection.invoke('shared_terminal', { action: 'discard_drafts', terminalConnectionId: owner, hostId: 'local' }); } catch {}
-  }
+  const connections = new Map([...state.connections].map(([id, [host, connection]]) => [connection, host.name + ' (' + id + ')']));
   const owned: Array<[string, Route]> = [];
   for (const [key, route] of [...state.routes]) if (route.owner === owner) { owned.push([key, route]); state.routes.delete(key); }
-  for (const [key, route] of owned) {
-    const [kind, id] = splitKey(key);
+  for (const [, route] of owned) if (!connections.has(route.connection)) connections.set(route.connection, route.hostId);
+  await Promise.all([...connections].map(async ([connection, host]) => {
+    if (!connection.alive) return;
+    const deadline = Date.now() + 10_000;
+    const cleanup = async (command: string, args: any) => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error('Remote cleanup deadline expired');
+      try { await connection.invoke(command, args, remaining); }
+      catch (error) {
+        if (Date.now() >= deadline || !connection.alive) throw error;
+        console.error('Remote cleanup failed for ' + host + ' (' + command + '):', error);
+      }
+    };
     try {
-      if (kind === 'flowId') { await route.connection.invoke('provider_auth', { hostId: 'local', request: { action: 'cancel', flowId: id } }); continue; }
-      const command = kind === 'runtimeId' ? 'stop_pi' : kind === 'terminalId' ? 'close_terminal' : undefined;
-      if (!command) continue;
-      await route.connection.invoke(command, { discardBlank: false, preserveRunning: true, [kind]: route.connection.prefix + id });
-    } catch {}
-  }
+      await cleanup('shared_terminal', { action: 'discard_drafts', terminalConnectionId: owner, hostId: 'local' });
+      for (const [key, route] of owned) {
+        if (route.connection !== connection) continue;
+        const [kind, id] = splitKey(key);
+        if (kind === 'flowId') { await cleanup('provider_auth', { hostId: 'local', request: { action: 'cancel', flowId: id } }); continue; }
+        const command = kind === 'runtimeId' ? 'stop_pi' : kind === 'terminalId' ? 'close_terminal' : undefined;
+        if (command) await cleanup(command, { discardBlank: false, preserveRunning: true, [kind]: connection.prefix + id });
+      }
+    } catch (error) { console.error('Remote cleanup failed for ' + host + ':', error); }
+  }));
 }
 
 export async function invalidate(app: App): Promise<void> {
@@ -403,7 +419,10 @@ export async function invalidate(app: App): Promise<void> {
 }
 
 export function shutdown(app: App): void {
-  for (const [, connection] of app.peers.connections.values()) connection.close();
+  for (const [, connection] of app.peers.connections.values()) {
+    connection.close();
+    connection.disconnected(app);
+  }
 }
 
 export async function ensureRestartSafe(app: App): Promise<void> {

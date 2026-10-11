@@ -41,6 +41,12 @@ function promptError(command, error, output) {
   output(response);
 }
 
+function acceptedPromptError(session, error, output) {
+  output({ type: "extension_error", error: error instanceof Error ? error.message : String(error) });
+
+  if (!session.isStreaming) output({ type: "agent_settled", aborted: false });
+}
+
 function syncPath(path, flags) {
   const fd = openSync(path, flags);
 
@@ -222,9 +228,8 @@ async function dispatchQueuedPrompt(command, session, output) {
       output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition, submittedText } });
     },
   }).catch(error => {
-    if (!preflightSucceeded) {
-      promptError(command, error, output);
-    }
+    if (!preflightSucceeded) promptError(command, error, output);
+    else acceptedPromptError(session, error, output);
   });
 }
 
@@ -236,7 +241,10 @@ function dispatchPrompt(command, session, output) {
       preflightSucceeded = true;
       output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition, submittedText } });
     },
-  }).catch(error => { if (!preflightSucceeded) promptError(command, error, output); });
+  }).catch(error => {
+    if (!preflightSucceeded) promptError(command, error, output);
+    else acceptedPromptError(session, error, output);
+  });
 }
 
 async function prepareGoalPrompt(text, session, goalSubmissionId, images, prepared) {
@@ -696,6 +704,9 @@ async function main() {
     await bind.apply(this, bindings);
 
     session = this;
+    const bridge = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"));
+    if (!bridge) throw new Error("Piop runtime bridge is unavailable");
+    bridge.value({ command: "session_ready", payload: null, ctx: this.extensionRunner.createCommandContext() });
   };
 
   appInput(command => dispatch(command, () => session, output));

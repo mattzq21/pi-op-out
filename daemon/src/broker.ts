@@ -251,7 +251,7 @@ async function startMessageJob(command: LaunchCommand, broker: BrokerRuntime, re
   if (broker.jobs.has(requestId)) { output.remove(); throw new Error('Agent message request is already running'); }
   let child: ChildProcess;
   try {
-    child = spawn(command.program, command.args, spawnOptions(command, { stdio: output.stdio() }));
+    child = spawn(command.program, command.args, spawnOptions(command, { stdio: output.stdio(), detached: true }));
     await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
   } catch (error: any) { output.remove(); throw new Error(`Could not message agent: ${error.message ?? error}`); }
   output.closeOutputs();

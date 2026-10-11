@@ -27,6 +27,9 @@ const pastedImageSchema = z.object({ data: z.string().optional(), mimeType: z.st
 const pendingMessageIdentitySchema = z.object({ id: z.string() });
 
 interface Props {
+  capabilityErrors?: string[];
+  capabilitiesLoading?: boolean;
+  onRetryCapabilities?: () => void;
   ownershipRequired?: boolean;
   onTakeOwnership?: () => Promise<void>;
   toolbar?: JSXElement;
@@ -633,6 +636,12 @@ export function Composer(props: Props) {
   };
 
   return <div class="composer-wrap">
+    <Show when={props.capabilityErrors?.length}>
+      <div role="alert">
+        <Key each={props.capabilityErrors ?? []} by={message => message}>{message => <p>{message()}</p>}</Key>
+        <button type="button" disabled={props.capabilitiesLoading} onClick={() => props.onRetryCapabilities?.()}>Retry loading choices</button>
+      </div>
+    </Show>
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
     {renderStreamBanner()}
