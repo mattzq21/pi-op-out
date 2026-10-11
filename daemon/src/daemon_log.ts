@@ -113,51 +113,124 @@ function append(directory: string, data: Buffer, progress?: (written: number) =>
   });
 }
 
-function status(error: string | null): void {
-  process.stdout.write(JSON.stringify({ error }) + '\n');
-}
-
 function collect(directory: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    let failures = Buffer.alloc(0);
-    let summary = Buffer.alloc(0);
+    type Report = { kind: 'report'; data: Buffer; started: boolean; source: string; text: string; count: number };
+    type Summary = { kind: 'summary'; data: Buffer; started: boolean; input: number; reports: number };
+    const queue: (Report | Summary)[] = [];
+    let lastReport: Report | undefined;
+    let pendingSummary: Summary | undefined;
+    let reportBytes = 0;
     let failed = false;
-    let lostBytes = 0;
-    let lostReportBytes = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let ended = false;
     let inputError: Error | undefined;
+    let stopped = false;
+    let latestStatus: string | null | undefined;
+    let sentStatus: string | null | undefined;
+    let writingStatus = false;
+    let blockedStatus = false;
 
-    const record = (source: string, error: unknown) => {
-      const text = errorMessage(error);
-      if (!failed) { failed = true; status(`${source}: ${text}`); }
-      const report = Buffer.from(`\n[daemon logging] ${source}: ${text}\n`);
-      const combined = Buffer.concat([failures, report]);
-      const excess = Math.max(0, combined.length - MAX_FAILURE_BYTES);
-      lostReportBytes += excess;
-      failures = Buffer.from(combined.subarray(excess));
-    };
-    const finish = () => {
-      if (!ended || failed || timer) return;
+    const cleanup = () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
       process.stdin.off('data', onData);
       process.stdin.off('end', onEnd);
       process.stdin.off('error', onError);
+      process.stdout.off('drain', onDrain);
+      process.stdout.off('error', onStatusError);
+    };
+    const onStatusError = (error: Error) => {
+      if (stopped) return;
+      cleanup();
+      process.stdin.pause();
+      reject(new Error('Could not write daemon log status: ' + errorMessage(error)));
+    };
+    const sendStatus = () => {
+      if (stopped || writingStatus || blockedStatus || latestStatus === sentStatus) return;
+      sentStatus = latestStatus;
+      writingStatus = true;
+      try {
+        blockedStatus = !process.stdout.write(JSON.stringify({ error: sentStatus }) + '\n', error => {
+          writingStatus = false;
+          // The stream's error event reports write failures.
+          if (error || stopped) return;
+          sendStatus();
+          finish();
+        });
+      } catch (error) { onStatusError(error as Error); }
+    };
+    const status = (error: string | null) => { latestStatus = error; sendStatus(); };
+    const onDrain = () => { blockedStatus = false; sendStatus(); finish(); };
+    const lose = (input: number, reports: number) => {
+      if (!input && !reports) return;
+      if (!pendingSummary) {
+        pendingSummary = { kind: 'summary', data: Buffer.alloc(0), started: false, input: 0, reports: 0 };
+        queue.push(pendingSummary);
+      }
+      pendingSummary.input += input;
+      pendingSummary.reports += reports;
+    };
+    const record = (source: string, error: unknown) => {
+      const text = errorMessage(error);
+      const message = `${source}: ${text}`;
+      failed = true;
+      status(message);
+      if (lastReport && !lastReport.started && lastReport.source === source && lastReport.text === text) {
+        const oldEnding = lastReport.count > 1 ? ` (repeated ${lastReport.count} times)\n` : '\n';
+        const removed = Math.min(lastReport.data.length, Buffer.byteLength(oldEnding));
+        lastReport.count += 1;
+        const ending = Buffer.from(` (repeated ${lastReport.count} times)\n`);
+        lastReport.data = Buffer.concat([lastReport.data.subarray(0, lastReport.data.length - removed), ending]);
+        reportBytes += ending.length - removed;
+      } else {
+        const data = Buffer.from(`\n[daemon logging] ${message}\n`);
+        lastReport = { kind: 'report', data, started: false, source, text, count: 1 };
+        queue.push(lastReport);
+        reportBytes += data.length;
+      }
+      let excess = Math.max(0, reportBytes - MAX_FAILURE_BYTES);
+      lose(0, excess);
+      for (let index = 0; excess && index < queue.length;) {
+        const entry = queue[index];
+        if (entry.kind !== 'report' || entry.started) { index += 1; continue; }
+        const removed = Math.min(excess, entry.data.length);
+        entry.data = Buffer.from(entry.data.subarray(removed));
+        reportBytes -= removed;
+        excess -= removed;
+        if (entry.data.length) index += 1;
+        else {
+          queue.splice(index, 1);
+          if (lastReport === entry) lastReport = undefined;
+        }
+      }
+    };
+    const finish = () => {
+      if (stopped || !ended || failed || timer || writingStatus || blockedStatus || latestStatus !== sentStatus) return;
+      cleanup();
       if (inputError) reject(inputError); else resolve();
     };
     const schedule = () => {
-      if (timer) return;
+      if (timer || stopped) return;
       timer = setTimeout(() => {
         timer = undefined;
         try {
-          for (;;) {
-            if (!summary.length && (lostBytes || lostReportBytes)) {
-              summary = Buffer.from(`\n[daemon logging] Lost ${lostBytes} input bytes and ${lostReportBytes} error report bytes while daemon.log was unavailable.\n`);
-              lostBytes = 0;
-              lostReportBytes = 0;
+          while (queue.length) {
+            const entry = queue[0];
+            if (entry.kind === 'summary' && !entry.started) {
+              entry.data = Buffer.from(`\n[daemon logging] Lost ${entry.input} input bytes and ${entry.reports} error report bytes while daemon.log was unavailable.\n`);
             }
-            if (summary.length) append(directory, summary, written => { summary = summary.subarray(written); });
-            if (failures.length) append(directory, failures, written => { failures = failures.subarray(written); });
-            if (!lostBytes && !lostReportBytes) break;
+            append(directory, entry.data, written => {
+              entry.started = true;
+              if (entry.kind === 'summary') {
+                if (pendingSummary === entry) pendingSummary = undefined;
+              } else {
+                reportBytes -= written;
+                if (lastReport === entry) lastReport = undefined;
+              }
+              entry.data = entry.data.subarray(written);
+              if (!entry.data.length) queue.shift();
+            });
           }
           failed = false;
           status(null);
@@ -169,11 +242,11 @@ function collect(directory: string): Promise<void> {
       }, 1000);
     };
     const onData = (chunk: Buffer) => {
-      if (failed) { lostBytes += chunk.length; return; }
+      if (failed) { lose(chunk.length, 0); return; }
       let remaining = chunk.length;
       try { append(directory, chunk, written => { remaining -= written; }); }
       catch (error) {
-        lostBytes += remaining;
+        lose(remaining, 0);
         record('Could not write daemon diagnostics', error);
         schedule();
       }
@@ -186,6 +259,8 @@ function collect(directory: string): Promise<void> {
       record('Could not read daemon diagnostics from stdin', error);
       schedule();
     };
+    process.stdout.on('drain', onDrain);
+    process.stdout.on('error', onStatusError);
     process.stdin.on('data', onData);
     process.stdin.once('end', onEnd);
     process.stdin.once('error', onError);
