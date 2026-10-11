@@ -46,6 +46,8 @@ export const sections: SettingsSection[] = [
 
 export const clientSections = new Set<Section>(["keybinds", "connections", "toasts"]);
 
+export const daemonSections = (hostId: string) => sections.filter((item) => !clientSections.has(item.id) && (item.id !== "machines" || (hostId === "local" && !isMobile)));
+
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 
 const firstAgentIndex = (agents: AgentProfile[]) => agents.length ? 0 : -1;
@@ -369,7 +371,7 @@ export function SettingsView(props: SettingsViewProps) {
     const fastModeValidationError = invalidFastModeAgent ? `${invalidFastModeAgent.name}: model ${invalidFastModeAgent.model || draft().defaultModel} does not support fast mode` : undefined;
     const formValid = agentValidation().agentsValid && !validationError() && !fastModeValidationError;
     const searchTerms = settingsQuery().trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    const matchingSections = sections.filter((item) => clientSections.has(item.id) === (settingsProps().scope === "client") && searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
+    const matchingSections = (settingsProps().scope === "client" ? sections.filter((item) => clientSections.has(item.id)) : daemonSections(settingsProps().providerHostId ?? "local")).filter((item) => searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
     const visibleSection = settingsProps().selectedSection ?? (matchingSections.some((item) => item.id === section()) ? section() : matchingSections[0]?.id);
 
     return { invalidFastModeAgent, fastModeValidationError, formValid, searchTerms, matchingSections, visibleSection };
