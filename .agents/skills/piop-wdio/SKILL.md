@@ -8,7 +8,7 @@ description: Manually inspect and interact with Piop app.
 Use the agent's shell tool to run this:
 
 ```bash
-python3 ~/.agents/skills/piop-wdio/scripts/tauri-webdriver.py --project "$PWD"
+python3 ~/.agents/skills/mine/piop-wdio/scripts/tauri-webdriver.py --project "$PWD"
 ```
 
 

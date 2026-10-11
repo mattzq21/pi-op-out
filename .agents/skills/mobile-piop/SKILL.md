@@ -1,6 +1,6 @@
 ---
 name: mobile-piop
-description: Manually inspect and interact with an Android app in a private Android VM.
+description: Manually inspect and interact with Piop's Android app in a private Android VM.
 ---
 
 # Manual UI testing in an Android VM
