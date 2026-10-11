@@ -1,5 +1,4 @@
 pub fn configure_image_copy(window: &tauri::WebviewWindow) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
     window.with_webview(|webview| {
         use webkit2gtk::{ContextMenuAction, ContextMenuExt, ContextMenuItem, ContextMenuItemExt, HitTestResultExt, WebViewExt};
         webview.inner().connect_context_menu(|_, menu, _, hit| {
@@ -17,12 +16,9 @@ pub fn configure_image_copy(window: &tauri::WebviewWindow) -> Result<(), String>
             false
         });
     }).map_err(|error| error.to_string())?;
-    #[cfg(not(target_os = "linux"))]
-    let _ = window;
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn embedded_image(uri: &str) -> Option<gtk::gdk_pixbuf::Pixbuf> {
     use base64::Engine;
     let (mime_type, data) = uri.strip_prefix("data:")?.split_once(";base64,")?;
@@ -33,7 +29,6 @@ fn embedded_image(uri: &str) -> Option<gtk::gdk_pixbuf::Pixbuf> {
 
 #[tauri::command]
 pub async fn read_clipboard_image(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    #[cfg(target_os = "linux")]
     {
         use base64::Engine;
         let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -51,6 +46,4 @@ pub async fn read_clipboard_image(app: tauri::AppHandle) -> Result<Option<String
             .map_err(|_| "Clipboard image request timed out".to_string())?
             .map_err(|error| error.to_string())?
     }
-    #[cfg(not(target_os = "linux"))]
-    { let _ = app; Ok(None) }
 }

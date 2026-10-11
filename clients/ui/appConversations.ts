@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createMutable } from "solid-js/store";
 import { required } from "./lib/required";
 import { batch,createComputed,createMemo,createSignal } from "solid-js";
 import { createConversationArchive } from "./appArchive";
@@ -98,8 +99,11 @@ export function createAppConversations(preloadChat: () => void) {
   const [notices, setNotices] = createSignal<Array<{ id: string; title: string; message: string }>>([]);
 
   const addNotice = (notice: { title: string; message: string }) => {
-    const id = crypto.randomUUID();
-    setNotices(current => [...current.slice(-9), { ...notice, id }]);
+    let id = crypto.randomUUID();
+    setNotices(current => {
+      while (current.some(item => item.id === id)) id = crypto.randomUUID();
+      return [...current.filter((item, index) => item.id.startsWith("daemon-log:") || index >= current.length - 9), { ...notice, id }];
+    });
 
     return () => setNotices(current => current.filter(item => item.id !== id));
   };
@@ -244,6 +248,16 @@ export function createAppConversations(preloadChat: () => void) {
         setSessions((current) => current.filter((session) => !runtimePool().isRemoved(session) && !archives.isArchived(session)));
         void syncSessionIndex();
       }, removedSessionSchema),
+      listen("pi://daemon-log-status", ({ payload }) => {
+        const id = `daemon-log:${payload.hostId}`;
+        setNotices(current => {
+          const existing = current.find(item => item.id === id);
+          if (payload.failure === null) return existing ? current.filter(item => item.id !== id) : current;
+          if (existing?.message === payload.failure) return current;
+          if (existing) { existing.message = payload.failure; return current; }
+          return [...current, createMutable({ id, title: `Logging · ${payload.hostId}`, message: payload.failure })];
+        });
+      }, z.object({ hostId: z.string(), failure: z.string().nullable() })),
       listen("pi://daemon-error", ({ payload }) => addNotice({ title: `Connection · ${payload.hostId}`, message: payload.line }), z.object({ hostId: z.string(), line: z.string() })),
     ];
 

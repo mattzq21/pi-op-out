@@ -334,23 +334,49 @@ function validAnswer(item: any): boolean {
 
 export class SessionQueue {
   private s = new QueueState();
+  private savedView: any;
+  private closed = false;
+  private saves = new Set<Promise<unknown>>();
+  private operations = new Set<Promise<unknown>>();
+
+  private track<T>(pending: Set<Promise<unknown>>, operation: Promise<T>): Promise<T> {
+    pending.add(operation);
+    void operation.then(() => { pending.delete(operation); }, error => {
+      pending.delete(operation);
+      console.error('Queue operation failed: ' + errorText(error));
+    });
+    return operation;
+  }
+
+  async flush(): Promise<void> {
+    while (this.saves.size) await Promise.allSettled([...this.saves]);
+  }
+
+  async drain(): Promise<void> {
+    while (this.operations.size) await Promise.allSettled([...this.operations]);
+    await this.flush();
+  }
   /** Serializes commands that change the queue. */
   readonly gate = new Mutex();
 
   constructor(private executor: Execution, pending: any[] = [], private storage: QueueStorage | null = null) {
     this.s.retained = clone(pending);
     this.s.pending = clone(pending);
+    this.savedView = this.s.view(this.s.pending);
   }
 
-  view(): any { return this.s.view(this.s.pending); }
+  close(): void { this.closed = true; }
+
+  view(): any { return clone(this.savedView); }
   pending(): any[] { return clone(this.s.durableMessages()); }
   held(): boolean { return this.s.held !== null; }
   heldCount(): number { return this.s.held?.length ?? 0; }
   isEmpty(): boolean { return this.s.pending.length === 0; }
 
-  private publish(): void {
-    this.persistState();
+  private async publish(): Promise<void> {
+    this.s.durableMessages();
     const event = this.s.publish();
+    await this.persistState();
     this.executor.publish(event);
   }
 
@@ -360,8 +386,11 @@ export class SessionQueue {
     }
   }
 
-  receive(event: any): void {
-    this.observeConsumption(event);
+  async receive(event: any): Promise<void> {
+    try { await this.observeConsumption(event); } catch (error) {
+      console.error(error);
+      this.journalError(errorText(error));
+    }
     const state = this.s;
     let queueEvent: any;
     if (kind(event) === 'agent_start') state.inferenceRevision += 1;
@@ -374,13 +403,17 @@ export class SessionQueue {
       queueEvent = state.publish();
     } else if (kind(event) === 'queue_update') {
       state.receiveQueue(event);
-      try { this.persistState(); } catch (error) { this.journalError(errorText(error)); }
+      await this.persistState();
       if (state.changing) return;
       queueEvent = state.publish();
     }
     if (queueEvent !== undefined) {
-      this.reportStorageError(() => this.persistState());
-      this.executor.publish(queueEvent);
+      const publish = async () => {
+        await this.persistState();
+        this.executor.publish(queueEvent);
+      };
+      if (kind(event) === 'disconnected') await this.reportStorageError(publish);
+      else await publish();
     }
     if (kind(event) === 'queue_update') return;
     state.tagMessage(event);
@@ -400,7 +433,6 @@ export class SessionQueue {
   private async deliver(item: any, discardOnRejection: boolean): Promise<any> {
     const retained = clone(item);
     retained.deliveryStarted = true;
-    this.retainItem(retained);
     const id = text(item, 'id');
     this.s.sending.add(id);
     const command: any = { type: 'queue_prompt', queueId: id, message: item.message ?? null, streamingBehavior: item.behavior ?? null, discardOnRejection };
@@ -408,9 +440,10 @@ export class SessionQueue {
     if (item.questionResponse !== undefined) command.questionResponse = clone(item.questionResponse);
     if (Array.isArray(item.images) && item.images.length) command.images = clone(item.images);
     try {
+      await this.retainItem(retained);
       const result = await this.execute(command);
       this.s.sending.delete(id);
-      if (result?.disposition === 'handled') this.consumed(id);
+      if (result?.disposition === 'handled') await this.consumed(id);
       return result;
     } catch (error) {
       this.s.sending.delete(id);
@@ -418,9 +451,9 @@ export class SessionQueue {
     }
   }
 
-  private heldFailed(): void {
+  private async heldFailed(): Promise<void> {
     const event = this.s.failedHeld();
-    this.persistState();
+    await this.persistState();
     this.executor.publish(event);
   }
 
@@ -433,18 +466,23 @@ export class SessionQueue {
       if (flag(item, 'retry')) continue;
       try { await this.deliver(item, false); } catch (error) {
         (this.s.held ??= []).unshift(item);
-        this.heldFailed();
+        await this.heldFailed();
         throw error;
       }
-      this.publish();
+      await this.publish();
     }
     this.s.held = null;
-    this.publish();
+    await this.publish();
   }
 
   interruptDelegation(): Promise<any> { return this.command({ type: 'abort' }); }
 
-  async command(command: any): Promise<any> {
+  command(command: any): Promise<any> {
+    if (this.closed) return Promise.reject(new Error('Pi is not running'));
+    return this.track(this.operations, this.runCommand(command));
+  }
+
+  private async runCommand(command: any): Promise<any> {
     const name = kind(command);
     if (name === 'abort') return this.stop(await this.abort(command));
     if (name === 'compact' || name.startsWith('get_')) return this.execute(command);
@@ -471,7 +509,7 @@ export class SessionQueue {
     })();
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { scope.cancel(); reject(new Error(TIMEOUT)); }, 5000); });
-    operation.catch(() => {});
+    this.track(this.operations, operation);
     try { return { ok: true, value: await Promise.race([operation, timeout]) }; }
     catch (error) { return { ok: false, error }; }
     finally { clearTimeout(timer); }
@@ -485,7 +523,7 @@ export class SessionQueue {
     if (this.wakingOrchestration(command, name)) return this.resumeCommand(command, name);
     if (name === 'pause') {
       await this.hold();
-      try { return await this.execute(command); } catch (error) { this.heldFailed(); throw error; }
+      try { return await this.execute(command); } catch (error) { await this.heldFailed(); throw error; }
     }
     if (this.resumingPrompt(command, name)) return this.resumeCommand(command, name);
     if (name !== 'steer' && name !== 'follow_up') return this.execute(command);
@@ -503,8 +541,8 @@ export class SessionQueue {
     for (const item of removed) this.s.remove(text(item, 'id'));
     this.s.held = null;
     this.s.steering = []; this.s.followUp = []; this.s.awaitingSteering = [];
-    this.persistState();
-    this.publish();
+    await this.persistState();
+    await this.publish();
     return result;
   }
 
@@ -530,12 +568,17 @@ export class SessionQueue {
     state.held = null;
     state.changing = false; state.clearing = false;
     state.steering = []; state.followUp = []; state.awaitingSteering = [];
-    this.publish();
+    await this.publish();
     this.executor.publish({ type: 'disconnected' });
     return null;
   }
 
-  async changePending(id: string, action: any): Promise<any> {
+  changePending(id: string, action: any): Promise<any> {
+    if (this.closed) return Promise.reject(new Error('Pi is not running'));
+    return this.track(this.operations, this.runChangePending(id, action));
+  }
+
+  private async runChangePending(id: string, action: any): Promise<any> {
     const cancelling = action === 'remove' && this.s.sending.has(id);
     let release: () => void;
     if (cancelling) {
@@ -551,7 +594,7 @@ export class SessionQueue {
       if (action === 'steer' && reviewCommand(text(target, 'message'))) throw new Error('Review commands can only be queued as a follow-up');
       await this.acknowledgeQuestionRemoval(target, behavior);
       if (cancelling) return await this.changeLive(id, 'remove', undefined, action);
-      if (this.changeHeld(id, behavior, neighbor, action)) { this.publish(); return null; }
+      if (this.changeHeld(id, behavior, neighbor, action)) { await this.publish(); return null; }
       if (flag(target, 'retry')) return await this.retry(id, target, behavior);
       return await this.changeLive(id, behavior, neighbor, action);
     } finally { release(); }
@@ -584,8 +627,8 @@ export class SessionQueue {
   private async retry(id: string, target: any, behavior: string): Promise<any> {
     if (behavior === 'remove') {
       this.s.remove(id);
-      this.persistState();
-      this.publish();
+      await this.persistState();
+      await this.publish();
       return null;
     }
     target.retry = false;
@@ -595,14 +638,14 @@ export class SessionQueue {
     target.behavior = behavior === 'steer' ? 'steer' : 'followUp';
     const index = this.s.pending.findIndex(item => item.id === id);
     if (index >= 0) this.s.pending[index] = clone(target);
-    try { this.persistState(); } catch (error) { this.markRetry([target]); throw error; }
+    try { await this.persistState(); } catch (error) { this.markRetry([target]); throw error; }
     let failure: unknown;
     try { await this.deliver(target, false); } catch (error) {
       failure = error;
       const item = this.s.pending.find(entry => entry.id === id);
       if (item) item.retry = true;
     }
-    this.publish();
+    await this.publish();
     if (failure !== undefined) throw failure;
     return null;
   }
@@ -616,7 +659,7 @@ export class SessionQueue {
     state.changing = true;
     const originals = clone(state.pending);
     try { return await this.replaceLive(id, behavior, neighbor, action, originals); }
-    finally { this.s.changing = false; this.publish(); }
+    finally { this.s.changing = false; await this.publish(); }
   }
 
   private async replaceLive(id: string, behavior: string, neighbor: string | undefined, action: any, originals: any[]): Promise<any> {
@@ -626,11 +669,11 @@ export class SessionQueue {
     let rest = remaining;
     if (behavior === 'remove') {
       rest = remaining.filter(item => item.id !== id);
-      this.forgetItem(id);
+      await this.forgetItem(id);
     }
     this.s.pending = [...originals.filter(item => flag(item, 'retry')), ...clone(rest)];
     if (behavior === 'remove') this.s.remove(id);
-    try { this.persistState(); } catch (error) { this.markRetry(rest); throw error; }
+    try { await this.persistState(); } catch (error) { this.markRetry(rest); throw error; }
     if (rest.some(item => flag(item, 'retry'))) {
       this.markRetry(rest);
       throw new Error('Another source changed the queue while switching. Pending text has been kept for retry; reattach any images from messages sent outside this window.');
@@ -664,10 +707,12 @@ export class SessionQueue {
       this.s.changing = false;
       this.s.clearing = false;
       const event = this.s.publish();
-      let saved: unknown;
-      try { this.persistState(); } catch (error) { saved = error; }
-      this.executor.publish(event);
-      if (saved !== undefined) this.journalError(errorText(saved));
+      this.track(this.saves, this.persistState().then(() => {
+        this.executor.publish(event);
+      }, error => {
+        console.error(error);
+        this.journalError(errorText(error));
+      }));
     };
     scope?.add(recover);
     try {
@@ -680,7 +725,7 @@ export class SessionQueue {
       recover();
       throw error;
     } finally { scope?.remove(recover); }
-    this.publish();
+    await this.publish();
   }
 
   async executeHeldPrompt(original: any): Promise<any> {
@@ -688,7 +733,6 @@ export class SessionQueue {
     const id = this.nextItemId();
     const item: any = { id, message: command.message ?? null, behavior: 'followUp', deliveryStarted: true };
     if (command.images !== undefined) item.images = clone(command.images);
-    this.retainItem(item);
     command.type = 'queue_prompt';
     command.queueId = id;
     command.streamingBehavior = 'followUp';
@@ -696,58 +740,67 @@ export class SessionQueue {
     this.s.sending.add(id);
     let result: any;
     let failure: unknown;
-    try { result = await this.execute(command); } catch (error) { failure = error ?? new Error('Command failed'); }
+    try { await this.retainItem(item); result = await this.execute(command); } catch (error) { failure = error ?? new Error('Command failed'); }
     this.s.sending.delete(id);
     if (failure !== undefined) {
       const pending = this.s.pending.find(entry => entry.id === id);
       if (pending) pending.retry = true;
     }
-    this.publish();
+    await this.publish();
     if (failure !== undefined) throw failure;
     return result;
   }
 
-  private saveRetained(retained: any[]): void {
+  private async saveRetained(retained: any[]): Promise<void> {
     if (retained.length > 100) throw new Error('A session can have at most 100 queued items');
-    this.storage?.save(retained);
+    if (this.storage) await this.track(this.saves, this.storage.save(retained));
   }
 
-  private retainItem(item: any): void {
+  private async retainItem(item: any): Promise<void> {
     const retained = clone(this.s.retained);
     updateItem(retained, item);
-    this.saveRetained(retained);
+    const saved = this.saveRetained(retained);
     this.s.retained = retained;
+    await this.commitView(saved);
   }
 
-  private forgetItem(id: string): void {
+  private async forgetItem(id: string): Promise<void> {
     const retained = this.s.retained.filter(item => item.id !== id);
-    this.saveRetained(retained);
+    const saved = this.saveRetained(retained);
     this.s.retained = retained;
     this.s.pending = this.s.pending.filter(item => item.id !== id);
     if (this.s.held) this.s.held = this.s.held.filter(item => item.id !== id);
+    await this.commitView(saved);
   }
 
-  private persistState(): void {
+  private async persistState(): Promise<void> {
     const retained = durableMessages(this.s);
-    this.saveRetained(retained);
+    const saved = this.saveRetained(retained);
     this.s.retained = retained;
+    await this.commitView(saved);
+  }
+
+  private async commitView(saved: Promise<void>): Promise<void> {
+    const view = this.s.view(this.s.pending);
+    await saved;
+    this.savedView = view;
   }
 
   private journalError(error: string): void {
     this.executor.publish({ type: 'extension_ui_request', method: 'notify', notifyType: 'error', message: 'Queued input recovery could not be updated: ' + error });
   }
 
-  private observeConsumption(event: any): void {
+  private async observeConsumption(event: any): Promise<void> {
     if (this.storage === null) return;
     if (kind(event) === 'message_end' && event.message?.role === 'user') {
-      try { this.recordConsumption(event.message); } catch (error) { this.journalError(errorText(error)); }
+      await this.recordConsumption(event.message);
     }
     if (kind(event) === 'message_end' || kind(event) === 'agent_settled') {
-      try { this.confirmConsumed(); } catch (error) { this.journalError(errorText(error)); }
+      await this.confirmConsumed();
     }
   }
 
-  private recordConsumption(message: any): void {
+  private async recordConsumption(message: any): Promise<void> {
     if (typeof message?.timestamp !== 'number') return;
     const retained = clone(this.s.retained);
     const candidates = consumptionCandidates(this.s, retained, message);
@@ -756,11 +809,12 @@ export class SessionQueue {
     item.consumedTimestamp = clone(message.timestamp);
     item.consumedContent = clone(message.content ?? null);
     item.consumedInputId = queueMessageId(message) ?? null;
-    this.saveRetained(retained);
+    const saved = this.saveRetained(retained);
     this.s.retained = retained;
+    await this.commitView(saved);
   }
 
-  confirmConsumed(): void {
+  async confirmConsumed(): Promise<void> {
     if (!this.s.retained.length) return;
     const messages = this.executor.savedUserMessages?.() ?? [];
     const consumed = new Set(this.s.retained.filter(item => messages.some(message => {
@@ -769,33 +823,35 @@ export class SessionQueue {
     })).map(item => text(item, 'id')));
     if (!consumed.size) return;
     const retained = this.s.retained.filter(item => !consumed.has(text(item, 'id')));
-    this.saveRetained(retained);
+    const saved = this.saveRetained(retained);
     this.s.retained = retained;
     this.s.pending = this.s.pending.filter(item => !consumed.has(text(item, 'id')));
     if (this.s.held) this.s.held = this.s.held.filter(item => !consumed.has(text(item, 'id')));
+    await this.commitView(saved);
   }
 
-  private reportStorageError(operation: () => void): void {
-    try { operation(); } catch (error) {
+  private async reportStorageError(operation: () => void | Promise<void>): Promise<void> {
+    try { await operation(); } catch (error) {
+      console.error(error);
       this.executor.publish({ type: 'extension_error', extensionPath: 'conversation queue', event: 'queue', error: errorText(error) });
     }
   }
 
-  rejected(id: string): void {
+  async rejected(id: string): Promise<void> {
     this.s.rejected.add(id);
-    this.consumed(id);
+    await this.consumed(id);
   }
 
-  consumed(id: string): void { this.reportStorageError(() => this.forgetItem(id)); }
+  async consumed(id: string): Promise<void> { await this.reportStorageError(() => this.forgetItem(id)); }
 
   questionResponse(request: string): any | undefined {
     const item = this.s.retained.find(entry => entry.questionResponse?.requestId === request);
     return item?.questionResponse === undefined ? undefined : clone(item.questionResponse);
   }
 
-  recoverQuestionAnswers(answers: any): void {
+  async recoverQuestionAnswers(answers: any): Promise<void> {
     for (const item of Array.isArray(answers) ? answers : []) if (validAnswer(item)) this.s.recoverQuestion(item, () => this.nextItemId());
-    this.reportStorageError(() => this.publish());
+    await this.reportStorageError(() => this.publish());
   }
 
   private async acknowledgeQuestionRemoval(item: any, action: string): Promise<void> {
@@ -816,8 +872,8 @@ export class SessionQueue {
     const question = prepared.questionResponse?.requestId;
     const id = this.nextItemId();
     const pending = submissionPayload(prepared, id, name);
-    if (this.saveSubmission(id, pending)) {
-      this.reportStorageError(() => this.publish());
+    if (await this.saveSubmission(id, pending)) {
+      await this.reportStorageError(() => this.publish());
       return null;
     }
     let result: any;
@@ -826,9 +882,9 @@ export class SessionQueue {
     try { result = await this.deliver(pending, typeof question !== 'string'); } catch (error) { failure = error; failed = true; }
     const rejected = failed && this.s.failedSubmission(id);
     this.s.sending.delete(id);
-    this.reportStorageError(() => this.publish());
+    await this.reportStorageError(() => this.publish());
     if (failed && !rejected) {
-      this.reportStorageError(() => { throw failure; });
+      await this.reportStorageError(() => { throw failure; });
       return null;
     }
     if (failed) throw failure;
@@ -855,15 +911,18 @@ export class SessionQueue {
     return command;
   }
 
-  private saveSubmission(id: string, pending: any): boolean {
+  private async saveSubmission(id: string, pending: any): Promise<boolean> {
     this.s.pending.push(clone(pending));
-    try { this.persistState(); } catch (error) { this.s.remove(id); throw error; }
+    const held = this.s.held !== null;
     if (this.s.held) {
       this.s.held.push(clone(pending));
       sortHeld(this.s.held);
-      return true;
+    } else this.s.sending.add(id);
+    try { await this.persistState(); } catch (error) {
+      this.s.remove(id);
+      this.s.sending.delete(id);
+      throw error;
     }
-    this.s.sending.add(id);
-    return false;
+    return held;
   }
 }

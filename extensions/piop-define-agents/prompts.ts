@@ -1,5 +1,5 @@
+import { lock } from "../../daemon/resources/file-lock.cjs";
 import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { constants, openSync, closeSync, mkdirSync, chmodSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { link, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
@@ -53,11 +53,7 @@ async function configLock() {
 
   try {
     if (!(await file.stat()).isFile()) throw new Error("Agent configuration lock is not a regular file");
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn("flock", ["--exclusive", "--wait", "10", "3"], { stdio: ["ignore", "ignore", "ignore", file.fd], timeout: 15_000, killSignal: "SIGKILL" });
-      child.once("error", reject);
-      child.once("exit", code => code === 0 ? resolve() : reject(new Error("Agent definitions are busy; try saving again")));
-    });
+    if (!await lock(file.fd, false, false, 10_000)) throw new Error("Agent definitions are busy; try saving again");
 
     return file;
   } catch (error) { await file.close(); throw error; }

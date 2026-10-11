@@ -1,5 +1,6 @@
 import { basename, isAbsolute } from 'node:path';
 import * as Registry from '../session_registry';
+import { Mutex } from '../util/sync';
 import { kind, text } from './json';
 import { Guard, ownershipError } from './ownership';
 import { argument, expandHome, readHeaderLine, sessionSpec, specIdentity, type LaunchSpec } from './protocol';
@@ -74,15 +75,20 @@ async function attachReadonly(host: Host, session: Session, runtime: string, tar
 }
 
 async function openDestination(host: Host, session: Session, runtime: string, target: Destination): Promise<any> {
-  const found = target.existing ? host.findSession(target.key) : undefined;
-  if (found?.transient()) throw new Error('This conversation branch is still being prepared');
-  const created = found === undefined;
-  const next = found ?? host.spawnSession({ key: target.key, spec: target.spec, timeout: session.timeout, transient: false, clientId: session.clientId(), cwd: target.cwd });
-  try { return await transfer(host, session, next, runtime); }
-  catch (error) {
-    if (created && !next.views().length && !next.submitted() && !next.working()) await next.stop();
-    throw error;
-  }
+  let gate = host.sessionGates.get(target.key);
+  if (!gate) { gate = new Mutex(); host.sessionGates.set(target.key, gate); }
+  const release = await gate.lock();
+  try {
+    const found = host.findSession(target.key);
+    if (found?.transient()) throw new Error('This conversation branch is still being prepared');
+    const created = found === undefined;
+    const next = found ?? await host.spawnSession({ key: target.key, spec: target.spec, timeout: session.timeout, transient: false, clientId: session.clientId(), cwd: target.cwd });
+    try { return await transfer(host, session, next, runtime); }
+    catch (error) {
+      if (created && !next.views().length && !next.submitted() && !next.working()) await next.stop();
+      throw error;
+    }
+  } finally { release(); }
 }
 
 function assertCurrent(host: Host, session: Session, runtime: string): void {
@@ -140,7 +146,7 @@ class Branch {
     const ownership = await this.host.ownership().begin(branchId, this.session.clientId(), { path: destination });
     this.guard = ownership;
     if (!ownership.owned) throw new Error(ownershipError());
-    const opened = this.host.spawnSession({ key: branchId, spec: sessionSpec(this.session.spec, '--session', destination), timeout: this.session.timeout, transient: true, clientId: this.session.clientId(), cwd: this.session.cwd });
+    const opened = await this.host.spawnSession({ key: branchId, spec: sessionSpec(this.session.spec, '--session', destination), timeout: this.session.timeout, transient: true, clientId: this.session.clientId(), cwd: this.session.cwd });
     opened.setReservedPath(destination);
     this.next = opened;
     const actual = await opened.execute({ type: 'get_state' });

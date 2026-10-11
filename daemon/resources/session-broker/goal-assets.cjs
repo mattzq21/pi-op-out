@@ -1,7 +1,7 @@
+const { lockSync } = require('../file-lock.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const goalDependencies = require('./goal-dependencies.cjs');
@@ -48,11 +48,9 @@ function acquire(root) {
 
   try {
     if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid goal asset lock');
-    const result = spawnSync('flock', ['--exclusive', '--nonblock', '3'], { stdio: ['ignore', 'ignore', 'pipe', descriptor], timeout: 5000 });
+    const result = lockSync(descriptor, false, true, 5000);
 
-    if (result.error) throw result.error;
-
-    if (result.status !== 0) throw new Error('Goal assets are in use by another storage operation. Retry after it finishes.');
+    if (!result) throw new Error('Goal assets are in use by another storage operation. Retry after it finishes.');
 
     return () => fs.closeSync(descriptor);
   } catch (error) { fs.closeSync(descriptor); throw error; }

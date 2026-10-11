@@ -8,6 +8,7 @@ import { dlopen, FFIType, ptr } from 'bun:ffi';
 import type { Duplex } from 'node:stream';
 import { DEVELOPMENT, MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
 import * as endpoint from './daemon_endpoint';
+import * as daemonLog from './daemon_log';
 import * as daemonRestart from './daemon_restart';
 import * as records from './settings_records';
 import * as mobileCommands from './mobile_commands';
@@ -18,7 +19,7 @@ import { errorText, withTimeout } from './util/sync';
 import type { App } from './app';
 
 const MAX_MESSAGE = MAX_REQUEST_BYTES;
-const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://groups-changed', 'pi://dictation', 'pi://sessions-changed', 'pi://daemon-error', 'pi://provider-auth-changed', 'pi://chatgpt-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://daemon-restarting'];
+const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://groups-changed', 'pi://dictation', 'pi://sessions-changed', 'pi://daemon-error', 'pi://daemon-log-status', 'pi://provider-auth-changed', 'pi://chatgpt-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://daemon-restarting'];
 
 /** A counter that limits how many items may run at once. */
 class Slots {
@@ -82,6 +83,7 @@ function upgradeServer(shared: Shared, onUpgrade: (request: IncomingMessage, soc
 }
 
 export async function start(app: App): Promise<void> {
+  daemonLog.listenStatus(failure => app.setLogStatus('local', failure));
   let token = process.env.PIOP_MOBILE_TOKEN;
   if (token === undefined) {
     try { token = endpoint.read().token; } catch { token = randomUUID() + randomUUID(); }
@@ -204,7 +206,10 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
       if (ws.closed) return;
       try { await withTimeout(ws.sendText(text), 10_000, 'Send timeout'); }
       catch { ws.terminate(); return; }
-      if (restartId !== undefined) daemonRestart.commit(app, restartId);
+      if (restartId !== undefined) {
+        try { await daemonRestart.commit(app, restartId); }
+        catch (error) { console.error(error); ws.terminate(); }
+      }
     });
   };
   const subscriber: Subscriber = event => {
@@ -213,6 +218,10 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
   };
   await sendReady(ws);
   shared.subscribers.add(subscriber);
+  for (const [hostId, failure] of app.logStatuses) {
+    if (peer && hostId !== 'local') continue;
+    send(JSON.stringify({ event: 'pi://daemon-log-status', payload: { hostId, failure } }));
+  }
   const heartbeat = setInterval(() => {
     if (Date.now() - lastSeen > 65_000) { ws.terminate(); return; }
     ws.ping().catch(() => ws.terminate());
@@ -343,7 +352,6 @@ function originAllowed(origin: string | undefined): boolean {
 }
 
 async function startTailscale(shared: Shared): Promise<void> {
-  if (process.platform !== 'linux') return;
   const directory = endpoint.directory();
   ensurePrivateDir(directory);
   const path = join(directory, 'tailscale.sock');

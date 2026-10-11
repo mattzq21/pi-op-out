@@ -1,8 +1,8 @@
+const { lockSync } = require('./file-lock.cjs');
 const records = require('./archive-records.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { execFileSync } = require('node:child_process');
 const { isDeepStrictEqual } = require('node:util');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
@@ -57,7 +57,7 @@ function assertLocked(root) {
   const inherited = fs.fstatSync(3, { bigint: true });
 
   if (`${inherited.dev}:${inherited.ino}` !== io.identity(lock)) throw new Error('Restore receipt cleanup requires the inherited session transaction lock');
-  execFileSync('flock', ['--nonblock', '--exclusive', '3'], { stdio: ['ignore', 'pipe', 'pipe', 3] });
+  if (!lockSync(3, false, true)) throw new Error('Restore receipt cleanup requires the session transaction lock');
 }
 
 function parse(body) {

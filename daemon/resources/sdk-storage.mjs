@@ -1,10 +1,10 @@
+import { lockSync as storageLockSync } from "./file-lock.cjs";
 import { createRequire as storageRequire } from "node:module";
 import * as sessionTables from "./session-database.cjs";
 import { DatabaseSync as StorageDatabase } from "node:sqlite";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
 import { homedir as storageHome } from "node:os";
-import { spawnSync as storageSpawn } from "node:child_process";
 import { createHash as storageHash } from "node:crypto";
 import { isDeepStrictEqual as sameStorageValue } from "node:util";
 import { pathToFileURL as storageFileUrl } from "node:url";
@@ -275,11 +275,9 @@ export function acquireSessionReferencePublication(transcript, sessionId) {
 
   try {
     if (!storageFs.fstatSync(descriptor).isFile()) throw new Error("Invalid reference publication lock");
-    const locked = storageSpawn("flock", ["--shared", "3"], { stdio: ["ignore", "pipe", "pipe", descriptor] });
+    const locked = storageLockSync(descriptor, true, false);
 
-    if (locked.error) throw locked.error;
-
-    if (locked.status !== 0) throw new Error(locked.stderr.toString().trim() || "Could not lock reference publication");
+    if (!locked) throw new Error("Could not lock reference publication");
     registerExternalTranscript(root, transcript, sessionId);
 
     return () => storageFs.closeSync(descriptor);

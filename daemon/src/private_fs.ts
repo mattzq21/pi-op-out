@@ -6,12 +6,11 @@ export function setPrivateFilePermissions(path: string): void {
   if (!existsSync(path)) return;
   const stats = statSync(path);
   if (stats.isDirectory()) throw new Error(`Configuration path is a directory: ${path}`);
-  if (process.platform !== 'win32' && (stats.mode & 0o777) !== 0o600) chmodSync(path, 0o600);
+  if ((stats.mode & 0o777) !== 0o600) chmodSync(path, 0o600);
 }
 
 export function ensurePrivateDir(path: string): void {
   mkdirSync(path, { recursive: true });
-  if (process.platform === 'win32') return;
   const stats = statSync(path);
   if ((stats.mode & 0o777) !== 0o700) chmodSync(path, 0o700);
 }
@@ -66,7 +65,7 @@ export function publishPrivate(path: string, content: Buffer | string): Publicat
   try {
     const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
     try {
-      if (process.platform !== 'win32') chmodSync(temporary, 0o600);
+      chmodSync(temporary, 0o600);
       let offset = 0;
       while (offset < body.length) offset += writeSync(fd, body, offset);
       fsyncSync(fd);

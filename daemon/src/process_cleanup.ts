@@ -14,7 +14,6 @@ function startTime(pid: number): string | undefined {
 }
 
 export function descendantProcesses(parent: number): Array<{ pid: number; started: string }> {
-  if (process.platform !== 'linux') return [];
   const processes = new Map<number, { ppid: number; started: string }>();
   let entries: string[] = [];
   try { entries = readdirSync('/proc'); } catch { return []; }

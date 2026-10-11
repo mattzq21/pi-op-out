@@ -37,9 +37,9 @@ interface Plan {
 
 function path(name: string): string { return join(endpoint.directory(), name); }
 
-function write(name: string, value: any): void {
-  const lock = artifacts.publicationLock();
-  try { restartStorage.write(path(name), value); } finally { lock.release(); }
+async function write(name: string, value: any, condition?: () => boolean): Promise<void> {
+  const lock = await artifacts.publicationLock();
+  try { if (!condition || condition()) restartStorage.write(path(name), value); } finally { lock.release(); }
 }
 
 function readPlan(): Plan {
@@ -51,12 +51,10 @@ function readPlan(): Plan {
 }
 
 /** True while this daemon prepares or owns an active restart. */
-export function blocking(): boolean {
+export async function blocking(): Promise<boolean> {
   if (PREPARING) return true;
-  let plan: Plan;
-  try { plan = readPlan(); } catch { return false; }
-  if (plan.owner !== process.pid) return false;
-  try { return artifacts.activePlan(); } catch { return true; }
+  try { return await artifacts.activePlan(process.pid) || PREPARING; }
+  catch (error) { console.error(error); return true; }
 }
 
 export function status(id: string): any {
@@ -66,8 +64,12 @@ export function status(id: string): any {
   return value;
 }
 
-function publish(plan: Plan, phase: string, error?: string, pid?: number): void {
-  write('restart-status.json', { restartId: plan.id, phase, error: error ?? null, processId: pid ?? null, expiresAt: Math.floor(Date.now() / 1000) + 180 });
+function statusRecord(plan: Plan, phase: string, error?: string, pid?: number): any {
+  return { restartId: plan.id, phase, error: error ?? null, processId: pid ?? null, expiresAt: Math.floor(Date.now() / 1000) + 180 };
+}
+
+async function publish(plan: Plan, phase: string, error?: string, pid?: number, condition?: () => boolean): Promise<void> {
+  await write('restart-status.json', statusRecord(plan, phase, error, pid), condition);
 }
 
 function currentExecutable(): string {
@@ -129,15 +131,31 @@ async function makePlan(app: App, prepared: any): Promise<[Plan, artifacts.Backu
   if (!Array.isArray(prepared?.tickets)) throw new Error('Invalid restart checkpoint tickets');
   const bind = restartBind(current.url);
   await validateRestartBind(bind);
-  const backup = artifacts.Backup.create(id, executable);
+  const backup = await artifacts.Backup.create(id, executable);
   const plan: Plan = { id, owner: process.pid, executable, fallback: backup.path, enabled, previous, tickets: prepared.tickets, bind, debug_bind: debugBind, automatic: app.clients.automatic() };
   return [plan, backup];
 }
 
+const preparations = new Map<string, Promise<void>>();
+
 export async function prepare(app: App, args: any): Promise<any> {
+  const key = endpoint.directory();
+  const previous = preparations.get(key);
+  let finish!: () => void;
+  const pending = new Promise<void>(resolve => { finish = resolve; });
+  preparations.set(key, pending);
+  await previous;
+  try { return await prepareOnce(app, args); }
+  finally {
+    if (preparations.get(key) === pending) preparations.delete(key);
+    finish();
+  }
+}
+
+async function prepareOnce(app: App, args: any): Promise<any> {
   if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Restart arguments must be an object');
-  try { artifacts.reconcile(); } catch (error: any) { console.error('Restart artifact cleanup remains pending: ' + (error?.message ?? error)); }
-  if (artifacts.activePlan()) throw new Error('A daemon restart is already in progress');
+  try { await artifacts.reconcile(); } catch (error: any) { console.error('Restart artifact cleanup remains pending: ' + (error?.message ?? error)); }
+  if (await artifacts.activePlan()) throw new Error('A daemon restart is already in progress');
   const terminals = app.terminals.runningCount();
   if (terminals > 0 && args.closeTerminals !== true) return { confirmationRequired: 'terminals', terminalCount: terminals };
   const daemon = await plugins.connection(app);
@@ -153,7 +171,7 @@ export async function prepare(app: App, args: any): Promise<any> {
 async function preparePluginHandoff(app: App, daemon: Daemon, args: any): Promise<any> {
   const prepared = await daemon.request(args);
   const preservingNotes = ['enabled', 'previous'].every(key => Array.isArray(prepared?.[key]) && prepared[key].includes('markdown'));
-  const leases = preservingNotes ? preserveLeasesForRestart() : undefined;
+  const leases = preservingNotes ? await preserveLeasesForRestart() : undefined;
   let backup: artifacts.Backup | undefined;
   try {
     const [plan, created] = await makePlan(app, prepared);
@@ -163,8 +181,8 @@ async function preparePluginHandoff(app: App, daemon: Daemon, args: any): Promis
     leases?.commit();
     return result;
   } catch (error) {
-    backup?.drop();
-    leases?.drop();
+    await backup?.drop();
+    try { await leases?.drop(); } catch (failure) { console.error(failure); }
     throw error;
   }
 }
@@ -177,11 +195,14 @@ export async function ensureLocalIdle(app: App): Promise<void> {
 
 async function prepareHandoff(plan: Plan): Promise<any> {
   try {
-    write('restart-plan.json', plan);
-    publish(plan, 'preparing');
+    const lock = await artifacts.publicationLock();
+    try {
+      restartStorage.write(path('restart-plan.json'), plan);
+      restartStorage.write(path('restart-status.json'), statusRecord(plan, 'preparing'));
+    } finally { lock.release(); }
     await arm(plan);
   } catch (error: any) {
-    try { if (readPlan().id === plan.id) publish(plan, 'failed', error?.message ?? String(error)); } catch {}
+    try { await publish(plan, 'failed', error?.message ?? String(error), undefined, () => readPlan().id === plan.id); } catch (failure) { console.error(failure); }
     throw error;
   }
   return { restartId: plan.id };
@@ -214,14 +235,16 @@ async function waitArmed(plan: Plan, coordinator: ChildProcess): Promise<void> {
   throw new Error('Restart validation timed out; the previous daemon is still running');
 }
 
-export function commit(app: App, id: string): void {
-  let plan: Plan;
-  try { plan = readPlan(); } catch { return; }
-  if (plan.id !== id || plan.owner !== process.pid) return;
-  try { if (status(id).phase !== 'armed') return; } catch { return; }
-  try { publish(plan, 'restarting'); } catch { return; }
-  app.emit('pi://daemon-restarting', { hostId: 'local', restartId: id });
-  setTimeout(() => app.clients.stop(), 300);
+export async function commit(app: App, id: string): Promise<void> {
+  const lock = await artifacts.publicationLock();
+  try {
+    const plan = readPlan();
+    if (plan.id !== id || plan.owner !== process.pid) return;
+    if (status(id).phase !== 'armed') return;
+    restartStorage.write(path('restart-status.json'), statusRecord(plan, 'restarting'));
+    app.emit('pi://daemon-restarting', { hostId: 'local', restartId: id });
+    setTimeout(() => app.clients.stop(), 300);
+  } finally { lock.release(); }
 }
 
 async function launch(plan: Plan, executable: string, mode: string): Promise<ChildProcess> {
@@ -265,8 +288,11 @@ async function waitForHandoff(plan: Plan): Promise<void> {
 }
 
 async function startCandidate(plan: Plan, fallback: boolean): Promise<number> {
-  write('plugins.json', { enabled: fallback ? plan.previous : plan.enabled, previous: plan.previous });
-  restartStorage.remove(path('restart-ready.json'));
+  const lock = await artifacts.publicationLock();
+  try {
+    restartStorage.write(path('plugins.json'), { enabled: fallback ? plan.previous : plan.enabled, previous: plan.previous });
+    restartStorage.remove(path('restart-ready.json'));
+  } finally { lock.release(); }
   const child = watch(await launch(plan, fallback ? plan.fallback : plan.executable, '--restart-candidate'));
   try { return await waitReady(plan, child); }
   catch (error) { child.kill('SIGKILL'); throw error; }
@@ -286,7 +312,7 @@ async function waitReady(plan: Plan, child: ChildProcess): Promise<number> {
 
 async function coordinate(plan: Plan): Promise<void> {
   await validate(plan);
-  publish(plan, 'armed');
+  await publish(plan, 'armed');
   await waitForHandoff(plan);
   let pid: number;
   try { pid = await startCandidate(plan, false); }
@@ -294,10 +320,10 @@ async function coordinate(plan: Plan): Promise<void> {
     const message = error?.message ?? String(error);
     try { pid = await startCandidate(plan, true); }
     catch (rollback: any) { throw new Error(message + '. The previous daemon also failed to start: ' + (rollback?.message ?? rollback) + '. See daemon.log for details.'); }
-    publish(plan, 'rolled_back', message + '. Restored the previous daemon and plugins.', pid);
+    await publish(plan, 'rolled_back', message + '. Restored the previous daemon and plugins.', pid);
     return;
   }
-  publish(plan, 'complete', undefined, pid);
+  await publish(plan, 'complete', undefined, pid);
 }
 
 /** Runs --restart-coordinator or --validate-plugins. Returns undefined for other modes. */
@@ -312,8 +338,8 @@ async function runSpecial(mode: string): Promise<void> {
   if (process.argv[3] !== plan.id) throw new Error('Invalid daemon restart identifier');
   if (mode === '--validate-plugins') return validateConfiguration(piExecutable(), plan.enabled);
   try { await coordinate(plan); }
-  catch (error: any) { try { publish(plan, 'failed', error?.message ?? String(error)); } catch {} throw error; }
-  finally { try { artifacts.reconcile(); } catch (error: any) { console.error('Restart artifact cleanup remains pending: ' + (error?.message ?? error)); } }
+  catch (error: any) { try { await publish(plan, 'failed', error?.message ?? String(error)); } catch (failure) { console.error(failure); } throw error; }
+  finally { try { await artifacts.reconcile(); } catch (error: any) { console.error('Restart artifact cleanup remains pending: ' + (error?.message ?? error)); } }
 }
 
 export function startupTickets(): any {
@@ -332,8 +358,11 @@ export async function initializeCandidate(app: App): Promise<void> {
   if (typeof result?.error === 'string') throw new Error(result.error);
 }
 
-export function ready(): void {
+export async function ready(): Promise<void> {
   if (process.argv[2] !== '--restart-candidate') return;
-  const plan = readPlan();
-  write('restart-ready.json', { restartId: plan.id, processId: process.pid });
+  const lock = await artifacts.publicationLock();
+  try {
+    const plan = readPlan();
+    restartStorage.write(path('restart-ready.json'), { restartId: plan.id, processId: process.pid });
+  } finally { lock.release(); }
 }

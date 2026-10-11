@@ -10,7 +10,7 @@ import { watchBackend } from "./watch-backend.mjs";
 const args = process.argv.slice(2);
 
 
-const windowBounds = process.platform === "linux" && args[0] === "dev" ? selectWindowBounds() : undefined;
+const windowBounds = args[0] === "dev" ? selectWindowBounds() : undefined;
 
 const development = args[0] === "dev" || (args[0] === "build" && args.includes("--debug"));
 

@@ -296,7 +296,7 @@ async function retryCurrent(app: App, applied: Applied): Promise<boolean> {
   const gate = app.restart.gate.tryRead();
   if (!gate) return false;
   try {
-    if (daemonRestart.blocking()) return false;
+    if (await daemonRestart.blocking()) return false;
     const runtime = app.pi;
     const lifecycle = runtime.lifecycle.tryLock();
     if (!lifecycle) return false;

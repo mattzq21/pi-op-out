@@ -10,7 +10,7 @@ use private_fs::ensure_private_dir;
 mod clipboard_image;
 use clipboard_image::{configure_image_copy, read_clipboard_image};
 use client_settings::{load_client_settings, save_client_settings, sync_prompt_history};
-use desktop_daemon::daemon_invoke;
+use desktop_daemon::{daemon_invoke, daemon_log_statuses};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, fs, io::Read, path::{Path, PathBuf}, process::{Command, Stdio}, sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, thread, time::Duration};
@@ -38,9 +38,7 @@ fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
 }
 
 fn configure_dictation_microphone(window: &tauri::WebviewWindow) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
     let dev_url = window.app_handle().config().build.dev_url.clone();
-    #[cfg(target_os = "linux")]
     window.with_webview(move |webview| {
         use gtk::prelude::Cast;
         use webkit2gtk::{PermissionRequestExt, SettingsExt, UserMediaPermissionRequest, UserMediaPermissionRequestExt, WebViewExt};
@@ -57,8 +55,6 @@ fn configure_dictation_microphone(window: &tauri::WebviewWindow) -> Result<(), S
             } else { false }
         });
     }).map_err(|error| error.to_string())?;
-    #[cfg(not(target_os = "linux"))]
-    let _ = window;
     Ok(())
 }
 
@@ -72,8 +68,7 @@ fn conversation_window_target(target: &Value) -> Result<(String, String), String
 }
 
 fn open_system_resource(target: &std::ffi::OsStr) -> Result<(), String> {
-    let program = if cfg!(target_os = "macos") { "open" } else if cfg!(target_os = "windows") { "explorer" } else { "xdg-open" };
-    let mut child = Command::new(program).arg(target).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not open {}: {error}", target.to_string_lossy()))?;
+    let mut child = Command::new("xdg-open").arg(target).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not open {}: {error}", target.to_string_lossy()))?;
     thread::spawn(move || { let _ = child.wait(); });
     Ok(())
 }
@@ -83,7 +78,6 @@ fn read_dropped_file(path: String) -> Result<Value, String> {
     if !fs::metadata(path).map_err(|error| error.to_string())?.is_file() { return Err("Drop regular files only".to_string()); }
     let mut options = fs::OpenOptions::new();
     options.read(true);
-    #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NONBLOCK);
@@ -126,7 +120,6 @@ fn open_rollout_file(path: String, host_id: Option<String>) -> Result<(), String
     open_system_resource(path.as_os_str())
 }
 
-#[cfg(target_os = "linux")]
 const LOAD_ERROR_HTML: &str = r#"<!doctype html>
 <html lang="en">
 <head>
@@ -173,7 +166,6 @@ pub fn run() {
         config.product_name = Some(APP_TITLE.into());
         for window in &mut config.app.windows { window.title = APP_TITLE.into(); }
     }
-    #[cfg(target_os = "linux")]
     let (context, start_window) = {
         let mut context = context;
         let window = context.config_mut().app.windows.first_mut().expect("Missing main window configuration");
@@ -202,7 +194,6 @@ pub fn run() {
                 let _ = handle.state::<desktop_daemon::DesktopDaemon>().connect(&handle, &label).await;
             });
         }
-        #[cfg(target_os = "linux")]
         if let Some((label, focus)) = start_window.as_ref() {
             use gtk::prelude::GtkWindowExt;
             use webkit2gtk::WebViewExt;
@@ -217,7 +208,7 @@ pub fn run() {
             window.show()?;
         }
         Ok(())
-    }).invoke_handler(tauri::generate_handler![daemon_invoke, reload_development_window, load_client_settings, save_client_settings, sync_prompt_history, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![daemon_invoke, daemon_log_statuses, reload_development_window, load_client_settings, save_client_settings, sync_prompt_history, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
             let app = app.clone(); let label = label.clone();
             tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&app, &label).await; });

@@ -7,7 +7,6 @@ import * as RestoreRecovery from '../restore_recovery';
 import * as Registry from '../session_registry';
 import { ensurePrivateDir } from '../private_fs';
 import { FileLock, flockDescriptor } from '../util/flock';
-import { sleep } from '../util/sync';
 import { flag, text } from './json';
 import { readHeaderLine } from './protocol';
 import * as ControlState from './control_state';
@@ -126,13 +125,10 @@ export class ConversationOwnership {
     const fd = openSync(path, constants.O_RDWR | constants.O_CREAT, 0o600);
     const deadline = Date.now() + 180_000;
     try {
-      for (;;) {
-        let locked: boolean;
-        try { locked = await flockDescriptor(fd, false); } catch (error: any) { throw new Error('Could not lock conversation: ' + (error?.message ?? error)); }
-        if (locked) return new FileLock(fd, path);
-        if (Date.now() >= deadline) throw new Error('Conversation is busy; try taking ownership again');
-        await sleep(20);
-      }
+      let locked: boolean;
+      try { locked = await flockDescriptor(fd, true, false, Math.max(0, deadline - Date.now())); } catch (error: any) { throw new Error('Could not lock conversation: ' + (error?.message ?? error)); }
+      if (locked) return new FileLock(fd, path);
+      throw new Error('Conversation is busy; try taking ownership again');
     } catch (error) { closeSync(fd); throw error; }
   }
 

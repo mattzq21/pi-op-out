@@ -12,7 +12,7 @@ export function load(home: string, storage: string, settings: any, initial: bool
     let child;
     try {
       child = spawn('node', ['--input-type=module', '-', JSON.stringify(settings)], {
-        env: { ...process.env, HOME: home, PIOP_STORAGE_DIRECTORY: storage, PI_CODING_AGENT_DIR: join(home, storage), PIOP_AGENT_CONFIG_PATH: path,
+        env: { ...process.env, HOME: home, PIOP_BUN: process.execPath, PIOP_STORAGE_DIRECTORY: storage, PI_CODING_AGENT_DIR: join(home, storage), PIOP_AGENT_CONFIG_PATH: path,
           PIOP_AGENT_RESPONSE_ID: response, PIOP_GENERATED_EXTENSION_ROOT: generatedExtensionRoot(), PIOP_PI_EXECUTABLE: piExecutable(), PIOP_AGENT_INITIAL_LOAD: initial ? '1' : '0' },
         stdio: ['pipe', 'pipe', 'pipe'],
       });

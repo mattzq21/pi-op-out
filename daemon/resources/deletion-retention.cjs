@@ -1,7 +1,7 @@
+const { lockSync } = require('./file-lock.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { spawnSync } = require('node:child_process');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { validSessionHeader } = require('./session-header.cjs');
@@ -56,15 +56,7 @@ function activeGoalAllocation(directory) {
 
   try {
     if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid goal attachment ownership lock');
-    const child = spawnSync('flock', ['--exclusive', '--nonblock', '--conflict-exit-code', '75', '3'], { stdio: ['ignore', 'pipe', 'pipe', descriptor] });
-
-    if (child.error) throw child.error;
-
-    if (child.status === 75) return true;
-
-    if (child.status !== 0) throw new Error(child.stderr.toString().trim() || 'Could not inspect goal attachment ownership');
-
-    return false;
+    return !lockSync(descriptor, false, true);
   } finally { fs.closeSync(descriptor); }
 }
 

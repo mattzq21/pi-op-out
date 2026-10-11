@@ -111,7 +111,8 @@ export class Sdk {
     incoming.catch(() => {});
     try {
       if (connection.closed) throw new Error('Pi provider SDK disconnected');
-      if (this.plugin !== undefined && packet?.method === 'plugin_call' && DaemonRestart.blocking()) throw new Error('The daemon is restarting. Reconnect before retrying.');
+      if (this.plugin !== undefined && packet?.method === 'plugin_call' && (await DaemonRestart.blocking())) throw new Error('The daemon is restarting. Reconnect before retrying.');
+      if (connection.closed) throw new Error('Pi provider SDK disconnected');
       await new Promise<void>((resolve, reject) => connection.child.stdin!.write(JSON.stringify(message) + '\n', error => error ? reject(error) : resolve()));
       return await Promise.race([
         incoming,

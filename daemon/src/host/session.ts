@@ -19,7 +19,7 @@ export interface SessionHost {
   readonlyViews(identity: string): string[];
   readonly(runtime: string): boolean;
   rekey(old: string, next: string, epoch: string): void;
-  finished(key: string, epoch: string, pending: any[], transient: boolean): void;
+  finished(key: string, epoch: string, transient: boolean): void;
   maintenance(key: string): void;
   refreshProviders(): Promise<number>;
 }
@@ -66,6 +66,7 @@ export class Session {
   readonly epoch = randomUUID();
   private worker: RuntimeWorker | undefined;
   private configurationGate = new Mutex();
+  private events: Promise<void> = Promise.resolve();
 
   key: string;
   state: any = null;
@@ -117,21 +118,22 @@ export class Session {
     this.queue = new SessionQueue(executor, pending, storage);
   }
 
-  static spawn(launch: SessionLaunch, pending: any[], host: SessionHost, home: string, toolPayloads: ToolPayloadCache): Session {
+  static async spawn(launch: SessionLaunch, pending: any[], host: SessionHost, home: string, toolPayloads: ToolPayloadCache, assertRunning: () => void): Promise<Session> {
     prepareSpec(launch.spec, launch.key, launch.clientId, home);
     const storage = queueStorage(host, launch.spec, launch.cwd, home, launch.key);
-    const recovered = storage ? storage.recover(pending) : pending;
+    const recovered = storage ? await storage.recover(pending) : pending;
     const identity = argument(launch.spec, '--session') !== undefined ? launch.key : (argument(launch.spec, '--session-id') ?? launch.key);
     const session = new Session(launch, identity, recovered, storage, host, toolPayloads);
-    session.reconcileQueue();
+    await session.reconcileQueue();
+    assertRunning();
     session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home);
     return session;
   }
 
   private observer(): WorkerObserver {
     return {
-      event: event => this.receive(event),
-      response: (event, request) => this.response(event, request),
+      event: event => { void this.inOrder(() => this.receive(event)); },
+      response: (event, request) => this.inOrder(() => this.response(event, request)),
       stderr: line => {
         if (this.state === null) this.startupError = line;
         for (const [runtime] of [...this.viewsList]) this.host.output({ type: 'stderr', runtimeId: runtime, line });
@@ -140,6 +142,15 @@ export class Session {
       finished: () => this.finish(),
       disconnectError: () => this.startupError ?? 'Pi disconnected before responding',
     };
+  }
+
+  private inOrder<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.events.then(operation);
+    this.events = result.then(() => {}, error => {
+      console.error('Session event failed for ' + this.key + ': ' + errorText(error));
+      this.host.output({ type: 'diagnostic', line: 'Session event failed for ' + this.key + ': ' + errorText(error) });
+    });
+    return result;
   }
 
   private savedUserMessages(): any[] {
@@ -151,8 +162,8 @@ export class Session {
   clientId(): string { return this.clientIdValue; }
   setClientId(client: string): void { this.clientIdValue = client; }
 
-  private reconcileQueue(): void {
-    try { this.queue.confirmConsumed(); } catch (error) {
+  private async reconcileQueue(): Promise<void> {
+    try { await this.queue.confirmConsumed(); } catch (error) {
       this.host.output({ type: 'diagnostic', line: 'Queued input retained for review: ' + errorText(error) });
     }
   }
@@ -244,7 +255,7 @@ export class Session {
   publishState(): void {
     const messageable = this.unused();
     if (this.isTransient) return;
-    this.host.output({ type: 'session_state', sessionKey: this.key, state: clone(this.state), working: this.isWorking, messageable });
+    this.host.output({ type: 'session_state', sessionKey: this.key, epoch: this.epoch, state: clone(this.state), working: this.isWorking, messageable });
   }
 
   private publishPresence(): void {
@@ -286,6 +297,13 @@ export class Session {
   async stop(): Promise<void> {
     this.isStopping = true;
     if (this.worker) await this.worker.stop();
+    await this.events;
+    await this.queue.flush();
+  }
+
+  async drain(): Promise<void> {
+    await this.events;
+    await this.queue.drain();
   }
 
   async activateUsageRecovery(): Promise<void> {
@@ -316,13 +334,20 @@ export class Session {
   private finish(): void {
     if (this.isClosed) return;
     this.isClosed = true;
+    this.queue.close();
+    void this.inOrder(() => this.finishQueue());
+  }
+
+  private async finishQueue(): Promise<void> {
     this.dialogs = [];
     const key = this.key;
     const transient = this.isTransient;
-    this.queue.receive({ type: 'disconnected' });
-    const pending = this.queue.pending();
-    this.host.finished(key, this.epoch, pending, transient);
-    if (!transient) this.host.output({ type: 'session_closed', sessionKey: key, state: this.savedState(), submitted: this.submitted() });
+    try {
+      await this.queue.receive({ type: 'disconnected' });
+      await this.queue.flush();
+    } finally {
+      this.host.finished(key, this.epoch, transient);
+    }
   }
 
   raw(command: any): Promise<any> { return this.rawAs(command, kind(command), null); }
@@ -394,15 +419,15 @@ export class Session {
 
   // Events from Pi.
 
-  private receive(event: any): void {
+  private async receive(event: any): Promise<void> {
     if (kind(event) === 'queue_consumed') {
-      if (event.sessionId === this.identity) this.queue.consumed(text(event, 'queueId'));
+      if (event.sessionId === this.identity) await this.queue.consumed(text(event, 'queueId'));
       return;
     }
     if (kind(event) === 'agent_settled' || (kind(event) === 'message_end' && event.message?.role === 'assistant')) Registry.record(this.state, this.cwd);
     this.retainLive(event);
     if (kind(event) === 'extension_ui_request') {
-      const next = this.receiveExtension(event);
+      const next = await this.receiveExtension(event);
       if (next === undefined) return;
       event = next;
     }
@@ -411,7 +436,7 @@ export class Session {
       const command = path.startsWith('command:') ? path.slice(8) : '';
       this.commandErrors.set(command, typeof event.error === 'string' ? event.error : 'Extension command failed');
     }
-    this.queue.receive(event);
+    await this.queue.receive(event);
   }
 
   private retainLive(event: any): void {
@@ -468,8 +493,8 @@ export class Session {
     }
   }
 
-  private receiveExtension(event: any): any | undefined {
-    if (event.method === 'setStatus' && this.receiveStatus(event)) return undefined;
+  private async receiveExtension(event: any): Promise<any | undefined> {
+    if (event.method === 'setStatus' && await this.receiveStatus(event)) return undefined;
     if (event.method === 'notify' && event.notifyType === 'error' && jsonEqual(event.message, this.inputRejection?.error)) event.inputRejected = true;
     if (['setStatus', 'setWidget', 'setTitle'].includes(event.method)) {
       const key = text(event, 'method') + ':' + (typeof event.statusKey === 'string' ? event.statusKey : typeof event.widgetKey === 'string' ? event.widgetKey : '');
@@ -494,7 +519,7 @@ export class Session {
     this.routeDialogs();
   }
 
-  private receiveStatus(event: any): boolean {
+  private async receiveStatus(event: any): Promise<boolean> {
     const parsed = (): { ok: true; value: any } | { ok: false; error: string } => {
       try { return { ok: true, value: JSON.parse(typeof event.statusText === 'string' ? event.statusText : '') }; }
       catch (error) { return { ok: false, error: errorText(error) }; }
@@ -503,7 +528,7 @@ export class Session {
       case 'piop-async-questions': case 'piop-async-question-recovery': {
         const result = parsed();
         if (!result.ok) { this.host.output({ type: 'diagnostic', line: result.error }); return true; }
-        if (event.statusKey === 'piop-async-question-recovery') this.queue.recoverQuestionAnswers(result.value);
+        if (event.statusKey === 'piop-async-question-recovery') await this.queue.recoverQuestionAnswers(result.value);
         else this.receiveQuestions(result.value);
         return true;
       }
@@ -659,16 +684,16 @@ export class Session {
     }
   }
 
-  private response(event: any, request: Request): any {
-    const goal = this.rejectGoalPreparation(event, request);
+  private async response(event: any, request: Request): Promise<any> {
+    const goal = await this.rejectGoalPreparation(event, request);
     if (goal) { if ('error' in goal) throw new Error(goal.error); return goal.value; }
     try { this.responseError(event, request); } catch (error) {
-      if (flag(request.command, 'discardOnRejection')) this.queue.rejected(text(request.command, 'queueId'));
+      if (flag(request.command, 'discardOnRejection')) await this.queue.rejected(text(request.command, 'queueId'));
       throw error;
     }
     const data = event?.data === undefined ? null : event.data;
     if (request.requestType === 'get_entries' || request.requestType === 'get_snapshot_entries') this.queue.tagEntries(data);
-    if (request.requestType === 'get_state') this.receiveState(data);
+    if (request.requestType === 'get_state') await this.receiveState(data);
     if (request.requestType === 'get_snapshot_entries') return this.snapshotResponse(data, request);
     return data;
   }
@@ -678,12 +703,12 @@ export class Session {
     if (!flag(event, 'success')) throw new Error(typeof event?.error === 'string' ? event.error : 'Pi command failed');
   }
 
-  private rejectGoalPreparation(event: any, request: Request): { value: any } | { error: string } | undefined {
+  private async rejectGoalPreparation(event: any, request: Request): Promise<{ value: any } | { error: string } | undefined> {
     if (flag(event, 'success') || event?.rejection !== 'goal_preparation') return undefined;
     if (request.requestType === 'queue_prompt' && !flag(request.command, 'discardOnRejection')) {
       return { error: typeof event.error === 'string' ? event.error : 'Goal prompt preparation failed' };
     }
-    if (flag(request.command, 'discardOnRejection')) this.queue.rejected(text(request.command, 'queueId'));
+    if (flag(request.command, 'discardOnRejection')) await this.queue.rejected(text(request.command, 'queueId'));
     return { value: false };
   }
 
@@ -698,7 +723,7 @@ export class Session {
     }
   }
 
-  private receiveState(data: any): void {
+  private async receiveState(data: any): Promise<void> {
     if (!jsonEqual(this.state?.sessionId, data?.sessionId)) Registry.record(data, this.cwd);
     this.state = clone(data);
     const id = data?.sessionId;
@@ -708,7 +733,7 @@ export class Session {
       this.key = id;
     }
     if (rekey) this.host.rekey(rekey[0], rekey[1], this.epoch);
-    this.reconcileQueue();
+    await this.reconcileQueue();
     this.publishState();
   }
 

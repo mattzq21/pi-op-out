@@ -1,17 +1,18 @@
+import fileLockSource from '../resources/file-lock.cjs?raw';
 import sessionDatabase from '../resources/session-database.cjs?raw';
 import appSettingsCjs from '../resources/session-broker/app-settings.cjs?raw';
 import relocateSessionBundle from '../resources/relocate-session.bundle.mjs?raw';
 import storageTransactionBundle from '../resources/storage-transaction.bundle.mjs?raw';
 import transcriptReferences from '../resources/transcript-references.cjs?raw';
-import sdkStorage from '../resources/sdk-storage.mjs?raw';
+import sdkStorageRaw from '../resources/sdk-storage.mjs?raw';
 import sessionRegistryBundle from '../resources/session-registry.bundle.mjs?raw';
 import agentCommands from '../resources/agent-commands.json?raw';
 import goalDependencies from '../resources/session-broker/goal-dependencies.cjs?raw';
-import sdkStorageBundle from '../resources/sdk-storage.bundle.mjs?raw';
+import sdkStorageBundleRaw from '../resources/sdk-storage.bundle.mjs?raw';
 import providerSdk from '../resources/provider-sdk.mjs?raw';
 import fastCapabilities from '../resources/fast-capabilities.mjs?raw';
 import chatgptStream from '../resources/chatgpt-stream.mjs?raw';
-import chatgptStorage from '../resources/chatgpt-storage.mjs?raw';
+import chatgptStorageRaw from '../resources/chatgpt-storage.mjs?raw';
 import chatgptService from '../resources/chatgpt-service.mjs?raw';
 import agentDefinitionsBundle from '../resources/agent-definitions.bundle.mjs?raw';
 import reviewPrompt from '../resources/session-broker/review-prompt.txt?raw';
@@ -35,7 +36,7 @@ import rtkExtension from '../../extensions/piop-rtk/rtk.ts?raw';
 import openaiCacheForkExtension from '../../extensions/piop-openai-cache-fork/index.ts?raw';
 import diagramsExtension from '../../extensions/piop-diagrams/index.ts?raw';
 import agentState from '../../extensions/piop-define-agents/state.ts?raw';
-import agentPrompts from '../../extensions/piop-define-agents/prompts.ts?raw';
+import agentPromptsRaw from '../../extensions/piop-define-agents/prompts.ts?raw';
 import agentProfiles from '../../extensions/piop-define-agents/profiles.ts?raw';
 import agentMcpConfig from '../../extensions/piop-define-agents/mcp-config.ts?raw';
 import definedAgentsExtension from '../../extensions/piop-define-agents/index.ts?raw';
@@ -64,7 +65,7 @@ import brokerModule8 from '../resources/session-broker/session-file.ts?raw';
 import brokerModule9 from '../resources/session-broker/session-child-index.cjs?raw';
 import brokerModule10 from '../resources/session-broker/session-child-index.d.cts?raw';
 import brokerModule11 from '../resources/session-broker/session-publication.cjs?raw';
-import brokerModule12 from '../resources/session-broker/session-publication-io.cjs?raw';
+import brokerModule12Raw from '../resources/session-broker/session-publication-io.cjs?raw';
 import brokerModule13 from '../resources/session-broker/session-publication-dependencies.cjs?raw';
 import brokerModule14 from '../resources/session-broker/review-publication.cjs?raw';
 import brokerModule15 from '../resources/session-broker/session-publication.d.cts?raw';
@@ -77,7 +78,7 @@ import brokerModule21 from '../resources/session-broker/orchestration.ts?raw';
 import brokerModule22 from '../resources/session-broker/durable-mailbox.ts?raw';
 import brokerModule23 from '../resources/session-broker/agent-profiles.ts?raw';
 import brokerModule24 from '../resources/session-broker/subagent-usage.ts?raw';
-import brokerModule25 from '../resources/session-broker/subagent-usage-channel.ts?raw';
+import brokerModule25Raw from '../resources/session-broker/subagent-usage-channel.ts?raw';
 import brokerModule26 from '../resources/session-broker/subagent-mailbox.ts?raw';
 import brokerModule27 from '../resources/session-broker/subagent-results.ts?raw';
 import brokerModule28 from '../resources/session-broker/subagent-recovery.ts?raw';
@@ -91,14 +92,35 @@ import brokerModule35 from '../resources/session-broker/goal-state.ts?raw';
 import brokerModule36 from '../resources/session-broker/goal-storage.cjs?raw';
 import brokerModule37 from '../resources/session-broker/goal-controls.ts?raw';
 import brokerModule38 from '../resources/session-broker/goal-coordination.ts?raw';
-import brokerModule39 from '../resources/session-broker/reference-publication-lock.cjs?raw';
-import brokerModule40 from '../resources/session-broker/goal-files.ts?raw';
+import brokerModule39Raw from '../resources/session-broker/reference-publication-lock.cjs?raw';
+import brokerModule40Raw from '../resources/session-broker/goal-files.ts?raw';
 import brokerModule41 from '../resources/session-broker/goal-dependencies.cjs?raw';
 import brokerModule42 from '../resources/session-broker/goal-prepared-files.cjs?raw';
 import brokerModule43 from '../resources/session-broker/goal-preparations.cjs?raw';
 import brokerModule44 from '../resources/session-broker/goal-ownership.cjs?raw';
-import brokerModule45 from '../resources/session-broker/goal-assets.cjs?raw';
+import brokerModule45Raw from '../resources/session-broker/goal-assets.cjs?raw';
 import brokerModule46 from '../resources/session-broker/goal-prompts.ts?raw';
+
+
+const bunEnvironment = 'process.env.PIOP_BUN = ' + JSON.stringify(process.execPath) + ';\n';
+const sdkStorageBundle = bunEnvironment + sdkStorageBundleRaw;
+const fileLockModule = fileLockSource
+  .replace("const { spawn, spawnSync } = require('node:child_process');", "import { spawn, spawnSync } from 'node:child_process';")
+  .replace('module.exports = { lockSync, lock, bunExecutable, shellLock };', 'export { lockSync, lock, bunExecutable, shellLock };');
+const fileLockUrl = 'data:text/javascript;base64,' + Buffer.from(fileLockModule).toString('base64');
+function embedFileLock(source: string): string {
+  return source
+    .replace(/from ["'][^"']*file-lock\.cjs["']/g, 'from ' + JSON.stringify(fileLockUrl))
+    .replace(/require\(['"][^'"]*file-lock\.cjs['"]\)/g, () => '(function () { const module = { exports: {} }; ' + fileLockSource + '; return module.exports; })()');
+}
+const sdkStorage = embedFileLock(sdkStorageRaw);
+const chatgptStorage = bunEnvironment + embedFileLock(chatgptStorageRaw);
+const agentPrompts = embedFileLock(agentPromptsRaw);
+const brokerModule12 = embedFileLock(brokerModule12Raw);
+const brokerModule25 = embedFileLock(brokerModule25Raw);
+const brokerModule39 = embedFileLock(brokerModule39Raw);
+const brokerModule40 = embedFileLock(brokerModule40Raw);
+const brokerModule45 = embedFileLock(brokerModule45Raw);
 
 export {
   storageInventoryBundle,

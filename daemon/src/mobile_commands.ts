@@ -52,7 +52,7 @@ function hostId(args: any): string { return argument(args, 'hostId', 'string?') 
 export async function dispatch(app: App, owner: string, command: string, args: any): Promise<any> {
   const release = await app.restart.gate.read();
   try {
-    if (daemonRestart.blocking() && command !== 'daemon_restart_status') throw new Error(RESTARTING);
+    if ((await daemonRestart.blocking()) && command !== 'daemon_restart_status') throw new Error(RESTARTING);
     const routed = await peers.route(app, owner, command, args);
     if (routed !== undefined) return routed;
   } finally { release(); }
@@ -75,7 +75,7 @@ async function dispatchLocal(app: App, owner: string, command: string, args: any
     try { return await daemonRestart.prepare(app, args); } finally { release(); }
   }
   if (command === 'plugin_call') {
-    if (daemonRestart.blocking()) throw new Error(RESTARTING);
+    if (await daemonRestart.blocking()) throw new Error(RESTARTING);
     return dispatchCommand(app, owner, command, args);
   }
   let release: (() => void) | undefined;
@@ -84,7 +84,7 @@ async function dispatchLocal(app: App, owner: string, command: string, args: any
     if (!release) throw new Error('The remote daemon is preparing a restart');
   } else release = await app.restart.gate.read();
   try {
-    if (daemonRestart.blocking()) throw new Error(RESTARTING);
+    if (await daemonRestart.blocking()) throw new Error(RESTARTING);
     return await dispatchCommand(app, owner, command, args);
   } finally { release(); }
 }

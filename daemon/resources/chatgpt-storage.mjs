@@ -1,10 +1,10 @@
+import { lock as chatStoreLock } from "./file-lock.cjs";
 import * as chatStoreFs from 'node:fs';
 import { DatabaseSync as ChatStoreDatabase } from 'node:sqlite';
 import { mkdir as chatStoreMkdir, lstat as chatStoreLstat, open as chatStoreOpen } from 'node:fs/promises';
 import { constants as chatStoreConstants } from 'node:fs';
 import { join as chatStoreJoin } from 'node:path';
 import { createHash as chatStoreHash, randomUUID as chatStoreUuid } from 'node:crypto';
-import { spawn as chatStoreSpawn } from 'node:child_process';
 
 const chatGptDatabases = new Map();
 
@@ -81,18 +81,7 @@ async function chatGptLock(identity, id) {
   try {
     if (!(await handle.stat()).isFile()) throw new Error('Invalid ChatGPT storage lock file.');
 
-    const code = await new Promise((resolve, reject) => {
-      const child = chatStoreSpawn('flock', ['--exclusive', '--nonblock', '--conflict-exit-code', '75', '3'], {
-        stdio: ['ignore', 'ignore', 'ignore', handle.fd], timeout: 5000, killSignal: 'SIGKILL',
-      });
-
-      child.once('error', reject);
-      child.once('close', resolve);
-    });
-
-    if (code === 0) return handle;
-
-    if (code !== 75) throw new Error('Could not acquire the shared ChatGPT storage lock. Check that flock is available on this host.');
+    if (await chatStoreLock(handle.fd, false, true)) return handle;
   } catch (error) { await handle.close(); throw error; }
 
   await handle.close();

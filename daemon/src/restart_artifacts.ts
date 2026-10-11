@@ -7,21 +7,19 @@ import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
 import * as endpoint from './daemon_endpoint';
 import * as restartStorage from './restart_storage';
 import { daemonScript } from './session_worker';
-import { lockPathSync, type FileLock } from './util/flock';
+import { lockPath, lockPathSync, type FileLock } from './util/flock';
 
 const SERVE_MODES = ['--serve', '--exit-on-disconnect', '--restart-candidate', '--restart-coordinator'];
-const RUNNING_EXECUTABLE = Bun.isStandaloneExecutable && process.platform === 'linux' ? '/proc/self/exe' : undefined;
+const RUNNING_EXECUTABLE = Bun.isStandaloneExecutable ? '/proc/self/exe' : undefined;
 let runningBytes: Buffer | undefined;
 let runningBytesError: string | undefined;
 
 function mode(): string | undefined { return process.argv[2]; }
 
 /**
- * Tells if the file holds the daemon that is running now.
- * A script build must hash to its own build ID. A compiled build also holds the Bun runtime, so it must contain the ID.
+ * Checks script bytes against the running daemon's build ID.
  */
 function isRunningBuild(bytes: Buffer, id: string): boolean {
-  if (Bun.isStandaloneExecutable) return bytes.includes(id);
   return id === 'piop-build-' + createHash('sha256').update(bytes.toString('utf8').replaceAll(id, '')).digest('hex');
 }
 
@@ -40,46 +38,68 @@ function identity(id: unknown): string {
 
 function name(id: string): string { return 'restart-' + id; }
 
-function openLock(path: string, options: { shared?: boolean; blocking?: boolean }): FileLock | undefined {
-  const lock = lockPathSync(path, { shared: options.shared, blocking: (options.blocking ?? true) as false });
-  if (lock) setPrivateFilePermissions(path);
+async function openLock(path: string, options: { shared?: boolean }): Promise<FileLock> {
+  const lock = await lockPath(path, { ...options, blocking: true });
+  if (!lock) throw new Error('Could not lock ' + path);
+  try { setPrivateFilePermissions(path); } catch (error) { lock.release(); throw error; }
   return lock;
 }
 
-function gate(root: string): FileLock { return openLock(join(root, 'restart-artifacts.lock'), {})!; }
+const gates = new Map<string, Promise<void>>();
 
-function withGate<T>(root: string, operation: () => T): T {
-  const lock = gate(root);
-  try { return operation(); } finally { lock.release(); }
+async function gate(root: string): Promise<FileLock> {
+  const previous = gates.get(root);
+  let finish!: () => void;
+  const pending = new Promise<void>(resolve => { finish = resolve; });
+  gates.set(root, pending);
+  const done = () => {
+    if (gates.get(root) === pending) gates.delete(root);
+    finish();
+  };
+  await previous;
+  try {
+    const lock = await openLock(join(root, 'restart-artifacts.lock'), {});
+    const release = lock.release.bind(lock);
+    lock.release = () => { try { release(); } finally { done(); } };
+    return lock;
+  } catch (error) { done(); throw error; }
+}
+
+async function withGate<T>(root: string, operation: () => T | Promise<T>): Promise<T> {
+  const lock = await gate(root);
+  try {
+    const result = operation();
+    return result instanceof Promise ? await result : result;
+  } finally { lock.release(); }
 }
 
 /** Holds the lock that keeps restart files from removal. Call release() when done. */
-export function publicationLock(): FileLock { return gate(directory()); }
+export function publicationLock(): Promise<FileLock> { return gate(directory()); }
 
-function leaseAt(root: string, id: string): FileLock {
+function leaseAt(root: string, id: string): Promise<FileLock> {
   identity(id);
-  return openLock(join(root, 'restart-' + id + '.lock'), { shared: true })!;
+  return openLock(join(root, 'restart-' + id + '.lock'), { shared: true });
 }
 
 function recordPath(root: string, id: string): string { return join(root, 'restart-' + id + '.artifact.json'); }
 
 function hash(path: string): string { return createHash('sha256').update(readFileSync(path)).digest('hex'); }
 
-/** A copy of the running daemon script, kept so a failed restart can roll back. */
+/** Copies /proc/self/exe or saved script bytes so a failed restart can roll back. */
 export class Backup {
   private handedOff = false;
   private constructor(readonly path: string, private id: string, private lease: FileLock | undefined, private references: FileLock[]) {}
 
-  static create(id: string, executable: string): Backup {
+  static async create(id: string, executable: string): Promise<Backup> {
     identity(id);
     const root = directory();
     const references: FileLock[] = [];
-    const reference = referenceLease(executable);
+    const reference = await referenceLease(executable);
     if (reference) references.push(reference);
     let reserved: [string, FileLock];
-    try { reserved = reserve(root, id); } catch (error) { for (const lock of references) lock.release(); throw error; }
+    try { reserved = await reserve(root, id); } catch (error) { for (const lock of references) lock.release(); throw error; }
     const backup = new Backup(reserved[0], id, reserved[1], references);
-    try { backup.copy(root); } catch (error) { backup.drop(); throw error; }
+    try { backup.copy(root); } catch (error) { await backup.drop(); throw error; }
     return backup;
   }
 
@@ -95,26 +115,30 @@ export class Backup {
     restartStorage.saveBackup(root, this.id, { id: this.id, digest: hash(this.path) });
   }
 
-  handOff(): void { this.handedOff = true; this.drop(); }
+  handOff(): void { this.handedOff = true; this.releaseLeases(); }
 
-  drop(): void {
+  private releaseLeases(): void {
     this.lease?.release();
     this.lease = undefined;
     for (const lock of this.references.splice(0)) lock.release();
+  }
+
+  async drop(): Promise<void> {
+    this.releaseLeases();
     if (this.handedOff) return;
     this.handedOff = true;
-    try { cleanupFailed(this.id); } catch (error: any) { console.error('Restart preparation cleanup remains pending for ' + this.path + ': ' + (error?.message ?? error)); }
+    try { await cleanupFailed(this.id); } catch (error: any) { console.error('Restart preparation cleanup remains pending for ' + this.path + ': ' + (error?.message ?? error)); }
   }
 }
 
-function reserve(root: string, id: string): [string, FileLock] {
-  return withGate(root, () => {
-    const lease = leaseAt(root, id);
+function reserve(root: string, id: string): Promise<[string, FileLock]> {
+  return withGate(root, async () => {
+    const lease = await leaseAt(root, id);
     const target = join(root, name(id));
     try {
       closeSync(openSync(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o700));
       try { restartStorage.saveBackup(root, id, { id, digest: null }); }
-      catch (error) { try { unlinkSync(target); } catch {} throw error; }
+      catch (error) { try { unlinkSync(target); } catch (failure) { console.error(failure); } throw error; }
     } catch (error) { lease.release(); throw error; }
     return [target, lease];
   });
@@ -125,14 +149,19 @@ function activePhase(status: any): boolean {
 }
 
 function tryExclusive(root: string, id: string): FileLock | undefined {
-  return openLock(join(root, 'restart-' + id + '.lock'), { blocking: false });
+  const path = join(root, 'restart-' + id + '.lock');
+  const lock = lockPathSync(path, { blocking: false });
+  if (lock) {
+    try { setPrivateFilePermissions(path); } catch (error) { lock.release(); throw error; }
+  }
+  return lock;
 }
 
-export function activePlan(): boolean {
+export function activePlan(owner?: number): Promise<boolean> {
   const root = directory();
   return withGate(root, () => {
     const plan = restartStorage.read(join(root, 'restart-plan.json'));
-    if (!plan) return false;
+    if (!plan || (owner !== undefined && plan.owner !== owner)) return false;
     return activePlanAt(root, plan);
   });
 }
@@ -165,16 +194,16 @@ function backupId(path: string): string | undefined {
   try { return identity(file.slice('restart-'.length)); } catch { return undefined; }
 }
 
-function currentLeases(root: string): FileLock[] {
-  return withGate(root, () => {
+function currentLeases(root: string): Promise<FileLock[]> {
+  return withGate(root, async () => {
     const leases: FileLock[] = [];
     try {
-      const reference = referenceLease(daemonScript());
+      const reference = await referenceLease(daemonScript());
       if (reference) leases.push(reference);
       const plan = operationPlan(root);
       if (plan) {
-        leases.push(leaseAt(root, identity(plan.id)));
-        leases.push(...planReferences(plan));
+        leases.push(await leaseAt(root, identity(plan.id)));
+        leases.push(...await planReferences(plan));
       }
     } catch (error) { for (const lease of leases) lease.release(); throw error; }
     return leases;
@@ -192,7 +221,7 @@ function operationPlan(root: string): any {
   return plan;
 }
 
-function referenceLease(path: string): FileLock | undefined {
+async function referenceLease(path: string): Promise<FileLock | undefined> {
   const id = backupId(path);
   if (id === undefined) return undefined;
   const root = realpathSync(dirname(path));
@@ -201,37 +230,48 @@ function referenceLease(path: string): FileLock | undefined {
   return leaseAt(root, id);
 }
 
-function planReferences(plan: any): FileLock[] {
+async function planReferences(plan: any): Promise<FileLock[]> {
   const leases: FileLock[] = [];
-  for (const field of ['executable', 'fallback']) {
-    if (typeof plan[field] !== 'string') { for (const lease of leases) lease.release(); throw new Error('Invalid restart executable path'); }
-    const lease = referenceLease(plan[field]);
-    if (lease) leases.push(lease);
-  }
-  return leases;
+  try {
+    for (const field of ['executable', 'fallback']) {
+      if (typeof plan[field] !== 'string') throw new Error('Invalid restart executable path');
+      const lease = await referenceLease(plan[field]);
+      if (lease) leases.push(lease);
+    }
+    return leases;
+  } catch (error) { for (const lease of leases) lease.release(); throw error; }
 }
 
 let leases: FileLock[] | undefined;
 let started = false;
 
-export function initialize(): void {
+let initializing: Promise<void> | undefined;
+
+export function initialize(): Promise<void> {
+  return initializing ??= initializeOnce().finally(() => { initializing = undefined; });
+}
+
+async function initializeOnce(): Promise<void> {
   if (!RUNNING_EXECUTABLE && SERVE_MODES.includes(mode() ?? '') && !runningBytes && !runningBytesError) {
     if (typeof __PIOP_BUILD_ID__ !== 'string' || !__PIOP_BUILD_ID__) runningBytesError = 'The daemon build ID is unavailable. Restart Piop manually.';
     else {
-      const bytes = readFileSync(daemonScript());
-      if (isRunningBuild(bytes, __PIOP_BUILD_ID__)) runningBytes = bytes;
-      else runningBytesError = 'The daemon file changed after this daemon started. Restart Piop manually.';
+      try {
+        const bytes = readFileSync(daemonScript());
+        if (isRunningBuild(bytes, __PIOP_BUILD_ID__)) runningBytes = bytes;
+        else runningBytesError = 'The daemon file changed after this daemon started. Restart Piop manually.';
+      } catch (error: any) { runningBytesError = (error?.message ?? 'Could not save the running daemon for restart.') + ' Restart Piop manually.'; }
     }
   }
   if (!needsLease()) return;
-  if (!leases) leases = currentLeases(directory());
+  if (!leases) leases = await currentLeases(directory());
   if (!SERVE_MODES.includes(mode() ?? '')) return;
   if (started) return;
   started = true;
-  setInterval(() => {
-    try { reconcile(); } catch (error: any) { console.error('Restart artifact cleanup remains pending: ' + (error?.message ?? error)); }
-  }, 30_000).unref();
-  setImmediate(() => { try { reconcile(); } catch (error: any) { console.error('Restart artifact cleanup remains pending: ' + (error?.message ?? error)); } });
+  const cleanup = async () => {
+    try { await reconcile(); } catch (error: any) { console.error('Restart artifact cleanup remains pending: ' + (error?.message ?? error)); }
+    finally { setTimeout(cleanup, 30_000).unref(); }
+  };
+  setImmediate(cleanup);
 }
 
 function needsLease(): boolean {
@@ -239,9 +279,9 @@ function needsLease(): boolean {
   return backupId(daemonScript()) !== undefined;
 }
 
-function cleanupFailed(id: string): void {
+function cleanupFailed(id: string): Promise<void> {
   const root = directory();
-  withGate(root, () => {
+  return withGate(root, () => {
     const lease = tryExclusive(root, id);
     if (!lease) return;
     try {
@@ -267,16 +307,22 @@ function removeBackup(root: string, id: string): void {
   restartStorage.removeBackup(root, id);
 }
 
-export function reconcile(): void {
+const reconciliations = new Map<string, Promise<void>>();
+
+export function reconcile(): Promise<void> {
   const root = directory();
-  withGate(root, () => {
+  const current = reconciliations.get(root);
+  if (current) return current;
+  const pending = withGate(root, () => {
     const plan = restartStorage.read(join(root, 'restart-plan.json'));
     const status = restartStorage.read(join(root, 'restart-status.json'));
     for (const id of restartStorage.backups(root)) {
       identity(id);
       reconcileBackup(root, join(root, name(id)), id, plan, status);
     }
-  });
+  }).finally(() => { reconciliations.delete(root); });
+  reconciliations.set(root, pending);
+  return pending;
 }
 
 function reconcileBackup(root: string, path: string, id: string, plan: any, status: any): void {
@@ -325,7 +371,6 @@ function recordMatches(path: string, id: string): boolean | undefined {
 function unusedExecutable(path: string): boolean {
   let artifact;
   try { artifact = statSync(path); } catch (error: any) { if (error?.code === 'ENOENT') return true; throw error; }
-  if (process.platform !== 'linux') return false;
   const id = backupId(path);
   for (const entry of readdirSync('/proc')) {
     if (!/^[0-9]+$/.test(entry)) continue;

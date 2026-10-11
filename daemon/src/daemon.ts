@@ -22,6 +22,7 @@ export class Daemon {
   pending = new Map<string, Pending>();
   supervisor: host.Supervisor | undefined;
   private queued: any[] = [];
+  readonly sessionEpochs = new Map<string, string>();
 
   constructor(readonly hostId: string, readonly connectionConfig: string | undefined) {
     this.agentPrefix = 'daemon:' + hostId + ':' + randomUUID() + ':';
@@ -49,6 +50,7 @@ export class Daemon {
     this.alive = false;
     for (const pending of this.pending.values()) pending.reject(new Error('Host daemon disconnected'));
     this.pending.clear();
+    this.sessionEpochs.clear();
     const ids = runtime.disconnectDaemon(this);
     for (const key of [...runtime.activeAgents.keys()]) if (key.startsWith(this.agentPrefix) || ids.includes(key)) runtime.activeAgents.delete(key);
     for (const id of ids) app.emit('pi://event', { runtimeId: id, event: { type: 'disconnected' } });
@@ -177,6 +179,7 @@ function handleSessionState(app: App, connection: Daemon, hostId: string, packet
   if (sessionId !== undefined) {
     for (const agent of app.pi.activeAgents.values()) if (agent.hostId === hostId && agent.sessionId === sessionId) agent.working = working;
   }
+  if (typeof packet.epoch === 'string') connection.sessionEpochs.set(key, packet.epoch);
   app.pi.activeAgents.set(key, { hostId, sessionId, sessionPath: typeof state.sessionFile === 'string' ? state.sessionFile : undefined, working, messageable: packet.messageable === true });
   app.emit('pi://sessions-changed', null);
 }
@@ -192,10 +195,14 @@ function handlePacket(app: App, connection: Daemon, hostId: string, packet: any)
     }
     case 'event': return handleEvent(app, connection, packet);
     case 'session_state': return handleSessionState(app, connection, hostId, packet);
-    case 'session_closed':
-      app.pi.activeAgents.delete(connection.agentPrefix + (typeof packet.sessionKey === 'string' ? packet.sessionKey : ''));
+    case 'session_closed': {
+      const key = connection.agentPrefix + (typeof packet.sessionKey === 'string' ? packet.sessionKey : '');
+      if (typeof packet.epoch !== 'string' || connection.sessionEpochs.get(key) !== packet.epoch) return;
+      connection.sessionEpochs.delete(key);
+      app.pi.activeAgents.delete(key);
       app.emit('pi://sessions-changed', null);
       return;
+    }
     case 'session_removed': app.emit('pi://session-removed', { hostId, sessionId: packet.sessionId ?? null, sessionPath: packet.sessionPath ?? null }); return;
     case 'stderr': app.emit('pi://stderr', packet); return;
     case 'provider_auth_changed': app.emit('pi://provider-auth-changed', { hostId, flow: packet.flow ?? null }); return;

@@ -1,3 +1,4 @@
+import { shellLock, bunExecutable } from "../file-lock.cjs";
 import { execFile } from "node:child_process";
 import { lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -85,12 +86,12 @@ async function updateChannel(path: string, sessionId: string, action: "claim" | 
 
   if (action === "claim") {
     const directory = await channelDirectory(path);
-    args = ["--exclusive", "--wait", "10", "--no-fork", join(directory, "subagent-usage.lock"), command, ...args];
-    command = "flock";
+    args = ["-c", 'exec 9<>"$1" || exit 1; shift; ' + shellLock(9, false, 10_000) + '; code=$?; [ "$code" = 75 ] && exit 1; [ "$code" = 0 ] || exit "$code"; exec "$@"', "piop-usage", join(directory, "subagent-usage.lock"), command, ...args];
+    command = "sh";
   }
 
   return new Promise<void>((resolve, reject) => {
-    const child = execFile(command, args, { timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 16_384, encoding: "utf8" }, (error, _output, stderr) => {
+    const child = execFile(command, args, { env: { ...process.env, PIOP_BUN: bunExecutable() }, timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 16_384, encoding: "utf8" }, (error, _output, stderr) => {
       if (error) reject(new Error(`Could not ${action} subagent usage channel: ${stderr.trim() || error.message}`));
       else resolve();
     });

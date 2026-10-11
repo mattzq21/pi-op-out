@@ -1,3 +1,4 @@
+const { shellLock, bunExecutable } = require('./file-lock.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -24,9 +25,8 @@ function lockStorage(root, nonblocking = false) {
       if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid storage transaction lock');
     }
 
-    const option = nonblocking ? '--nonblock --conflict-exit-code 75' : '';
-    const command = [4, 5, 3, 6].map(fd => `flock --exclusive ${option} ${fd} || exit $?`).join('; ') + '; exec "$@"';
-    const child = spawnSync('sh', ['-c', command, 'piop-storage', process.execPath, ...process.execArgv, '--', ...process.argv.slice(1), '--storage-transaction-locked'], { stdio: ['inherit', 'inherit', 'inherit', ...descriptors] });
+    const command = [4, 5, 3, 6].map(fd => `${shellLock(fd, nonblocking)} || exit $?`).join('; ') + '; exec "$@"';
+    const child = spawnSync('sh', ['-c', command, 'piop-storage', process.execPath, ...process.execArgv, '--', ...process.argv.slice(1), '--storage-transaction-locked'], { env: { ...process.env, PIOP_BUN: bunExecutable() }, stdio: ['inherit', 'inherit', 'inherit', ...descriptors] });
 
     if (child.error) throw child.error;
     process.exitCode = transactionExitCode(child.status, nonblocking);
