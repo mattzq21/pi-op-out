@@ -169,7 +169,7 @@ export function DictationSettings(props: { settings: AppSettings; onChange: (pat
           onPath={path => props.onChange({ dictationEngines: updateEntry(type, { path }) })} onRemove={() => removeEngine(type)} />}</For>
         <Show when={unsaved().length}>
           <li class="dictation-engine-add">
-            <Show when={adding()} fallback={<button type="button" class="dictation-engine-add-button" onClick={() => setAdding(true)}><Plus size={18} />Add engine</button>}>
+            <Show when={adding()} fallback={<button type="button" class="dictation-engine-add-button" onClick={() => setAdding(true)}><Plus size={14} />Add engine</button>}>
               <div class="dictation-add-engine">
                 <For each={unsaved()}>{type => <button type="button" class="dictation-engine-option" onClick={() => addEngine(type)}><Plus size={13} />{engines[type].label}</button>}</For>
                 <button type="button" class="dictation-link" onClick={() => setAdding(false)}>Cancel</button>
