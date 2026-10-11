@@ -11,6 +11,7 @@ import * as endpoint from './daemon_endpoint';
 import * as daemonRestart from './daemon_restart';
 import * as records from './settings_records';
 import * as mobileCommands from './mobile_commands';
+import { responseErrorText } from './storage_transactions';
 import { detachOwner } from './lifecycle';
 import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
 import { acceptUpgrade, reject, type WebSocketConnection } from './ws_server';
@@ -240,7 +241,7 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
         try {
           const result = peer ? await mobileCommands.dispatchPeer(app, owner, command, args) : await mobileCommands.dispatch(app, owner, command, args);
           response = { id, result: result === undefined ? null : result };
-        } catch (error) { response = { id, error: errorText(error) }; }
+        } catch (error) { response = { id, error: responseErrorText(error) }; }
         finally { permit(); }
         const restartId = typeof response.result?.restartId === 'string' ? response.result.restartId : undefined;
         send(JSON.stringify(response), restartId);

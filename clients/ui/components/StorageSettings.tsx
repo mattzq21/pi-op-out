@@ -7,6 +7,7 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Archive, Database, FolderClock, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
 import { deleteArchivedConversations, loadStorageReport, openGroupDirectory } from "../lib/nativeTransport";
+import { storageFailureText } from "../lib/storageFailure";
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport, StorageRoot } from "../types";
 
 function includesTemporaryFolder(host: HostStorage, archives: ArchivedConversation[]) {
@@ -147,7 +148,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
     const removed = new Set<string>();
 
     try { for (const path of await deleteArchivedConversations(archives.map(archive => archive.path), host.hostId)) removed.add(path); }
-    catch (reason) { failure = reason instanceof Error ? reason.message : String(reason); }
+    catch (reason) { failure = storageFailureText("delete", reason, archives.length); }
 
     if (removed.size) setReport((current) => current ? { hosts: current.hosts.map((candidate) => candidate.hostId === host.hostId ? { ...candidate, archives: candidate.archives.filter((archive) => !removed.has(archive.path)) } : candidate) } : current);
     setDeleting((current) => { const next = new Set(current); keys.forEach((key) => next.delete(key));

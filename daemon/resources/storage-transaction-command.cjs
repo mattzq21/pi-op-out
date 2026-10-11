@@ -90,4 +90,5 @@ async function start() {
   throw new Error(`Unknown storage transaction action: ${request.action}`);
 }
 
-start().then(report, error => report({ state: 'pending', error: error.message }));
+// Every write happens inside a journaled transaction that reports its own state, so an error that reaches here changed nothing.
+start().then(report, error => report({ state: 'rolled-back', error: error.message }));

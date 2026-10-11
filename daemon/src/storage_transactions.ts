@@ -7,11 +7,21 @@ export interface RestoredSession extends ArchivedSession { path: string }
 export interface RestoreResult { path: string; sessionPath: string; sessionId: string; sessions: RestoredSession[] }
 export interface DeletionTarget { path: string; area: 'sessions' | 'archived' }
 
+export type StorageFailureState = 'rolled-back' | 'pending' | 'unknown';
+
+/** Daemon replies carry errors as text, so the state rides on a first line that the client reads back. */
+const STATE_MARK = 'piop-storage-state:';
+
 export class StorageTransactionError extends Error {
-  constructor(public readonly state: 'rolled-back' | 'pending', message: string) {
+  constructor(public readonly state: StorageFailureState, message: string) {
     super(message);
     this.name = 'StorageTransactionError';
   }
+}
+
+export function responseErrorText(error: unknown): string {
+  if (error instanceof StorageTransactionError) return `${STATE_MARK}${error.state}\n${error.message}`;
+  return error instanceof Error ? error.message : String(error);
 }
 
 type Request =
@@ -29,22 +39,24 @@ const restoreResult = (value: unknown): value is RestoreResult => record(value) 
   && Array.isArray(value.sessions) && value.sessions.length > 0 && value.sessions.every(restoredSession);
 
 async function run(host: Host, request: Request, options: { signal?: AbortSignal; busyIsOk?: boolean } = {}): Promise<unknown> {
-  const output = await runHostScript(host, storageTransactionBundle, [JSON.stringify(request)], { maxOutputBytes: 64 * 1024 * 1024, signal: options.signal });
+  let output;
+  try { output = await runHostScript(host, storageTransactionBundle, [JSON.stringify(request)], { maxOutputBytes: 64 * 1024 * 1024, signal: options.signal }); }
+  catch (error: any) { throw new StorageTransactionError('unknown', error?.message ?? String(error)); }
   const diagnostic = output.stderr.toString().trim();
   if (output.status.code === 75 && request.action === 'recover' && options.busyIsOk) return;
   let response: unknown;
   try { response = JSON.parse(output.stdout.toString()); }
-  catch { throw new Error(`Storage transaction outcome is unknown: ${diagnostic || 'missing or invalid response'}`); }
+  catch { throw new StorageTransactionError('unknown', diagnostic || 'The storage script gave no result'); }
   if (!record(response) || !['committed', 'rolled-back', 'pending', 'skipped'].includes(String(response.state))
       || (response.warning !== undefined && !text(response.warning)) || (response.error !== undefined && !text(response.error))) {
-    throw new Error('Invalid storage transaction response; outcome is unknown');
+    throw new StorageTransactionError('unknown', 'The storage script gave an invalid result');
   }
   if (diagnostic) console.error(diagnostic);
   if (response.state === 'rolled-back' || response.state === 'pending') {
     if (response.warning) console.error(response.warning);
     throw new StorageTransactionError(response.state, text(response.error) ? response.error : diagnostic || `Storage transaction ${response.state}`);
   }
-  if (!output.status.success) throw new Error(`Storage transaction outcome is unknown: ${diagnostic || `exit ${output.status.code}`}`);
+  if (!output.status.success) throw new StorageTransactionError('unknown', diagnostic || `The storage script stopped with exit code ${output.status.code}`);
   if (response.warning) console.error(response.warning);
   if (response.state === 'skipped') {
     if (request.action === 'delete' && 'blank' in request && ['busy', 'not-needed'].includes(String(response.reason))) return;

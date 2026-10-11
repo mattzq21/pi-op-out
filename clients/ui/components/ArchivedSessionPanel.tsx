@@ -2,6 +2,7 @@ import { Key } from "@solid-primitives/keyed";
 import { Archive, ArchiveRestore,  RefreshCw, Search } from "lucide-solid";
 import { createMemo, createSignal, Show } from "solid-js";
 import { loadStorageReport, restoreArchivedConversation } from "../lib/nativeTransport";
+import { storageFailureText } from "../lib/storageFailure";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import { IconButton } from "./IconButton";
 import type { StorageReport } from "../types";
@@ -28,12 +29,15 @@ export function ArchivedSessionPanel() {
   const restore = async (hostId: string, path: string) => {
     if (restoring()) return;
     setRestoring(`${hostId}:${path}`); setError(undefined);
+    let failure: string | undefined;
 
     try {
-      await restoreArchivedConversation(path, hostId);
+      try { await restoreArchivedConversation(path, hostId); }
+      catch (reason) { failure = storageFailureText("restore", reason); }
       await refresh();
-    } catch (reason) { setError(`Could not restore conversation: ${String(reason)}`); }
-    finally { setRestoring(undefined); }
+
+      if (failure) setError(failure);
+    } finally { setRestoring(undefined); }
   };
 
   const hosts = createMemo(() => {
