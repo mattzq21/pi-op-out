@@ -130,6 +130,7 @@ export class NativeTransport {
   private processLifecycle: Promise<unknown> = Promise.resolve();
   private disposed = false;
   private disposal?: Promise<void>;
+  private disposeListeners: Set<() => void> | undefined = new Set();
   private readonly settings = new NativeSettings(call, {
     target: () => ({ cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId }),
     selectTarget: target => { this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId; },
@@ -458,6 +459,11 @@ export class NativeTransport {
     if (owned) this.emit({ type: "ownership_lost" });
 
   return this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId, discardBlank }, z.boolean())); }
+  onDispose(listener: () => void) {
+    if (this.disposeListeners) this.disposeListeners.add(listener); else listener();
+
+    return () => this.disposeListeners?.delete(listener);
+  }
   dispose() {
     if (this.disposal) return this.disposal;
     this.disposed = true; this.settings.cancelPending();
@@ -469,6 +475,11 @@ export class NativeTransport {
 
       if (temporaryPath && (stopped || !this.connectionAttempted)) await call("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }, voidResultSchema);
       this.temporaryChat = false; this.temporaryChatUsed = false;
+      const listeners = this.disposeListeners; this.disposeListeners = undefined;
+
+      for (const listener of listeners ?? []) {
+        try { listener(); } catch (reason) { queueMicrotask(() => { throw reason; }); }
+      }
     })().catch(reason => { this.disposal = undefined; this.disposed = false; throw reason; });
 
     return this.disposal;

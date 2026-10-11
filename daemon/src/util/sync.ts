@@ -99,9 +99,20 @@ export class Notify {
   private waiters: Array<() => void> = [];
   private permit = false;
 
-  notified(): Promise<void> {
+  notified(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
     if (this.permit) { this.permit = false; return Promise.resolve(); }
-    return new Promise(resolve => this.waiters.push(resolve));
+    return new Promise((resolve, reject) => {
+      const waiter = () => { signal?.removeEventListener('abort', abort); resolve(); };
+      const abort = () => {
+        const index = this.waiters.indexOf(waiter);
+        if (index !== -1) this.waiters.splice(index, 1);
+        signal?.removeEventListener('abort', abort);
+        reject(signal?.reason);
+      };
+      this.waiters.push(waiter);
+      signal?.addEventListener('abort', abort, { once: true });
+    });
   }
 
   notifyOne(): void {

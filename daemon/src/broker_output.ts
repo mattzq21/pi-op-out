@@ -64,13 +64,14 @@ export class MessageOutput {
   static async prepare(): Promise<MessageOutput> {
     const parent = directory();
     const gate = creationGate(parent);
+    let output: MessageOutput | undefined;
     try {
       await flockDescriptor(gate, true, true);
       const id = randomUUID();
       reserve(parent, id);
       const root = join(parent, id);
       mkdirSync(root, { mode: 0o700 });
-      const output = new MessageOutput(root, join(root, 'stdout'), join(root, 'stderr'));
+      output = new MessageOutput(root, join(root, 'stdout'), join(root, 'stderr'));
       const owner = privateFile(join(root, 'owner.lock'), true);
       output.owner = owner;
       await flockDescriptor(owner, true, true);
@@ -82,7 +83,8 @@ export class MessageOutput {
         await flockDescriptor(fd, true, true);
       }
       return output;
-    } finally { closeSync(gate); }
+    } catch (error) { output?.remove(); throw error; }
+    finally { closeSync(gate); }
   }
 
   /** Standard input, output, error, and the inherited owner lock for the worker. */
