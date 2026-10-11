@@ -109,7 +109,16 @@ function rootMarkdown(root: string): any[] {
   return discovered;
 }
 
-export function refreshSkills(): void { savedSkills(homeDir(), true); }
+export function refreshSkills(): void {
+  const home = homeDir();
+  const previous = JSON.stringify(savedSkills(home, false));
+  const current = JSON.stringify(savedSkills(home, true));
+  if (previous !== current) for (const listener of skillListeners) listener();
+}
+
+const skillListeners = new Set<() => void>();
+
+export function onSkillsChanged(listener: () => void): void { skillListeners.add(listener); }
 
 function savedSkills(home: string, refresh: boolean): any[] {
   const root = join(home, '.agents/skills');

@@ -205,7 +205,7 @@ async function stopShell(process: TerminalProcess): Promise<void> {
 }
 
 export async function stopTerminals(runtime: TerminalRuntime, terminalIds: string[]): Promise<void> {
-  for (const id of terminalIds) {
+  const results = await Promise.allSettled(terminalIds.map(async id => {
     const process = runtime.processes.get(id);
     if (process) {
       try { await stopTerminalProcess(process); }
@@ -213,7 +213,9 @@ export async function stopTerminals(runtime: TerminalRuntime, terminalIds: strin
     }
     if (runtime.processes.get(id) === process) { runtime.processes.delete(id); runtime.history.delete(id); }
     else if (!runtime.processes.has(id)) runtime.history.delete(id);
-  }
+  }));
+  const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+  if (errors.length) throw new AggregateError(errors, errors.map(error => error?.message ?? String(error)).join('; '));
 }
 
 export async function detachOwner(runtime: TerminalRuntime, owner: string): Promise<void> {

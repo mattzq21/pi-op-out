@@ -13,7 +13,8 @@ const snapshotSchema = z.object({
 
 export function createDraftPersistence() {
   const endpoint = captureDaemonTransport().identity;
-  const database = new Promise<IDBDatabase>((resolve, reject) => {
+  let database: Promise<IDBDatabase> | undefined;
+  const open = () => database ??= new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("piop-drafts", 1);
     let failed = false;
     request.onupgradeneeded = () => request.result.createObjectStore("drafts");
@@ -23,7 +24,7 @@ export function createDraftPersistence() {
   });
   let previous: DraftSnapshot = { records: [], submissions: [] };
   const transact = async (next?: DraftSnapshot) => {
-    const db = await database;
+    const db = await open();
 
     if (!endpoint) throw new Error("Connect to a host before saving drafts");
 
@@ -63,5 +64,15 @@ export function createDraftPersistence() {
     });
   };
 
-  return { read: () => transact(), write: (value: DraftSnapshot) => transact(value), close: async () => (await database).close() };
+  const access = async (next?: DraftSnapshot) => {
+    try { return await transact(next); }
+    catch (reason) {
+      const failed = database;
+      database = undefined;
+      await failed?.then(db => db.close(), () => undefined);
+      throw reason;
+    }
+  };
+
+  return { read: () => access(), write: (value: DraftSnapshot) => access(value), close: async () => (await database)?.close() };
 }

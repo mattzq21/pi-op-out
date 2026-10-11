@@ -64,32 +64,40 @@ export async function buildArtifact({ output, inputs, key }, generate) {
     return;
   }
 
-  // The dependency list is only known after generation; the previous record's list covers the files most likely to change meanwhile.
-  const before = new Map(await fingerprint([...fixedInputs, ...await cachedDependencies(cachePath)]));
-  const { content, dependencies = [] } = await generate();
-  const outputContent = Buffer.from(content);
-  const previous = await readOptional(output);
+  let knownDependencies = await cachedDependencies(cachePath);
+  await rm(cachePath, { force: true });
 
-  if (!previous?.equals(outputContent)) {
-    await mkdir(dirname(output), { recursive: true });
-    await writeFile(output, outputContent);
-  }
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const before = new Map(await fingerprint([...fixedInputs, ...knownDependencies]));
+    const { content, dependencies = [] } = await generate();
+    const after = await fingerprint([...fixedInputs, ...dependencies]);
 
-  const after = await fingerprint([...fixedInputs, ...dependencies]);
+    // A pass that discovers new dependencies cannot publish output; fingerprint them before retrying.
+    if (after.some(([path, digest]) => !before.has(path) || before.get(path) !== digest)) {
+      if (attempt === 3) throw new Error(`Inputs changed or new dependencies were found during 3 build attempts: ${output}`);
 
-  if (after.some(([path, digest]) => before.has(path) && before.get(path) !== digest)) {
-    await rm(cachePath, { force: true });
-    console.warn(`Inputs changed during build; will rebuild: ${output}`);
+      knownDependencies = dependencies;
+      console.warn(`Inputs changed or new dependencies were found; rebuilding: ${output}`);
+      continue;
+    }
+
+    const outputContent = Buffer.from(content);
+    const previous = await readOptional(output);
+
+    if (!previous?.equals(outputContent)) {
+      await mkdir(dirname(output), { recursive: true });
+      await writeFile(output, outputContent);
+    }
+
+    const record = { signature, dependencies, inputs: after, outputHash: hash(outputContent) };
+    await mkdir(cacheDirectory, { recursive: true });
+    const temporary = `${cachePath}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporary, JSON.stringify(record));
+    await rename(temporary, cachePath);
+    console.log(`Built: ${output}`);
 
     return;
   }
-
-  const record = { signature, dependencies, inputs: after, outputHash: hash(outputContent) };
-  await mkdir(cacheDirectory, { recursive: true });
-  const temporary = `${cachePath}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, JSON.stringify(record));
-  await rename(temporary, cachePath);
-  console.log(`Built: ${output}`);
 }
 
 export async function buildBundle(options, output, { script, inputs = [], transform = content => content }) {

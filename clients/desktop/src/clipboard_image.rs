@@ -30,14 +30,18 @@ fn embedded_image(uri: &str) -> Option<gtk::gdk_pixbuf::Pixbuf> {
 #[tauri::command]
 pub async fn read_clipboard_image(app: tauri::AppHandle) -> Result<Option<String>, String> {
     use base64::Engine;
-    const LIMIT: usize = 10 * 1024 * 1024;
+    const RAW_IMAGE_LIMIT: usize = 256 * 1024 * 1024;
+    const ENCODED_IMAGE_LIMIT: usize = 10 * 1024 * 1024;
     let (sender, receiver) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
         gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).request_image(move |_, image| {
             let result = image.map(|image| {
                 let (width, height, stride) = (image.width(), image.height(), image.rowstride());
-                if width <= 0 || height <= 0 || stride <= 0 || (stride as usize).checked_mul(height as usize).is_none_or(|size| size > LIMIT) || image.byte_length() > LIMIT {
-                    return Err("Screenshot exceeds the 10 MB raw image limit".to_string());
+                if width <= 0 || height <= 0 || stride <= 0 {
+                    return Err("Screenshot has invalid image dimensions".to_string());
+                }
+                if (stride as usize).checked_mul(height as usize).is_none_or(|size| size > RAW_IMAGE_LIMIT) || image.byte_length() > RAW_IMAGE_LIMIT {
+                    return Err("Screenshot exceeds the 256 MiB raw image limit".to_string());
                 }
                 Ok((image.read_pixel_bytes().as_ref().to_vec(), image.has_alpha(), image.bits_per_sample(), width, height, stride))
             }).transpose();
@@ -51,7 +55,7 @@ pub async fn read_clipboard_image(app: tauri::AppHandle) -> Result<Option<String
     tauri::async_runtime::spawn_blocking(move || {
         let image = gtk::gdk_pixbuf::Pixbuf::from_bytes(&gtk::glib::Bytes::from_owned(pixels), gtk::gdk_pixbuf::Colorspace::Rgb, alpha, bits, width, height, stride);
         let bytes = image.save_to_bufferv("png", &[]).map_err(|error| error.to_string())?;
-        if bytes.len() > LIMIT { return Err("Screenshot exceeds the 10 MB image limit".to_string()); }
+        if bytes.len() > ENCODED_IMAGE_LIMIT { return Err("Screenshot exceeds the 10 MiB encoded PNG limit".to_string()); }
         Ok(Some(base64::engine::general_purpose::STANDARD.encode(bytes)))
     }).await.map_err(|error| error.to_string())?
 }
