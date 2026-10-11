@@ -37,15 +37,22 @@ export function createDraftPersistence() {
           result = request.result === undefined ? { records: [], submissions: [] } : snapshotSchema.parse(request.result);
 
           if (next) {
-            const merge = <T>(saved: T[], before: T[], after: T[], key: (item: T) => string) => {
+            // Another window may have saved a newer copy since this window last read. A record is only removed or
+            // replaced when the saved copy is not newer than what this window last saw or now holds.
+            const merge = <T>(saved: T[], before: T[], after: T[], key: (item: T) => string, stamp: (item: T) => number) => {
               const values = new Map(saved.map(item => [key(item), item]));
               const old = new Map(before.map(item => [key(item), item]));
-              for (const item of before) if (!after.some(value => key(value) === key(item))) values.delete(key(item));
-              for (const item of after) if (old.get(key(item)) !== item) values.set(key(item), item);
+              const newerElsewhere = (item: T) => { const current = values.get(key(item)); const seen = old.get(key(item)); return current !== undefined && seen !== undefined && stamp(current) > stamp(seen); };
+              for (const item of before) if (!after.some(value => key(value) === key(item)) && !newerElsewhere(item)) values.delete(key(item));
+              for (const item of after) {
+                if (old.get(key(item)) === item) continue;
+                const current = values.get(key(item));
+                if (current === undefined || stamp(item) >= stamp(current)) values.set(key(item), item);
+              }
 
               return [...values.values()];
             };
-            result = { records: merge(result.records, previous.records, next.records, item => item.key), submissions: merge(result.submissions, previous.submissions, next.submissions, item => item.id) };
+            result = { records: merge(result.records, previous.records, next.records, item => item.key, item => item.updatedAt), submissions: merge(result.submissions, previous.submissions, next.submissions, item => item.id, item => item.createdAt) };
             store.put(result, endpoint);
           }
         } catch (reason) { transaction.abort(); reject(reason); }

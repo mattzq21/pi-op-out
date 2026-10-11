@@ -1,7 +1,7 @@
 import * as restartArtifacts from './restart_artifacts';
 import * as daemonLog from './daemon_log';
 import { runSessionClaim } from './session_worker';
-import { runDaemon } from './lifecycle';
+import { installFailureHandlers, runDaemon } from './lifecycle';
 import { ALREADY_RUNNING_EXIT_CODE, DaemonAlreadyRunningError } from './daemon_endpoint';
 import { errorText } from './util/sync';
 
@@ -14,6 +14,7 @@ function fail(prefix: string, error: unknown): never {
 
 async function main(): Promise<void> {
   const first = process.argv[2];
+  installFailureHandlers();
   if (first === '--daemon-log-sink' || first === '--daemon-log-writer') {
     try {
       if (first === '--daemon-log-sink') await daemonLog.runSink(); else await daemonLog.run();

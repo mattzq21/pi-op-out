@@ -14,6 +14,23 @@ import * as daemon from './daemon';
 import { startSessionBroker } from './broker';
 import { loadAppSettings } from './settings';
 import { prepareDefinedAgentsExtension } from './extensions';
+import { errorText } from './util/sync';
+
+let failureListener: ((line: string) => void) | undefined;
+
+/**
+ * Keeps the daemon alive on a missed promise rejection or a stray exception. Bun exits on either by default, which
+ * would end every agent session and terminal for one missed catch. The failure is logged and sent to clients instead.
+ */
+export function installFailureHandlers(): void {
+  const report = (kind: string, error: unknown) => {
+    const line = kind + ' in the Piop daemon: ' + errorText(error) + (error instanceof Error && error.stack ? '\n' + error.stack : '');
+    console.error(line);
+    try { failureListener?.(line); } catch (reason) { console.error('Could not report the daemon failure to clients: ' + errorText(reason)); }
+  };
+  process.on('unhandledRejection', error => report('Unhandled promise rejection', error));
+  process.on('uncaughtException', error => report('Uncaught exception', error));
+}
 
 export async function runDaemon(): Promise<void> {
   const first = process.argv[2];
@@ -33,6 +50,7 @@ export async function runDaemon(): Promise<void> {
 
 async function runBackend(): Promise<void> {
   const app = new App();
+  failureListener = line => app.emit('pi://daemon-error', { hostId: 'local', line });
   dictation.start(app);
   await startSessionBroker(app, app.broker);
   const settings = await loadAppSettings(app);

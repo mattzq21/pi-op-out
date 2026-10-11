@@ -142,6 +142,8 @@ function createRecoveryStorage(profileRoot) {
     if (!realDirectory(record.directory)) throw new Error('The durable recovery directory is missing');
 
     syncTree(record.directory);
+    // The directory entry itself lives in the parent; sync it so the folder survives power loss once the record says ready.
+    syncDirectory(path.dirname(record.directory));
 
     Object.assign(record, { state: 'ready', recovered });
 

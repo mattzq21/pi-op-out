@@ -19,13 +19,20 @@ export async function dispatch(app: App, operation: string, args: any): Promise<
 }
 
 const NOTE_MUTATIONS = new Set(['save', 'claim', 'takeover', 'release']);
+/** Last note state seen per host and session, so repeated reads of an unchanged, deleted or disabled note emit nothing. */
+const noteStates = new Map<string, string>();
 
 /** Tells every client that a chat note or its ownership changed, so viewers refresh without polling. */
 function notifyNoteChange(app: App, args: any, result: any): void {
   const sessionId = args.request?.sessionId;
   if (typeof sessionId !== 'string') return;
-  if (!NOTE_MUTATIONS.has(args.request?.action) && result?.deleted !== true && result?.disabled !== true) return;
-  app.emit('pi://event', { type: 'note_changed', hostId: typeof args.hostId === 'string' ? args.hostId : 'local', sessionId });
+  const hostId = typeof args.hostId === 'string' ? args.hostId : 'local';
+  const key = hostId + ':' + sessionId;
+  const state = JSON.stringify([result?.version ?? null, result?.deleted === true, result?.disabled === true]);
+  const changed = noteStates.get(key) !== state;
+  noteStates.set(key, state);
+  if (!NOTE_MUTATIONS.has(args.request?.action) && !changed) return;
+  app.emit('pi://event', { type: 'note_changed', hostId, sessionId });
 }
 
 export async function connection(app: App): Promise<daemon.Daemon> {

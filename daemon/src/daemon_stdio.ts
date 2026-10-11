@@ -50,6 +50,8 @@ class Socket {
   }
 
   send(text: string): void { this.socket.send(text); }
+  /** Bytes accepted by send but not yet handed to the network. */
+  bufferedAmount(): number { return this.socket.bufferedAmount; }
   close(): void { try { this.socket.close(); } catch {} }
 }
 
@@ -166,6 +168,10 @@ export async function control(action: string): Promise<void> {
   console.log('Piop daemon ' + (action === 'start' ? 'running in the background' : 'stopped') + '.');
 }
 
+const INPUT_HIGH_WATER_BYTES = 16 * 1024 * 1024;
+const INPUT_LOW_WATER_BYTES = 8 * 1024 * 1024;
+const INPUT_STALL_MS = 60_000;
+
 /** Runs --stdio-client: bridges stdin and stdout lines to the local daemon. */
 export async function run(): Promise<void> {
   const [socket, ready] = await connect();
@@ -175,6 +181,9 @@ export async function run(): Promise<void> {
     let queuedBytes = 0;
     let failed = false;
     let paused = false;
+    let inputPaused = false;
+    let inputDrainTimer: NodeJS.Timeout | undefined;
+    let inputStallTimer: NodeJS.Timeout | undefined;
     let stallTimer: NodeJS.Timeout | undefined;
     const heartbeat = setInterval(() => { try { socket.send(JSON.stringify({ type: 'ping' })); } catch {} }, 20_000);
     const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -183,9 +192,26 @@ export async function run(): Promise<void> {
       failed = true;
       reject(error);
       clearTimeout(stallTimer);
+      clearTimeout(inputDrainTimer);
+      clearTimeout(inputStallTimer);
       clearInterval(heartbeat);
       socket.close();
       input.close();
+    };
+    // The WebSocket API has no drain event, so while input is paused the send buffer is checked on a short timer.
+    const resumeInputWhenDrained = () => {
+      if (failed) return;
+      if (socket.bufferedAmount() > INPUT_LOW_WATER_BYTES) { inputDrainTimer = setTimeout(resumeInputWhenDrained, 50); return; }
+      clearTimeout(inputStallTimer);
+      inputPaused = false;
+      input.resume();
+    };
+    const pauseInputUntilDrained = () => {
+      if (inputPaused) return;
+      inputPaused = true;
+      input.pause();
+      inputStallTimer = setTimeout(() => fail(new Error('Daemon stopped reading input: the send buffer did not drain for 60 seconds')), INPUT_STALL_MS);
+      inputDrainTimer = setTimeout(resumeInputWhenDrained, 50);
     };
     const resetStallTimer = () => {
       clearTimeout(stallTimer);
@@ -209,9 +235,10 @@ export async function run(): Promise<void> {
       if (failed) return;
       if (Buffer.byteLength(line) > 32 * 1024 * 1024) { fail(new Error('Daemon request is too large')); return; }
       try { socket.send(line); } catch (error) { fail(error); }
+      if (socket.bufferedAmount() > INPUT_HIGH_WATER_BYTES) pauseInputUntilDrained();
     });
-    input.on('close', () => { clearInterval(heartbeat); socket.close(); output.then(() => resolve()); });
-    socket.onClose = () => { clearInterval(heartbeat); input.close(); output.then(() => resolve()); };
+    input.on('close', () => { clearInterval(heartbeat); clearTimeout(inputDrainTimer); clearTimeout(inputStallTimer); socket.close(); output.then(() => resolve()); });
+    socket.onClose = () => { clearInterval(heartbeat); clearTimeout(inputDrainTimer); clearTimeout(inputStallTimer); input.close(); output.then(() => resolve()); };
     enqueue(JSON.stringify(ready));
     socket.listen(enqueue);
   });
