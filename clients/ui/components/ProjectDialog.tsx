@@ -1,17 +1,16 @@
 import { z } from "zod";
 import { required } from "../lib/required";
 import { Key } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSelector, createSignal } from "solid-js";
+import { createComputed, createMemo, createSelector, createSignal, For } from "solid-js";
 import { createDependencyEffect, createRef, type KeyboardEvent } from "../lib/solid";
 
 import { ArrowDown, ArrowUp, Folder, FolderOpen, Search } from "lucide-solid";
-import type { DirectoryListing, RemoteHost } from "../types";
+import type { DirectoryListing } from "../types";
 
 interface Props {
   initialPath: string;
-  hosts: RemoteHost[];
-  localEnabled?: boolean;
-  initialHostId: string;
+  hostId: string;
+  hosts?: { id: string; name: string; disabled?: boolean }[];
   onHomeDirectory: (hostId: string) => Promise<string>;
   onChooseDirectory: (currentPath: string, hostId: string) => Promise<string | DirectoryListing | null>;
   onOpen: (path: string, hostId: string) => Promise<void>;
@@ -58,8 +57,8 @@ export function ProjectDialog(componentProps: Props) {
   const returnFocusRef = createRef(document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
   const callbacks = createRef({ onHomeDirectory: componentProps.onHomeDirectory, onChooseDirectory: componentProps.onChooseDirectory });
   createComputed(() => { callbacks.current = { onHomeDirectory: componentProps.onHomeDirectory, onChooseDirectory: componentProps.onChooseDirectory }; });
-  const initialLocation = createRef({ path: componentProps.initialPath, hostId: componentProps.initialHostId });
-  const [hostId, setHostId] = createSignal(componentProps.initialHostId);
+  const initialLocation = createRef({ path: componentProps.initialPath, hostId: componentProps.hostId });
+  const [hostId, setHostId] = createSignal(componentProps.hostId);
   const [query, setQuery] = createSignal("");
   const queryHistory = createRef<{ current: string; past: string[]; future: string[] }>({ current: "", past: [], future: [] });
   const queryRevision = createRef(0);
@@ -247,7 +246,7 @@ export function ProjectDialog(componentProps: Props) {
 
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.isComposing) { event.preventDefault(); void open(); }
   }}>
-    <header class="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2><select aria-label="Machine" disabled={opening()} value={hostId()} onChange={(event) => setHostId(event.target.value)}><option value="local" disabled={componentProps.localEnabled === false}>Local</option>{<Key each={componentProps.hosts} by={(host) => host.id}>{(host, _index) => <option  value={host().id}>{host().name}</option>}</Key>}</select><button class="directory-palette-escape" disabled={opening()} onClick={componentProps.onCancel}>esc</button></header>
+    <header class="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2>{componentProps.hosts && <select aria-label="Machine" disabled={opening()} value={hostId()} onChange={(event) => setHostId(event.target.value)}><For each={componentProps.hosts}>{(host) => <option value={host.id} disabled={host.disabled}>{host.name}</option>}</For></select>}<button class="directory-palette-escape" disabled={opening()} onClick={componentProps.onCancel}>esc</button></header>
     {renderDirectoryPaletteSearch()}
     {renderDirectoryPaletteCaption()}
     {renderDirectoryPaletteResults()}

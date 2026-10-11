@@ -29,6 +29,6 @@ export function GroupProjectPicker(props: Props) {
 
   return <>
     <div class="project-picker group-project-picker"><button type="button" class={name() ? "selected" : undefined} data-tooltip={props.project?.cwd ?? undefined} disabled={props.disabled} onClick={() => setOpen(true)}><Folder size={14} />{name() ?? "Choose project"}</button></div>
-    <Show when={open()}><ProjectDialog localEnabled={props.settings.localEnabled} hosts={props.settings.hosts.filter(host => host.enabled !== false)} initialPath={props.project?.cwd ?? ""} initialHostId={props.project?.hostId ?? props.hostId} onHomeDirectory={hostId => props.transport.homeDirectory(hostId)} onChooseDirectory={(path, hostId) => props.transport.listDirectories(hostId, path || undefined)} onOpen={select} onCancel={() => { setOpen(false); props.onCancel(); }} /></Show>
+    <Show when={open()}><ProjectDialog hosts={[{ id: "local", name: "Local", disabled: props.settings.localEnabled === false }, ...props.settings.hosts.filter(host => host.enabled !== false)]} initialPath={props.project?.cwd ?? ""} hostId={props.project?.hostId ?? props.hostId} onHomeDirectory={hostId => props.transport.homeDirectory(hostId)} onChooseDirectory={(path, hostId) => props.transport.listDirectories(hostId, path || undefined)} onOpen={select} onCancel={() => { setOpen(false); props.onCancel(); }} /></Show>
   </>;
 }
