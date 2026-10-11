@@ -27,7 +27,9 @@ type DraggedItem = DraggedSession | { projectKey: string };
 
 type MouseDrag = DraggedItem & { startX: number; startY: number; active: boolean; };
 
-const isDirlessTarget = (target?: DropTarget) => target?.projectKey === DIRLESS_KEY;
+function isBlockedDirlessTarget(drag: MouseDrag, target?: DropTarget) {
+  return target?.projectKey === DIRLESS_KEY && !("session" in drag && drag.projectKey === DIRLESS_KEY && target.sessionKey);
+}
 
 const actions: ReadonlyArray<readonly [SessionAction, typeof AppWindow, string]> = [
   ["new-window", AppWindow, "Open in new window"], ["rename", Pencil, "Rename conversation"], ["open-directory", FolderOpen, "Open project directory"], ["copy-id", Copy, "Copy session ID"], ["open-rollout", FileText, "Open rollout file"]
@@ -298,7 +300,7 @@ export function SessionPanel(props: Props) {
         nextTarget = emptyProjectDrop(hit);
       }
 
-      if (isDirlessTarget(nextTarget)) nextTarget = undefined;
+      if (isBlockedDirlessTarget(current, nextTarget)) nextTarget = undefined;
 
       mouseDropTargetRef.current = nextTarget;
       setDropTarget(nextTarget);
