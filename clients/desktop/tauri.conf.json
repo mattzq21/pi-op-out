@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "dev.pi.desktop",
   "build": {
-    "beforeDevCommand": "node scripts/build-daemon.mjs --debug && npm run dev",
+    "beforeDevCommand": "bun scripts/build-daemon.mjs --debug && npm run dev",
     "devUrl": "http://localhost:1423",
     "beforeBuildCommand": "node scripts/build.mjs",
     "frontendDist": "../../dist"

@@ -50,8 +50,8 @@ try {
     bundle: true,
     platform: 'node',
     format: 'esm',
-    target: 'node22',
-    banner: { js: "#!/usr/bin/env node\nimport { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);" },
+    target: 'esnext',
+    banner: { js: "#!/usr/bin/env bun\nimport { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);" },
     define: {
       __PIOP_DEVELOPMENT__: JSON.stringify(debug),
       __PIOP_PROJECT_DIR__: JSON.stringify(debug ? root.replace(/[\\/]+$/, '') : ''),

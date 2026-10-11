@@ -26,7 +26,7 @@ export function reserve(root: string): string {
 function run(request: Record<string, unknown>): void {
   try {
     request.root = join(homeDir(), STORAGE_DIRECTORY);
-    const child = spawn('node', ['-e', source(), JSON.stringify(request)], { env: { ...process.env, PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY }, stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(process.execPath, ['-e', source(), JSON.stringify(request)], { env: { ...process.env, PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY }, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     child.stderr!.on('data', chunk => { stderr += chunk; });
     child.on('error', error => console.error(`Session registry: ${error.message}`));
@@ -44,7 +44,7 @@ const ready = new Set<string>();
 
 export function open(root: string): Database {
   if (!ready.has(root)) {
-    const output = spawnSync('node', ['-e', source(), JSON.stringify({ root, action: 'initialize' })], { env: { ...process.env, PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY }, maxBuffer: 64 * 1024 * 1024 });
+    const output = spawnSync(process.execPath, ['-e', source(), JSON.stringify({ root, action: 'initialize' })], { env: { ...process.env, PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY }, maxBuffer: 64 * 1024 * 1024 });
     if (output.error) throw output.error;
     if (output.status !== 0) throw new Error(output.stderr.toString());
     ready.add(root);
