@@ -61,11 +61,7 @@ while (Date.now() < deadline) {
       const packet = await ready(url.href);
 
       if (packet) {
-        let runningIdentity;
-
-        if (Number.isSafeInteger(packet.debugProcessId) && packet.debugProcessId > 0) {
-          try { runningIdentity = createHash("sha256").update(readFileSync(`/proc/${packet.debugProcessId}/exe`)).digest("hex"); } catch { }
-        }
+        const runningIdentity = packet.debugRuntime?.buildIdentity;
 
         if (runningIdentity !== builtIdentity) {
           outdatedBuild = true;

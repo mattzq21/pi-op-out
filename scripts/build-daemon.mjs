@@ -38,10 +38,11 @@ const rawText = {
   },
 };
 
-const extension = process.platform === 'win32' ? '.mjs' : '';
+const extension = process.platform === 'win32' ? (debug ? '.mjs' : '.exe') : '';
 const source = join(root, 'target', debug ? 'debug' : 'release', 'piopd' + extension);
 mkdirSync(dirname(source), { recursive: true });
 const temporaryBuild = join(dirname(source), '.piopd-' + randomUUID() + '.mjs');
+const temporaryExecutable = join(dirname(source), '.piopd-' + randomUUID() + extension);
 
 try {
   await build({
@@ -64,10 +65,13 @@ try {
     logLevel: 'warning',
     plugins: [rawText],
   });
-  chmodSync(temporaryBuild, 0o755);
-  if (!sameContent(temporaryBuild, source)) renameSync(temporaryBuild, source);
+  if (!debug) run(process.execPath, ['build', '--compile', temporaryBuild, '--outfile', temporaryExecutable]);
+  const output = debug ? temporaryBuild : temporaryExecutable;
+  chmodSync(output, 0o755);
+  if (!sameContent(output, source)) renameSync(output, source);
 } finally {
   rmSync(temporaryBuild, { force: true });
+  rmSync(temporaryExecutable, { force: true });
 }
 
 function sameContent(left, right) {

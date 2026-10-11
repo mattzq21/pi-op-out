@@ -95,7 +95,7 @@ function goalDependenciesOf(root: string, directory: string): Set<string> {
 function goalTextContents(root: string, directory: string): string[] {
   const module = goalDependencies.replaceAll("require('../session-database.cjs')", "require('./session-database.cjs')");
   const script = Registry.withDatabase('const goalTextFiles = (() => { const module = {exports: {}}; ' + module + '\nreturn module.exports; })();\nprocess.stdout.write(JSON.stringify(goalTextFiles.textContents(process.argv[1], process.argv[2]).map(entry => entry.text)));');
-  const output = spawnSync(process.execPath, ['-e', script, root, directory], { env: { ...process.env, PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY }, maxBuffer: 1024 * 1024 * 1024 });
+  const output = spawnSync(process.execPath, ['-e', script, root, directory], { env: { ...process.env, BUN_BE_BUN: '1', PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY }, maxBuffer: 1024 * 1024 * 1024 });
   if (output.error) throw output.error;
   if (output.status !== 0) throw new Error(output.stderr.toString().trim());
   return JSON.parse(output.stdout.toString());

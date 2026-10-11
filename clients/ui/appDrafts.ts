@@ -22,7 +22,16 @@ export function createConversationDrafts() {
   const redirected = new WeakMap<NativeTransport, NativeTransport>();
   const allows = (key: string, destination?: DraftDestination) => !enabledHosts || enabledHosts.has(destination?.hostId ?? key.slice(0, key.lastIndexOf(":")));
 
-  const keyFor = (key: string): string => aliases.has(key) ? keyFor(aliases.get(key) ?? key) : key;
+  const keyFor = (key: string): string => {
+    const visited = new Set<string>();
+
+    while (aliases.has(key) && !visited.has(key)) {
+      visited.add(key);
+      key = aliases.get(key) ?? key;
+    }
+
+    return key;
+  };
   const ownerFor = (owner: NativeTransport): NativeTransport => redirected.has(owner) ? ownerFor(redirected.get(owner) ?? owner) : owner;
   const empty = (key: string): DraftRecord => ({ key, destination: destinations.get(key), text: "", uploads: [], updatedAt: Date.now() });
   const recordFor = (key: string) => records().get(keyFor(key)) ?? empty(keyFor(key));
@@ -176,10 +185,12 @@ export function createConversationDrafts() {
     if (previousKey === nextKey) return;
     const previous = recordFor(previousKey); const destination = previous.destination ? { ...previous.destination, key: nextKey } : undefined;
     const next = { ...previous, key: nextKey, destination, uploads: mergeUploads(previous.uploads, recordFor(nextKey).uploads), text: mergeText(previous.text, recordFor(nextKey).text) };
+    aliases.delete(nextKey);
     publish(next);
 
     if (!copy) {
       destinations.delete(previousKey);
+      for (const [key, target] of aliases) if (target === previousKey) aliases.set(key, nextKey);
       aliases.set(previousKey, nextKey);
       setRecords(current => { const next = new Map(current); next.delete(previousKey);
 

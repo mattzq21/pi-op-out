@@ -36,7 +36,7 @@ export function claimPath(id: string): string {
  * locks it with flock, and then replaces itself with Pi so Pi keeps holding the lock.
  */
 const WORKER_SCRIPT = [
-  'info=$("$PIOP_SESSION_NODE" "$PIOP_SESSION_DAEMON" --piop-session-claim "$@") || exit 1',
+  'info=$("$PIOP_SESSION_NODE" ${PIOP_SESSION_DAEMON:+"$PIOP_SESSION_DAEMON"} --piop-session-claim "$@") || exit 1',
   'lock=$(printf "%s\\n" "$info" | sed -n 1p)',
   'reserved=$(printf "%s\\n" "$info" | sed -n 2p)',
   'umask 077',
@@ -47,13 +47,13 @@ const WORKER_SCRIPT = [
   'exec "$@"',
 ].join('\n');
 
-export function daemonScript(): string { return resolve(process.argv[1] ?? ''); }
+export function daemonScript(): string { return Bun.isStandaloneExecutable ? process.execPath : resolve(process.argv[1] ?? ''); }
 
 export function sessionWorkerCommand(piPath: string): LaunchCommand {
   return {
     program: 'sh',
     args: ['-c', WORKER_SCRIPT, 'piop-session', piPath],
-    env: { PIOP_SESSION_NODE: process.execPath, PIOP_SESSION_DAEMON: daemonScript() },
+    env: { PIOP_SESSION_NODE: process.execPath, PIOP_SESSION_DAEMON: Bun.isStandaloneExecutable ? '' : daemonScript() },
   };
 }
 
