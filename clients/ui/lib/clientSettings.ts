@@ -1,7 +1,7 @@
 import type { AppSettings } from "../types";
 import { invoke } from "./platform";
 import { z } from "zod";
-import { settingsPublicationSchema } from "./responseSchemas";
+import { savedDictationModelSchema, settingsPublicationSchema } from "./responseSchemas";
 import { applyClientPreferences, clientPreferences, clientPreferencesSchema, ClientPreferenceConflictError } from "./clientPreferenceMerge";
 
 const storageKey = "piop-client-settings";
@@ -17,6 +17,7 @@ const clientSettingsSchema = z.object({
   dictationEnginePath: z.string().optional().catch(undefined),
   dictationModelPath: z.string().optional().catch(undefined),
   dictationLanguage: z.string().optional().catch(undefined),
+  dictationModels: z.array(savedDictationModelSchema).optional().catch(undefined),
 }).catch({});
 
 type StoredPreferences = z.infer<typeof clientSettingsSchema>;
@@ -48,6 +49,7 @@ function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): 
     dictationEnginePath: stored.dictationEnginePath,
     dictationModelPath: stored.dictationModelPath,
     dictationLanguage: stored.dictationLanguage,
+    dictationModels: stored.dictationModels,
   };
 }
 

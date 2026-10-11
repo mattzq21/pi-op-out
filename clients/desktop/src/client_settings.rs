@@ -4,6 +4,15 @@ use crate::settings_concurrency::{lock_settings, settings_revision};
 #[path = "../../../shared/rust/settings_records.rs"]
 pub(crate) mod records;
 
+/// A model file the user saved, with the engine and language to use it with. The path identifies it.
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub(crate) struct SavedDictationModel {
+    engine: String,
+    path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClientSettings {
@@ -20,6 +29,8 @@ pub(crate) struct ClientSettings {
     dictation_model_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dictation_language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dictation_models: Option<Vec<SavedDictationModel>>,
 }
 
 impl ClientSettings {
@@ -63,6 +74,20 @@ fn merge_memberships(latest: &[String], baseline: &[String], intended: &[String]
     merged
 }
 
+/// Keeps saved models from other windows. This window's removals, additions and changes win for the paths it edited.
+fn merge_saved_models(latest: &[SavedDictationModel], baseline: &[SavedDictationModel], intended: &[SavedDictationModel]) -> Vec<SavedDictationModel> {
+    let has = |models: &[SavedDictationModel], path: &str| models.iter().any(|model| model.path == path);
+    let mut merged: Vec<SavedDictationModel> = latest.iter().filter(|model| !has(baseline, &model.path) || has(intended, &model.path)).cloned().collect();
+    for model in intended {
+        if baseline.contains(model) { continue; }
+        match merged.iter_mut().find(|item| item.path == model.path) {
+            Some(item) => *item = model.clone(),
+            None => merged.push(model.clone()),
+        }
+    }
+    merged
+}
+
 fn merge_keybindings(latest: &mut HashMap<String, String>, baseline: &HashMap<String, String>, intended: &HashMap<String, String>) -> Result<(), String> {
     for key in baseline.keys().chain(intended.keys()) {
         let before = baseline.get(key);
@@ -90,6 +115,9 @@ fn merge_preferences(mut latest: ClientSettings, baseline: &ClientSettings, inte
     if intended.dictation_engine_path != baseline.dictation_engine_path { latest.dictation_engine_path = intended.dictation_engine_path.clone(); }
     if intended.dictation_model_path != baseline.dictation_model_path { latest.dictation_model_path = intended.dictation_model_path.clone(); }
     if intended.dictation_language != baseline.dictation_language { latest.dictation_language = intended.dictation_language.clone(); }
+    if latest.dictation_models.is_some() || intended.dictation_models.is_some() {
+        latest.dictation_models = Some(merge_saved_models(latest.dictation_models.as_deref().unwrap_or_default(), baseline.dictation_models.as_deref().unwrap_or_default(), intended.dictation_models.as_deref().unwrap_or_default()));
+    }
     Ok(latest)
 }
 
