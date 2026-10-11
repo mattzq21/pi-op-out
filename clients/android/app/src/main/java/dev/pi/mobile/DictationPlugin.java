@@ -26,6 +26,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -41,6 +44,9 @@ public class DictationPlugin extends Plugin {
 
     /** Runs every native engine call, one after another. */
     private final ExecutorService engine = Executors.newSingleThreadExecutor();
+    /** Runs the idle timers of streams. */
+    private final ScheduledExecutorService timers = Executors.newSingleThreadScheduledExecutor();
+    private static final int IDLE_SECONDS = 15;
     private final Object lock = new Object();
 
     /** The engine settings that are loaded or loading. A change reloads the engine. */
@@ -74,6 +80,8 @@ public class DictationPlugin extends Plugin {
         final String id;
         int samples;
         boolean closed;
+        /** Closes the stream when no audio arrives for IDLE_SECONDS. Guarded by lock. */
+        ScheduledFuture<?> idle;
         float[] pending = new float[0];
         String committed = "";
         String tentative = "";
@@ -100,6 +108,7 @@ public class DictationPlugin extends Plugin {
             stream = null;
             for (Download download : downloads.values()) download.cancelled = true;
         }
+        timers.shutdownNow();
         engine.execute(this::unload);
         engine.shutdown();
     }
@@ -233,6 +242,7 @@ public class DictationPlugin extends Plugin {
         Stream current = stream;
         if (current == null) return;
         stream = null;
+        if (current.idle != null) current.idle.cancel(false);
         engine.execute(() -> reset(current));
         if (error != null) {
             JSObject event = new JSObject();
@@ -260,6 +270,16 @@ public class DictationPlugin extends Plugin {
         return stream;
     }
 
+    /** Called with lock held. Restarts the wait for the next audio of this stream. */
+    private void armIdle(Stream current) {
+        if (current.idle != null) current.idle.cancel(false);
+        current.idle = timers.schedule(() -> {
+            synchronized (lock) {
+                if (stream == current) closeStream("Dictation stopped because no audio arrived for " + IDLE_SECONDS + " seconds");
+            }
+        }, IDLE_SECONDS, TimeUnit.SECONDS);
+    }
+
     @PluginMethod
     public void start(PluginCall call) {
         Stream started;
@@ -272,6 +292,7 @@ public class DictationPlugin extends Plugin {
             closeStream("Dictation stopped because a new dictation started");
             started = new Stream(UUID.randomUUID().toString());
             stream = started;
+            armIdle(started);
         }
         engine.execute(() -> {
             if (started.closed || loaded == null) return;
@@ -333,6 +354,7 @@ public class DictationPlugin extends Plugin {
             }
             if (current.samples + samples.length > MAX_SAMPLES) { call.reject("Dictation recording is too long"); return; }
             current.samples += samples.length;
+            armIdle(current);
         }
         engine.execute(() -> {
             if (current.closed || loaded == null) return;
@@ -396,6 +418,7 @@ public class DictationPlugin extends Plugin {
                 return;
             }
             stream = null;
+            if (current.idle != null) current.idle.cancel(false);
         }
         engine.execute(() -> {
             if (current.closed || loaded == null) { call.reject("This dictation is no longer running"); return; }

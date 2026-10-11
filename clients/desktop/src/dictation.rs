@@ -16,6 +16,7 @@ const MAX_LINE_BYTES: usize = 256 * 1024;
 const MAX_ERROR_BYTES: usize = 4096;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 const FINISH_TIMEOUT: Duration = Duration::from_secs(120);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const UNCONFIGURED: &str = "No dictation model is configured";
 
 /// The dictation fields of the client preferences. Empty strings mean "not set".
@@ -32,8 +33,8 @@ struct Languages { languages: Vec<String>, detect: bool }
 /// A running worker process.
 struct Worker { child: Arc<Mutex<Child>>, stdin: Mutex<Option<ChildStdin>> }
 
-/// The one live dictation. A new dictation from any window replaces it.
-struct Stream { id: String, window: String, worker: Arc<Worker>, bytes: usize, finishing: bool, done: Option<mpsc::Receiver<Result<String, String>>> }
+/// The one live dictation. A new dictation from any window replaces it. idle closes it when no audio arrives for IDLE_TIMEOUT.
+struct Stream { id: String, window: String, worker: Arc<Worker>, bytes: usize, finishing: bool, done: Option<mpsc::Receiver<Result<String, String>>>, idle: Option<tauri::async_runtime::JoinHandle<()>> }
 
 struct State {
     settings: Option<DictationSettings>,
@@ -88,9 +89,23 @@ fn stream_event(app: &AppHandle, window: &str, payload: Value) {
 
 /// Must hold the state lock. Stops the live dictation and tells its window why.
 fn close_stream(app: &AppHandle, state: &mut State, error: Option<&str>) {
-    let Some(stream) = state.stream.take() else { return };
+    let Some(mut stream) = state.stream.take() else { return };
+    if let Some(idle) = stream.idle.take() { idle.abort(); }
     stream.worker.kill();
     if let Some(error) = error { stream_event(app, &stream.window, json!({ "id": stream.id, "error": error })); }
+}
+
+/// Restarts the wait for the next audio of this stream.
+fn arm_idle(app: &AppHandle, stream: &mut Stream) {
+    if let Some(idle) = stream.idle.take() { idle.abort(); }
+    let (app, id) = (app.clone(), stream.id.clone());
+    stream.idle = Some(tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(IDLE_TIMEOUT).await;
+        let mut state = lock_state(&app);
+        if state.stream.as_ref().is_some_and(|stream| stream.id == id && !stream.finishing) {
+            close_stream(&app, &mut state, Some(&format!("Dictation stopped because no audio arrived for {} seconds", IDLE_TIMEOUT.as_secs())));
+        }
+    }));
 }
 
 /// Loads the engine for these settings when they changed.
@@ -317,7 +332,9 @@ pub(crate) fn dictation_stream_start(app: AppHandle, window: tauri::WebviewWindo
             }
             let _ = done_sender.send(result);
         }))?;
-    state.stream = Some(Stream { id: id.clone(), window: label, worker: Arc::new(worker), bytes: 0, finishing: false, done: Some(done) });
+    let mut stream = Stream { id: id.clone(), window: label, worker: Arc::new(worker), bytes: 0, finishing: false, done: Some(done), idle: None };
+    arm_idle(&app, &mut stream);
+    state.stream = Some(stream);
     Ok(json!({ "id": id }))
 }
 
@@ -336,7 +353,9 @@ pub(crate) fn dictation_stream_feed(app: AppHandle, window: tauri::WebviewWindow
         if stream.finishing { return Err("This dictation is already finishing".into()); }
         if stream.bytes + bytes.len() > MAX_STREAM_BYTES { return Err("Dictation recording is too long".into()); }
         stream.bytes += bytes.len();
-        stream.worker.clone()
+        let worker = stream.worker.clone();
+        arm_idle(&app, stream);
+        worker
     };
     worker.write(&bytes)
 }
@@ -348,6 +367,7 @@ pub(crate) fn dictation_stream_finish(app: AppHandle, window: tauri::WebviewWind
         let stream = owned(&mut state, window.label(), &id)?;
         if stream.finishing { return Err("This dictation is already finishing".into()); }
         stream.finishing = true;
+        if let Some(idle) = stream.idle.take() { idle.abort(); }
         (stream.worker.clone(), stream.done.take().ok_or("This dictation is already finishing")?)
     };
     worker.end();
