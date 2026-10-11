@@ -72,23 +72,16 @@ function ModelForm(props: { engine: DictationEngine; initial?: DictationModelEnt
   </div>;
 }
 
-/** A short line that says whether Piop found the engine program. */
-function foundSummary(found: Found | undefined, configured: boolean) {
-  if (isMobile) return { state: "ready", text: "Built into the app" };
-  if (!found) return { state: "", text: "Searching…" };
-  return found.executable ? { state: "ready", text: configured ? "Found" : "Found automatically" } : { state: "failed", text: "Not found" };
-}
-
-/** One saved engine. Click it to use it. The settings button shows its path and where Piop found it. */
+/** One saved engine. Click it to use it. It says "Not found" only when Piop cannot find the program. The settings button shows its path and where Piop found it. */
 function EngineTile(props: { entry: DictationEngineSettings; found?: Found; active: boolean; onUse: () => void; onPath: (path: string) => void; onRemove: () => void }) {
   const [open, setOpen] = createSignal(false);
   const label = () => engines[props.entry.engine].label;
-  const summary = () => foundSummary(props.found, !!props.entry.path);
+  const missing = () => !isMobile && props.found !== undefined && !props.found.executable;
 
   return <li class="dictation-engine" classList={{ active: props.active, open: open() }}>
     <button type="button" class="dictation-engine-pick" role="radio" aria-checked={props.active} onClick={() => props.onUse()}>
       <i class="dictation-radio" />
-      <span><strong>{label()}</strong><small><i class={"dictation-dot " + summary().state} />{summary().text}</small></span>
+      <span><strong>{label()}</strong><Show when={missing()}><small><i class="dictation-dot failed" />Not found</small></Show></span>
     </button>
     <Show when={!isMobile}><IconButton type="button" label={label() + " settings"} aria-expanded={open()} onClick={() => setOpen(value => !value)}><Settings2 size={14} /></IconButton></Show>
     <IconButton type="button" label={"Remove " + label()} onClick={() => props.onRemove()}><Trash2 size={14} /></IconButton>
