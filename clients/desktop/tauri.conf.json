@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "dev.pi.desktop",
   "build": {
-    "beforeDevCommand": "bun scripts/build-daemon.mjs --debug && npm run dev",
+    "beforeDevCommand": "bun scripts/build-daemon.mjs --debug && bun run dev",
     "devUrl": "http://localhost:1423",
-    "beforeBuildCommand": "node scripts/build.mjs",
+    "beforeBuildCommand": "bun scripts/build.mjs",
     "frontendDist": "../../dist"
   },
   "app": {

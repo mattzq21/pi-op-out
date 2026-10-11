@@ -127,7 +127,7 @@ export async function watchBackend(command, args, options, root, { port, watch =
 
     if (closing) return;
 
-    if (changes.some(path => ["package.json", "package-lock.json"].includes(path.slice(root.length + 1)))) await vite.restart(true);
+    if (changes.some(path => ["package.json", "bun.lock"].includes(path.slice(root.length + 1)))) await vite.restart(true);
 
     if (desktop) {
       await stopClient();
@@ -177,7 +177,7 @@ export async function watchBackend(command, args, options, root, { port, watch =
     for (const directory of ["clients/desktop/src", "daemon", "crates/protocol", "clients/desktop/capabilities", "clients/desktop/icons", "extensions", "scripts", ".cargo"]) observe(join(root, directory), true);
     observe(join(root, "clients/desktop"));
 
-    for (const filename of ["package.json", "package-lock.json", "Cargo.toml", "Cargo.lock"]) {
+    for (const filename of ["package.json", "bun.lock", "Cargo.toml", "Cargo.lock"]) {
       const path = join(root, filename);
 
       if (existsSync(path)) watchers.push(watchFiles(path, () => changed(root, filename)));

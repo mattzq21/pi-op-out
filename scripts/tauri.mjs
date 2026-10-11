@@ -58,11 +58,11 @@ if (args[0] === "dev") {
   });
 }
 
-if (args[0] === "build" && development) configOverrides.build = { beforeBuildCommand: "node scripts/build.mjs --debug" };
+if (args[0] === "build" && development) configOverrides.build = { beforeBuildCommand: "bun scripts/build.mjs --debug" };
 
 if (development) args.splice(1, 0, "--config", JSON.stringify(configOverrides));
 
-const tauri = fileURLToPath(new URL("../node_modules/.bin/tauri", import.meta.url));
+const tauri = fileURLToPath(new URL("../node_modules/@tauri-apps/cli/tauri.js", import.meta.url));
 
 const env = {
   ...process.env,
@@ -78,9 +78,9 @@ if (windowBounds) {
 }
 
 if (args[0] === "dev") {
-  await watchBackend(tauri, args.includes("--no-watch") ? args : [...args, "--no-watch"], { stdio: "inherit", env }, fileURLToPath(new URL("../", import.meta.url)), { port: devPort, watch: !args.includes("--no-watch") });
+  await watchBackend(process.execPath, [tauri, ...(args.includes("--no-watch") ? args : [...args, "--no-watch"])], { stdio: "inherit", env }, fileURLToPath(new URL("../", import.meta.url)), { port: devPort, watch: !args.includes("--no-watch") });
 } else {
-  const child = spawn(tauri, args, { stdio: "inherit", env });
+  const child = spawn(process.execPath, [tauri, ...args], { stdio: "inherit", env });
   child.once("error", (error) => { console.error(error.message); process.exitCode = 1; });
   child.once("exit", (code, signal) => { if (signal) process.kill(process.pid, signal); else process.exitCode = code ?? 1; });
 }

@@ -47,7 +47,7 @@ async function isCurrent(cachePath, signature, fixedInputs, output) {
 }
 
 export async function buildArtifact({ output, inputs, key }, generate) {
-  const configuration = (await readdir(".")).filter(path => path === "package.json" || path === "package-lock.json" || /^tsconfig.*\.json$/.test(path));
+  const configuration = (await readdir(".")).filter(path => path === "package.json" || path === "bun.lock" || /^tsconfig.*\.json$/.test(path));
   const fixedInputs = [...inputs, helper, ...configuration];
   const signature = JSON.stringify([version, process.version, key, [...fixedInputs].sort()]);
   const cachePath = `${cacheDirectory}/${hash(output)}.json`;

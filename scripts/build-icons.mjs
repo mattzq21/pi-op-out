@@ -51,7 +51,7 @@ const resources = join(root, "clients/android/app/src/main/res");
 
 await cachedBuild({
   name: "icons",
-  inputs: [source, join(root, "scripts/icon-background.svg"), fileURLToPath(import.meta.url), join(root, "scripts/build-cache.mjs"), join(root, "package-lock.json")],
+  inputs: [source, join(root, "scripts/icon-background.svg"), fileURLToPath(import.meta.url), join(root, "scripts/build-cache.mjs"), join(root, "bun.lock")],
   outputs: [...desktopIcons.map(name => join(root, "clients/desktop/icons", name)), ...densities.flatMap(density => androidIcons.map(name => join(resources, `mipmap-${density}`, name))), join(resources, "drawable/piop_icon.png")],
   key: "tauri-icons",
 }, async () => {

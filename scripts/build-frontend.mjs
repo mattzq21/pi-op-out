@@ -26,7 +26,7 @@ async function frontend() {
 
   const resolved = await resolveConfig(configuration, "build");
 
-  const files = (await readdir(root)).filter(path => /^(package(-lock)?\.json|tsconfig.*\.json|\.env(?:\..*)?|.*(postcss|tailwind).*|vite\.config\.(ts|js|mts|mjs|cts|cjs))$/.test(path));
+  const files = (await readdir(root)).filter(path => /^(package\.json|bun\.lock|tsconfig.*\.json|\.env(?:\..*)?|.*(postcss|tailwind).*|vite\.config\.(ts|js|mts|mjs|cts|cjs))$/.test(path));
 
   await cachedBuild({
     name: `Vite ${outDir}`,

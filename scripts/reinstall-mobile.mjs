@@ -98,16 +98,16 @@ async function waitForDevice() {
 try {
   const serial = await waitForDevice();
   console.log('Building and starting the Piop debug daemon…');
-  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'daemon:dev:restart']);
+  run(process.execPath, ['run', 'daemon:dev:restart']);
   const connection = JSON.parse(run(process.execPath, ['scripts/mobile-debug-connection.mjs'], true));
   const hostUrl = wirelessAddress(connection);
   console.log(`Rebuilding Piop for ${serial}…`);
-  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'android:build']);
+  run(process.execPath, ['run', 'android:build']);
   run(adb, ['-s', serial, 'install', '-r', join(root, 'clients/android/app/build/outputs/apk/debug/app-debug.apk')]);
   run(adb, ['-s', serial, 'shell', 'am', 'start', '-S', '-n', 'dev.pi.mobile/.MainActivity', '--es', 'piopHostUrl', hostUrl]);
   console.log('Piop reinstalled and opened. App data preserved.');
   console.log(`Connected wirelessly through Tailscale: ${hostUrl}`);
-  console.log('Daemon controls: npm run daemon:dev:stop | npm run daemon:dev:restart');
+  console.log('Daemon controls: bun run daemon:dev:stop | bun run daemon:dev:restart');
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
