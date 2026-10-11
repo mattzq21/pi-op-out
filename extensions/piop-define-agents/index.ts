@@ -372,7 +372,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   return request.models ?? []; };
 
-  const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model)) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
+  const fastModeError = (agent: Agent, model: string | undefined, fastMode = fastModeOverride ?? agent.fastMode) => fastMode === true && (!model || !fastModeModels().includes(model)) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
 
   const refreshFastMode = async (ctx: ExtensionContext) => {
     const request: FastModeRequest = { ctx, refresh: true };
@@ -700,7 +700,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!agent) throw new Error(`Unknown defined agent: ${name}`);
     restore(ctx);
     await refreshFastMode(ctx);
-    const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model);
+    const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model, agent.fastMode === true);
 
     if (error) throw new Error(error);
     await extensions.prepare(extensionPaths(agent.extensions));

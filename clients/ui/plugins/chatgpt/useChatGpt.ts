@@ -13,12 +13,27 @@ export type { RegularChat } from "./chatSchemas";
 
 export interface QuickChatRequest { id: string; source: Accessor<ChatGptContextSource>; onAccepted?: () => void }
 
-export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open: Accessor<boolean>) {
+export function createChatGptDrafts() {
+  const [prompts, setPrompts] = createSignal(new Map<string | undefined, string>());
+
+  return { requestId: undefined as string | undefined, chatId: undefined as string | undefined,
+    prompt: (id: string | undefined) => prompts().get(id) ?? "",
+    setPrompt: (id: string | undefined, value: string) => setPrompts(previous => {
+      const next = new Map(previous);
+
+      if (value) next.set(id, value); else next.delete(id);
+
+      return next;
+    }) };
+}
+
+export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open: Accessor<boolean>, drafts = createChatGptDrafts()) {
   let provider = "openai-codex";
   const [models, setModels] = createSignal<ChatModel[]>([]);
   const [chats, setChats] = createSignal<RegularChat[]>([]);
   const [chat, setChat] = createSignal<RegularChat>();
-  const [prompt, setPrompt] = createSignal("");
+  const prompt = () => drafts.prompt(chat()?.id);
+  const setPrompt = (value: string) => drafts.setPrompt(chat()?.id, value);
   const [draftIncludeContext, setDraftIncludeContext] = createSignal(true);
   const includeContext = () => chat()?.messages.length ? Boolean(chat()?.contextSource) : draftIncludeContext();
   const modelSelection = createModelSelection(models);
@@ -70,12 +85,11 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   };
 
   const fresh = () => {
+    drafts.requestId = request()?.id; drafts.chatId = undefined;
     desiredChat = undefined; submission?.abort(); submission = undefined; stopOperation = undefined; setBusy(false);
     release();
-    selection++; setLoading(false); setDraftId(crypto.randomUUID()); setChat(undefined); setPrompt(""); setError(undefined); setPollError(undefined); setCancellationError(undefined);
+    selection++; setLoading(false); setDraftId(crypto.randomUUID()); setChat(undefined); setError(undefined); setPollError(undefined); setCancellationError(undefined);
   };
-
-  createDependencyEffect(fresh, () => [request()?.id]);
 
   const loadCatalog = async (current: number) => {
     const started = Date.now();
@@ -169,13 +183,17 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
       if (!currentSelection(current, version)) return;
       const value = await selectCall("read", regularChatSchema, { chatId: id });
 
-      if (currentSelection(current, version)) { setChat(value); modelSelection.restore(value); setPrompt(""); }
+      if (currentSelection(current, version)) { drafts.chatId = value.id; setChat(value); modelSelection.restore(value); }
     } catch (reason) { if (currentSelection(current, version)) {
       release(id); desiredChat = chat()?.id;
       setError(reason instanceof Error ? reason.message : String(reason));
     } }
     finally { if (currentSelection(current, version)) setLoading(false); }
   };
+
+  createDependencyEffect(() => {
+    if (drafts.requestId === request()?.id && drafts.chatId) void select(drafts.chatId); else fresh();
+  }, () => [request()?.id]);
 
   createDependencyEffect(() => {
     const id = chat()?.id;
@@ -232,6 +250,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const send = async () => {
     if (!canSend()) return;
     const current = generation; const selected = selection; const text = prompt(); const currentRequest = request();
+    const draftKey = chat()?.id;
     const id = targetChatId(); const chosenModel = modelSelection.selection(); const capturedSource = contextSource();
     desiredChat = id;
     const submissionKey = JSON.stringify([provider, id, text, chosenModel, sourceIdentity(capturedSource)]);
@@ -248,12 +267,13 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
       const result = await submitChatGpt(sendCall, { chatId: id, prompt: text, ...chosenModel, submissionId: attemptId }, capturedSource, controller.signal);
       const value = result.chat;
 
+      if (drafts.prompt(draftKey) === text) drafts.setPrompt(draftKey, "");
       acceptSubmission(attemptId, currentRequest);
 
       if (generation !== current) return;
       remember(value);
 
-      if (selection === selected && submission === controller) { setCancellationError(result.cancellationError); setChat(value); setPrompt(""); }
+      if (selection === selected && submission === controller) { drafts.chatId = value.id; setCancellationError(result.cancellationError); setChat(value); }
     } catch (reason) {
       if (generation !== current) return;
 

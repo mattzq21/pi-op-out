@@ -2,11 +2,11 @@ import { For, Show, createEffect, onCleanup, onMount } from "solid-js";
 import { Square } from "lucide-solid";
 import { Markdown } from "../../components/Markdown";
 import { ChatHistoryPicker } from "./ChatHistoryPicker";
-import { useChatGpt, type QuickChatRequest } from "./useChatGpt";
+import { useChatGpt, type createChatGptDrafts, type QuickChatRequest } from "./useChatGpt";
 import "./quick-chat.css";
 
-export function QuickChat(props: { request?: QuickChatRequest; open: boolean; onNew: () => void }) {
-  const state = useChatGpt(() => props.request, () => props.open);
+export function QuickChat(props: { request?: QuickChatRequest; open: boolean; onNew: () => void; drafts: ReturnType<typeof createChatGptDrafts> }) {
+  const state = useChatGpt(() => props.request, () => props.open, props.drafts);
   let messages: HTMLDivElement | undefined;
   let composer: HTMLTextAreaElement | undefined;
   let follow = true;

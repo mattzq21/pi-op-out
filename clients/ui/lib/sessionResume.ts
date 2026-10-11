@@ -153,7 +153,7 @@ export function restoredSessionTarget(fallback: NativeConnectionTarget = {}): Na
   try {
     const key = storageKey();
 
-    if (!key) return {};
+    if (!key) return fallback;
 
     return targetCache.get(key) ?? fallback;
   } catch { return fallback; }

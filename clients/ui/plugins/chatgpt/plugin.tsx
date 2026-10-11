@@ -2,11 +2,12 @@ import { createSignal, Show } from "solid-js";
 import { QuickChat } from "./QuickChat";
 import { captureChatGptContext, chatGptContext, type ChatGptContextSource } from "./context";
 import { ChatGptSelection } from "./ChatGptSelection";
-import type { QuickChatRequest } from "./useChatGpt";
+import { createChatGptDrafts, type QuickChatRequest } from "./useChatGpt";
 import type { PluginContext, PluginInstance } from "../types";
 
 export function createPlugin(context: PluginContext): PluginInstance {
   const [request, setRequest] = createSignal<QuickChatRequest>();
+  const drafts = createChatGptDrafts();
 
   const start = async (value?: ChatGptContextSource, signal = new AbortController().signal) => {
     const selected = value?.selected;
@@ -31,6 +32,6 @@ export function createPlugin(context: PluginContext): PluginInstance {
   return {
     transcript: props => <ChatGptSelection {...props} onAsk={start} />,
     show: () => { if (!request()) start(); },
-    panel: () => <Show when={request()}><QuickChat request={request()} open={context.visible()} onNew={() => start()} /></Show>,
+    panel: () => <Show when={request()}><QuickChat request={request()} open={context.visible()} onNew={() => start()} drafts={drafts} /></Show>,
   };
 }

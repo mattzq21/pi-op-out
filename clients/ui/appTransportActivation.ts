@@ -33,7 +33,7 @@ export function createConversationViewKey<T>(transport: Accessor<T>, conversatio
 
 export function useWorkspaceDisconnect(hasDrafts: () => boolean, pool: () => SessionRuntimePool, draftTerminalIds: () => string[], owner: () => NativeTransport) {
   const beforeDisconnect = (event: WindowEventMap["piop-mobile-before-disconnect"]) => {
-    if (hasDrafts() && !window.confirm("Disconnect? Draft messages, attachments, and unsaved settings will be discarded.")) { event.preventDefault();
+    if (hasDrafts() && !window.confirm("Disconnect? Draft messages, interrupted messages, attachments, and unsaved settings will be discarded.")) { event.preventDefault();
 
     return; }
 

@@ -351,7 +351,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const canLeaveSettings = () => view() !== "settings" || !settingsDirty() || window.confirm("Discard unsaved settings changes?");
   const activateTransport = createTransportActivation({ savedSessions: sessions, transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, discardDraft: drafts.discard, forgetTerminals: terminals.forgetConversation });
-  useWorkspaceDisconnect(() => settingsDirty() || drafts.draftSummaries().length > 0, runtimePool, terminals.draftTerminalIds, () => activeTransportRef.current);
+  useWorkspaceDisconnect(() => settingsDirty() || drafts.draftSummaries().length > 0 || drafts.submissions().length > 0, runtimePool, terminals.draftTerminalIds, () => activeTransportRef.current);
 
   const rekeyConversationUi = (previousKey: string, nextKey: string, ownerTransport: NativeTransport, moveTerminals = true, copyDraft = false) => {
     if (previousKey === nextKey) return;
