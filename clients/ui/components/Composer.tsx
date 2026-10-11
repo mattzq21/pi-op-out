@@ -549,9 +549,9 @@ export function Composer(props: Props) {
           <ComposerSettingsMenu agent={composer().activeAgent ?? "general"}>
             <div class="composer-settings-row"><span>Agent</span>{renderAgentPicker()}</div>
             <Show when={fastModeSupported()}><div class="composer-settings-row"><span>Fast mode</span>{renderFastModeIndicator()}</div></Show>
-            <div class="composer-settings-row"><span>Model</span>{renderModelPicker()}</div>
-            <div class="composer-settings-row"><span>Effort</span><ContainedPicker label="Thinking level" selectedLabel={composer().thinkingLevel.charAt(0).toUpperCase() + composer().thinkingLevel.slice(1)} value={composer().thinkingLevel} disabled={controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} /></div>
+            <div class="composer-settings-row composer-effort-row"><span>Effort</span><ContainedPicker label="Thinking level" selectedLabel={composer().thinkingLevel.charAt(0).toUpperCase() + composer().thinkingLevel.slice(1)} value={composer().thinkingLevel} disabled={controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} /></div>
           </ComposerSettingsMenu>
+          {renderModelPicker()}
           <span class="composer-divider" />
           {renderStopButton()}
           {renderSend()}
