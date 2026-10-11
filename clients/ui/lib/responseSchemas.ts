@@ -62,7 +62,7 @@ export const sessionSnapshotSchema = z.object({ revision: z.string(), state: age
 
 export const slashCommandSchema = z.object({ name: z.string(), description: z.string().optional(), source: z.union([z.literal("builtin"), z.literal("extension"), z.literal("prompt"), z.literal("skill")]), sourceInfo: z.object({ source: z.string().optional() }).optional() });
 
-export const dictationConfigurationSchema = z.object({ enabled: z.boolean(), loading: z.boolean() });
+export const dictationConfigurationSchema = z.object({ enabled: z.boolean(), loading: z.boolean(), error: z.string().nullable().optional() });
 
 export const authNoticeSchema = z.object({ type: z.union([z.literal("info"), z.literal("progress"), z.literal("auth_url"), z.literal("device_code")]), message: z.string().optional(), url: z.string().optional(), userCode: z.string().optional(), links: z.array(z.object({ url: z.string().optional(), label: z.string().optional() })).optional() });
 

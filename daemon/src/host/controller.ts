@@ -67,7 +67,6 @@ export class Host implements SessionHost {
     host.recoverQueuedInput();
     services.bind(host);
     await services.initialize();
-    host.watchRemovals();
     host.watchRetention();
     return host;
   }
@@ -110,18 +109,12 @@ export class Host implements SessionHost {
   maintenance(key: string): void { this.maintain(key); }
   refreshProviders(): Promise<number> { return this.services.refreshProviders(); }
 
-  private watchRemovals(): void {
-    const timer = setInterval(() => {
-      const targets = new Map<string, string | null>();
-      for (const view of this.readonlyMap.values()) targets.set(view.id, view.path);
-      for (const [id, path] of targets) {
-        let removed = false;
-        try { removed = this.ownership().removed(id); } catch {}
-        if (removed) this.output({ type: 'session_removed', sessionId: id, sessionPath: path });
-      }
-    }, 2000);
-    timer.unref();
-    this.timers.push(timer);
+  /** Tells read-only viewers of a conversation that it was deleted or archived. */
+  private announceRemoved(id: string): void {
+    let path: string | null | undefined;
+    for (const view of this.readonlyMap.values()) if (view.id === id) { path = view.path; break; }
+    if (path === undefined) return;
+    this.output({ type: 'session_removed', sessionId: id, sessionPath: path });
   }
 
   findSession(identity: string): Session | undefined {
@@ -495,7 +488,7 @@ export class Host implements SessionHost {
 
   private async restartRequest(packet: any): Promise<any> {
     const sessions = [...this.sessions.values()];
-    if (sessions.some(session => session.busy(null) || session.transient()) || this.deliveries.size || this.guards.size || this.pending.size) {
+    if (sessions.some(session => session.busy(null) || session.transient()) || this.deliveries.size || this.guards.size) {
       throw new Error('Wait for active agents to finish before restarting the daemon');
     }
     return this.services.handle(kind(packet) === 'check_daemon_idle' ? { type: 'plugin_idle' } : packet);
@@ -681,11 +674,13 @@ export class Host implements SessionHost {
       return null;
     }
     const deletedId = operation === 'delete' && flag(packet, 'success') && typeof guard.saved?.header?.id === 'string' ? guard.saved.header.id : undefined;
-    guard.release(this.ownership(), flag(packet, 'success') && (operation === 'delete' || operation === 'archive'));
+    const removed = flag(packet, 'success') && (operation === 'delete' || operation === 'archive');
+    guard.release(this.ownership(), removed);
     if (deletedId !== undefined) {
       await clearSaved(this.storageRoot(), deletedId);
       this.pending.delete(deletedId);
     }
+    if (removed) this.announceRemoved(guard.id);
     return null;
   }
 

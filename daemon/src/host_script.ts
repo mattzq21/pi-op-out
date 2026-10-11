@@ -61,11 +61,21 @@ function hostCommand(host: Host, shell: string): CommandSpec {
   return { program: 'sh', args: ['-c', shell], env: { BUN_BE_BUN: '1' } };
 }
 
-/** Runs the copied file if it exists. Exits with MISSING before any script code runs if it does not. */
+/**
+ * Runs the copied file if it exists. Exits with MISSING before any script code runs if it does not.
+ * Remote hosts get the request as the first input line and stop the script when the SSH connection closes.
+ */
 function runCommand(host: Host, script: HostScript<unknown, unknown>): CommandSpec {
   const bun = host.kind === 'local' ? shellQuote(process.execPath) : 'bun';
   const file = fileName(script.bundle);
-  return hostCommand(host, `d=${scriptDirectory(host)}; [ -f "$d"/${file} ] || exit ${MISSING}; cd -- "$d" || exit 1; command exec 3< ./${file} || exit ${MISSING}; touch -c -- ${file} || exit 1; printf '%s' ${shellQuote(STARTED)} >&2; PIOP_STORAGE_DIRECTORY=${shellQuote(STORAGE_DIRECTORY)} exec ${bun} -e ${shellQuote(scriptLoader)} -- /proc/self/fd/3`);
+  const prepare = `d=${scriptDirectory(host)}; [ -f "$d"/${file} ] || exit ${MISSING}; cd -- "$d" || exit 1; command exec 3< ./${file} || exit ${MISSING}; touch -c -- ${file} || exit 1;`;
+  const environment = `PIOP_STORAGE_DIRECTORY=${shellQuote(STORAGE_DIRECTORY)}`;
+  const start = `${bun} -e ${shellQuote(scriptLoader)} -- /proc/self/fd/3`;
+  if (host.kind === 'local') return hostCommand(host, `${prepare} printf '%s' ${shellQuote(STARTED)} >&2; ${environment} exec ${start}`);
+  return hostCommand(host, `${prepare} IFS= read -r q || exit 1; exec 4<&0; printf '%s' ${shellQuote(STARTED)} >&2; ${environment} setsid ${start} <<PIOP_REQUEST &
+$q
+PIOP_REQUEST
+p=$!; { cat <&4 >/dev/null; kill -- -"$p" 2>/dev/null || kill "$p" 2>/dev/null; } & w=$!; wait "$p"; s=$?; kill "$w" 2>/dev/null; exit "$s"`);
 }
 
 /** Copies the script with a temporary file and a rename, then removes unused copies older than one day. */
@@ -77,7 +87,8 @@ function copyCommand(host: Host, script: HostScript<unknown, unknown>): CommandS
 
 interface Run { code: number | null; started: boolean; stdout: Buffer; stderr: string }
 
-function run(command: CommandSpec, input: string, maxOutput: number, signal: AbortSignal | undefined, timeout = DEFAULT_TIMEOUT): Promise<Run> {
+/** holdInput sends the input as one line and keeps stdin open until the script ends, so the remote side sees the connection close. */
+function run(command: CommandSpec, input: string, maxOutput: number, signal: AbortSignal | undefined, timeout = DEFAULT_TIMEOUT, holdInput = false): Promise<Run> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new HostScriptError('not-started', 'Host script was stopped before it started')); return; }
     let child;
@@ -107,6 +118,7 @@ function run(command: CommandSpec, input: string, maxOutput: number, signal: Abo
       }
       child.stdout!.removeAllListeners('data');
       child.stderr!.removeAllListeners('data');
+      child.stdin!.destroy();
       diagnostic(pendingStderr);
       if (failure) { if (stderr.trim()) console.error(`Host script: ${stderr.trim()}`); reject(failure); return; }
       resolve({ code, started, stdout: Buffer.concat(stdout), stderr: stderr.trim() });
@@ -155,7 +167,8 @@ function run(command: CommandSpec, input: string, maxOutput: number, signal: Abo
       pendingStderr = pendingStderr.slice(length);
     });
     child.stdin!.on('error', () => {});
-    child.stdin!.end(input);
+    if (holdInput) child.stdin!.write(input + '\n');
+    else child.stdin!.end(input);
     child.once('error', error => { failure ??= new HostScriptError(child.pid === undefined ? 'not-started' : 'unknown', `Could not start host script: ${error.message}`); });
     child.once('close', finish);
     child.once('exit', onExit);
@@ -188,10 +201,11 @@ function reply<Result>(script: HostScript<unknown, Result>, result: Run): Result
 export async function runHostScript<Request, Result>(host: Host, script: HostScript<Request, Result>, request: Request, options: { signal?: AbortSignal } = {}): Promise<Result> {
   const input = JSON.stringify(request);
   const timeout = ['storage-transaction', 'storage-inventory', 'index-sessions', 'session-descendants', 'session-registry', 'temporary-chat'].includes(script.name) ? STORAGE_TIMEOUT : DEFAULT_TIMEOUT;
-  let result = await run(runCommand(host, script), input, script.maxOutput, options.signal, timeout);
+  const hold = host.kind === 'remote';
+  let result = await run(runCommand(host, script), input, script.maxOutput, options.signal, timeout, hold);
   if (result.code === MISSING && !result.started) {
     await copy(host, script, options.signal);
-    result = await run(runCommand(host, script), input, script.maxOutput, options.signal, timeout);
+    result = await run(runCommand(host, script), input, script.maxOutput, options.signal, timeout, hold);
   }
   return reply(script, result);
 }

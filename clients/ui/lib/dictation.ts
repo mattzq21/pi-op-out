@@ -5,7 +5,7 @@ import { invoke, listen } from "./platform";
 import type { DictationVad } from "./dictationVad";
 import { encodeBase64 } from "./base64";
 
-type Configuration = { enabled: boolean; loading: boolean };
+type Configuration = { enabled: boolean; loading: boolean; error?: string | null };
 
 const MAX_SECONDS = 120;
 
@@ -13,6 +13,7 @@ let recordingOwner: symbol | undefined;
 
 export function useDictationEnabled() {
   const [enabled, setEnabled] = createSignal(false);
+  const [status, setStatus] = createSignal<string>();
   const [error, setError] = createSignal<string>();
   const [listenerError, setListenerError] = createSignal<string>();
   let disposed = false;
@@ -24,6 +25,7 @@ export function useDictationEnabled() {
   const apply = (state: Configuration) => {
     clearTimeout(timer);
     setEnabled(state.enabled === true && !!navigator.mediaDevices?.getUserMedia && typeof AudioContext !== "undefined");
+    setStatus(state.loading ? "Loading the speech model…" : state.error ?? undefined);
     if (listenerFailed && state.loading) timer = setTimeout(() => void refresh(), 1500);
   };
 
@@ -60,7 +62,8 @@ export function useDictationEnabled() {
   });
   onCleanup(() => { disposed = true; clearTimeout(timer); unlisten?.(); window.removeEventListener("focus", focus); });
 
-  return { enabled, error: () => error() ?? listenerError(), retry: () => listenerFailed ? subscribe() : refresh() };
+  /** status: why the daemon has no engine, or a loading note; undefined when dictation works. */
+  return { enabled, status, error: () => error() ?? listenerError(), retry: () => listenerFailed ? subscribe() : refresh() };
 }
 
 function wavAudio(chunks: Float32Array[], sampleRate: number) {

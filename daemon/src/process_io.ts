@@ -69,11 +69,12 @@ function collect(spec: CommandSpec, maxStdout: number, maxStderr: number, contex
       child.stdin?.destroy(); child.stdout?.destroy(); child.stderr?.destroy();
       reject(error);
     };
-    const timer = setTimeout(() => fail(new Error(`${context}: command ${spec.program} timed out after ${timeout} ms`)), timeout);
+    const errorTail = () => { const tail = Buffer.concat(stderr).toString('utf8').trim().split('\n').slice(-5).join('\n'); return tail ? `: ${tail}` : ''; };
+    const timer = setTimeout(() => fail(new Error(`${context}: command ${spec.program} timed out after ${timeout} ms${errorTail()}`)), timeout);
     child.stdout!.on('data', (chunk: Buffer) => {
       if (settled) return;
       stdoutLength += chunk.length;
-      if (stdoutLength > maxStdout) { fail(new Error(`${context}: output exceeded ${Math.floor(maxStdout / 1024 / 1024)} MiB`)); return; }
+      if (stdoutLength > maxStdout) { fail(new Error(`${context}: output exceeded ${sizeText(maxStdout)}`)); return; }
       stdout.push(chunk);
     });
     child.stderr!.on('data', (chunk: Buffer) => {
@@ -81,7 +82,7 @@ function collect(spec: CommandSpec, maxStdout: number, maxStderr: number, contex
       if (settled || remaining <= 0) return;
       const kept = chunk.subarray(0, remaining); stderr.push(kept); stderrLength += kept.length;
     });
-    child.on('error', error => fail(new Error(`${context}: ${error.message}`)));
+    child.on('error', error => fail(new Error(`${context}: ${error.message}${errorTail()}`)));
     child.stdin?.on('error', error => fail(new Error(`${context}: could not write command input: ${error.message}`)));
     child.stdout!.on('error', error => fail(new Error(`${context}: ${error.message}`)));
     child.stderr!.on('error', error => fail(new Error(`${context}: ${error.message}`)));
@@ -93,4 +94,10 @@ function collect(spec: CommandSpec, maxStdout: number, maxStderr: number, contex
       resolve({ status: { code, signal, success: code === 0 }, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
     });
   });
+}
+
+function sizeText(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / 1024 / 1024)} MiB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KiB`;
+  return `${bytes} bytes`;
 }

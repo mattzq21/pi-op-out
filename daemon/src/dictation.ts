@@ -17,6 +17,8 @@ interface Engine { executable: string; model: string }
 export class DictationRuntime {
   engine: Engine | undefined;
   loading = true;
+  /** Why no engine is available; null while loading or when one is. */
+  error: string | null = null;
   generation = 0;
   busy = false;
   stopped = false;
@@ -24,7 +26,7 @@ export class DictationRuntime {
 }
 
 export function configuration(app: App): any {
-  return { enabled: app.dictation.engine !== undefined, loading: app.dictation.loading };
+  return { enabled: app.dictation.engine !== undefined, loading: app.dictation.loading, error: app.dictation.error };
 }
 
 function publish(app: App): void { app.emit('pi://dictation', configuration(app)); }
@@ -35,17 +37,23 @@ export function start(app: App): void {
   const previous = [...runtime.children.keys()].map(child => stopChild(runtime, child));
   runtime.engine = undefined;
   runtime.loading = true;
+  runtime.error = null;
   const generation = ++runtime.generation;
   publish(app);
   void (async () => {
     let loaded: Engine | undefined;
+    let error: string | null = null;
     try {
       await Promise.all(previous);
       if (runtime.generation !== generation) return;
       loaded = await loadEngine(runtime, generation);
-    } catch (error) { console.error('Could not load dictation engine:', error); }
+    } catch (failure: any) {
+      error = failure?.message ?? String(failure);
+      if (!(failure instanceof NotConfigured)) console.error('Could not load dictation engine:', failure);
+    }
     if (runtime.generation !== generation) return;
     runtime.engine = loaded;
+    runtime.error = loaded ? null : error ?? 'No working dictation engine was found';
     runtime.loading = false;
     publish(app);
   })();
@@ -65,24 +73,32 @@ export async function stop(app: App): Promise<void> {
   runtime.generation += 1;
   runtime.engine = undefined;
   runtime.loading = false;
+  runtime.error = 'Dictation is stopped';
   await Promise.all([...runtime.children.keys()].map(child => stopChild(runtime, child)));
 }
 
+/** Dictation has no model; the user has not set one up. */
+class NotConfigured extends Error {}
+
 async function loadEngine(runtime: DictationRuntime, generation: number): Promise<Engine | undefined> {
   const [executables, model] = await candidates();
+  if (!executables.length) throw new Error('No transcribe-cli executable was found');
+  let last: string | null = null;
   for (const executable of executables) {
     if (runtime.generation !== generation) return;
     const engine = { executable, model };
-    try { await transcribe(runtime, engine, silentWav(), 90_000); return engine; } catch (error) { console.error('Could not initialize dictation engine ' + executable + ':', error); }
+    try { await transcribe(runtime, engine, silentWav(), 90_000); return engine; }
+    catch (error: any) { last = executable + ': ' + (error?.message ?? String(error)); console.error('Could not initialize dictation engine ' + last); }
   }
-  return undefined;
+  if (runtime.generation !== generation) return;
+  throw new Error('Could not initialize dictation engine ' + last);
 }
 
 async function candidates(): Promise<[string[], string]> {
   const home = homeDir();
   const settings = readSettingsAt(await settingsPath());
   const configured = settings.dictationModelPath;
-  if (!configured || !configured.trim()) throw new Error('No dictation model configured');
+  if (!configured || !configured.trim()) throw new NotConfigured('No dictation model configured');
   const model = configured.startsWith('~/') ? join(home, configured.slice(2)) : configured;
   if (!isFile(model)) throw new Error('Dictation model is not a file');
   const name = 'transcribe-cli';

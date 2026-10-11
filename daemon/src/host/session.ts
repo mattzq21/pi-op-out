@@ -95,6 +95,8 @@ export class Session {
   pauseState: any = null;
   reservedPathValue: string | null = null;
   startupError: string | null = null;
+  /** Last stderr lines from Pi, kept for error reports. */
+  stderrTail: string[] = [];
   inputRejection: any = null;
   commandErrors = new Map<string, string>();
   appliedConfiguration: any | null = null;
@@ -141,13 +143,22 @@ export class Session {
       event: event => { void this.inOrder(() => this.receive(event)); },
       response: (event, request) => this.inOrder(() => this.response(event, request)),
       stderr: line => {
-        if (this.state === null) this.startupError = line;
+        if (this.stderrTail.push(line) > 20) this.stderrTail.shift();
         for (const [runtime] of [...this.viewsList]) this.host.output({ type: 'stderr', runtimeId: runtime, line });
       },
       diagnostic: line => this.host.output({ type: 'diagnostic', line }),
       finished: () => this.finish(),
-      disconnectError: () => this.startupError ?? 'Pi disconnected before responding',
+      disconnectError: status => this.disconnectError(status),
     };
+  }
+
+  private disconnectError(status: string | null): string {
+    const base = this.state === null ? 'Pi stopped before it was ready' : 'Pi disconnected before responding';
+    const tail = this.stderrTail.join('\n').trim();
+    const message = base + (status ? ' (' + status + ')' : '') + (tail ? ':\n' + tail : '');
+    if (!this.viewsList.length && !this.isStopping && (this.state === null || status !== 'exit code 0')) this.host.output({ type: 'diagnostic', line: this.key + ': ' + message });
+    this.startupError = message;
+    return message;
   }
 
   private inOrder<T>(operation: () => Promise<T>): Promise<T> {

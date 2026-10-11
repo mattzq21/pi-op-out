@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline';
+import type { ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import { PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
 import * as endpoint from './daemon_endpoint';
@@ -86,12 +87,39 @@ async function tryOpen(scope: string): Promise<[Socket, any] | undefined> {
   try { return await openSocket(scope); } catch { return undefined; }
 }
 
-async function startDaemon(mode: string): Promise<string> {
+async function startDaemon(mode: string): Promise<[string, ChildProcess]> {
   const executable = daemonScript();
   const command: daemonLog.DaemonCommand = { program: executable, args: [mode], env: {} };
   const logPath = await daemonLog.configure(command, executable);
-  await daemonLog.spawnDaemon(command);
-  return logPath;
+  return [logPath, await daemonLog.spawnDaemon(command)];
+}
+
+/**
+ * Starts a daemon and opens a socket to it. When the new daemon exits because another daemon still holds
+ * the lock, waits for that daemon to release it and starts again once.
+ */
+async function startAndOpen(mode: string, scope: string): Promise<[Socket, any]> {
+  const deadline = Date.now() + endpoint.STARTUP_TIMEOUT;
+  let logPath: string;
+  let child: ChildProcess;
+  let exit: number | null | undefined;
+  const launch = async () => { [logPath, child] = await startDaemon(mode); exit = undefined; child.once('exit', code => { exit = code; }); };
+  await launch();
+  let relaunched = false;
+  let lastError = '';
+  while (Date.now() < deadline) {
+    try { return await openSocket(scope); } catch (error: any) { lastError = error?.message ?? String(error); }
+    if (exit !== undefined) {
+      if (exit !== endpoint.ALREADY_RUNNING_EXIT_CODE || relaunched) throw new Error('Piop daemon exited with code ' + exit + '. See ' + logPath!);
+      while (Date.now() < deadline && !claimed()) await sleep(100);
+      if (Date.now() >= deadline) break;
+      relaunched = true;
+      await launch();
+      continue;
+    }
+    await sleep(100);
+  }
+  throw new Error('Could not attach to Piop daemon: ' + lastError + '. See ' + logPath!);
 }
 
 async function connect(): Promise<[Socket, any]> {
@@ -102,14 +130,7 @@ async function connect(): Promise<[Socket, any]> {
     opened = await tryOpen('peer');
     if (opened) return opened;
   }
-  const logPath = await startDaemon('--exit-on-disconnect');
-  const deadline = Date.now() + endpoint.STARTUP_TIMEOUT;
-  let lastError = '';
-  while (Date.now() < deadline) {
-    try { return await openSocket('peer'); } catch (error: any) { lastError = error?.message ?? String(error); }
-    await sleep(100);
-  }
-  throw new Error('Could not attach to Piop daemon: ' + lastError + '. See ' + logPath);
+  return startAndOpen('--exit-on-disconnect', 'peer');
 }
 
 function claimed(): boolean {
@@ -125,8 +146,8 @@ async function controlSocket(action: string): Promise<Socket | undefined> {
     if (opened) return opened[0];
   }
   if (action === 'stop' && claimed()) return undefined;
-  if (action === 'start') await startDaemon('--serve');
-  const deadline = Date.now() + (action === 'start' ? endpoint.STARTUP_TIMEOUT : 15_000);
+  if (action === 'start') return (await startAndOpen('--serve', 'control'))[0];
+  const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     opened = await tryOpen('control');
     if (opened) return opened[0];

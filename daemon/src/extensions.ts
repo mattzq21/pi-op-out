@@ -1,4 +1,3 @@
-import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEVELOPMENT, STORAGE_DIRECTORY } from './config';
 import { directory as daemonDirectory } from './daemon_endpoint';
@@ -159,7 +158,6 @@ function prepareAgentDirectories(dir: string): void {
 export function prepareDefinedAgentsExtension(): string {
   const dir = join(generatedExtensionRoot(), 'piop-define-agents');
   prepareAgentDirectories(dir);
-  const legacyDir = join(homeDir(), '.pi/agent/extensions/pi-define-agents');
   const path = join(dir, 'index.ts');
   for (const [name, source] of [
     ['mcp-schema.ts', R.mcpSchemaBundle],
@@ -173,6 +171,5 @@ export function prepareDefinedAgentsExtension(): string {
     ['../piop-diagrams.ts', R.diagramsExtension],
     ['index.ts', R.definedAgentsExtension],
   ] as const) atomicWritePrivate(join(dir, name), source);
-  if (!DEVELOPMENT && existsSync(join(legacyDir, 'index.ts'))) rmSync(join(legacyDir, 'index.ts'));
   return path;
 }

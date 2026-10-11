@@ -23,6 +23,7 @@ import { StorageSettings } from "./StorageSettings";
 import { PluginSettings } from "./PluginSettings";
 import { ToastHistory } from "./ToastHistory";
 import { Toggle } from "./Toggle";
+import { useDictationEnabled } from "../lib/dictation";
 import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
 export type Section = "review" | "inference" | "general" | "dictation" | "storage" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
@@ -107,6 +108,7 @@ export function SettingsView(props: SettingsViewProps) {
   const [draft, setDraft] = createSignal((() => structuredClone(settingsProps().settings))()); const [agentDrafts, setAgentDrafts] = createSignal((() => structuredClone(agentConfig()?.agents ?? []))()); const [agentIndex, setAgentIndex] = createSignal((() => firstAgentIndex(agentConfig()?.agents ?? []))()); const [section, setSection] = createSignal<Section>(settingsProps().scope === "client" ? "keybinds" : "general"); const [saved, setSaved] = createSignal(false); const savingRef = createRef(false); const [saveError, setSaveError] = createSignal<string>();
   const retainedSaveError = createRef(false);
   const [modelFilter, setModelFilter] = createSignal("");
+  const dictation = useDictationEnabled();
   const [inferenceView, setInferenceView] = createSignal<"models" | "providers">("models");
   const [settingsQuery, setSettingsQuery] = createSignal("");
   const [pastHeader, setPastHeader] = createSignal(false);
@@ -408,7 +410,7 @@ export function SettingsView(props: SettingsViewProps) {
   const renderSettingsLayout = () => {
     const renderSettingsContent = () => {
 
-      const renderDictation = () => (formValidation().visibleSection === "dictation" && <SettingsSection title="Dictation" description="Choose the speech model used by this daemon."><label class="field"><span>Model file path</span><input aria-label="Dictation model file path" placeholder="~/Models/speech-model.gguf" value={draft().dictationModelPath ?? ""} onInput={event => patch({ dictationModelPath: event.currentTarget.value })} /></label></SettingsSection>);
+      const renderDictation = () => (formValidation().visibleSection === "dictation" && <SettingsSection title="Dictation" description="Choose the speech model used by this daemon."><label class="field"><span>Model file path</span><input aria-label="Dictation model file path" placeholder="~/Models/speech-model.gguf" value={draft().dictationModelPath ?? ""} onInput={event => patch({ dictationModelPath: event.currentTarget.value })} /></label><Show when={dictation.status()}><p role="status">{dictation.status()}</p></Show></SettingsSection>);
 
       const renderGeneral = () => (formValidation().visibleSection === "general" && <SettingsSection title="General" description="Agent behavior.">
         <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Applies to new conversations. Each conversation keeps its initial cap, including whether it is enabled."><div class="setting-cap-controls"><input class="setting-number" aria-label="Context window cap" aria-invalid={!nameValidation().contextWindowValid} disabled={!draft().contextWindowCapEnabled} type="number" min={1000} max={10000000} step={1000} value={draft().contextWindowCap} onInput={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft().contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
