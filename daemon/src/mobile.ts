@@ -3,7 +3,8 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { createServer as createNetServer, isIP, type Socket } from 'node:net';
 import { lstatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawn, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { dlopen, FFIType, ptr } from 'bun:ffi';
 import type { Duplex } from 'node:stream';
 import { DEVELOPMENT, MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
 import * as endpoint from './daemon_endpoint';
@@ -284,23 +285,37 @@ async function hostLogin(): Promise<string> {
   return login;
 }
 
-const PEER_CREDENTIALS = 'import socket, struct\ns = socket.socket(fileno=3)\npid, uid, gid = struct.unpack("3i", s.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))\nprint(pid, uid)\n';
+/** Linux socket option values: SOL_SOCKET level and the SO_PEERCRED option. */
+const SOL_SOCKET = 1;
+const SO_PEERCRED = 17;
+
+type GetSockOpt = (fd: number, level: number, option: number, value: any, length: any) => number;
+let getsockopt: GetSockOpt | undefined;
+
+/** Loads getsockopt from the C library (glibc or musl) through bun:ffi. */
+function loadGetsockopt(): GetSockOpt {
+  if (getsockopt) return getsockopt;
+  let failure: unknown;
+  for (const name of ['libc.so.6', 'libc.so', 'libc.musl-x86_64.so.1', 'libc.musl-aarch64.so.1']) {
+    try {
+      const library = dlopen(name, { getsockopt: { args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 } });
+      getsockopt = library.symbols.getsockopt as GetSockOpt;
+      return getsockopt;
+    } catch (error) { failure = error; }
+  }
+  throw new Error('Cannot load the C library to read socket credentials: ' + errorText(failure));
+}
 
 /** Reads the process and user identity of the other end of a unix socket. */
-function peerCredentials(socket: Socket): Promise<{ pid: number; uid: number }> {
-  return new Promise((resolve, rejectRead) => {
-    const child = spawn('python3', ['-c', PEER_CREDENTIALS], { stdio: ['ignore', 'pipe', 'ignore', socket as any] });
-    let stdout = '';
-    const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
-    child.stdout!.on('data', data => { stdout += data; });
-    child.on('error', error => { clearTimeout(timer); rejectRead(error); });
-    child.on('close', code => {
-      clearTimeout(timer);
-      const [pid, uid] = stdout.trim().split(/\s+/).map(Number);
-      if (code !== 0 || !Number.isInteger(pid) || !Number.isInteger(uid)) { rejectRead(new Error('Missing proxy peer PID')); return; }
-      resolve({ pid: pid!, uid: uid! });
-    });
-  });
+async function peerCredentials(socket: Socket): Promise<{ pid: number; uid: number }> {
+  const fd = (socket as any)._handle?.fd;
+  if (!Number.isInteger(fd) || fd < 0) throw new Error('Missing proxy peer socket');
+  // struct ucred is three 32-bit integers: pid, uid, gid.
+  const credentials = new Int32Array(3);
+  const length = new Uint32Array([credentials.byteLength]);
+  const result = loadGetsockopt()(fd, SOL_SOCKET, SO_PEERCRED, ptr(credentials), ptr(length));
+  if (result !== 0 || length[0] !== credentials.byteLength) throw new Error('Missing proxy peer PID');
+  return { pid: credentials[0]!, uid: credentials[1]! };
 }
 
 async function verifyProxyPeer(socket: Socket): Promise<void> {

@@ -51,6 +51,7 @@ try {
     platform: 'node',
     format: 'esm',
     target: 'esnext',
+    external: ['bun', 'bun:*'],
     banner: { js: "#!/usr/bin/env bun\nimport { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);" },
     define: {
       __PIOP_DEVELOPMENT__: JSON.stringify(debug),
