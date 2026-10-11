@@ -21,6 +21,8 @@ export interface AppSettings {
   dictationEngine: DictationEngineKind;
   dictationEnginePath?: string;
   dictationModelPath?: string;
+  /** A language code such as "en". Absent lets the model choose: Needle detects it, transcribe.cpp uses the model default. */
+  dictationLanguage?: string;
   localEnabled: boolean;
   defaultAgent: string;
   defaultModel: string;
@@ -113,6 +115,7 @@ export function parseAppSettings(value: any): AppSettings {
     dictationEngine: dictationEngineField(value.dictationEngine),
     dictationEnginePath: optionalString(value.dictationEnginePath, 'dictationEnginePath'),
     dictationModelPath: optionalString(value.dictationModelPath, 'dictationModelPath'),
+    dictationLanguage: optionalString(value.dictationLanguage, 'dictationLanguage'),
     localEnabled: boolField(value.localEnabled, 'localEnabled', true),
     defaultAgent: stringField(value.defaultAgent, 'defaultAgent', defaultAgent),
     defaultModel: stringField(value.defaultModel, 'defaultModel'),
@@ -141,6 +144,7 @@ export function serializeAppSettings(settings: AppSettings): Record<string, unkn
   result.dictationEngine = settings.dictationEngine;
   if (settings.dictationEnginePath !== undefined) result.dictationEnginePath = settings.dictationEnginePath;
   if (settings.dictationModelPath !== undefined) result.dictationModelPath = settings.dictationModelPath;
+  if (settings.dictationLanguage !== undefined) result.dictationLanguage = settings.dictationLanguage;
   result.localEnabled = settings.localEnabled;
   result.defaultAgent = settings.defaultAgent;
   result.defaultModel = settings.defaultModel;

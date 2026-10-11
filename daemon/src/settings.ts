@@ -72,6 +72,8 @@ export async function saveAppSettings(app: App, settings: AppSettings, agentHost
   settings.dictationModelPath = model ? model : undefined;
   const program = settings.dictationEnginePath?.trim();
   settings.dictationEnginePath = program ? program : undefined;
+  const language = settings.dictationLanguage?.trim().toLowerCase();
+  settings.dictationLanguage = language ? language : undefined;
   const reloadDictation = previousDictation !== dictation.settingsKey(settings);
   migrateQuestionTool(settings);
   migrateGoalTools(settings);

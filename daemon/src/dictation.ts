@@ -19,8 +19,11 @@ const PROBE_MS = 120_000;
 const FINISH_MS = 120_000;
 const UNCONFIGURED = 'No dictation model is configured';
 
-/** A speech-to-text setup that the daemon can run: the Python interpreter command and the model file. */
-interface Engine { kind: DictationEngineKind; executable: string; interpreter: string[]; model: string }
+/** A speech-to-text setup that the daemon can run: the Python interpreter command, the model file and the language ("" lets the model choose). */
+interface Engine { kind: DictationEngineKind; executable: string; interpreter: string[]; model: string; language: string }
+
+/** What a loaded model reports: the languages it knows and whether it can detect the language. */
+interface ModelLanguages { languages: string[]; detect: boolean }
 
 /** A running dictation worker process. It gets raw 16 kHz mono 16-bit audio and sends back live text. */
 interface Worker { write(audio: Buffer): void; end(): void; kill(): void; done: Promise<string> }
@@ -31,6 +34,7 @@ interface Stream { id: string; owner: string; worker: Worker; bytes: number; idl
 /** State for the local speech-to-text engine. */
 export class DictationRuntime {
   engine: Engine | undefined;
+  languages: ModelLanguages | undefined;
   error: string | undefined;
   loading = true;
   generation = 0;
@@ -39,13 +43,14 @@ export class DictationRuntime {
 
 /** The settings that select the engine. A change to any of them reloads the engine. */
 export function settingsKey(settings: AppSettings): string {
-  return JSON.stringify([settings.dictationEngine, settings.dictationEnginePath, settings.dictationModelPath]);
+  return JSON.stringify([settings.dictationEngine, settings.dictationEnginePath, settings.dictationModelPath, settings.dictationLanguage]);
 }
 
 export function configuration(app: App): any {
   const runtime = app.dictation;
   const result: any = { enabled: runtime.engine !== undefined, loading: runtime.loading };
-  if (runtime.engine) { result.engine = runtime.engine.kind; result.executable = runtime.engine.executable; }
+  if (runtime.engine) { result.engine = runtime.engine.kind; result.executable = runtime.engine.executable; result.language = runtime.engine.language; }
+  if (runtime.languages) { result.languages = runtime.languages.languages; result.detectLanguage = runtime.languages.detect; }
   if (runtime.error !== undefined) result.error = runtime.error;
   return result;
 }
@@ -63,16 +68,18 @@ export function start(app: App): void {
   const runtime = app.dictation;
   for (const stream of [...runtime.streams.values()]) close(app, stream, 'Dictation stopped because the speech engine changed');
   runtime.engine = undefined;
+  runtime.languages = undefined;
   runtime.error = undefined;
   runtime.loading = true;
   const generation = ++runtime.generation;
   publish(app);
   void (async () => {
-    let loaded: Engine | undefined;
+    let loaded: { engine: Engine; languages: ModelLanguages } | undefined;
     let error: string | undefined;
     try { loaded = await loadEngine(); } catch (failure) { error = message(failure); }
     if (runtime.generation !== generation) return;
-    runtime.engine = loaded;
+    runtime.engine = loaded?.engine;
+    runtime.languages = loaded?.languages;
     runtime.error = error;
     runtime.loading = false;
     publish(app);
@@ -80,7 +87,7 @@ export function start(app: App): void {
   })();
 }
 
-async function loadEngine(): Promise<Engine> {
+async function loadEngine(): Promise<{ engine: Engine; languages: ModelLanguages }> {
   const settings = readSettingsAt(await settingsPath());
   const configured = settings.dictationModelPath;
   if (!configured || !configured.trim()) throw new Error(UNCONFIGURED);
@@ -91,20 +98,22 @@ async function loadEngine(): Promise<Engine> {
   const failures: string[] = [];
   for (const executable of executables) {
     try {
-      const engine = { kind: settings.dictationEngine, executable, interpreter: interpreter(settings.dictationEngine, executable), model };
-      await probe(engine);
-      return engine;
+      const engine = { kind: settings.dictationEngine, executable, interpreter: interpreter(settings.dictationEngine, executable), model, language: settings.dictationLanguage ?? '' };
+      return { engine, languages: await probe(engine) };
     } catch (failure) { failures.push(`${executable}: ${message(failure)}`); }
   }
   throw new Error(failures.join('\n'));
 }
 
-/** Runs one second of silence through the engine to prove that the program and the model load. */
-async function probe(engine: Engine): Promise<void> {
-  const running = spawnWorker(engine, () => undefined);
+/** Runs one second of silence through the engine to prove that the program, the model and the language load. Returns the model's languages. */
+async function probe(engine: Engine): Promise<ModelLanguages> {
+  let languages: ModelLanguages | undefined;
+  const running = spawnWorker(engine, () => undefined, ready => { languages = ready; });
   running.write(Buffer.alloc(BYTES_PER_SECOND));
   running.end();
   await deadline(running, PROBE_MS, 'The speech engine did not start in time');
+  if (!languages) throw new Error('The speech engine did not report its languages');
+  return languages;
 }
 
 function deadline(running: Worker, timeout: number, text: string): Promise<string> {
@@ -157,10 +166,10 @@ function interpreter(kind: DictationEngineKind, executable: string): string[] {
 
 function lastLine(text: string): string | undefined { return text.split('\n').map(line => line.trim()).filter(Boolean).pop(); }
 
-function spawnWorker(engine: Engine, onText: (committed: string, tentative: string) => void): Worker {
+function spawnWorker(engine: Engine, onText: (committed: string, tentative: string) => void, onReady: (languages: ModelLanguages) => void = () => undefined): Worker {
   const [program, ...prefix] = engine.interpreter;
   const env = { ...process.env, NEEDLE_TELEMETRY: '0', PYTHONUNBUFFERED: '1' };
-  const child = spawn(program, [...prefix, '-c', worker, engine.kind, engine.model], { stdio: ['pipe', 'pipe', 'pipe'], env });
+  const child = spawn(program, [...prefix, '-c', worker, engine.kind, engine.model, engine.language], { stdio: ['pipe', 'pipe', 'pipe'], env });
   let stderr = '';
   let line = '';
   let final: string | undefined;
@@ -178,6 +187,7 @@ function spawnWorker(engine: Engine, onText: (committed: string, tentative: stri
         let parsed: any;
         try { parsed = JSON.parse(text); } catch { protocolError = 'The speech engine sent invalid output'; child.kill('SIGKILL'); return; }
         if (parsed?.type === 'text' && typeof parsed.committed === 'string' && typeof parsed.tentative === 'string') onText(parsed.committed, parsed.tentative);
+        else if (parsed?.type === 'ready' && Array.isArray(parsed.languages) && parsed.languages.every((item: unknown) => typeof item === 'string') && typeof parsed.detect === 'boolean') onReady({ languages: parsed.languages, detect: parsed.detect });
         else if (parsed?.type === 'final' && typeof parsed.text === 'string') final = parsed.text.trim();
       }
       if (line.length > MAX_LINE_BYTES) { protocolError = 'The speech engine sent too much text'; child.kill('SIGKILL'); }
