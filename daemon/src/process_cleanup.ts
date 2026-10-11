@@ -9,12 +9,13 @@ function startTime(pid: number): string | undefined {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
     const index = stat.lastIndexOf(')');
     if (index < 0) return undefined;
-    return stat.slice(index + 1).trim().split(/\s+/)[19];
+    const fields = stat.slice(index + 1).trim().split(/\s+/);
+    return fields[0] === 'Z' ? undefined : fields[19];
   } catch { return undefined; }
 }
 
-export function descendantProcesses(parent: number): Array<{ pid: number; started: string }> {
-  const processes = new Map<number, { ppid: number; started: string }>();
+export function descendantProcesses(parent: number, group?: number): Array<{ pid: number; started: string }> {
+  const processes = new Map<number, { ppid: number; group: number; started: string }>();
   let entries: string[] = [];
   try { entries = readdirSync('/proc'); } catch { return []; }
   for (const entry of entries) {
@@ -26,10 +27,11 @@ export function descendantProcesses(parent: number): Array<{ pid: number; starte
       const fields = stat.slice(index + 1).trim().split(/\s+/);
       const ppid = Number(fields[1]);
       const started = fields[19];
-      if (Number.isFinite(ppid) && started) processes.set(Number(entry), { ppid, started });
+      if (Number.isFinite(ppid) && started && fields[0] !== 'Z') processes.set(Number(entry), { ppid, group: Number(fields[2]), started });
     } catch {}
   }
   const descendants = new Set([parent]);
+  if (group !== undefined) for (const [pid, entry] of processes) if (entry.group === group) descendants.add(pid);
   for (;;) {
     const previous = descendants.size;
     for (const [pid, { ppid }] of processes) if (descendants.has(ppid)) descendants.add(pid);
@@ -70,16 +72,23 @@ function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
 }
 
 export async function stopMessageWorker(child: ChildProcess): Promise<void> {
-  if (child.pid === undefined) return;
-  const descendants = exited(child) ? [] : descendantProcesses(child.pid);
-  if (!exited(child)) {
-    if (!signalProcessGroup(child.pid, 'SIGTERM')) signalChild(child, 'SIGTERM');
-    await waitForExit(child, 5000);
-  }
-  if (!exited(child)) signalProcessGroup(child.pid, 'SIGKILL');
+  const group = child.pid;
+  if (group === undefined) return;
+  const descendants = descendantProcesses(group, group);
+  const signalled = signalProcessGroup(group, 'SIGTERM');
+  killVerified(descendants, 'SIGTERM');
+  signalChild(child, 'SIGTERM');
+  const deadline = Date.now() + 5000;
+  if (!exited(child)) await waitForExit(child, 5000);
+  while (Date.now() < deadline && descendantProcesses(group, group).some(({ pid, started }) => startTime(pid) === started)) await sleep(50);
+  descendants.push(...descendantProcesses(group, group));
+  signalProcessGroup(group, 'SIGKILL');
   killVerified(descendants);
   signalChild(child, 'SIGKILL');
-  if (!await waitForExit(child, 5000)) console.error(`Process ${child.pid} did not exit after SIGKILL`);
+  if (!await waitForExit(child, 5000)) console.error(`Process ${group} did not exit after SIGKILL`);
+  if (descendants.length) await sleep(100);
+  const remaining = new Set([...descendants, ...descendantProcesses(group, group)].filter(({ pid, started }) => startTime(pid) === started).map(({ pid }) => pid));
+  if (remaining.size) console.error(`Processes in worker group ${group} did not exit after SIGKILL: ${[...remaining].join(', ')}`);
 }
 
 export { sleep };

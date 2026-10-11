@@ -1,9 +1,10 @@
-import { createMemo, createSignal } from "solid-js";
+import { batch, createComputed, createMemo, createSignal, onCleanup } from "solid-js";
 import { NativeTransport, type NativeConnectionTarget } from "./lib/nativeTransport";
 import type { StateUpdate } from "./lib/solid";
 import type { AppSettings, ComposerUpload, SessionSummary } from "./types";
 import type { DraftDestination, DraftRecord, DraftSubmission } from "./lib/draftState";
 import { bindDraftStaging, goalPreparationSchema, submissionFingerprint, type DraftSubmissionHandle, type DraftSubmissionPayload } from "./lib/draftSubmission";
+import { createDraftPersistence } from "./lib/draftPersistence";
 
 export interface ConversationDraft { text: string; uploads: ComposerUpload[]; target?: NativeConnectionTarget; updatedAt: number; }
 
@@ -11,7 +12,8 @@ const mergeText = (previous: string, newer: string) => !previous ? newer : newer
 
 const mergeUploads = (previous: ComposerUpload[], newer: ComposerUpload[]) => [...previous.filter(item => !newer.some(other => other.id === item.id)), ...newer];
 
-export function createConversationDrafts() {
+export function createConversationDrafts(reportStorageError: (message: string) => void) {
+  const reportDraftStorageError = (reason: unknown) => reportStorageError(reason instanceof Error ? reason.message : String(reason));
   let enabledHosts: Set<string> | undefined;
   const [records, setRecords] = createSignal<Map<string, DraftRecord>>(new Map());
   const [submissions, setSubmissions] = createSignal<DraftSubmission[]>([]);
@@ -21,6 +23,49 @@ export function createConversationDrafts() {
   const aliases = new Map<string, string>();
   const redirected = new WeakMap<NativeTransport, NativeTransport>();
   const allows = (key: string, destination?: DraftDestination) => !enabledHosts || enabledHosts.has(destination?.hostId ?? key.slice(0, key.lastIndexOf(":")));
+
+  const persistence = createDraftPersistence();
+  const removedBeforeLoad: Array<(key: string, destination?: DraftDestination) => boolean> = [];
+  let loaded = false;
+  let disposed = false;
+  let scheduled: ReturnType<typeof setTimeout> | undefined;
+  const ready = persistence.read().then(saved => {
+    batch(() => {
+      const next = new Map(saved.records.filter(record => allows(record.key, record.destination) && !removedBeforeLoad.some(matches => matches(record.key, record.destination))).map(record => [record.key, record]));
+      for (const [key, record] of records()) {
+        const previous = next.get(key);
+        next.set(key, previous ? { ...previous, ...record, text: mergeText(previous.text, record.text), uploads: mergeUploads(previous.uploads, record.uploads) } : record);
+      }
+      setRecords(next);
+      setSubmissions(saved.submissions.filter(item => allows(item.destination.key, item.destination) && !removedBeforeLoad.some(matches => matches(item.destination.key, item.destination))));
+      for (const record of next.values()) if (record.destination) destinations.set(record.key, record.destination);
+      publishUploads();
+      loaded = true;
+      removedBeforeLoad.length = 0;
+    });
+  });
+  void ready.catch(reportDraftStorageError);
+  let queue: Promise<unknown> = ready;
+  const save = () => {
+    queue = queue.catch(() => undefined).then(async () => {
+      await ready;
+      await persistence.write({ records: [...records().values()], submissions: submissions() });
+    });
+    void queue.catch(reportDraftStorageError);
+
+    return queue;
+  };
+  const flush = () => { if (scheduled === undefined) return; clearTimeout(scheduled); scheduled = undefined; if (!disposed) void save(); };
+  createComputed(() => {
+    records(); submissions();
+
+    if (scheduled !== undefined) return;
+    scheduled = setTimeout(flush, 300);
+  });
+  const hidden = () => { if (document.visibilityState === "hidden") flush(); };
+  document.addEventListener("visibilitychange", hidden);
+  window.addEventListener("pagehide", flush);
+  onCleanup(() => { document.removeEventListener("visibilitychange", hidden); window.removeEventListener("pagehide", flush); flush(); disposed = true; void queue.finally(() => persistence.close()).catch(reportDraftStorageError); });
 
   const keyFor = (key: string): string => {
     const visited = new Set<string>();
@@ -90,20 +135,30 @@ export function createConversationDrafts() {
   };
 
   const storeSubmission = async (submission: DraftSubmission) => {
+    await ready;
     if (!allows(submission.destination.key, submission.destination)) throw new Error("This machine was removed or disabled");
     setSubmissions(current => [...current.filter(item => item.id !== submission.id), submission]);
+    await save();
   };
 
   const retireSubmission = async (id: string) => {
+    await ready;
+    const previous = submissions().find(item => item.id === id);
     setSubmissions(current => current.filter(item => item.id !== id));
+    try { await save(); }
+    catch (reason) { if (previous) setSubmissions(current => [...current, previous]); throw reason; }
   };
 
   const restoreSubmission = async (submission: DraftSubmission) => {
+    await ready;
     const key = keyFor(submission.destination.key);
     const fingerprint = await submissionFingerprint(submission.rawText, submission.uploads);
     const record = { ...recordFor(key), destination: { ...submission.destination, key }, text: mergeText(submission.rawText, recordFor(key).text), uploads: mergeUploads(submission.uploads, recordFor(key).uploads), updatedAt: Date.now(), retrySubmission: { id: submission.id, fingerprint } };
-    publish(record);
-    setSubmissions(current => current.filter(item => item.id !== submission.id));
+    batch(() => {
+      publish(record);
+      setSubmissions(current => current.filter(item => item.id !== submission.id));
+    });
+    await save();
 
   };
 
@@ -119,10 +174,13 @@ export function createConversationDrafts() {
     publish(transferred);
     setSubmissions(current => current.map(item => item.id === next.id ? next : item));
 
+    await save();
+
     return next;
   };
 
   const stage = async (initialOwner: NativeTransport, payload: DraftSubmissionPayload): Promise<DraftSubmissionHandle> => {
+    await ready;
     let owner = ownerFor(initialOwner);
     const destination = destinationFor(owner);
     const fingerprint = await submissionFingerprint(payload.rawText, payload.uploads);
@@ -138,6 +196,7 @@ export function createConversationDrafts() {
       setComposerUploads(owner, current => current.filter(upload => !ids.has(upload.id)));
     }
 
+    await save();
     let dispatched = false;
 
     return {
@@ -226,6 +285,7 @@ export function createConversationDrafts() {
   }));
 
   const removeMatchingDrafts = (matches: (key: string, destination?: DraftDestination) => boolean) => {
+    if (!loaded) removedBeforeLoad.push(matches);
     for (const [key, destination] of destinations) if (matches(key, destination)) destinations.delete(key);
     setRecords(current => new Map([...current].filter(([key, record]) => !matches(key, record.destination))));
     setSubmissions(current => current.filter(item => !matches(item.destination.key, item.destination)));

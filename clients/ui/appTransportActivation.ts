@@ -89,10 +89,17 @@ export function createTransportActivation(context: ActivationContext) {
         const terminalIds = conversationTerminalIds(previousKey);
 
         closingTerminals = Promise.allSettled(terminalIds.map((id) => previousTransport.closeTerminal(id)));
-        forgetTerminals(previousKey);
       }
 
-      void closingTerminals.then(() => runtimePool().release(previousTransport)).finally(() => transportConversationKeys.current.delete(previousTransport));
+      const pool = runtimePool();
+      const stopTracking = previousTransport.onDispose(() => transportConversationKeys.current.delete(previousTransport));
+      void closingTerminals.then(async results => {
+        const failed = results.find(result => result.status === "rejected");
+
+        if (failed?.status === "rejected") throw failed.reason;
+        if (previousKey) forgetTerminals(previousKey);
+        await pool.release(previousTransport);
+      }).catch(reason => { stopTracking(); pool.reportError(`Could not release conversation: ${String(reason)}`); });
   };
 
   const hasDraftWork = (owner: NativeTransport, key: string | undefined) => transportHasDraft(owner, key) || owner.hasTerminalActivity() || Boolean(key && conversationTerminalIds(key).some(id => !owner.isPreparedTerminal(id)));
@@ -107,9 +114,13 @@ export function createTransportActivation(context: ActivationContext) {
     const leavingEmpty = previousTransport !== nextTransport && emptyConversation();
 
     if (leavingEmpty && hasUnsentWork && previousKey && !nextIsDraft) retainDraft(previousTransport, previousKey);
-    const discardPrevious = leavingEmpty && previousKey !== nextKey && !hasUnsentWork;
+    const state = chatSession().state;
+    const settled = !state.isStreaming && !state.isCompacting && !state.isPausing && !state.isPaused && !runtimePool().isRunning(previousTransport) && !state.pendingMessageCount && !state.pendingMessages?.length;
+    const discardPrevious = leavingEmpty && previousKey !== nextKey && !hasUnsentWork && settled;
+    const detachPrevious = previousTransport !== nextTransport && !leavingEmpty && settled && !hasUnsentWork;
     activeTransportRef.current = nextTransport; runtimePool().activate(nextTransport); setTransport(nextTransport);
 
     if (discardPrevious) discardTransport(previousTransport, previousKey);
+    else if (detachPrevious) runtimePool().detachIdle(previousTransport, () => !hasDraftWork(previousTransport, previousKey));
   };
 }

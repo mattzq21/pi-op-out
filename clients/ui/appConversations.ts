@@ -49,7 +49,7 @@ function removedSessionMatches(hostId: string | undefined, sessionId: string, se
 export function createAppConversations(preloadChat: () => void) {
   const runtimePool = createMemo(() => new SessionRuntimePool());
   const initialTarget = initialWindowTarget();
-  const drafts = createConversationDrafts();
+  const drafts = createConversationDrafts(message => addNotice({ title: "Could not save drafts", message }));
 
   const [transport, setTransport] = createSignal((() => { const initial = runtimePool().create(initialTarget); runtimePool().activate(initial);
 

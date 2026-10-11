@@ -5,6 +5,8 @@ import { Channel } from './util/sync';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const MAX_AUTH_BYTES = 4096;
+const MAX_QUEUED_BYTES = 16 * 1024 * 1024;
+const MAX_QUEUED_MESSAGES = 256;
 const MAX_PENDING_PONGS = 32;
 const MAX_BUFFERED_BYTES = 64 * 1024 * 1024;
 
@@ -37,7 +39,10 @@ export class WebSocketConnection {
   private fragments: Buffer[] = [];
   private fragmentBytes = 0;
   private fragmentType = 0;
-  private messages = new Channel<Incoming>();
+  private messages = new Channel<{ message: Incoming; bytes: number }>();
+  private queuedBytes = 0;
+  private queuedCount = 0;
+  private inputPaused = false;
   private closeSent = false;
   private closeTimer: ReturnType<typeof setTimeout> | undefined;
   private authenticated = false;
@@ -54,7 +59,29 @@ export class WebSocketConnection {
   }
 
   /** Returns the next text or binary message, or undefined after the connection closes. */
-  next(): Promise<Incoming | undefined> { return this.messages.recv(); }
+  async next(): Promise<Incoming | undefined> {
+    const entry = await this.messages.recv();
+    if (!entry) return undefined;
+    this.queuedBytes -= entry.bytes;
+    this.queuedCount -= 1;
+    if (this.inputPaused && this.queuedBytes <= MAX_QUEUED_BYTES / 2 && this.queuedCount <= MAX_QUEUED_MESSAGES / 2 && !this.messages.isClosed) {
+      this.inputPaused = false;
+      this.drain();
+      if (!this.inputPaused && !this.messages.isClosed) this.socket.resume();
+    }
+    return entry.message;
+  }
+
+  private enqueue(message: Incoming): void {
+    const bytes = typeof message.data === 'string' ? message.data.length * 2 : message.data.length;
+    if (!this.messages.send({ message, bytes })) return;
+    this.queuedBytes += bytes;
+    this.queuedCount += 1;
+    if (this.queuedBytes >= MAX_QUEUED_BYTES || this.queuedCount >= MAX_QUEUED_MESSAGES) {
+      this.inputPaused = true;
+      this.socket.pause();
+    }
+  }
 
   markAuthenticated(): void { this.authenticated = true; }
 
@@ -92,7 +119,10 @@ export class WebSocketConnection {
   private stopReceiving(discardReceived = true): void {
     this.socket.pause();
     this.messages.close();
-    if (discardReceived) while (this.messages.tryRecv() !== undefined) { /* discard queued messages */ }
+    if (discardReceived) {
+      let entry;
+      while ((entry = this.messages.tryRecv()) !== undefined) { this.queuedBytes -= entry.bytes; this.queuedCount -= 1; }
+    }
     this.chunks = [];
     this.buffered = 0;
     this.fragments = [];
@@ -145,7 +175,11 @@ export class WebSocketConnection {
     }
     this.chunks.push(data);
     this.buffered += data.length;
-    while (this.buffered >= 2 && !this.messages.isClosed) {
+    this.drain();
+  }
+
+  private drain(): void {
+    while (this.buffered >= 2 && !this.messages.isClosed && !this.inputPaused) {
       const start = this.peek(2);
       const fin = (start[0]! & 0x80) !== 0;
       const opcode = start[0]! & 0x0f;
@@ -187,7 +221,7 @@ export class WebSocketConnection {
         this.frame(0xa, payload).catch(() => this.terminate()).finally(() => { this.pendingPongs -= 1; });
         return;
       }
-      if (opcode === 0xa) { this.messages.send({ type: 'binary', data: Buffer.alloc(0) }); return; }
+      if (opcode === 0xa) { this.enqueue({ type: 'binary', data: Buffer.alloc(0) }); return; }
       this.fail(1002);
       return;
     }
@@ -209,7 +243,7 @@ export class WebSocketConnection {
     if (type === 0x1) {
       let text: string;
       try { text = new TextDecoder('utf-8', { fatal: true }).decode(body); } catch { this.fail(1007); return; }
-      this.messages.send({ type: 'text', data: text });
-    } else this.messages.send({ type: 'binary', data: body });
+      this.enqueue({ type: 'text', data: text });
+    } else this.enqueue({ type: 'binary', data: body });
   }
 }

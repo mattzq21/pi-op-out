@@ -12,7 +12,7 @@ const sharedTerminalsSchema = z.array(z.object({ id: z.string(), output: z.strin
 
 export type SharedTerminal = z.infer<typeof sharedTerminalsSchema>[number] & { output: string };
 
-type TerminalCommandOptions = { sessionKey?: string; cwd?: string; cols?: number; rows?: number; data?: string };
+type TerminalCommandOptions = { sessionKey?: string; cwd?: string; cols?: number; rows?: number; data?: string; expectedDraft?: string };
 
 class NativeTerminals {
   private writes = new Map<string, { tail: Promise<void> }>();
@@ -121,6 +121,10 @@ class NativeTerminals {
 
   write(terminalId: string, data: string, action = isMobile ? "write" : "write_with_draft") {
     return this.enqueue(action, terminalId, { data });
+  }
+
+  writeAndClearDraft(terminalId: string, data: string, expectedDraft: string) {
+    return this.enqueue("write_and_clear_draft", terminalId, { data, expectedDraft });
   }
 
   resize(terminalId: string, cols: number, rows: number) {

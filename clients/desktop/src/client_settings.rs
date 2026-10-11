@@ -51,7 +51,7 @@ fn intended_preferences(path: &Path, baseline: &ClientSettings, intended: Client
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn load_client_settings() -> Result<Value, String> {
     let path = storage_path()?;
     let _guard = lock_settings(&path)?;
@@ -64,7 +64,7 @@ pub(crate) fn load_client_settings() -> Result<Value, String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn save_client_settings(app: AppHandle, settings: ClientSettings, baseline: ClientSettings, initialize: Option<bool>) -> Result<Value, String> {
     let path = storage_path()?;
     let _guard = lock_settings(&path)?;
@@ -107,7 +107,7 @@ fn update_prompt_history(entries: Vec<PromptHistoryEntry>, legacy: Vec<String>) 
     Ok((history, changed))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn sync_prompt_history(app: AppHandle, entries: Vec<PromptHistoryEntry>, legacy: Vec<String>) -> Result<Vec<String>, String> {
     let (history, changed) = update_prompt_history(entries, legacy)?;
     if changed {

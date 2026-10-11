@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{fs, path::Path, thread, time::{Duration, Instant}};
 use sha2::{Digest, Sha256};
 
 pub(crate) fn settings_revision(body: Option<&[u8]>) -> String {
@@ -14,6 +14,17 @@ pub(crate) fn lock_settings(path: &Path) -> Result<fs::File, String> {
         options.mode(0o600);
     }
     let file = options.open(path.with_extension("lock")).map_err(|error| error.to_string())?;
-    file.lock().map_err(|error| format!("Could not lock settings: {error}"))?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match file.try_lock() {
+            Ok(()) => break,
+            Err(fs::TryLockError::WouldBlock) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() { return Err("Could not lock settings within 3 seconds: another settings operation is still running. Try again.".into()); }
+                thread::sleep(remaining.min(Duration::from_millis(25)));
+            }
+            Err(fs::TryLockError::Error(error)) => return Err(format!("Could not lock settings: {error}")),
+        }
+    }
     Ok(file)
 }
