@@ -101,7 +101,7 @@ async function withBrokerAccess<T>(app: App, work: () => Promise<T>): Promise<T>
   const release = app.restart.gate.tryRead();
   if (!release) throw new Error('The daemon is preparing a restart');
   try {
-    if (daemonRestart.blocking() || app.clients.closing()) throw new Error('The daemon is restarting or shutting down. Reconnect before retrying.');
+    if ((await daemonRestart.blocking()) || app.clients.closing()) throw new Error('The daemon is restarting or shutting down. Reconnect before retrying.');
     return await work();
   } finally { release(); }
 }

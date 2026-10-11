@@ -20,9 +20,17 @@ pub(crate) struct Connection {
     outgoing: async_mpsc::UnboundedSender<Message>,
     pending: Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>,
     terminals: Mutex<std::collections::HashSet<String>>,
+    log_statuses: Mutex<HashMap<String, Value>>,
 }
 
 impl Connection {
+    fn log_statuses(&self) -> std::sync::MutexGuard<'_, HashMap<String, Value>> {
+        self.log_statuses.lock().unwrap_or_else(|error| {
+            eprintln!("Piop daemon log status lock was poisoned; recovering stored states");
+            error.into_inner()
+        })
+    }
+
     fn register_terminal(&self, terminal: &Option<String>) -> Result<(), String> {
         let mut terminals = self.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
         if !self.alive.load(Ordering::SeqCst) { return Err("Disconnected from the Piop daemon".into()); }
@@ -61,6 +69,19 @@ impl Connection {
     }
 
     fn receive_event(&self, app: &AppHandle, event: &str, payload: &Value) {
+            if event == "pi://daemon-log-status" {
+                let Some(host_id) = payload["hostId"].as_str() else {
+                    eprintln!("Piop daemon sent a log status without a hostId: {payload}");
+                    return;
+                };
+                let mut statuses = self.log_statuses();
+                if !self.alive.load(Ordering::SeqCst) { return; }
+                statuses.insert(host_id.into(), payload.clone());
+                if let Err(error) = app.emit_to(&self.window, event, payload) {
+                    eprintln!("Could not forward daemon log status for {host_id}: {error}");
+                }
+                return;
+            }
             if event == "pi://daemon-restarting" && payload["hostId"] == "local" { self.restarting.store(true, Ordering::SeqCst); }
             if event == "pi://event" && payload["type"] == "terminal_exit" {
                 if let (Some(id), Ok(mut terminals)) = (payload["terminalId"].as_str(), self.terminals.lock()) { terminals.remove(id); }
@@ -79,7 +100,15 @@ impl Connection {
     }
 
     fn disconnected(&self, app: &AppHandle, reason: &str) {
-        self.alive.store(false, Ordering::SeqCst);
+        {
+            let mut statuses = self.log_statuses();
+            for (host_id, _) in statuses.drain() {
+                if let Err(error) = app.emit_to(&self.window, "pi://daemon-log-status", json!({"hostId":host_id,"failure":null})) {
+                    eprintln!("Could not clear daemon log status for {host_id}: {error}");
+                }
+            }
+            self.alive.store(false, Ordering::SeqCst);
+        }
         if let Ok(mut terminals) = self.terminals.lock() {
             for id in terminals.drain() { let _ = app.emit_to(&self.window, "pi://event", json!({"type":"terminal_exit", "terminalId":id})); }
         }
@@ -105,7 +134,7 @@ impl DesktopDaemon {
         };
         if app.get_webview_window(window).is_none() { return Err("The client window was closed".into()); }
         let (outgoing, incoming) = async_mpsc::unbounded_channel();
-        let connection = Arc::new(Connection { window: window.into(), alive: AtomicBool::new(true), restarting: AtomicBool::new(false), sequence: AtomicU64::new(1), outgoing, pending: Mutex::new(HashMap::new()), terminals: Mutex::new(std::collections::HashSet::new()) });
+        let connection = Arc::new(Connection { window: window.into(), alive: AtomicBool::new(true), restarting: AtomicBool::new(false), sequence: AtomicU64::new(1), outgoing, pending: Mutex::new(HashMap::new()), terminals: Mutex::new(std::collections::HashSet::new()), log_statuses: Mutex::new(HashMap::new()) });
         connections.insert(window.into(), connection.clone());
         let reader = connection.clone();
         tokio::spawn(run_connection(socket, incoming, reader, app.clone()));
@@ -114,7 +143,14 @@ impl DesktopDaemon {
     }
 
     pub(crate) async fn close_window(&self, _app: &AppHandle, window: &str) {
-        if let Some(connection) = self.connections.lock().await.remove(window) { connection.alive.store(false, Ordering::SeqCst); let _ = connection.outgoing.send(Message::Close(None)); }
+        if let Some(connection) = self.connections.lock().await.remove(window) {
+            {
+                let mut statuses = connection.log_statuses();
+                statuses.clear();
+                connection.alive.store(false, Ordering::SeqCst);
+            }
+            let _ = connection.outgoing.send(Message::Close(None));
+        }
         if let Ok(mut runtimes) = self.runtimes.lock() {
             runtimes.retain(|_, connection| connection.window != window);
         }
@@ -217,27 +253,27 @@ async fn local_socket(app: &AppHandle) -> Result<Socket, String> {
     #[cfg(debug_assertions)]
     tokio::task::spawn_blocking(ensure_development_daemon).await.map_err(|error| error.to_string())??;
     let executable = daemon_executable(app)?;
-    let (log_path, mut child) = spawn_local_daemon(&executable)?;
-    let result = wait_local_socket(&log_path, &executable, &mut child).await;
+    let (log_path, mut child) = spawn_local_daemon(app, &executable)?;
+    let result = wait_local_socket(app, &log_path, &executable, &mut child).await;
     thread::spawn(move || { let _ = child.wait(); });
     result
 }
 
-async fn wait_local_socket(log_path: &Path, executable: &Path, child: &mut std::process::Child) -> Result<Socket, String> {
+async fn wait_local_socket(app: &AppHandle, log_path: &Path, executable: &Path, child: &mut std::process::Child) -> Result<Socket, String> {
     let deadline = tokio::time::Instant::now() + daemon_endpoint::STARTUP_TIMEOUT;
     let mut retry_delay = Duration::from_millis(10);
     while tokio::time::Instant::now() < deadline {
         if let Ok(endpoint) = daemon_endpoint::read() { if let Ok(Ok(socket)) = tokio::time::timeout_at(deadline, open(&endpoint)).await { return Ok(socket); } }
         if child.try_wait().map_err(|error| error.to_string())?.is_some() {
             tokio::time::sleep(Duration::from_millis(400)).await;
-            *child = spawn_local_daemon(executable)?.1;
+            *child = spawn_local_daemon(app, executable)?.1;
         }
         tokio::time::sleep(retry_delay).await;
         retry_delay = (retry_delay * 2).min(Duration::from_millis(100));
     }
     Err(format!("Piop daemon did not start. See {}", log_path.display()))
 }
-fn spawn_local_daemon(executable: &Path) -> Result<(PathBuf, std::process::Child), String> {
+fn spawn_local_daemon(_app: &AppHandle, executable: &Path) -> Result<(PathBuf, std::process::Child), String> {
     let mut command = Command::new(executable);
     command.arg("--exit-on-disconnect").stdin(Stdio::null()).stdout(Stdio::null());
     let log_path = crate::daemon_log::configure(&mut command, executable)?;
@@ -252,7 +288,7 @@ fn ensure_development_daemon() -> Result<(), String> {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).ok_or("Cannot locate Cargo workspace")?;
         if !manifest.join("Cargo.toml").is_file() { return Ok(()); }
         let prepared = std::env::var_os("PIOP_PREBUILT_DAEMON_FOR").is_some_and(|path| Path::new(&path) == manifest);
-        if prepared && manifest.join("target/debug").join(format!("piopd{}", std::env::consts::EXE_SUFFIX)).is_file() { return Ok(()); }
+        if prepared && manifest.join("target/debug/piopd").is_file() { return Ok(()); }
         let output = Command::new("bun")
             .args(["scripts/build-daemon.mjs", "--debug", "--skip-extensions", "--skip-copy"])
             .current_dir(manifest).output()
@@ -265,13 +301,20 @@ fn ensure_development_daemon() -> Result<(), String> {
 }
 
 fn daemon_executable(app: &AppHandle) -> Result<PathBuf, String> {
-    let name = format!("piopd{}", std::env::consts::EXE_SUFFIX);
+    let name = "piopd";
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-    let adjacent = executable.parent().ok_or("Cannot locate application")?.join(&name);
+    let adjacent = executable.parent().ok_or("Cannot locate application")?.join(name);
     if adjacent.is_file() { return Ok(adjacent); }
-    let bundled = app.path().resource_dir().map_err(|error| error.to_string())?.join(&name);
+    let bundled = app.path().resource_dir().map_err(|error| error.to_string())?.join(name);
     if bundled.is_file() { return Ok(bundled); }
     Err("The Piop daemon is missing. Rebuild Piop with its daemon companion.".into())
+}
+
+#[tauri::command]
+pub(crate) async fn daemon_log_statuses(app: AppHandle, window: tauri::WebviewWindow) -> Vec<Value> {
+    let state = app.state::<DesktopDaemon>();
+    let connections = state.connections.lock().await;
+    connections.get(window.label()).map(|connection| connection.log_statuses().values().cloned().collect()).unwrap_or_default()
 }
 
 #[tauri::command]

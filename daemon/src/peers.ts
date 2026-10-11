@@ -22,6 +22,7 @@ const REQUEST_TIMEOUT = 660_000;
 export class Connection {
   alive = true;
   sequence = 1;
+  logStatus: string | null | undefined;
   pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
   readonly prefix = 'peer-' + randomUUID() + ':';
   constructor(readonly daemonId: string, readonly child: ChildProcess) {}
@@ -44,6 +45,7 @@ export class Connection {
   disconnected(app: App): void {
     if (!this.alive) return;
     this.alive = false;
+    for (const [hostId, [, connection]] of app.peers.connections) if (connection === this) app.removeLogStatus(hostId);
     for (const pending of this.pending.values()) pending.reject(new Error('SSH disconnected; the remote command may have completed. Running sessions remain on the remote daemon.'));
     this.pending.clear();
     for (const [key, route] of app.peers.routes) {
@@ -80,9 +82,17 @@ export class Connection {
       }
       return;
     }
+    if (!this.alive) return;
     let event = packet?.event;
     if (typeof event !== 'string') return;
     if (event === 'pi://groups-changed' || event === 'pi://dictation' || packet.payload?._peer === true) return;
+    if (event === 'pi://daemon-log-status') {
+      const failure = packet.payload?.failure;
+      if (packet.payload?.hostId !== 'local' || (failure !== null && typeof failure !== 'string')) { console.error('Invalid remote daemon log status'); return; }
+      this.logStatus = failure;
+      for (const [hostId, [, connection]] of app.peers.connections) if (connection === this) app.setLogStatus(hostId, failure);
+      return;
+    }
     if (event === 'pi://settings-changed') event = 'pi://host-settings-changed';
     let payload = packet.payload;
     payload = payload && typeof payload === 'object' && !Array.isArray(payload) ? { ...payload } : {};
@@ -158,10 +168,13 @@ export async function connect(app: App, hostId: string): Promise<Connection> {
     const existing = [...state.connections.values()].map(([, other]) => other).find(other => other.daemonId === connection.daemonId && other.alive);
     if (existing) {
       connection.close();
+      app.removeLogStatus(hostId);
       state.connections.set(hostId, [host, existing]);
+      if (existing.logStatus !== undefined) app.setLogStatus(hostId, existing.logStatus);
       return existing;
     }
     const previous = state.connections.get(hostId);
+    app.removeLogStatus(hostId);
     state.connections.set(hostId, [host, connection]);
     previous?.[1].close();
     app.emit('pi://plugins-changed', { hostId, _peer: true });
@@ -383,7 +396,7 @@ export async function invalidate(app: App): Promise<void> {
   const removed: Connection[] = [];
   for (const [id, [previous, connection]] of [...state.connections]) {
     const keep = settings.hosts.some(host => host.enabled && host.id === id && host.target === previous.target && host.piPath === previous.piPath);
-    if (!keep) { state.connections.delete(id); removed.push(connection); }
+    if (!keep) { state.connections.delete(id); app.removeLogStatus(id); removed.push(connection); }
   }
   const retained = new Set([...state.connections.values()].map(([, connection]) => connection));
   for (const connection of removed) if (!retained.has(connection)) connection.close();

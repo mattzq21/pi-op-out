@@ -12,6 +12,7 @@ import { ConversationOwnership, Guard, ownershipError } from './ownership';
 import { clientPayload, savedToolPayload } from './payload';
 import { argument, expandHome, parseLaunchSpec, serializeSpec, sessionSpec, specIdentity, type LaunchSpec, type SessionLaunch } from './protocol';
 import { clearSaved } from './queue';
+import { drainSaves } from './queue_storage';
 import { recoverMissingTranscripts, type Recovery } from './queue_recovery';
 import { Session, type SessionHost } from './session';
 import { ToolPayload, ToolPayloadCache } from './tool_payload';
@@ -44,6 +45,10 @@ export class Host implements SessionHost {
   releaseGates = new Map<string, Mutex>();
   dialogGates = new Map<string, Mutex>();
   sessionGates = new Map<string, Mutex>();
+  private spawnGates = new Map<string, Mutex>();
+  private shuttingDown = false;
+  private starts = new Set<Promise<Session>>();
+  private finishes = new Map<Session, Promise<void>>();
   deliveries = new Map<string, Set<string>>();
   cancelledDeliveries = new Set<string>();
   private configurationGate = new Mutex();
@@ -80,10 +85,27 @@ export class Host implements SessionHost {
     const session = this.sessions.get(old);
     if (session && session.epoch === epoch) { this.sessions.delete(old); this.sessions.set(next, session); }
   }
-  finished(key: string, epoch: string, pending: any[], transient: boolean): void {
-    if (!transient && this.sessions.get(key)?.epoch === epoch) this.sessions.delete(key);
-    if (pending.length) this.pending.set(key, pending);
-    for (const [runtime, session] of [...this.subscriptions]) if (session.epoch === epoch) this.subscriptions.delete(runtime);
+  finished(key: string, epoch: string, transient: boolean): void {
+    const session = this.sessions.get(key);
+    if (session?.epoch !== epoch) return;
+    const finished = (async () => {
+      await session.drain();
+      if (this.sessions.get(session.key) !== session) return;
+      const retained = session.queue.pending();
+      if (retained.length) this.pending.set(session.key, retained);
+      else this.pending.delete(session.key);
+      for (const [runtime, current] of this.subscriptions) if (current === session) this.subscriptions.delete(runtime);
+      if (!transient) {
+        this.output({ type: 'session_closed', sessionKey: session.key, epoch, state: session.savedState(), submitted: session.submitted() });
+      }
+      this.sessions.delete(session.key);
+    })();
+    this.finishes.set(session, finished);
+    void finished.then(() => { this.finishes.delete(session); }, error => {
+      this.finishes.delete(session);
+      console.error('Queue shutdown failed for ' + key + ': ' + errorText(error));
+      this.output({ type: 'diagnostic', line: 'Queue shutdown failed for ' + key + ': ' + errorText(error) });
+    });
   }
   maintenance(key: string): void { this.maintain(key); }
   refreshProviders(): Promise<number> { return this.services.refreshProviders(); }
@@ -109,16 +131,46 @@ export class Host implements SessionHost {
 
   current(runtime: string, session: Session): boolean { return this.subscriptions.get(runtime)?.epoch === session.epoch; }
 
-  spawnSession(launch: SessionLaunch): Session {
+  assertRunning(): void {
+    if (this.shuttingDown) throw new Error('Cannot start a session: the host is shutting down');
+  }
+
+  spawnSession(launch: SessionLaunch): Promise<Session> {
+    const start = this.startSession(launch);
+    this.starts.add(start);
+    void start.then(() => { this.starts.delete(start); }, error => {
+      this.starts.delete(start);
+      if (this.shuttingDown) console.error('Session start failed during shutdown: ' + errorText(error));
+    });
+    return start;
+  }
+
+  private async startSession(launch: SessionLaunch): Promise<Session> {
+    this.assertRunning();
     const key = launch.key;
-    const pending = this.pending.get(key) ?? [];
-    this.pending.delete(key);
-    let session: Session;
-    try { session = Session.spawn(launch, structuredClone(pending), this, this.home, this.toolPayloads); }
-    catch (error) { if (pending.length) this.pending.set(key, pending); throw error; }
-    this.sessions.set(key, session);
-    if (session.closed()) this.forgetWorker(session);
-    return session;
+    const release = await gate(this.spawnGates, key).lock();
+    try {
+      this.assertRunning();
+      let existing = this.sessions.get(key) ?? this.findSession(key);
+      if (existing && (existing.closed() || existing.stopping())) {
+        await existing.stop();
+        await this.finishes.get(existing);
+        this.assertRunning();
+        existing = this.findSession(key);
+      }
+      if (existing) {
+        if (launch.transient) throw new Error('The prepared branch identity is already in use');
+        if (existing.transient()) throw new Error('This conversation branch is still being prepared');
+        return existing;
+      }
+      const pending = this.pending.get(key) ?? [];
+      this.pending.delete(key);
+      let session: Session;
+      try { session = await Session.spawn(launch, structuredClone(pending), this, this.home, this.toolPayloads, () => this.assertRunning()); }
+      catch (error) { if (pending.length) this.pending.set(key, pending); throw error; }
+      this.sessions.set(key, session);
+      return session;
+    } finally { release(); }
   }
 
   remember(runtime: string, session: Session): void {
@@ -137,6 +189,7 @@ export class Host implements SessionHost {
   }
 
   forgetWorker(session: Session): void {
+    if (this.finishes.has(session)) return;
     const key = session.key;
     if (this.sessions.get(key)?.epoch === session.epoch) this.sessions.delete(key);
   }
@@ -348,9 +401,15 @@ export class Host implements SessionHost {
   }
 
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
     for (const timer of this.timers) clearInterval(timer);
     await this.services.shutdown();
-    await Promise.all([...this.sessions.values()].map(session => session.stop()));
+    await Promise.allSettled([...this.starts]);
+    const sessions = [...this.sessions.values()];
+    await Promise.all(sessions.map(session => session.stop()));
+    await Promise.all(sessions.map(session => session.queue.drain()));
+    while (this.finishes.size) await Promise.allSettled([...this.finishes.values()]);
+    await drainSaves(this.storageRoot());
     this.ownership().shutdown();
     for (const [guard] of this.guards.values()) guard.drop();
     this.guards.clear();
@@ -380,7 +439,7 @@ export class Host implements SessionHost {
   async handle(packet: any): Promise<any> {
     const runtime = text(packet, 'runtimeId');
     const name = kind(packet);
-    if (DaemonRestart.blocking() && !['prepare_daemon_restart', 'plugin_status', 'detach', 'shutdown'].includes(name)) {
+    if ((await DaemonRestart.blocking()) && !['prepare_daemon_restart', 'plugin_status', 'detach', 'shutdown'].includes(name)) {
       throw new Error('The daemon is restarting. Reconnect before retrying.');
     }
     if (name === 'detach') this.attachments.delete(runtime);
@@ -588,7 +647,7 @@ export class Host implements SessionHost {
     const deletedId = operation === 'delete' && flag(packet, 'success') && typeof guard.saved?.header?.id === 'string' ? guard.saved.header.id : undefined;
     guard.release(this.ownership(), flag(packet, 'success') && (operation === 'delete' || operation === 'archive'));
     if (deletedId !== undefined) {
-      clearSaved(this.storageRoot(), deletedId);
+      await clearSaved(this.storageRoot(), deletedId);
       this.pending.delete(deletedId);
     }
     return null;
@@ -781,7 +840,7 @@ class Attachment {
       await session.stop();
       session = this.host.findSession(this.identity);
     }
-    return session ?? this.host.spawnSession(this.launch(guard));
+    return session ?? await this.host.spawnSession(this.launch(guard));
   }
 
   private launch(guard: Guard): SessionLaunch {

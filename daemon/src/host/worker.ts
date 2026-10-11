@@ -1,3 +1,4 @@
+import { shellLock } from '../../resources/file-lock.cjs';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
@@ -27,7 +28,7 @@ function launchCommand(spec: LaunchSpec, identity: string, home: string): { prog
     const directory = join(join(home, claims), 'session-claims');
     ensurePrivateDir(directory);
     const hash = createHash('sha256').update(identity.toLowerCase()).digest('hex');
-    return { program: 'flock', args: ['--nonblock', '--no-fork', join(directory, 'id-' + hash.slice(0, 40) + '.lock'), spec.program, ...spec.args] };
+    return { program: 'sh', args: ['-c', 'exec 9<>"$1" || exit 1; shift; ' + shellLock(9, true) + '; code=$?; [ "$code" = 75 ] && exit 1; [ "$code" = 0 ] || exit "$code"; exec "$@"', 'piop-claim', join(directory, 'id-' + hash.slice(0, 40) + '.lock'), spec.program, ...spec.args] };
   }
   return { program: spec.program, args: [...spec.args] };
 }
@@ -45,7 +46,7 @@ export class RuntimeWorker {
     const command = launchCommand(spec, identity, home);
     const child = spawn(command.program, command.args, {
       cwd: spec.cwd ? spec.cwd : undefined,
-      env: { ...process.env, ...spec.env },
+      env: { ...process.env, ...spec.env, PIOP_BUN: process.execPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     if (child.pid === undefined) {

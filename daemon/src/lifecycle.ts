@@ -40,7 +40,7 @@ async function runBackend(): Promise<void> {
   await daemon.connect(app, app.pi, app.broker, settings, 'local');
   await daemonRestart.initializeCandidate(app);
   await mobile.start(app);
-  daemonRestart.ready();
+  await daemonRestart.ready();
   await waitForShutdown(app);
   await shutdownBackend(app);
 }

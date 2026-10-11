@@ -19,7 +19,19 @@ export class App {
   broker = new BrokerRuntime();
   peers = new PeerRuntime();
   dictation = new DictationRuntime();
+  readonly logStatuses = new Map<string, string | null>();
   private listeners = new Map<string, Listener[]>();
+
+  setLogStatus(hostId: string, failure: string | null): void {
+    if (this.logStatuses.has(hostId) && this.logStatuses.get(hostId) === failure) return;
+    this.logStatuses.set(hostId, failure);
+    this.emit('pi://daemon-log-status', { hostId, failure, ...(hostId !== 'local' ? { _peer: true } : {}) });
+  }
+
+  removeLogStatus(hostId: string): void {
+    if (!this.logStatuses.delete(hostId)) return;
+    this.emit('pi://daemon-log-status', { hostId, failure: null, _peer: true });
+  }
 
   emit(name: string, payload?: unknown): void {
     const listeners = this.listeners.get(name);

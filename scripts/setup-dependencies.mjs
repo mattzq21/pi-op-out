@@ -10,7 +10,7 @@ const localModules = join(root, "node_modules");
 
 const stamp = join(root, ".trace/dependencies.json");
 
-const bun = process.versions.bun ? process.execPath : process.platform === "win32" ? "bun.exe" : "bun";
+const bun = process.versions.bun ? process.execPath : "bun";
 
 async function optional(path) {
   try { return await readFile(path); } catch (error) {

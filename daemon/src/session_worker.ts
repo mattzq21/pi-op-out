@@ -1,3 +1,4 @@
+import { shellLock } from '../resources/file-lock.cjs';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
@@ -41,7 +42,7 @@ const WORKER_SCRIPT = [
   'reserved=$(printf "%s\\n" "$info" | sed -n 2p)',
   'umask 077',
   'exec 9<>"$lock" || { echo "piop session: Could not open a session claim" >&2; exit 1; }',
-  'flock --exclusive --nonblock 9 || { echo "piop session: This conversation is open in another window or daemon" >&2; exit 1; }',
+  shellLock(9, true) + ' || { echo "piop session: This conversation is open in another window or daemon" >&2; exit 1; }',
   'if [ -n "$reserved" ]; then set -- "$@" --session-id "$reserved"; fi',
   'if [ -n "$PIOP_RPC_ENTRY" ]; then exec node "$PIOP_RPC_ENTRY" "$@"; fi',
   'exec "$@"',
@@ -53,7 +54,7 @@ export function sessionWorkerCommand(piPath: string): LaunchCommand {
   return {
     program: 'sh',
     args: ['-c', WORKER_SCRIPT, 'piop-session', piPath],
-    env: { PIOP_SESSION_NODE: process.execPath, PIOP_SESSION_DAEMON: Bun.isStandaloneExecutable ? '' : daemonScript() },
+    env: { PIOP_BUN: process.execPath, PIOP_SESSION_NODE: process.execPath, PIOP_SESSION_DAEMON: Bun.isStandaloneExecutable ? '' : daemonScript() },
   };
 }
 

@@ -472,7 +472,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     return prompt;
   }
 
-  const validateFastMode = (agent: Agent, modelName: string | undefined, currentModel: string | undefined) => fastModeError(agent, agent.model.trim() || runtimeDefaults?.model || currentModel) || fastModeError(agent, modelName || currentModel);
+  const validateFastMode = (agent: Agent, modelName: string | undefined, currentModel: string | undefined) => fastModeError(agent, modelName || currentModel);
 
   const selectAgentModel = async (agent: Agent, ctx: ExtensionContext, modelName: string) => {
     const [provider, ...parts] = modelName.split("/"); const model = ctx.modelRegistry.find(provider, parts.join("/"));
@@ -537,6 +537,14 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   const effectiveAgentFastMode = (agent: Agent) => fastModeOverride ?? agent.fastMode;
 
+  /** Unloads the piop extensions of an agent that cannot run, so their providers do not stay registered. */
+  const unloadExtensions = async (error: string, ctx: ExtensionContext) => {
+    try { await extensions.deactivate(ctx); }
+    catch (cleanupError) { ctx.ui.notify(`piop extension cleanup failed: ${String(cleanupError)}`, "error"); }
+
+    return error;
+  };
+
   const activate = async (agent: Agent, ctx: ExtensionContext, persistSnapshot: boolean, applyFastMode: boolean | "restore") => {
     const promptError = await prepareAgentPrompts(agent, persistSnapshot);
 
@@ -551,18 +559,18 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
     if (toolError) { pi.setActiveTools([]);
 
-    return toolError; }
+    return unloadExtensions(toolError, ctx); }
 
     const modelError = await configureAgentModel(agent, ctx);
 
-    if (modelError) return modelError;
+    if (modelError) return unloadExtensions(modelError, ctx);
     configureAgentEffort(agent);
 
     if (applyFastMode) pi.events.emit("piop:fast-mode", { apply: true, enabled: effectiveAgentFastMode(agent), restore: applyFastMode === "restore", ctx });
     const tools = new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools()]);
     const mcpError = await registerAgentMcp(agent, ctx, tools);
 
-    if (mcpError) return mcpError;
+    if (mcpError) return unloadExtensions(mcpError, ctx);
 
     if (agent.name !== "terminal-agent") tools.delete("lookup_terminals");
     const required: RequiredToolsRequest = { ctx, tools: [], availableTools: [...tools] }; pi.events.emit("piop:required-tools", required);
@@ -608,7 +616,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
 
   const stopFastModelChanges = pi.events.on("piop:fast-mode-models-changed", ({ ctx }) => publish(ctx));
-  pi.on("session_shutdown", () => { stopSubagentProfiles(); stopProfileCatalog(); stopRefresh(); stopReload(); stopFastModeChanges(); stopFastModelChanges(); extensions.stop(); });
+  pi.on("session_shutdown", async (event, ctx) => { stopSubagentProfiles(); stopProfileCatalog(); stopRefresh(); stopReload(); stopFastModeChanges(); stopFastModelChanges(); await extensions.deactivate(ctx, event); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`;
 
   if (applyingAgentModel === model) { applyingAgentModel = undefined;
@@ -700,7 +708,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!agent) throw new Error(`Unknown defined agent: ${name}`);
     restore(ctx);
     await refreshFastMode(ctx);
-    const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model, agent.fastMode === true);
+    const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model || (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined), agent.fastMode === true);
 
     if (error) throw new Error(error);
     await extensions.prepare(extensionPaths(agent.extensions));

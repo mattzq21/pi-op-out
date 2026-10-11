@@ -7,7 +7,7 @@ import { ensurePrivateDir, syncDirectoryAncestors } from '../private_fs';
 import * as Registry from '../session_registry';
 import * as ConversationStorage from '../conversation_storage';
 import { transaction, type Database } from '../util/db';
-import { lockPathSync, type FileLock } from '../util/flock';
+import { lockPath, type FileLock } from '../util/flock';
 import { ConversationOwnership, savedConversationIn } from './ownership';
 
 interface Lease { client: string; editor: string; token: string; expires: number }
@@ -31,15 +31,24 @@ function validatePath(path: string): string {
   return path;
 }
 
-function lockNotes(): FileLock {
+async function lockNotes(): Promise<FileLock> {
   const root = storageRoot();
   ensurePrivateDir(root);
-  return lockPathSync(validatePath(join(root, 'note-mutations.lock')));
+  const path = validatePath(join(root, 'note-mutations.lock'));
+  const lock = await lockPath(path, { blocking: true });
+  if (!lock) throw new Error('Could not lock ' + path);
+  return lock;
 }
 
-function withNotes<T>(operation: () => T): T {
-  const lock = lockNotes();
-  try { return operation(); } finally { lock.release(); }
+let notesPending: Promise<void> = Promise.resolve();
+
+function withNotes<T>(operation: () => T): Promise<T> {
+  const result = notesPending.then(async () => {
+    const lock = await lockNotes();
+    try { return operation(); } finally { lock.release(); }
+  });
+  notesPending = result.then(() => {}, () => {});
+  return result;
 }
 
 // Lease records live in the session database; the path only names the session and the storage root.
@@ -149,23 +158,24 @@ function sameLease(left: Lease | undefined, right: Lease | undefined): boolean {
 export class RestartLeases {
   constructor(private preserved: Array<[string, Lease, Lease]> = []) {}
   commit(): void { this.preserved = []; }
-  drop(): void {
+  async drop(): Promise<void> {
     if (!this.preserved.length) return;
+    const preserved = this.preserved;
+    this.preserved = [];
     try {
-      withNotes(() => {
-        for (const [path, original, extended] of this.preserved) if (sameLease(readLease(path), extended)) writeLease(path, original);
+      await withNotes(() => {
+        for (const [path, original, extended] of preserved) if (sameLease(readLease(path), extended)) writeLease(path, original);
       });
     } catch (error: any) {
       console.error('Could not restore note leases after failed restart preparation: ' + (error?.message ?? error));
     }
-    this.preserved = [];
   }
 }
 
-export function preserveLeasesForRestart(): RestartLeases {
+export async function preserveLeasesForRestart(): Promise<RestartLeases> {
   const leases = new RestartLeases();
   try {
-    withNotes(() => {
+    await withNotes(() => {
       for (const path of Leases.list(storageRoot())) {
         if (!path.endsWith('.json')) continue;
         const lease = readLease(path);
@@ -175,7 +185,7 @@ export function preserveLeasesForRestart(): RestartLeases {
         writeLease(path, extended);
       }
     });
-  } catch (error) { leases.drop(); throw error; }
+  } catch (error) { await leases.drop(); throw error; }
   return leases;
 }
 
@@ -242,7 +252,7 @@ function editorFor(args: any): Editor {
   return { client, id, token: typeof args?.leaseToken === 'string' ? args.leaseToken : undefined };
 }
 
-export function dispatch(args: any, enabled: boolean): any {
+export function dispatch(args: any, enabled: boolean): Promise<any> {
   return withNotes(() => {
     const session = parseUuid(field(args, 'sessionId'));
     if (!session) throw new Error('Choose a chat before writing a note');

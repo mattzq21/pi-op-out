@@ -113,6 +113,7 @@ export async function configureConversationRuntime(value: AppSettings, transport
   if (transport.currentHostId() !== "local") value = await transport.loadHostSettings();
 
   if (!current()) return;
+  transport.setDefaultFastMode(value.defaultFastMode);
 
   await transport.configureAutomaticBehavior(value.autoRetry);
 

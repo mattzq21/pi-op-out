@@ -1,8 +1,8 @@
+const { lockSync } = require('../file-lock.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createHash } = require('node:crypto');
-const { spawnSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
@@ -158,15 +158,7 @@ function rootForTarget(target) {
 }
 
 function lockDescriptor(descriptor) {
-  const result = spawnSync('flock', ['--exclusive', '--nonblock', '--conflict-exit-code', '75', '3'], { stdio: ['ignore', 'ignore', 'pipe', descriptor], timeout: 5000 });
-
-  if (result.error) throw result.error;
-
-  if (result.status === 75) return false;
-
-  if (result.status !== 0) throw new Error('Could not acquire the session publication OS lock');
-
-  return true;
+  return lockSync(descriptor, false, true, 5000);
 }
 
 function claim(file, expected) {

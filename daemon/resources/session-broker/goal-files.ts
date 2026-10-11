@@ -1,10 +1,10 @@
+import { lockSync as lockSync } from "../file-lock.cjs";
 import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "./goal-directory-recovery.cjs";
 import { read as readDependencies, textContents, savePreparedText, removePreparedText } from "./goal-dependencies.cjs";
 import { markCleanup } from "../session-database.cjs";
 import { link, mkdir, open, rename, rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { validateObjective } from "./goal-state.ts";
@@ -49,11 +49,9 @@ function ownGoalDirectory(directory: string) {
 
   try {
     if (!fstatSync(descriptor).isFile()) throw new Error("Invalid goal attachment ownership lock");
-    const child = spawnSync("flock", ["--exclusive", "3"], { stdio: ["ignore", "pipe", "pipe", descriptor] });
+    const child = lockSync(descriptor, false, false);
 
-    if (child.error) throw child.error;
-
-    if (child.status !== 0) throw new Error(child.stderr.toString().trim() || "Could not own goal attachments");
+    if (!child) throw new Error("Could not own goal attachments");
 
     return () => closeSync(descriptor);
   } catch (error) { closeSync(descriptor); throw error; }

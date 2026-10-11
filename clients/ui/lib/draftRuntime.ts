@@ -38,6 +38,7 @@ export class DraftRuntime {
   private revision = 0;
   readonly changes = new Map<string, RpcCommand>();
   fastMode = false;
+  defaultFastMode = false;
 
   constructor(private hostId: () => string, private emit: (event: RpcEvent) => void) {}
 
@@ -92,9 +93,10 @@ export class DraftRuntime {
     this.agent = name;
     const model = this.catalog?.models.find(model => `${model.provider}/${model.id}` === agent.model);
     this.state = { ...this.state, model: model ?? this.state.model, thinkingLevel: agent.effort || this.state.thinkingLevel };
-    this.fastMode = agent.fastMode ?? false;
+    this.fastMode = agent.fastMode ?? this.defaultFastMode;
     this.changes.delete("set_model"); this.changes.delete("set_thinking_level");
     this.changes.set("select_agent", { type: "select_agent", agent: name }); this.revision++;
+    this.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: this.fastMode ? "Fast mode on" : "" });
     this.emit({ type: "extension_ui_request", method: "setStatus", statusKey: DEFINED_AGENTS_STATUS_KEY, statusText: encodeAgentValue({ version: 1, active: this.agent, locked: false, saved: false, config: this.catalog?.config ?? { agents: [] } }) });
 
     return {};

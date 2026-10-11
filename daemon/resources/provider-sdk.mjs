@@ -327,7 +327,7 @@ async function handle(packet) {
   if (packet.method === 'answer') return answerLogin(packet);
   const loaded = await runtime();
 
-  if (packet.method === 'initialize') return { builtinIds: loaded.builtinIds };
+  if (packet.method === 'initialize') return { builtinIds: loaded.builtinIds, authPath: loaded.authPath };
 
   if (['model_config', 'save_model_provider'].includes(packet.method)) return storedProviderRequest(loaded, packet);
 

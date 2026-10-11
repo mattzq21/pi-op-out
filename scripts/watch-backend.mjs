@@ -13,14 +13,13 @@ export async function watchBackend(command, args, options, root, { port, watch =
   let vite;
   const pending = new Set();
   const watchers = [];
-  const daemon = join(root, "target/debug", process.platform === "win32" ? "piopd.exe" : "piopd");
+  const daemon = join(root, "target/debug", "piopd");
 
   const signalChild = (running, signal) => {
     if (!running?.pid) return;
 
     try {
-      if (process.platform === "win32") running.kill(signal);
-      else process.kill(-running.pid, signal);
+      process.kill(-running.pid, signal);
     } catch (error) { if (error.code !== "ESRCH") console.error(error.message); }
   };
 
@@ -46,7 +45,7 @@ export async function watchBackend(command, args, options, root, { port, watch =
       return;
     }
 
-    const running = spawn(executable, arguments_, { ...options, cwd: root, detached: process.platform !== "win32" });
+    const running = spawn(executable, arguments_, { ...options, cwd: root, detached: true });
     task = running;
     running.once("error", reject);
     running.once("exit", (code, signal) => {
@@ -84,7 +83,7 @@ export async function watchBackend(command, args, options, root, { port, watch =
 
   const launch = () => {
     if (closing) return;
-    const running = spawn(command, args, { ...options, cwd: root, detached: process.platform !== "win32" });
+    const running = spawn(command, args, { ...options, cwd: root, detached: true });
     child = running;
     running.once("error", error => { console.error(error.message); void close(1); });
     running.once("exit", code => {

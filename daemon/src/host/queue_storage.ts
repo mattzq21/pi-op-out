@@ -1,8 +1,8 @@
-import { join, dirname, basename, isAbsolute } from 'node:path';
+import { join, dirname, basename, isAbsolute, resolve } from 'node:path';
 import * as Registry from '../session_registry';
 import { ensurePrivateDir } from '../private_fs';
 import { transaction, type Database } from '../util/db';
-import { lockPathSync, type FileLock } from '../util/flock';
+import { lockPath, type FileLock } from '../util/flock';
 import * as Publication from './reference_publication';
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
@@ -19,9 +19,28 @@ export function parseIdentity(id: string): string {
 }
 
 /** Lock that keeps queued-input storage writes in order across processes. */
-export function temporaryLock(root: string): FileLock {
+export async function temporaryLock(root: string): Promise<FileLock> {
   ensurePrivateDir(root);
-  return lockPathSync(join(root, 'queued-input.lock'), { nofollow: true, regularFile: 'Invalid queued-input storage lock' });
+  const path = join(root, 'queued-input.lock');
+  const lock = await lockPath(path, { blocking: true, nofollow: true, regularFile: 'Invalid queued-input storage lock' });
+  if (!lock) throw new Error('Could not lock ' + path);
+  return lock;
+}
+
+const saves = new Map<string, Promise<void>>();
+
+function inOrder<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const previous = saves.get(key) ?? Promise.resolve();
+  const result = previous.then(operation);
+  const tail = result.then(() => {}, () => {});
+  saves.set(key, tail);
+  void tail.then(() => { if (saves.get(key) === tail) saves.delete(key); });
+  return result;
+}
+
+export async function drainSaves(root: string): Promise<void> {
+  const key = resolve(root);
+  while (saves.has(key)) await saves.get(key);
 }
 
 export class QueueStorage {
@@ -67,48 +86,57 @@ export class QueueStorage {
     return saved ? recoverItems(saved) : [];
   }
 
-  recover(pending: any[]): any[] {
-    const recovered = this.load();
-    for (const original of pending) {
-      const item = structuredClone(original);
-      validateItem(item);
-      item.retry = true;
-      if (!recovered.some(saved => saved.id === item.id)) recovered.push(item);
-    }
-    this.save(recovered);
-    return recovered;
+  async recover(pending: any[]): Promise<any[]> {
+    const snapshot = structuredClone(pending);
+    const origin = structuredClone(this.origin);
+    return inOrder(resolve(this.root()), async () => {
+      const recovered = this.load();
+      for (const item of snapshot) {
+        validateItem(item);
+        item.retry = true;
+        if (!recovered.some(saved => saved.id === item.id)) recovered.push(item);
+      }
+      await this.saveLocked(recovered, origin);
+      return recovered;
+    });
   }
 
-  save(items: any[]): void {
+  async save(items: any[]): Promise<void> {
     validateItems(items);
+    const snapshot = structuredClone(items);
+    const origin = structuredClone(this.origin);
+    return inOrder(resolve(this.root()), () => this.saveLocked(snapshot, origin));
+  }
+
+  private async saveLocked(items: any[], origin: any): Promise<void> {
     const root = this.root();
-    const publication = Publication.lock(root);
+    const publication = await Publication.lock(root);
     try {
-      const storage = temporaryLock(root);
+      const storage = await temporaryLock(root);
       try {
-        Publication.validateNewReferences(root, items, this.load());
+        await Publication.validateNewReferences(root, items, this.load());
         const db = Registry.open(root);
-        try { transaction(db, 'IMMEDIATE', () => this.writeItems(db, items)); } finally { db.close(); }
+        try { transaction(db, 'IMMEDIATE', () => this.writeItems(db, items, origin)); } finally { db.close(); }
       } finally { storage.release(); }
     } finally { publication.release(); }
   }
 
-  private writeItems(db: Database, items: any[]): void {
+  private writeItems(db: Database, items: any[], origin: any): void {
     const id = this.id();
     if (!items.length) {
       db.prepare('DELETE FROM queue_items WHERE session_id=?').run(id);
       db.prepare('DELETE FROM queue_origins WHERE session_id=?').run(id);
       return;
     }
-    if (!this.origin) throw new Error('Queued-input recovery is missing its working directory');
+    if (!origin) throw new Error('Queued-input recovery is missing its working directory');
     db.prepare('INSERT INTO queue_origins VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET cwd=excluded.cwd, session_path=excluded.session_path')
-      .run(id, typeof this.origin.cwd === 'string' ? this.origin.cwd : null, typeof this.origin.sessionPath === 'string' ? this.origin.sessionPath : null);
+      .run(id, typeof origin.cwd === 'string' ? origin.cwd : null, typeof origin.sessionPath === 'string' ? origin.sessionPath : null);
     saveRows(db, id, items);
   }
 }
 
-export function clearSaved(root: string, id: string): void {
-  new QueueStorage(join(root, 'queued-input'), id).save([]);
+export async function clearSaved(root: string, id: string): Promise<void> {
+  await new QueueStorage(join(root, 'queued-input'), id).save([]);
 }
 
 function recoverItems(saved: any): any[] {

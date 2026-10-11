@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,10 +23,7 @@ function hostTriple() {
   const triple = result.status === 0 ? result.stdout.match(/^host: (.+)$/m)?.[1] : undefined;
   if (triple) return triple;
   const arch = { x64: 'x86_64', arm64: 'aarch64', ia32: 'i686' }[process.arch] ?? process.arch;
-  if (process.platform === 'linux') return arch + '-unknown-linux-gnu';
-  if (process.platform === 'darwin') return arch + '-apple-darwin';
-  if (process.platform === 'win32') return arch + '-pc-windows-msvc';
-  throw new Error('Could not determine the native target');
+  return arch + '-unknown-linux-gnu';
 }
 
 /** Loads files imported with a "?raw" suffix as text. */
@@ -38,11 +35,12 @@ const rawText = {
   },
 };
 
-const extension = process.platform === 'win32' ? (debug ? '.mjs' : '.exe') : '';
-const source = join(root, 'target', debug ? 'debug' : 'release', 'piopd' + extension);
+const source = join(root, 'target', debug ? 'debug' : 'release', 'piopd');
 mkdirSync(dirname(source), { recursive: true });
 const temporaryBuild = join(dirname(source), '.piopd-' + randomUUID() + '.mjs');
-const temporaryExecutable = join(dirname(source), '.piopd-' + randomUUID() + extension);
+const temporaryExecutable = join(dirname(source), '.piopd-' + randomUUID());
+// The placeholder has the same length as the final ID, so the inline source map stays correct.
+const buildIdPlaceholder = 'piop-build-' + randomBytes(32).toString('hex');
 
 try {
   await build({
@@ -55,6 +53,7 @@ try {
     external: ['bun', 'bun:*'],
     banner: { js: "#!/usr/bin/env bun\nimport { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);" },
     define: {
+      __PIOP_BUILD_ID__: JSON.stringify(buildIdPlaceholder),
       __PIOP_DEVELOPMENT__: JSON.stringify(debug),
       __PIOP_PROJECT_DIR__: JSON.stringify(debug ? root.replace(/[\\/]+$/, '') : ''),
     },
@@ -65,6 +64,11 @@ try {
     logLevel: 'warning',
     plugins: [rawText],
   });
+  const bundle = readFileSync(temporaryBuild, 'utf8');
+  if (!bundle.includes(buildIdPlaceholder)) throw new Error('Daemon build ID is missing from the bundle');
+  const buildId = 'piop-build-' + createHash('sha256').update(bundle.replaceAll(buildIdPlaceholder, '')).digest('hex');
+  if (buildId.length !== buildIdPlaceholder.length) throw new Error('Daemon build ID length changed');
+  writeFileSync(temporaryBuild, bundle.replaceAll(buildIdPlaceholder, buildId));
   if (!debug) run(process.execPath, ['build', '--compile', temporaryBuild, '--outfile', temporaryExecutable]);
   const output = debug ? temporaryBuild : temporaryExecutable;
   chmodSync(output, 0o755);
@@ -84,14 +88,14 @@ let sourceContent;
 function copyIfChanged(target) {
   try {
     const targetStats = statSync(target);
-    if (targetStats.size === sourceStats.size && (process.platform === 'win32' || (targetStats.mode & 0o111) === (sourceStats.mode & 0o111))) {
+    if (targetStats.size === sourceStats.size && (targetStats.mode & 0o111) === (sourceStats.mode & 0o111)) {
       sourceContent ??= readFileSync(source);
       if (readFileSync(target).equals(sourceContent)) return false;
     }
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
-  const temporary = join(dirname(target), '.piopd-' + randomUUID() + extension);
+  const temporary = join(dirname(target), '.piopd-' + randomUUID());
   try {
     copyFileSync(source, temporary);
     chmodSync(temporary, 0o755);
@@ -104,12 +108,12 @@ function copyIfChanged(target) {
 
 if (!process.argv.includes('--skip-copy')) {
   mkdirSync(join(root, 'clients/desktop/binaries'), { recursive: true });
-  copyIfChanged(join(root, 'clients/desktop/binaries', 'piopd-' + hostTriple() + extension));
+  copyIfChanged(join(root, 'clients/desktop/binaries', 'piopd-' + hostTriple()));
 }
 
 if (process.argv.includes('--install')) {
   const binDirectory = join(homedir(), '.local', 'bin');
-  const installed = join(binDirectory, 'piopd' + extension);
+  const installed = join(binDirectory, 'piopd');
   mkdirSync(binDirectory, { recursive: true });
   console.log((copyIfChanged(installed) ? 'Installed' : 'Unchanged:') + ' ' + installed);
   if (!(process.env.PATH ?? '').split(delimiter).some(directory => resolve(directory) === binDirectory)) {

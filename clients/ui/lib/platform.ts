@@ -26,7 +26,32 @@ const clientPreferences = registerPlugin<{
   save(options: { settings: unknown; baseline: unknown; initialize: boolean }): Promise<{ settings: unknown; revision: string; publication: SettingsPublication }>;
 }>("ClientPreferences");
 
-export const listen = <S extends z.ZodType>(event: string, handler: EventCallback<z.output<S>>, schema: S): Promise<UnlistenFn> => isMobile ? remoteClient.listen(event, handler, schema) : nativeListen(event, value => handler({ ...value, payload: schema.parse(value.payload) }), { target: { kind: "WebviewWindow", label: getCurrentWebviewWindow().label } });
+export async function listen<S extends z.ZodType>(event: string, handler: EventCallback<z.output<S>>, schema: S): Promise<UnlistenFn> {
+  if (isMobile) return remoteClient.listen(event, handler, schema);
+
+  let liveHosts = event === "pi://daemon-log-status" ? new Set<string>() : undefined;
+  const hostSchema = z.object({ hostId: z.string() });
+  const listener: EventCallback<unknown> = value => handler({ ...value, payload: schema.parse(value.payload) });
+  const unlisten = await nativeListen(event, value => {
+    if (liveHosts) liveHosts.add(hostSchema.parse(value.payload).hostId);
+    listener(value);
+  }, { target: { kind: "WebviewWindow", label: getCurrentWebviewWindow().label } });
+
+  if (liveHosts) {
+    try {
+      const statuses = z.array(z.unknown()).parse(await nativeInvoke("daemon_log_statuses"));
+      for (const payload of statuses) {
+        if (!liveHosts.has(hostSchema.parse(payload).hostId)) listener({ event, payload, id: 0 });
+      }
+    } catch (error) {
+      unlisten();
+      throw error;
+    } finally {
+      liveHosts = undefined;
+    }
+  }
+  return unlisten;
+}
 
 export function captureDaemonTransport() {
   const identity = isMobile ? remoteClient.connectionIdentity() : "desktop";

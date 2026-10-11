@@ -9,8 +9,6 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const home = homedir();
 
-const extension = process.platform === 'win32' ? '.exe' : '';
-
 const env = { ...process.env, VITE_PIOP_DEBUG: "true" };
 
 const localProperties = join(root, 'clients/android/local.properties');
@@ -19,16 +17,16 @@ const configuredSdk = existsSync(localProperties)
   ? readFileSync(localProperties, 'utf8').match(/^sdk\.dir=(.+)$/m)?.[1].trim().replace(/\\([\\: ])/g, '$1')
   : undefined;
 
-const sdk = [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, configuredSdk, join(home, 'Android/Sdk'), join(home, 'Library/Android/sdk')]
-  .find((path) => path && existsSync(join(path, `platform-tools/adb${extension}`)));
+const sdk = [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, configuredSdk, join(home, 'Android/Sdk')]
+  .find((path) => path && existsSync(join(path, 'platform-tools/adb')));
 
-const adb = sdk ? join(sdk, `platform-tools/adb${extension}`) : `adb${extension}`;
+const adb = sdk ? join(sdk, 'platform-tools/adb') : 'adb';
 
 if (sdk) env.ANDROID_HOME = sdk;
 
 if (!env.JAVA_HOME) {
-  const java = [join(home, 'Applications/android-studio/jbr'), '/opt/android-studio/jbr', '/Applications/Android Studio.app/Contents/jbr/Contents/Home']
-    .find((path) => existsSync(join(path, `bin/java${extension}`)));
+  const java = [join(home, 'Applications/android-studio/jbr'), '/opt/android-studio/jbr']
+    .find((path) => existsSync(join(path, 'bin/java')));
 
   if (java) env.JAVA_HOME = java;
 }

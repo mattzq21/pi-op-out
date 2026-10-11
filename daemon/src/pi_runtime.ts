@@ -189,9 +189,8 @@ export function updateRuntimeSnapshot(runtime: PiRuntime, runtimeId: string, sta
 }
 
 function openSystemResource(target: string): void {
-  const program = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
   try {
-    const child = spawn(program, [target], { stdio: 'ignore', detached: false });
+    const child = spawn('xdg-open', [target], { stdio: 'ignore', detached: false });
     child.on('error', error => console.error('Could not open ' + target + ': ' + error.message));
   } catch (error: any) { throw new Error('Could not open ' + target + ': ' + error.message); }
 }

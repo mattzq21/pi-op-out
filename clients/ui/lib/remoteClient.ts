@@ -27,6 +27,7 @@ export class RemoteClient {
   private pending = new Map<number, Pending>();
   private terminals = new Set<string>();
   private listeners = new Map<string, Set<(event: RemoteEvent) => void>>();
+  private logStatuses = new Map<string, RemoteEvent>();
   private heartbeat?: ReturnType<typeof setInterval>;
   onDisconnect?: (message: string) => void;
   connectionIdentity() { return this.destination; }
@@ -101,6 +102,10 @@ export class RemoteClient {
   publishLocalEvent(event: string, payload: JSONType) { this.receive({ event, payload }); }
   private receive(message: RemotePacket) {
     if (message.event !== undefined) {
+      if (message.event === "pi://daemon-log-status") {
+        const payload = z.object({ hostId: z.string(), failure: z.string().nullable() }).parse(message.payload);
+        this.logStatuses.set(payload.hostId, { event: message.event, payload });
+      }
       const event = z.object({ type: z.string().optional(), terminalId: z.string().optional() }).catch({}).parse(message.payload);
 
       if (message.event === "pi://event" && event?.type === "terminal_exit" && event.terminalId) this.terminals.delete(event.terminalId);
@@ -165,11 +170,17 @@ export class RemoteClient {
     const listeners = this.listeners.get(event) ?? new Set();
     listeners.add(listener); this.listeners.set(event, listeners);
 
+    if (event === "pi://daemon-log-status") {
+      try { for (const status of this.logStatuses.values()) listener(status); }
+      catch (error) { listeners.delete(listener); return Promise.reject(error); }
+    }
     return Promise.resolve(() => { listeners.delete(listener); });
   }
   private failPending() {
     const wasReady = this.ready;
     this.ready = false;
+    for (const hostId of [...this.logStatuses.keys()]) this.receive({ event: "pi://daemon-log-status", payload: { hostId, failure: null } });
+    this.logStatuses.clear();
 
     if (wasReady) this.receive({ event: "pi://event", payload: { type: "disconnected" } });
     clearInterval(this.heartbeat);

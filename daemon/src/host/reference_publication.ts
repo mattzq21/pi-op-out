@@ -1,16 +1,19 @@
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { STORAGE_DIRECTORY } from '../config';
 import { goalDependencies } from '../resources';
 import * as Registry from '../session_registry';
-import { lockPathSync, type FileLock } from '../util/flock';
+import { lockPath, type FileLock } from '../util/flock';
 
-export function lock(root: string): FileLock {
-  return lockPathSync(join(root, 'reference-publication.lock'), { shared: true, nofollow: true, regularFile: 'Invalid reference publication lock' });
+export async function lock(root: string): Promise<FileLock> {
+  const path = join(root, 'reference-publication.lock');
+  const result = await lockPath(path, { blocking: true, shared: true, nofollow: true, regularFile: 'Invalid reference publication lock' });
+  if (!result) throw new Error('Could not lock ' + path);
+  return result;
 }
 
-export function validateNewReferences(root: string, values: any[], previous: any[]): void {
+export async function validateNewReferences(root: string, values: any[], previous: any[]): Promise<void> {
   const retained = valueReferences(root, previous);
   const pending = [...valueReferences(root, values)];
   while (pending.length) {
@@ -18,7 +21,7 @@ export function validateNewReferences(root: string, values: any[], previous: any
     if (retained.has(directory)) continue;
     retained.add(directory);
     let dependencies: Set<string>;
-    try { dependencies = goalDependenciesOf(root, directory); } catch (error: any) {
+    try { dependencies = await goalDependenciesOf(root, directory); } catch (error: any) {
       throw new Error('Managed goal attachment is unavailable: ' + directory + '. Reattach it before saving. ' + (error?.message ?? String(error)));
     }
     pending.push(...dependencies);
@@ -85,18 +88,38 @@ function validateGoalDirectory(directory: string): void {
   if (!lstatSync(directory).isDirectory() || !lstatSync(join(directory, 'goal-objective.md')).isFile()) throw new Error('Invalid goal attachment');
 }
 
-function goalDependenciesOf(root: string, directory: string): Set<string> {
+async function goalDependenciesOf(root: string, directory: string): Promise<Set<string>> {
   validateGoalDirectory(directory);
   const found = new Set<string>();
-  for (const text of goalTextContents(root, directory)) textReferences(root, text, found);
+  for (const text of await goalTextContents(root, directory)) textReferences(root, text, found);
   return found;
 }
 
-function goalTextContents(root: string, directory: string): string[] {
+async function goalTextContents(root: string, directory: string): Promise<string[]> {
   const module = goalDependencies.replaceAll("require('../session-database.cjs')", "require('./session-database.cjs')");
   const script = Registry.withDatabase('const goalTextFiles = (() => { const module = {exports: {}}; ' + module + '\nreturn module.exports; })();\nprocess.stdout.write(JSON.stringify(goalTextFiles.textContents(process.argv[1], process.argv[2]).map(entry => entry.text)));');
-  const output = spawnSync(process.execPath, ['-e', script, root, directory], { env: { ...process.env, BUN_BE_BUN: '1', PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY }, maxBuffer: 1024 * 1024 * 1024 });
-  if (output.error) throw output.error;
-  if (output.status !== 0) throw new Error(output.stderr.toString().trim());
-  return JSON.parse(output.stdout.toString());
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['-e', script, root, directory], { env: { ...process.env, BUN_BE_BUN: '1', PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout: Buffer[] = [], stderr: Buffer[] = [];
+    let outputSize = 0, errorSize = 0;
+    let failure: Error | undefined;
+    const collect = (chunks: Buffer[], chunk: Buffer, stream: 'stdout' | 'stderr') => {
+      if (failure) return;
+      if (stream === 'stdout') outputSize += chunk.length; else errorSize += chunk.length;
+      if (outputSize > 1024 * 1024 * 1024 || errorSize > 1024 * 1024 * 1024) {
+        failure = Object.assign(new Error('spawnSync ' + process.execPath + ' ENOBUFS'), { code: 'ENOBUFS' });
+        child.kill();
+      } else chunks.push(chunk);
+    };
+    child.stdout.on('data', chunk => collect(stdout, chunk, 'stdout'));
+    child.stderr.on('data', chunk => collect(stderr, chunk, 'stderr'));
+    child.on('error', reject);
+    child.stdout.on('error', error => { failure = error; child.kill(); });
+    child.stderr.on('error', error => { failure = error; child.kill(); });
+    child.on('close', status => {
+      if (failure) { reject(failure); return; }
+      if (status !== 0) { reject(new Error(Buffer.concat(stderr).toString().trim())); return; }
+      try { resolve(JSON.parse(Buffer.concat(stdout).toString())); } catch (error) { reject(error); }
+    });
+  });
 }
