@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,11 @@ const source = join(root, 'target', debug ? 'debug' : 'release', 'piopd' + exten
 mkdirSync(dirname(source), { recursive: true });
 const temporaryBuild = join(dirname(source), '.piopd-' + randomUUID() + '.mjs');
 const temporaryExecutable = join(dirname(source), '.piopd-' + randomUUID() + extension);
+// The placeholder has the same length as the final ID, so the inline source map stays correct.
+const buildIdPlaceholder = 'piop-build-' + randomBytes(32).toString('hex');
+// Compiled builds include the Bun runtime, so their ID also covers the Bun version and target.
+// The daemon checks script builds again at run time, so their hash input is the bundle only.
+const buildTarget = debug ? '' : ['bun', process.versions.bun ?? process.version, process.platform, process.arch, 'compile'].join(' ') + '\n';
 
 try {
   await build({
@@ -55,6 +60,7 @@ try {
     external: ['bun', 'bun:*'],
     banner: { js: "#!/usr/bin/env bun\nimport { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);" },
     define: {
+      __PIOP_BUILD_ID__: JSON.stringify(buildIdPlaceholder),
       __PIOP_DEVELOPMENT__: JSON.stringify(debug),
       __PIOP_PROJECT_DIR__: JSON.stringify(debug ? root.replace(/[\\/]+$/, '') : ''),
     },
@@ -65,6 +71,11 @@ try {
     logLevel: 'warning',
     plugins: [rawText],
   });
+  const bundle = readFileSync(temporaryBuild, 'utf8');
+  if (!bundle.includes(buildIdPlaceholder)) throw new Error('Daemon build ID is missing from the bundle');
+  const buildId = 'piop-build-' + createHash('sha256').update(buildTarget + bundle.replaceAll(buildIdPlaceholder, '')).digest('hex');
+  if (buildId.length !== buildIdPlaceholder.length) throw new Error('Daemon build ID length changed');
+  writeFileSync(temporaryBuild, bundle.replaceAll(buildIdPlaceholder, buildId));
   if (!debug) run(process.execPath, ['build', '--compile', temporaryBuild, '--outfile', temporaryExecutable]);
   const output = debug ? temporaryBuild : temporaryExecutable;
   chmodSync(output, 0o755);

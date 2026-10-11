@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
@@ -9,6 +9,26 @@ import type { App } from './app';
 
 const IMAGE_LIMIT = 10 * 1024 * 1024;
 const GOAL_IMAGE_PATH = /^(?:sessions|archived)\/(?:[^/]+\/)*attachments\/goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})\//;
+let darwinImagePath: ((fd: number) => string) | undefined;
+
+function openedImagePath(fd: number): string {
+  if (process.platform === 'linux') return realpathSync('/proc/self/fd/' + fd);
+  if (process.platform !== 'darwin') throw new Error('Image previews are not supported on this system');
+  if (!darwinImagePath) {
+    const { dlopen, ptr } = require('bun:ffi') as typeof import('bun:ffi');
+    const library = dlopen('/usr/lib/libSystem.B.dylib', {
+      proc_pidfdinfo: { args: ['i32', 'i32', 'i32', 'ptr', 'i32'], returns: 'i32' },
+    });
+    darwinImagePath = fd => {
+      const buffer = Buffer.alloc(1200);
+      if (library.symbols.proc_pidfdinfo(process.pid, fd, 2, ptr(buffer), buffer.length) !== buffer.length) throw new Error('Could not resolve image file');
+      const end = buffer.indexOf(0, 176);
+      if (end <= 176) throw new Error('Could not resolve image file');
+      return buffer.toString('utf8', 176, end);
+    };
+  }
+  return darwinImagePath(fd);
+}
 
 export async function readImage(app: App, cwd: string, path: string, hostId: string): Promise<string> {
   const bytes = hostId === 'local' ? readLocalImage(cwd, path) : await readRemoteImage(app, cwd, path, hostId);
@@ -17,6 +37,7 @@ export async function readImage(app: App, cwd: string, path: string, hostId: str
 }
 
 function readLocalImage(cwd: string, path: string): Buffer {
+  if (process.platform !== 'linux' && process.platform !== 'darwin') throw new Error('Image previews are not supported on this system');
   const target = realpathSync(resolve(cwd, path));
   let root: string | undefined;
   try { root = realpathSync(cwd); } catch (error: any) { if (error.code !== 'ENOENT') throw error; }
@@ -26,12 +47,11 @@ function readLocalImage(cwd: string, path: string): Buffer {
     try { storage = realpathSync(join(homeDir(), STORAGE_DIRECTORY)); } catch (error: any) { if (error.code !== 'ENOENT') throw error; }
     if (!storage || !GOAL_IMAGE_PATH.test(relative(storage, target).split(sep).join('/'))) throw new Error('Image is outside the project');
   }
-  const expected = statSync(target, { bigint: true });
   let fd: number;
   try { fd = openSync(target, constants.O_RDONLY | constants.O_NONBLOCK); } catch (error: any) { throw new Error(`Could not read image: ${error.message}`); }
   try {
     const stats = fstatSync(fd, { bigint: true });
-    if (stats.dev !== expected.dev || stats.ino !== expected.ino || realpathSync(process.platform === 'linux' ? '/proc/self/fd/' + fd : target) !== target) throw new Error('Image file changed while opening');
+    if (openedImagePath(fd) !== target) throw new Error('Image file changed while opening');
     if (!stats.isFile()) throw new Error('Select a regular image file');
     if (stats.size > IMAGE_LIMIT) throw new Error('Image is larger than 10 MB');
     const buffer = Buffer.alloc(IMAGE_LIMIT + 1);
@@ -50,6 +70,7 @@ async function readRemoteImage(app: App, cwd: string, path: string, hostId: stri
   const settings = await loadAppSettings(app);
   const host = remoteHost(settings, hostId);
   const script = `const fs=require('fs'),p=require('path');
+if(process.platform!=='linux'&&process.platform!=='darwin')throw Error('Image previews are not supported on this system');
 const target=fs.realpathSync(p.resolve(process.argv[1],process.argv[2]));
 let root;
 try{root=fs.realpathSync(process.argv[1]);}catch(error){if(error.code!=='ENOENT')throw error;}
@@ -59,11 +80,25 @@ if(location===undefined||location==='..'||location.startsWith('..'+p.sep)||p.isA
   try{storage=fs.realpathSync(p.join(process.env.HOME,${JSON.stringify(STORAGE_DIRECTORY)}));}catch(error){if(error.code!=='ENOENT')throw error;}
   if(!storage||!new RegExp(${JSON.stringify(GOAL_IMAGE_PATH.source)}).test(p.relative(storage,target).split(p.sep).join('/')))throw Error('Image is outside the project');
 }
-const expected=fs.statSync(target,{bigint:true});
 const fd=fs.openSync(target,fs.constants.O_RDONLY|fs.constants.O_NONBLOCK);
 try{
   const s=fs.fstatSync(fd,{bigint:true});
-  if(s.dev!==expected.dev||s.ino!==expected.ino||fs.realpathSync(process.platform==='linux'?'/proc/self/fd/'+fd:target)!==target)throw Error('Image file changed while opening');
+  let opened;
+  if(process.platform==='linux')opened=fs.realpathSync('/proc/self/fd/'+fd);
+  else{
+    const {dlopen,ptr}=require('bun:ffi');
+    const library=dlopen('/usr/lib/libSystem.B.dylib',{
+      proc_pidfdinfo:{args:['i32','i32','i32','ptr','i32'],returns:'i32'}
+    });
+    try{
+      const buffer=Buffer.alloc(1200);
+      if(library.symbols.proc_pidfdinfo(process.pid,fd,2,ptr(buffer),buffer.length)!==buffer.length)throw Error('Could not resolve image file');
+      const end=buffer.indexOf(0,176);
+      if(end<=176)throw Error('Could not resolve image file');
+      opened=buffer.toString('utf8',176,end);
+    }finally{library.close();}
+  }
+  if(opened!==target)throw Error('Image file changed while opening');
   if(!s.isFile()||s.size>10485760)throw Error('Select an image file up to 10 MB');
   const b=Buffer.alloc(10485761);let n=0,k;
   while(n<b.length&&(k=fs.readSync(fd,b,n,b.length-n,null)))n+=k;

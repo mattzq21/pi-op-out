@@ -12,8 +12,18 @@ import { lockPathSync, type FileLock } from './util/flock';
 const SERVE_MODES = ['--serve', '--exit-on-disconnect', '--restart-candidate', '--restart-coordinator'];
 const RUNNING_EXECUTABLE = Bun.isStandaloneExecutable && process.platform === 'linux' ? '/proc/self/exe' : undefined;
 let runningBytes: Buffer | undefined;
+let runningBytesError: string | undefined;
 
 function mode(): string | undefined { return process.argv[2]; }
+
+/**
+ * Tells if the file holds the daemon that is running now.
+ * A script build must hash to its own build ID. A compiled build also holds the Bun runtime, so it must contain the ID.
+ */
+function isRunningBuild(bytes: Buffer, id: string): boolean {
+  if (Bun.isStandaloneExecutable) return bytes.includes(id);
+  return id === 'piop-build-' + createHash('sha256').update(bytes.toString('utf8').replaceAll(id, '')).digest('hex');
+}
 
 function directory(): string {
   const root = endpoint.directory();
@@ -76,7 +86,7 @@ export class Backup {
   private copy(root: string): void {
     if (RUNNING_EXECUTABLE) copyFileSync(RUNNING_EXECUTABLE, this.path);
     else {
-      if (!runningBytes) throw new Error('Running daemon backup is unavailable');
+      if (!runningBytes) throw new Error(runningBytesError ?? 'Running daemon backup is unavailable');
       writeFileSync(this.path, runningBytes);
     }
     chmodSync(this.path, 0o700);
@@ -205,7 +215,14 @@ let leases: FileLock[] | undefined;
 let started = false;
 
 export function initialize(): void {
-  if (!RUNNING_EXECUTABLE && SERVE_MODES.includes(mode() ?? '')) runningBytes ??= readFileSync(daemonScript());
+  if (!RUNNING_EXECUTABLE && SERVE_MODES.includes(mode() ?? '') && !runningBytes && !runningBytesError) {
+    if (typeof __PIOP_BUILD_ID__ !== 'string' || !__PIOP_BUILD_ID__) runningBytesError = 'The daemon build ID is unavailable. Restart Piop manually.';
+    else {
+      const bytes = readFileSync(daemonScript());
+      if (isRunningBuild(bytes, __PIOP_BUILD_ID__)) runningBytes = bytes;
+      else runningBytesError = 'The daemon file changed after this daemon started. Restart Piop manually.';
+    }
+  }
   if (!needsLease()) return;
   if (!leases) leases = currentLeases(directory());
   if (!SERVE_MODES.includes(mode() ?? '')) return;

@@ -18,6 +18,17 @@ type Tool = Parameters<ExtensionAPI["registerTool"]>[0];
 
 type Command = Parameters<ExtensionAPI["registerCommand"]>[1];
 
+type ProviderConfig = Extract<Parameters<ExtensionAPI["registerProvider"]>, [string, unknown]>[1];
+
+/**
+ * The provider registration that was in place before a group changed it, and the changes the group made.
+ * "native" is the provider object the group registered, if any. "values" are the config values the group set.
+ * "restored" is true after the earlier registration was put back.
+ */
+type ProviderOverride = { before?: ProviderConfig | Provider; native?: Provider; values: Record<string, unknown>; restored?: boolean };
+
+const isNativeProvider = (value: ProviderConfig | Provider | undefined): value is Provider => value !== undefined && "id" in value && typeof value.id === "string" && "auth" in value;
+
 type Registration = { method: "registerTool"; name: string; tool: Tool }
   | { method: "registerCommand"; name: string; command: Command }
   | { method: "registerShortcut"; name: Parameters<ExtensionAPI["registerShortcut"]>[0]; shortcut: Parameters<ExtensionAPI["registerShortcut"]>[1] }
@@ -29,6 +40,7 @@ type Group = {
   key: string;
   paths: string[];
   registrations: Map<Registration["method"], Map<string, Registration>>;
+  providers: Map<string, ProviderOverride>;
   listeners: Array<{ name: string; handler: BusHandler; removed?: boolean; unsubscribe?: () => void }>;
   stops: Array<() => void>;
   ready: boolean;
@@ -88,6 +100,57 @@ async function importExtension(entry: string, importer: ExtensionImporter): Prom
 
 export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importer: ExtensionImporter = path => import(path)) {
   let current: Group | undefined;
+  let registry: ExtensionContext["modelRegistry"] | undefined;
+  const registeredProvider = (name: string): ProviderConfig | Provider | undefined => registry?.getRegisteredNativeProvider?.(name) ?? registry?.getRegisteredProviderConfig?.(name);
+
+  /**
+   * Puts back the provider that was in place before the group registered its own.
+   * Pi merges configs, so a value that another extension set later stays. A value the group set goes back to its earlier value.
+   */
+  const restoreProvider = (name: string, override: ProviderOverride) => {
+    if (override.restored) return;
+    override.restored = true;
+    const now = registeredProvider(name);
+
+    if (now === undefined) return;
+
+    if (isNativeProvider(now)) {
+      if (now !== override.native) return;
+      pi.unregisterProvider(name);
+
+      if (isNativeProvider(override.before)) pi.registerProvider(override.before);
+      else if (override.before !== undefined) pi.registerProvider(name, override.before);
+
+      return;
+    }
+
+    const before: Record<string, unknown> = isNativeProvider(override.before) ? {} : { ...override.before };
+    const result: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(now)) {
+      if (!Object.hasOwn(override.values, key) || override.values[key] !== value) result[key] = value;
+      else if (before[key] !== undefined) result[key] = before[key];
+    }
+
+    for (const [key, value] of Object.entries(before)) if (!(key in result) && value !== undefined) result[key] = value;
+
+    pi.unregisterProvider(name);
+
+    if (isNativeProvider(override.before)) { pi.registerProvider(override.before); return; }
+
+    // Pi requires "api" when "streamSimple" is set. A later "streamSimple" can depend on the "api" that the group set.
+    const tries = [result];
+
+    if (result.streamSimple !== undefined && result.api === undefined && now.api !== undefined) tries.push({ ...result, api: now.api });
+
+    if (override.before !== undefined) tries.push({ ...override.before });
+
+    for (const config of tries) {
+      if (Object.keys(config).length === 0) return;
+
+      try { pi.registerProvider(name, config as ProviderConfig); return; } catch {}
+    }
+  };
 
   function channel<A extends unknown[], R>(subscribe: (handler: (...args: A) => R) => () => void, fallback: () => R) {
     const groups = new WeakMap<Group, Array<((...args: A) => R) | undefined>>();
@@ -174,7 +237,16 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
   const dispatchedCommands = new Set<string>();
   const managedTools = new Set<string>();
   const tools = (group = current): string[] => [...(group?.registrations.get("registerTool")?.keys() ?? [])];
-  const stop = (group?: Group) => { for (const unsubscribe of group?.stops.splice(0) ?? []) unsubscribe(); };
+  const stop = (group?: Group) => {
+    if (group) group.ready = false;
+
+    for (const [name, override] of group?.providers ?? []) {
+      try { restoreProvider(name, override); } catch {}
+    }
+    group?.providers.clear();
+
+    for (const unsubscribe of group?.stops.splice(0) ?? []) unsubscribe();
+  };
 
   const listen = (group: Group) => {
     for (const listener of group.listeners) if (!listener.removed) {
@@ -190,7 +262,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     const cached = prepared.get(key);
 
     if (cached) return cached;
-    const group: Group = { key, paths: [...paths], registrations: new Map(), listeners: [], stops: [], ready: false };
+    const group: Group = { key, paths: [...paths], registrations: new Map(), providers: new Map(), listeners: [], stops: [], ready: false };
     const loaded = new Set<string>();
     const visiting: string[] = [];
 
@@ -305,14 +377,28 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
       },
       registerProvider: (...args: [Provider] | Parameters<ExtensionAPI["registerProvider"]>) => {
         ensureActive("registerProvider");
+        const name = args.length === 1 ? args[0].id : args[0];
+        const saved = group.providers.get(name);
+        const override: ProviderOverride = saved && !saved.restored ? saved : { before: registeredProvider(name), values: {} };
 
         if (args.length === 1) pi.registerProvider(args[0]);
         else pi.registerProvider(...args);
+
+        if (args.length === 1) { override.native = args[0]; override.values = {}; }
+        else {
+          if (override.native) { override.native = undefined; override.values = {}; }
+
+          for (const [key, value] of Object.entries(args[1])) if (value !== undefined) override.values[key] = value;
+        }
+
+        group.providers.set(name, override);
       },
       unregisterProvider: (...args) => {
         ensureActive("unregisterProvider");
+        const override = group.providers.get(args[0]);
 
-        return pi.unregisterProvider(...args);
+        if (override) restoreProvider(args[0], override);
+        else pi.unregisterProvider(...args);
       },
       registerMcpServer: (...args) => {
         ensureActive("registerMcpServer");
@@ -473,13 +559,14 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     }
   }
 
-  async function shutdown(group: Group | undefined, ctx: ExtensionContext) {
+  async function shutdown(group: Group | undefined, ctx: ExtensionContext, event: SDK.SessionShutdownEvent = { type: "session_shutdown", reason: "reload" }) {
     const active = current;
     current = group;
+    registry = ctx.modelRegistry;
 
     try {
       for (const handler of channels.session_shutdown.handlers(group)) {
-        try { await handler?.({ type: "session_shutdown", reason: "reload" }, ctx); }
+        try { await handler?.(event, ctx); }
         catch (error) { ctx.ui.notify(`piop extension cleanup failed: ${String(error)}`, "error"); }
       }
     } finally { current = active; }
@@ -487,6 +574,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
 
   async function activate(group: Group, ctx: ExtensionContext) {
     const session = ctx.sessionManager.getSessionId();
+    registry = ctx.modelRegistry;
 
     if (group === current && group.session === session) return;
 
@@ -522,5 +610,24 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     }
   }
 
-  return { prepare, activate, tools, shutdown: (ctx: ExtensionContext) => shutdown(current, ctx), stop: () => stop(current) };
+  /**
+   * Runs the shutdown handlers of the active group, then removes its providers and listeners.
+   * With no event, the group is also unloaded for a reload and its tools are hidden.
+   */
+  async function deactivate(ctx: ExtensionContext, event?: SDK.SessionShutdownEvent) {
+    const group = current;
+
+    if (!group) return;
+
+    try { await shutdown(group, ctx, event); }
+    finally {
+      stop(group);
+
+      if (current === group) current = undefined;
+
+      if (!event) hideInactiveTools(group, undefined);
+    }
+  }
+
+  return { prepare, activate, tools, deactivate };
 }
