@@ -51,37 +51,43 @@ export async function runDaemon(): Promise<void> {
 async function runBackend(): Promise<void> {
   const app = new App();
   failureListener = line => app.emit('pi://daemon-error', { hostId: 'local', line });
+  // Signals are handled from the first step so a stop during a slow startup still runs the shutdown sequence.
+  const signalled = watchSignals(app);
+  const stoppedEarly = Symbol('stopped during startup');
+  const step = async (operation: () => Promise<unknown> | unknown) => { if (app.clients.closing()) throw stoppedEarly; await operation(); };
   try {
-    dictation.start(app);
-    await startSessionBroker(app, app.broker);
-    const settings = await loadAppSettings(app);
-    await prepareDefinedAgentsExtension();
-    await daemon.connect(app, app.pi, app.broker, settings, 'local');
-    await daemonRestart.initializeCandidate(app);
-    await mobile.start(app);
-    await daemonRestart.ready();
-    await waitForShutdown(app);
+    let settings: Awaited<ReturnType<typeof loadAppSettings>> | undefined;
+    await step(() => dictation.start(app));
+    await step(() => startSessionBroker(app, app.broker));
+    await step(async () => { settings = await loadAppSettings(app); });
+    await step(() => prepareDefinedAgentsExtension());
+    await step(() => daemon.connect(app, app.pi, app.broker, settings!, 'local'));
+    await step(() => daemonRestart.initializeCandidate(app));
+    await step(() => mobile.start(app));
+    await step(() => daemonRestart.ready());
+    await Promise.race([signalled.stopped, app.clients.waitForShutdown(app).catch(error => console.error('Shutdown wait failed:', error))]);
+  } catch (error) {
+    if (error !== stoppedEarly) throw error;
   } finally {
+    signalled.release();
     await shutdownBackend(app);
     failureListener = undefined;
   }
 }
 
-function waitForShutdown(app: App): Promise<void> {
-  return new Promise(resolve => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      app.clients.stop();
-      done = true;
-      process.off('SIGINT', finish);
-      process.off('SIGTERM', finish);
-      resolve();
-    };
-    process.on('SIGINT', finish);
-    process.on('SIGTERM', finish);
-    app.clients.waitForShutdown(app).then(finish, finish);
-  });
+const STOP_SIGNALS: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
+/** Stops the daemon on a termination signal. The returned promise resolves on the first signal. */
+function watchSignals(app: App): { stopped: Promise<void>; release(): void } {
+  let resolveStopped!: () => void;
+  const stopped = new Promise<void>(resolve => { resolveStopped = resolve; });
+  const finish = (signal: NodeJS.Signals) => {
+    console.error('Piop daemon received ' + signal + '; shutting down');
+    app.clients.stop();
+    resolveStopped();
+  };
+  for (const signal of STOP_SIGNALS) process.on(signal, finish);
+  return { stopped, release: () => { for (const signal of STOP_SIGNALS) process.off(signal, finish); } };
 }
 
 async function ignore(operation: () => Promise<unknown> | unknown): Promise<void> {
