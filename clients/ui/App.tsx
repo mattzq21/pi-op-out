@@ -100,7 +100,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
         };
 
         return <SplitChatPane drafts={drafts} runtimePool={runtimePool()} uploadsFor={(owner) => uploadsByTransport().get(owner) ?? []} onUploadsChange={setComposerUploads}
-          session={currentPane()?.session ?? pane.session} settings={required(settings())} hiddenModels={modelVisibility.hidden((currentPane()?.session ?? pane.session).hostId ?? "local")} draft={composerState().splitComposerDraft}
+          session={currentPane()?.session ?? pane.session} settings={required(settings())} modelVisibility={modelVisibility} draft={composerState().splitComposerDraft}
           focusRequest={splitComposerFocusRequest()} onActivate={() => { if (currentPane()) setActivePane("split"); }}
           onOpenTerminal={() => { const current = currentPane();
 

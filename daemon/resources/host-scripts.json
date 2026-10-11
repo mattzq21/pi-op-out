@@ -8,6 +8,5 @@
   "storage-transaction": "storage-transaction-command.cjs",
   "temporary-chat": "temporary-chat-command.cjs",
   "goal-text": "goal-text-command.cjs",
-  "read-image": "read-image-command.cjs",
   "agent-definitions": "../../extensions/piop-define-agents/daemon-loader.ts"
 }

@@ -2,7 +2,7 @@ import type { Accessor } from "solid-js";
 import { onCleanup } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { z } from "zod";
-import type { AppSettings, SettingsChange } from "../types";
+import type { AppSettings, Model, SettingsChange } from "../types";
 import { observeModelConnections } from "./modelReports";
 import { recordSeenModels } from "./modelVisibility";
 import { NativeTransport } from "./nativeTransport";
@@ -131,7 +131,18 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
     return operation;
   };
 
-  return { hidden, recordSeen };
+  const visibleModels = (hostId: string, models: Model[]) => {
+    const hiddenModels = hidden(hostId);
+    const knownModels = hostId === "local" ? localSettings()?.knownModels : remote[hostId]?.knownModels;
+
+    return hiddenModels ? models.filter(model => {
+      const id = `${model.provider}/${model.id}`;
+
+      return !hiddenModels.includes(id) && (knownModels === undefined || knownModels.includes(id));
+    }) : [];
+  };
+
+  return { hidden, visibleModels, recordSeen };
 }
 
 export type HostModelVisibility = ReturnType<typeof createHostModelVisibility>;

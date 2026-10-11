@@ -68,6 +68,8 @@ export function MobileApp() {
     try {
       cleanUrl = validateHost({ url: address.trim() });
       await debugAddressLoaded.current;
+
+      if (attempt !== generation.current) return;
       activeDebugAddress.current = cleanUrl === configuredDebugAddress.current ? cleanUrl : undefined;
       const saved = anchor();
       const host = validateMobileAnchor(cleanUrl, label ?? (saved?.url === cleanUrl ? saved.name : activeDebugAddress.current ? "Development" : ""));

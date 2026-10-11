@@ -172,9 +172,10 @@ async function registeredSessions(root, warnings) {
   }
 }
 
-async function main() {
+async function main(request) {
+  if (request.piPath !== undefined && !Check(Type.String({ minLength: 1 }), request.piPath)) throw new Error('Invalid Pi executable path');
   const profile = await fs.realpath(piopRoot).catch(() => piopRoot);
-  const discovery = await discoverRoots(profile);
+  const discovery = await discoverRoots(profile, request.piPath);
   discovery.sessions = new Map();
   discovery.headers = new Map();
   discovery.goals = new Map();
