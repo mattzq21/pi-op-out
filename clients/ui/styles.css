@@ -672,3 +672,4 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .dictation-dot.ready { background: var(--green); }
 .dictation-dot.failed { background: #dc4545; }
 .dictation-add-form .dictation-link { margin: 0; padding: 4px 8px; }
+.dictation-add-hint { flex-basis: 100%; color: var(--muted); font-size: calc(11px + var(--settings-font-offset, 0px)); }

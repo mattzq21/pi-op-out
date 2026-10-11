@@ -43,10 +43,11 @@ function Choice(props: { title: string; detail: string; active: boolean; onUse: 
 }
 
 /** A short inline form that adds one entry. */
-function AddForm(props: { label: string; children: import("solid-js").JSXElement; canAdd: boolean; onAdd: () => void; onCancel: () => void }) {
+function AddForm(props: { hint?: string; children: import("solid-js").JSXElement; canAdd: boolean; onAdd: () => void; onCancel: () => void }) {
   return <div class="dictation-add-form">
     {props.children}
     <div><button type="button" class="primary-button" disabled={!props.canAdd} onClick={() => props.onAdd()}>Add</button><button type="button" class="dictation-link" onClick={() => props.onCancel()}>Cancel</button></div>
+    <Show when={props.hint}><small class="dictation-add-hint">{props.hint}</small></Show>
   </div>;
 }
 
@@ -65,8 +66,12 @@ export function DictationSettings(props: { settings: AppSettings; onChange: (pat
   const languages = () => configuration().engine === engine() ? configuration().languages ?? [] : [];
 
   const [addingEngine, setAddingEngine] = createSignal(false);
-  const [newEngine, setNewEngine] = createSignal<DictationEngine>("needle");
   const [newProgram, setNewProgram] = createSignal("");
+  /** The engine type of the new program, from its file name: "needle…" is Needle, "python…" is transcribe.cpp. */
+  const newEngine = (): DictationEngine | undefined => {
+    const name = fileName(newProgram().trim()).toLowerCase();
+    return name.startsWith("needle") ? "needle" : name.startsWith("python") ? "transcribe.cpp" : undefined;
+  };
   const [addingModel, setAddingModel] = createSignal(false);
   const [newModel, setNewModel] = createSignal("");
 
@@ -82,7 +87,9 @@ export function DictationSettings(props: { settings: AppSettings; onChange: (pat
   const currentModel = (): SavedDictationModel => ({ engine: engine(), path: modelPath(), ...(language() ? { language: language() } : {}) });
 
   const addEngine = () => {
-    const item = { engine: newEngine(), path: newProgram().trim() };
+    const kind = newEngine();
+    if (!kind) return;
+    const item = { engine: kind, path: newProgram().trim() };
     const model = item.engine === engine() ? undefined : savedModels().find(entry => entry.engine === item.engine);
     props.onChange({ dictationEngines: withEngine(item), dictationEngine: item.engine, dictationEnginePath: item.path, ...(item.engine === engine() ? {} : { dictationModelPath: model?.path ?? "", dictationLanguage: model?.language ?? "" }) });
     setAddingEngine(false); setNewProgram("");
@@ -112,10 +119,9 @@ export function DictationSettings(props: { settings: AppSettings; onChange: (pat
         </>}</For>
       </ul>
       <Show when={!isMobile}>
-        <Show when={addingEngine()} fallback={<button type="button" class="dictation-link" onClick={() => { setNewEngine(engine()); setAddingEngine(true); }}><Plus size={14} />Add engine</button>}>
-          <AddForm label="engine" canAdd={!!newProgram().trim()} onAdd={addEngine} onCancel={() => setAddingEngine(false)}>
-            <select aria-label="New engine type" value={newEngine()} onChange={event => setNewEngine(event.currentTarget.value as DictationEngine)}>{engines.map(item => <option value={item.id}>{item.label}</option>)}</select>
-            <input aria-label="New engine program path" autofocus placeholder={newEngine() === "needle" ? "/path/to/needle" : "/path/to/transcribe.cpp/python"} value={newProgram()} onInput={event => setNewProgram(event.currentTarget.value)} onKeyDown={event => { if (event.key === "Enter" && newProgram().trim()) addEngine(); if (event.key === "Escape") setAddingEngine(false); }} />
+        <Show when={addingEngine()} fallback={<button type="button" class="dictation-link" onClick={() => setAddingEngine(true)}><Plus size={14} />Add engine</button>}>
+          <AddForm hint={newProgram().trim() ? (newEngine() ? "Engine: " + engineLabel(newEngine()!) : "Unknown program. The file name must start with needle or python.") : undefined} canAdd={newEngine() !== undefined} onAdd={addEngine} onCancel={() => setAddingEngine(false)}>
+            <input aria-label="New engine program path" autofocus placeholder="Path to needle, or to the Python of transcribe.cpp" value={newProgram()} onInput={event => setNewProgram(event.currentTarget.value)} onKeyDown={event => { if (event.key === "Enter" && newEngine()) addEngine(); if (event.key === "Escape") setAddingEngine(false); }} />
           </AddForm>
         </Show>
       </Show>
@@ -129,7 +135,7 @@ export function DictationSettings(props: { settings: AppSettings; onChange: (pat
       </ul>
       <Show when={!models().length && modelSaved()}><p class="dictation-empty">No models for {engineLabel(engine())} yet.</p></Show>
       <Show when={addingModel()} fallback={<button type="button" class="dictation-link" onClick={() => setAddingModel(true)}><Plus size={14} />Add model</button>}>
-        <AddForm label="model" canAdd={!!newModel().trim()} onAdd={addModel} onCancel={() => setAddingModel(false)}>
+        <AddForm canAdd={!!newModel().trim()} onAdd={addModel} onCancel={() => setAddingModel(false)}>
           <input aria-label="New model file path" autofocus placeholder={engines.find(item => item.id === engine())?.model} value={newModel()} onInput={event => setNewModel(event.currentTarget.value)} onKeyDown={event => { if (event.key === "Enter" && newModel().trim()) addModel(); if (event.key === "Escape") setAddingModel(false); }} />
         </AddForm>
       </Show>
