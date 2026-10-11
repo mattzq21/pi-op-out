@@ -2,7 +2,7 @@ import { plugin } from 'bun';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { once } from 'node:events';
 
@@ -12,6 +12,7 @@ plugin({ name: 'raw-text', setup(build) {
 } });
 
 const storage = await import('../../daemon/src/storage_transactions');
+const { runHostScript } = await import('../../daemon/src/host_script');
 const ownership = await import('../../daemon/src/conversation_storage');
 const { STORAGE_DIRECTORY } = await import('../../daemon/src/config');
 const root = join(process.env.HOME!, STORAGE_DIRECTORY);
@@ -67,6 +68,27 @@ switch (process.argv[2]) {
       return true;
     });
     assert.deepEqual(readFileSync(original.file), before);
+
+    // A read-only archive folder lets planning pass, then fails the last move after earlier steps changed files.
+    const archivedRoot = join(root, 'archived');
+    const recordKey = createHash('sha256').update(original.id).digest('hex').slice(0, 40);
+    const record = ownership.read(root, recordKey);
+    mkdirSync(archivedRoot, { recursive: true });
+    chmodSync(archivedRoot, 0o500);
+    try {
+      await assert.rejects(storage.archive(host, [original.file]), error => {
+        assert.ok(error instanceof storage.StorageTransactionError);
+        assert.equal(error.state, 'rolled-back');
+        assert.match(error.message, /EACCES|permission/i);
+        return true;
+      });
+    } finally { chmodSync(archivedRoot, 0o700); }
+    assert.deepEqual(readFileSync(original.file), before);
+    assert.deepEqual(readdirSync(archivedRoot), []);
+    assert.deepEqual(readdirSync(join(root, 'storage-transactions')), []);
+    assert.equal(require('../../daemon/resources/storage-transaction.cjs').pending(root), false);
+    assert.equal(ownership.read(root, recordKey), record);
+
     const io = require('../../daemon/resources/session-transactions.cjs');
     const database = require('../../daemon/resources/session-database.cjs').open(root);
     const id = randomUUID();
@@ -100,6 +122,32 @@ switch (process.argv[2]) {
       const closed = once(holder, 'close');
       holder.stdin.end('release\n');
       await closed;
+    }
+    break;
+  }
+  case 'abort': {
+    // The script starts a child and waits; aborting must stop both, because the runner kills the whole process group.
+    const pids = join(process.env.HOME!, 'pids');
+    const script = `const { spawn } = require('node:child_process');
+const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+require('node:fs').writeFileSync(${JSON.stringify(pids)}, process.pid + ' ' + child.pid);
+setInterval(() => {}, 1000);`;
+    const controller = new AbortController();
+    const running = runHostScript(host, script, [], { maxOutputBytes: 1024, signal: controller.signal });
+    const started = Date.now();
+    while (!existsSync(pids)) {
+      assert.ok(Date.now() - started < 10_000, 'Script did not start');
+      await Bun.sleep(20);
+    }
+    controller.abort();
+    await assert.rejects(running, /aborted; outcome is unknown/);
+    const alive = (pid: string) => { try { return !readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1]!.startsWith('Z'); } catch { return false; } };
+    const stopped = Date.now();
+    for (const pid of readFileSync(pids, 'utf8').split(' ')) {
+      while (alive(pid)) {
+        assert.ok(Date.now() - stopped < 5_000, `Process ${pid} kept running after abort`);
+        await Bun.sleep(20);
+      }
     }
     break;
   }

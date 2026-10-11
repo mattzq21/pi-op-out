@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-for (const scenario of ['archive-restore', 'delete', 'rollback', 'busy', 'blank']) {
+for (const scenario of ['archive-restore', 'delete', 'rollback', 'busy', 'abort', 'blank']) {
   test(`storage transactions: ${scenario}`, async () => {
     const directory = mkdtempSync(join(tmpdir(), 'piop-storage-test-'));
     try {
