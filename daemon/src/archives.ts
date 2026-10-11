@@ -9,7 +9,8 @@ import { hostScript, runHostScript } from './host_script';
 import { loadAppSettings } from './settings';
 import * as restoreRecovery from './restore_recovery';
 import * as storageTransactions from './storage_transactions';
-import { hostFor } from './host_connection';
+import { hostFor, type Host } from './host_connection';
+import { restoreSessionTree } from './restore';
 import { MutationGuard } from './conversation_ownership';
 import * as sessionGroups from './session_groups';
 import * as terminalLookup from './terminal_lookup';
@@ -90,15 +91,15 @@ export function localArchivedSessionFileAt(home: string, sessionPath: string): s
 }
 
 export async function desktopSessionFile(settings: AppSettings, hostId: string, path: string): Promise<string> {
-  return locateSessionFile(settings, hostId, path, false);
+  return locateSessionFile(hostFor(settings, hostId), path, false);
 }
 
 export async function archivedSessionFile(settings: AppSettings, hostId: string, path: string): Promise<string> {
-  return locateSessionFile(settings, hostId, path, true);
+  return locateSessionFile(hostFor(settings, hostId), path, true);
 }
 
-async function locateSessionFile(settings: AppSettings, hostId: string, path: string, archived: boolean): Promise<string> {
-  const host = hostFor(settings, hostId);
+/** Returns the real path of a session file in the active or archived area of the Host. */
+export async function locateSessionFile(host: Host, path: string, archived: boolean): Promise<string> {
   const locate = async () => host.kind === 'local'
     ? (archived ? localArchivedSessionFileAt : localDesktopSessionFileAt)(homeDir(), path)
     : remoteSessionFile(path, archived, script => ssh(host.host, script));
@@ -134,8 +135,9 @@ async function archiveSessionPaths(app: App, client: PiRuntime, hostId: string, 
   mutations.push(await MutationGuard.acquire(app, hostId, sessionPath, clientId, false, 'archive'));
   await retireArchivedSession(app, client, hostId, sessionPath);
   const paths = [sessionPath];
+  const host = hostFor(await loadAppSettings(app), hostId);
   for (;;) {
-    const descendants = (await sessionDescendants(app, hostId, sessionPath, false, false)).map(([path]) => path).filter(path => !paths.includes(path));
+    const descendants = (await sessionDescendants(host, sessionPath, false, false)).map(([path]) => path).filter(path => !paths.includes(path));
     if (!descendants.length) break;
     for (const path of descendants) {
       mutations.push(await MutationGuard.acquire(app, hostId, path, clientId, false, 'archive'));
@@ -176,11 +178,11 @@ const descendantsScript = hostScript<DescendantsRequest, unknown[]>('session-des
   return value;
 });
 
-async function sessionDescendants(app: App, hostId: string, sessionPath: string, archived: boolean, includeOtherArea: boolean): Promise<Array<[string, boolean]>> {
-  const settings = await loadAppSettings(app);
-  const root = hostId === 'local' ? join(homeDir(), STORAGE_DIRECTORY, archived ? 'archived' : 'sessions') : null;
+/** Returns the subagent sessions of the session at sessionPath. With includeOtherArea, each item also tells if it is archived. */
+export async function sessionDescendants(host: Host, sessionPath: string, archived: boolean, includeOtherArea: boolean): Promise<Array<[string, boolean]>> {
+  const root = host.kind === 'local' ? join(homeDir(), STORAGE_DIRECTORY, archived ? 'archived' : 'sessions') : null;
   let value: unknown[];
-  try { value = await runHostScript(hostFor(settings, hostId), descendantsScript, { path: sessionPath, root, archived, includeOtherArea }); }
+  try { value = await runHostScript(host, descendantsScript, { path: sessionPath, root, archived, includeOtherArea }); }
   catch (error: any) { throw new Error(`Could not find subagent conversations: ${error?.message ?? error}`); }
   if (includeOtherArea) return value.map((item: any) => {
     if (!Array.isArray(item) || typeof item[0] !== 'string' || typeof item[1] !== 'boolean') throw new Error('Invalid subagent conversation list: expected a tuple');
@@ -219,7 +221,7 @@ async function deleteStoredSessions(app: App, runtime: PiRuntime, sessionPaths: 
       const roots = [...paths];
       for (;;) {
         const children: Array<[string, boolean]> = [];
-        for (const [path, isArchived] of roots) children.push(...await sessionDescendants(app, hostId, path, isArchived, true));
+        for (const [path, isArchived] of roots) children.push(...await sessionDescendants(hostFor(settings, hostId), path, isArchived, true));
         let added = false;
         for (const [child, childArchived] of children) {
           if (paths.some(([path]) => path === child)) continue;
@@ -263,56 +265,13 @@ export function deleteArchivedSession(app: App, runtime: PiRuntime, sessionPath:
   return deleteStoredSessions(app, runtime, [...(sessionPaths ?? []), sessionPath], hostId, true, clientId);
 }
 
-export async function restoreArchivedSession(app: App, sessionPath: string, hostId: string | undefined | null, clientId: string): Promise<void> {
-  await restoreArchivedSessionResult(app, sessionPath, hostId, clientId);
-}
-
-async function restoreResult(settings: AppSettings, hostId: string, path: string): Promise<any> {
-  const result = await storageTransactions.committedRestore(hostFor(settings, hostId), path);
-  if (result === null || result === undefined) throw new Error('No committed restoration is available');
-  return result;
-}
-
-function restoredConversations(result: any): any[] { return Array.isArray(result?.sessions) ? result.sessions : [result]; }
-
-async function performRestore(app: App, settings: AppSettings, hostId: string, sessionPath: string, clientId: string): Promise<any> {
-  let path: string;
-  try { path = await archivedSessionFile(settings, hostId, sessionPath); }
-  catch (error) { return restoreResult(settings, hostId, sessionPath).catch(() => { throw error; }); }
-  let parent: MutationGuard;
-  try { parent = await MutationGuard.acquire(app, hostId, path, clientId, true, 'restore'); }
-  catch (error) { return restoreResult(settings, hostId, path).catch(() => { throw error; }); }
-  const mutations: Array<[string, MutationGuard]> = [[path, parent]];
-  try {
-    for (const [child] of await sessionDescendants(app, hostId, path, true, false)) {
-      mutations.push([child, await MutationGuard.acquire(app, hostId, child, clientId, true, 'restore')]);
-    }
-    const paths = mutations.map(([source]) => source);
-    let result: any;
-    try { result = await storageTransactions.restore(hostFor(settings, hostId), paths); }
-    catch (error) { result = await restoreResult(settings, hostId, path).catch(() => { throw error; }); }
-    const restored = restoredConversations(result);
-    const restoredPaths = mutations.map(([source]) => {
-      const session = restored.find(session => session?.sourcePath === source) ?? (mutations.length === 1 ? result : undefined);
-      if (typeof session?.sessionPath !== 'string') throw new Error('Restored session path missing');
-      return session.sessionPath as string;
-    });
-    for (let index = 0; index < mutations.length; index++) {
-      try { await mutations[index]![1].finishRestore(restoredPaths[index]!); }
-      catch (error: any) { console.error(`Restore committed; could not acknowledge ownership release: ${error.message ?? error}`); }
-    }
-    return result;
-  } finally { for (const [, guard] of mutations) await guard.release(); }
-}
-
-export async function restoreArchivedSessionResult(app: App, sessionPath: string, hostIdOption: string | undefined | null, clientId: string): Promise<any> {
+export async function restoreArchivedSession(app: App, sessionPath: string, hostIdOption: string | undefined | null, clientId: string): Promise<void> {
   const hostId = hostIdOption ?? 'local';
-  return app.pi.lifecycle.run(async () => {
+  await app.pi.lifecycle.run(async () => {
     const settings = await loadAppSettings(app);
-    const result = await performRestore(app, settings, hostId, sessionPath, clientId);
-    for (const session of restoredConversations(result)) app.emit('pi://session-restored', { hostId, sessionId: session?.sessionId ?? null, sessionPath: session?.sessionPath ?? null });
+    const result = await restoreSessionTree(hostFor(settings, hostId), sessionPath, path => MutationGuard.acquire(app, hostId, path, clientId, true, 'restore'));
+    for (const session of result.sessions) app.emit('pi://session-restored', { hostId, sessionId: session.sessionId, sessionPath: session.sessionPath });
     app.emit('pi://sessions-changed', {});
-    return result;
   });
 }
 
