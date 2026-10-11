@@ -18,7 +18,6 @@ import { detachPiWith, ensureRuntimeOwner, openProjectDirectory, piCommand, piPr
 import { closeTerminal, resizeTerminal, startTerminalForOwner, writeTerminal } from './terminals';
 import { codexUsage } from './provider_codex';
 import { opencodeGoUsage } from './provider_opencode';
-import { withTimeout } from './util/sync';
 import type { App } from './app';
 
 const RESTARTING = 'The daemon is restarting. Reconnect before retrying.';
@@ -72,7 +71,7 @@ async function dispatchLocal(app: App, owner: string, command: string, args: any
   if (DEVELOPMENT && command === 'debug_runtime') return endpoint.debugRuntime();
   if (command === 'daemon_restart_status') return daemonRestart.status(argument(args, 'restartId', 'string'));
   if (command === 'restart_daemon') {
-    const release = await withTimeout(app.restart.gate.write(), 30_000, 'Pending daemon requests did not finish within 30 seconds. Try restarting again once they finish.');
+    const release = await app.restart.gate.writeWithin(30_000, 'Pending daemon requests did not finish within 30 seconds. Try restarting again once they finish.');
     try { return await daemonRestart.prepare(app, args); } finally { release(); }
   }
   if (command === 'plugin_call') {

@@ -14,6 +14,8 @@ public class DebugConnectionPlugin extends Plugin {
         if (BuildConfig.DEBUG) {
             String url = getActivity().getIntent().getStringExtra("piopDebugUrl");
             if (url != null) result.put("url", url);
+            String token = getActivity().getIntent().getStringExtra("piopDebugToken");
+            if (token != null) result.put("token", token);
             String hostUrl = getActivity().getIntent().getStringExtra("piopHostUrl");
             if (hostUrl != null) result.put("hostUrl", hostUrl);
         }
