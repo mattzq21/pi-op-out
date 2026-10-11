@@ -5,7 +5,18 @@ description: Manually inspect and interact with Piop's Android app in a private 
 
 # Manual UI testing in an Android VM
 
-Use the `mobile-piop` MCP tools. Their server builds the app and starts it in a private VM before the chat begins, so the app is ready.
+Use the agent's shell tool with `tty: true` to run this, and keep its session open:
+
+```bash
+python3 ~/.agents/skills/mine/mobile-piop/scripts/setup-debug.py --project "$PWD"
+```
+
+It builds the app, starts it in a private VM, and prints a `sessionFile`. Use it for all calls:
+
+```bash
+python3 ~/.agents/skills/mine/mobile-piop/scripts/setup-debug.py tools --session /absolute/session.json
+python3 ~/.agents/skills/mine/mobile-piop/scripts/setup-debug.py call --session /absolute/session.json TOOL '{}'
+```
 
 The tools let you:
 

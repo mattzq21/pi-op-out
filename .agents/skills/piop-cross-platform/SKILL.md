@@ -3,10 +3,8 @@ name: piop-cross-platform
 description: Test Piop simultaneously on PC and Android using piop-wdio and mobile-piop.
 ---
 
-# Piop on desktop and Android
+Read and follow both `~/.agents/skills/piop-wdio/SKILL.md` and `~/.agents/skills/mobile-piop/SKILL.md`.
 
-Use the `piop-wdio` MCP tools for desktop and the `mobile-piop` MCP tools for Android.
+Start both skills' launcher scripts concurrently for the same project/worktree and keep both processes running throughout testing. Use each launcher's own session details and current tool schemas.
 
-1. Both servers start their app before the chat begins.
-2. Test the requested flow on both platforms. Do the matching steps one after the other and inspect the live UI after each interaction. Remember that both apps share the worktree's daemon, so an action on one platform can change the other.
-3. Report the result on each platform and any differences or blockers.
+Test the requested flow on both platforms, interleaving corresponding steps and inspecting live UI state after each interaction. Account for shared backend state when an action on one platform affects the other. Compare behavior and report results for each platform, including any differences or blockers.
