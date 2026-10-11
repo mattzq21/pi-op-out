@@ -8,39 +8,29 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** On-device dictation: runs the speech engine chosen in the client preferences and saves speech models in the app's files. */
+/** On-device dictation: runs the speech engine chosen in the client preferences. */
 @CapacitorPlugin(name = "Dictation")
 public class DictationPlugin extends Plugin {
     private static final int SAMPLE_RATE = 16000;
     private static final int MAX_SAMPLES = SAMPLE_RATE * 120;
     private static final int MAX_FEED_SAMPLES = SAMPLE_RATE * 5;
     private static final List<String> NEEDLE_LANGUAGES = Arrays.asList("en", "de", "fr", "es", "it", "nl", "pl");
-    private static final Pattern FILE_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
 
     /** Runs every native engine call, one after another. */
     private final ExecutorService engine = Executors.newSingleThreadExecutor();
@@ -56,9 +46,6 @@ public class DictationPlugin extends Plugin {
     private Stream stream;
     /** Used only on the engine thread. */
     private Loaded loaded;
-
-    private final Map<String, Download> downloads = new LinkedHashMap<>();
-    private final Map<String, String> downloadErrors = new LinkedHashMap<>();
 
     /** A loaded engine. */
     private static final class Loaded {
@@ -91,11 +78,6 @@ public class DictationPlugin extends Plugin {
         }
     }
 
-    private static final class Download {
-        volatile boolean cancelled;
-        long received;
-    }
-
     @Override
     public void load() {
         reload();
@@ -106,7 +88,6 @@ public class DictationPlugin extends Plugin {
         synchronized (lock) {
             generation++;
             stream = null;
-            for (Download download : downloads.values()) download.cancelled = true;
         }
         timers.shutdownNow();
         engine.execute(this::unload);
@@ -455,176 +436,5 @@ public class DictationPlugin extends Plugin {
             if (stream != null && stream.id.equals(id)) closeStream(null);
         }
         call.resolve();
-    }
-
-    private File directory() {
-        return new File(getContext().getFilesDir(), "models/speech");
-    }
-
-    /** Must hold lock. */
-    private JSObject models() {
-        JSArray items = new JSArray();
-        File[] files = directory().listFiles();
-        if (files != null) {
-            Arrays.sort(files);
-            for (File file : files) {
-                if (!file.isFile() || file.getName().endsWith(".part") || downloads.containsKey(file.getName())) continue;
-                JSObject item = new JSObject();
-                item.put("file", file.getName());
-                item.put("saved", true);
-                items.put(item);
-            }
-        }
-        for (Map.Entry<String, Download> entry : downloads.entrySet()) {
-            JSObject item = new JSObject();
-            item.put("file", entry.getKey());
-            item.put("saved", false);
-            item.put("received", entry.getValue().received);
-            items.put(item);
-        }
-        for (Map.Entry<String, String> entry : downloadErrors.entrySet()) {
-            JSObject item = new JSObject();
-            item.put("file", entry.getKey());
-            item.put("saved", false);
-            item.put("error", entry.getValue());
-            items.put(item);
-        }
-        JSObject result = new JSObject();
-        result.put("directory", directory().getAbsolutePath());
-        result.put("items", items);
-        return result;
-    }
-
-    private void publishModels() {
-        JSObject result;
-        synchronized (lock) {
-            result = models();
-        }
-        notifyListeners("dictation-models", result);
-    }
-
-    @PluginMethod
-    public void models(PluginCall call) {
-        synchronized (lock) {
-            call.resolve(models());
-        }
-    }
-
-    private static String fileName(PluginCall call) {
-        String file = call.getString("file", "");
-        if (!FILE_NAME.matcher(file).matches() || file.endsWith(".part")) throw new IllegalArgumentException("Invalid model file name");
-        return file;
-    }
-
-    @PluginMethod
-    public void saveModel(PluginCall call) {
-        String file;
-        try {
-            file = fileName(call);
-        } catch (IllegalArgumentException error) {
-            call.reject(error.getMessage());
-            return;
-        }
-        String url = call.getString("url", "");
-        String sha256 = call.getString("sha256", "").toLowerCase(Locale.ROOT);
-        long size = call.getData().optLong("size", 0);
-        if (!url.startsWith("https://") || !sha256.matches("[0-9a-f]{64}") || size <= 0) { call.reject("Invalid model download"); return; }
-        Download download = new Download();
-        synchronized (lock) {
-            if (downloads.containsKey(file)) { call.reject("This model is already being saved"); return; }
-            downloads.put(file, download);
-            downloadErrors.remove(file);
-        }
-        publishModels();
-        call.resolve();
-        new Thread(() -> {
-            String error = null;
-            File part = new File(directory(), file + ".part");
-            try {
-                save(download, url, size, sha256, part, new File(directory(), file));
-            } catch (Throwable failure) {
-                error = download.cancelled ? null : message(failure);
-            }
-            if (part.exists() && !part.delete()) error = error == null ? "Could not remove " + part : error;
-            synchronized (lock) {
-                downloads.remove(file);
-                if (error != null) downloadErrors.put(file, error);
-            }
-            publishModels();
-        }, "piop-model-" + file).start();
-    }
-
-    private void save(Download download, String url, long size, String sha256, File part, File target) throws Exception {
-        File folder = target.getParentFile();
-        if (!folder.isDirectory() && !folder.mkdirs()) throw new IllegalStateException("Could not create " + folder);
-        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-        connection.setInstanceFollowRedirects(true);
-        connection.setConnectTimeout(30_000);
-        connection.setReadTimeout(60_000);
-        try {
-            int code = connection.getResponseCode();
-            if (code != 200) throw new IllegalStateException("The download failed with HTTP " + code);
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] buffer = new byte[1 << 16];
-            long received = 0;
-            long shownPercent = -1;
-            try (InputStream input = connection.getInputStream(); OutputStream output = new FileOutputStream(part)) {
-                int count;
-                while ((count = input.read(buffer)) >= 0) {
-                    if (download.cancelled) throw new IllegalStateException("Cancelled");
-                    received += count;
-                    if (received > size) throw new IllegalStateException("The download is larger than expected");
-                    digest.update(buffer, 0, count);
-                    output.write(buffer, 0, count);
-                    long percent = received * 100 / size;
-                    if (percent != shownPercent) {
-                        shownPercent = percent;
-                        synchronized (lock) {
-                            download.received = received;
-                        }
-                        publishModels();
-                    }
-                }
-                ((FileOutputStream) output).getFD().sync();
-            }
-            if (received != size) throw new IllegalStateException("The download is incomplete");
-            StringBuilder hex = new StringBuilder();
-            for (byte value : digest.digest()) hex.append(String.format(Locale.ROOT, "%02x", value));
-            if (!hex.toString().equals(sha256)) throw new IllegalStateException("The download does not match its checksum");
-            if (!part.renameTo(target)) throw new IllegalStateException("Could not save " + target);
-        } finally {
-            connection.disconnect();
-        }
-    }
-
-    @PluginMethod
-    public void cancelModel(PluginCall call) {
-        try {
-            String file = fileName(call);
-            synchronized (lock) {
-                Download download = downloads.get(file);
-                if (download != null) download.cancelled = true;
-            }
-            call.resolve();
-        } catch (IllegalArgumentException error) {
-            call.reject(error.getMessage());
-        }
-    }
-
-    @PluginMethod
-    public void removeModel(PluginCall call) {
-        try {
-            String file = fileName(call);
-            File target = new File(directory(), file);
-            synchronized (lock) {
-                if (downloads.containsKey(file)) { call.reject("Stop saving this model first"); return; }
-                downloadErrors.remove(file);
-            }
-            if (target.exists() && !target.delete()) { call.reject("Could not remove " + target); return; }
-            publishModels();
-            call.resolve();
-        } catch (IllegalArgumentException error) {
-            call.reject(error.getMessage());
-        }
     }
 }

@@ -1,12 +1,10 @@
-//! Dictation on the desktop client: runs the speech engine chosen in the client preferences and saves speech models.
+//! Dictation on the desktop client: runs the speech engine chosen in the client preferences.
 //! The engines are separately installed Python programs (transcribe.cpp or Cactus Needle). Each live dictation runs
 //! the embedded worker script, which reads 16 kHz mono 16-bit audio on stdin and writes JSON lines on stdout.
 use super::*;
 use base64::Engine as _;
-use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader, Read as _, Write as _};
 use std::process::{Child, ChildStdin};
-use tokio::io::AsyncWriteExt;
 
 const WORKER: &str = include_str!("../resources/dictation-worker.py");
 const BYTES_PER_SECOND: usize = 16000 * 2;
@@ -46,17 +44,11 @@ struct State {
     stream: Option<Stream>,
 }
 
-/// One running model save. received counts the bytes written so far.
-struct Download { received: u64, cancelled: Arc<AtomicBool> }
-
-#[derive(Default)]
-struct Models { downloads: HashMap<String, Download>, errors: HashMap<String, String> }
-
-pub(crate) struct Dictation { state: Mutex<State>, models: Mutex<Models> }
+pub(crate) struct Dictation { state: Mutex<State> }
 
 impl Default for Dictation {
     fn default() -> Self {
-        Self { state: Mutex::new(State { settings: None, generation: 0, engine: None, languages: None, error: None, loading: true, stream: None }), models: Mutex::default() }
+        Self { state: Mutex::new(State { settings: None, generation: 0, engine: None, languages: None, error: None, loading: true, stream: None }) }
     }
 }
 
@@ -381,130 +373,4 @@ pub(crate) fn dictation_stream_finish(app: AppHandle, window: tauri::WebviewWind
 pub(crate) fn dictation_stream_cancel(app: AppHandle, window: tauri::WebviewWindow, id: String) {
     let mut state = lock_state(&app);
     if owned(&mut state, window.label(), &id).is_ok() { close_stream(&app, &mut state, None); }
-}
-
-/// The directory for saved speech models. Debug and release builds share it, so a large model is saved once.
-fn models_directory() -> Result<PathBuf, String> {
-    let data = std::env::var_os("XDG_DATA_HOME").filter(|value| !value.is_empty()).map(PathBuf::from).map_or_else(|| home_dir().map(|home| home.join(".local/share")), Ok)?;
-    Ok(data.join("piop/models/speech"))
-}
-
-fn models_state(app: &AppHandle) -> Result<Value, String> {
-    let directory = models_directory()?;
-    let models = app.state::<Dictation>().inner().models.lock().map_err(|_| "Speech models are unavailable")?;
-    let mut items = Vec::new();
-    let mut saved: Vec<String> = match fs::read_dir(&directory) {
-        Ok(entries) => entries.filter_map(Result::ok).filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-            .map(|entry| entry.file_name().to_string_lossy().into_owned()).filter(|name| !name.ends_with(".part") && !models.downloads.contains_key(name)).collect(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => return Err(format!("Could not read {}: {error}", directory.display())),
-    };
-    saved.sort();
-    for file in saved { items.push(json!({ "file": file, "saved": true })); }
-    for (file, download) in &models.downloads { items.push(json!({ "file": file, "saved": false, "received": download.received })); }
-    for (file, error) in &models.errors { items.push(json!({ "file": file, "saved": false, "error": error })); }
-    Ok(json!({ "directory": directory.to_string_lossy(), "items": items }))
-}
-
-fn publish_models(app: &AppHandle) {
-    match models_state(app) {
-        Ok(models) => if let Err(error) = app.emit("pi://dictation-models", models) { eprintln!("Could not publish the speech models: {error}"); },
-        Err(error) => eprintln!("Could not read the speech models: {error}"),
-    }
-}
-
-fn model_file(file: &str) -> Result<(), String> {
-    let valid = file.chars().next().is_some_and(|first| first.is_ascii_alphanumeric()) && file.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) && !file.ends_with(".part");
-    if valid { Ok(()) } else { Err("Invalid model file name".into()) }
-}
-
-#[tauri::command(async)]
-pub(crate) fn dictation_models(app: AppHandle) -> Result<Value, String> { models_state(&app) }
-
-#[tauri::command(async)]
-pub(crate) fn dictation_model_save(app: AppHandle, file: String, url: String, size: u64, sha256: String) -> Result<(), String> {
-    model_file(&file)?;
-    let sha256 = sha256.to_ascii_lowercase();
-    if !url.starts_with("https://") || sha256.len() != 64 || !sha256.chars().all(|c| c.is_ascii_hexdigit()) || size == 0 { return Err("Invalid model download".into()); }
-    let cancelled = Arc::new(AtomicBool::new(false));
-    {
-        let mut models = app.state::<Dictation>().inner().models.lock().map_err(|_| "Speech models are unavailable")?;
-        if models.downloads.contains_key(&file) { return Err("This model is already being saved".into()); }
-        models.errors.remove(&file);
-        models.downloads.insert(file.clone(), Download { received: 0, cancelled: cancelled.clone() });
-    }
-    publish_models(&app);
-    tauri::async_runtime::spawn(async move {
-        let directory = models_directory();
-        let result = match &directory {
-            Ok(directory) => save_model(&app, &file, &url, size, &sha256, directory, &cancelled).await,
-            Err(error) => Err(error.clone()),
-        };
-        let mut error = if cancelled.load(Ordering::SeqCst) { None } else { result.err() };
-        if let Ok(directory) = &directory {
-            let part = directory.join(format!("{file}.part"));
-            if part.exists() { if let Err(failure) = fs::remove_file(&part) { error.get_or_insert(format!("Could not remove {}: {failure}", part.display())); } }
-        }
-        if let Ok(mut models) = app.state::<Dictation>().inner().models.lock() {
-            models.downloads.remove(&file);
-            if let Some(error) = error { models.errors.insert(file, error); }
-        }
-        publish_models(&app);
-    });
-    Ok(())
-}
-
-async fn save_model(app: &AppHandle, file: &str, url: &str, size: u64, sha256: &str, directory: &Path, cancelled: &AtomicBool) -> Result<(), String> {
-    fs::create_dir_all(directory).map_err(|error| format!("Could not create {}: {error}", directory.display()))?;
-    let part = directory.join(format!("{file}.part"));
-    let mut response = reqwest::get(url).await.map_err(|error| format!("The download failed: {error}"))?;
-    if !response.status().is_success() { return Err(format!("The download failed with HTTP {}", response.status())); }
-    let mut output = tokio::fs::File::create(&part).await.map_err(|error| format!("Could not write {}: {error}", part.display()))?;
-    let mut digest = Sha256::new();
-    let (mut received, mut shown) = (0u64, u64::MAX);
-    while let Some(chunk) = response.chunk().await.map_err(|error| format!("The download failed: {error}"))? {
-        if cancelled.load(Ordering::SeqCst) { return Err("Cancelled".into()); }
-        received += chunk.len() as u64;
-        if received > size { return Err("The download is larger than expected".into()); }
-        digest.update(&chunk);
-        output.write_all(&chunk).await.map_err(|error| format!("Could not write {}: {error}", part.display()))?;
-        let percent = received * 100 / size;
-        if percent != shown {
-            shown = percent;
-            if let Ok(mut models) = app.state::<Dictation>().inner().models.lock() { if let Some(download) = models.downloads.get_mut(file) { download.received = received; } }
-            publish_models(app);
-        }
-    }
-    output.sync_all().await.map_err(|error| format!("Could not write {}: {error}", part.display()))?;
-    if received != size { return Err("The download is incomplete".into()); }
-    let actual: String = digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
-    if actual != sha256 { return Err("The download does not match its checksum".into()); }
-    let target = directory.join(file);
-    fs::rename(&part, &target).map_err(|error| format!("Could not save {}: {error}", target.display()))
-}
-
-#[tauri::command(async)]
-pub(crate) fn dictation_model_cancel(app: AppHandle, file: String) -> Result<(), String> {
-    model_file(&file)?;
-    let models = app.state::<Dictation>().inner().models.lock().map_err(|_| "Speech models are unavailable")?;
-    if let Some(download) = models.downloads.get(&file) { download.cancelled.store(true, Ordering::SeqCst); }
-    Ok(())
-}
-
-#[tauri::command(async)]
-pub(crate) fn dictation_model_remove(app: AppHandle, file: String) -> Result<(), String> {
-    model_file(&file)?;
-    {
-        let mut models = app.state::<Dictation>().inner().models.lock().map_err(|_| "Speech models are unavailable")?;
-        if models.downloads.contains_key(&file) { return Err("Stop saving this model first".into()); }
-        models.errors.remove(&file);
-    }
-    let target = models_directory()?.join(&file);
-    match fs::remove_file(&target) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("Could not remove {}: {error}", target.display())),
-    }
-    publish_models(&app);
-    Ok(())
 }

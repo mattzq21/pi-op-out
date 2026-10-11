@@ -34,10 +34,9 @@ const dictationPlugin = registerPlugin<{
 /** Dictation commands run on this device. On Android they map to the Dictation plugin methods. */
 const dictationCommands: Record<string, string> = {
   dictation_configuration: "configuration", dictation_stream_start: "start", dictation_stream_feed: "feed", dictation_stream_finish: "finish", dictation_stream_cancel: "cancel",
-  dictation_models: "models", dictation_model_save: "saveModel", dictation_model_cancel: "cancelModel", dictation_model_remove: "removeModel",
 };
 
-const dictationEvents: Record<string, string> = { "pi://dictation": "dictation", "pi://dictation-stream": "dictation-stream", "pi://dictation-models": "dictation-models" };
+const dictationEvents: Record<string, string> = { "pi://dictation": "dictation", "pi://dictation-stream": "dictation-stream" };
 
 export const listen = <S extends z.ZodType>(event: string, handler: EventCallback<z.output<S>>, schema: S): Promise<UnlistenFn> => {
   const dictationEvent = dictationEvents[event];

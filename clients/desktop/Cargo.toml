@@ -27,8 +27,7 @@ serde_json = "1"
 base64 = "0.22"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
-tokio = { version = "1", features = ["fs", "io-util", "io-std", "macros", "process", "sync", "time", "net", "rt-multi-thread", "signal"] }
-reqwest = "0.13"
+tokio = { version = "1", features = ["io-util", "io-std", "macros", "process", "sync", "time", "net", "rt-multi-thread", "signal"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 
