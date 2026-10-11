@@ -638,3 +638,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .review-feedback-button { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font-size: 11px; }
 .review-feedback-button:hover:not(:disabled), .review-feedback-button[aria-pressed="true"] { background: var(--hover); }
 .review-feedback-button:disabled { opacity: .5; }
+.dictation-models { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.dictation-model { display: flex; align-items: center; gap: 8px; }
+.dictation-model-text { display: grid; gap: 2px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dictation-model .secondary-button { margin-top: 0; }
