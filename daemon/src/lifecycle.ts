@@ -1,4 +1,5 @@
 import { App } from './app';
+import { DEVELOPMENT } from './config';
 import * as daemonEndpoint from './daemon_endpoint';
 import * as daemonStdio from './daemon_stdio';
 import * as daemonRestart from './daemon_restart';
@@ -24,6 +25,8 @@ export async function runDaemon(): Promise<void> {
   const instance = daemonEndpoint.claim();
   try {
     daemonEndpoint.identity();
+    // Hash the executable now, before a rebuild can replace it, so launchers see this process's own build.
+    if (DEVELOPMENT) daemonEndpoint.debugRuntime();
     await runBackend();
   } finally { instance.release(); }
 }
