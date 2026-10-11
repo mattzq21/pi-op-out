@@ -45,7 +45,7 @@ export const sections: SettingsSection[] = [
   ...mobileSections,
 ];
 
-export const clientSections = new Set<Section>(["models", "keybinds", "connections", "toasts"]);
+export const clientSections = new Set<Section>(["keybinds", "connections", "toasts"]);
 
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 

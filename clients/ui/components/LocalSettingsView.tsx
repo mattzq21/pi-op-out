@@ -15,7 +15,7 @@ import { NativeTransport } from "../lib/nativeTransport";
 import { SettingsPublication } from "../lib/settingsPublication";
 import { SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { isMobile, listen } from "../lib/platform";
-import type { AgentConfig, AppSettings, Model, RemoteHost, SessionSummary, SettingsChange, SettingsPublication as Publication } from "../types";
+import type { AgentConfig, AppSettings, Model, SessionSummary, SettingsChange, SettingsPublication as Publication } from "../types";
 import { clientSections, sections, SettingsView, type Section } from "./SettingsView";
 
 interface Props {
@@ -33,24 +33,6 @@ async function loadAgentConfiguration(reader: NativeTransport, target: string, d
   const config = await reader.command({ type: "get_agent_configuration" }, agentConfigSchema);
 
   return { ...config, fastModeModels: discovered()?.fastModeModels };
-}
-
-async function loadHostModels(hostId: string): Promise<Model[]> {
-  const reader = new NativeTransport({ hostId, cwd: "~" });
-
-  try {
-    await reader.connect();
-
-    return (await reader.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) }))).models;
-  } finally { await reader.dispose().catch(() => undefined); }
-}
-
-function mergeModels(lists: Model[][]): Model[] {
-  const merged = new Map<string, Model>();
-
-  for (const model of lists.flat()) if (!merged.has(`${model.provider}/${model.id}`)) merged.set(`${model.provider}/${model.id}`, model);
-
-  return [...merged.values()];
 }
 
 export function LocalSettingsView(props: Props) {
@@ -94,7 +76,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   const [loadingModels, setLoadingModels] = createSignal<string[]>([]);
   const [saveWarnings, setSaveWarnings] = createSignal<string[]>();
   const [revision, setRevision] = createSignal(0);
-  const needsResources = createMemo(() => componentProps.target !== "client" || componentProps.selectedSection === "models");
+  const needsResources = createMemo(() => componentProps.target !== "client");
 
   const publications = new SettingsPublication();
 
@@ -125,26 +107,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     let cancelled = false;
     const reader = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
     let config: AgentConfig | undefined;
-    // Model visibility belongs to the client, so the client list also has models from every enabled machine.
-    const remoteHosts: RemoteHost[] = capturedTarget0 === "client" ? componentProps.settings.hosts.filter((host) => host.enabled !== false) : [];
-    let localModels: Model[] | undefined;
-    const remoteModels: Model[][] = [];
-    const failures: string[] = [];
-    const ownName = capturedTarget0 === "client" ? (isMobile ? "Connected daemon" : "This computer") : componentProps.label;
-    const finished = (name: string) => setLoadingModels((current) => current.filter((item) => item !== name));
-    setLoadingModels([ownName, ...remoteHosts.map((host) => host.name)]);
-
-    for (const host of remoteHosts) {
-      void loadHostModels(host.id).then((models) => {
-        if (cancelled) return;
-        remoteModels.push(models);
-        if (localModels) setResources((current) => current && { ...current, models: mergeModels([localModels!, ...remoteModels]) });
-      }, (reason) => {
-        if (cancelled) return;
-        failures.push(`models from ${host.name}: ${reason instanceof Error ? reason.message : String(reason)}`);
-        setError(failures.join("; "));
-      }).finally(() => { if (!cancelled) finished(host.name); });
-    }
+    setLoadingModels([componentProps.label]);
 
     const unsubscribe = reader.subscribe((event) => {
       const statusText = z.string().safeParse(event.statusText);
@@ -178,11 +141,10 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
         ]);
 
         if (cancelled) return;
-        localModels = models.models;
-        setResources({ config: storedConfig, models: mergeModels([localModels, ...remoteModels]), levels: levels.levels });
+        setResources({ config: storedConfig, models: models.models, levels: levels.levels });
       } catch (reason) {
-        if (!cancelled) { failures.unshift(reason instanceof Error ? reason.message : String(reason)); setError(failures.join("; ")); }
-      } finally { if (!cancelled) finished(ownName); unsubscribe(); await reader.dispose().catch(() => undefined); }
+        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+      } finally { if (!cancelled) setLoadingModels([]); unsubscribe(); await reader.dispose().catch(() => undefined); }
     })();
 
     return () => { cancelled = true; unsubscribe(); void reader.dispose().catch(() => undefined); };

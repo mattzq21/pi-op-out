@@ -10,8 +10,6 @@ let durabilityFailure: { revision: string; error: string } | undefined;
 
 const clientSettingsSchema = z.object({
   keybindings: z.record(z.string(), z.string()).optional().catch(undefined),
-  hiddenModels: z.array(z.string()).optional().catch(undefined),
-  knownModels: z.array(z.string()).optional().catch(undefined),
   debugMode: z.boolean().optional().catch(undefined),
 }).catch({});
 
@@ -37,8 +35,6 @@ export async function withClientSettings(source: AppSettings | Promise<AppSettin
 function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): AppSettings {
   return { ...settings,
     keybindings: stored.keybindings ? { ...settings.keybindings, ...stored.keybindings } : settings.keybindings,
-    hiddenModels: stored.hiddenModels ?? settings.hiddenModels,
-    knownModels: stored.knownModels ?? (stored.hiddenModels ? undefined : settings.knownModels),
     debugMode: stored.debugMode ?? settings.debugMode,
   };
 }

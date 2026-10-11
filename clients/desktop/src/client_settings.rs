@@ -8,9 +8,6 @@ pub(crate) mod records;
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClientSettings {
     keybindings: HashMap<String, String>,
-    hidden_models: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    known_models: Option<Vec<String>>,
     debug_mode: bool,
 }
 
@@ -22,14 +19,6 @@ fn storage_path() -> Result<PathBuf, String> {
 
 fn read_preferences(path: &Path) -> Result<Option<ClientSettings>, String> {
     records::read(path)?.map(|body| serde_json::from_slice(&body).map_err(|error| format!("Could not read client preferences: {error}"))).transpose()
-}
-
-fn merge_memberships(latest: &[String], baseline: &[String], intended: &[String]) -> Vec<String> {
-    let mut merged: Vec<String> = latest.iter().filter(|id| !baseline.contains(id) || intended.contains(id)).cloned().collect();
-    for id in intended {
-        if !baseline.contains(id) && !merged.contains(id) { merged.push(id.clone()); }
-    }
-    merged
 }
 
 fn merge_keybindings(latest: &mut HashMap<String, String>, baseline: &HashMap<String, String>, intended: &HashMap<String, String>) -> Result<(), String> {
@@ -50,10 +39,6 @@ fn merge_keybindings(latest: &mut HashMap<String, String>, baseline: &HashMap<St
 
 fn merge_preferences(mut latest: ClientSettings, baseline: &ClientSettings, intended: &ClientSettings) -> Result<ClientSettings, String> {
     merge_keybindings(&mut latest.keybindings, &baseline.keybindings, &intended.keybindings)?;
-    latest.hidden_models = merge_memberships(&latest.hidden_models, &baseline.hidden_models, &intended.hidden_models);
-    if latest.known_models.is_some() || intended.known_models.is_some() {
-        latest.known_models = Some(merge_memberships(latest.known_models.as_deref().unwrap_or_default(), baseline.known_models.as_deref().unwrap_or_default(), intended.known_models.as_deref().unwrap_or_default()));
-    }
     if intended.debug_mode != baseline.debug_mode { latest.debug_mode = intended.debug_mode; }
     Ok(latest)
 }

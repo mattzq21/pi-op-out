@@ -119,13 +119,13 @@ async function applyDefaults(transport: NativeTransport, value: AppSettings, mod
 
 export async function configureConversationRuntime(value: AppSettings, transport: NativeTransport, activeTransport: () => NativeTransport, projectControls: WeakMap<NativeTransport, ProjectControls>, addNotice: Notice) {
   const current = () => activeTransport() === transport;
-  const hiddenModels = value.hiddenModels;
 
   if (!current() || !transport.ownsConversation()) return;
 
   if (transport.currentHostId() !== "local") value = await transport.loadHostSettings();
 
   if (!current()) return;
+  const hiddenModels = value.hiddenModels;
   transport.setDefaultFastMode(value.defaultFastMode);
 
   await transport.configureAutomaticBehavior(value.autoRetry);

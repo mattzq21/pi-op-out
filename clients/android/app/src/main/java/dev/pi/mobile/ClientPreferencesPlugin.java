@@ -8,7 +8,6 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.Set;
-import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -32,39 +31,13 @@ public class ClientPreferencesPlugin extends Plugin {
         }
     }
 
-    private static Set<String> memberships(JSONObject settings, String field) throws JSONException {
-        Set<String> result = new LinkedHashSet<>();
-        if (!settings.has(field)) {
-            if (field.equals("knownModels")) return result;
-            throw new JSONException("Missing client preference " + field);
-        }
-        JSONArray values = settings.getJSONArray(field);
-        for (int index = 0; index < values.length(); index++) {
-            Object value = values.get(index);
-            if (!(value instanceof String)) throw new JSONException("Invalid client preference " + field);
-            result.add((String) value);
-        }
-        return result;
-    }
-
     private static void validate(JSONObject settings) throws JSONException {
         JSONObject shortcuts = settings.getJSONObject("keybindings");
         Iterator<String> keys = shortcuts.keys();
         while (keys.hasNext()) {
             if (!(shortcuts.get(keys.next()) instanceof String)) throw new JSONException("Invalid client preference keybindings");
         }
-        memberships(settings, "hiddenModels");
-        memberships(settings, "knownModels");
         if (!(settings.get("debugMode") instanceof Boolean)) throw new JSONException("Invalid client preference debugMode");
-    }
-
-    private static void mergeMemberships(JSONObject latest, JSONObject baseline, JSONObject intended, String field) throws JSONException {
-        Set<String> before = memberships(baseline, field);
-        Set<String> after = memberships(intended, field);
-        Set<String> merged = memberships(latest, field);
-        for (String value : before) if (!after.contains(value)) merged.remove(value);
-        for (String value : after) if (!before.contains(value)) merged.add(value);
-        if (latest.has(field) || intended.has(field)) latest.put(field, new JSONArray(merged));
     }
 
     private static void mergeKeybindings(JSONObject latest, JSONObject baseline, JSONObject intended) throws JSONException {
@@ -89,8 +62,6 @@ public class ClientPreferencesPlugin extends Plugin {
 
     private static JSONObject merge(JSONObject latest, JSONObject baseline, JSONObject intended) throws JSONException {
         mergeKeybindings(latest, baseline, intended);
-        mergeMemberships(latest, baseline, intended, "hiddenModels");
-        mergeMemberships(latest, baseline, intended, "knownModels");
         if (!intended.get("debugMode").equals(baseline.get("debugMode"))) latest.put("debugMode", intended.get("debugMode"));
         return latest;
     }

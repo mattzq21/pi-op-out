@@ -109,8 +109,6 @@ async function saveHostSettings(app: App, args: any): Promise<any> {
   const settings = parseAppSettings(argument(args, 'settings', 'any'));
   const previous = await loadAppSettings(app);
   settings.keybindings = previous.keybindings;
-  settings.hiddenModels = previous.hiddenModels;
-  settings.knownModels = previous.knownModels;
   settings.debugMode = previous.debugMode;
   const agentsChanged = argument(args, 'agentsChanged', 'boolean');
   return saveAppSettings(app, settings, agentsChanged ? 'local' : undefined);

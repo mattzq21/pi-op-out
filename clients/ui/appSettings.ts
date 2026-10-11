@@ -9,6 +9,7 @@ import { restoreAgentConfiguration, saveAgentConfiguration } from "./lib/agentCo
 import { applyClientPreferences, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "./lib/clientPreferenceMerge";
 import { ConversationChangedError } from "./lib/conversationChanged";
 import { recordSeenModels } from "./lib/modelVisibility";
+import { createHostModelVisibility } from "./lib/hostModelVisibility";
 import { clearDraftCatalogs } from "./lib/draftRuntime";
 import { NativeTransport } from "./lib/nativeTransport";
 import { listen } from "./lib/platform";
@@ -71,13 +72,22 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     if (latest) setSettings(current => current ? applyClientPreferences(current, clientPreferences(latest)) : current);
   };
 
-  createDependencyEffect(() => { const capturedSettings = settings(); const capturedSession = { ...chatSession() };
+  const modelVisibility = createHostModelVisibility(settings, addNotice);
+  const recordingLocalModels = createRef(false);
 
-    if (!capturedSettings || capturedSession.models.length === 0 || settingsSavePending.current) return;
-    const next = recordSeenModels((capturedSettings), capturedSession.models.map((model) => `${model.provider}/${model.id}`));
+  createDependencyEffect(() => { const capturedSettings = settings(); const capturedSession = { ...chatSession() }; const capturedTransport = transport(); const hostId = capturedTransport.currentHostId();
+
+    if (!capturedSettings || capturedSession.models.length === 0) return;
+    const ids = capturedSession.models.map((model) => `${model.provider}/${model.id}`);
+
+    if (hostId !== "local") { modelVisibility.recordSeen(hostId, ids); return; }
+
+    if (settingsSavePending.current || recordingLocalModels.current) return;
+    const next = recordSeenModels(capturedSettings, ids);
 
     if (!next) return;
-    void saveClientSettings(next, capturedSettings).then(committed => publishPreferences(capturedSettings, committed)).catch(reason => addNotice({ title: "Could not save model preferences", message: reason instanceof Error ? reason.message : String(reason) }));
+    recordingLocalModels.current = true;
+    void capturedTransport.saveSettings(next, false, undefined, "daemon", capturedSettings).then(publishSettingsChange).catch(reason => addNotice({ title: "Could not save model list", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { recordingLocalModels.current = false; });
   }, () => [chatSession().models, settings(), transport()]);
   createDependencyEffect(() => {
     let revision = 0; let pendingSettings: AppSettings | undefined;
@@ -185,5 +195,5 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     void saveClientSettings(next, baseline).then(committed => publishPreferences(baseline, committed)).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
   };
 
- return { settings, setSettings, runtimeSettings, applyRuntimeSettings, settingsSavePending, settingsSaving, setSettingsSaving, debugModeSaving, setDebugModeSaving, debugModePending, settingsDirty, setSettingsDirty, loadSettings, saveSettings, applySettings, toggleDebugMode };
+ return { modelVisibility, settings, setSettings, runtimeSettings, applyRuntimeSettings, settingsSavePending, settingsSaving, setSettingsSaving, debugModeSaving, setDebugModeSaving, debugModePending, settingsDirty, setSettingsDirty, loadSettings, saveSettings, applySettings, toggleDebugMode };
 }
