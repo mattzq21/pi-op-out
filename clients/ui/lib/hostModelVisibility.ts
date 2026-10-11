@@ -49,7 +49,7 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
   const recordSeen = (hostId: string, ids: string[]) => {
     const known = remote[hostId]?.knownModels;
 
-    if (!remote[hostId] || recording.has(hostId) || (known && ids.every(id => known.includes(id)))) return;
+    if (recording.has(hostId) || (known && ids.every(id => known.includes(id)))) return;
     recording.add(hostId);
     const writer = new NativeTransport({ hostId, cwd: "~" });
     void (async () => {

@@ -352,7 +352,11 @@ async function handleProviderRequest(loaded, packet) {
 
   if (packet.method === 'fast_capabilities') return { clientVersion: FAST_CATALOG_CLIENT_VERSION, models: await discoverFastCapabilities(loaded.runtime) };
 
-  if (packet.method === 'draft_catalog') return { models: loaded.runtime.getModels() };
+  if (packet.method === 'draft_catalog') {
+    await loaded.runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
+
+    return { models: await loaded.runtime.getAvailable() };
+  }
 
   if (packet.method === 'inspect') {
     await loaded.runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });

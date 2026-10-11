@@ -663,7 +663,7 @@ function pickerDefaults({ label, selectedLabel, value, options, disabled, menuWi
   return { label, selectedLabel, value, options, disabled, menuWidth, centered, compact, onChange };
 }
 
-function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void; footer?: JSXElement }) {
+export function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void; footer?: JSXElement }) {
   const pickerFields = createMemoFields(() => pickerDefaults(props));
   const picker = () => pickerFields;
   const [menuStyle, setMenuStyle] = createSignal<CSSProperties>();
