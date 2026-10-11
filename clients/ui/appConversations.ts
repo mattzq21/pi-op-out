@@ -288,7 +288,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const projectControls = new WeakMap<NativeTransport, ProjectControls>();
   const composerControls = createComposerControls(transport, connected, projectControls, () => definedAgents()?.config.fastModeModels);
-  const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current, projectControls);
+  const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current, projectControls, addNotice);
   const reviewImages = new WeakMap<NativeTransport, ImageAttachment[]>();
   const resolveHomeDirectory = (hostId: string) => transport().homeDirectory(hostId);
 

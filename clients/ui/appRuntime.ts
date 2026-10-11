@@ -77,22 +77,34 @@ export function reassignTerminals(transport: NativeTransport, terminals: readonl
   }
 }
 
-async function applyInherited(transport: NativeTransport, inherited: ProjectControls, models: Model[]) {
+type Notice = (notice: { title: string; message: string }) => void;
+
+const modelKey = (model: { provider: string; id: string }) => `${model.provider}/${model.id}`;
+
+async function setStartModel(transport: NativeTransport, wanted: string | undefined, models: Model[], hiddenModels: readonly string[], addNotice: Notice) {
+  const model = models.find((model) => modelKey(model) === wanted);
+
+  if (model) { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); return; }
+  const fallback = models.find((model) => !hiddenModels.includes(modelKey(model)));
+
+  if (!fallback) throw new Error(`Model ${wanted ?? "(none)"} is not available on this machine and no enabled model exists. Enable a model in Settings → Models.`);
+  await transport.command({ type: "set_model", provider: fallback.provider, modelId: fallback.id });
+  addNotice({ title: "Default model unavailable", message: `${wanted ?? "No default model"} is not available on this machine. Using ${fallback.name || modelKey(fallback)}.` });
+}
+
+async function applyInherited(transport: NativeTransport, inherited: ProjectControls, defaultModel: string, models: Model[], hiddenModels: readonly string[], addNotice: Notice) {
   if (inherited.agent) await transport.command({ type: "select_agent", agent: inherited.agent });
 
-  if (inherited.model && models.some((model) => model.provider === required(inherited.model).provider && model.id === required(inherited.model).id)) {
-    transport.promptControls.model(inherited.model);
-  }
+  if (inherited.model && models.some((model) => model.provider === required(inherited.model).provider && model.id === required(inherited.model).id)) transport.promptControls.model(inherited.model);
+  else await setStartModel(transport, inherited.model ? modelKey(inherited.model) : defaultModel, models, hiddenModels, addNotice);
 
   transport.promptControls.thinking(inherited.thinking);
 
   if (inherited.fastMode !== undefined) transport.promptControls.fast(inherited.fastMode);
 }
 
-async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], current: () => boolean) {
-  const model = models.find((model) => `${model.provider}/${model.id}` === value.defaultModel);
-
-  if (model) await transport.command({ type: "set_model", provider: model.provider, modelId: model.id });
+async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], hiddenModels: readonly string[], current: () => boolean, addNotice: Notice) {
+  await setStartModel(transport, value.defaultModel, models, hiddenModels, addNotice);
 
   if (!current()) return;
   await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
@@ -105,8 +117,9 @@ async function applyDefaults(transport: NativeTransport, value: AppSettings, mod
   transport.defaultsApplied();
 }
 
-export async function configureConversationRuntime(value: AppSettings, transport: NativeTransport, activeTransport: () => NativeTransport, projectControls: WeakMap<NativeTransport, ProjectControls>) {
+export async function configureConversationRuntime(value: AppSettings, transport: NativeTransport, activeTransport: () => NativeTransport, projectControls: WeakMap<NativeTransport, ProjectControls>, addNotice: Notice) {
   const current = () => activeTransport() === transport;
+  const hiddenModels = value.hiddenModels;
 
   if (!current() || !transport.ownsConversation()) return;
 
@@ -121,16 +134,16 @@ export async function configureConversationRuntime(value: AppSettings, transport
   const inherited = projectControls.get(transport);
 
   if (!inherited && !transport.needsDefaults()) return;
-  const availableModels = await transport.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).then(result => result.models, () => []);
+  const availableModels = await transport.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).then(result => result.models);
 
   if (!current()) return;
 
   if (inherited) {
-    await applyInherited(transport, inherited, availableModels);
+    await applyInherited(transport, inherited, value.defaultModel, availableModels, hiddenModels, addNotice);
     projectControls.delete(transport); transport.defaultsApplied();
 
     return;
   }
 
-  await applyDefaults(transport, value, availableModels, current);
+  await applyDefaults(transport, value, availableModels, hiddenModels, current, addNotice);
 }
