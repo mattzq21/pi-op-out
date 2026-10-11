@@ -890,20 +890,9 @@ export async function queueCommand(session: Session, original: any): Promise<any
   return session.queue.command(command);
 }
 
-function retentionPending(root: string): boolean {
-  const database = Registry.open(root);
-  try {
-    const row: any = database.prepare('SELECT (EXISTS(SELECT 1 FROM retention_candidates) OR EXISTS(SELECT 1 FROM cleanup_requests) OR EXISTS(SELECT 1 FROM storage_transactions)) AS pending').get();
-    return Boolean(row.pending);
-  } finally { database.close(); }
-}
-
 async function retentionPass(root: string, initialize: boolean): Promise<void> {
-  if (initialize) {
-    const database = Registry.open(root);
-    try { database.prepare('INSERT INTO cleanup_requests VALUES (?, 1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1').run('goal'); } finally { database.close(); }
-  }
-  if (!retentionPending(root)) return;
+  if (initialize) Registry.requestCleanup(root, 'goal');
+  if (!Registry.pending(root, 'retention')) return;
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Deferred retention cleanup timed out; candidates remain available for retry')), 30_000); });
   const controller = new AbortController();

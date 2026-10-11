@@ -25,7 +25,7 @@ function recoverStorage(root: string, ownership: ConversationOwnership): Recover
     const restore = tryLock(join(root, 'restore.lock'));
     if (!restore) return { ...empty(), retry: true };
     try {
-      if (restorationPending(root)) return { ...empty(), retry: true, transactionsPending: true };
+      if (Registry.pending(root, 'transaction')) return { ...empty(), retry: true, transactionsPending: true };
       const db = Registry.open(root);
       let entries: string[];
       try { entries = (db.prepare('SELECT DISTINCT session_id FROM queue_items').all() as any[]).map(row => String(row.session_id)); } finally { db.close(); }
@@ -37,14 +37,6 @@ function recoverStorage(root: string, ownership: ConversationOwnership): Recover
       return recovery;
     } finally { restore.release(); }
   } finally { notes.release(); }
-}
-
-function restorationPending(root: string): boolean {
-  const db = Registry.open(root);
-  try {
-    const row: any = db.prepare('SELECT EXISTS(SELECT 1 FROM storage_transactions) AS pending').get();
-    return Boolean(row.pending);
-  } finally { db.close(); }
 }
 
 function recoverJournal(root: string, ownership: ConversationOwnership, path: string): boolean {

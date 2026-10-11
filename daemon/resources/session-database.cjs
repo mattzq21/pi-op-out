@@ -124,15 +124,32 @@ function reserve(root) {
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const db = open(root);
 
-  try {
-    const insert = db.prepare("INSERT INTO sessions (session_id) SELECT ?1 WHERE NOT EXISTS (SELECT 1 FROM storage_transactions s, json_each(s.journal_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) ON CONFLICT(session_id) DO NOTHING");
+  try { return reserveId(db); }
+  finally { db.close(); }
+}
 
-    for (;;) {
-      const id = require('node:crypto').randomUUID();
+function reserveId(db) {
+  const insert = db.prepare("INSERT INTO sessions (session_id) SELECT ?1 WHERE NOT EXISTS (SELECT 1 FROM storage_transactions s, json_each(s.journal_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) ON CONFLICT(session_id) DO NOTHING");
 
-      if (insert.run(id).changes === 1) return id;
-    }
-  } finally { db.close(); }
+  for (;;) {
+    const id = require('node:crypto').randomUUID();
+
+    if (Number(insert.run(id).changes) === 1) return id;
+  }
+}
+
+const pendingTables = {
+  transaction: ['storage_transactions'],
+  recovery: ['session_publications', 'session_restore_receipts', 'storage_transactions'],
+  retention: ['retention_candidates', 'cleanup_requests', 'storage_transactions'],
+};
+
+function pending(db, work) {
+  const tables = pendingTables[work];
+
+  if (!tables) throw new Error(`Unknown pending storage work: ${work}`);
+
+  return Boolean(db.prepare(`SELECT (${tables.map(table => `EXISTS(SELECT 1 FROM ${table})`).join(' OR ')}) AS pending`).get().pending);
 }
 
 function bind(db, sessionId, sessionPath) {
@@ -313,5 +330,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { copyGoal, initialize, reserve, bind, directoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+module.exports = { copyGoal, initialize, reserve, reserveId, pending, bind, directoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
   recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };

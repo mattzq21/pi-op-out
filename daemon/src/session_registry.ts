@@ -1,6 +1,7 @@
-import { spawn, spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import * as SessionTables from '../resources/session-database.cjs';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { sessionDatabase, sessionRegistryBundle } from './resources';
@@ -14,13 +15,16 @@ export function withDatabase(script: string): string {
 
 export function reserve(root: string): string {
   const database = open(root);
-  try {
-    const statement = database.prepare("INSERT INTO sessions (session_id) SELECT ?1 WHERE NOT EXISTS (SELECT 1 FROM storage_transactions s, json_each(s.journal_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) ON CONFLICT(session_id) DO NOTHING");
-    for (;;) {
-      const id = randomUUID();
-      if (Number(statement.run(id).changes) === 1) return id;
-    }
-  } finally { database.close(); }
+  try { return SessionTables.reserveId(database); } finally { database.close(); }
+}
+
+export function pending(root: string, work: 'transaction' | 'recovery' | 'retention'): boolean {
+  const database = open(root);
+  try { return SessionTables.pending(database, work); } finally { database.close(); }
+}
+
+export function requestCleanup(root: string, kind: 'goal'): void {
+  SessionTables.markCleanup(root, kind);
 }
 
 function run(request: Record<string, unknown>): void {
@@ -43,13 +47,16 @@ export function record(state: any, cwd: string | undefined | null): void {
 const ready = new Set<string>();
 
 export function open(root: string): Database {
-  if (!ready.has(root)) {
-    const output = spawnSync(process.execPath, ['-e', source(), JSON.stringify({ root, action: 'initialize' })], { env: { ...process.env, BUN_BE_BUN: '1', PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY }, maxBuffer: 64 * 1024 * 1024 });
-    if (output.error) throw output.error;
-    if (output.status !== 0) throw new Error(output.stderr.toString());
-    ready.add(root);
-  }
-  const database = openDatabase(join(root, 'sessions.sqlite'), { nofollow: false, timeout: 10_000 });
-  try { database.exec('PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;'); } catch (error) { database.close(); throw error; }
+  const file = join(root, 'sessions.sqlite');
+  if (!ready.has(root)) mkdirSync(root, { recursive: true, mode: 0o700 });
+  const database = openDatabase(file, { nofollow: false, timeout: 10_000 });
+  try {
+    if (!ready.has(root)) {
+      chmodSync(file, 0o600);
+      SessionTables.initialize(database);
+      ready.add(root);
+    }
+    database.exec('PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;');
+  } catch (error) { database.close(); throw error; }
   return database;
 }

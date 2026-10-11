@@ -591,7 +591,7 @@ function recover(root) {
   return failures.length ? { state: 'pending', error: failures.join('\n'), warning: temporary } : { state: 'committed', warning: temporary };
 }
 
-function pending(root) { return rows(root).length > 0; }
+function pending(root) { return withDatabase(root, db => database.pending(db, 'transaction')); }
 
 function stuck(root) {
   return rows(root).filter(row => row.damaged || row.journal.lastError).map(row => ({ id: row.id, kind: row.kind, error: row.damaged ?? row.journal.lastError }));

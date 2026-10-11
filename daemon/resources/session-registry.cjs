@@ -136,8 +136,7 @@ function identity() {
 }
 
 try {
-  if (request.action === 'initialize') sessionTables.initialize(db);
-  else if (request.action === 'reserve') process.stdout.write(JSON.stringify(sessionTables.reserve(root)));
+  if (request.action === 'reserve') process.stdout.write(JSON.stringify(sessionTables.reserve(root)));
   else if (request.action === 'metadata') metadata();
   else if (request.action === 'identity') identity();
   else if (request.action === 'get') process.stdout.write(JSON.stringify(db.prepare('SELECT r.*, s.session_path FROM session_directories r JOIN sessions s USING(session_id) WHERE r.session_id = ?').get(request.sessionId) || null));
