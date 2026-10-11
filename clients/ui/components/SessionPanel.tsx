@@ -27,6 +27,9 @@ type DraggedItem = DraggedSession | { projectKey: string };
 
 type MouseDrag = DraggedItem & { startX: number; startY: number; active: boolean; };
 
+const TOUCH_HOLD_MS = 800;
+const TOUCH_SCROLL_SLOP = 8;
+
 function isBlockedDirlessTarget(drag: MouseDrag, target?: DropTarget) {
   return target?.projectKey === DIRLESS_KEY && !("session" in drag && drag.projectKey === DIRLESS_KEY && target.sessionKey);
 }
@@ -97,6 +100,7 @@ export function SessionPanel(props: Props) {
   const groupedSessionsRef = createRef<Map<string, SessionSummary[]>>(new Map());
   createComputed(() => { groupedSessionsRef.current = storedGroups.groupedSessions(); });
   const removeMouseListenersRef = createRef<() => void>(() => { });
+  const touchHoldRef = createRef(false);
 
   const closeMenu = (restoreFocus = false) => { const target = groupMenu()?.returnFocus ?? menu()?.returnFocus; setMenu(undefined); setGroupMenu(undefined);
 
@@ -215,15 +219,29 @@ export function SessionPanel(props: Props) {
   };
 
   const startMouseDrag = (event: MouseEvent<HTMLElement>, drag: DraggedItem) => {
+    if (event.button === 0) startDrag(event.clientX, event.clientY, drag, "mouse");
+  };
+
+  const startTouchDrag = (event: TouchEvent, drag: DraggedItem, onHoldRelease?: (x: number, y: number) => void) => {
+    const touch = event.touches.length === 1 ? event.touches[0] : undefined;
+
+    if (touch) startDrag(touch.clientX, touch.clientY, drag, "touch", onHoldRelease);
+  };
+
+  const startDrag = (startX: number, startY: number, drag: DraggedItem, input: "mouse" | "touch", onHoldRelease?: (x: number, y: number) => void) => {
     if (!("sessionKey" in drag) && isFixedGroup(drag.projectKey)) return;
 
-    if (normalizedQuery() || event.button !== 0) return;
+    if (normalizedQuery()) return;
     removeMouseListenersRef.current();
-    const mouseDrag: MouseDrag = { ...drag, startX: event.clientX, startY: event.clientY, active: false };
+    const mouseDrag: MouseDrag = { ...drag, startX, startY, active: false };
     mouseDragRef.current = mouseDrag;
+    let holdTimer: number | undefined;
+    let touchMoved = false;
 
     const clear = () => {
       removeMouseListenersRef.current();
+      window.clearTimeout(holdTimer);
+      touchHoldRef.current = false;
       mouseDragRef.current = undefined;
       mouseDropTargetRef.current = undefined;
       setDraggedSession(undefined);
@@ -317,21 +335,42 @@ export function SessionPanel(props: Props) {
       if (speed) { scroll.scrollTop += speed; updateDropTarget(pointer.x, pointer.y, current); autoScrollFrameRef.current = requestAnimationFrame(autoScroll); }
     };
 
-    const move = (mouseEvent: MouseEvent) => {
+    const activate = (current: MouseDrag) => {
+      current.active = true;
+
+      if ("session" in current) setDraggedSession(current); else setDraggedProject(current.projectKey);
+    };
+
+    const moveTo = (x: number, y: number, event: Event) => {
       const current = mouseDragRef.current;
 
       if (!current) return;
 
-      if (!current.active && Math.hypot(mouseEvent.clientX - current.startX, mouseEvent.clientY - current.startY) < 5) return;
+      if (!current.active && Math.hypot(x - current.startX, y - current.startY) < 5) return;
 
-      if (!current.active) { current.active = true;
+      if (!current.active) activate(current);
 
-        if ("session" in current) setDraggedSession(current); else setDraggedProject(current.projectKey); }
-
-      mouseEvent.preventDefault(); dragPointerRef.current = { x: mouseEvent.clientX, y: mouseEvent.clientY };
-      updateDropTarget(mouseEvent.clientX, mouseEvent.clientY, current);
+      event.preventDefault(); dragPointerRef.current = { x, y };
+      updateDropTarget(x, y, current);
 
       if (autoScrollFrameRef.current === undefined) autoScrollFrameRef.current = requestAnimationFrame(autoScroll);
+    };
+
+    const move = (event: globalThis.MouseEvent) => moveTo(event.clientX, event.clientY, event);
+
+    const touchMove = (event: TouchEvent) => {
+      const touch = event.touches[0];
+
+      if (!touch) return;
+
+      if (!mouseDrag.active) {
+        if (Math.hypot(touch.clientX - startX, touch.clientY - startY) > TOUCH_SCROLL_SLOP) clear();
+
+        return;
+      }
+
+      touchMoved = true;
+      moveTo(touch.clientX, touch.clientY, event);
     };
 
     const placeDroppedProject = (current: MouseDrag, target: DropTarget, token: string) => {
@@ -369,12 +408,40 @@ export function SessionPanel(props: Props) {
     };
 
     const cancel = () => clear();
-    window.addEventListener("mousemove", move, { passive: false });
-    window.addEventListener("mouseup", finish);
+
+    const touchEnd = (event: TouchEvent) => {
+      if (!mouseDrag.active) { clear();
+
+        return; }
+
+      event.preventDefault();
+
+      if (!touchMoved && onHoldRelease) { onHoldRelease(startX, startY); clear();
+
+        return; }
+
+      finish();
+    };
+
     window.addEventListener("blur", cancel);
+
+    if (input === "touch") {
+      touchHoldRef.current = true;
+      holdTimer = window.setTimeout(() => { if (mouseDragRef.current === mouseDrag) activate(mouseDrag); }, TOUCH_HOLD_MS);
+      window.addEventListener("touchmove", touchMove, { passive: false });
+      window.addEventListener("touchend", touchEnd, { passive: false });
+      window.addEventListener("touchcancel", cancel);
+    } else {
+      window.addEventListener("mousemove", move, { passive: false });
+      window.addEventListener("mouseup", finish);
+    }
+
     removeMouseListenersRef.current = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", finish);
+      window.removeEventListener("touchmove", touchMove);
+      window.removeEventListener("touchend", touchEnd);
+      window.removeEventListener("touchcancel", cancel);
       window.removeEventListener("blur", cancel);
       removeMouseListenersRef.current = () => { };
     };
@@ -384,6 +451,8 @@ export function SessionPanel(props: Props) {
 
   const projectDragProps = (projectKey: string) => ({
     onMouseDown: (event: MouseEvent<HTMLElement>) => startMouseDrag(event, { projectKey }),
+    onTouchStart: (event: TouchEvent) => startTouchDrag(event, { projectKey }),
+    onContextMenu: (event: globalThis.MouseEvent) => { if (touchHoldRef.current) event.preventDefault(); },
     onClick: (event: MouseEvent<HTMLElement>) => {
       if (suppressClickRef.current === groupLayoutToken(projectKey)) { suppressClickRef.current = undefined; event.preventDefault();
 
@@ -428,7 +497,12 @@ export function SessionPanel(props: Props) {
     const target = createMemo(() => dropTarget()?.projectKey === projectKey && dropTarget()?.sessionKey === key() ? dropTarget()?.edge : undefined);
     const drag = () => ({ projectKey, sessionKey: key(), session: session() });
 
-    const renderSessionMain = () => (<button class="session-main" disabled={archiving()} aria-label={`${session().name}, ${directoryLabel(session())}, ${formatApiCost(session().apiCost)}${accessibleActivity() ? `, ${accessibleActivity()}` : ""}`} aria-current={isActiveSession(session()) ? "page" : undefined} aria-description={!normalizedQuery() ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} onMouseDown={(event) => { if (!archiving()) startMouseDrag(event, drag()); }} onKeyDown={(event) => { if (!archiving() && !normalizedQuery() && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag(), event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (archiving()) return;
+    const openSessionMenu = (x: number, y: number, returnFocus?: HTMLElement) => {
+      if (archiving()) return;
+      setGroupMenu(undefined); setMenu({ session: session(), x: Math.min(x, window.innerWidth - 190), y: Math.min(y, window.innerHeight - 190), returnFocus });
+    };
+
+    const renderSessionMain = () => (<button class="session-main" disabled={archiving()} aria-label={`${session().name}, ${directoryLabel(session())}, ${formatApiCost(session().apiCost)}${accessibleActivity() ? `, ${accessibleActivity()}` : ""}`} aria-current={isActiveSession(session()) ? "page" : undefined} aria-description={!normalizedQuery() ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} onMouseDown={(event) => { if (!archiving()) startMouseDrag(event, drag()); }} onTouchStart={(event) => { const element = event.currentTarget; if (!archiving()) startTouchDrag(event, drag(), (x, y) => openSessionMenu(x, y, element)); }} onKeyDown={(event) => { if (!archiving() && !normalizedQuery() && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag(), event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (archiving()) return;
 
       if (suppressClickRef.current === sessionLayoutToken(key())) { suppressClickRef.current = undefined; event.preventDefault();
 
@@ -441,7 +515,7 @@ export function SessionPanel(props: Props) {
 
     return <div data-sidebar-token={sessionLayoutToken(key())} data-session-key={key()} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault();
 
-      if (archiving()) return; const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session: session(), x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
+      if (touchHoldRef.current) return; openSessionMenu(event.clientX, event.clientY, document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined); }}>
       {renderSessionMain()}
       {renderArchiveButton()}
     </div>;
