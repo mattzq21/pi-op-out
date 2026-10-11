@@ -1,5 +1,5 @@
-import { createUniqueId, For, Show } from "solid-js";
-import { CirclePlus, Trash2 } from "lucide-solid";
+import { createSignal, createUniqueId, For, Show } from "solid-js";
+import { Plus, Save, Trash2 } from "lucide-solid";
 import { useDictationConfiguration } from "../lib/dictation";
 import { isMobile } from "../lib/platform";
 import type { AppSettings, DictationEngine, SavedDictationEngine, SavedDictationModel } from "../types";
@@ -7,93 +7,135 @@ import { IconButton } from "./IconButton";
 
 const engines: Array<{ id: DictationEngine; label: string; program: string; model: string; language: string }> = [
   { id: "transcribe.cpp", label: "transcribe.cpp", program: "transcribe.cpp", model: "~/Models/speech/parakeet-unified-en-0.6b-Q8_0.gguf", language: "Model default" },
-  { id: "needle", label: "Cactus Needle (Whistle)", program: "needle", model: "~/Models/whistle.cact", language: "Detect automatically" },
+  { id: "needle", label: "Cactus Needle (Whistle)", program: "needle", model: "~/Models/speech/whistle.cact", language: "Detect automatically" },
 ];
 
-/** Shows the status of the speech engine on this device. */
+const engineLabel = (id: DictationEngine) => engines.find(item => item.id === id)?.label ?? id;
+const fileName = (path: string) => path.split("/").pop() || path;
+
+/** Shows the status of the speech engine on this device in one line. */
 function DictationStatus() {
   const configuration = useDictationConfiguration();
-  const language = () => configuration().language || (configuration().detectLanguage ? "detected automatically" : "model default");
+  const language = () => configuration().language || (configuration().detectLanguage ? "language detected automatically" : "model default language");
 
-  return <Show when={configuration().loading} fallback={
-    <Show when={configuration().error} fallback={<Show when={configuration().enabled}>
-      <p role="status">Ready: {configuration().engine}{configuration().executable ? ` at ${configuration().executable}` : ""}. Language: {language()}.</p>
-      <Show when={configuration().languages?.length}><p>The model knows: {configuration().languages?.join(", ")}</p></Show>
-    </Show>}>
-      {(error) => <p role="alert" class="dictation-settings-error">{error()}</p>}
+  return <div class="dictation-status">
+    <Show when={!configuration().loading} fallback={<p role="status"><i class="dictation-dot" />Checking the speech engine…</p>}>
+      <Show when={configuration().error} fallback={<Show when={configuration().enabled}>
+        <p role="status"><i class="dictation-dot ready" />Ready · {language()}</p>
+        <Show when={configuration().languages?.length}><small>The model knows {configuration().languages?.join(", ")}</small></Show>
+      </Show>}>
+        {(error) => <p role="alert" class="dictation-settings-error"><i class="dictation-dot failed" />{error()}</p>}
+      </Show>
     </Show>
-  }><p role="status">Checking the speech engine…</p></Show>;
+  </div>;
 }
 
-/** One saved model or engine. "Use" puts it in the form. */
-function SavedRow(props: { name: string; details: string[]; active: boolean; onUse: () => void; onRemove: () => void }) {
-  return <li class="dictation-saved-model">
-    <span><strong>{props.name}</strong><For each={props.details}>{line => <small>{line}</small>}</For></span>
-    <button type="button" class="secondary-button" disabled={props.active} onClick={() => props.onUse()}>{props.active ? "In use" : "Use"}</button>
-    <IconButton type="button" label={"Remove " + props.name} onClick={() => props.onRemove()}><Trash2 size={15} /></IconButton>
+/** One choice in a list. Click it to use it. Saved choices can be removed; an unsaved one can be saved. */
+function Choice(props: { title: string; detail: string; active: boolean; onUse: () => void; onRemove?: () => void; onSave?: () => void }) {
+  return <li class={props.active ? "dictation-choice active" : "dictation-choice"}>
+    <button type="button" role="radio" aria-checked={props.active} onClick={() => props.onUse()}>
+      <i class="dictation-radio" />
+      <span><strong>{props.title}</strong><small>{props.detail}</small></span>
+    </button>
+    <Show when={props.onSave}>{save => <IconButton type="button" label={"Save " + props.title} onClick={() => save()()}><Save size={14} /></IconButton>}</Show>
+    <Show when={props.onRemove}>{remove => <IconButton type="button" label={"Remove " + props.title} onClick={() => remove()()}><Trash2 size={14} /></IconButton>}</Show>
   </li>;
 }
 
-const fileName = (path: string) => path.split("/").pop() || path;
-const engineLabel = (id: DictationEngine) => engines.find(item => item.id === id)?.label ?? id;
+/** A short inline form that adds one entry. */
+function AddForm(props: { label: string; children: import("solid-js").JSXElement; canAdd: boolean; onAdd: () => void; onCancel: () => void }) {
+  return <div class="dictation-add-form">
+    {props.children}
+    <div><button type="button" class="primary-button" disabled={!props.canAdd} onClick={() => props.onAdd()}>Add</button><button type="button" class="dictation-link" onClick={() => props.onCancel()}>Cancel</button></div>
+  </div>;
+}
 
 export function DictationSettings(props: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {
   const configuration = useDictationConfiguration();
   const languageList = createUniqueId();
-  const engine = () => engines.find(item => item.id === (props.settings.dictationEngine ?? "transcribe.cpp")) ?? engines[0];
-  /** Languages of the loaded model. They apply only while the form shows the loaded engine. */
-  const languages = () => configuration().engine === engine().id ? configuration().languages ?? [] : [];
-
-  const savedEngines = () => props.settings.dictationEngines ?? [];
-  const programPath = () => props.settings.dictationEnginePath?.trim() ?? "";
-  const engineActive = (item: SavedDictationEngine) => item.path === programPath() && item.engine === engine().id;
-  const currentEngine = () => savedEngines().find(item => item.path === programPath());
-  /** Adds the engine in the form to the list. An engine with the same program path is replaced. */
-  const saveEngine = () => {
-    const item: SavedDictationEngine = { engine: engine().id, path: programPath() };
-    props.onChange({ dictationEngines: currentEngine() ? savedEngines().map(entry => entry.path === item.path ? item : entry) : [...savedEngines(), item] });
-  };
-
-  const savedModels = () => props.settings.dictationModels ?? [];
+  const engine = () => props.settings.dictationEngine ?? "transcribe.cpp";
+  const program = () => props.settings.dictationEnginePath?.trim() ?? "";
   const modelPath = () => props.settings.dictationModelPath?.trim() ?? "";
-  const language = () => props.settings.dictationLanguage?.trim() || undefined;
-  const modelActive = (model: SavedDictationModel) => model.path === modelPath() && model.engine === engine().id && model.language === language();
-  const currentModel = () => savedModels().find(model => model.path === modelPath());
-  /** Adds the model in the form to the list. A model with the same path is replaced. */
-  const saveModel = () => {
-    const model: SavedDictationModel = { engine: engine().id, path: modelPath(), ...(language() ? { language: language() } : {}) };
-    props.onChange({ dictationModels: currentModel() ? savedModels().map(item => item.path === model.path ? model : item) : [...savedModels(), model] });
-  };
-  /** Uses a saved model. For another engine type, the program becomes the first saved engine of that type, or automatic search. */
-  const useModel = (model: SavedDictationModel) => props.onChange({
-    dictationEngine: model.engine, dictationModelPath: model.path, dictationLanguage: model.language ?? "",
-    ...(model.engine === engine().id ? {} : { dictationEnginePath: savedEngines().find(item => item.engine === model.engine)?.path ?? "" }),
-  });
+  const savedEngines = () => props.settings.dictationEngines ?? [];
+  const savedModels = () => props.settings.dictationModels ?? [];
+  const models = () => savedModels().filter(model => model.engine === engine());
+  const engineSaved = () => !program() || savedEngines().some(item => item.path === program() && item.engine === engine());
+  const modelSaved = () => !modelPath() || models().some(model => model.path === modelPath());
+  /** Languages of the loaded model. They apply only while the form shows the loaded engine. */
+  const languages = () => configuration().engine === engine() ? configuration().languages ?? [] : [];
 
-  return <>
-    <Show when={!isMobile}><div class="field"><span>Saved engines</span>
-      <Show when={savedEngines().length} fallback={<small>No saved engines. Fill in the engine below and save it.</small>}>
-        <ul class="dictation-saved-models"><For each={savedEngines()}>{item => <SavedRow name={engineLabel(item.engine)} details={[item.path]} active={engineActive(item)}
-          onUse={() => props.onChange({ dictationEngine: item.engine, dictationEnginePath: item.path })}
-          onRemove={() => props.onChange({ dictationEngines: savedEngines().filter(entry => entry.path !== item.path) })} />}</For></ul>
+  const [addingEngine, setAddingEngine] = createSignal(false);
+  const [newEngine, setNewEngine] = createSignal<DictationEngine>("needle");
+  const [newProgram, setNewProgram] = createSignal("");
+  const [addingModel, setAddingModel] = createSignal(false);
+  const [newModel, setNewModel] = createSignal("");
+
+  /** Uses an engine. For another engine type, the model becomes the first saved model of that type. */
+  const useEngine = (kind: DictationEngine, path: string) => {
+    const model = kind === engine() ? undefined : savedModels().find(item => item.engine === kind);
+    props.onChange({ dictationEngine: kind, dictationEnginePath: path, ...(kind === engine() ? {} : { dictationModelPath: model?.path ?? "", dictationLanguage: model?.language ?? "" }) });
+  };
+  const useModel = (model: SavedDictationModel) => props.onChange({ dictationModelPath: model.path, dictationLanguage: model.language ?? "" });
+  const withEngine = (item: SavedDictationEngine) => [...savedEngines().filter(entry => entry.path !== item.path), item];
+  const withModel = (item: SavedDictationModel) => [...savedModels().filter(entry => entry.path !== item.path), item];
+  const language = () => props.settings.dictationLanguage?.trim() || undefined;
+  const currentModel = (): SavedDictationModel => ({ engine: engine(), path: modelPath(), ...(language() ? { language: language() } : {}) });
+
+  const addEngine = () => {
+    const item = { engine: newEngine(), path: newProgram().trim() };
+    const model = item.engine === engine() ? undefined : savedModels().find(entry => entry.engine === item.engine);
+    props.onChange({ dictationEngines: withEngine(item), dictationEngine: item.engine, dictationEnginePath: item.path, ...(item.engine === engine() ? {} : { dictationModelPath: model?.path ?? "", dictationLanguage: model?.language ?? "" }) });
+    setAddingEngine(false); setNewProgram("");
+  };
+  const addModel = () => {
+    const item: SavedDictationModel = { ...currentModel(), path: newModel().trim() };
+    props.onChange({ dictationModels: withModel(item), dictationModelPath: item.path });
+    setAddingModel(false); setNewModel("");
+  };
+  /** The language belongs to the model in use, so a change also updates its saved entry. */
+  const setLanguage = (value: string) => {
+    const saved = models().some(model => model.path === modelPath());
+    props.onChange({ dictationLanguage: value, ...(saved ? { dictationModels: savedModels().map(model => model.path === modelPath() ? { engine: model.engine, path: model.path, ...(value.trim() ? { language: value.trim() } : {}) } : model) } : {}) });
+  };
+
+  return <div class="dictation-settings">
+    <section class="dictation-group">
+      <h3>Engine</h3>
+      <ul class="dictation-choices" role="radiogroup" aria-label="Dictation engine">
+        <For each={engines}>{kind => <>
+          <Choice title={kind.label} detail={isMobile ? "Built into the app" : "Find " + kind.program + " automatically"} active={engine() === kind.id && !program()} onUse={() => useEngine(kind.id, "")} />
+          <Show when={!isMobile}>
+            <For each={savedEngines().filter(item => item.engine === kind.id)}>{item => <Choice title={kind.label} detail={item.path} active={engine() === item.engine && program() === item.path} onUse={() => useEngine(item.engine, item.path)}
+              onRemove={() => props.onChange({ dictationEngines: savedEngines().filter(entry => entry.path !== item.path), ...(program() === item.path ? { dictationEnginePath: "" } : {}) })} />}</For>
+            <Show when={engine() === kind.id && !engineSaved()}><Choice title={kind.label} detail={program() + " · not saved"} active onUse={() => undefined} onSave={() => props.onChange({ dictationEngines: withEngine({ engine: engine(), path: program() }) })} /></Show>
+          </Show>
+        </>}</For>
+      </ul>
+      <Show when={!isMobile}>
+        <Show when={addingEngine()} fallback={<button type="button" class="dictation-link" onClick={() => { setNewEngine(engine()); setAddingEngine(true); }}><Plus size={14} />Add engine</button>}>
+          <AddForm label="engine" canAdd={!!newProgram().trim()} onAdd={addEngine} onCancel={() => setAddingEngine(false)}>
+            <select aria-label="New engine type" value={newEngine()} onChange={event => setNewEngine(event.currentTarget.value as DictationEngine)}>{engines.map(item => <option value={item.id}>{item.label}</option>)}</select>
+            <input aria-label="New engine program path" autofocus placeholder={newEngine() === "needle" ? "/path/to/needle" : "/path/to/transcribe.cpp/python"} value={newProgram()} onInput={event => setNewProgram(event.currentTarget.value)} onKeyDown={event => { if (event.key === "Enter" && newProgram().trim()) addEngine(); if (event.key === "Escape") setAddingEngine(false); }} />
+          </AddForm>
+        </Show>
       </Show>
-    </div></Show>
-    <label class="field"><span>Engine</span><select aria-label="Dictation engine" value={engine().id} onChange={event => props.onChange({ dictationEngine: event.currentTarget.value as DictationEngine })}>{engines.map(item => <option value={item.id}>{item.label}</option>)}</select></label>
-    <Show when={!isMobile}>
-      <label class="field"><span>Program path</span><input aria-label="Dictation program path" placeholder={`Find ${engine().program} automatically`} value={props.settings.dictationEnginePath ?? ""} onInput={event => props.onChange({ dictationEnginePath: event.currentTarget.value })} /></label>
-      <button type="button" class="secondary-button" disabled={!programPath() || (currentEngine() !== undefined && engineActive(currentEngine()!))} onClick={saveEngine}><CirclePlus size={15} />{currentEngine() ? "Update saved engine" : "Save this engine"}</button>
-    </Show>
-    <div class="field"><span>Saved models</span>
-      <Show when={savedModels().length} fallback={<small>No saved models. Fill in the model below and save it.</small>}>
-        <ul class="dictation-saved-models"><For each={savedModels()}>{model => <SavedRow name={fileName(model.path)} details={[engineLabel(model.engine) + (model.language ? " · " + model.language : ""), model.path]} active={modelActive(model)}
-          onUse={() => useModel(model)}
-          onRemove={() => props.onChange({ dictationModels: savedModels().filter(item => item.path !== model.path) })} />}</For></ul>
+    </section>
+    <section class="dictation-group">
+      <h3>Model</h3>
+      <ul class="dictation-choices" role="radiogroup" aria-label="Dictation model">
+        <For each={models()}>{model => <Choice title={fileName(model.path)} detail={model.path} active={modelPath() === model.path} onUse={() => useModel(model)}
+          onRemove={() => props.onChange({ dictationModels: savedModels().filter(entry => entry.path !== model.path), ...(modelPath() === model.path ? { dictationModelPath: "" } : {}) })} />}</For>
+        <Show when={!modelSaved()}><Choice title={fileName(modelPath())} detail={modelPath() + " · not saved"} active onUse={() => undefined} onSave={() => props.onChange({ dictationModels: withModel(currentModel()) })} /></Show>
+      </ul>
+      <Show when={!models().length && modelSaved()}><p class="dictation-empty">No models for {engineLabel(engine())} yet.</p></Show>
+      <Show when={addingModel()} fallback={<button type="button" class="dictation-link" onClick={() => setAddingModel(true)}><Plus size={14} />Add model</button>}>
+        <AddForm label="model" canAdd={!!newModel().trim()} onAdd={addModel} onCancel={() => setAddingModel(false)}>
+          <input aria-label="New model file path" autofocus placeholder={engines.find(item => item.id === engine())?.model} value={newModel()} onInput={event => setNewModel(event.currentTarget.value)} onKeyDown={event => { if (event.key === "Enter" && newModel().trim()) addModel(); if (event.key === "Escape") setAddingModel(false); }} />
+        </AddForm>
       </Show>
-    </div>
-    <label class="field"><span>Model file path</span><input aria-label="Dictation model file path" placeholder={engine().model} value={props.settings.dictationModelPath ?? ""} onInput={event => props.onChange({ dictationModelPath: event.currentTarget.value })} /></label>
-    <label class="field"><span>Language</span><input aria-label="Dictation language" list={languageList} placeholder={engine().language} value={props.settings.dictationLanguage ?? ""} onInput={event => props.onChange({ dictationLanguage: event.currentTarget.value })} /></label>
-    <datalist id={languageList}><For each={languages()}>{item => <option value={item} />}</For></datalist>
-    <button type="button" class="secondary-button" disabled={!modelPath() || (currentModel() !== undefined && modelActive(currentModel()!))} onClick={saveModel}><CirclePlus size={15} />{currentModel() ? "Update saved model" : "Save this model"}</button>
+      <label class="field dictation-language"><span>Language</span><input aria-label="Dictation language" list={languageList} placeholder={engines.find(item => item.id === engine())?.language} value={props.settings.dictationLanguage ?? ""} onInput={event => setLanguage(event.currentTarget.value)} /></label>
+      <datalist id={languageList}><For each={languages()}>{item => <option value={item} />}</For></datalist>
+    </section>
     <DictationStatus />
-  </>;
+  </div>;
 }
