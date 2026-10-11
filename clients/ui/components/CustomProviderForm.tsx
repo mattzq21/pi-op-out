@@ -18,7 +18,7 @@ export function CustomProviderForm(componentProps: { working: boolean; save: (in
 
  if (await capturedSave0(capturedInput)) { setInput(blankProvider()); setSaved(true); } };
 
-  return <>{saved() ? (<div class="provider-login-panel" role="status"><strong>Custom provider added</strong><p>Enable its models in the Models list below to use them in a conversation.</p><button onClick={componentProps.close}>Done</button></div>) : (<form class="provider-login-panel custom-provider-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+  return <>{saved() ? (<div class="provider-login-panel" role="status"><strong>Custom provider added</strong><p>Enable its models in Inference → Models to use them in a conversation.</p><button onClick={componentProps.close}>Done</button></div>) : (<form class="provider-login-panel custom-provider-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
     <div class="provider-account-actions"><strong>Add custom provider</strong><button type="button" disabled={componentProps.working} onClick={() => setInput(brokerProvider())}>Use Go broker preset</button></div>
     <fieldset disabled={componentProps.working}>
       <div class="custom-provider-grid">
@@ -31,7 +31,7 @@ export function CustomProviderForm(componentProps: { working: boolean; save: (in
       {!input().noKey && <label class="field"><span>API key</span><input type="password" required autocomplete="off" spellcheck={false} value={input().apiKey} onInput={(event) => update({ apiKey: event.target.value })} /><small>For the Go broker, use its dashboard token.</small></label>}
       <label class="custom-provider-check"><input type="checkbox" checked={input().sessionAffinity} onInput={(event) => update({ sessionAffinity: event.target.checked })} />Send a stable session key for cache affinity</label>
       <p class="provider-login-help">The endpoint must be reachable from the selected host. On a remote host, localhost refers to that remote machine.</p>
-      <p class="provider-login-help">Models are discovered automatically from the provider’s /models endpoint and refreshed periodically. Choose which to use in the Models list below.</p>
+      <p class="provider-login-help">Models are discovered automatically from the provider’s /models endpoint and refreshed periodically. Choose which to use in Inference → Models.</p>
     </fieldset>
     <div class="provider-account-actions"><button type="button" disabled={componentProps.working} onClick={componentProps.close}>Cancel</button><button type="submit" class="primary-button" disabled={componentProps.working}>{componentProps.working ? "Discovering models…" : "Add provider"}</button></div>
   </form>)}</>;

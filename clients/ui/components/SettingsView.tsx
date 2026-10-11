@@ -99,6 +99,7 @@ export function SettingsView(props: SettingsViewProps) {
   const [draft, setDraft] = createSignal((() => structuredClone(settingsProps().settings))()); const [agentDrafts, setAgentDrafts] = createSignal((() => structuredClone(agentConfig()?.agents ?? []))()); const [agentIndex, setAgentIndex] = createSignal((() => firstAgentIndex(agentConfig()?.agents ?? []))()); const [section, setSection] = createSignal<Section>(settingsProps().scope === "client" ? "keybinds" : "general"); const [saved, setSaved] = createSignal(false); const savingRef = createRef(false); const [saveError, setSaveError] = createSignal<string>();
   const retainedSaveError = createRef(false);
   const [modelFilter, setModelFilter] = createSignal("");
+  const [inferenceView, setInferenceView] = createSignal<"models" | "providers">("models");
   const [settingsQuery, setSettingsQuery] = createSignal("");
   const [pastHeader, setPastHeader] = createSignal(false);
   createDependencyEffect(() => {
@@ -409,7 +410,7 @@ export function SettingsView(props: SettingsViewProps) {
         </div>
       </SettingsSection>);
 
-      const renderModels = () => (formValidation().visibleSection === "inference" && <SettingsSection title="Models" description="Choose which models appear in chat pickers. Existing conversations and default models are unchanged. Newly arrived models start hidden." headerAction={<label class="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter()} onInput={(event) => setModelFilter(event.target.value)} /></label>}>
+      const renderModels = () => (formValidation().visibleSection === "inference" && inferenceView() === "models" && <SettingsSection title="Models" description="Choose which models appear in chat pickers. Existing conversations and default models are unchanged. Newly arrived models start hidden." headerAction={<label class="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter()} onInput={(event) => setModelFilter(event.target.value)} /></label>}>
         <div class="model-bulk-actions" role="group" aria-label="All model visibility">
           <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: draft().hiddenModels.filter(id => !agentValidation().availableModelIds.has(id)) })}>Enable all models</button>
           <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => !agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: [...new Set([...draft().hiddenModels, ...agentValidation().modelChoices.map(model => model.id)])] })}>Disable all models</button>
@@ -457,7 +458,8 @@ export function SettingsView(props: SettingsViewProps) {
         <Show when={formValidation().visibleSection === "toasts"}><ToastHistory /></Show>
         {formValidation().visibleSection === "plugins" && <PluginSettings hostId={providerHostId()} onBusyChange={settingsProps().onSavingChange} />}
         {!formValidation().matchingSections.length && <div class="empty-small" role="status">No settings match your search.</div>}
-        {formValidation().visibleSection === "inference" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
+        {formValidation().visibleSection === "inference" && <div class="segmented-control" role="tablist" aria-label="Inference view">{(["models", "providers"] as const).map(view => <button type="button" role="tab" aria-selected={inferenceView() === view} onClick={() => setInferenceView(view)}>{view === "models" ? "Models" : "Providers"}</button>)}</div>}
+        {formValidation().visibleSection === "inference" && inferenceView() === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
         {renderGeneral()}
         {renderDictation()}
         {renderModels()}

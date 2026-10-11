@@ -610,6 +610,10 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .setting-cap-controls { display: flex; align-items: center; gap: 12px; }
 .settings-section + .settings-section { margin-top: 28px; }
+.segmented-control { display: inline-flex; gap: 2px; margin-bottom: 18px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; }
+.segmented-control button { height: 28px; padding: 0 14px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: calc(12px + var(--settings-font-offset, 0px)); font-weight: 600; }
+.segmented-control button:hover { color: var(--ink); }
+.segmented-control button[aria-selected="true"] { background: var(--dark-control, #f1eee8); color: var(--ink); }
 .toast-history { display: grid; gap: 12px; padding-top: 14px; }
 .toast-history-entry { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; overflow-wrap: anywhere; font-size: calc(12px + var(--settings-font-offset, 0px)); line-height: 1.45; }
 .toast-history-entry small { color: var(--muted); font-size: calc(10px + var(--settings-font-offset, 0px)); }
