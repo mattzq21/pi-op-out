@@ -7,6 +7,8 @@ pub(crate) mod records;
 /// A model added to an engine, with its arguments. The path and the arguments together identify it.
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub(crate) struct DictationModel {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    name: String,
     path: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     args: String,

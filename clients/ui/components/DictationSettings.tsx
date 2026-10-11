@@ -13,6 +13,7 @@ const engines: Record<DictationEngine, { label: string; program: string; extensi
 const engineTypes = Object.keys(engines) as DictationEngine[];
 
 const fileName = (path: string) => path.split("/").pop() || path;
+const modelName = (model: DictationModelEntry) => model.name || fileName(model.path);
 const sameModel = (a: DictationModelEntry, b: DictationModelEntry) => a.path === b.path && (a.args ?? "") === (b.args ?? "");
 
 /** The search result for an engine: undefined while the search runs. */
@@ -40,29 +41,31 @@ function Choice(props: { model: DictationModelEntry; active: boolean; onUse: () 
   return <li class={props.active ? "dictation-choice active" : "dictation-choice"}>
     <button type="button" role="radio" aria-checked={props.active} onClick={() => props.onUse()}>
       <i class="dictation-radio" />
-      <span><strong>{fileName(props.model.path)}<Show when={props.model.args}>{args => <code>{args()}</code>}</Show></strong><small>{props.model.path}</small></span>
+      <span><strong>{modelName(props.model)}<Show when={props.model.args}>{args => <code>{args()}</code>}</Show></strong><small>{props.model.path}</small></span>
     </button>
-    <IconButton type="button" label={"Edit " + fileName(props.model.path)} onClick={() => props.onEdit()}><Pencil size={14} /></IconButton>
-    <IconButton type="button" label={"Remove " + fileName(props.model.path)} onClick={() => props.onRemove()}><Trash2 size={14} /></IconButton>
+    <IconButton type="button" label={"Edit " + modelName(props.model)} onClick={() => props.onEdit()}><Pencil size={14} /></IconButton>
+    <IconButton type="button" label={"Remove " + modelName(props.model)} onClick={() => props.onRemove()}><Trash2 size={14} /></IconButton>
   </li>;
 }
 
 /** The form that adds a model to the engine or changes one. */
 function ModelForm(props: { engine: DictationEngine; initial?: DictationModelEntry; onSubmit: (model: DictationModelEntry) => void; onCancel: () => void }) {
+  const [name, setName] = createSignal(props.initial?.name ?? "");
   const [path, setPath] = createSignal(props.initial?.path ?? "");
   const [args, setArgs] = createSignal(props.initial?.args ?? "");
   const extension = () => engines[props.engine].extension;
   const valid = () => path().trim().toLowerCase().endsWith(extension());
   const submit = () => {
     if (!valid()) return;
-    const model: DictationModelEntry = { path: path().trim() };
+    const model: DictationModelEntry = { ...(name().trim() ? { name: name().trim() } : {}), path: path().trim() };
     if (args().trim()) model.args = args().trim().split(/\s+/).join(" ");
     props.onSubmit(model);
   };
   const keys = (event: KeyboardEvent) => { if (event.key === "Enter") submit(); if (event.key === "Escape") props.onCancel(); };
 
   return <div class="dictation-form">
-    <label><span>Model</span><input aria-label="Model file path" autofocus placeholder={"/path/to/model" + extension()} value={path()} onInput={event => setPath(event.currentTarget.value)} onKeyDown={keys} /></label>
+    <label><span>Name</span><input aria-label="Model name" autofocus placeholder={path().trim() ? fileName(path().trim()) : "Optional"} value={name()} onInput={event => setName(event.currentTarget.value)} onKeyDown={keys} /></label>
+    <label><span>Model</span><input aria-label="Model file path" placeholder={"/path/to/model" + extension()} value={path()} onInput={event => setPath(event.currentTarget.value)} onKeyDown={keys} /></label>
     <label><span>Arguments</span><input aria-label="Engine arguments" placeholder="--language en" value={args()} onInput={event => setArgs(event.currentTarget.value)} onKeyDown={keys} /></label>
     <Show when={path().trim() && !valid()}><small class="dictation-add-hint">{engines[props.engine].label} needs a {extension()} file.</small></Show>
     <div><button type="button" class="primary-button" disabled={!valid()} onClick={submit}>{props.initial ? "Save" : "Add"}</button><button type="button" class="dictation-link" onClick={() => props.onCancel()}>Cancel</button></div>

@@ -74,7 +74,7 @@ public class ClientPreferencesPlugin extends Plugin {
             JSONArray models = engine.getJSONArray("models");
             for (int position = 0; position < models.length(); position++) {
                 JSONObject model = models.getJSONObject(position);
-                if (!(model.get("path") instanceof String) || (model.has("args") && !(model.get("args") instanceof String))) throw new JSONException("Invalid client preference dictationEngines");
+                if (!(model.get("path") instanceof String) || (model.has("name") && !(model.get("name") instanceof String)) || (model.has("args") && !(model.get("args") instanceof String))) throw new JSONException("Invalid client preference dictationEngines");
             }
             result.put(engine.getString("engine"), engine);
         }
