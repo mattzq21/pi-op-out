@@ -1,5 +1,5 @@
 import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
-import { Pencil, Plus, Trash2 } from "lucide-solid";
+import { Pencil, Plus, Settings2, Trash2 } from "lucide-solid";
 import { useDictationConfiguration } from "../lib/dictation";
 import { invoke, isMobile } from "../lib/platform";
 import { dictationFoundEnginesSchema } from "../lib/responseSchemas";
@@ -72,27 +72,50 @@ function ModelForm(props: { engine: DictationEngine; initial?: DictationModelEnt
   </div>;
 }
 
-/** Shows whether Piop found the engine program. */
-function EngineFound(props: { found?: Found; configured: boolean }) {
-  return <p class="dictation-found" role="status">
-    <Show when={!isMobile} fallback={<><i class="dictation-dot ready" />Built into the app</>}>
-      <Show when={props.found} fallback={<><i class="dictation-dot" />Searching…</>}>
-        {found => <Show when={found().executable} fallback={<><i class="dictation-dot failed" /><span class="dictation-settings-error">{found().error}</span></>}>
-          {executable => <><i class="dictation-dot ready" />Found{props.configured ? "" : " automatically"}: <code>{executable()}</code></>}
-        </Show>}
-      </Show>
+/** A short line that says whether Piop found the engine program. */
+function foundSummary(found: Found | undefined, configured: boolean) {
+  if (isMobile) return { state: "ready", text: "Built into the app" };
+  if (!found) return { state: "", text: "Searching…" };
+  return found.executable ? { state: "ready", text: configured ? "Found" : "Found automatically" } : { state: "failed", text: "Not found" };
+}
+
+/** One saved engine. Click it to use it. The settings button shows its path and where Piop found it. */
+function EngineTile(props: { entry: DictationEngineSettings; found?: Found; active: boolean; onUse: () => void; onPath: (path: string) => void; onRemove: () => void }) {
+  const [open, setOpen] = createSignal(false);
+  const label = () => engines[props.entry.engine].label;
+  const summary = () => foundSummary(props.found, !!props.entry.path);
+
+  return <li class="dictation-engine" classList={{ active: props.active, open: open() }}>
+    <button type="button" class="dictation-engine-pick" role="radio" aria-checked={props.active} onClick={() => props.onUse()}>
+      <i class="dictation-radio" />
+      <span><strong>{label()}</strong><small><i class={"dictation-dot " + summary().state} />{summary().text}</small></span>
+    </button>
+    <Show when={!isMobile}><IconButton type="button" label={label() + " settings"} aria-expanded={open()} onClick={() => setOpen(value => !value)}><Settings2 size={14} /></IconButton></Show>
+    <IconButton type="button" label={"Remove " + label()} onClick={() => props.onRemove()}><Trash2 size={14} /></IconButton>
+    <Show when={open()}>
+      <div class="dictation-engine-settings">
+        <label><span>Engine path</span><input aria-label={label() + " path"} placeholder={"Search PATH for " + engines[props.entry.engine].program} value={props.entry.path ?? ""} onChange={event => props.onPath(event.currentTarget.value)} /></label>
+        <p class="dictation-found" role="status">
+          <Show when={props.found} fallback={<>Searching…</>}>
+            {found => <Show when={found().executable} fallback={<span class="dictation-settings-error">{found().error}</span>}>{executable => <>Program: <code>{executable()}</code></>}</Show>}
+          </Show>
+        </p>
+      </div>
     </Show>
-  </p>;
+  </li>;
 }
 
 export function DictationSettings(props: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {
-  const engine = (): DictationEngine => props.settings.dictationEngine ?? "transcribe.cpp";
   const entries = () => props.settings.dictationEngines ?? [];
   const entry = (type: DictationEngine): DictationEngineSettings => entries().find(item => item.engine === type) ?? { engine: type, models: [] };
-  const models = () => entry(engine()).models;
+  /** The engine in use. Only a saved engine can be in use. */
+  const engine = (): DictationEngine | undefined => entries().some(item => item.engine === props.settings.dictationEngine) ? props.settings.dictationEngine : undefined;
+  const models = () => engine() ? entry(engine()!).models : [];
   const current = (): DictationModelEntry => ({ path: props.settings.dictationModelPath?.trim() ?? "", args: props.settings.dictationArgs?.trim() || undefined });
+  const unsaved = () => engineTypes.filter(type => !entries().some(item => item.engine === type));
   /** The model form: "new" adds a model; a number changes that model. */
   const [editing, setEditing] = createSignal<"new" | number>();
+  const [adding, setAdding] = createSignal(false);
   const [found, setFound] = createSignal<Partial<Record<DictationEngine, Found>>>({});
 
   /** Searches for the engines each time this section opens and each time an engine path changes. */
@@ -116,47 +139,62 @@ export function DictationSettings(props: { settings: AppSettings; onChange: (pat
     return [...rest, value].sort((a, b) => engineTypes.indexOf(a.engine) - engineTypes.indexOf(b.engine));
   };
   const use = (model?: DictationModelEntry) => ({ dictationModelPath: model?.path ?? "", dictationArgs: model?.args ?? "" });
-  const chooseEngine = (type: DictationEngine) => { setEditing(undefined); props.onChange({ dictationEngine: type, ...use(entry(type).models[0]) }); };
+  const chooseEngine = (type: DictationEngine) => { if (type === engine()) return; setEditing(undefined); props.onChange({ dictationEngine: type, ...use(entry(type).models[0]) }); };
+  const addEngine = (type: DictationEngine) => { setAdding(false); setEditing(undefined); props.onChange({ dictationEngines: updateEntry(type, {}), dictationEngine: type, ...use() }); };
+  const removeEngine = (type: DictationEngine) => {
+    const rest = entries().filter(item => item.engine !== type);
+    const next = type === engine() ? rest[0] : undefined;
+    if (type === engine()) setEditing(undefined);
+    props.onChange({ dictationEngines: rest, ...(type === engine() ? { dictationEngine: next?.engine, ...use(next?.models[0]) } : {}) });
+  };
   const submit = (model: DictationModelEntry) => {
+    const type = engine();
+    if (!type) return;
     const old = editing();
     const list = models().filter((item, index) => index !== old && !sameModel(item, model));
     const position = typeof old === "number" ? Math.min(old, list.length) : list.length;
     list.splice(position, 0, model);
-    props.onChange({ dictationEngine: engine(), dictationEngines: updateEntry(engine(), { models: list }), ...use(model) });
+    props.onChange({ dictationEngines: updateEntry(type, { models: list }), ...use(model) });
     setEditing(undefined);
   };
   const remove = (index: number) => {
+    const type = engine();
+    if (!type) return;
     const model = models()[index];
     const list = models().filter((_, position) => position !== index);
-    props.onChange({ dictationEngines: updateEntry(engine(), { models: list }), ...(sameModel(model, current()) ? use(list[0]) : {}) });
+    props.onChange({ dictationEngines: updateEntry(type, { models: list }), ...(sameModel(model, current()) ? use(list[0]) : {}) });
     setEditing(undefined);
   };
 
   return <div class="dictation-settings">
     <section class="dictation-group">
-      <label class="field dictation-field"><span>Engine</span>
-        <select aria-label="Dictation engine" value={engine()} onChange={event => chooseEngine(event.currentTarget.value as DictationEngine)}>
-          <For each={engineTypes}>{type => <option value={type}>{engines[type].label}</option>}</For>
-        </select>
-      </label>
-      <Show when={!isMobile}>
-        <label class="field dictation-field"><span>Engine path</span>
-          <input aria-label="Engine path" placeholder={"Search PATH for " + engines[engine()].program} value={entry(engine()).path ?? ""} onChange={event => props.onChange({ dictationEngines: updateEntry(engine(), { path: event.currentTarget.value }) })} />
-        </label>
+      <h3>Engines</h3>
+      <Show when={entries().length} fallback={<p class="dictation-empty">No engines yet.</p>}>
+        <ul class="dictation-engines" role="radiogroup" aria-label="Dictation engine">
+          <For each={entries().map(item => item.engine)}>{type => <EngineTile entry={entry(type)} found={found()[type]} active={type === engine()} onUse={() => chooseEngine(type)}
+            onPath={path => props.onChange({ dictationEngines: updateEntry(type, { path }) })} onRemove={() => removeEngine(type)} />}</For>
+        </ul>
       </Show>
-      <EngineFound found={found()[engine()]} configured={!!entry(engine()).path} />
+      <Show when={unsaved().length}>
+        <Show when={adding()} fallback={<button type="button" class="dictation-link" onClick={() => setAdding(true)}><Plus size={14} />Add engine</button>}>
+          <div class="dictation-add-engine">
+            <For each={unsaved()}>{type => <button type="button" class="dictation-engine-option" onClick={() => addEngine(type)}><Plus size={13} />{engines[type].label}</button>}</For>
+            <button type="button" class="dictation-link" onClick={() => setAdding(false)}>Cancel</button>
+          </div>
+        </Show>
+      </Show>
     </section>
-    <section class="dictation-group">
-      <h3>Models</h3>
-      <Show when={models().length} fallback={<p class="dictation-empty">No models for {engines[engine()].label} yet.</p>}>
+    <Show when={engine()} keyed>{type => <section class="dictation-group">
+      <h3>{engines[type].label} models</h3>
+      <Show when={models().length} fallback={<p class="dictation-empty">No models yet.</p>}>
         <ul class="dictation-choices" role="radiogroup" aria-label="Dictation model">
           <For each={models()}>{(model, index) => <Choice model={model} active={sameModel(model, current())} onUse={() => props.onChange(use(model))} onEdit={() => setEditing(index())} onRemove={() => remove(index())} />}</For>
         </ul>
       </Show>
-      <Show when={editing() !== undefined ? { key: editing()!, engine: engine() } : undefined} keyed fallback={<button type="button" class="dictation-link" onClick={() => setEditing("new")}><Plus size={14} />Add model</button>}>
-        {state => <ModelForm engine={state.engine} initial={state.key === "new" ? undefined : models()[state.key]} onSubmit={submit} onCancel={() => setEditing(undefined)} />}
+      <Show when={editing()} keyed fallback={<button type="button" class="dictation-link" onClick={() => setEditing("new")}><Plus size={14} />Add model</button>}>
+        {key => <ModelForm engine={type} initial={key === "new" ? undefined : models()[key]} onSubmit={submit} onCancel={() => setEditing(undefined)} />}
       </Show>
-    </section>
+    </section>}</Show>
     <DictationStatus />
   </div>;
 }
