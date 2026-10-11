@@ -145,13 +145,15 @@ export function createConversationDrafts() {
     const target = owner.connectionTarget();
 
     if (target.draftKey === key || target.sessionId && key === `${owner.currentHostId()}:${target.sessionId}`) aliases.delete(key);
-    const resolved = keyFor(key);
+    const resolved = keyFor(key); const bound = owners.has(owner);
     owners.set(owner, resolved);
     const destination = destinationFor(owner); const previous = recordFor(resolved);
 
     if (JSON.stringify(previous.destination) !== JSON.stringify(destination)) update(resolved, record => ({ ...record, destination }));
     publishUploads();
     bindDraftStaging(owner, payload => stage(owner, payload));
+
+    if (!bound) owner.onDispose(() => { owners.delete(owner); publishUploads(); });
   };
 
   const keyForTransport = (transport: NativeTransport) => {

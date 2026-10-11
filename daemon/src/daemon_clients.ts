@@ -36,7 +36,7 @@ export class DaemonClients {
 
   private unattended(): boolean { return this.automaticFlag && this.count === 0; }
 
-  private wait(ms: number): Promise<void> { return Promise.race([this.stopped.notified(), sleep(ms)]); }
+  private wait(ms: number): Promise<void> { const controller = new AbortController(); return Promise.race([this.stopped.notified(controller.signal), sleep(ms)]).finally(() => controller.abort()); }
 
   async waitForShutdown(app: App): Promise<void> {
     await this.wait(30_000);
