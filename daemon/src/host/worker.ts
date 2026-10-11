@@ -127,7 +127,7 @@ export class RuntimeWorker {
 
   isClosed(): boolean { return this.exited; }
 
-  send(packet: any): Promise<void> {
+  private write(packet: any): Promise<void> {
     if (this.isClosed()) return Promise.reject(new Error('Pi is not running'));
     return new Promise((resolve, reject) => {
       this.child.stdin!.write(JSON.stringify(packet) + '\n', error => error ? reject(new Error(error.message)) : resolve());
@@ -144,6 +144,15 @@ export class RuntimeWorker {
     const reply = new Promise<any>((resolve, reject) => { entry = { command, requestType, snapshotState, resolve, reject }; });
     reply.catch(() => {});
     this.pending.set(id, entry);
+    try { return await this.withDeadline(written => this.write(wire).then(() => { written(); return reply; }), timeout, abort); }
+    finally { this.pending.delete(id); }
+  }
+
+  send(packet: any): Promise<void> {
+    return this.withDeadline(() => this.write(packet), this.timeout);
+  }
+
+  private async withDeadline<T>(operation: (written: () => void) => Promise<T>, timeout: number, abort = false): Promise<T> {
     let timer: NodeJS.Timeout | undefined;
     let written = false;
     const expired = new Promise<never>((_, reject) => {
@@ -158,8 +167,8 @@ export class RuntimeWorker {
         reject(new Error('Pi command timed out'));
       }, timeout);
     });
-    try { return await Promise.race([this.send(wire).then(() => { written = true; return reply; }), expired]); }
-    finally { clearTimeout(timer); this.pending.delete(id); }
+    try { return await Promise.race([operation(() => { written = true; }), expired]); }
+    finally { clearTimeout(timer); }
   }
 
   async stop(): Promise<void> {

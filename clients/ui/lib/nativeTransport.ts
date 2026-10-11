@@ -430,7 +430,10 @@ export class NativeTransport {
 
       if (runtimeId !== this.runtimeId || !line?.trim()) return;
       this.stderrLines = [...this.stderrLines.slice(-4), line.trim()];
-    }, z.union([z.object({ runtimeId: z.string().optional(), line: z.string().optional() }), z.string()]));
+    }, z.union([z.object({ runtimeId: z.string().optional(), line: z.string().optional() }), z.string()])).catch(reason => {
+      unlisten();
+      throw reason;
+    });
 
     if (version !== this.connectionVersion) { unlisten(); stderrUnlisten();
 

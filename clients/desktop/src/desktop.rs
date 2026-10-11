@@ -68,9 +68,18 @@ fn conversation_window_target(target: &Value) -> Result<(String, String), String
 }
 
 fn open_system_resource(target: &std::ffi::OsStr) -> Result<(), String> {
-    let output = Command::new("xdg-open").arg(target).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).output().map_err(|error| format!("Could not open {}: {error}", target.to_string_lossy()))?;
-    if !output.status.success() { return Err(format!("Could not open {} ({}): {}", target.to_string_lossy(), output.status, String::from_utf8_lossy(&output.stderr).trim())); }
-    Ok(())
+    let mut child = Command::new("xdg-open").arg(target).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::inherit()).spawn().map_err(|error| format!("Could not open {}: {error}", target.to_string_lossy()))?;
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let result = child.wait().map_err(|error| format!("Could not wait for xdg-open: {error}"))
+            .and_then(|status| if status.success() { Ok(()) } else { Err(format!("xdg-open failed ({status})")) });
+        if let Err(mpsc::SendError(Err(error))) = sender.send(result) { eprintln!("{error}"); }
+    });
+    match receiver.recv_timeout(Duration::from_secs(3)) {
+        Ok(result) => result.map_err(|error| format!("Could not open {}: {error}", target.to_string_lossy())),
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(()),
+        Err(error) => Err(format!("Could not wait for xdg-open: {error}")),
+    }
 }
 #[tauri::command(async)]
 fn read_dropped_file(path: String) -> Result<Value, String> {

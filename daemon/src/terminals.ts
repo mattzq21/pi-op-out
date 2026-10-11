@@ -125,7 +125,7 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
   void child.exited.then(async () => {
     // Let the PTY deliver the last output before the terminal closes.
     await Promise.race([ptyClosed, new Promise(resolve => setTimeout(resolve, 1000))]);
-    if (started.stopping) await started.stopping;
+    await stopTerminalProcess(started);
     try { child.terminal?.close(); } catch (error) { console.error('Could not close terminal PTY ' + terminalId + ':', error); }
     started.exited = true;
     output(decoder.decode());

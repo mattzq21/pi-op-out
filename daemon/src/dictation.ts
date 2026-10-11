@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -6,6 +6,7 @@ import { homeDir, isFile } from './environment';
 import { readSettingsAt } from './settings';
 import { settingsPath } from './settings_storage';
 import type { App } from './app';
+import { stopMessageWorker } from './process_cleanup';
 
 const MAX_AUDIO_BYTES = 44 + 16000 * 2 * 120;
 const MAX_TEXT_BYTES = 256 * 1024;
@@ -18,6 +19,8 @@ export class DictationRuntime {
   loading = true;
   generation = 0;
   busy = false;
+  stopped = false;
+  children = new Map<ChildProcess, Promise<void> | undefined>();
 }
 
 export function configuration(app: App): any {
@@ -28,13 +31,19 @@ function publish(app: App): void { app.emit('pi://dictation', configuration(app)
 
 export function start(app: App): void {
   const runtime = app.dictation;
+  if (runtime.stopped) return;
+  const previous = [...runtime.children.keys()].map(child => stopChild(runtime, child));
   runtime.engine = undefined;
   runtime.loading = true;
   const generation = ++runtime.generation;
   publish(app);
   void (async () => {
     let loaded: Engine | undefined;
-    try { loaded = await loadEngine(); } catch (error) { console.error('Could not load dictation engine:', error); }
+    try {
+      await Promise.all(previous);
+      if (runtime.generation !== generation) return;
+      loaded = await loadEngine(runtime, generation);
+    } catch (error) { console.error('Could not load dictation engine:', error); }
     if (runtime.generation !== generation) return;
     runtime.engine = loaded;
     runtime.loading = false;
@@ -42,11 +51,29 @@ export function start(app: App): void {
   })();
 }
 
-async function loadEngine(): Promise<Engine | undefined> {
+function stopChild(runtime: DictationRuntime, child: ChildProcess): Promise<void> {
+  const pending = runtime.children.get(child);
+  if (pending) return pending;
+  const stopping = stopMessageWorker(child).finally(() => { runtime.children.delete(child); });
+  runtime.children.set(child, stopping);
+  return stopping;
+}
+
+export async function stop(app: App): Promise<void> {
+  const runtime = app.dictation;
+  runtime.stopped = true;
+  runtime.generation += 1;
+  runtime.engine = undefined;
+  runtime.loading = false;
+  await Promise.all([...runtime.children.keys()].map(child => stopChild(runtime, child)));
+}
+
+async function loadEngine(runtime: DictationRuntime, generation: number): Promise<Engine | undefined> {
   const [executables, model] = await candidates();
   for (const executable of executables) {
+    if (runtime.generation !== generation) return;
     const engine = { executable, model };
-    try { await transcribe(engine, silentWav(), 90_000); return engine; } catch (error) { console.error('Could not initialize dictation engine ' + executable + ':', error); }
+    try { await transcribe(runtime, engine, silentWav(), 90_000); return engine; } catch (error) { console.error('Could not initialize dictation engine ' + executable + ':', error); }
   }
   return undefined;
 }
@@ -83,7 +110,7 @@ function readTranscript(output: string): string {
   try { return readFileSync(output, 'utf8').trim(); } catch { throw new Error('Could not read the transcript'); }
 }
 
-async function transcribe(engine: Engine, wav: Buffer, timeout: number): Promise<string> {
+async function transcribe(runtime: DictationRuntime, engine: Engine, wav: Buffer, timeout: number): Promise<string> {
   let directory: string;
   try { directory = mkdtempSync(join(tmpdir(), 'piop-dictation-')); chmodSync(directory, 0o700); }
   catch { throw new Error('Could not prepare dictation audio'); }
@@ -93,11 +120,20 @@ async function transcribe(engine: Engine, wav: Buffer, timeout: number): Promise
     try { writeFileSync(audio, wav); } catch { throw new Error('Could not write dictation audio'); }
     const success = await new Promise<boolean>((resolve, reject) => {
       let child;
-      try { child = spawn(engine.executable, ['--model', engine.model, '--quiet', '--output', output, audio], { stdio: 'ignore' }); }
+      try { child = spawn(engine.executable, ['--model', engine.model, '--quiet', '--output', output, audio], { stdio: 'ignore', detached: true }); }
       catch { reject(new Error('Could not start dictation')); return; }
-      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Dictation timed out')); }, timeout);
+      runtime.children.set(child, undefined);
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        void stopChild(runtime, child).then(() => reject(new Error('Dictation timed out')), error => { console.error('Could not stop dictation:', error); reject(error); });
+      }, timeout);
       child.on('error', () => { clearTimeout(timer); reject(new Error('Could not start dictation')); });
-      child.on('close', code => { clearTimeout(timer); resolve(code === 0); });
+      child.on('close', code => {
+        clearTimeout(timer);
+        if (!runtime.children.get(child)) runtime.children.delete(child);
+        if (timedOut) reject(new Error('Dictation timed out')); else resolve(code === 0);
+      });
     });
     if (!success) throw new Error('The speech model could not transcribe this recording');
     return readTranscript(output);
@@ -134,6 +170,6 @@ export async function dictate(app: App, audio: string): Promise<any> {
   if (!engine) throw new Error('Dictation is unavailable');
   runtime.busy = true;
   try {
-    return { text: await transcribe(engine, wav, 180_000) };
+    return { text: await transcribe(runtime, engine, wav, 180_000) };
   } finally { runtime.busy = false; }
 }

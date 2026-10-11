@@ -14,12 +14,16 @@ export type SharedTerminal = z.infer<typeof sharedTerminalsSchema>[number] & { o
 
 type TerminalCommandOptions = { sessionKey?: string; cwd?: string; cols?: number; rows?: number; data?: string; expectedDraft?: string };
 
+const TRANSCRIPT_BYTE_LIMIT = 32 * 1024 * 1024;
+
 class NativeTerminals {
   private writes = new Map<string, { tail: Promise<void> }>();
   private starts = new Map<string, Promise<void>>();
   private hosts = new Map<string, string>();
   private generations = new Map<string, string>();
-  private transcripts = new Map<string, { generation: string; outputEnd: number; output: string; sessionKey: string; hostId: string }>();
+  private transcripts = new Map<string, { generation: string; outputEnd: number; output: string; sessionKey: string; hostId: string; lastUsed: number }>();
+  private activeSession?: { sessionKey: string; hostId: string };
+  private transcriptAccess = 0;
   private cacheRevision = 0;
   private reassignments = new Map<string, Promise<void>>();
   private terminalReassignments = new Map<string, Promise<void>>();
@@ -52,14 +56,39 @@ class NativeTerminals {
     return this.call("shared_terminal", { action, sharedTerminalId: terminalId, hostId: this.hosts.get(terminalId) ?? "local", ...args }, voidResultSchema);
   }
 
-  async list(sessionKey: string, hostId: string): Promise<SharedTerminal[]> {
+  private trimTranscripts() {
+    let bytes = [...this.transcripts.values()].reduce((total, value) => total + value.output.length * 2, 0);
+
+    if (bytes <= TRANSCRIPT_BYTE_LIMIT) return;
+    for (const [id, value] of [...this.transcripts].sort(([, left], [, right]) => left.lastUsed - right.lastUsed)) {
+      if (bytes <= TRANSCRIPT_BYTE_LIMIT) break;
+      if (value.sessionKey === this.activeSession?.sessionKey && value.hostId === this.activeSession.hostId) continue;
+      this.transcripts.delete(id);
+      bytes -= value.output.length * 2;
+    }
+  }
+
+  list(sessionKey: string, hostId: string): Promise<SharedTerminal[]> {
+    this.activeSession = { sessionKey, hostId };
+    const lastUsed = ++this.transcriptAccess;
+
+    for (const value of this.transcripts.values()) {
+      if (value.sessionKey === sessionKey && value.hostId === hostId) value.lastUsed = lastUsed;
+    }
+
+    this.trimTranscripts();
+
+    return this.loadList(sessionKey, hostId, lastUsed);
+  }
+
+  private async loadList(sessionKey: string, hostId: string, lastUsed: number): Promise<SharedTerminal[]> {
     await this.reassignments.get(sessionKey);
     const revision = this.cacheRevision;
     const cached = new Map([...this.transcripts].filter(([, value]) => value.sessionKey === sessionKey && value.hostId === hostId));
     const known = Object.fromEntries([...cached].map(([id, value]) => [id, { generation: value.generation, outputEnd: value.outputEnd }]));
     const response = await this.call("shared_terminal", { action: "list", sessionKey, hostId, known }, sharedTerminalsSchema);
 
-    if (revision !== this.cacheRevision) return this.list(sessionKey, hostId);
+    if (revision !== this.cacheRevision) return this.loadList(sessionKey, hostId, lastUsed);
     const terminals = response.map(terminal => ({ ...terminal, output: terminal.output ?? cached.get(terminal.id)?.output ?? "" }));
     const ids = new Set(terminals.map(terminal => terminal.id));
 
@@ -78,9 +107,11 @@ class NativeTerminals {
 
       if (previous !== undefined && previous !== terminal.generation || previousHost !== undefined && previousHost !== hostId) this.writes.delete(terminal.id);
       this.generations.set(terminal.id, terminal.generation);
-      this.transcripts.set(terminal.id, { ...terminal, sessionKey, hostId });
+      this.transcripts.set(terminal.id, { ...terminal, sessionKey, hostId, lastUsed: Math.max(lastUsed, this.transcripts.get(terminal.id)?.lastUsed ?? 0) });
       this.hosts.set(terminal.id, hostId);
     }
+
+    this.trimTranscripts();
 
     return terminals;
   }
@@ -143,6 +174,7 @@ class NativeTerminals {
         const cached = this.transcripts.get(terminalId);
 
         if (cached) this.transcripts.set(terminalId, { ...cached, sessionKey });
+        this.trimTranscripts();
       });
 
     this.reassignments.set(sessionKey, pending);

@@ -501,7 +501,9 @@ function cleanupTemporaryChats(root) {
     const revision = database.cleanupRequest(root, 'temporary-chat');
 
     if (revision === undefined) return;
-    require('./temporary-chat.cjs').cleanupDeleted(root);
+    const result = require('./temporary-chat.cjs').cleanupDeleted(root);
+
+    if (result?.pending) return result.warning;
     database.finishCleanup(root, 'temporary-chat', revision);
   } catch (error) { return `Temporary folder cleanup will retry: ${error.message}`; }
 }

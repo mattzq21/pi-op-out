@@ -112,10 +112,19 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
    */
   const restoreProvider = (name: string, override: ProviderOverride) => {
     if (override.restored) return;
+    restoreRegistration(name, override);
     override.restored = true;
+  };
+
+  const restoreRegistration = (name: string, override: ProviderOverride) => {
     const now = registeredProvider(name);
 
-    if (now === undefined) return;
+    if (now === undefined) {
+      if (isNativeProvider(override.before)) pi.registerProvider(override.before);
+      else if (override.before !== undefined) pi.registerProvider(name, override.before);
+
+      return;
+    }
 
     if (isNativeProvider(now)) {
       if (now !== override.native) return;
@@ -148,11 +157,15 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
 
     if (override.before !== undefined) tries.push({ ...override.before });
 
+    let failure: unknown;
+
     for (const config of tries) {
       if (Object.keys(config).length === 0) return;
 
-      try { pi.registerProvider(name, config as ProviderConfig); return; } catch {}
+      try { pi.registerProvider(name, config as ProviderConfig); return; } catch (error) { failure = error; }
     }
+
+    throw new Error(`Could not restore provider ${name}: ${String(failure)}`, { cause: failure });
   };
 
   function channel<A extends unknown[], R>(subscribe: (handler: (...args: A) => R) => () => void, fallback: () => R) {
@@ -264,9 +277,8 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     group?.virtualModels.clear();
 
     for (const [name, override] of group?.providers ?? []) {
-      cleanup(() => restoreProvider(name, override));
+      cleanup(() => { restoreProvider(name, override); group!.providers.delete(name); });
     }
-    group?.providers.clear();
 
     for (const unsubscribe of group?.stops.splice(0) ?? []) cleanup(unsubscribe);
   };

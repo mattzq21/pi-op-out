@@ -6,7 +6,7 @@ import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { remoteLoginCommand, ssh, type Host } from './host_connection';
 import { shellQuote, spawnOptions, type CommandSpec } from './process_io';
-import { descendantProcesses, killVerified } from './process_cleanup';
+import { descendantProcesses, killVerified, signalProcessGroup } from './process_cleanup';
 import { HOST_SCRIPT_BUNDLES, type HostScriptName } from './resources';
 
 /** A piop script that runs on a Host to read or change its stored data. read checks the result shape. */
@@ -101,7 +101,7 @@ function run(command: CommandSpec, input: string, maxOutput: number, signal: Abo
       child.removeListener('close', finish);
       child.removeListener('exit', onExit);
       if (failure) {
-        killVerified(descendants);
+        killGroup('SIGKILL');
         child.stdout!.destroy();
         child.stderr!.destroy();
       }
@@ -113,19 +113,15 @@ function run(command: CommandSpec, input: string, maxOutput: number, signal: Abo
     };
     const onExit = (code: number | null) => { if (killTimer !== undefined) finish(code); };
     const killGroup = (signal: NodeJS.Signals) => {
-      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
-        try { process.kill(-child.pid, signal); }
-        catch (error: any) {
-          if (error.code !== 'ESRCH') console.error(`Could not send ${signal} to host script process group: ${error?.message ?? error}`);
-        }
-      }
+      if (child.pid === undefined) return;
+      descendants.push(...descendantProcesses(child.pid, child.pid));
+      signalProcessGroup(child.pid, signal);
+      killVerified(descendants, signal);
     };
     const stop = (error: HostScriptError) => {
       if (settled || killTimer !== undefined) return;
       failure ??= error;
       clearTimeout(deadline);
-      if (child.exitCode !== null || child.signalCode !== null) { finish(child.exitCode); return; }
-      if (child.pid !== undefined) descendants = descendantProcesses(child.pid);
       killGroup('SIGTERM');
       killTimer = setTimeout(() => {
         killGroup('SIGKILL');

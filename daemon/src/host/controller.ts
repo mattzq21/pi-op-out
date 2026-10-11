@@ -403,8 +403,8 @@ export class Host implements SessionHost {
       const dialog = session.dialog(id);
       if (!dialog || dialog.owner !== runtime) throw new Error('This question is no longer owned by this view. Reopen the conversation to refresh it.');
       if (typeof dialog.event?.asyncQuestion !== 'string') {
-        session.resolveDialog(id);
         await session.send(command);
+        session.resolveDialog(id);
         return null;
       }
       const response = dialog.queuedResponse ?? session.queue.questionResponse(text(dialog.event, 'asyncQuestion'))

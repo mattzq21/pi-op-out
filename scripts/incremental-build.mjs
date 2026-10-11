@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, version } from "esbuild";
@@ -46,6 +46,12 @@ async function isCurrent(cachePath, signature, fixedInputs, output) {
   return JSON.stringify(current) === JSON.stringify(cached.inputs) && outputContent !== undefined && hash(outputContent) === cached.outputHash;
 }
 
+async function cachedDependencies(cachePath) {
+  const saved = await readOptional(cachePath);
+
+  try { const cached = saved && JSON.parse(saved.toString()); return Array.isArray(cached?.dependencies) ? cached.dependencies : []; } catch { return []; }
+}
+
 export async function buildArtifact({ output, inputs, key }, generate) {
   const configuration = (await readdir(".")).filter(path => path === "package.json" || path === "bun.lock" || /^tsconfig.*\.json$/.test(path));
   const fixedInputs = [...inputs, helper, ...configuration];
@@ -58,6 +64,8 @@ export async function buildArtifact({ output, inputs, key }, generate) {
     return;
   }
 
+  // The dependency list is only known after generation; the previous record's list covers the files most likely to change meanwhile.
+  const before = new Map(await fingerprint([...fixedInputs, ...await cachedDependencies(cachePath)]));
   const { content, dependencies = [] } = await generate();
   const outputContent = Buffer.from(content);
   const previous = await readOptional(output);
@@ -67,7 +75,16 @@ export async function buildArtifact({ output, inputs, key }, generate) {
     await writeFile(output, outputContent);
   }
 
-  const record = { signature, dependencies, inputs: await fingerprint([...fixedInputs, ...dependencies]), outputHash: hash(outputContent) };
+  const after = await fingerprint([...fixedInputs, ...dependencies]);
+
+  if (after.some(([path, digest]) => before.has(path) && before.get(path) !== digest)) {
+    await rm(cachePath, { force: true });
+    console.warn(`Inputs changed during build; will rebuild: ${output}`);
+
+    return;
+  }
+
+  const record = { signature, dependencies, inputs: after, outputHash: hash(outputContent) };
   await mkdir(cacheDirectory, { recursive: true });
   const temporary = `${cachePath}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporary, JSON.stringify(record));
@@ -79,6 +96,6 @@ export async function buildBundle(options, output, { script, inputs = [], transf
   await buildArtifact({ output, inputs: [fileURLToPath(script), ...inputs], key: options }, async () => {
     const result = await build({ ...options, write: false, metafile: true });
 
-    return { content: transform(result.outputFiles[0].contents), dependencies: Object.keys(result.metafile.inputs) };
+    return { content: await transform(result.outputFiles[0].contents), dependencies: Object.keys(result.metafile.inputs) };
   });
 }

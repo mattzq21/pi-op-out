@@ -29,21 +29,29 @@ fn embedded_image(uri: &str) -> Option<gtk::gdk_pixbuf::Pixbuf> {
 
 #[tauri::command]
 pub async fn read_clipboard_image(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    {
-        use base64::Engine;
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        app.run_on_main_thread(move || {
-            gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).request_image(move |_, image| {
-                let result = image.map(|image| image.save_to_bufferv("png", &[])
-                    .map_err(|error| error.to_string()).and_then(|bytes| {
-                        if bytes.len() > 10 * 1024 * 1024 { return Err("Screenshot exceeds the 10 MB image limit".into()); }
-                        Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
-                    })).transpose();
-                let _ = sender.send(result);
-            });
-        }).map_err(|error| error.to_string())?;
-        tokio::time::timeout(std::time::Duration::from_secs(5), receiver).await
-            .map_err(|_| "Clipboard image request timed out".to_string())?
-            .map_err(|error| error.to_string())?
-    }
+    use base64::Engine;
+    const LIMIT: usize = 10 * 1024 * 1024;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).request_image(move |_, image| {
+            let result = image.map(|image| {
+                let (width, height, stride) = (image.width(), image.height(), image.rowstride());
+                if width <= 0 || height <= 0 || stride <= 0 || (stride as usize).checked_mul(height as usize).is_none_or(|size| size > LIMIT) || image.byte_length() > LIMIT {
+                    return Err("Screenshot exceeds the 10 MB raw image limit".to_string());
+                }
+                Ok((image.read_pixel_bytes().as_ref().to_vec(), image.has_alpha(), image.bits_per_sample(), width, height, stride))
+            }).transpose();
+            let _ = sender.send(result);
+        });
+    }).map_err(|error| error.to_string())?;
+    let image = tokio::time::timeout(std::time::Duration::from_secs(5), receiver).await
+        .map_err(|_| "Clipboard image request timed out".to_string())?
+        .map_err(|error| error.to_string())??;
+    let Some((pixels, alpha, bits, width, height, stride)) = image else { return Ok(None); };
+    tauri::async_runtime::spawn_blocking(move || {
+        let image = gtk::gdk_pixbuf::Pixbuf::from_bytes(&gtk::glib::Bytes::from_owned(pixels), gtk::gdk_pixbuf::Colorspace::Rgb, alpha, bits, width, height, stride);
+        let bytes = image.save_to_bufferv("png", &[]).map_err(|error| error.to_string())?;
+        if bytes.len() > LIMIT { return Err("Screenshot exceeds the 10 MB image limit".to_string()); }
+        Ok(Some(base64::engine::general_purpose::STANDARD.encode(bytes)))
+    }).await.map_err(|error| error.to_string())?
 }

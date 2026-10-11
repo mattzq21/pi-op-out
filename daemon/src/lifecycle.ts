@@ -96,6 +96,7 @@ export async function detachOwner(app: App, owner: string, discardBlank: boolean
 async function shutdownBackend(app: App): Promise<void> {
   app.clients.stop();
   mobile.stopAccepting(app);
+  await ignore(() => dictation.stop(app));
   await ignore(() => app.clients.drain(10_000));
   mobile.closeConnections(app);
   await ignore(() => peers.shutdown(app));

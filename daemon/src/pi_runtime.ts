@@ -180,10 +180,25 @@ export function updateRuntimeSnapshot(runtime: PiRuntime, runtimeId: string, sta
   }
 }
 
-function openSystemResource(target: string): void {
+async function openSystemResource(target: string): Promise<void> {
   try {
-    const child = spawn('xdg-open', [target], { stdio: 'ignore', detached: false });
-    child.on('error', error => console.error('Could not open ' + target + ': ' + error.message));
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn('xdg-open', [target], { stdio: 'ignore', detached: false });
+      let settled = false;
+      const timer = setTimeout(() => { settled = true; child.unref(); resolve(); }, 5000);
+      child.once('error', error => {
+        clearTimeout(timer);
+        if (settled) console.error('Could not open ' + target + ': ' + error.message);
+        else { settled = true; reject(error); }
+      });
+      child.once('exit', (code, signal) => {
+        clearTimeout(timer);
+        const error = code === 0 ? undefined : new Error(signal ? 'xdg-open was killed by ' + signal : 'xdg-open exited with code ' + code);
+        if (settled) { if (error) console.error('Could not open ' + target + ': ' + error.message); return; }
+        settled = true;
+        if (error) reject(error); else resolve();
+      });
+    });
   } catch (error: any) { throw new Error('Could not open ' + target + ': ' + error.message); }
 }
 
@@ -194,7 +209,7 @@ export async function openProjectDirectory(app: App, cwd: string, hostId: string
     throw new Error('Opening project directories on ' + host.name + ' is not supported by the local file manager');
   }
   if (!isDirectory(cwd)) throw new Error('Project directory does not exist: ' + cwd);
-  openSystemResource(cwd);
+  await openSystemResource(cwd);
 }
 
 export async function detachOwner(runtime: PiRuntime, owner: string, discardBlank: boolean): Promise<void> {

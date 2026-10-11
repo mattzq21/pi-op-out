@@ -63,13 +63,20 @@ async function mcpBridge() {
 async function backendScripts() {
   const manifest = "daemon/resources/host-scripts.json";
   const scripts = Object.entries(JSON.parse(await readFile(manifest, "utf8")));
-  const agentWrapper = (await readFile("daemon/resources/host-script.cjs", "utf8")) + "\n" + (await readFile("daemon/resources/agent-definitions-command.cjs", "utf8")).replace("const { hostScript } = require('./host-script.cjs');", "");
 
-  await buildArtifact({ output: "daemon/resources/host-script-bundles.ts", inputs: [fileURLToPath(import.meta.url), manifest], key: "host-script-bundles" }, async () => ({
-    content: scripts.map(([name], index) => `import script${index} from './${name}.bundle.mjs?raw';`).join("\n") + "\n\nexport const HOST_SCRIPT_BUNDLES = {\n" + scripts.map(([name], index) => `  '${name}': script${index},`).join("\n") + "\n};\n",
-  }));
+  await buildArtifact({ output: "daemon/resources/host-script-bundles.ts", inputs: [fileURLToPath(import.meta.url), manifest], key: "host-script-bundles" }, async () => {
+    const scripts = Object.entries(JSON.parse(await readFile(manifest, "utf8")));
+
+    return { content: scripts.map(([name], index) => `import script${index} from './${name}.bundle.mjs?raw';`).join("\n") + "\n\nexport const HOST_SCRIPT_BUNDLES = {\n" + scripts.map(([name], index) => `  '${name}': script${index},`).join("\n") + "\n};\n" };
+  });
 
   const commandInputs = await agentCommandInputs();
+
+  await buildArtifact({
+    output: "daemon/resources/agent-commands.json",
+    inputs: [fileURLToPath(import.meta.url), fileURLToPath(new URL("./agent-command-inventory.mjs", import.meta.url)), ...commandInputs],
+    key: "agent-command-inventory",
+  }, async () => ({ content: `${JSON.stringify(await agentCommandInventory(commandInputs), null, 2)}\n` }));
 
   await buildInParallel([
     buildBundle({
@@ -90,15 +97,14 @@ async function backendScripts() {
       }, `daemon/resources/${name}.bundle.mjs`, {
         script: import.meta.url,
         inputs: [manifest, "daemon/resources/host-script.cjs", "daemon/resources/agent-definitions-command.cjs", fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))],
-        transform: content => name === "agent-definitions" ? agentWrapper.replace("__PIOP_AGENT_LOADER__", JSON.stringify(gzipSync(content, { level: 9 }).toString("base64"))) : content,
+        async transform(content) {
+          if (name !== "agent-definitions") return content;
+          const agentWrapper = (await readFile("daemon/resources/host-script.cjs", "utf8")) + "\n" + (await readFile("daemon/resources/agent-definitions-command.cjs", "utf8")).replace("const { hostScript } = require('./host-script.cjs');", "");
+
+          return agentWrapper.replace("__PIOP_AGENT_LOADER__", JSON.stringify(gzipSync(content, { level: 9 }).toString("base64")));
+        },
       });
     }),
-
-    buildArtifact({
-      output: "daemon/resources/agent-commands.json",
-      inputs: [fileURLToPath(import.meta.url), fileURLToPath(new URL("./agent-command-inventory.mjs", import.meta.url)), ...commandInputs],
-      key: "agent-command-inventory",
-    }, async () => ({ content: `${JSON.stringify(await agentCommandInventory(commandInputs), null, 2)}\n` })),
   ]);
 }
 
