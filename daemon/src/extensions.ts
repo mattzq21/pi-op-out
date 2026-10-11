@@ -60,7 +60,6 @@ function saveRuntimeSettings(dir: string, settings: AppSettings): void {
 }
 
 export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
-export const LOOP_DETECTION_ASSETS = R.LOOP_DETECTION_ASSETS;
 export const EXCALIDRAW_ASSETS = R.EXCALIDRAW_ASSETS;
 
 export function prepareSessionBroker(): string {
@@ -146,14 +145,6 @@ export function prepareSessionCostLimitExtension(_settings: AppSettings): string
   const path = join(dir, 'index.ts');
   atomicWritePrivate(path, R.sessionCostLimitExtension);
   return path;
-}
-
-export function prepareLoopDetectionExtension(): string {
-  const dir = join(generatedExtensionRoot(), 'piop-loop-detection');
-  ensurePrivateDir(dir);
-  atomicWritePrivate(join(dir, '../session-database.cjs'), R.sessionDatabase);
-  for (const [name, content] of LOOP_DETECTION_ASSETS) atomicWritePrivate(join(dir, name), content);
-  return join(dir, 'index.ts');
 }
 
 function prepareAgentDirectories(dir: string): void {

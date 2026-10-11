@@ -299,21 +299,13 @@ function readHeader(file) {
 }
 
 function supportingFiles(source) {
-  const files = [];
   const snapshots = source.replace(/\.jsonl$/, '.snapshots');
-  const loop = `${source}.loop-detection.json`;
 
-  if (io.exists(snapshots)) {
-    if (!fs.lstatSync(snapshots).isDirectory()) throw new Rejected(`Invalid snapshot directory: ${snapshots}`);
-    files.push(snapshots);
-  }
+  if (!io.exists(snapshots)) return [];
 
-  if (io.exists(loop)) {
-    if (!fs.lstatSync(loop).isFile()) throw new Rejected(`Refusing to delete a non-regular file: ${loop}`);
-    files.push(loop);
-  }
+  if (!fs.lstatSync(snapshots).isDirectory()) throw new Rejected(`Invalid snapshot directory: ${snapshots}`);
 
-  return files;
+  return [snapshots];
 }
 
 function ownershipFile(root, sessionId) {
@@ -322,7 +314,7 @@ function ownershipFile(root, sessionId) {
   return path.join(root, 'conversation-ownership', `${key}.json`);
 }
 
-function supportingPaths(source) { return [source, source.replace(/\.jsonl$/, '.snapshots'), `${source}.loop-detection.json`]; }
+function supportingPaths(source) { return [source, source.replace(/\.jsonl$/, '.snapshots')]; }
 
 function ownershipRecord(root, sessionId) {
   const file = ownershipFile(root, sessionId);

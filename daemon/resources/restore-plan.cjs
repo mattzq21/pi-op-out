@@ -78,7 +78,7 @@ function planTargets(root, files) {
     ids.add(record.header.id);
     destinations.add(destination);
 
-    for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), `${destination}.loop-detection.json`]) absent(target);
+    for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots')]) absent(target);
 
     return { path: record.path, sessionId: record.header.id, cwd: record.header.cwd, destination, entries: record.entries };
   });

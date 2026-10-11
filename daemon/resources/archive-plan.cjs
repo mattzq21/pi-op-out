@@ -13,7 +13,7 @@ function readSession(file) {
 }
 
 function destinationFree(destination) {
-  for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots'), `${destination}.loop-detection.json`]) {
+  for (const target of [destination, destination.replace(/\.jsonl$/, '.snapshots')]) {
     if (io.exists(target)) throw new Error(`Archive destination already exists: ${target}`);
   }
 }

@@ -45,11 +45,6 @@ import agentDaemonDefinitions from '../../extensions/piop-define-agents/daemon-d
 import contextWindowCapExtension from '../../extensions/piop-context-window-cap/index.ts?raw';
 import contextBarExtension from '../../extensions/piop-context-bar/index.ts?raw';
 import codexWebSearchExtension from '../../extensions/piop-codex-web-search/index.ts?raw';
-import loopDetectionIndex from '../../extensions/piop-loop-detection/index.ts?raw';
-import loopDetectionDetector from '../../extensions/piop-loop-detection/detector.ts?raw';
-import loopDetectionObservations from '../../extensions/piop-loop-detection/observations.ts?raw';
-import loopDetectionPersistence from '../../extensions/piop-loop-detection/persistence.ts?raw';
-import loopDetectionStorage from '../../extensions/piop-loop-detection/storage.cjs?raw';
 import excalidrawSkill from '../../extensions/piop-excalidraw/SKILL.md?raw';
 import excalidrawCheatsheet from '../../extensions/piop-excalidraw/references/cheatsheet.md?raw';
 import brokerModule0 from '../resources/session-broker/goal-directory-recovery.cjs?raw';
@@ -168,11 +163,6 @@ export {
   contextWindowCapExtension,
   contextBarExtension,
   codexWebSearchExtension,
-  loopDetectionIndex,
-  loopDetectionDetector,
-  loopDetectionObservations,
-  loopDetectionPersistence,
-  loopDetectionStorage,
   excalidrawSkill,
   excalidrawCheatsheet,
 };
@@ -225,14 +215,6 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['goal-ownership.cjs', brokerModule44],
   ['goal-assets.cjs', brokerModule45],
   ['goal-prompts.ts', brokerModule46],
-];
-
-export const LOOP_DETECTION_ASSETS: Array<[string, string]> = [
-  ['index.ts', loopDetectionIndex],
-  ['detector.ts', loopDetectionDetector],
-  ['observations.ts', loopDetectionObservations],
-  ['persistence.ts', loopDetectionPersistence],
-  ['storage.cjs', loopDetectionStorage],
 ];
 
 export const EXCALIDRAW_ASSETS: Array<[string, string]> = [
