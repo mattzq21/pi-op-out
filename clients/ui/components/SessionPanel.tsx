@@ -521,7 +521,7 @@ export function SessionPanel(props: Props) {
           </div>);
         };
 
-        return [projectKey !== DIRLESS_KEY && renderDropZone(token(), parentKey), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${(draggedSession() || draggedProject()) && dropTarget()?.projectKey === projectKey && dropTarget()?.layoutBefore === undefined ? "drop-project" : ""}`} >
+        return [projectKey !== DIRLESS_KEY && renderDropZone(token(), parentKey), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${projectKey !== DIRLESS_KEY && (draggedSession() || draggedProject()) && dropTarget()?.projectKey === projectKey && dropTarget()?.layoutBefore === undefined ? "drop-project" : ""}`} >
           {renderProjectHeading()}
           <div id={groupId} class={!isFixedGroup(projectKey) ? "project-children" : undefined} hidden={collapsed()}>
             <Show when={customGroupsByKey().has(projectKey)} fallback={<Key each={visibleSessions()} by={sessionKey}>{session => <SessionRow session={session()} projectKey={projectKey} />}</Key>}>
