@@ -45,15 +45,6 @@ async function loadHostModels(hostId: string): Promise<Model[]> {
   } finally { await reader.dispose().catch(() => undefined); }
 }
 
-/** Model visibility belongs to the client, so its list includes models from every enabled machine. */
-async function loadRemoteModels(hosts: RemoteHost[]): Promise<{ models: Model[]; failures: string[] }> {
-  const enabled = hosts.filter((host) => host.enabled !== false);
-  const results = await Promise.allSettled(enabled.map((host) => loadHostModels(host.id)));
-  const failures = results.flatMap((result, index) => result.status === "rejected" ? [`${enabled[index].name}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`] : []);
-
-  return { models: results.flatMap((result) => result.status === "fulfilled" ? result.value : []), failures };
-}
-
 function mergeModels(lists: Model[][]): Model[] {
   const merged = new Map<string, Model>();
 
@@ -100,6 +91,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   const [hostSettings, setHostSettings] = createSignal<AppSettings>();
   const [resources, setResources] = createSignal<{ config: AgentConfig; models: Model[]; levels: string[] }>();
   const [error, setError] = createSignal<string>();
+  const [loadingModels, setLoadingModels] = createSignal<string[]>([]);
   const [saveWarnings, setSaveWarnings] = createSignal<string[]>();
   const [revision, setRevision] = createSignal(0);
   const needsResources = createMemo(() => componentProps.target !== "client" || componentProps.selectedSection === "models");
@@ -127,11 +119,32 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   }, () => [hostId()]);
   createDependencyEffect(() => { const capturedHostId = hostId(); const capturedTarget0 = componentProps.target;
     setError(undefined);
+    setLoadingModels([]);
 
     if (!needsResources()) return;
     let cancelled = false;
     const reader = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
     let config: AgentConfig | undefined;
+    // Model visibility belongs to the client, so the client list also has models from every enabled machine.
+    const remoteHosts: RemoteHost[] = capturedTarget0 === "client" ? componentProps.settings.hosts.filter((host) => host.enabled !== false) : [];
+    let localModels: Model[] | undefined;
+    const remoteModels: Model[][] = [];
+    const failures: string[] = [];
+    const ownName = capturedTarget0 === "client" ? (isMobile ? "Connected daemon" : "This computer") : componentProps.label;
+    const finished = (name: string) => setLoadingModels((current) => current.filter((item) => item !== name));
+    setLoadingModels([ownName, ...remoteHosts.map((host) => host.name)]);
+
+    for (const host of remoteHosts) {
+      void loadHostModels(host.id).then((models) => {
+        if (cancelled) return;
+        remoteModels.push(models);
+        if (localModels) setResources((current) => current && { ...current, models: mergeModels([localModels!, ...remoteModels]) });
+      }, (reason) => {
+        if (cancelled) return;
+        failures.push(`models from ${host.name}: ${reason instanceof Error ? reason.message : String(reason)}`);
+        setError(failures.join("; "));
+      }).finally(() => { if (!cancelled) finished(host.name); });
+    }
 
     const unsubscribe = reader.subscribe((event) => {
       const statusText = z.string().safeParse(event.statusText);
@@ -158,19 +171,18 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
 
         if (cancelled) return;
 
-        const [models, levels, storedConfig, remote] = await Promise.all([
+        const [models, levels, storedConfig] = await Promise.all([
           reader.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })),
           reader.command({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })),
           loadAgentConfiguration(reader, capturedTarget0, () => config),
-          capturedTarget0 === "client" ? loadRemoteModels(componentProps.settings.hosts) : Promise.resolve({ models: [], failures: [] }),
         ]);
 
         if (cancelled) return;
-        setResources({ config: storedConfig, models: mergeModels([models.models, remote.models]), levels: levels.levels });
-
-        if (remote.failures.length) setError(`models from ${remote.failures.join("; ")}`);
-      } catch (reason) { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); }
-      finally { unsubscribe(); await reader.dispose().catch(() => undefined); }
+        localModels = models.models;
+        setResources({ config: storedConfig, models: mergeModels([localModels, ...remoteModels]), levels: levels.levels });
+      } catch (reason) {
+        if (!cancelled) { failures.unshift(reason instanceof Error ? reason.message : String(reason)); setError(failures.join("; ")); }
+      } finally { if (!cancelled) finished(ownName); unsubscribe(); await reader.dispose().catch(() => undefined); }
     })();
 
     return () => { cancelled = true; unsubscribe(); void reader.dispose().catch(() => undefined); };
@@ -238,5 +250,5 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     return warnings && warnings.length > 0 && <p role="alert">Settings saved with synchronization warnings: {warnings.join(" ")}</p>;
   };
 
-  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : resources()?.config} models={resources()?.models} thinkingLevels={resources()?.levels} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
+  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : resources()?.config} models={resources()?.models} loadingModels={loadingModels()} thinkingLevels={resources()?.levels} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
 }
