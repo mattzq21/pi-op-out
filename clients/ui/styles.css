@@ -625,6 +625,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .dictation-controls button { display: inline-flex; align-items: center; gap: 5px; }
 .dictation-recording { color: #dc4545; }
 .dictation-error { max-width: 280px; color: #dc4545; }
+.dictation-settings-error { color: #dc4545; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-mcp-settings { margin-top: 20px; }
 .agent-mcp-settings h3 { font-size: calc(13px + var(--settings-font-offset, 0px)); font-weight: 500; }
 .agent-mcp-settings .mcp-card-head { grid-template-columns: 24px minmax(0, 1fr) auto auto; }

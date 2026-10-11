@@ -1,18 +1,21 @@
 import { z } from "zod";
 import { dictationConfigurationSchema } from "./responseSchemas";
-import { createSignal, onCleanup, onMount } from "solid-js";
+import { createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { invoke, listen } from "./platform";
 import type { DictationVad } from "./dictationVad";
 import { encodeBase64 } from "./base64";
 
-type Configuration = { enabled: boolean; loading: boolean };
+type Configuration = z.output<typeof dictationConfigurationSchema>;
 
 const MAX_SECONDS = 120;
 
 let recordingOwner: symbol | undefined;
 
-export function useDictationEnabled() {
-  const [enabled, setEnabled] = createSignal(false);
+const microphoneAvailable = () => !!navigator.mediaDevices?.getUserMedia && typeof AudioContext !== "undefined";
+
+/** Follows the speech-to-text engine status of the connected daemon. */
+export function useDictationConfiguration() {
+  const [configuration, setConfiguration] = createSignal<Configuration>({ enabled: false, loading: true }, { equals: (left, right) => JSON.stringify(left) === JSON.stringify(right) });
   let disposed = false;
   let revision = 0;
   let unlisten: (() => void) | undefined;
@@ -21,7 +24,7 @@ export function useDictationEnabled() {
 
   const apply = (state: Configuration) => {
     clearTimeout(timer);
-    setEnabled(state.enabled === true && !!navigator.mediaDevices?.getUserMedia && typeof AudioContext !== "undefined");
+    setConfiguration(state);
     if (listenerFailed && state.loading) timer = setTimeout(() => void refresh(), 1500);
   };
 
@@ -32,7 +35,7 @@ export function useDictationEnabled() {
       const state = await invoke("dictation_configuration", undefined, dictationConfigurationSchema);
 
       if (!disposed && request === revision) apply(state);
-    } catch { if (!disposed && request === revision) apply({ enabled: false, loading: false }); }
+    } catch (reason) { if (!disposed && request === revision) apply({ enabled: false, loading: false, error: `Could not read the dictation status: ${reason instanceof Error ? reason.message : String(reason)}` }); }
   };
 
   const focus = () => void refresh();
@@ -52,6 +55,13 @@ export function useDictationEnabled() {
     window.addEventListener("focus", focus);
   });
   onCleanup(() => { disposed = true; clearTimeout(timer); unlisten?.(); window.removeEventListener("focus", focus); });
+
+  return configuration;
+}
+
+export function useDictationEnabled() {
+  const configuration = useDictationConfiguration();
+  const enabled = createMemo(() => configuration().enabled && microphoneAvailable());
 
   return enabled;
 }

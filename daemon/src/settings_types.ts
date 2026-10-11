@@ -10,10 +10,16 @@ export interface RemoteHost {
   piPath: string;
 }
 
+export const DICTATION_ENGINES = ['transcribe.cpp', 'needle'] as const;
+/** The speech-to-text program: transcribe.cpp (transcribe-cli) or Cactus Needle (the needle Python package). */
+export type DictationEngineKind = typeof DICTATION_ENGINES[number];
+
 export interface AppSettings {
   settingsRevision?: string;
   reviewAgent: string;
   reviewPrompt: string;
+  dictationEngine: DictationEngineKind;
+  dictationEnginePath?: string;
   dictationModelPath?: string;
   localEnabled: boolean;
   defaultAgent: string;
@@ -58,6 +64,12 @@ function optionalString(value: any, field: string): string | undefined {
   return value;
 }
 
+function dictationEngineField(value: any): DictationEngineKind {
+  if (value === undefined) return 'transcribe.cpp';
+  if (!DICTATION_ENGINES.includes(value)) fail('dictationEngine', DICTATION_ENGINES.join(' or '));
+  return value;
+}
+
 function stringArray(value: any, field: string): string[] {
   if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) fail(field, 'a sequence of strings');
   return [...value];
@@ -98,6 +110,8 @@ export function parseAppSettings(value: any): AppSettings {
     settingsRevision: optionalString(value.settingsRevision, 'settingsRevision'),
     reviewAgent: stringField(value.reviewAgent, 'reviewAgent', defaultAgent),
     reviewPrompt: stringField(value.reviewPrompt, 'reviewPrompt', defaultReviewPrompt),
+    dictationEngine: dictationEngineField(value.dictationEngine),
+    dictationEnginePath: optionalString(value.dictationEnginePath, 'dictationEnginePath'),
     dictationModelPath: optionalString(value.dictationModelPath, 'dictationModelPath'),
     localEnabled: boolField(value.localEnabled, 'localEnabled', true),
     defaultAgent: stringField(value.defaultAgent, 'defaultAgent', defaultAgent),
@@ -124,6 +138,8 @@ export function serializeAppSettings(settings: AppSettings): Record<string, unkn
   if (settings.settingsRevision !== undefined) result.settingsRevision = settings.settingsRevision;
   result.reviewAgent = settings.reviewAgent;
   result.reviewPrompt = settings.reviewPrompt;
+  result.dictationEngine = settings.dictationEngine;
+  if (settings.dictationEnginePath !== undefined) result.dictationEnginePath = settings.dictationEnginePath;
   if (settings.dictationModelPath !== undefined) result.dictationModelPath = settings.dictationModelPath;
   result.localEnabled = settings.localEnabled;
   result.defaultAgent = settings.defaultAgent;
@@ -151,6 +167,7 @@ export function defaultSettings(): AppSettings {
   return {
     reviewAgent: defaultAgent(),
     reviewPrompt: defaultReviewPrompt(),
+    dictationEngine: 'transcribe.cpp',
     localEnabled: true,
     defaultAgent: defaultAgent(),
     defaultFastMode: false,

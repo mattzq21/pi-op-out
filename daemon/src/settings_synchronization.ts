@@ -213,7 +213,7 @@ function addPendingWarning(change: any, pending: boolean, revision: number): voi
 interface Applied {
   revision?: number;
   notifiedRevision?: number;
-  dictationModel?: { value: string | undefined };
+  dictationSettings?: string;
   dictationChanged: boolean;
   warnings: string[];
   sweep?: number;
@@ -256,9 +256,10 @@ function needsRetry(journal: Journal, progress: Progress, applied: Applied): boo
 }
 
 function scheduleEffects(current: AppSettings, applied: Applied): void {
-  if (!applied.dictationModel || applied.dictationModel.value !== current.dictationModelPath) {
+  const key = dictation.settingsKey(current);
+  if (applied.dictationSettings !== key) {
     applied.dictationChanged = true;
-    applied.dictationModel = { value: current.dictationModelPath };
+    applied.dictationSettings = key;
   }
 }
 

@@ -67,10 +67,12 @@ export function readSettingsAt(path: string): AppSettings {
 }
 
 export async function saveAppSettings(app: App, settings: AppSettings, agentHostId: string | undefined): Promise<any> {
-  const previousDictationModel = readSettingsAt(await settingsPath()).dictationModelPath;
-  const trimmed = settings.dictationModelPath?.trim();
-  settings.dictationModelPath = trimmed ? trimmed : undefined;
-  const reloadDictation = previousDictationModel !== settings.dictationModelPath;
+  const previousDictation = dictation.settingsKey(readSettingsAt(await settingsPath()));
+  const model = settings.dictationModelPath?.trim();
+  settings.dictationModelPath = model ? model : undefined;
+  const program = settings.dictationEnginePath?.trim();
+  settings.dictationEnginePath = program ? program : undefined;
+  const reloadDictation = previousDictation !== dictation.settingsKey(settings);
   migrateQuestionTool(settings);
   migrateGoalTools(settings);
   for (const tool of sessionOperationTools()) if (!settings.tools.some(existing => existing?.name === tool.name)) settings.tools.push(tool);

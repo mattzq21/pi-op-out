@@ -18,6 +18,7 @@ import type { AgentConfig, AgentProfile, AppSettings, Model, RemoteHost, Session
 import { IconButton } from "./IconButton";
 import { ProviderSettings } from "./ProviderSettings";
 import { ReviewSettings } from "./ReviewSettings";
+import { DictationSettings } from "./DictationSettings";
 import { StorageSettings } from "./StorageSettings";
 import { PluginSettings } from "./PluginSettings";
 import { ToastHistory } from "./ToastHistory";
@@ -400,7 +401,7 @@ export function SettingsView(props: SettingsViewProps) {
   const renderSettingsLayout = () => {
     const renderSettingsContent = () => {
 
-      const renderDictation = () => (formValidation().visibleSection === "dictation" && <SettingsSection title="Dictation" description="Choose the speech model used by this daemon."><label class="field"><span>Model file path</span><input aria-label="Dictation model file path" placeholder="~/Models/speech-model.gguf" value={draft().dictationModelPath ?? ""} onInput={event => patch({ dictationModelPath: event.currentTarget.value })} /></label></SettingsSection>);
+      const renderDictation = () => (formValidation().visibleSection === "dictation" && <SettingsSection title="Dictation" description="Choose the speech engine and model used by this daemon."><DictationSettings settings={draft()} showStatus={settingsProps().scope === "daemon" && settingsProps().providerHostId === "local"} onChange={patch} /></SettingsSection>);
 
       const renderGeneral = () => (formValidation().visibleSection === "general" && <SettingsSection title="General" description="Agent behavior.">
         <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Applies to new conversations. Each conversation keeps its initial cap, including whether it is enabled."><div class="setting-cap-controls"><input class="setting-number" aria-label="Context window cap" aria-invalid={!nameValidation().contextWindowValid} disabled={!draft().contextWindowCapEnabled} type="number" min={1000} max={10000000} step={1000} value={draft().contextWindowCap} onInput={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft().contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
