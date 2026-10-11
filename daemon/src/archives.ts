@@ -3,14 +3,15 @@ import { extname, join, sep } from 'node:path';
 import { MAX_PATH_LIST_BYTES, MAX_SESSION_INDEX_BATCH_BYTES, STORAGE_DIRECTORY } from './config';
 import { MAX_REMOTE_HOSTS } from './settings_types';
 import { homeDir } from './environment';
-import { recoverMissingSessionBundle, relocateSessionBundle, sessionDescendantsBundle, storageInventoryBundle, storageTransactionBundle } from './resources';
+import { recoverMissingSessionBundle, relocateSessionBundle, sessionDescendantsBundle, storageInventoryBundle } from './resources';
 import { nodeCommand } from './node_command';
 import { remoteHost, remoteLoginCommand, sessionIdentity, ssh } from './pi_launch';
 import { desktopSessionsDir, runLimited, shellQuote, type CommandSpec, type Output } from './process_io';
 import { loadAppSettings } from './settings';
 import * as restoreRecovery from './restore_recovery';
 import * as Registry from './session_registry';
-import { archiveConversations } from './archive_sessions';
+import * as storageTransactions from './storage_transactions';
+import { hostFor } from './host_connection';
 import { MutationGuard } from './conversation_ownership';
 import * as sessionGroups from './session_groups';
 import * as terminalLookup from './terminal_lookup';
@@ -21,17 +22,6 @@ import type { TerminalRuntime } from './terminals';
 import type { App } from './app';
 
 export interface HostStorage { hostId: string; hostName: string; categories: any[]; archives: any[]; warnings: string[]; error?: string }
-
-async function recoverHostTransactions(settings: AppSettings, hostId: string): Promise<void> {
-  if (hostId === 'local') await restoreRecovery.recover(join(homeDir(), STORAGE_DIRECTORY));
-  else await restoreRecovery.recoverRemote(remoteHost(settings, hostId));
-}
-
-async function transactionSettings(app: App, hostId: string): Promise<AppSettings> {
-  const settings = await loadAppSettings(app);
-  await recoverHostTransactions(settings, hostId);
-  return settings;
-}
 
 export async function inspectStorage(host: RemoteHost | undefined): Promise<HostStorage> {
   if (!host) await restoreRecovery.recover(join(homeDir(), STORAGE_DIRECTORY));
@@ -110,15 +100,23 @@ export function localArchivedSessionFileAt(home: string, sessionPath: string): s
 }
 
 export async function desktopSessionFile(settings: AppSettings, hostId: string, path: string): Promise<string> {
-  if (hostId === 'local') return localDesktopSessionFileAt(homeDir(), path);
-  const host = remoteHost(settings, hostId);
-  return remoteSessionFile(path, false, script => ssh(host, script));
+  return locateSessionFile(settings, hostId, path, false);
 }
 
 export async function archivedSessionFile(settings: AppSettings, hostId: string, path: string): Promise<string> {
-  if (hostId === 'local') return localArchivedSessionFileAt(homeDir(), path);
-  const host = remoteHost(settings, hostId);
-  return remoteSessionFile(path, true, script => ssh(host, script));
+  return locateSessionFile(settings, hostId, path, true);
+}
+
+async function locateSessionFile(settings: AppSettings, hostId: string, path: string, archived: boolean): Promise<string> {
+  const host = hostFor(settings, hostId);
+  const locate = async () => host.kind === 'local'
+    ? (archived ? localArchivedSessionFileAt : localDesktopSessionFileAt)(homeDir(), path)
+    : remoteSessionFile(path, archived, script => ssh(host.host, script));
+  try { return await locate(); }
+  catch {
+    await storageTransactions.recover(host, { busyIsOk: true });
+    return locate();
+  }
 }
 
 export async function remoteSessionFile(path: string, archived: boolean, command: (script: string) => CommandSpec): Promise<string> {
@@ -162,7 +160,7 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
   const hostId = hostIdOption ?? 'local';
   const client = app.pi;
   await client.lifecycle.run(async () => {
-    const settings = await transactionSettings(app, hostId);
+    const settings = await loadAppSettings(app);
     const mutations: MutationGuard[] = [];
     try {
       const paths = await archiveSessionPaths(app, client, hostId, sessionPath, clientId, mutations);
@@ -170,7 +168,9 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
       for (const path of paths) sessionIds.push(await sessionIdentity(settings, hostId, path));
       terminalIds.push(...terminalLookup.sessionTerminals(runtime, hostId, sessionIds));
       await stopTerminals(runtime, terminalIds);
-      await archiveConversations(app, hostId, paths);
+      const invalidate = app.sessionIndex.projects.invalidateAfter(hostId);
+      try { await storageTransactions.archive(hostFor(settings, hostId), paths); }
+      finally { invalidate(); }
       for (let index = 0; index < paths.length; index++) {
         await mutations[index]!.finish();
         app.emit('pi://session-removed', { hostId, sessionPath: paths[index], sessionId: sessionIds[index] });
@@ -181,7 +181,7 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
 
 async function sessionDescendants(app: App, hostId: string, sessionPath: string, archived: boolean, includeOtherArea: boolean): Promise<Array<[string, boolean]>> {
   const settings = await loadAppSettings(app);
-  const root = hostId === 'local' ? sessionStoreRoot(archived) : null;
+  const root = hostId === 'local' ? join(homeDir(), STORAGE_DIRECTORY, archived ? 'archived' : 'sessions') : null;
   const argumentsText = JSON.stringify({ path: sessionPath, root, archived, includeOtherArea });
   const command = hostId === 'local'
     ? nodeCommand(['-e', sessionDescendantsBundle, argumentsText])
@@ -202,16 +202,11 @@ function storedSessionFile(settings: AppSettings, hostId: string, sessionPath: s
   return archived ? archivedSessionFile(settings, hostId, sessionPath) : desktopSessionFile(settings, hostId, sessionPath);
 }
 
-function sessionStoreRoot(archived: boolean): string {
-  const home = homeDir();
-  return archived ? join(home, STORAGE_DIRECTORY, 'archived') : desktopSessionsDir(home);
-}
-
-async function deletionTargets(settings: AppSettings, hostId: string, paths: Array<[string, boolean]>): Promise<any[]> {
-  const targets: any[] = [];
+async function deletionTargets(settings: AppSettings, hostId: string, paths: Array<[string, boolean]>): Promise<storageTransactions.DeletionTarget[]> {
+  const targets: storageTransactions.DeletionTarget[] = [];
   for (const [path, archived] of paths) {
     const file = await storedSessionFile(settings, hostId, path, archived);
-    targets.push({ path: file, area: archived ? 'archived' : 'sessions', root: hostId === 'local' ? sessionStoreRoot(archived) : null });
+    targets.push({ path: file, area: archived ? 'archived' : 'sessions' });
   }
   return targets;
 }
@@ -219,7 +214,7 @@ async function deletionTargets(settings: AppSettings, hostId: string, paths: Arr
 async function deleteStoredSessions(app: App, runtime: PiRuntime, sessionPaths: string[], hostIdOption: string | undefined | null, archived: boolean, clientId: string): Promise<string[]> {
   return runtime.lifecycle.run(async () => {
     const hostId = hostIdOption ?? 'local';
-    const settings = await transactionSettings(app, hostId);
+    const settings = await loadAppSettings(app);
     if (!sessionPaths.length) throw new Error('Select at least one conversation to delete');
     const mutations: MutationGuard[] = [];
     try {
@@ -244,11 +239,10 @@ async function deleteStoredSessions(app: App, runtime: PiRuntime, sessionPaths: 
         if (!added) break;
       }
       const targets = await deletionTargets(settings, hostId, paths);
-      const host = hostId === 'local' ? undefined : remoteHost(settings, hostId);
       const sessionIds: string[] = [];
       for (const [path] of paths) sessionIds.push(await sessionIdentity(settings, hostId, path));
       await stopTerminals(app.terminals, terminalLookup.sessionTerminals(app.terminals, hostId, sessionIds));
-      await deleteSessionTargets(runtime, targets, hostId, host);
+      await deleteSessionTargets(runtime, targets, hostId, settings);
       for (let index = 0; index < paths.length; index++) {
         try { await mutations[index]!.finishCommitted(); }
         catch (error: any) { console.error(`Conversation deletion committed, but ownership cleanup failed for ${paths[index]![0]}: ${error.message ?? error}`); }
@@ -261,26 +255,13 @@ async function deleteStoredSessions(app: App, runtime: PiRuntime, sessionPaths: 
   });
 }
 
-async function deleteSessionTargets(runtime: PiRuntime, targets: any[], hostId: string, host: RemoteHost | undefined): Promise<void> {
+async function deleteSessionTargets(runtime: PiRuntime, targets: storageTransactions.DeletionTarget[], hostId: string, settings: AppSettings): Promise<void> {
   const agents = [...runtime.activeAgents.values()];
   if (agents.some(agent => !agent.messageable && agent.hostId === hostId && targets.some(target => agent.sessionPath !== undefined && agent.sessionPath === target.path))) {
     throw new Error('Close the session before deleting it');
   }
   const activeSessionIds = agents.filter(agent => !agent.messageable && agent.hostId === hostId).map(agent => agent.sessionId).filter((id): id is string => id !== undefined);
-  const argumentsText = JSON.stringify({ action: 'delete', targets, activeSessionIds });
-  let command: CommandSpec;
-  if (hostId === 'local') command = nodeCommand(['-e', storageTransactionBundle, argumentsText]);
-  else {
-    if (!host) throw new Error('Remote host is required');
-    command = ssh(host, remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(storageTransactionBundle)} ${shellQuote(argumentsText)}`));
-  }
-  await runSessionDeletion(command);
-}
-
-export async function runSessionDeletion(command: CommandSpec): Promise<void> {
-  const result = await runLimited(command, 256 * 1024, 'Could not delete session');
-  if (result.status.success) { if (result.stderr.length) console.error(result.stderr.toString().trim()); return; }
-  throw new Error(result.stderr.toString().trim() || 'Could not delete session');
+  await storageTransactions.deleteSessions(hostFor(settings, hostId), targets, activeSessionIds);
 }
 
 export function deleteSession(app: App, runtime: PiRuntime, sessionPath: string, hostId: string | undefined | null, clientId: string): Promise<string[]> {
@@ -291,18 +272,12 @@ export function deleteArchivedSession(app: App, runtime: PiRuntime, sessionPath:
   return deleteStoredSessions(app, runtime, [...(sessionPaths ?? []), sessionPath], hostId, true, clientId);
 }
 
-function restoreSessionCommand(settings: AppSettings, hostId: string, request: unknown): CommandSpec {
-  const text = JSON.stringify(request);
-  if (hostId === 'local') return nodeCommand(['-e', storageTransactionBundle, text]);
-  return ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(storageTransactionBundle)} ${shellQuote(text)}`));
-}
-
 export async function restoreArchivedSession(app: App, sessionPath: string, hostId: string | undefined | null, clientId: string): Promise<void> {
   await restoreArchivedSessionResult(app, sessionPath, hostId, clientId);
 }
 
 async function restoreResult(settings: AppSettings, hostId: string, path: string): Promise<any> {
-  const result = await runSessionRestoration(restoreSessionCommand(settings, hostId, { action: 'result', path }));
+  const result = await storageTransactions.committedRestore(hostFor(settings, hostId), path);
   if (result === null || result === undefined) throw new Error('No committed restoration is available');
   return result;
 }
@@ -323,7 +298,7 @@ async function performRestore(app: App, settings: AppSettings, hostId: string, s
     }
     const paths = mutations.map(([source]) => source);
     let result: any;
-    try { result = await runSessionRestoration(restoreSessionCommand(settings, hostId, { action: 'restore', paths })); }
+    try { result = await storageTransactions.restore(hostFor(settings, hostId), paths); }
     catch (error) { result = await restoreResult(settings, hostId, path).catch(() => { throw error; }); }
     const restored = restoredConversations(result);
     const restoredPaths = mutations.map(([source]) => {
@@ -342,21 +317,12 @@ async function performRestore(app: App, settings: AppSettings, hostId: string, s
 export async function restoreArchivedSessionResult(app: App, sessionPath: string, hostIdOption: string | undefined | null, clientId: string): Promise<any> {
   const hostId = hostIdOption ?? 'local';
   return app.pi.lifecycle.run(async () => {
-    const settings = await transactionSettings(app, hostId);
+    const settings = await loadAppSettings(app);
     const result = await performRestore(app, settings, hostId, sessionPath, clientId);
     for (const session of restoredConversations(result)) app.emit('pi://session-restored', { hostId, sessionId: session?.sessionId ?? null, sessionPath: session?.sessionPath ?? null });
     app.emit('pi://sessions-changed', {});
     return result;
   });
-}
-
-async function runSessionRestoration(command: CommandSpec): Promise<any> {
-  const result = await runLimited(command, MAX_SESSION_INDEX_BATCH_BYTES, 'Could not restore archived chat');
-  if (!result.status.success) throw new Error(result.stderr.toString().trim());
-  if (result.stderr.length) console.error(result.stderr.toString().trim());
-  let response: any;
-  try { response = JSON.parse(result.stdout.toString('utf8')); } catch (error: any) { throw new Error(`Invalid chat restoration response: ${error.message}`); }
-  return response?.result ?? null;
 }
 
 export async function relocateSession(app: App, sessionPath: string, cwd: string, hostIdOption: string | undefined | null, clientId: string): Promise<void> {

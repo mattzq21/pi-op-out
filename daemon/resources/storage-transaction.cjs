@@ -432,7 +432,7 @@ function planRestore(root, request) {
   const sessions = planned.map(target => ({ path: target.cwd, sessionPath: target.destination, sessionId: target.sessionId, sourcePath: target.path }));
   const result = { path: sessions[0].path, sessionPath: sessions[0].sessionPath, sessionId: sessions[0].sessionId, sessions };
 
-  if (Buffer.byteLength(JSON.stringify(result)) + 1 > 64 * 1024 * 1024) throw new Rejected('Restore group is too large; restore fewer sessions at a time');
+  if (Buffer.byteLength(JSON.stringify({ state: 'committed', result })) + 1 > 64 * 1024 * 1024) throw new Rejected('Restore group is too large; restore fewer sessions at a time');
   const steps = [...targets.map(claimStep), ...placeSteps(targets), ...targets.map(target => restoreRecord(root, target.sessionId, target.destination))];
 
   const id = randomUUID();
@@ -492,7 +492,7 @@ function restoredResult(root, source) {
 
   if (result?.sessions && !require('./deletion-retention.cjs').validReceipt(receipt, new Set())) return { state: 'committed', result: null };
 
-  return { state: 'committed', result };
+  return { state: 'committed', result: result ?? null };
 }
 
 function afterCommit(root, outcome) {

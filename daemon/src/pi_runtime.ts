@@ -10,7 +10,7 @@ import { validateSessionWorkingDirectory } from './session_index';
 import { loadAppSettings } from './settings';
 import { nodeCommand } from './node_command';
 import { output, shellQuote, type CommandSpec } from './process_io';
-import { storageTransactionBundle } from './resources';
+import * as storageTransactions from './storage_transactions';
 import * as Registry from './session_registry';
 import { Mutex } from './util/sync';
 import type { AgentAddress, BlankSessionCleanup } from './types';
@@ -59,12 +59,8 @@ export async function reserveSessionId(settings: AppSettings, hostId: string): P
 
 export async function cleanupBlankSession(target: BlankSessionCleanup): Promise<void> {
   if (target.submitted) return;
-  let root: string | null = null;
-  if (!target.host) { try { root = join(homeDir(), STORAGE_DIRECTORY, 'sessions'); } catch {} }
-  const args = JSON.stringify({ action: 'delete', blank: { path: target.path ?? null, id: target.id ?? null, root } });
   try {
-    const result = await output(target.host ? remoteNodeCommand(target.host, storageTransactionBundle, args) : nodeCommand(['-e', storageTransactionBundle, args]));
-    if (!result.status.success) console.error('Could not clean up blank session: ' + result.stderr.toString('utf8'));
+    await storageTransactions.deleteBlank(target.host ? { kind: 'remote', host: target.host } : { kind: 'local' }, { path: target.path, id: target.id });
   } catch (error: any) { console.error('Could not clean up blank session: ' + (error?.message ?? error)); }
 }
 
