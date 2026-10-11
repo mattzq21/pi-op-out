@@ -523,6 +523,17 @@ export function Composer(props: Props) {
       </div>);
 
     const ComposerBar = () => {
+      const mobileQuery = window.matchMedia("(max-width: 700px)");
+      const [mobileLayout, setMobileLayout] = createSignal(mobileQuery.matches);
+
+      createDependencyEffect(() => {
+        const updateLayout = () => setMobileLayout(mobileQuery.matches);
+        mobileQuery.addEventListener("change", updateLayout);
+        updateLayout();
+
+        return () => mobileQuery.removeEventListener("change", updateLayout);
+      }, () => []);
+
       const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled && !props.ownershipRequired} onClick={(composer().onOpenTerminal)}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`} aria-label={`Cache ${cache().rate}%, ${cache().cachedTokens}/${cache().promptTokens}`} tabIndex={0} data-tooltip={`${cache().cachedTokens.toLocaleString()} / ${cache().promptTokens.toLocaleString()} tokens cached`}><CacheIcon rate={cache().rate} />{cache().rate}%</span>}</Show></div>);
 
       const renderComposerActions = () => {
@@ -548,10 +559,11 @@ export function Composer(props: Props) {
         return (<div class="composer-actions">
           <ComposerSettingsMenu agent={composer().activeAgent ?? "general"}>
             <div class="composer-settings-row"><span>Agent</span>{renderAgentPicker()}</div>
+            <Show when={!mobileLayout()}>{renderModelPicker()}</Show>
             <Show when={fastModeSupported()}><div class="composer-settings-row"><span>Fast mode</span>{renderFastModeIndicator()}</div></Show>
             <div class="composer-settings-row composer-effort-row"><span>Effort</span><ContainedPicker label="Thinking level" selectedLabel={composer().thinkingLevel.charAt(0).toUpperCase() + composer().thinkingLevel.slice(1)} value={composer().thinkingLevel} disabled={controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} /></div>
           </ComposerSettingsMenu>
-          {renderModelPicker()}
+          <Show when={mobileLayout()}>{renderModelPicker()}</Show>
           <span class="composer-divider" />
           {renderStopButton()}
           {renderSend()}

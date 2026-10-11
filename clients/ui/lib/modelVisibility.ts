@@ -3,9 +3,9 @@ import type { AppSettings } from "../types";
 export function modelChoiceId(provider: string, id: string) { return `${provider}/${id}`; }
 
 export function recordSeenModels(settings: AppSettings, ids: string[]): AppSettings | undefined {
-  if (settings.knownModels === undefined) return { ...settings, knownModels: ids };
+  if (settings.knownModels === undefined) return { ...settings, knownModels: [...new Set(ids)] };
   const known = new Set(settings.knownModels);
-  const fresh = ids.filter((id) => !known.has(id) && id !== settings.defaultModel);
+  const fresh = [...new Set(ids)].filter((id) => !known.has(id));
 
   if (fresh.length === 0) return undefined;
   const hidden = new Set(settings.hiddenModels);

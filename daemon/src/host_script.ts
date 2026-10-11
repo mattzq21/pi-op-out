@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { scriptLoader } from '../resources/host-script.cjs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
@@ -59,15 +60,15 @@ function hostCommand(host: Host, shell: string): CommandSpec {
 /** Runs the copied file if it exists. Exits with MISSING before any script code runs if it does not. */
 function runCommand(host: Host, script: HostScript<unknown, unknown>): CommandSpec {
   const bun = host.kind === 'local' ? shellQuote(process.execPath) : 'bun';
-  const file = `${scriptDirectory(host)}/${fileName(script.bundle)}`;
-  return hostCommand(host, `f=${file}; [ -f "$f" ] || exit ${MISSING}; printf '%s' ${shellQuote(STARTED)} >&2; PIOP_STORAGE_DIRECTORY=${shellQuote(STORAGE_DIRECTORY)} exec ${bun} "$f"`);
+  const file = fileName(script.bundle);
+  return hostCommand(host, `d=${scriptDirectory(host)}; [ -f "$d"/${file} ] || exit ${MISSING}; cd -- "$d" || exit 1; command exec 3< ./${file} || exit ${MISSING}; touch -c -- ${file} || exit 1; printf '%s' ${shellQuote(STARTED)} >&2; PIOP_STORAGE_DIRECTORY=${shellQuote(STORAGE_DIRECTORY)} exec ${bun} -e ${shellQuote(scriptLoader)} -- /proc/self/fd/3`);
 }
 
-/** Copies the script with a temporary file and a rename, then removes copies of scripts that this daemon does not have. */
+/** Copies the script with a temporary file and a rename, then removes unused copies older than one day. */
 function copyCommand(host: Host, script: HostScript<unknown, unknown>): CommandSpec {
   const directory = scriptDirectory(host);
   const keep = [...new Set(Object.values(HOST_SCRIPT_BUNDLES).map(fileName))].join('|');
-  return hostCommand(host, `umask 077; d=${directory}; mkdir -p "$d" && t=$(mktemp "$d/.copy.XXXXXX") && cat > "$t" && mv -f "$t" "$d"/${fileName(script.bundle)} || exit 1; for f in "$d"/*.cjs; do case "${'$'}{f##*/}" in ${keep}) ;; *) rm -f -- "$f" ;; esac; done`);
+  return hostCommand(host, `umask 077; d=${directory}; t=; mkdir -p "$d" && t=$(mktemp "$d/.copy.XXXXXX") && cat > "$t" && digest=$(sha256sum < "$t") && [ "${'$'}{digest%% *}" = ${fileName(script.bundle).slice(0, -4)} ] && mv -f "$t" "$d"/${fileName(script.bundle)} || { [ -z "$t" ] || rm -f -- "$t"; printf '%s\\n' 'Host script copy or checksum failed' >&2; exit 1; }; for f in "$d"/*.cjs; do case "${'$'}{f##*/}" in ${keep}) ;; *) find "$f" -mmin +1440 -exec rm -f -- {} + || printf '%s\\n' 'Host script cleanup failed' >&2 ;; esac; done`);
 }
 
 interface Run { code: number | null; started: boolean; stdout: Buffer; stderr: string }
@@ -79,7 +80,9 @@ function run(command: CommandSpec, input: string, maxOutput: number, signal: Abo
     try { child = spawn(command.program, command.args ?? [], spawnOptions(command, { stdio: ['pipe', 'pipe', 'pipe'], detached: true })); }
     catch (error: any) { reject(new HostScriptError('not-started', `Could not start host script: ${error?.message ?? error}`)); return; }
     const stdout: Buffer[] = [];
-    let stdoutBytes = 0, stderr = '';
+    let stdoutBytes = 0, stderr = '', pendingStderr = '';
+    let started = false;
+    const diagnostic = (text: string) => { stderr += text.slice(0, MAX_DIAGNOSTIC - stderr.length); };
     let failure: HostScriptError | undefined;
     const stop = (error: HostScriptError) => {
       failure ??= error;
@@ -96,28 +99,41 @@ function run(command: CommandSpec, input: string, maxOutput: number, signal: Abo
       stdout.push(chunk);
     });
     child.stderr!.setEncoding('utf8');
-    child.stderr!.on('data', (chunk: string) => { if (stderr.length < MAX_DIAGNOSTIC) stderr += chunk.slice(0, MAX_DIAGNOSTIC - stderr.length); });
+    child.stderr!.on('data', (chunk: string) => {
+      pendingStderr += chunk;
+      let marker;
+      while ((marker = pendingStderr.indexOf(STARTED)) !== -1) {
+        started = true;
+        diagnostic(pendingStderr.slice(0, marker));
+        pendingStderr = pendingStderr.slice(marker + STARTED.length);
+      }
+      const length = Math.max(0, pendingStderr.length - STARTED.length + 1);
+      diagnostic(pendingStderr.slice(0, length));
+      pendingStderr = pendingStderr.slice(length);
+    });
     child.stdin!.on('error', () => {});
     child.stdin!.end(input);
-    child.on('error', error => { failure ??= new HostScriptError('not-started', `Could not start host script: ${error.message}`); });
+    child.on('error', error => { failure ??= new HostScriptError(child.pid === undefined ? 'not-started' : 'unknown', `Could not start host script: ${error.message}`); });
     child.on('close', code => {
       signal?.removeEventListener('abort', abort);
-      const started = stderr.startsWith(STARTED);
-      if (started) stderr = stderr.slice(STARTED.length);
-      if (failure) { reject(failure.kind === 'unknown' && !started ? new HostScriptError('not-started', failure.message) : failure); return; }
+      diagnostic(pendingStderr);
+      if (failure) { if (stderr.trim()) console.error(`Host script: ${stderr.trim()}`); reject(failure); return; }
       resolve({ code, started, stdout: Buffer.concat(stdout), stderr: stderr.trim() });
     });
   });
 }
 
 async function copy(host: Host, script: HostScript<unknown, unknown>, signal: AbortSignal | undefined): Promise<void> {
-  const result = await run(copyCommand(host, script), script.bundle, 0, signal);
+  let result: Run;
+  try { result = await run(copyCommand(host, script), script.bundle, 0, signal); }
+  catch (error: any) { throw new HostScriptError('not-started', `Could not copy host script ${script.name}: ${error?.message ?? error}`); }
   if (result.code !== 0) throw new HostScriptError('not-started', `Could not copy host script ${script.name}: ${result.stderr || `exit code ${result.code}`}`);
+  if (result.stderr) console.error(`Host script ${script.name} copy: ${result.stderr}`);
 }
 
 function reply<Result>(script: HostScript<unknown, Result>, result: Run): Result {
   const unknown = (reason: string) => new HostScriptError('unknown', `Host script ${script.name} ${reason}${result.stderr ? `: ${result.stderr}` : ''}`);
-  if (!result.started) throw new HostScriptError('not-started', `Host script ${script.name} did not start${result.stderr ? `: ${result.stderr}` : ` (exit code ${result.code})`}`);
+  if (!result.started) throw new HostScriptError(result.code === MISSING ? 'not-started' : 'unknown', `Host script ${script.name} start was not confirmed${result.stderr ? `: ${result.stderr}` : ` (exit code ${result.code})`}`);
   let value: any;
   try { value = JSON.parse(result.stdout.toString('utf8')); } catch { throw unknown('gave no valid reply'); }
   if (result.stderr) console.error(`Host script ${script.name}: ${result.stderr}`);

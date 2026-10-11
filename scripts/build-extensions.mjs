@@ -61,17 +61,13 @@ async function mcpBridge() {
 }
 
 async function backendScripts() {
-  const scripts = [
-    ["session-descendants", "session-descendants"],
-    ["index-sessions", "index-sessions"],
-    ["storage-inventory", "storage-inventory"],
-    ["recover-missing-session", "recover-missing-session"],
-    ["relocate-session", "relocate-session-command"],
-    ["session-registry", "session-registry-command"],
-    ["storage-transaction", "storage-transaction-command"],
-    ["temporary-chat", "temporary-chat-command"],
-    ["goal-text", "goal-text-command"],
-  ];
+  const manifest = "daemon/resources/host-scripts.json";
+  const scripts = Object.entries(JSON.parse(await readFile(manifest, "utf8")));
+  const agentWrapper = (await readFile("daemon/resources/host-script.cjs", "utf8")) + "\n" + (await readFile("daemon/resources/agent-definitions-command.cjs", "utf8")).replace("const { hostScript } = require('./host-script.cjs');", "");
+
+  await buildArtifact({ output: "daemon/resources/host-script-bundles.ts", inputs: [fileURLToPath(import.meta.url), manifest], key: "host-script-bundles" }, async () => ({
+    content: scripts.map(([name], index) => `import script${index} from './${name}.bundle.mjs?raw';`).join("\n") + "\n\nexport const HOST_SCRIPT_BUNDLES = {\n" + scripts.map(([name], index) => `  '${name}': script${index},`).join("\n") + "\n};\n",
+  }));
 
   const commandInputs = await agentCommandInputs();
 
@@ -83,15 +79,19 @@ async function backendScripts() {
     }, "daemon/resources/sdk-storage.bundle.mjs", { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))] }),
     ...scripts.map(async ([name, entry]) => {
       await buildBundle({
-        entryPoints: [`daemon/resources/${entry}.cjs`],
+        entryPoints: [`daemon/resources/${entry}`],
         bundle: true,
         platform: "node",
-        format: "iife",
+        format: name === "agent-definitions" ? "esm" : "iife",
         target: "node22",
         charset: "utf8",
         minify: true,
         plugins: [storageSchemaImports()],
-      }, `daemon/resources/${name}.bundle.mjs`, { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))] });
+      }, `daemon/resources/${name}.bundle.mjs`, {
+        script: import.meta.url,
+        inputs: [manifest, "daemon/resources/host-script.cjs", "daemon/resources/agent-definitions-command.cjs", fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))],
+        transform: content => name === "agent-definitions" ? agentWrapper.replace("__PIOP_AGENT_LOADER__", JSON.stringify(gzipSync(content, { level: 9 }).toString("base64"))) : content,
+      });
     }),
 
     buildArtifact({
@@ -99,16 +99,6 @@ async function backendScripts() {
       inputs: [fileURLToPath(import.meta.url), fileURLToPath(new URL("./agent-command-inventory.mjs", import.meta.url)), ...commandInputs],
       key: "agent-command-inventory",
     }, async () => ({ content: `${JSON.stringify(await agentCommandInventory(commandInputs), null, 2)}\n` })),
-
-    buildBundle({
-      entryPoints: ["extensions/piop-define-agents/daemon-loader.ts"],
-      bundle: true, platform: "node", format: "esm", target: "node22", minify: true,
-      plugins: [storageSchemaImports()],
-    }, "daemon/resources/agent-definitions.bundle.mjs", { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))], transform(content) {
-      const agentsPayload = gzipSync(content, { level: 9 }).toString("base64");
-
-      return `import { gunzipSync } from "node:zlib";\ntry { await import("data:text/javascript;base64," + gunzipSync(Buffer.from("${agentsPayload}", "base64")).toString("base64")); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; } finally { process.exit(process.exitCode ?? 0); }\n`;
-    } }),
   ]);
 }
 

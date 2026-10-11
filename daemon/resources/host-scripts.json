@@ -1,0 +1,13 @@
+{
+  "session-descendants": "session-descendants.cjs",
+  "index-sessions": "index-sessions.cjs",
+  "storage-inventory": "storage-inventory.cjs",
+  "recover-missing-session": "recover-missing-session.cjs",
+  "relocate-session": "relocate-session-command.cjs",
+  "session-registry": "session-registry-command.cjs",
+  "storage-transaction": "storage-transaction-command.cjs",
+  "temporary-chat": "temporary-chat-command.cjs",
+  "goal-text": "goal-text-command.cjs",
+  "read-image": "read-image-command.cjs",
+  "agent-definitions": "../../extensions/piop-define-agents/daemon-loader.ts"
+}

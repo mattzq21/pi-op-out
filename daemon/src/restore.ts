@@ -19,23 +19,27 @@ export async function restoreSessionTree(host: Host, sessionPath: string, lease:
   const leases: Array<[string, RestoreLease]> = [];
   let source = sessionPath;
   try {
-    let result: RestoreResult;
+    let result: RestoreResult, restored: string[];
     try {
       source = await locateSessionFile(host, sessionPath, true);
       leases.push([source, await lease(source)]);
       for (const [child] of await sessionDescendants(host, source, true, false)) leases.push([child, await lease(child)]);
       result = await storageTransactions.restore(host, leases.map(([path]) => path));
+      restored = restoredPaths(result, leases.map(([path]) => path));
     } catch (error) {
       result = await savedResult(host, source, error);
+      restored = restoredPaths(result, leases.map(([path]) => path));
     }
-    const restored = restoredPaths(result, leases.map(([path]) => path));
     for (const [index, [, held]] of leases.entries()) {
-      try { await held.finishRestore(restored[index]!); }
+      try { await held.finishRestore(restored[index]); }
       catch (error: any) { console.error(`Restore committed; could not acknowledge ownership release: ${error?.message ?? error}`); }
     }
     return result;
   } finally {
-    for (const [, held] of leases) await held.release();
+    for (const [path, held] of leases) {
+      try { await held.release(); }
+      catch (error: any) { console.error(`Could not release the restore hold on ${path}: ${error?.message ?? error}`); }
+    }
   }
 }
 

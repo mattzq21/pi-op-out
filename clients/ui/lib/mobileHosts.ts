@@ -22,25 +22,26 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
-async function anchorTransaction(change?: (saved: MobileAnchor | undefined) => MobileAnchor | undefined): Promise<MobileAnchor | undefined> {
+async function anchorTransaction(change?: () => MobileAnchor | undefined): Promise<MobileAnchor | undefined> {
   const database = await openDatabase();
 
   try {
     const anchor = await new Promise<MobileAnchor | undefined>((resolve, reject) => {
       const transaction = database.transaction("state", "readwrite", { durability: "strict" });
       const state = transaction.objectStore("state");
-      const request = state.get("anchor");
       let result: MobileAnchor | undefined;
-      request.onsuccess = () => {
-        try {
-          const saved = request.result === undefined ? undefined : anchorSchema.parse(request.result);
-          result = change ? change(saved) : saved;
 
-          if (!change) return;
+      if (change) {
+        result = change();
 
-          if (result) state.put(result, "anchor"); else state.delete("anchor");
-        } catch (error) { transaction.abort(); reject(error); }
-      };
+        if (result) state.put(result, "anchor"); else state.delete("anchor");
+      } else {
+        const request = state.get("anchor");
+        request.onsuccess = () => {
+          try { result = request.result === undefined ? undefined : anchorSchema.parse(request.result); }
+          catch (error) { transaction.abort(); reject(error); }
+        };
+      }
       transaction.oncomplete = () => resolve(result);
       transaction.onabort = () => reject(transaction.error ?? new Error("Could not save the anchor host"));
     });

@@ -8,10 +8,7 @@ html[data-mobile] .conversation-unowned .composer-interaction { opacity: 1; }
 .mobile-sidebar-backdrop { display: none; }
 .composer-settings, .composer-settings-panel, .composer-settings-row { display: contents; }
 .composer-bar .composer-settings-trigger, .composer-settings-row > span { display: none; }
-.composer-effort-row > .composer-picker { order: 1; }
-.composer-actions > .composer-divider, .composer-actions > .icon-button { order: 2; }
 @media (max-width: 700px) {
-  .composer-effort-row > .composer-picker { order: 0; }
   .composer-bar .composer-picker-trigger[aria-label="Model"] { max-width: 110px; }
   .composer-settings { display: block; position: relative; }
   .composer-bar .composer-settings-trigger { display: inline-flex; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

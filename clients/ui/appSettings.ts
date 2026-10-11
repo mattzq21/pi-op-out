@@ -2,13 +2,13 @@ import { z } from "zod";
 import { settingsChangeSchema } from "./lib/responseSchemas";
 import { required } from "./lib/required";
 import type { Accessor } from "solid-js";
-import { createSignal } from "solid-js";
+import { createSignal, onCleanup } from "solid-js";
 import { saveClientSettings,withClientSettings } from "./lib/clientSettings";
 import { agentConfigChangeSchema } from "./lib/agentSchemas";
 import { restoreAgentConfiguration, saveAgentConfiguration } from "./lib/agentConfiguration";
 import { applyClientPreferences, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "./lib/clientPreferenceMerge";
 import { ConversationChangedError } from "./lib/conversationChanged";
-import { recordSeenModels } from "./lib/modelVisibility";
+import { observeModelReports, refreshHostModels } from "./lib/modelReports";
 import { createHostModelVisibility } from "./lib/hostModelVisibility";
 import { clearDraftCatalogs } from "./lib/draftRuntime";
 import { NativeTransport } from "./lib/nativeTransport";
@@ -72,23 +72,15 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     if (latest) setSettings(current => current ? applyClientPreferences(current, clientPreferences(latest)) : current);
   };
 
-  const modelVisibility = createHostModelVisibility(settings, addNotice);
-  const recordingLocalModels = createRef(false);
+  const modelVisibility = createHostModelVisibility(settings, addNotice, async (next, baseline) => {
+    const change = await transport().saveSettings(next, false, undefined, "daemon", baseline);
+    publishSettingsChange(change);
 
-  createDependencyEffect(() => { const capturedSettings = settings(); const capturedSession = { ...chatSession() }; const capturedTransport = transport(); const hostId = capturedTransport.currentHostId();
-
-    if (!capturedSettings || capturedSession.models.length === 0) return;
-    const ids = capturedSession.models.map((model) => `${model.provider}/${model.id}`);
-
-    if (hostId !== "local") { modelVisibility.recordSeen(hostId, ids); return; }
-
-    if (settingsSavePending.current || recordingLocalModels.current) return;
-    const next = recordSeenModels(capturedSettings, ids);
-
-    if (!next) return;
-    recordingLocalModels.current = true;
-    void capturedTransport.saveSettings(next, false, undefined, "daemon", capturedSettings).then(publishSettingsChange).catch(reason => addNotice({ title: "Could not save model list", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { recordingLocalModels.current = false; });
-  }, () => [chatSession().models, settings(), transport()]);
+    return change;
+  });
+  const recordModels = (hostId: string, ids: string[]) => modelVisibility.recordSeen(hostId, ids);
+  onCleanup(observeModelReports(recordModels));
+  createDependencyEffect(() => { recordModels(transport().currentHostId(), chatSession().models.map(model => `${model.provider}/${model.id}`)); }, () => [chatSession().models, transport()]);
   createDependencyEffect(() => {
     let revision = 0; let pendingSettings: AppSettings | undefined;
 
@@ -110,13 +102,18 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
       update(payload);
     }, settingsChangeSchema);
 
-    const catalogListeners = ["pi://host-settings-changed", "pi://provider-auth-changed", "pi://daemon-restarting"].map(event => listen(event, clearDraftCatalogs, z.unknown()));
+    const catalogListeners = ["pi://host-settings-changed", "pi://daemon-restarting"].map(event => listen(event, clearDraftCatalogs, z.unknown()));
+
+    const authPending = listen("pi://provider-auth-changed", ({ payload }) => {
+      clearDraftCatalogs();
+      void refreshHostModels(payload.hostId).catch(reason => addNotice({ title: "Could not refresh model list", message: String(reason) }));
+    }, z.object({ hostId: z.string() }));
 
     const clientPending = listen("pi://client-settings-changed", () => { const current = pendingSettings ?? settings();
 
     if (current) update({ ...latestChange, settings: current }); }, z.unknown());
 
-    return () => { revision++; clearDraftCatalogs(); void pending.then((unlisten) => unlisten()); void clientPending.then((unlisten) => unlisten());
+    return () => { revision++; clearDraftCatalogs(); void authPending.then(unlisten => unlisten()); void pending.then((unlisten) => unlisten()); void clientPending.then((unlisten) => unlisten());
 
       for (const listener of catalogListeners) void listener.then(unlisten => unlisten()); };
   }, () => [applyRuntimeSettings]);

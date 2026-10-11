@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { modelSchema } from "./lib/responseSchemas";
+import { agentStateSchema, modelSchema } from "./lib/responseSchemas";
 import { required } from "./lib/required";
 import { createMemo, type Accessor } from "solid-js";
 import type { NativeTransport } from "./lib/nativeTransport";
@@ -83,7 +83,12 @@ async function setStartModel(transport: NativeTransport, wanted: string | undefi
   const model = models.find((model) => modelKey(model) === wanted);
 
   if (model) await transport.command({ type: "set_model", provider: model.provider, modelId: model.id });
-  else transport.promptControls.clearModel();
+  else {
+    const state = await transport.command({ type: "get_state" }, agentStateSchema);
+
+    if (state.model && models.some(model => modelKey(model) === modelKey(required(state.model)))) transport.promptControls.useEffectiveModel(state.model);
+    else transport.promptControls.clearModel();
+  }
 }
 
 async function applyInherited(transport: NativeTransport, inherited: ProjectControls, defaultModel: string, models: Model[]) {
@@ -98,7 +103,7 @@ async function applyInherited(transport: NativeTransport, inherited: ProjectCont
 }
 
 async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], current: () => boolean) {
-  await setStartModel(transport, value.defaultModel, models);
+  if (models.some(model => modelKey(model) === value.defaultModel)) await setStartModel(transport, value.defaultModel, models);
 
   if (!current()) return;
   await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
@@ -108,6 +113,13 @@ async function applyDefaults(transport: NativeTransport, value: AppSettings, mod
 
   if (!current()) return;
   await transport.command({ type: "select_agent", agent: value.defaultAgent ?? "general" });
+  if (!current()) return;
+  const state = await transport.command({ type: "get_state" }, agentStateSchema);
+
+  if (!current()) return;
+
+  if (state.model && models.some(model => modelKey(model) === modelKey(required(state.model)))) transport.promptControls.useEffectiveModel(state.model);
+  else transport.promptControls.clearModel();
   transport.defaultsApplied();
 }
 

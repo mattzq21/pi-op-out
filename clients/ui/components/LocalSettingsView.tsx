@@ -1,3 +1,4 @@
+import { reportModels } from "../lib/modelReports";
 import { localHostLabel } from "../lib/mobileHosts";
 import { modelSchema } from "../lib/responseSchemas";
 import { z } from "zod";
@@ -142,6 +143,13 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
         ]);
 
         if (cancelled) return;
+        await reportModels(capturedHostId, models.models);
+
+        if (cancelled) return;
+        const recorded = await reader.loadHostSettingsChange();
+
+        if (cancelled) return;
+        receiveChange(recorded, capturedHostId);
         setResources({ config: storedConfig, models: models.models, levels: levels.levels });
       } catch (reason) {
         if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
 import { MAX_SESSION_INDEX_BATCH_BYTES, STORAGE_DIRECTORY } from './config';
@@ -41,35 +42,32 @@ async function inspectSessionProjects(index: SessionIndexRuntime, sessions: Sess
   }));
 }
 
-const indexSessions = hostScript<{ paths: string[] }, any[]>('index-sessions', MAX_SESSION_INDEX_BATCH_BYTES, value => {
-  if (!Array.isArray(value)) throw new Error('expected a sequence');
-  return value;
+const sessionSummarySchema = z.object({
+  path: z.string().min(1), id: z.string().min(1), cwd: z.string(), name: z.string(), preview: z.string(),
+  messageCount: z.number().int().nonnegative(), lastMessageAt: z.number().nonnegative(), apiCost: z.number().nonnegative(),
+  explicitlyNamed: z.boolean(), hasUserMessage: z.boolean(), bytes: z.number().int().nonnegative(),
+  subagentParentId: z.string().min(1).optional(),
 });
+const indexSessions = hostScript<{ paths: string[] }, z.infer<typeof sessionSummarySchema>[]>('index-sessions', MAX_SESSION_INDEX_BATCH_BYTES, value => z.array(sessionSummarySchema).parse(value));
+const SESSION_INDEX_BATCH_SIZE = 128;
 
 export async function readSessionSummaries(candidates: SessionCandidate[], host: RemoteHost | undefined): Promise<Map<string, CachedSession>> {
   const result = new Map<string, CachedSession>();
-  if (!candidates.length) return result;
   const items = new Map(candidates.map(item => [item[0], item]));
-  let values: any[];
-  try { values = await runHostScript(host ? { kind: 'remote', host } : { kind: 'local' }, indexSessions, { paths: [...items.keys()] }); }
-  catch (error: any) { throw new Error(`Could not read session summaries: ${error?.message ?? error}`); }
-  for (const value of values) {
-    const path = value?.path;
-    if (typeof path !== 'string') continue;
-    const item = items.get(path);
-    if (!item) continue;
-    const string = (key: string) => typeof value[key] === 'string' ? value[key] : '';
-    const cwd = string('cwd');
-    const project = basename(cwd) || 'Workspace';
-    const summary: SessionSummary = {
-      groupId: null, subagentParentId: typeof value.subagentParentId === 'string' ? value.subagentParentId : undefined,
-      id: string('id'), path, name: string('name'), project, cwd, cwdExists: true, modifiedAt: item[2], preview: string('preview'),
-      messageCount: Number.isInteger(value.messageCount) && value.messageCount >= 0 ? value.messageCount : 0,
-      lastMessageAt: Number.isInteger(value.lastMessageAt) && value.lastMessageAt >= 0 ? value.lastMessageAt : 0,
-      apiCost: typeof value.apiCost === 'number' ? value.apiCost : 0,
-      hostId: host?.id ?? 'local', hostName: host?.name ?? 'Local',
-    };
-    result.set(path, { fingerprint: item[1], summary });
+  const paths = [...items.keys()];
+  for (let offset = 0; offset < paths.length; offset += SESSION_INDEX_BATCH_SIZE) {
+    const values = await runHostScript(host ? { kind: 'remote', host } : { kind: 'local' }, indexSessions, { paths: paths.slice(offset, offset + SESSION_INDEX_BATCH_SIZE) });
+    for (const value of values) {
+      const item = items.get(value.path);
+      if (!item) throw new Error(`Unexpected session summary path: ${value.path}`);
+      const summary: SessionSummary = {
+        groupId: null, subagentParentId: value.subagentParentId,
+        id: value.id, path: value.path, name: value.name, project: basename(value.cwd) || 'Workspace', cwd: value.cwd, cwdExists: true,
+        modifiedAt: item[2], preview: value.preview, messageCount: value.messageCount, lastMessageAt: value.lastMessageAt, apiCost: value.apiCost,
+        hostId: host?.id ?? 'local', hostName: host?.name ?? 'Local',
+      };
+      result.set(value.path, { fingerprint: item[1], summary });
+    }
   }
   return result;
 }

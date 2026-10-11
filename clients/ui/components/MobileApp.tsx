@@ -13,6 +13,9 @@ export function MobileApp() {
   const [url, setUrl] = createSignal(cachedMobileHost());
   const [name, setName] = createSignal("");
   const [anchor, setAnchor] = createSignal<MobileAnchor>();
+  const [anchorReadFailed, setAnchorReadFailed] = createSignal(false);
+  const [forgetting, setForgetting] = createSignal(false);
+  const pendingAnchorSave = createRef<Promise<MobileAnchor | undefined> | undefined>(undefined);
   const [connected, setConnected] = createSignal(false);
   const [workspaceOpen, setWorkspaceOpen] = createSignal(false);
   const [connecting, setConnecting] = createSignal(false);
@@ -23,6 +26,8 @@ export function MobileApp() {
   const retry = createRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const retryDelay = createRef(2000);
   const intentionalDisconnect = createRef(false);
+  const configuredDebugAddress = createRef<string | undefined>(undefined);
+  const debugAddressLoaded = createRef<Promise<void>>(Promise.resolve());
   const activeDebugAddress = createRef<string | undefined>(undefined);
   const connectRef = createRef<(address: string, label?: string) => Promise<void>>(async () => {});
 
@@ -30,7 +35,7 @@ export function MobileApp() {
     clearTimeout(retry.current);
     const last = activeDebugAddress.current ?? cachedMobileHost();
 
-    if (intentionalDisconnect.current || !last) return;
+    if (forgetting() || intentionalDisconnect.current || !last) return;
     retry.current = setTimeout(() => { void connectRef.current(last); }, retryDelay.current);
     retryDelay.current = Math.min(retryDelay.current * 2, 30000);
   };
@@ -55,12 +60,15 @@ export function MobileApp() {
   };
 
   const connect = async (address: string, label?: string) => {
-    if (address !== activeDebugAddress.current) activeDebugAddress.current = undefined;
+    if (forgetting()) return;
     const attempt = ++generation.current;
+    let cleanUrl: string | undefined;
     clearTimeout(retry.current); setConnecting(true); setError("");
 
     try {
-      const cleanUrl = validateHost({ url: address.trim() });
+      cleanUrl = validateHost({ url: address.trim() });
+      await debugAddressLoaded.current;
+      activeDebugAddress.current = cleanUrl === configuredDebugAddress.current ? cleanUrl : undefined;
       const saved = anchor();
       const host = validateMobileAnchor(cleanUrl, label ?? (saved?.url === cleanUrl ? saved.name : activeDebugAddress.current ? "Development" : ""));
       await remoteClient.connect({ url: host.url });
@@ -68,10 +76,12 @@ export function MobileApp() {
       if (attempt !== generation.current) return;
       if (activeDebugAddress.current) useDevelopmentAnchor(host.url);
       else {
-        const stored = await saveMobileAnchor(host.url, host.name);
+        const saving = saveMobileAnchor(host.url, host.name);
+        pendingAnchorSave.current = saving;
+        const stored = await saving;
 
         if (attempt !== generation.current) return;
-        setAnchor(stored);
+        setAnchor(stored); setAnchorReadFailed(false);
       }
 
       setUrl(host.url); setName(host.name); setConnected(true); setWorkspaceOpen(true); retryDelay.current = 2000;
@@ -79,7 +89,7 @@ export function MobileApp() {
       if (attempt !== generation.current) return;
       remoteClient.close(); setError(reason instanceof Error ? reason.message : String(reason));
 
-      if (address === activeDebugAddress.current || address === cachedMobileHost()) scheduleReconnect();
+      if (cleanUrl && (cleanUrl === activeDebugAddress.current || cleanUrl === cachedMobileHost())) scheduleReconnect();
     } finally { if (attempt === generation.current) setConnecting(false); }
   };
 
@@ -89,6 +99,7 @@ export function MobileApp() {
     remoteClient.onDisconnect = (reason) => { setConnected(false); setError(reason); scheduleReconnect(); };
 
     const restarting = () => {
+      if (intentionalDisconnect.current || forgetting()) return;
       retryDelay.current = 500;
       clearTimeout(restartGraceTimer.current); setRestartGrace(true);
       restartGraceTimer.current = setTimeout(() => setRestartGrace(false), 5000);
@@ -101,18 +112,26 @@ export function MobileApp() {
     window.addEventListener("piop-daemon-restarting", restarting);
 
     const startupGeneration = generation.current;
-    void Promise.all([loadMobileDebugConnection(), readMobileAnchor()]).then(([debugUrl, saved]) => {
+    const debugConnection = loadMobileDebugConnection().then((debugUrl) => {
+      configuredDebugAddress.current = debugUrl ? validateHost({ url: debugUrl.trim() }) : undefined;
+
+      return debugUrl;
+    });
+    debugAddressLoaded.current = debugConnection.then(() => undefined, (reason) => { if (!disposed) setError(String(reason)); });
+    void Promise.all([debugConnection, readMobileAnchor().catch((reason) => {
+      if (!disposed && generation.current === startupGeneration) setAnchorReadFailed(true);
+      throw reason;
+    })]).then(([debugUrl, saved]) => {
       if (disposed || generation.current !== startupGeneration) return;
       setAnchor(saved);
 
       if (saved) { setUrl(saved.url); setName(saved.name); }
 
       if (debugUrl) {
-        activeDebugAddress.current = debugUrl;
         setUrl(debugUrl);
         void connectRef.current(debugUrl);
       } else if (saved) void connectRef.current(saved.url);
-    }).catch((reason) => { if (generation.current === startupGeneration) setError(String(reason)); });
+    }).catch((reason) => { if (!disposed && generation.current === startupGeneration) setError(String(reason)); });
     window.addEventListener("piop-mobile-disconnect", disconnect);
 
     const back = AndroidApp.addListener("backButton", () => {
@@ -132,24 +151,32 @@ export function MobileApp() {
   }, () => [disconnect, scheduleReconnect]);
 
   const forgetAnchor = async () => {
+    if (forgetting()) return;
+    setForgetting(true); intentionalDisconnect.current = true; generation.current++;
+    clearTimeout(retry.current); clearTimeout(restartGraceTimer.current); setRestartGrace(false);
+    remoteClient.close(); setConnected(false); setConnecting(false);
+
     try {
+      if (pendingAnchorSave.current) await Promise.allSettled([pendingAnchorSave.current]);
       await forgetMobileAnchor();
-      setAnchor(undefined); setUrl(""); setName(""); clearTimeout(retry.current); setError("");
+      pendingAnchorSave.current = undefined;
+      setAnchor(undefined); setAnchorReadFailed(false); setUrl(""); setName(""); setError("");
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setForgetting(false); }
   };
 
-  const connectDisabled = () => connecting() || !url().trim() || !name().trim();
+  const connectDisabled = () => forgetting() || connecting() || !url().trim() || !name().trim();
   const showConnectionNotice = () => !restartGrace() && (!connected() || Boolean(error()));
   const renderConnectionNotice = () => showConnectionNotice() && <div class="mobile-reconnect-banner"><div role="status">{error() || "Reconnecting…"}<button disabled={connecting() || disconnecting()} onClick={() => { if (connected()) void disconnect(); else void connect(url()); }}>{connected() ? "Retry disconnect" : connecting() ? "Connecting…" : "Reconnect"}</button></div>{!connected() && <MobileTailscaleStatus />}</div>;
 
-  return <>{workspaceOpen() ? (<><div style={{ display: "contents" }} inert={disconnecting()}><App suppressConnectionNotices={restartGrace()} /></div>{renderConnectionNotice()}<button class="mobile-host-button" aria-label="Disconnect from anchor host" disabled={disconnecting()} onClick={() => void disconnect()}>Host</button></>) : (<main class="mobile-connect dark"><form onSubmit={(event) => { event.preventDefault(); intentionalDisconnect.current = false; retryDelay.current = 2000; void connect(url(), name()); }}>
-    <label>Anchor host address<input type="url" required disabled={connecting()} placeholder="wss://your-host.your-tailnet.ts.net" autoCapitalize="none" autocorrect="off" spellcheck={false} value={url()} onInput={(event) => { generation.current++; clearTimeout(retry.current); intentionalDisconnect.current = true; setUrl(event.target.value); }} /></label>
-    <label>Host name<input required disabled={connecting()} value={name()} placeholder="My PC" onInput={(event) => setName(event.target.value)} /></label>
+  return <>{workspaceOpen() ? (<><div style={{ display: "contents" }} inert={disconnecting()}><App suppressConnectionNotices={restartGrace()} /></div>{renderConnectionNotice()}<button class="mobile-host-button" aria-label="Disconnect from anchor host" disabled={disconnecting()} onClick={() => void disconnect()}>Host</button></>) : (<main class="mobile-connect dark"><form onSubmit={(event) => { event.preventDefault(); if (forgetting()) return; intentionalDisconnect.current = false; retryDelay.current = 2000; void connect(url(), name()); }}>
+    <label>Anchor host address<input type="url" required disabled={connecting() || forgetting()} placeholder="wss://your-host.your-tailnet.ts.net" autoCapitalize="none" autocorrect="off" spellcheck={false} value={url()} onInput={(event) => { generation.current++; clearTimeout(retry.current); intentionalDisconnect.current = true; setUrl(event.target.value); }} /></label>
+    <label>Host name<input required disabled={connecting() || forgetting()} value={name()} placeholder="My PC" onInput={(event) => setName(event.target.value)} /></label>
     <p class="mobile-connect-hint">Piop connects to this host. You can also use the machines that this host has added. Connect this device and the host to the same Tailscale account, then enter the host’s Tailscale Serve wss:// address.</p>
     <MobileTailscaleStatus />
     {error() && <p role="alert">{error()}</p>}
     <button class="primary-button" disabled={connectDisabled()}>{connecting() ? "Connecting…" : "Connect"}</button>
     {connecting() && <button type="button" onClick={disconnect}>Cancel</button>}
-    {anchor() && !connecting() && <button type="button" onClick={() => void forgetAnchor()}>Forget anchor host</button>}
+    {(anchor() || anchorReadFailed()) && !connecting() && <button type="button" disabled={forgetting()} onClick={() => void forgetAnchor()}>Forget anchor host</button>}
   </form></main>)}</>;
 }

@@ -1,5 +1,7 @@
 const fs = require('node:fs');
 
+const scriptLoader = "require('node:vm').runInThisContext(require('node:fs').readFileSync(process.argv[1], 'utf8'), { filename: process.argv[1], importModuleDynamically: specifier => import(specifier) })";
+
 /** Returned by a script when a child process that runs this script again already wrote the reply, for example to hold the storage lock. */
 const delegated = Symbol('host-script-delegated');
 let requestText;
@@ -23,7 +25,7 @@ function failure(error) {
 
 /** Runs main with the JSON request from stdin and writes one reply: { ok: true, result } or { ok: false, error, state?, warning? }. */
 function hostScript(main) {
-  Promise.resolve()
+  return Promise.resolve()
     .then(() => main(JSON.parse(readRequestText())))
     .then(result => {
       if (result === delegated) return;
@@ -34,4 +36,4 @@ function hostScript(main) {
     });
 }
 
-module.exports = { hostScript, readRequestText, delegated };
+module.exports = { hostScript, readRequestText, delegated, scriptLoader };
