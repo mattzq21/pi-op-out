@@ -24,7 +24,7 @@ import { ToastHistory } from "./ToastHistory";
 import { Toggle } from "./Toggle";
 import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
-export type Section = "review" | "providers" | "general" | "dictation" | "models" | "storage" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
+export type Section = "review" | "inference" | "general" | "dictation" | "storage" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
 
 type SettingsSection = { id: Section; label: string; icon: typeof Settings2 };
 
@@ -33,8 +33,7 @@ const mobileSections: SettingsSection[] = isMobile ? [{ id: "connections", label
 export const sections: SettingsSection[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "dictation", label: "Dictation", icon: Mic },
-  { id: "models", label: "Models", icon: Cpu },
-  { id: "providers", label: "Providers", icon: ShieldCheck },
+  { id: "inference", label: "Inference", icon: Cpu },
   { id: "review", label: "Review", icon: ClipboardCheck },
   { id: "storage", label: "Storage", icon: HardDrive },
   { id: "keybinds", label: "Keybinds", icon: Keyboard },
@@ -410,7 +409,7 @@ export function SettingsView(props: SettingsViewProps) {
         </div>
       </SettingsSection>);
 
-      const renderModels = () => (formValidation().visibleSection === "models" && <SettingsSection title="Models" description="Choose which models appear in chat pickers. Existing conversations and default models are unchanged. Newly arrived models start hidden." headerAction={<label class="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter()} onInput={(event) => setModelFilter(event.target.value)} /></label>}>
+      const renderModels = () => (formValidation().visibleSection === "inference" && <SettingsSection title="Models" description="Choose which models appear in chat pickers. Existing conversations and default models are unchanged. Newly arrived models start hidden." headerAction={<label class="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter()} onInput={(event) => setModelFilter(event.target.value)} /></label>}>
         <div class="model-bulk-actions" role="group" aria-label="All model visibility">
           <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: draft().hiddenModels.filter(id => !agentValidation().availableModelIds.has(id)) })}>Enable all models</button>
           <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => !agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: [...new Set([...draft().hiddenModels, ...agentValidation().modelChoices.map(model => model.id)])] })}>Disable all models</button>
@@ -458,7 +457,7 @@ export function SettingsView(props: SettingsViewProps) {
         <Show when={formValidation().visibleSection === "toasts"}><ToastHistory /></Show>
         {formValidation().visibleSection === "plugins" && <PluginSettings hostId={providerHostId()} onBusyChange={settingsProps().onSavingChange} />}
         {!formValidation().matchingSections.length && <div class="empty-small" role="status">No settings match your search.</div>}
-        {formValidation().visibleSection === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
+        {formValidation().visibleSection === "inference" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
         {renderGeneral()}
         {renderDictation()}
         {renderModels()}
