@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { homeDir } from './environment';
+import { homeDir, isDirectory } from './environment';
 import { ensureDesktopSessionsDir, runLimited, shellQuote } from './process_io';
 import { STORAGE_DIRECTORY } from './config';
 import { nodeCommand } from './node_command';
@@ -202,7 +202,12 @@ function assignSeed(state: SessionGroups, seed: SessionSeed): boolean {
   return true;
 }
 
-async function loadAt(path: string, seeds: SessionSeed[]): Promise<SessionGroups> {
+function hasMissingLocalFolder(seed: SessionSeed): boolean {
+  return seed.project.hostId === 'local' && typeof seed.project.cwd === 'string' && !isDirectory(seed.project.cwd);
+}
+
+async function loadAt(path: string, allSeeds: SessionSeed[]): Promise<SessionGroups> {
+  const seeds = allSeeds.filter(seed => !hasMissingLocalFolder(seed));
   const lock = await lockStorage(path);
   try {
     const stored = read(path);

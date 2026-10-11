@@ -43,7 +43,7 @@ let queue: Promise<void> = Promise.resolve();
 
 export function inheritSessionGroup(parentKey: string, childKey: string, parent?: SessionSummary) {
   return enqueue(async () => {
-    const seeds = parent && !isTemporaryChatCwd(parent.cwd) ? [sessionGroupSeed(parent)] : [];
+    const seeds = parent && parent.cwdExists !== false && !isTemporaryChatCwd(parent.cwd) ? [sessionGroupSeed(parent)] : [];
     const state = await loadSessionGroups(seeds);
     const revision = eventRevision;
     const next = await changeSessionGroups({ type: "assign", key: childKey, group: state.assignments[parentKey] ?? null });
@@ -74,12 +74,12 @@ function sessionGroupSeed(session: SessionSummary): SessionGroupSeed {
 }
 
 function sessionGroupSeedInputs(session: SessionSummary) {
-  return [session.id, session.hostId, session.cwd, session.project, session.hostName];
+  return [session.id, session.hostId, session.cwd, session.cwdExists, session.project, session.hostName];
 }
 
 function sessionGroupSeeds(sessions: Accessor<SessionSummary[]>) {
   return createMemo((previous: { inputs: ReturnType<typeof sessionGroupSeedInputs>[]; json: string } | undefined) => {
-    const eligible = sessions().filter(session => !session.isDraft && session.messageCount > 0 && !isTemporaryChatCwd(session.cwd));
+    const eligible = sessions().filter(session => !session.isDraft && session.messageCount > 0 && session.cwdExists !== false && !isTemporaryChatCwd(session.cwd));
     const inputs = eligible.map(sessionGroupSeedInputs);
 
     if (previous && inputs.length === previous.inputs.length && inputs.every((input, index) => input.every((value, field) => value === previous.inputs[index][field]))) return previous;

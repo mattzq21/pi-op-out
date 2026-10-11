@@ -42,10 +42,10 @@ function orderedSessions(projectKey: string, sessions: SessionSummary[], orders:
   const customOrder = orders[projectKey];
   const defaultOrder = projectKey === RECENT_KEY ? recentSessionOrder : stableSessionOrder;
 
-  if (!customOrder) return sessions.sort(defaultOrder);
+  if (!customOrder) return [...sessions].sort(defaultOrder);
   const positions = new Map(customOrder.map((key, index) => [key, index]));
 
-  return sessions.sort((left, right) => {
+  return [...sessions].sort((left, right) => {
     const leftPosition = positions.get(sessionKey(left)); const rightPosition = positions.get(sessionKey(right));
 
     if (leftPosition !== undefined && rightPosition !== undefined) return leftPosition - rightPosition;
@@ -287,7 +287,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     ...customVisualGroups().filter(([key, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0 || [...customVisualGroups(), ...physicalGroups()].some(([id, , , , children]) => children.length > 0 && groupAncestors(id).includes(key))),
     ...physicalGroups().filter(([, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0),
     [RECENT_KEY, RECENT_LABEL, "", undefined, recentSessions()],
-    [DIRLESS_KEY, "Dirless", "", undefined, orderedSessions(DIRLESS_KEY, groupedSessions()[DIRLESS_KEY] ?? [], sessionOrders())],
+    ...(groupedSessions()[DIRLESS_KEY]?.length ? [[DIRLESS_KEY, "Dirless", "", undefined, orderedSessions(DIRLESS_KEY, groupedSessions()[DIRLESS_KEY] ?? [], sessionOrders())] satisfies SidebarGroup] : []),
   ]));
 
   const displayedSessions = createMemo(() => new Map([[RECENT_KEY, recentSessions()], ...groups().map(([key, , , , projectSessions]): [string, SessionSummary[]] => [key, projectSessions])]));
