@@ -9,8 +9,6 @@ const { Check } = require('typebox/value');
 
 const labels = { archive: 'Archive', delete: 'Deletion', restore: 'Restore' };
 
-const outcomes = { archive: 'archived', delete: 'deleted', restore: 'restored' };
-
 const stepSchema = Type.Object({ type: Type.String() });
 
 const moveSchema = Type.Object({ type: Type.Literal('move'), source: Type.String(), staged: Type.String(), identity: Type.Object({ identity: Type.String() }) });
@@ -446,7 +444,7 @@ function planRestore(root, request) {
 
 function recoverEarlier(root, kind) {
   try { recoverStorage(root); }
-  catch (error) { return { state: 'rolled-back', error: `${labels[kind]} failed: earlier storage recovery is pending: ${error.message}\nNothing was ${outcomes[kind]}.` }; }
+  catch (error) { return { state: 'rolled-back', error: `${labels[kind]} failed: earlier storage recovery is pending: ${error.message}` }; }
 }
 
 function recoverStorage(root) {
