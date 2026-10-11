@@ -1,27 +1,28 @@
 #!/usr/bin/env python3
-"""Build a Piop worktree, run its connected debug app in a private android-vm-broker VM, and serve its Android CLI tools."""
+"""MCP server: build a Piop worktree, run its connected debug app in a private android-vm-broker VM, and serve its Android CLI tools."""
 
 import argparse
-import base64
 import contextlib
+import shlex
 from concurrent.futures import Future
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import queue
 import re
+import runpy
 import shutil
 import signal
-import socket
-import socketserver
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import uuid
 import zipfile
 
@@ -34,8 +35,6 @@ REINSTALL_TOOL = {
     "description": "Rebuild this worktree's debug daemon and app, then install and start the app in this VM. Use after code changes.",
     "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
 }
-INSTRUCTIONS = ("The app runs in this launcher's private Android VM. The tools act on its screen through Android CLI. "
-                "Call reinstall after code changes.")
 
 
 # Processes and deadlines
@@ -148,7 +147,7 @@ def stop_children(children, marker):
             child.wait(timeout=2)
 
 
-# MCP client and tool server
+# MCP client
 
 class McpError(Exception):
     def __init__(self, error):
@@ -255,155 +254,6 @@ def require_tool_success(result, operation):
         raise RuntimeError(f"{operation} failed: {json.dumps(result)}")
 
 
-def forward(client, timeout=360):
-    """Return a tool handler that passes calls to an MCP client."""
-    return lambda name, arguments: client.request("tools/call", {"name": name, "arguments": arguments}, timeout=timeout)
-
-
-class ToolServer(socketserver.ThreadingUnixStreamServer):
-    """Serve tools from several handlers as one MCP server on a Unix socket."""
-
-    daemon_threads = True
-    block_on_close = False
-
-    def __init__(self, path, initialized, instructions, routes):
-        self.tools = {}
-        for tools, handler in routes:
-            for tool in tools:
-                if tool["name"] in self.tools:
-                    raise RuntimeError(f"Two tools are named {tool['name']}")
-                self.tools[tool["name"]] = (tool, handler)
-        self.initialized = {**initialized, "capabilities": {"tools": {}}, "instructions": instructions}
-        super().__init__(str(path), ToolHandler)
-        self.thread = threading.Thread(target=self.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
-        self.thread.start()
-
-    def dispatch(self, message):
-        method = message.get("method")
-        params = message.get("params", {})
-        if not isinstance(params, dict):
-            raise McpError({"code": -32602, "message": "params must be an object"})
-        if "id" not in message:
-            return None
-        if method == "initialize":
-            return self.initialized
-        if method == "ping":
-            return {}
-        if method == "tools/list":
-            return {"tools": [tool for tool, _ in self.tools.values()]}
-        if method == "tools/call":
-            entry = self.tools.get(params.get("name"))
-            if entry is None:
-                return {"isError": True, "content": [{"type": "text", "text": f"Unknown tool: {params.get('name')}"}]}
-            return entry[1](params["name"], params.get("arguments") or {})
-        raise McpError({"code": -32601, "message": f"Unsupported method: {method}"})
-
-    def close(self):
-        self.shutdown()
-        self.server_close()
-        self.thread.join(timeout=1)
-        Path(self.server_address).unlink(missing_ok=True)
-
-
-class ToolHandler(socketserver.StreamRequestHandler):
-    def handle(self):
-        for line in self.rfile:
-            message = None
-            try:
-                message = json.loads(line)
-                if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
-                    raise McpError({"code": -32600, "message": "Invalid JSON-RPC request"})
-                result = self.server.dispatch(message)
-                if "id" not in message:
-                    continue
-                response = {"jsonrpc": "2.0", "id": message["id"], "result": result}
-            except Exception as error:
-                detail = error.error if isinstance(error, McpError) else {"code": -32000, "message": str(error)}
-                response = {"jsonrpc": "2.0", "id": message.get("id") if isinstance(message, dict) else None, "error": detail}
-            try:
-                self.wfile.write((json.dumps(response) + "\n").encode())
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                return
-
-
-def bridge_request(connection, method, params):
-    request_id = str(uuid.uuid4())
-    connection.sendall((json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}) + "\n").encode())
-    with connection.makefile("rb") as responses:
-        line = responses.readline()
-    if not line:
-        raise RuntimeError("The launcher disconnected")
-    response = json.loads(line)
-    if response.get("id") != request_id:
-        raise RuntimeError("MCP response ID did not match the request")
-    if "error" in response:
-        raise McpError(response["error"])
-    return response["result"]
-
-
-def relay_stdio(connection):
-    connection.settimeout(None)
-
-    def send_input():
-        try:
-            while chunk := sys.stdin.buffer.read1(65536):
-                connection.sendall(chunk)
-        except OSError:
-            pass
-        finally:
-            with contextlib.suppress(OSError):
-                connection.shutdown(socket.SHUT_WR)
-
-    threading.Thread(target=send_input, daemon=True).start()
-    while chunk := connection.recv(65536):
-        sys.stdout.buffer.write(chunk)
-        sys.stdout.buffer.flush()
-
-
-def run_client_command(mode):
-    parser = argparse.ArgumentParser(prog=f"{Path(__file__).name} {mode}")
-    parser.add_argument("--session", required=True, type=Path, help="sessionFile printed by the launcher")
-    if mode == "call":
-        parser.add_argument("tool")
-        parser.add_argument("arguments", nargs="?", default="{}", help="Tool arguments as JSON")
-    elif mode == "tools":
-        parser.add_argument("tool", nargs="?", help="Show only this tool's schema")
-    args = parser.parse_args(sys.argv[2:])
-    session_file = args.session.expanduser().resolve(strict=True)
-    manifest = json.loads(session_file.read_text())
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        # The launcher bounds every call with its own deadlines, including reinstall builds.
-        connection.connect(manifest["mcpSocket"])
-        if mode == "connect":
-            relay_stdio(connection)
-            return
-        if mode == "call":
-            arguments = json.loads(args.arguments)
-            if not isinstance(arguments, dict):
-                parser.error("Tool arguments must be a JSON object")
-            result = bridge_request(connection, "tools/call", {"name": args.tool, "arguments": arguments})
-        else:
-            result = bridge_request(connection, "tools/list", {})
-            if args.tool:
-                result = {**result, "tools": [tool for tool in result.get("tools", []) if tool["name"] == args.tool]}
-                if not result["tools"]:
-                    raise RuntimeError(f"Unknown tool: {args.tool}")
-    result_id = str(uuid.uuid4())
-    result_file = session_file.parent / f"result-{result_id}.json"
-    result_file.write_text(json.dumps(result, indent=2) + "\n")
-    displayed = json.loads(json.dumps(result))
-    for index, part in enumerate(displayed.get("content", [])):
-        if part.get("type") == "image":
-            extension = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(part.get("mimeType"), ".bin")
-            image_file = session_file.parent / f"image-{result_id}-{index}{extension}"
-            image_file.write_bytes(base64.b64decode(part["data"], validate=True))
-            displayed["content"][index] = {"type": "text", "text": f"Image saved to {image_file}"}
-    print(json.dumps({"resultFile": str(result_file), "result": displayed}, indent=2))
-    if result.get("isError"):
-        sys.exit(1)
-
-
 # Android SDK
 
 def sdk_root(env=os.environ):
@@ -456,24 +306,7 @@ def app_stater(client, app_id):
     return app_state
 
 
-# Piop launcher
-
-def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project", type=Path, default=Path.cwd())
-    parser.add_argument("--broker", type=Path, default=Path(os.environ.get("ANDROID_VM_BROKER", str(Path.home() / "Projects/android-vm-broker/android-vm-broker"))))
-    parser.add_argument("--timeout", type=float, default=1800, help="Setup deadline in seconds")
-    args = parser.parse_args()
-    args.project = args.project.expanduser().resolve(strict=True)
-    args.broker = args.broker.expanduser().resolve(strict=True)
-    if not (args.project / "scripts/mobile-debug-connection.mjs").is_file():
-        parser.error("This worktree needs Piop's mobile debug connection support")
-    if not 0 < args.timeout < float("inf"):
-        parser.error("--timeout must be positive and finite")
-    args.apk = None
-    args.gradle_init = Path(__file__).with_name("android-debug-build.gradle")
-    return args
-
+# Piop build
 
 def connection(args, env, log, deadline):
     for attempt in range(2):
@@ -580,28 +413,6 @@ def wait_for_workspace(client, children, broker_errors, deadline, log):
     raise RuntimeError(f"Piop did not show a connected workspace within the startup readiness deadline. Last observation: {last_observation[:2048]}. See {log.name}")
 
 
-def call(client, tool, arguments, deadline):
-    result = client.request("tools/call", {"name": tool, "arguments": arguments}, timeout=remaining(deadline, 360))
-    require_tool_success(result, tool)
-    return result
-
-
-def labels(nodes):
-    for node in nodes:
-        for key in ("text", "content-desc"):
-            if node.get(key):
-                yield node[key]
-        yield from labels(node.get("children", []))
-
-
-def visible_labels(client, deadline):
-    result = call(client, "ui_hierarchy", {}, deadline)
-    observation = json.loads(result["content"][0]["text"])
-    if observation.get("exit_code") or observation.get("timed_out") or observation.get("truncated"):
-        raise RuntimeError(f"Incomplete UI observation: {json.dumps(observation)[:2048]}")
-    return set(labels(json.loads(observation["stdout"])))
-
-
 def piop_env(instance):
     shared_env = {key: value for key, value in os.environ.items() if key != MARKER}
     sdk = shared_env.get("ANDROID_HOME") or shared_env.get("ANDROID_SDK_ROOT") or str(Path.home() / "Android/Sdk")
@@ -616,174 +427,302 @@ def launch_arguments(endpoint, app_id):
     return arguments
 
 
-def reinstaller(args, directory, client, app_id, shared_env, build_env, log):
-    """Return the reinstall tool handler: rebuild daemon and APK, then install and start the app in this VM."""
-    lock = threading.Lock()
+# MCP server
 
-    def reinstall(_name, _arguments):
-        if not lock.acquire(blocking=False):
+BROKER = Path(os.environ.get("ANDROID_VM_BROKER", str(Path.home() / "Projects/android-vm-broker/android-vm-broker"))).expanduser()
+LAUNCH_OPTIONS = {
+    "description": "Build a Piop worktree and its debug daemon, start the debug app in a private Android VM, connect it to the daemon, wait for the connected workspace, and keep it running for the mobile-piop MCP tools.",
+    "inputSchema": {"type": "object", "additionalProperties": False, "required": ["project"], "properties": {
+        "project": {"type": "string", "description": "Absolute Piop worktree directory"},
+        "timeout_sec": {"type": "number", "exclusiveMinimum": 0, "default": 1800, "description": "Setup and rebuild deadline"},
+    }},
+}
+
+
+def build_options(arguments):
+    """Check launch arguments and return them as build options."""
+    project = Path(arguments.get("project") or "").expanduser()
+    if not project.is_absolute():
+        raise ValueError("project must be an absolute path")
+    project = project.resolve(strict=True)
+    if not (project / "scripts/mobile-debug-connection.mjs").is_file():
+        raise ValueError("This worktree needs Piop's mobile debug connection support")
+    timeout = float(arguments.get("timeout_sec") or 1800)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout_sec must be positive and finite")
+    return SimpleNamespace(project=project, apk=None, timeout=timeout,
+                           gradle_init=Path(__file__).with_name("android-debug-build.gradle"))
+
+
+def call(client, tool, arguments, deadline):
+    result = client.request("tools/call", {"name": tool, "arguments": arguments}, timeout=remaining(deadline, 360))
+    require_tool_success(result, tool)
+    return result
+
+
+class Session:
+    """One Piop debug app in one private broker VM."""
+
+    def __init__(self, options):
+        self.options = options
+        self.directory = Path(tempfile.mkdtemp(prefix="debug-", dir=runtime_root()))
+        self.instance = str(uuid.uuid4())
+        self.marker = f"{MARKER}={self.instance}".encode()
+        self.shared_env, self.build_env = piop_env(self.instance)
+        self.children = []
+        self.workers = []
+        self.broker_errors = []
+        self.stopped = threading.Event()
+        self.client = self.process = None
+        self.app_id = None
+        self.reinstall_lock = threading.Lock()
+        self.log = open(self.directory / "setup.log", "ab", buffering=0)
+        self.broker_log = open(self.directory / "broker.log", "ab", buffering=0)
+
+    def check(self):
+        ensure_running(self.children)
+        self.client.check()
+        if self.broker_errors:
+            raise self.broker_errors[0]
+
+    def start(self):
+        options, log, children = self.options, self.log, self.children
+        deadline = time.monotonic() + options.timeout
+        CACHE.mkdir(parents=True, exist_ok=True, mode=0o700)
+        broker_ready = Future()
+        daemon_ready = Future()
+        print(f"Acquiring a private Android VM from android-vm-broker. Logs: {self.directory}", file=sys.stderr, flush=True)
+        self.process = subprocess.Popen([sys.executable, str(BROKER), "mcp"], cwd=options.project,
+                                        env=self.shared_env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=self.broker_log, start_new_session=True)
+        children.append(("Android broker lease", self.process))
+        self.client = McpClient(self.process, "Android broker")
+
+        def boot_vm():
+            try:
+                broker_ready.set_result(initialize(self.client, NAME, remaining(deadline, 360)))
+                # Keep the lease alive while the app runs.
+                while not self.stopped.wait(15):
+                    self.client.request("ping", timeout=360)
+            except Exception as error:
+                if not broker_ready.done():
+                    broker_ready.set_exception(error)
+                elif not self.stopped.is_set():
+                    self.broker_errors.append(error)
+
+        def build_daemon():
+            try:
+                daemon_lock = options.project / "target" / ".piop-daemon-launch.lock"
+                daemon_lock.parent.mkdir(parents=True, exist_ok=True)
+                with file_lock(daemon_lock, deadline):
+                    run_step(["node", "scripts/build-daemon.mjs", "--debug"], env=self.build_env, cwd=options.project,
+                             log=log, children=children, deadline=deadline, label="Building this worktree's debug daemon.")
+                    if self.stopped.is_set():
+                        raise RuntimeError("Setup cancelled")
+                    daemon_ready.set_result(connection(options, self.shared_env, log, deadline))
+            except Exception as error:
+                daemon_ready.set_exception(error)
+
+        worker = threading.Thread(target=boot_vm, daemon=True)
+        self.workers.append(worker)
+        worker.start()
+        key = hashlib.sha256(str(options.project).encode()).hexdigest()[:24]
+        with file_lock(CACHE / f"setup-{key}.lock", deadline):
+            run_step(["npm", "run", "setup:dependencies"], env=self.build_env, cwd=options.project, log=log,
+                     children=children, deadline=deadline, label="Preparing worktree dependencies.")
+            worker = threading.Thread(target=build_daemon, daemon=True)
+            self.workers.append(worker)
+            worker.start()
+            apk, app_id = prepare_apk(options, self.build_env, self.directory, log, children, deadline)
+            endpoint = daemon_ready.result(timeout=remaining(deadline))
+        broker_ready.result(timeout=remaining(deadline))
+        self.check()
+        print("Installing Piop and connecting it to the worktree daemon.", file=sys.stderr, flush=True)
+        call(self.client, "install_app", {"apks": [str(apk)]}, deadline)
+        call(self.client, "exec", launch_arguments(endpoint, app_id), deadline)
+        wait_for_workspace(self.client, children, self.broker_errors, deadline, log)
+        self.app_id = app_id
+        return {"apk": str(apk), "appId": app_id, "url": endpoint["url"], "runtime": endpoint.get("runtime"),
+                "logs": str(self.directory)}
+
+    def reinstall(self):
+        if not self.reinstall_lock.acquire(blocking=False):
             raise RuntimeError("A reinstall is already running")
         try:
-            deadline = time.monotonic() + args.timeout
-            target = Path(tempfile.mkdtemp(prefix="reinstall-", dir=directory))
-            # Build processes carry the launcher marker, so launcher shutdown also stops them.
+            options = self.options
+            deadline = time.monotonic() + options.timeout
+            target = Path(tempfile.mkdtemp(prefix="reinstall-", dir=self.directory))
+            # Build processes carry the instance marker, so stop also ends them.
             children = []
-            key = hashlib.sha256(str(args.project).encode()).hexdigest()[:24]
+            key = hashlib.sha256(str(options.project).encode()).hexdigest()[:24]
             with file_lock(CACHE / f"setup-{key}.lock", deadline):
-                run_step(["npm", "run", "setup:dependencies"], env=build_env, cwd=args.project, log=log,
+                run_step(["npm", "run", "setup:dependencies"], env=self.build_env, cwd=options.project, log=self.log,
                          children=children, deadline=deadline, label="Preparing worktree dependencies.")
-                run_step(["node", "scripts/build-daemon.mjs", "--debug"], env=build_env, cwd=args.project, log=log,
-                         children=children, deadline=deadline, label="Building this worktree's debug daemon.")
-                endpoint = connection(args, shared_env, log, deadline)
-                apk, new_app_id = prepare_apk(args, build_env, target, log, children, deadline)
-            if new_app_id != app_id:
-                raise RuntimeError(f"New APK is {new_app_id}, but this session runs {app_id}")
-            print("Installing the new build and launching it in the same VM.", file=sys.stderr, flush=True)
-            call(client, "install_app", {"apks": [str(apk)]}, deadline)
-            call(client, "exec", launch_arguments(endpoint, app_id), deadline)
-            return {"content": [{"type": "text", "text": json.dumps({"apk": str(apk), "appId": app_id, "url": endpoint["url"]})}]}
+                run_step(["node", "scripts/build-daemon.mjs", "--debug"], env=self.build_env, cwd=options.project,
+                         log=self.log, children=children, deadline=deadline, label="Building this worktree's debug daemon.")
+                endpoint = connection(options, self.shared_env, self.log, deadline)
+                apk, new_app_id = prepare_apk(options, self.build_env, target, self.log, children, deadline)
+            if new_app_id != self.app_id:
+                raise RuntimeError(f"New APK is {new_app_id}, but this session runs {self.app_id}")
+            call(self.client, "install_app", {"apks": [str(apk)]}, deadline)
+            call(self.client, "exec", launch_arguments(endpoint, self.app_id), deadline)
+            return {"apk": str(apk), "appId": self.app_id, "url": endpoint["url"]}
         finally:
-            lock.release()
+            self.reinstall_lock.release()
 
-    return reinstall
+    def call_tool(self, name, arguments):
+        self.check()
+        if name == "reinstall":
+            return text_result(self.reinstall())
+        if name == "app_state":
+            return app_stater(self.client, self.app_id)(name, arguments)
+        return self.client.request("tools/call", {"name": name, "arguments": arguments}, timeout=360)
+
+    def close(self):
+        if self.stopped.is_set():
+            return
+        self.stopped.set()
+        if self.client:
+            self.client.close()
+        if self.process:
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                self.process.wait(timeout=10)
+        stop_children(self.children, self.marker)
+        for worker in self.workers:
+            worker.join(timeout=2)
+        self.log.close()
+        self.broker_log.close()
+        print(f"Instance stopped. Logs retained at {self.directory}", file=sys.stderr, flush=True)
 
 
-def launch(args, directory):
-    CACHE.mkdir(parents=True, exist_ok=True, mode=0o700)
-    deadline = time.monotonic() + args.timeout
-    instance = str(uuid.uuid4())
-    marker = f"{MARKER}={instance}".encode()
-    shared_env, build_env = piop_env(instance)
-    children = []
-    client = server = process = None
-    stopped = threading.Event()
-    workers = []
-    broker_ready = Future()
-    daemon_ready = Future()
-    broker_errors = []
-    with open(directory / "setup.log", "ab", buffering=0) as log, open(directory / "broker.log", "ab", buffering=0) as broker_log:
+def text_result(value, error=False):
+    return {"content": [{"type": "text", "text": value if isinstance(value, str) else json.dumps(value)}], "isError": error}
+
+
+def list_tools():
+    broker_tools = runpy.run_path(str(BROKER), run_name="android_vm_broker_tools")["TOOLS"]
+    return [*broker_tools, APP_STATE_TOOL, REINSTALL_TOOL]
+
+
+@contextlib.contextmanager
+def open_session(options):
+    session = Session(options)
+    try:
+        yield session, list_tools()
+    finally:
+        session.close()
+
+
+def check_host():
+    if sys.platform != "linux":
+        raise RuntimeError("This script supports Linux only")
+
+
+def cli_arguments(argv):
+    """Read launch flags from the MCP server command. Each LAUNCH_OPTIONS property is one flag."""
+    parser = argparse.ArgumentParser(description=LAUNCH_OPTIONS["description"])
+    properties = LAUNCH_OPTIONS["inputSchema"]["properties"]
+    for name, spec in properties.items():
+        flag, kind, help_text = "--" + name.replace("_", "-"), spec.get("type"), spec.get("description")
+        if kind == "boolean":
+            parser.add_argument(flag, dest=name, action="store_true", help=help_text)
+        elif kind == "array" and name == "command":
+            parser.add_argument(flag, dest=name, type=shlex.split, help=help_text)
+        elif kind == "array":
+            parser.add_argument(flag, dest=name, action="append", help=f"{help_text} (repeatable)")
+        elif kind == "object":
+            parser.add_argument(flag, dest=name, action="append", metavar="KEY=VALUE", help=f"{help_text} (repeatable)")
+        elif kind == "number":
+            parser.add_argument(flag, dest=name, type=float, help=help_text)
+        else:
+            parser.add_argument(flag, dest=name, help=help_text)
+    arguments = vars(parser.parse_args(argv))
+    for name, spec in properties.items():
+        if spec.get("type") == "object" and arguments[name]:
+            pairs = [item.partition("=") for item in arguments[name]]
+            if any(not key or not separator for key, separator, _ in pairs):
+                parser.error(f"--{name.replace('_', '-')} needs KEY=VALUE")
+            arguments[name] = {key: value for key, _, value in pairs}
+    # Codex starts MCP servers in the chat's working directory.
+    arguments["project"] = str(Path(arguments["project"] or Path.cwd()).expanduser().resolve())
+    return {name: value for name, value in arguments.items() if value not in (None, False)}
+
+
+class Server:
+    """MCP server on stdio for one running app. Codex closes stdin to stop it."""
+
+    def __init__(self, session, tools, summary):
+        self.session = session
+        self.tools = tools
+        self.names = {tool["name"] for tool in tools}
+        self.instructions = f"These tools act on the app that this server started and keeps running: {json.dumps(summary)}"
+        self.write_lock = threading.Lock()
+
+    def send(self, message):
+        with self.write_lock:
+            sys.stdout.write(json.dumps(message) + "\n")
+            sys.stdout.flush()
+
+    def handle(self, message):
+        method = message.get("method")
+        params = message.get("params") or {}
         try:
-            print("Acquiring a private Android VM from android-vm-broker.", file=sys.stderr, flush=True)
-            process = subprocess.Popen([sys.executable, str(args.broker), "mcp"], cwd=args.project,
-                                       env=shared_env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                       stderr=broker_log, start_new_session=True)
-            children.append(("Android broker lease", process))
-            client = McpClient(process, "Android broker")
-
-            def boot_vm():
+            if method == "initialize":
+                result = {"protocolVersion": params.get("protocolVersion", "2025-06-18"), "capabilities": {"tools": {}},
+                          "serverInfo": {"name": NAME, "version": "1.0.0"}, "instructions": self.instructions}
+            elif method == "ping":
+                result = {}
+            elif method == "tools/list":
+                result = {"tools": self.tools}
+            elif method == "tools/call":
+                name = params.get("name")
+                if name not in self.names:
+                    raise McpError({"code": -32602, "message": f"Unknown tool: {name}"})
                 try:
-                    initialized = initialize(client, NAME, remaining(deadline, 360))
-                    tools = client.request("tools/list", timeout=remaining(deadline, 30))["tools"]
-                    broker_ready.set_result((initialized, tools))
-                    while not stopped.wait(15):
-                        client.request("ping", timeout=360)
+                    result = self.session.call_tool(name, params.get("arguments") or {})
+                except McpError:
+                    raise
                 except Exception as error:
-                    if not broker_ready.done():
-                        broker_ready.set_exception(error)
-                    else:
-                        broker_errors.append(error)
+                    result = text_result(f"{type(error).__name__}: {error}", error=True)
+            else:
+                raise McpError({"code": -32601, "message": f"Unsupported method: {method}"})
+            response = {"jsonrpc": "2.0", "id": message["id"], "result": result}
+        except McpError as error:
+            response = {"jsonrpc": "2.0", "id": message["id"], "error": error.error}
+        self.send(response)
 
-            worker = threading.Thread(target=boot_vm, daemon=True)
-            workers.append(worker)
-            worker.start()
-            key = hashlib.sha256(str(args.project).encode()).hexdigest()[:24]
-            with file_lock(CACHE / f"setup-{key}.lock", deadline):
-                run_step(["npm", "run", "setup:dependencies"], env=build_env, cwd=args.project, log=log,
-                         children=children, deadline=deadline, label="Preparing worktree dependencies.")
-
-                def build_daemon():
-                    try:
-                        if stopped.is_set():
-                            raise RuntimeError("Setup cancelled")
-                        daemon_lock = args.project / "target" / ".piop-daemon-launch.lock"
-                        daemon_lock.parent.mkdir(parents=True, exist_ok=True)
-                        with file_lock(daemon_lock, deadline):
-                            run_step(["node", "scripts/build-daemon.mjs", "--debug"], env=build_env, cwd=args.project,
-                                     log=log, children=children, deadline=deadline,
-                                     label="Building this worktree's debug daemon.")
-                            if stopped.is_set():
-                                raise RuntimeError("Setup cancelled")
-                            daemon_ready.set_result(connection(args, shared_env, log, deadline))
-                    except Exception as error:
-                        daemon_ready.set_exception(error)
-
-                worker = threading.Thread(target=build_daemon, daemon=True)
-                workers.append(worker)
-                worker.start()
-                apk, app_id = prepare_apk(args, build_env, directory, log, children, deadline)
-                endpoint = daemon_ready.result(timeout=remaining(deadline))
-
-            initialized, native_tools = broker_ready.result(timeout=remaining(deadline))
-            print("Installing Piop and connecting it to the worktree daemon.", file=sys.stderr, flush=True)
-            call(client, "install_app", {"apks": [str(apk)]}, deadline)
-            call(client, "exec", launch_arguments(endpoint, app_id), deadline)
-            print("Waiting for Piop's connected workspace UI.", file=sys.stderr, flush=True)
-            wait_for_workspace(client, children, broker_errors, deadline, log)
-            server = ToolServer(directory / "mcp.sock", initialized, INSTRUCTIONS, [
-                (native_tools, forward(client)),
-                ([APP_STATE_TOOL], app_stater(client, app_id)),
-                ([REINSTALL_TOOL], reinstaller(args, directory, client, app_id, shared_env, build_env, log)),
-            ])
-            session_file = directory / "session.json"
-            manifest = {
-                "project": str(args.project), "instanceId": instance, "launcherPid": os.getpid(),
-                "apk": str(apk), "appId": app_id, "url": endpoint["url"], "runtime": endpoint.get("runtime"),
-                "sessionFile": str(session_file), "mcpSocket": str(directory / "mcp.sock"),
-                "logs": {name: str(directory / f"{name}.log") for name in ("setup", "broker")},
-                "mcp": {"command": sys.executable, "args": [str(Path(__file__).resolve()), "connect", "--session", str(session_file)]},
-            }
-            session_file.write_text(json.dumps(manifest, indent=2) + "\n")
-            print(json.dumps(manifest, indent=2), flush=True)
-            print("Ready: use this sessionFile for tools and calls. Keep this launcher running.", file=sys.stderr, flush=True)
-            while not stopped.wait(0.5):
-                ensure_running(children)
-                client.check()
-                if broker_errors:
-                    raise broker_errors[0]
-        finally:
-            handlers = {sig: signal.signal(sig, signal.SIG_IGN) for sig in STOP_SIGNALS}
+    def serve(self):
+        for line in sys.stdin:
             try:
-                stopped.set()
-                if server:
-                    server.close()
-                if client:
-                    client.close()
-                if process:
-                    with contextlib.suppress(subprocess.TimeoutExpired):
-                        process.wait(timeout=10)
-                stop_children(children, marker)
-                for worker in workers:
-                    worker.join(timeout=2)
-                (directory / "session.json").unlink(missing_ok=True)
-            finally:
-                for sig, handler in handlers.items():
-                    signal.signal(sig, handler)
-            print(f"Instance stopped. Logs and results retained at {directory}", file=sys.stderr, flush=True)
+                message = json.loads(line)
+            except ValueError:
+                self.send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
+                continue
+            if not isinstance(message, dict) or "id" not in message or "method" not in message:
+                continue
+            threading.Thread(target=self.handle, args=(message,), daemon=True).start()
 
 
 def main():
-    if sys.platform != "linux":
-        raise RuntimeError("This launcher supports Linux only")
-    args = parse_args()
-    directory = Path(tempfile.mkdtemp(prefix="debug-", dir=runtime_root()))
-    print(f"Instance logs: {directory}", file=sys.stderr, flush=True)
+    """Start the app first and answer Codex only when it is ready, so its tools exist only then."""
+    check_host()
 
     def interrupted(signum, _frame):
+        for sig in STOP_SIGNALS:
+            signal.signal(sig, signal.SIG_IGN)
         raise Shutdown(signum)
 
     for sig in STOP_SIGNALS:
         signal.signal(sig, interrupted)
-    launch(args, directory)
+    options = build_options(cli_arguments(sys.argv[1:]))
+    with open_session(options) as (session, tools):
+        summary = session.start()
+        print(json.dumps({"status": "ready", **summary}), file=sys.stderr, flush=True)
+        Server(session, tools, summary).serve()
 
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) > 1 and sys.argv[1] in ("call", "tools", "connect"):
-            run_client_command(sys.argv[1])
-        else:
-            main()
-    except Shutdown as error:
-        sys.exit(error.code)
-    except Exception as error:
-        print(f"{NAME}: {error}", file=sys.stderr)
-        sys.exit(1)
+        main()
+    except Shutdown as stop:
+        sys.exit(stop.code)

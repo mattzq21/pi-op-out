@@ -1,32 +1,33 @@
 #!/usr/bin/env python3
-"""Launch a Linux Tauri dev app and attach its own WDIO MCP."""
+"""MCP server: start a Piop worktree's Tauri dev app with WebKitWebDriver and serve WDIO MCP tools attached to it."""
 
 import argparse
-import base64
 import contextlib
+import shlex
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import queue
 import shutil
 import signal
 import socket
-import socketserver
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import urllib.error
 import urllib.request
 import uuid
 
 
+NAME = "piop-wdio"
 STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 MCP_COMMAND = ["npx", "-y", "@wdio/mcp@3.12.0"]
-SESSION_TOOLS = {"start_session", "attach_session", "close_session", "launch_chrome"}
 ALLOWED_TOOLS = {
     "click_element", "scroll", "set_value", "tap_element", "swipe",
     "drag_and_drop", "execute_script", "get_elements", "get_screenshot",
@@ -135,15 +136,14 @@ class McpClient:
             self.process.stdout.close()
 
 
-def start_mcp(directory, instance_id, stderr):
+def start_mcp(directory, stderr):
     return subprocess.Popen(
         MCP_COMMAND, cwd=directory,
         env={
             **os.environ,
-            "TAURI_WEBDRIVER_INSTANCE": instance_id,
             # WDIO's logger binds console methods before MCP redirects them.
             # Keep diagnostic output out of the JSON-RPC stdout stream.
-            "WDIO_LOG_PATH": str(directory / "webdriver.log"),
+            "WDIO_LOG_PATH": str(directory / f"webdriver-{os.getpid()}.log"),
         },
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr,
         start_new_session=True,
@@ -155,175 +155,6 @@ def require_tool_success(result, operation):
         raise RuntimeError(f"{operation} failed: {json.dumps(result)}")
 
 
-class McpBridge(socketserver.ThreadingUnixStreamServer):
-    daemon_threads = True
-    block_on_close = False
-
-    def __init__(self, path, client, initialized):
-        self.client = client
-        self.initialized = {
-            **initialized,
-            "capabilities": {"tools": {}, "resources": {}},
-            "instructions": "WDIO MCP is already attached to this launcher's Tauri app. Inspect and interact directly. The launcher owns session setup and cleanup.",
-        }
-        super().__init__(str(path), McpBridgeHandler)
-        self.thread = threading.Thread(target=self.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
-        self.thread.start()
-
-    def dispatch(self, message):
-        method = message.get("method")
-        params = message.get("params", {})
-        if not isinstance(params, dict):
-            raise McpError({"code": -32602, "message": "params must be an object"})
-        if "id" not in message:
-            return None
-        if method == "initialize":
-            return self.initialized
-        if method == "ping":
-            self.client.check()
-            return {}
-        if method == "tools/call" and params.get("name") in SESSION_TOOLS:
-            return {"isError": True, "content": [{"type": "text", "text": "The launcher already attached this instance and owns its lifecycle. Stop the launcher to close it."}]}
-        if method == "tools/call" and params.get("name") not in ALLOWED_TOOLS:
-            return {"isError": True, "content": [{"type": "text", "text": "This tool is not enabled for this skill."}]}
-        if method not in ("tools/list", "tools/call", "resources/list", "resources/templates/list", "resources/read"):
-            raise McpError({"code": -32601, "message": f"Unsupported method: {method}"})
-        result = self.client.request(method, params)
-        if method == "tools/list":
-            result = {**result, "tools": [tool for tool in result.get("tools", []) if tool["name"] in ALLOWED_TOOLS]}
-        return result
-
-    def close(self):
-        self.shutdown()
-        self.server_close()
-        self.thread.join(timeout=1)
-        Path(self.server_address).unlink(missing_ok=True)
-
-
-class McpBridgeHandler(socketserver.StreamRequestHandler):
-    def handle(self):
-        for line in self.rfile:
-            message = None
-            try:
-                message = json.loads(line)
-                if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
-                    raise McpError({"code": -32600, "message": "Invalid JSON-RPC request"})
-                result = self.server.dispatch(message)
-                if "id" not in message:
-                    continue
-                response = {"jsonrpc": "2.0", "id": message["id"], "result": result}
-            except Exception as error:
-                detail = error.error if isinstance(error, McpError) else {"code": -32000, "message": str(error)}
-                response = {"jsonrpc": "2.0", "id": message.get("id") if isinstance(message, dict) else None, "error": detail}
-            try:
-                self.wfile.write((json.dumps(response) + "\n").encode())
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                return
-
-
-def bridge_request(connection, method, params):
-    request_id = str(uuid.uuid4())
-    connection.sendall((json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}) + "\n").encode())
-    with connection.makefile("rb") as responses:
-        line = responses.readline()
-    if not line:
-        raise RuntimeError("The launcher disconnected")
-    response = json.loads(line)
-    if response.get("id") != request_id:
-        raise RuntimeError("MCP response ID did not match the request")
-    if "error" in response:
-        raise McpError(response["error"])
-    return response["result"]
-
-
-def relay_stdio(connection):
-    connection.settimeout(None)
-
-    def send_input():
-        try:
-            while chunk := sys.stdin.buffer.read1(65536):
-                connection.sendall(chunk)
-        except OSError:
-            pass
-        finally:
-            with contextlib.suppress(OSError):
-                connection.shutdown(socket.SHUT_WR)
-
-    threading.Thread(target=send_input, daemon=True).start()
-    while chunk := connection.recv(65536):
-        sys.stdout.buffer.write(chunk)
-        sys.stdout.buffer.flush()
-
-
-def run_client_command(mode):
-    parser = argparse.ArgumentParser(prog=f"{Path(__file__).name} {mode}")
-    parser.add_argument("--session", required=True, type=Path, help="sessionFile printed by this instance's launcher")
-    if mode == "call":
-        parser.add_argument("tool")
-        parser.add_argument("arguments", nargs="?", default="{}", help="Tool arguments as JSON")
-    elif mode == "tools":
-        parser.add_argument("tool", nargs="?", help="Show only this tool's schema")
-    args = parser.parse_args(sys.argv[2:])
-    session_file = args.session.expanduser().resolve(strict=True)
-    manifest = json.loads(session_file.read_text())
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        connection.settimeout(125)
-        connection.connect(manifest["mcpSocket"])
-        if mode == "connect":
-            relay_stdio(connection)
-            return
-        if mode == "call":
-            arguments = json.loads(args.arguments)
-            if not isinstance(arguments, dict):
-                parser.error("Tool arguments must be a JSON object")
-            result = bridge_request(connection, "tools/call", {"name": args.tool, "arguments": arguments})
-        else:
-            result = bridge_request(connection, "tools/list", {})
-            if args.tool:
-                result = {**result, "tools": [tool for tool in result.get("tools", []) if tool["name"] == args.tool]}
-                if not result["tools"]:
-                    raise RuntimeError(f"Unknown tool: {args.tool}")
-    result_id = str(uuid.uuid4())
-    result_file = session_file.parent / f"result-{result_id}.json"
-    result_file.write_text(json.dumps(result, indent=2) + "\n")
-    displayed = json.loads(json.dumps(result))
-    for index, part in enumerate(displayed.get("content", [])):
-        if part.get("type") == "image":
-            extension = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(part.get("mimeType"), ".bin")
-            image_file = session_file.parent / f"image-{result_id}-{index}{extension}"
-            image_file.write_bytes(base64.b64decode(part["data"], validate=True))
-            displayed["content"][index] = {"type": "text", "text": f"Image saved to {image_file}"}
-    print(json.dumps({"resultFile": str(result_file), "result": displayed}, indent=2))
-    if result.get("isError"):
-        sys.exit(1)
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        epilog="After startup: tools --session FILE [TOOL], call --session FILE TOOL '[JSON]', or connect --session FILE for MCP stdio.",
-    )
-    parser.add_argument("--project", type=Path, default=Path.cwd(), help="Project or worktree directory")
-    parser.add_argument("--driver", default="WebKitWebDriver", help="Native driver executable")
-    parser.add_argument("--browser-name", default="wry")
-    parser.add_argument("--timeout", type=float, default=600, help="Startup deadline in seconds")
-    profile = parser.add_mutually_exclusive_group()
-    profile.add_argument("--shared-profile", dest="shared_profile", action="store_true", help="Reuse the inherited app profile and potentially its existing daemon (default)")
-    profile.add_argument("--isolated-profile", dest="shared_profile", action="store_false", help="Use a clean temporary app profile without inherited provider credentials")
-    parser.set_defaults(shared_profile=True)
-    parser.add_argument("command", nargs=argparse.REMAINDER, help="Optional app command after --; replaces the default tauri dev command")
-    args = parser.parse_args()
-    args.project = args.project.expanduser().resolve(strict=True)
-    if not args.project.is_dir():
-        parser.error("--project must be a directory")
-    if not 0 < args.timeout < float("inf"):
-        parser.error("--timeout must be a positive finite number")
-    if args.command[:1] == ["--"]:
-        args.command = args.command[1:]
-    return args
-
-
 def runtime_root():
     root = Path(tempfile.gettempdir()) / f"tauri-webdriver-{os.getuid()}"
     root.mkdir(mode=0o700, exist_ok=True)
@@ -331,22 +162,6 @@ def runtime_root():
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise RuntimeError(f"Expected a private directory owned by this user: {root}")
     return root
-
-
-def acquire_daemon_launch_lock(project, deadline):
-    """Wait for other Piop launchers to finish building and connecting this worktree's daemon."""
-    path = Path(project) / "target" / ".piop-daemon-launch.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
-    while True:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return lock
-        except BlockingIOError:
-            if time.monotonic() >= deadline:
-                os.close(lock)
-                raise TimeoutError("Another Piop launcher kept this worktree's daemon lock past the startup deadline")
-            time.sleep(0.2)
 
 
 @contextlib.contextmanager
@@ -457,32 +272,6 @@ def signal_owned(marker, signum):
             pass
 
 
-def connected_runtime(driver_port, session_id, timeout):
-    script = """
-const done = arguments[arguments.length - 1];
-let finished = false;
-const finish = result => {
-    if (finished) return;
-    finished = true;
-    clearTimeout(timer);
-    done(result);
-};
-const timer = setTimeout(() => finish({runtimeError: "Timed out reading daemon runtime information"}), arguments[0]);
-Promise.resolve().then(() => window.__TAURI_INTERNALS__.invoke("daemon_invoke", {
-    command: "debug_runtime", args: {}
-})).then(runtime => finish({runtime}), error => finish({runtimeError: String(error)}));
-"""
-    try:
-        result = webdriver_request(driver_port, f"/session/{session_id}/execute/async", method="POST",
-                                   payload={"script": script, "args": [max(100, int((timeout - 1) * 1000))]}, timeout=timeout)
-        value = result.get("value")
-        if not isinstance(value, dict):
-            raise RuntimeError("Daemon returned no runtime information")
-        return value
-    except Exception as error:
-        return {"runtimeError": str(error)}
-
-
 def stop_children(children, marker):
     # Give supervisors time to stop before sweeping descendants, including daemons
     # and watchers that created new process groups.
@@ -530,182 +319,351 @@ def app_environment(args, directory, instance_id):
     return env
 
 
-def launch(args, root, directory, instance_id):
-    marker = f"TAURI_WEBDRIVER_INSTANCE={instance_id}".encode()
-    env = app_environment(args, directory, instance_id)
-    deadline = time.monotonic() + args.timeout
-    app_command = args.command or ["npm", "run", "tauri", "dev"]
-    for attempt in range(3):
-        children = []
-        session_id = None
-        driver_port = None
-        mcp_client = None
-        mcp_bridge = None
-        with contextlib.ExitStack() as resources:
-            inspector_port, inspector_socket = resources.enter_context(reserve_port(root))
-            driver_port, driver_socket = resources.enter_context(reserve_port(root))
-            app_log = resources.enter_context(open(directory / "app.log", "ab", buffering=0))
-            driver_log = resources.enter_context(open(directory / "driver.log", "ab", buffering=0))
-            mcp_log = resources.enter_context(open(directory / "mcp.log", "ab", buffering=0))
-            address = f"127.0.0.1:{inspector_port}"
+def acquire_daemon_launch_lock(project, deadline):
+    """Wait for other Piop launchers to finish building and connecting this worktree's daemon."""
+    path = Path(project) / "target" / ".piop-daemon-launch.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return lock
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                os.close(lock)
+                raise TimeoutError("Another Piop launcher kept this worktree's daemon lock past the startup deadline")
+            time.sleep(0.2)
+
+
+def connected_runtime(driver_port, session_id, timeout):
+    script = """
+const done = arguments[arguments.length - 1];
+let finished = false;
+const finish = result => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    done(result);
+};
+const timer = setTimeout(() => finish({runtimeError: "Timed out reading daemon runtime information"}), arguments[0]);
+Promise.resolve().then(() => window.__TAURI_INTERNALS__.invoke("daemon_invoke", {
+    command: "debug_runtime", args: {}
+})).then(runtime => finish({runtime}), error => finish({runtimeError: String(error)}));
+"""
+    try:
+        result = webdriver_request(driver_port, f"/session/{session_id}/execute/async", method="POST",
+                                   payload={"script": script, "args": [max(100, int((timeout - 1) * 1000))]}, timeout=timeout)
+        value = result.get("value")
+        if not isinstance(value, dict):
+            raise RuntimeError("Daemon returned no runtime information")
+        return value
+    except Exception as error:
+        return {"runtimeError": str(error)}
+
+
+# MCP server
+
+LAUNCH_OPTIONS = {
+    "description": "Start a Piop worktree's Tauri desktop app in development mode with WebKitWebDriver, attach WDIO to it, and keep it running for the piop-wdio MCP tools.",
+    "inputSchema": {"type": "object", "additionalProperties": False, "required": ["project"], "properties": {
+        "project": {"type": "string", "description": "Project or worktree directory; defaults to the current directory"},
+        "command": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+                    "description": "App command run in project; replaces the default npm run tauri dev"},
+        "isolated_profile": {"type": "boolean", "default": False,
+                             "description": "Use a clean temporary home directory without the user's provider credentials or running daemon"},
+        "browser_name": {"type": "string", "default": "wry"},
+        "timeout_sec": {"type": "number", "exclusiveMinimum": 0, "default": 600, "description": "Startup deadline"},
+    }},
+}
+
+
+def launch_options(arguments):
+    """Check launch arguments and return them as options."""
+    project = Path(arguments.get("project") or "").expanduser()
+    if not project.is_absolute():
+        raise ValueError("project must be an absolute path")
+    project = project.resolve(strict=True)
+    if not project.is_dir():
+        raise ValueError("project must be a directory")
+    timeout = float(arguments.get("timeout_sec") or 600)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout_sec must be positive and finite")
+    driver = shutil.which("WebKitWebDriver")
+    if not driver:
+        raise RuntimeError("WebKitWebDriver was not found; install it")
+    return SimpleNamespace(
+        project=project, command=list(arguments.get("command") or ["npm", "run", "tauri", "dev"]),
+        shared_profile=not arguments.get("isolated_profile", False),
+        browser_name=arguments.get("browser_name") or "wry", timeout=timeout, driver=driver)
+
+
+class Session:
+    """One Tauri app with its WebKitWebDriver session, attached to the server's WDIO MCP."""
+
+    def __init__(self, options, wdio):
+        self.options = options
+        self.wdio = wdio
+        self.root = runtime_root()
+        self.directory = Path(tempfile.mkdtemp(prefix="instance-", dir=self.root))
+        self.instance = str(uuid.uuid4())
+        self.marker = f"TAURI_WEBDRIVER_INSTANCE={self.instance}".encode()
+        self.children = []
+        self.resources = contextlib.ExitStack()
+        self.session_id = self.driver_port = None
+        self.attached = False
+        self.closed = False
+
+    def check(self):
+        ensure_running(self.children)
+        self.wdio.check()
+
+    def start(self):
+        options = self.options
+        env = app_environment(options, self.directory, self.instance)
+        deadline = time.monotonic() + options.timeout
+        print(f"Starting the app. Logs and profile: {self.directory}", file=sys.stderr, flush=True)
+        for attempt in range(3):
             try:
-                driver_socket.close()
-                driver_env = {**os.environ, "TAURI_WEBDRIVER_INSTANCE": instance_id}
-                driver_env.pop("WEBDRIVER_TARGET_ADDR", None)
-                driver = subprocess.Popen(
-                    [args.driver, "--host=127.0.0.1", f"--port={driver_port}", f"--target={address}"],
-                    cwd=args.project, env=driver_env, stdin=subprocess.DEVNULL,
-                    stdout=driver_log, stderr=subprocess.STDOUT, start_new_session=True,
-                )
-                children.append(("WebKitWebDriver", driver))
-                wait_for_port(driver_port, marker, children, min(deadline, time.monotonic() + 15))
-                if webdriver_request(driver_port, "/status", timeout=2).get("value", {}).get("ready") is not True:
-                    raise RuntimeError("WebKitWebDriver is not ready for a session")
-                inspector_socket.close()
-                daemon_lock = acquire_daemon_launch_lock(args.project, deadline)
-                resources.callback(os.close, daemon_lock)
-                app = subprocess.Popen(
-                    app_command, cwd=args.project,
-                    env={**env, "WEBKIT_INSPECTOR_SERVER": address}, stdin=subprocess.DEVNULL,
-                    stdout=app_log, stderr=subprocess.STDOUT, start_new_session=True,
-                )
-                children.append(("App launcher", app))
-                wait_for_port(inspector_port, marker, children, deadline)
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("Startup deadline expired")
-                result = webdriver_request(driver_port, "/session", method="POST", payload={
-                    "capabilities": {"alwaysMatch": {"browserName": args.browser_name}, "firstMatch": [{}]},
-                }, timeout=min(30, remaining))
-                value = result.get("value", {})
-                if not isinstance(value, dict):
-                    raise RuntimeError("WebKitWebDriver did not return session details")
-                session_id = value.get("sessionId")
-                if not isinstance(session_id, str) or not session_id:
-                    raise RuntimeError("WebKitWebDriver did not return a session ID")
-                ensure_running(children)
-                connection = {"protocol": "http", "hostname": "127.0.0.1", "port": driver_port, "path": "/"}
-                attach_arguments = {
-                    "provider": "external", "platform": "browser", "sessionId": session_id,
-                    "webdriverConfig": connection, "capabilities": value.get("capabilities", {"browserName": args.browser_name}),
-                }
-                mcp = start_mcp(directory, instance_id, mcp_log)
-                children.append(("WDIO MCP", mcp))
-                mcp_client = McpClient(mcp)
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("Startup deadline expired before MCP attachment")
-                print("Starting WDIO MCP and attaching it to this app instance.", file=sys.stderr, flush=True)
-                initialized = mcp_client.request("initialize", {
-                    "protocolVersion": "2025-06-18", "capabilities": {},
-                    "clientInfo": {"name": "tauri-webdriver-launcher", "version": "1.0.0"},
-                }, timeout=min(60, remaining))
-                mcp_client.notify("notifications/initialized")
-                for tool, arguments in (("attach_session", attach_arguments), ("get_tabs", {})):
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError("Startup deadline expired during MCP attachment")
-                    result = mcp_client.request("tools/call", {"name": tool, "arguments": arguments}, timeout=min(30, remaining))
-                    require_tool_success(result, tool)
-                ensure_running(children)
-                session_file = directory / "session.json"
-                socket_path = directory / "mcp.sock"
-                mcp_bridge = McpBridge(socket_path, mcp_client, initialized)
-                runtime = connected_runtime(driver_port, session_id, min(15, max(1, deadline - time.monotonic())))
-                fcntl.flock(daemon_lock, fcntl.LOCK_UN)
-                manifest = {
-                    "instanceId": instance_id,
-                    "project": str(args.project),
-                    "launcherPid": os.getpid(),
-                    "directory": str(directory),
-                    "profileHome": env.get("HOME"),
-                    **runtime,
-                    "appCommand": app_command,
-                    "inspectorAddress": address,
-                    "webdriverSessionId": session_id,
-                    "webdriverConfig": connection,
-                    "sessionFile": str(session_file),
-                    "mcpSocket": str(socket_path),
-                    "mcpAttached": True,
-                    "logs": {
-                        "app": str(directory / "app.log"), "driver": str(directory / "driver.log"),
-                        "mcp": str(directory / "mcp.log"),
-                        "webdriver": str(directory / "webdriver.log"),
-                    },
-                    "mcp": {
-                        "command": sys.executable,
-                        "args": [str(Path(__file__).resolve()), "connect", "--session", str(session_file)],
-                    },
-                }
-                serialized = json.dumps(manifest, indent=2) + "\n"
-                session_file.write_text(serialized)
-                print(serialized, end="", flush=True)
-                print("Ready: WDIO MCP is attached. Use this script's tools/call commands with sessionFile. Keep the launcher running; Ctrl+C stops this instance.", file=sys.stderr)
-                while True:
-                    if app.poll() == 0:
-                        return
-                    ensure_running(children)
-                    mcp_client.check()
-                    time.sleep(0.5)
+                return self.start_once(env, deadline)
             except PortConflict as error:
                 if attempt == 2 or time.monotonic() >= deadline:
                     raise
-                print(f"{error}; retrying with new ports.", file=sys.stderr)
-            finally:
-                handlers = {sig: signal.signal(sig, signal.SIG_IGN) for sig in STOP_SIGNALS}
+                print(f"{error}; retrying with new ports.", file=sys.stderr, flush=True)
+                self.stop_processes()
+                self.resources.close()
+                self.resources = contextlib.ExitStack()
+
+    def start_once(self, env, deadline):
+        options, resources, children = self.options, self.resources, self.children
+        inspector_port, inspector_socket = resources.enter_context(reserve_port(self.root))
+        self.driver_port, driver_socket = resources.enter_context(reserve_port(self.root))
+        app_command = options.command
+        app_log = resources.enter_context(open(self.directory / "app.log", "ab", buffering=0))
+        driver_log = resources.enter_context(open(self.directory / "driver.log", "ab", buffering=0))
+        address = f"127.0.0.1:{inspector_port}"
+        driver_socket.close()
+        driver_env = {**os.environ, "TAURI_WEBDRIVER_INSTANCE": self.instance}
+        driver_env.pop("WEBDRIVER_TARGET_ADDR", None)
+        children.append(("WebKitWebDriver", subprocess.Popen(
+            [options.driver, "--host=127.0.0.1", f"--port={self.driver_port}", f"--target={address}"],
+            cwd=options.project, env=driver_env, stdin=subprocess.DEVNULL,
+            stdout=driver_log, stderr=subprocess.STDOUT, start_new_session=True)))
+        wait_for_port(self.driver_port, self.marker, children, min(deadline, time.monotonic() + 15))
+        if webdriver_request(self.driver_port, "/status", timeout=2).get("value", {}).get("ready") is not True:
+            raise RuntimeError("WebKitWebDriver is not ready for a session")
+        inspector_socket.close()
+        # Other Piop launchers must not build or connect this worktree's daemon at the same time.
+        daemon_lock = acquire_daemon_launch_lock(options.project, deadline)
+        resources.callback(os.close, daemon_lock)
+        children.append(("App launcher", subprocess.Popen(
+            app_command, cwd=options.project, env={**env, "WEBKIT_INSPECTOR_SERVER": address}, stdin=subprocess.DEVNULL,
+            stdout=app_log, stderr=subprocess.STDOUT, start_new_session=True)))
+        wait_for_port(inspector_port, self.marker, children, deadline)
+        value = webdriver_request(self.driver_port, "/session", method="POST", payload={
+            "capabilities": {"alwaysMatch": {"browserName": options.browser_name}, "firstMatch": [{}]},
+        }, timeout=remaining(deadline, 30)).get("value", {})
+        if not isinstance(value, dict) or not isinstance(value.get("sessionId"), str) or not value["sessionId"]:
+            raise RuntimeError("WebKitWebDriver did not return a session ID")
+        self.session_id = value["sessionId"]
+        ensure_running(children)
+        connection = {"protocol": "http", "hostname": "127.0.0.1", "port": self.driver_port, "path": "/"}
+        require_tool_success(self.wdio.request("tools/call", {"name": "attach_session", "arguments": {
+            "provider": "external", "platform": "browser", "sessionId": self.session_id, "webdriverConfig": connection,
+            "capabilities": value.get("capabilities", {"browserName": options.browser_name})}},
+            timeout=remaining(deadline, 30)), "attach_session")
+        self.attached = True
+        runtime = connected_runtime(self.driver_port, self.session_id, min(15, max(1, deadline - time.monotonic())))
+        fcntl.flock(daemon_lock, fcntl.LOCK_UN)
+        return {"project": str(options.project), "logs": str(self.directory), "profileHome": env.get("HOME"),
+                "appCommand": app_command, **runtime}
+
+    def call_tool(self, name, arguments):
+        self.check()
+        return self.wdio.request("tools/call", {"name": name, "arguments": arguments})
+
+    def stop_processes(self):
+        if self.attached:
+            with contextlib.suppress(Exception):
+                self.wdio.request("tools/call", {"name": "close_session", "arguments": {"detach": True}}, timeout=5)
+            self.attached = False
+        if self.session_id and self.children and self.children[0][1].poll() is None:
+            with contextlib.suppress(Exception):
+                webdriver_request(self.driver_port, f"/session/{self.session_id}", method="DELETE", timeout=2)
+        self.session_id = None
+        stop_children(self.children, self.marker)
+        self.children.clear()
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        self.stop_processes()
+        self.resources.close()
+        print(f"Instance stopped. Logs and profile retained at {self.directory}", file=sys.stderr, flush=True)
+
+
+def remaining(deadline, maximum=None):
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TimeoutError("Startup deadline expired")
+    return left if maximum is None else min(left, maximum)
+
+
+def text_result(value, error=False):
+    return {"content": [{"type": "text", "text": value if isinstance(value, str) else json.dumps(value)}], "isError": error}
+
+
+def start_wdio(log):
+    process = start_mcp(runtime_root(), log)
+    client = McpClient(process)
+    try:
+        client.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                      "clientInfo": {"name": NAME, "version": "1.0.0"}}, timeout=120)
+        client.notify("notifications/initialized")
+        tools = [tool for tool in client.request("tools/list", timeout=30)["tools"] if tool["name"] in ALLOWED_TOOLS]
+        missing = ALLOWED_TOOLS - {tool["name"] for tool in tools}
+        if missing:
+            raise RuntimeError(f"WDIO MCP lacks tools: {sorted(missing)}")
+    except BaseException:
+        stop_wdio(process, client)
+        raise
+    return process, client, tools
+
+
+def stop_wdio(process, client):
+    client.close()
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGTERM)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=5)
+
+
+
+
+@contextlib.contextmanager
+def open_session(options):
+    with open(runtime_root() / f"wdio-{os.getpid()}.log", "ab", buffering=0) as log:
+        process, client, tools = start_wdio(log)
+        session = Session(options, client)
+        try:
+            yield session, tools
+        finally:
+            session.close()
+            stop_wdio(process, client)
+
+
+def check_host():
+    if sys.platform != "linux":
+        raise RuntimeError("This script requires Linux and WebKitWebDriver")
+    if not shutil.which(MCP_COMMAND[0]):
+        raise RuntimeError("npx was not found; install Node.js and npm to start WDIO MCP")
+
+
+def cli_arguments(argv):
+    """Read launch flags from the MCP server command. Each LAUNCH_OPTIONS property is one flag."""
+    parser = argparse.ArgumentParser(description=LAUNCH_OPTIONS["description"])
+    properties = LAUNCH_OPTIONS["inputSchema"]["properties"]
+    for name, spec in properties.items():
+        flag, kind, help_text = "--" + name.replace("_", "-"), spec.get("type"), spec.get("description")
+        if kind == "boolean":
+            parser.add_argument(flag, dest=name, action="store_true", help=help_text)
+        elif kind == "array" and name == "command":
+            parser.add_argument(flag, dest=name, type=shlex.split, help=help_text)
+        elif kind == "array":
+            parser.add_argument(flag, dest=name, action="append", help=f"{help_text} (repeatable)")
+        elif kind == "object":
+            parser.add_argument(flag, dest=name, action="append", metavar="KEY=VALUE", help=f"{help_text} (repeatable)")
+        elif kind == "number":
+            parser.add_argument(flag, dest=name, type=float, help=help_text)
+        else:
+            parser.add_argument(flag, dest=name, help=help_text)
+    arguments = vars(parser.parse_args(argv))
+    for name, spec in properties.items():
+        if spec.get("type") == "object" and arguments[name]:
+            pairs = [item.partition("=") for item in arguments[name]]
+            if any(not key or not separator for key, separator, _ in pairs):
+                parser.error(f"--{name.replace('_', '-')} needs KEY=VALUE")
+            arguments[name] = {key: value for key, _, value in pairs}
+    # Codex starts MCP servers in the chat's working directory.
+    arguments["project"] = str(Path(arguments["project"] or Path.cwd()).expanduser().resolve())
+    return {name: value for name, value in arguments.items() if value not in (None, False)}
+
+
+class Server:
+    """MCP server on stdio for one running app. Codex closes stdin to stop it."""
+
+    def __init__(self, session, tools, summary):
+        self.session = session
+        self.tools = tools
+        self.names = {tool["name"] for tool in tools}
+        self.instructions = f"These tools act on the app that this server started and keeps running: {json.dumps(summary)}"
+        self.write_lock = threading.Lock()
+
+    def send(self, message):
+        with self.write_lock:
+            sys.stdout.write(json.dumps(message) + "\n")
+            sys.stdout.flush()
+
+    def handle(self, message):
+        method = message.get("method")
+        params = message.get("params") or {}
+        try:
+            if method == "initialize":
+                result = {"protocolVersion": params.get("protocolVersion", "2025-06-18"), "capabilities": {"tools": {}},
+                          "serverInfo": {"name": NAME, "version": "1.0.0"}, "instructions": self.instructions}
+            elif method == "ping":
+                result = {}
+            elif method == "tools/list":
+                result = {"tools": self.tools}
+            elif method == "tools/call":
+                name = params.get("name")
+                if name not in self.names:
+                    raise McpError({"code": -32602, "message": f"Unknown tool: {name}"})
                 try:
-                    try:
-                        if mcp_bridge is not None:
-                            mcp_bridge.close()
-                        if mcp_client is not None:
-                            with contextlib.suppress(Exception):
-                                mcp_client.request("tools/call", {"name": "close_session", "arguments": {"detach": True}}, timeout=1)
-                        if session_id and children[0][1].poll() is None:
-                            with contextlib.suppress(Exception):
-                                webdriver_request(driver_port, f"/session/{session_id}", method="DELETE", timeout=1)
-                    finally:
-                        stop_children(children, marker)
-                        if mcp_client is not None:
-                            mcp_client.close()
-                        (directory / "session.json").unlink(missing_ok=True)
-                finally:
-                    for sig, handler in handlers.items():
-                        signal.signal(sig, handler)
+                    result = self.session.call_tool(name, params.get("arguments") or {})
+                except McpError:
+                    raise
+                except Exception as error:
+                    result = text_result(f"{type(error).__name__}: {error}", error=True)
+            else:
+                raise McpError({"code": -32601, "message": f"Unsupported method: {method}"})
+            response = {"jsonrpc": "2.0", "id": message["id"], "result": result}
+        except McpError as error:
+            response = {"jsonrpc": "2.0", "id": message["id"], "error": error.error}
+        self.send(response)
+
+    def serve(self):
+        for line in sys.stdin:
+            try:
+                message = json.loads(line)
+            except ValueError:
+                self.send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
+                continue
+            if not isinstance(message, dict) or "id" not in message or "method" not in message:
+                continue
+            threading.Thread(target=self.handle, args=(message,), daemon=True).start()
 
 
 def main():
-    if sys.platform != "linux":
-        raise RuntimeError("This launcher requires Linux and WebKitWebDriver")
-    args = parse_args()
-    args.driver = shutil.which(os.path.expanduser(args.driver))
-    if not args.driver:
-        raise RuntimeError("WebKitWebDriver was not found; install it or pass --driver /path/to/WebKitWebDriver")
-    if not shutil.which(MCP_COMMAND[0]):
-        raise RuntimeError("npx was not found; install Node.js/npm to start WDIO MCP")
-    root = runtime_root()
-    directory = Path(tempfile.mkdtemp(prefix="instance-", dir=root))
-    print(f"Instance logs and profile: {directory}", file=sys.stderr, flush=True)
-    print("Building and starting the app; connection JSON will appear on stdout after WDIO MCP attaches.", file=sys.stderr, flush=True)
+    """Start the app first and answer Codex only when it is ready, so its tools exist only then."""
+    check_host()
 
     def interrupted(signum, _frame):
+        for sig in STOP_SIGNALS:
+            signal.signal(sig, signal.SIG_IGN)
         raise Shutdown(signum)
 
     for sig in STOP_SIGNALS:
         signal.signal(sig, interrupted)
-    try:
-        launch(args, root, directory, str(uuid.uuid4()))
-    finally:
-        print(f"Instance stopped. Logs and profile retained at {directory}", file=sys.stderr)
+    options = launch_options(cli_arguments(sys.argv[1:]))
+    with open_session(options) as (session, tools):
+        summary = session.start()
+        print(json.dumps({"status": "ready", **summary}), file=sys.stderr, flush=True)
+        Server(session, tools, summary).serve()
 
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) > 1 and sys.argv[1] in ("call", "tools", "connect"):
-            run_client_command(sys.argv[1])
-        else:
-            main()
-    except Shutdown as error:
-        sys.exit(error.code)
-    except Exception as error:
-        print(f"tauri-webdriver: {error}", file=sys.stderr)
-        sys.exit(1)
+        main()
+    except Shutdown as stop:
+        sys.exit(stop.code)
