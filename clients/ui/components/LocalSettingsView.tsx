@@ -15,7 +15,7 @@ import { NativeTransport } from "../lib/nativeTransport";
 import { SettingsPublication } from "../lib/settingsPublication";
 import { SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { isMobile, listen } from "../lib/platform";
-import type { AgentConfig, AppSettings, Model, SessionSummary, SettingsChange, SettingsPublication as Publication } from "../types";
+import type { AgentConfig, AppSettings, Model, RemoteHost, SessionSummary, SettingsChange, SettingsPublication as Publication } from "../types";
 import { clientSections, sections, SettingsView, type Section } from "./SettingsView";
 
 interface Props {
@@ -33,6 +33,33 @@ async function loadAgentConfiguration(reader: NativeTransport, target: string, d
   const config = await reader.command({ type: "get_agent_configuration" }, agentConfigSchema);
 
   return { ...config, fastModeModels: discovered()?.fastModeModels };
+}
+
+async function loadHostModels(hostId: string): Promise<Model[]> {
+  const reader = new NativeTransport({ hostId, cwd: "~" });
+
+  try {
+    await reader.connect();
+
+    return (await reader.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) }))).models;
+  } finally { await reader.dispose().catch(() => undefined); }
+}
+
+/** Model visibility belongs to the client, so its list includes models from every enabled machine. */
+async function loadRemoteModels(hosts: RemoteHost[]): Promise<{ models: Model[]; failures: string[] }> {
+  const enabled = hosts.filter((host) => host.enabled !== false);
+  const results = await Promise.allSettled(enabled.map((host) => loadHostModels(host.id)));
+  const failures = results.flatMap((result, index) => result.status === "rejected" ? [`${enabled[index].name}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`] : []);
+
+  return { models: results.flatMap((result) => result.status === "fulfilled" ? result.value : []), failures };
+}
+
+function mergeModels(lists: Model[][]): Model[] {
+  const merged = new Map<string, Model>();
+
+  for (const model of lists.flat()) if (!merged.has(`${model.provider}/${model.id}`)) merged.set(`${model.provider}/${model.id}`, model);
+
+  return [...merged.values()];
 }
 
 export function LocalSettingsView(props: Props) {
@@ -131,13 +158,17 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
 
         if (cancelled) return;
 
-        const [models, levels, storedConfig] = await Promise.all([
+        const [models, levels, storedConfig, remote] = await Promise.all([
           reader.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })),
           reader.command({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })),
           loadAgentConfiguration(reader, capturedTarget0, () => config),
+          capturedTarget0 === "client" ? loadRemoteModels(componentProps.settings.hosts) : Promise.resolve({ models: [], failures: [] }),
         ]);
 
-        if (!cancelled) setResources({ config: storedConfig, models: models.models, levels: levels.levels });
+        if (cancelled) return;
+        setResources({ config: storedConfig, models: mergeModels([models.models, remote.models]), levels: levels.levels });
+
+        if (remote.failures.length) setError(`models from ${remote.failures.join("; ")}`);
       } catch (reason) { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); }
       finally { unsubscribe(); await reader.dispose().catch(() => undefined); }
     })();
