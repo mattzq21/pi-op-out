@@ -259,7 +259,7 @@ function execute(journal) {
       return { state: 'pending', error: `${label} failed: ${error.message}\n${label} recovery is pending: ${failure.message}` };
     }
 
-    return { state: 'rolled-back', error: `${label} failed: ${error.message}\n${label} was rolled back.` };
+    return { state: 'rolled-back', error: `${label} failed: ${error.message}` };
   }
 
   const failure = finish(journal);
@@ -268,7 +268,7 @@ function execute(journal) {
 }
 
 function rejected(kind, error) {
-  return { state: 'rolled-back', error: `${labels[kind]} failed: ${error.message}\n${labels[kind]} was rolled back.` };
+  return { state: 'rolled-back', error: `${labels[kind]} failed: ${error.message}` };
 }
 
 function inside(parent, file) { return io.inside(parent, file) && file !== parent; }
