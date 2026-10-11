@@ -11,7 +11,7 @@ export interface RemoteHost {
 }
 
 export const DICTATION_ENGINES = ['transcribe.cpp', 'needle'] as const;
-/** The speech-to-text program: transcribe.cpp (transcribe-cli) or Cactus Needle (the needle Python package). */
+/** The speech-to-text program: transcribe.cpp or Cactus Needle. */
 export type DictationEngineKind = typeof DICTATION_ENGINES[number];
 
 export interface AppSettings {

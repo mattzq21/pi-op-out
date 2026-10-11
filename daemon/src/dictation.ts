@@ -120,7 +120,7 @@ function expand(path: string): string {
 }
 
 function programName(kind: DictationEngineKind): string {
-  return kind === 'needle' ? 'needle (pip install cactus-needle)' : 'a Python with transcribe-cpp (pip install transcribe-cpp)';
+  return kind === 'needle' ? 'needle (pip install cactus-needle)' : 'transcribe.cpp (pip install transcribe-cpp)';
 }
 
 function candidates(kind: DictationEngineKind, configured: string | undefined): string[] {
