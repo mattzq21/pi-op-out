@@ -63,7 +63,8 @@ while (Date.now() < deadline) {
       if (packet) {
         let runningIdentity;
 
-        if (Number.isSafeInteger(packet.debugProcessId) && packet.debugProcessId > 0) {
+        if (typeof packet.debugRuntime?.buildIdentity === "string") runningIdentity = packet.debugRuntime.buildIdentity;
+        else if (Number.isSafeInteger(packet.debugProcessId) && packet.debugProcessId > 0) {
           try { runningIdentity = createHash("sha256").update(readFileSync(`/proc/${packet.debugProcessId}/exe`)).digest("hex"); } catch { }
         }
 
