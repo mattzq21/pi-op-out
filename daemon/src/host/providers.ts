@@ -67,7 +67,10 @@ export class ProviderService {
 
   private fastCapabilities(): Promise<any> {
     if (!this.fastCapabilitiesValue) {
-      this.fastCapabilitiesValue = this.sdk.request({ method: 'fast_capabilities' });
+      this.fastCapabilitiesValue = this.sdk.request({ method: 'fast_capabilities' }).then(value => {
+        if (!array(value, 'models').length) throw new Error('Fast mode startup catalog unavailable');
+        return value;
+      }).catch(error => { this.fastCapabilitiesValue = undefined; throw error; });
       this.fastCapabilitiesValue.catch(() => {});
     }
     return this.fastCapabilitiesValue;

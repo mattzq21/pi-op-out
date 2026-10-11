@@ -152,7 +152,7 @@ class QueueState {
     return this.publish();
   }
 
-  recoverQuestion(item: any): void {
+  recoverQuestion(item: any, nextId: () => string): void {
     const request = item.questionResponse?.requestId;
     if (this.retained.some(saved => saved.id === item.id || jsonEqual(saved.questionResponse?.requestId, request))) return;
     const matched = this.retained.find(saved => jsonEqual(saved.message, item.message) && saved.questionResponse === undefined);
@@ -162,6 +162,7 @@ class QueueState {
         if (saved.id === id) { saved.questionResponse = clone(item.questionResponse); saved.recovered = true; }
       }
     } else {
+      item = { ...item, id: nextId() };
       this.pending.push(clone(item));
       this.retained.push(clone(item));
     }
@@ -793,7 +794,7 @@ export class SessionQueue {
   }
 
   recoverQuestionAnswers(answers: any): void {
-    for (const item of Array.isArray(answers) ? answers : []) if (validAnswer(item)) this.s.recoverQuestion(item);
+    for (const item of Array.isArray(answers) ? answers : []) if (validAnswer(item)) this.s.recoverQuestion(item, () => this.nextItemId());
     this.reportStorageError(() => this.publish());
   }
 

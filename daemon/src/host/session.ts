@@ -535,7 +535,7 @@ export class Session {
   }
 
   routeDialogs(): void {
-    const views = this.viewsList;
+    const views = this.viewsList.filter(([runtime]) => !this.host.readonly(runtime));
     const events: Array<[string, any]> = [];
     const owner = (views.find(([, view]) => flag(view, 'visible') && flag(view, 'focused')) ?? views.find(([, view]) => flag(view, 'visible')))?.[0] ?? null;
     for (const [id, dialog] of this.dialogs) {

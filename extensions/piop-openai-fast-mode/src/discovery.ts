@@ -125,7 +125,7 @@ export function createFastModeDiscovery() {
   async function catalog(ctx: DiscoveryContext, model: Model): Promise<Catalog> {
     const startup = await startupCatalog(model);
 
-    if (startup) return startup;
+    if (startup?.size) return startup;
 
     try {
       const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);

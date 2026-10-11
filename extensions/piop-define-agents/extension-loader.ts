@@ -499,6 +499,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
 
     prepared.delete(group.key);
     const previous = current;
+    await shutdown(previous, ctx);
     current = group; group.ready = true;
 
     try {
@@ -508,7 +509,6 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
       listen(group);
       await start(group, ctx);
       group.session = session;
-      await shutdown(previous, ctx);
       stop(previous);
       hideInactiveTools(previous, group);
     } catch (error) {
@@ -517,6 +517,14 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
       hideInactiveTools(group, previous);
 
       republishTools(previous);
+
+      if (previous) {
+        previous.session = undefined;
+
+        try { await start(previous, ctx); previous.session = session; }
+        catch (error) { ctx.ui.notify(`piop extension restart failed: ${String(error)}`, "error"); }
+      }
+
       throw error;
     }
   }

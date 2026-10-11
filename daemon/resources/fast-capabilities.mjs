@@ -62,21 +62,21 @@ function fastCatalogEntry(entry, provider) {
 }
 
 async function fetchFastCatalog(runtime, model) {
-  try {
-    const resolution = await runtime.getAuth(model);
+  const resolution = await runtime.getAuth(model);
 
-    if (!resolution) return [];
+  if (!resolution) throw new Error('Provider login is missing');
 
-    const response = await fetch(fastCatalogUrl(model, resolution), {
-      headers: fastCatalogHeaders(model, resolution.auth), signal: AbortSignal.timeout(5_000), redirect: 'error',
-    });
+  const response = await fetch(fastCatalogUrl(model, resolution), {
+    headers: fastCatalogHeaders(model, resolution.auth), signal: AbortSignal.timeout(5_000), redirect: 'error',
+  });
 
-    if (!response.ok) return [];
-    const body = await response.json();
-    const catalog = body.models ?? body.data;
+  if (!response.ok) throw new Error('Model catalog unavailable');
+  const body = await response.json();
+  const catalog = body.models ?? body.data;
 
-    return Array.isArray(catalog) ? catalog.flatMap(entry => fastCatalogEntry(entry, model.provider)) : [];
-  } catch { return []; }
+  if (!Array.isArray(catalog)) throw new Error('Invalid model catalog');
+
+  return catalog.flatMap(entry => fastCatalogEntry(entry, model.provider));
 }
 
 export async function discoverFastCapabilities(runtime) {
@@ -87,7 +87,7 @@ export async function discoverFastCapabilities(runtime) {
     groups.set(`${model.provider}:${model.baseUrl}:${model.api}`, model);
   }
 
-  const results = await Promise.all([...groups.values()].map(model => fetchFastCatalog(runtime, model)));
+  const results = await Promise.allSettled([...groups.values()].map(model => fetchFastCatalog(runtime, model)));
 
-  return results.flat();
+  return results.flatMap(result => result.status === 'fulfilled' ? result.value : []);
 }
