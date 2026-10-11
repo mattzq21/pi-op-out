@@ -42,7 +42,7 @@ export function descendantProcesses(parent: number): Array<{ pid: number; starte
 export function killVerified(processes: Array<{ pid: number; started: string }>, signal: NodeJS.Signals = 'SIGKILL'): void {
   for (const { pid, started } of processes) {
     if (startTime(pid) !== started) continue;
-    try { process.kill(pid, signal); } catch {}
+    try { process.kill(pid, signal); } catch (error: any) { if (error.code !== 'ESRCH') console.error(`Could not send ${signal} to process ${pid}: ${error.message}`); }
   }
 }
 
@@ -55,14 +55,31 @@ export function waitForExit(child: ChildProcess, ms: number): Promise<boolean> {
   });
 }
 
+export function signalProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
+  try { process.kill(-pid, signal); return true; }
+  catch (error: any) {
+    if (error.code !== 'ESRCH') console.error(`Could not send ${signal} to process group ${pid}: ${error.message}`);
+    return false;
+  }
+}
+
+function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (exited(child)) return;
+  try { child.kill(signal); }
+  catch (error: any) { if (error.code !== 'ESRCH') console.error(`Could not send ${signal} to process ${child.pid}: ${error.message}`); }
+}
+
 export async function stopMessageWorker(child: ChildProcess): Promise<void> {
-  if (exited(child) || child.pid === undefined) return;
-  const descendants = descendantProcesses(child.pid);
-  try { child.kill('SIGTERM'); } catch {}
-  await waitForExit(child, 5000);
+  if (child.pid === undefined) return;
+  const descendants = exited(child) ? [] : descendantProcesses(child.pid);
+  if (!exited(child)) {
+    if (!signalProcessGroup(child.pid, 'SIGTERM')) signalChild(child, 'SIGTERM');
+    await waitForExit(child, 5000);
+  }
+  if (!exited(child)) signalProcessGroup(child.pid, 'SIGKILL');
   killVerified(descendants);
-  if (!exited(child)) { try { child.kill('SIGKILL'); } catch {} }
-  await waitForExit(child, 5000);
+  signalChild(child, 'SIGKILL');
+  if (!await waitForExit(child, 5000)) console.error(`Process ${child.pid} did not exit after SIGKILL`);
 }
 
 export { sleep };

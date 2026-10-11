@@ -64,13 +64,13 @@ async function createReview(ctx: ExtensionContext, agentState: SessionAgentState
   const timestamp = new Date().toISOString();
   const sessionId = reserveSessionId();
   const record = { sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(), publicationId: randomUUID() };
-  const metadataId = randomUUID().slice(0, 8);
+  const metadataId = randomUUID();
 
   const publication = await writeSessionFile(record.sessionPath, [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: ctx.cwd },
     { type: "custom", id: metadataId, parentId: null, timestamp, customType: "piop-review-parent", data: { parentSessionId: record.parentSessionId, sessionId, hostId: record.hostId, parentHostId: record.hostId, publicationId: record.publicationId } },
     { type: "custom", id: `${metadataId}-agent`, parentId: metadataId, timestamp, customType: "pi-define-agents-state", data: agentState },
-    { type: "session_info", id: randomUUID().slice(0, 8), parentId: `${metadataId}-agent`, timestamp, name: "Code review" },
+    { type: "session_info", id: randomUUID(), parentId: `${metadataId}-agent`, timestamp, name: "Code review" },
   ], { review: { record, parentSessionPath }, beforeWrite: () => signal?.throwIfAborted() });
 
   return { record, publication };

@@ -170,17 +170,49 @@ export async function control(action: string): Promise<void> {
 export async function run(): Promise<void> {
   const [socket, ready] = await connect();
   const write = (text: string) => new Promise<void>((resolve, reject) => process.stdout.write(text + '\n', error => error ? reject(error) : resolve()));
-  await write(JSON.stringify(ready));
   await new Promise<void>((resolve, reject) => {
     let output = Promise.resolve();
-    socket.listen(text => { output = output.then(() => write(text)).catch(reject); });
+    let queuedBytes = 0;
+    let failed = false;
+    let paused = false;
+    let stallTimer: NodeJS.Timeout | undefined;
     const heartbeat = setInterval(() => { try { socket.send(JSON.stringify({ type: 'ping' })); } catch {} }, 20_000);
     const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+    const fail = (error: unknown) => {
+      if (failed) return;
+      failed = true;
+      reject(error);
+      clearTimeout(stallTimer);
+      clearInterval(heartbeat);
+      socket.close();
+      input.close();
+    };
+    const resetStallTimer = () => {
+      clearTimeout(stallTimer);
+      if (queuedBytes > 0 && !failed) stallTimer = setTimeout(() => fail(new Error('Daemon stdout reader stalled: no write completed for 60 seconds')), 60_000);
+    };
+    const enqueue = (text: string) => {
+      if (failed) return;
+      const bytes = Buffer.byteLength(text) + 1;
+      const wasEmpty = queuedBytes === 0;
+      queuedBytes += bytes;
+      if (wasEmpty) resetStallTimer();
+      if (queuedBytes > 16 * 1024 * 1024 && !paused) paused = socket.socket.pause();
+      output = output.then(async () => {
+        try { if (!failed) await write(text); } finally { queuedBytes -= bytes; }
+        if (failed) return;
+        resetStallTimer();
+        if (paused && queuedBytes < 8 * 1024 * 1024) { socket.socket.resume(); paused = false; }
+      }).catch(fail);
+    };
     input.on('line', line => {
-      if (Buffer.byteLength(line) > 32 * 1024 * 1024) { clearInterval(heartbeat); socket.close(); reject(new Error('Daemon request is too large')); return; }
-      try { socket.send(line); } catch (error) { reject(error); }
+      if (failed) return;
+      if (Buffer.byteLength(line) > 32 * 1024 * 1024) { fail(new Error('Daemon request is too large')); return; }
+      try { socket.send(line); } catch (error) { fail(error); }
     });
     input.on('close', () => { clearInterval(heartbeat); socket.close(); output.then(() => resolve()); });
     socket.onClose = () => { clearInterval(heartbeat); input.close(); output.then(() => resolve()); };
+    enqueue(JSON.stringify(ready));
+    socket.listen(enqueue);
   });
 }

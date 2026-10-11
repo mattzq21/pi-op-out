@@ -48,6 +48,7 @@ function waitForShutdown(app: App): Promise<void> {
     let done = false;
     const finish = () => {
       if (done) return;
+      app.clients.stop();
       done = true;
       process.off('SIGINT', finish);
       process.off('SIGTERM', finish);
@@ -60,18 +61,23 @@ function waitForShutdown(app: App): Promise<void> {
 }
 
 async function ignore(operation: () => Promise<unknown> | unknown): Promise<void> {
-  try { await operation(); } catch { /* cleanup continues */ }
+  try { await operation(); } catch (error) { console.error('Daemon cleanup failed:', error); }
 }
 
 /** Releases every session, terminal and peer route held by one client. */
 export async function detachOwner(app: App, owner: string, discardBlank: boolean): Promise<void> {
-  await ignore(() => peers.detachOwner(app, owner));
+  const remote = ignore(() => peers.detachOwner(app, owner));
   await ignore(() => providerAuth.cancelOwner(app.pi, owner));
   await ignore(() => piRuntime.detachOwner(app.pi, owner, discardBlank));
   await ignore(() => terminals.detachOwner(app.terminals, owner));
+  await remote;
 }
 
 async function shutdownBackend(app: App): Promise<void> {
+  app.clients.stop();
+  mobile.stopAccepting(app);
+  await ignore(() => app.clients.drain(10_000));
+  mobile.closeConnections(app);
   await ignore(() => peers.shutdown(app));
   await ignore(() => app.broker.shutdown());
   await ignore(() => terminals.shutdown(app.terminals));

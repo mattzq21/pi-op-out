@@ -105,6 +105,8 @@ async function interruptionComplete(sessionId: string, hostId: string, retired: 
 }
 
 export async function interruptSession(sessionId: string, hostId: string, signal?: AbortSignal, deliveryId?: string) {
+  const timeout = AbortSignal.timeout(10_000);
+  signal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let failures = 0;
 
   while (true) {
@@ -304,6 +306,10 @@ function registerDelivery(pi: ExtensionAPI) {
     }, 0);
   });
   pi.on("session_compact_failed", (_event, ctx) => { flush(ctx); });
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "session_ready") return;
+    if (mailboxes.get(pi)?.length) flush(request.ctx);
+  });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "orchestration_message") return;
     request.ready = (async () => {

@@ -43,8 +43,9 @@ class Runtime {
   async drain(disabling: boolean): Promise<boolean> {
     const sdk = this.chatgpt;
     if (!sdk) return true;
+    let cancelled = false;
     const work = (async () => {
-      for (;;) {
+      while (!cancelled) {
         let idle: boolean;
         try {
           const result = await timeout(sdk.request({ method: 'plugin_idle' }), 5_000);
@@ -55,13 +56,17 @@ class Runtime {
           if (disabling) { console.error('Disabling unavailable ChatGPT worker: ' + errorText(error)); return false; }
           throw error;
         }
+        if (cancelled) return false;
         if (idle) return true;
         await sleep(200);
       }
+      return false;
     })();
-    const result = await timeout(work, 30_000);
-    if (!result.done) { work.catch(() => {}); throw new Error('ChatGPT is still responding. The previous plugins remain active; restart again when it finishes.'); }
-    return result.value;
+    try {
+      const result = await timeout(work, 30_000);
+      if (!result.done) throw new Error('ChatGPT is still responding. The previous plugins remain active; restart again when it finishes.');
+      return result.value;
+    } finally { cancelled = true; }
   }
 
   async shutdown(): Promise<void> { await this.chatgpt?.shutdown(); }

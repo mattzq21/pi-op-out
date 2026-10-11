@@ -1,7 +1,6 @@
 import { createReadStream, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import { createInterface } from "node:readline";
 import database from "./session-database.cjs";
 import { sessionHeaderMatches } from "./sdk-storage.mjs";
 
@@ -62,9 +61,12 @@ function savedSummary(row, stamp) {
   return row.fingerprint === stamp && row.body ? decode(row) : undefined;
 }
 
-function entry(line) {
-  try { return JSON.parse(line); }
-  catch { return undefined; }
+function entry(line, path, lineNumber) {
+  try {
+    const record = JSON.parse(line);
+    if (!record || typeof record.type !== "string") throw new Error("Invalid record");
+    return record;
+  } catch { throw new Error(`Damaged chat record at line ${lineNumber}: ${path}`); }
 }
 
 function messageText(message) {
@@ -120,16 +122,25 @@ function summaryValue(row, state) {
 
 async function readSummary(row, signal) {
   const state = { id: row.session_id, messageCount: 0, firstMessage: "", messages: [], activity: 0 };
-  const input = createReadStream(row.session_path, { encoding: "utf8", signal });
-  const lines = createInterface({ input, crlfDelay: Infinity });
+  const input = createReadStream(row.session_path, { signal });
+  let pending = [];
+  let lineNumber = 0;
 
   try {
-    for await (const line of lines) {
+    for await (const chunk of input) {
       signal?.throwIfAborted();
-
-      if (!collectEntry(state, entry(line))) return undefined;
+      let start = 0, end;
+      while ((end = chunk.indexOf(10, start)) >= 0) {
+        pending.push(chunk.subarray(start, end));
+        const line = Buffer.concat(pending).toString("utf8");
+        pending = []; start = end + 1;
+        if (!collectEntry(state, entry(line, row.session_path, ++lineNumber))) return undefined;
+      }
+      if (start < chunk.length) pending.push(chunk.subarray(start));
     }
-  } finally { lines.close(); input.destroy(); }
+    const interruptedBytes = pending.reduce((total, chunk) => total + chunk.length, 0);
+    if (interruptedBytes) console.warn(`${row.session_path}: last write was interrupted; ignored ${interruptedBytes} bytes`);
+  } finally { input.destroy(); }
 
   return summaryValue(row, state);
 }

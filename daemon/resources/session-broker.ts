@@ -9,6 +9,7 @@ import { registerBrokerTools } from "./session-broker/tools.ts";
 import { registerGoals } from "./session-broker/goals.ts";
 import { registerReview } from "./session-broker/review.ts";
 import { registerHtmlPreview } from "./session-broker/html-preview.ts";
+import { registerConversationClient } from "./session-broker/client.ts";
 import { registerOrchestration } from "./session-broker/orchestration.ts";
 import { existsSync } from "node:fs";
 import { initialize } from "./session-broker/session-child-index.cjs";
@@ -29,6 +30,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
 
     if (file) await initialize(file, ctx.sessionManager.getSessionId(), !existsSync(file));
   });
+  registerConversationClient(pi);
   registerPauseControl(pi);
   registerFastModeStatus(pi);
   registerForkAndForget(pi);

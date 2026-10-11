@@ -61,7 +61,7 @@ export const contextUsageSchema = z.object({ tokens: z.union([z.number(), z.null
 
 export const agentStateSchema = z.object({ viewers: z.number().optional(), pendingMessages: z.array(pendingMessageSchema).optional(), model: z.union([modelSchema, z.null()]), thinkingLevel: z.string(), isStreaming: z.boolean(), isCompacting: z.boolean().optional(), isPaused: z.boolean().optional(), isPausing: z.boolean().optional(), sessionFile: z.string().optional(), sessionId: z.string(), sessionName: z.string().optional(), messageCount: z.number(), pendingMessageCount: z.number(), activity: z.string().optional(), contextUsage: contextUsageSchema.optional() });
 
-export const sessionSnapshotSchema = z.object({ revision: z.string(), state: agentStateSchema, history: z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]), omittedEntries: z.number().optional() }), sequence: z.number(), epoch: z.string(), liveTools: z.array(rpcEventSchema), queue: rpcEventSchema });
+export const sessionSnapshotSchema = z.object({ revision: z.string(), state: agentStateSchema, history: z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]), omittedEntries: z.number().optional(), incomplete: z.boolean().optional(), damagedLines: z.array(z.number().int().positive()).optional() }), sequence: z.number(), epoch: z.string(), liveTools: z.array(rpcEventSchema), queue: rpcEventSchema });
 
 export const slashCommandSchema = z.object({ name: z.string(), description: z.string().optional(), source: z.union([z.literal("builtin"), z.literal("extension"), z.literal("prompt"), z.literal("skill")]), sourceInfo: z.object({ source: z.string().optional() }).optional() });
 

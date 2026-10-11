@@ -8,6 +8,37 @@ export class DaemonClients {
   private closingFlag = false;
   private automaticFlag = process.argv.includes('--exit-on-disconnect') || process.env.PIOP_RESTART_AUTOMATIC !== undefined;
   private stopped = new Notify();
+  private requests = 0;
+  private drained = new Set<() => void>();
+
+  beginRequest(): () => void {
+    this.ensureOpen();
+    this.requests += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.requests -= 1;
+      if (!this.requests) for (const resolve of this.drained) resolve();
+    };
+  }
+
+  ensureOpen(): void {
+    if (this.closingFlag) throw new Error('Piop daemon is shutting down');
+  }
+
+  async drain(ms: number): Promise<void> {
+    if (!this.requests) return;
+    let done!: () => void;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        done = resolve;
+        this.drained.add(done);
+        timer = setTimeout(() => reject(new Error('Daemon requests did not finish within ' + ms + ' ms')), ms);
+      });
+    } finally { clearTimeout(timer); this.drained.delete(done); }
+  }
 
   automatic(): boolean { return this.automaticFlag; }
 
@@ -52,7 +83,7 @@ export class DaemonClients {
     if (!release) return false;
     try {
       try { await daemonRestart.ensureLocalIdle(app); } catch { return false; }
-      if (this.unattended()) { this.closingFlag = true; return true; }
+      if (this.unattended()) { this.stop(); return true; }
       return false;
     } finally { release(); }
   }

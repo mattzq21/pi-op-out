@@ -5,7 +5,7 @@ import { createMemo, type Accessor } from "solid-js";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { AgentState, AppSettings, DefinedAgentsCapability, Model } from "./types";
 
-export type ProjectControls = { agent?: string; model: Model | null; thinking: string; fastMode?: boolean; contextWindow?: number };
+export type ProjectControls = { agent?: string; agentModel?: string; model: Model | null; thinking: string; fastMode?: boolean; contextWindow?: number };
 
 export async function openDraftSession(owner: NativeTransport, target: { cwd?: string; hostId?: string }, current: () => NativeTransport, select: () => void, onError: (cause: unknown) => void) {
   try {
@@ -68,7 +68,7 @@ export function inheritGroupControls(controls: WeakMap<NativeTransport, ProjectC
   if (!grouped) return;
   const agent = newChatAgent(agents, settings?.defaultAgent);
   const thinking = state.thinkingLevel;
-  controls.set(target, { agent, model: state.model, thinking, fastMode: statuses["pi-desktop-fast-mode"] === "Fast mode on", contextWindow: state.contextUsage?.contextWindow ?? state.model?.contextWindow });
+  controls.set(target, { agent, agentModel: agentModel(agents, agent), model: state.model, thinking, fastMode: statuses["pi-desktop-fast-mode"] === "Fast mode on", contextWindow: state.contextUsage?.contextWindow ?? state.model?.contextWindow });
 }
 
 export function reassignTerminals(transport: NativeTransport, terminals: readonly { id: string; started: boolean }[], sessionKey: string, onError: (cause: unknown) => void) {
@@ -79,34 +79,29 @@ export function reassignTerminals(transport: NativeTransport, terminals: readonl
 
 const modelKey = (model: { provider: string; id: string }) => `${model.provider}/${model.id}`;
 
-function useAvailableModel(transport: NativeTransport, model: Model | null, models: Model[]) {
-  if (model && models.some(available => modelKey(available) === modelKey(model))) transport.promptControls.useEffectiveModel(model);
-  else transport.promptControls.clearModel();
+function agentModel(agents: DefinedAgentsCapability | undefined, name: string | undefined) {
+  return agents?.config.agents.find(agent => agent.name === name)?.model.trim() || undefined;
 }
 
 async function setStartModel(transport: NativeTransport, wanted: string | undefined, models: Model[]) {
   const model = models.find((model) => modelKey(model) === wanted);
 
   if (model) await transport.command({ type: "set_model", provider: model.provider, modelId: model.id });
-  else {
-    const state = await transport.command({ type: "get_state" }, agentStateSchema);
-
-    useAvailableModel(transport, state.model, models);
-  }
+  else transport.promptControls.clearModel();
 }
 
 async function applyInherited(transport: NativeTransport, inherited: ProjectControls, defaultModel: string, models: Model[]) {
   if (inherited.agent) await transport.command({ type: "select_agent", agent: inherited.agent });
 
   if (inherited.model && models.some((model) => model.provider === required(inherited.model).provider && model.id === required(inherited.model).id)) transport.promptControls.model(inherited.model);
-  else await setStartModel(transport, inherited.model ? modelKey(inherited.model) : defaultModel, models);
+  else await setStartModel(transport, inherited.agentModel || defaultModel, models);
 
   transport.promptControls.thinking(inherited.thinking);
 
   if (inherited.fastMode !== undefined) transport.promptControls.fast(inherited.fastMode);
 }
 
-async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], current: () => boolean) {
+async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], agents: DefinedAgentsCapability | undefined, current: () => boolean) {
   if (models.some(model => modelKey(model) === value.defaultModel)) await setStartModel(transport, value.defaultModel, models);
 
   if (!current()) return;
@@ -116,17 +111,23 @@ async function applyDefaults(transport: NativeTransport, value: AppSettings, mod
   await transport.setFastMode(value.defaultFastMode);
 
   if (!current()) return;
-  await transport.command({ type: "select_agent", agent: value.defaultAgent ?? "general" });
+  const agent = value.defaultAgent ?? "general";
+  await transport.command({ type: "select_agent", agent });
   if (!current()) return;
-  const state = await transport.command({ type: "get_state" }, agentStateSchema);
+  const wanted = agentModel(agents, agent) || value.defaultModel;
 
-  if (!current()) return;
+  if (models.some(model => modelKey(model) === wanted)) {
+    const state = await transport.command({ type: "get_state" }, agentStateSchema);
 
-  useAvailableModel(transport, state.model, models);
+    if (!current()) return;
+
+    if (state.model && modelKey(state.model) === wanted) transport.promptControls.useEffectiveModel(state.model);
+    else transport.promptControls.clearModel();
+  } else transport.promptControls.clearModel();
   transport.defaultsApplied();
 }
 
-export async function configureConversationRuntime(value: AppSettings, transport: NativeTransport, activeTransport: () => NativeTransport, projectControls: WeakMap<NativeTransport, ProjectControls>) {
+export async function configureConversationRuntime(value: AppSettings, transport: NativeTransport, activeTransport: () => NativeTransport, projectControls: WeakMap<NativeTransport, ProjectControls>, agents: () => DefinedAgentsCapability | undefined) {
   const current = () => activeTransport() === transport;
 
   if (!current() || !transport.ownsConversation()) return;
@@ -153,5 +154,5 @@ export async function configureConversationRuntime(value: AppSettings, transport
     return;
   }
 
-  await applyDefaults(transport, value, availableModels, current);
+  await applyDefaults(transport, value, availableModels, agents(), current);
 }

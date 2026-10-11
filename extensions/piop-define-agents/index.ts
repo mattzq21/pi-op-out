@@ -550,7 +550,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
     if (promptError) return promptError;
 
-    try { await extensions.activate(await extensions.prepare(extensionPaths(agent.extensions)), ctx); }
+    try { await extensions.activate(await extensions.prepare(extensionPaths(agent.extensions), ctx), ctx); }
     catch (error) { pi.setActiveTools([]);
 
     return `Agent "${agent.name}" could not load its piop extensions:\n${error instanceof Error ? error.message : String(error)}`; }
@@ -711,7 +711,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model || (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined), agent.fastMode === true);
 
     if (error) throw new Error(error);
-    await extensions.prepare(extensionPaths(agent.extensions));
+    await extensions.prepare(extensionPaths(agent.extensions), ctx);
     const previousActive = active;
     const previousSnapshot = snapshot;
     const previousModel = modelOverride;

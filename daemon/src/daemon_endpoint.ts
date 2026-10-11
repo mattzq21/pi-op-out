@@ -11,6 +11,11 @@ import { generatedExtensionRoot } from './extensions';
 
 export const STARTUP_TIMEOUT = 90_000;
 
+/** Exit code of a daemon that stops because another daemon already runs for the same directory. */
+export const ALREADY_RUNNING_EXIT_CODE = 3;
+
+export class DaemonAlreadyRunningError extends Error {}
+
 /** The address and token clients use to reach the daemon. */
 export interface Endpoint { url: string; token: string; protocol: number }
 
@@ -74,7 +79,7 @@ export function claim(): FileLock {
   ensurePrivateDir(root);
   const file = join(root, 'daemon.lock');
   const lock = tryLockFileSync(file, 0o600);
-  if (!lock) throw new Error(DEVELOPMENT ? 'A Piop debug daemon is already running for this worktree' : 'A Piop daemon is already running for this configuration directory');
+  if (!lock) throw new DaemonAlreadyRunningError(DEVELOPMENT ? 'A Piop debug daemon is already running for this worktree' : 'A Piop daemon is already running for this configuration directory');
   setPrivateFilePermissions(file);
   return lock;
 }

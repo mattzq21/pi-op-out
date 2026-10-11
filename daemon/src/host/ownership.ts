@@ -257,7 +257,15 @@ export class ConversationOwnership {
   snapshot(id: string, _path?: string | null): any {
     const saved = this.lookupSaved(id, false)?.[0] ?? null;
     const entries: any[] = [];
-    for (const line of saved ? saved.lines.slice(1) : []) { try { entries.push(JSON.parse(line)); } catch {} }
+    const damagedLines: number[] = [];
+    for (let index = 1; saved && index < saved.lines.length; index++) {
+      try {
+        const entry = JSON.parse(saved.lines[index]);
+        if (!entry || typeof entry !== 'object' || typeof entry.type !== 'string') throw new Error('Invalid record');
+        entries.push(entry);
+      } catch { damagedLines.push(index + 1); }
+    }
+    if (damagedLines.length) console.error(`Incomplete chat history: ${saved!.path}; damaged record lines: ${damagedLines.join(', ')}`);
     const revision = saved ? saved.revision : 'missing:' + id;
     const leaf = [...entries].reverse().find(entry => entry?.type !== 'session');
     const leafId = typeof leaf?.id === 'string' ? leaf.id : null;
@@ -265,7 +273,7 @@ export class ConversationOwnership {
     const snapshot: any = {
       revision,
       state: { sessionId: id, model: null, thinkingLevel: 'off', isStreaming: false, pendingMessageCount: 0, isPaused: control.isPaused, isPausing: false, needsInput: control.needsInput, messageCount: entries.filter(entry => entry?.type === 'message').length },
-      history: { leafId, entries }, sequence: 0, epoch: 'readonly:' + id,
+      history: { leafId, entries, ...(damagedLines.length ? { incomplete: true, damagedLines } : {}) }, sequence: 0, epoch: 'readonly:' + id,
       liveTools: [], queue: { type: 'queue_update', steering: [], followUp: [], pendingMessages: [] },
     };
     if (saved) snapshot.state.sessionFile = saved.path;
@@ -403,7 +411,9 @@ function readSavedLines(id: string, path: string): string[] | null {
     if (error?.code === 'ENOENT') return null;
     throw error;
   }
-  const lines = content.trimEnd().split('\n');
+  const lines = content.split('\n');
+  const tail = lines.pop()!;
+  if (tail) console.warn(`${path}: last write was interrupted; ignored ${Buffer.byteLength(tail)} bytes`);
   let header: any = null;
   try { header = JSON.parse(lines[0]); } catch {}
   if (header?.type !== 'session' || header?.id !== id) return null;

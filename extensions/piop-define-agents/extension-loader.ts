@@ -41,6 +41,8 @@ type Group = {
   paths: string[];
   registrations: Map<Registration["method"], Map<string, Registration>>;
   providers: Map<string, ProviderOverride>;
+  mcpServers: Map<string, Parameters<ExtensionAPI["registerMcpServer"]>[1] | undefined>;
+  virtualModels: Map<string, [string, string]>;
   listeners: Array<{ name: string; handler: BusHandler; removed?: boolean; unsubscribe?: () => void }>;
   stops: Array<() => void>;
   ready: boolean;
@@ -100,6 +102,7 @@ async function importExtension(entry: string, importer: ExtensionImporter): Prom
 
 export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importer: ExtensionImporter = path => import(path)) {
   let current: Group | undefined;
+  const handlerExtensions = new WeakMap<object, string>();
   let registry: ExtensionContext["modelRegistry"] | undefined;
   const registeredProvider = (name: string): ProviderConfig | Provider | undefined => registry?.getRegisteredNativeProvider?.(name) ?? registry?.getRegisteredProviderConfig?.(name);
 
@@ -153,32 +156,36 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
   };
 
   function channel<A extends unknown[], R>(subscribe: (handler: (...args: A) => R) => () => void, fallback: () => R) {
-    const groups = new WeakMap<Group, Array<((...args: A) => R) | undefined>>();
-    let dispatched = 0;
+    const groups = new WeakMap<Group, Set<(...args: A) => R>>();
+    const subscriptions = new Map<(...args: A) => R, () => void>();
     const handlers = (group?: Group) => group ? groups.get(group) ?? [] : [];
 
-    const publish = (group: Group) => {
-      for (; dispatched < handlers(group).length; dispatched++) {
-        const index = dispatched;
-        subscribe((...args) => {
-          const handler = handlers(current)[index];
+    const unpublish = () => {
+      for (const unsubscribe of subscriptions.values()) unsubscribe();
+      subscriptions.clear();
+    };
 
-          return handler ? handler(...args) : fallback();
-        });
+    const publish = (group: Group) => {
+      for (const handler of handlers(group)) {
+        if (subscriptions.has(handler)) continue;
+        subscriptions.set(handler, subscribe((...args) => current === group ? handler(...args) : fallback()));
       }
     };
 
     const add = (group: Group, handler: (...args: A) => R) => {
-      const list = groups.get(group) ?? [];
-      const index = list.push(handler) - 1;
+      const list = groups.get(group) ?? new Set<(...args: A) => R>();
+      const extension = handlerExtensions.get(handler);
+      handler = new Proxy(handler, {});
+      if (extension) handlerExtensions.set(handler, extension);
+      list.add(handler);
       groups.set(group, list);
 
       if (group.ready && current === group) publishHandlers(group);
 
-      return () => { list[index] = undefined; };
+      return () => { list.delete(handler); subscriptions.get(handler)?.(); subscriptions.delete(handler); };
     };
 
-    return { add, publish, handlers };
+    return { add, publish, handlers, unpublish };
   }
 
   const extensionChannel = <E, R = undefined>(subscribe: (handler: SDK.ExtensionHandler<E, R>) => () => void) =>
@@ -237,15 +244,31 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
   const dispatchedCommands = new Set<string>();
   const managedTools = new Set<string>();
   const tools = (group = current): string[] => [...(group?.registrations.get("registerTool")?.keys() ?? [])];
-  const stop = (group?: Group) => {
+  const restoreMcpServer = (group: Group, name: string) => {
+    const before = group.mcpServers.get(name);
+    if (before) pi.registerMcpServer(name, before);
+    else pi.unregisterMcpServer(name);
+    group.mcpServers.delete(name);
+  };
+  const stop = (group: Group | undefined, ctx: ExtensionContext) => {
     if (group) group.ready = false;
+    const cleanup = (run: () => void) => {
+      try { run(); }
+      catch (error) { ctx.ui.notify(`piop extension cleanup failed: ${String(error)}`, "error"); }
+    };
+
+    if (group === current) for (const channel of Object.values(channels)) cleanup(channel.unpublish);
+
+    for (const name of group?.mcpServers.keys() ?? []) cleanup(() => restoreMcpServer(group!, name));
+    for (const [provider, id] of group?.virtualModels.values() ?? []) cleanup(() => pi.unregisterVirtualModel(provider, id));
+    group?.virtualModels.clear();
 
     for (const [name, override] of group?.providers ?? []) {
-      try { restoreProvider(name, override); } catch {}
+      cleanup(() => restoreProvider(name, override));
     }
     group?.providers.clear();
 
-    for (const unsubscribe of group?.stops.splice(0) ?? []) unsubscribe();
+    for (const unsubscribe of group?.stops.splice(0) ?? []) cleanup(unsubscribe);
   };
 
   const listen = (group: Group) => {
@@ -255,14 +278,14 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     }
   };
 
-  async function prepare(paths: string[]): Promise<Group> {
+  async function prepare(paths: string[], ctx: ExtensionContext): Promise<Group> {
     const key = JSON.stringify(paths);
 
     if (current?.key === key) return current;
     const cached = prepared.get(key);
 
     if (cached) return cached;
-    const group: Group = { key, paths: [...paths], registrations: new Map(), providers: new Map(), listeners: [], stops: [], ready: false };
+    const group: Group = { key, paths: [...paths], registrations: new Map(), providers: new Map(), mcpServers: new Map(), virtualModels: new Map(), listeners: [], stops: [], ready: false };
     const loaded = new Set<string>();
     const visiting: string[] = [];
 
@@ -402,13 +425,15 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
       },
       registerMcpServer: (...args) => {
         ensureActive("registerMcpServer");
-
-        return pi.registerMcpServer(...args);
+        const before = pi.getMcpServers().find(server => server.name === args[0])?.config;
+        pi.registerMcpServer(...args);
+        if (!group.mcpServers.has(args[0])) group.mcpServers.set(args[0], before);
       },
       unregisterMcpServer: (...args) => {
         ensureActive("unregisterMcpServer");
 
-        return pi.unregisterMcpServer(...args);
+        if (group.mcpServers.has(args[0])) restoreMcpServer(group, args[0]);
+        else throw new Error(`piop extension does not own MCP server: ${args[0]}`);
       },
       getMcpServers: (...args) => {
         ensureActive("getMcpServers");
@@ -417,21 +442,33 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
       },
       registerVirtualModel: (...args) => {
         ensureActive("registerVirtualModel");
-
-        return pi.registerVirtualModel(...args);
+        const { provider, id } = args[0];
+        const key = JSON.stringify([provider, id]);
+        if (!group.virtualModels.has(key) && registry?.find(provider, id)) throw new Error(`piop extension virtual model conflicts with an existing model: ${provider}/${id}`);
+        pi.registerVirtualModel(...args);
+        group.virtualModels.set(key, [provider, id]);
       },
       unregisterVirtualModel: (...args) => {
         ensureActive("unregisterVirtualModel");
 
-        return pi.unregisterVirtualModel(...args);
+        const key = JSON.stringify(args);
+        if (!group.virtualModels.has(key)) throw new Error(`piop extension does not own virtual model: ${args.join("/")}`);
+        pi.unregisterVirtualModel(...args);
+        group.virtualModels.delete(key);
       },
     };
 
     const isForwarded = (property: PropertyKey): property is keyof typeof forwardingApi => Object.hasOwn(forwardingApi, property);
 
-    const api = new Proxy(pi, {
+    const api = (entry: string) => new Proxy(pi, {
       get(_target, property) {
-        if (property === "on") return <K extends keyof EventHandlers>(event: K, handler: EventHandlers[K]) => eventRegistrations[event].add(group, handler);
+        if (property === "on") return <K extends keyof EventHandlers>(event: K, handler: EventHandlers[K]) => {
+          if (event !== "session_start" && event !== "session_shutdown") return eventRegistrations[event].add(group, handler);
+          const owned = new Proxy(handler, {});
+          handlerExtensions.set(owned, entry);
+
+          return eventRegistrations[event].add(group, owned);
+        };
 
         if (property === "events") return {
           on(name: string, handler: BusHandler) {
@@ -475,15 +512,22 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
         const module = await importExtension(entry, importer);
 
         for (const dependency of extensionPaths(module.extensions)) await load(dependency, dirname(entry));
-        await module.default(api);
+        await module.default(api(entry));
         visiting.pop(); loaded.add(entry);
       } catch (error) {
         throw new Error(`Could not load piop extension ${absolute}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
       }
     }
 
-    for (const path of paths) await load(path, baseDirectory);
-    validateConflicts(group);
+    try {
+      for (const path of paths) await load(path, baseDirectory);
+      validateConflicts(group);
+    } catch (error) {
+      group.ready = true;
+      await shutdown(group, ctx);
+      stop(group, ctx);
+      throw error;
+    }
     prepared.set(key, group);
 
     return group;
@@ -545,8 +589,48 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     else pi.registerEntryRenderer(registration.name, registration.renderer);
   }
 
+  async function runHandler(extension: string, phase: "startup" | "shutdown", ctx: ExtensionContext, run: (ctx: ExtensionContext) => unknown) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = phase === "startup" ? 60000 : 10000;
+    const controller = new AbortController();
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
+
+    const pending = Promise.resolve().then(() => run(new Proxy(ctx, {
+      get: (target, property, receiver) => property === "signal" ? signal : Reflect.get(target, property, receiver),
+    })));
+
+    try {
+      await Promise.race([
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            const error = new Error(`handler timed out after ${timeout} ms`);
+            reject(error);
+            controller.abort(error);
+          }, timeout);
+        }),
+        pending,
+      ]);
+    } catch (error) {
+      if (phase === "startup" && controller.signal.aborted) {
+        clearTimeout(timer);
+        const settled = await Promise.race([
+          pending.then(() => true, () => true),
+          new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 10000); }),
+        ]);
+
+        if (!settled) ctx.ui.notify(`piop extension ${extension} startup handler has not settled 10000 ms after abort; proceeding with cleanup`, "error");
+      }
+
+      throw new Error(`piop extension ${extension} ${phase} failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    } finally { clearTimeout(timer); }
+  }
+
   async function start(group: Group, ctx: ExtensionContext) {
-    for (const handler of channels.session_start.handlers(group)) await handler?.({ type: "session_start", reason: "reload" }, ctx);
+    for (const handler of channels.session_start.handlers(group)) {
+      if (!handler) continue;
+      const extension = handlerExtensions.get(handler)!;
+      await runHandler(extension, "startup", ctx, context => handler({ type: "session_start", reason: "reload" }, context));
+    }
   }
 
   function hideInactiveTools(group: Group | undefined, activeGroup: Group | undefined) {
@@ -564,12 +648,19 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     current = group;
     registry = ctx.modelRegistry;
 
+    const errors: unknown[] = [];
+
     try {
       for (const handler of channels.session_shutdown.handlers(group)) {
-        try { await handler?.(event, ctx); }
-        catch (error) { ctx.ui.notify(`piop extension cleanup failed: ${String(error)}`, "error"); }
+        if (!handler) continue;
+        const extension = handlerExtensions.get(handler)!;
+
+        try { await runHandler(extension, "shutdown", ctx, context => handler(event, context)); }
+        catch (error) { errors.push(error); }
       }
     } finally { current = active; }
+
+    for (const error of errors) ctx.ui.notify(`piop extension cleanup failed: ${String(error)}`, "error");
   }
 
   async function activate(group: Group, ctx: ExtensionContext) {
@@ -578,14 +669,22 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
 
     if (group === current && group.session === session) return;
 
-    if (group === current) { await start(group, ctx); group.session = session;
+    if (group === current) {
+      try { await start(group, ctx); group.session = session; }
+      catch (error) {
+        await shutdown(group, ctx);
+        stop(group, ctx); current = undefined;
+        hideInactiveTools(group, undefined);
+        throw error;
+      }
 
-    return; }
+      return;
+    }
 
     prepared.delete(group.key);
     const previous = current;
     await shutdown(previous, ctx);
-    stop(previous);
+    stop(previous, ctx);
     current = group; group.ready = true;
 
     try {
@@ -598,11 +697,11 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
       hideInactiveTools(previous, group);
     } catch (error) {
       await shutdown(group, ctx);
-      stop(group); current = undefined;
+      stop(group, ctx); current = undefined;
       hideInactiveTools(group, previous);
 
       if (previous) {
-        try { await activate(await prepare(previous.paths), ctx); }
+        try { await activate(await prepare(previous.paths, ctx), ctx); }
         catch (error) { hideInactiveTools(group, undefined); hideInactiveTools(previous, undefined); ctx.ui.notify(`piop extension restart failed: ${String(error)}`, "error"); }
       }
 
@@ -621,7 +720,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
 
     try { await shutdown(group, ctx, event); }
     finally {
-      stop(group);
+      stop(group, ctx);
 
       if (current === group) current = undefined;
 

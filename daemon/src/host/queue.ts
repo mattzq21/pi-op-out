@@ -162,6 +162,7 @@ class QueueState {
         if (saved.id === id) { saved.questionResponse = clone(item.questionResponse); saved.recovered = true; }
       }
     } else {
+      if (durableMessages(this).length >= 100) throw new Error('Queue is full');
       item = { ...item, id: nextId() };
       this.pending.push(clone(item));
       this.retained.push(clone(item));
@@ -477,20 +478,25 @@ export class SessionQueue {
 
   interruptDelegation(): Promise<any> { return this.command({ type: 'abort' }); }
 
-  command(command: any): Promise<any> {
+  command(command: any, assertOwner: () => void = () => {}): Promise<any> {
     if (this.closed) return Promise.reject(new Error('Pi is not running'));
-    return this.track(this.operations, this.runCommand(command));
+    return this.track(this.operations, this.runCommand(command, assertOwner));
   }
 
-  private async runCommand(command: any): Promise<any> {
+  private async runCommand(command: any, assertOwner: () => void): Promise<any> {
+    assertOwner();
     const name = kind(command);
-    if (name === 'abort') return this.stop(await this.abort(command));
+    if (name === 'abort') {
+      const result = await this.abort(command, assertOwner);
+      assertOwner();
+      return this.stop(result);
+    }
     if (name === 'compact' || name.startsWith('get_')) return this.execute(command);
     const release = await this.gate.lock();
-    try { return await this.serialCommand(command, name); } finally { release(); }
+    try { assertOwner(); return await this.serialCommand(command, name); } finally { release(); }
   }
 
-  private async abort(command: any): Promise<{ ok: true; value: any } | { ok: false; error: unknown }> {
+  private async abort(command: any, assertOwner: () => void): Promise<{ ok: true; value: any } | { ok: false; error: unknown }> {
     const scope = new CancelScope();
     const operation = (async () => {
       const [cancelled, gate] = await Promise.allSettled([this.execute({ type: 'cancel_preparation' }), this.gate.lock()]);
@@ -500,8 +506,10 @@ export class SessionQueue {
         if (cancelled.status === 'rejected') throw cancelled.reason;
         if (gate.status === 'rejected') throw gate.reason;
         if (scope.cancelled) throw new Error(TIMEOUT);
+        assertOwner();
         await this.hold(scope);
         if (scope.cancelled) throw new Error(TIMEOUT);
+        assertOwner();
         return await this.execute(command, scope);
       } finally {
         if (release) { scope.remove(release); release(); }
@@ -573,12 +581,13 @@ export class SessionQueue {
     return null;
   }
 
-  changePending(id: string, action: any): Promise<any> {
+  changePending(id: string, action: any, assertOwner: () => void = () => {}): Promise<any> {
     if (this.closed) return Promise.reject(new Error('Pi is not running'));
-    return this.track(this.operations, this.runChangePending(id, action));
+    return this.track(this.operations, this.runChangePending(id, action, assertOwner));
   }
 
-  private async runChangePending(id: string, action: any): Promise<any> {
+  private async runChangePending(id: string, action: any, assertOwner: () => void): Promise<any> {
+    assertOwner();
     const cancelling = action === 'remove' && this.s.sending.has(id);
     let release: () => void;
     if (cancelling) {
@@ -588,11 +597,13 @@ export class SessionQueue {
       release = gate.value;
     } else release = await this.gate.lock();
     try {
+      assertOwner();
       const change = this.pendingChange(id, action);
       if (!change) return null;
       const { target, behavior, neighbor } = change;
       if (action === 'steer' && reviewCommand(text(target, 'message'))) throw new Error('Review commands can only be queued as a follow-up');
       await this.acknowledgeQuestionRemoval(target, behavior);
+      assertOwner();
       if (cancelling) return await this.changeLive(id, 'remove', undefined, action);
       if (this.changeHeld(id, behavior, neighbor, action)) { await this.publish(); return null; }
       if (flag(target, 'retry')) return await this.retry(id, target, behavior);
@@ -729,6 +740,7 @@ export class SessionQueue {
   }
 
   async executeHeldPrompt(original: any): Promise<any> {
+    if (durableMessages(this.s).length >= 100) throw new Error('Queue is full');
     const command = clone(original);
     const id = this.nextItemId();
     const item: any = { id, message: command.message ?? null, behavior: 'followUp', deliveryStarted: true };
@@ -739,20 +751,18 @@ export class SessionQueue {
     this.s.pending.push(item);
     this.s.sending.add(id);
     let result: any;
-    let failure: unknown;
-    try { await this.retainItem(item); result = await this.execute(command); } catch (error) { failure = error ?? new Error('Command failed'); }
-    this.s.sending.delete(id);
-    if (failure !== undefined) {
-      const pending = this.s.pending.find(entry => entry.id === id);
-      if (pending) pending.retry = true;
-    }
+    try { await this.retainItem(item); result = await this.execute(command); } catch (error) {
+      this.s.remove(id);
+      this.s.sending.delete(id);
+      await this.reportStorageError(() => this.publish());
+      throw error;
+    } finally { this.s.sending.delete(id); }
     await this.publish();
-    if (failure !== undefined) throw failure;
     return result;
   }
 
   private async saveRetained(retained: any[]): Promise<void> {
-    if (retained.length > 100) throw new Error('A session can have at most 100 queued items');
+    if (retained.length > 100) throw new Error('Queue is full');
     if (this.storage) await this.track(this.saves, this.storage.save(retained));
   }
 
@@ -850,8 +860,18 @@ export class SessionQueue {
   }
 
   async recoverQuestionAnswers(answers: any): Promise<void> {
-    for (const item of Array.isArray(answers) ? answers : []) if (validAnswer(item)) this.s.recoverQuestion(item, () => this.nextItemId());
-    await this.reportStorageError(() => this.publish());
+    const added: string[] = [];
+    try {
+      for (const item of Array.isArray(answers) ? answers : []) if (validAnswer(item)) this.s.recoverQuestion(item, () => {
+        const id = this.nextItemId();
+        added.push(id);
+        return id;
+      });
+      await this.publish();
+    } catch (error) {
+      for (const id of added) this.s.remove(id);
+      throw error;
+    }
   }
 
   private async acknowledgeQuestionRemoval(item: any, action: string): Promise<void> {
@@ -866,7 +886,7 @@ export class SessionQueue {
   private async enqueue(command: any, name: string): Promise<any> {
     const request = command.questionResponse?.requestId;
     if (typeof request === 'string' && this.questionResponse(request) !== undefined) return null;
-    if (this.s.durableMessages().length >= 100) throw new Error('A session can have at most 100 queued items');
+    if (this.s.durableMessages().length >= 100) throw new Error('Queue is full');
     const prepared = await this.prepareSubmission(command);
     if (prepared === undefined) return false;
     const question = prepared.questionResponse?.requestId;
@@ -912,6 +932,7 @@ export class SessionQueue {
   }
 
   private async saveSubmission(id: string, pending: any): Promise<boolean> {
+    if (durableMessages(this.s).length >= 100) throw new Error('Queue is full');
     this.s.pending.push(clone(pending));
     const held = this.s.held !== null;
     if (this.s.held) {

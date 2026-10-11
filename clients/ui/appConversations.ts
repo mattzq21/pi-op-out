@@ -214,18 +214,30 @@ export function createAppConversations(preloadChat: () => void) {
     sessionIndexDirty.current = false;
 
     if (!sessionIndexRequest.current) sessionIndexRequest.current = transport().listSessions().then((nextSessions) => {
+      for (const session of nextSessions) {
+        if (archives.isPending(session)) continue;
+        const hostId = session.hostId ?? "local";
+        archives.restored(hostId, session.id);
+
+        if (session.path) runtimePool().restoreSummary(hostId, session.path);
+      }
+
       setSessions(nextSessions.filter((session) => !runtimePool().isRemoved(session) && !archives.isArchived(session)));
       chatSession().setState((current) => {
         const activeSession = nextSessions.find((session) => session.id === current.sessionId && (session.hostId ?? "local") === activeHostIdRef.current);
 
         return activeSession && activeSession.name !== current.sessionName ? { ...current, sessionName: activeSession.name } : current;
       });
-    }).catch(() => undefined).finally(() => { sessionIndexRequest.current = undefined;
+    }).catch((reason) => { addNotice({ title: "Could not load chats", message: reason instanceof Error ? reason.message : String(reason) }); }).finally(() => { sessionIndexRequest.current = undefined;
 
       if (sessionIndexDirty.current) void syncSessionIndex(); });
 
     return sessionIndexRequest.current;
   };
+
+  createDependencyEffect(() => {
+    if (connected()) void syncSessionIndex();
+  }, () => [connected()]);
 
   createDependencyEffect(() => {
     const unsubscribes = [
@@ -288,7 +300,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const projectControls = new WeakMap<NativeTransport, ProjectControls>();
   const composerControls = createComposerControls(transport, connected, projectControls, () => definedAgents()?.config.fastModeModels);
-  const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current, projectControls);
+  const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current, projectControls, definedAgents);
   const reviewImages = new WeakMap<NativeTransport, ImageAttachment[]>();
   const resolveHomeDirectory = (hostId: string) => transport().homeDirectory(hostId);
 

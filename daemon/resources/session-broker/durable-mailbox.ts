@@ -304,11 +304,13 @@ export class DurableMailbox {
     if (this.queued.has(key)) return false;
 
     try {
-      send(record.message);
       this.queued.add(key);
+      send(record.message);
 
       return true;
     } catch (error) {
+      this.queued.delete(key);
+      this.consumed.delete(key);
       ctx.ui.notify(`Agent mail was saved and will be retried: ${String(error)}`, "error");
 
       return false;
@@ -355,6 +357,8 @@ export class DurableMailbox {
         if (!fingerprint) continue;
         assertSameDelivery(fingerprint, record.message);
         await removePending(ctx, root, record);
+        this.queued.delete(this.key(ctx, record.deliveryId));
+        this.consumed.delete(this.key(ctx, record.deliveryId));
       }
 
     });
@@ -398,7 +402,11 @@ export class DurableMailbox {
     }));
   }
 
-  consume(ctx: ExtensionContext, notificationId: string) { this.consumed.add(this.key(ctx, notificationId)); }
+  consume(ctx: ExtensionContext, notificationId: string) {
+    const key = this.key(ctx, notificationId);
+
+    if (this.queued.has(key)) this.consumed.add(key);
+  }
 
   reset() { this.queued.clear(); this.consumed.clear(); }
 }

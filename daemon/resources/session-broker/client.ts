@@ -1,5 +1,18 @@
 import { Type } from "typebox";
 import { Parse } from "typebox/value";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export function registerConversationClient(pi: ExtensionAPI) {
+  pi.events.on("piop:rpc", request => {
+    if (request.command !== "conversation_client") return;
+    request.ready = Promise.resolve().then(() => {
+      const client = request.payload?.clientId;
+      if (typeof client !== "string" || !client) throw new Error("Conversation client is missing");
+      process.env.PIOP_CONVERSATION_CLIENT = client;
+      return null;
+    });
+  });
+}
 
 interface BrokerRequest {
   action?: string; sourceSessionId?: string; sourceHostId?: string; wake?: boolean;

@@ -15,6 +15,8 @@ let modelFileStorage;
 
 const failedSessionStorage = new WeakSet();
 
+const sessionStorageFiles = new WeakMap();
+
 const sessionReferenceBaselines = new WeakMap();
 
 const sessionReferenceRecorders = new WeakMap();
@@ -106,9 +108,22 @@ function bindNewSession(manager) {
 
 function installSessionCreation(SessionManager) {
   const prototype = SessionManager.prototype;
-  requireStorageMethods(prototype, ["newSession", "_loadEntries"]);
+  requireStorageMethods(prototype, ["newSession", "_loadEntries", "_setSessionFile"]);
+  requireStorageMethods(SessionManager, ["open"]);
   const create = prototype.newSession;
   const load = prototype._loadEntries;
+  const setFile = prototype._setSessionFile;
+  const open = SessionManager.open;
+
+  SessionManager.open = function (path, ...args) {
+    if (storageFs.existsSync(path)) storedSessionEntries(path, {});
+    return open.call(this, path, ...args);
+  };
+
+  prototype._setSessionFile = function (path, entries) {
+    if (this.persist && storageFs.existsSync(path)) entries = storedSessionEntries(path, this);
+    return setFile.call(this, path, entries);
+  };
 
   prototype.newSession = function (options) {
     if (!this.persist) return create.call(this, options);
@@ -122,6 +137,7 @@ function installSessionCreation(SessionManager) {
   };
 
   prototype._loadEntries = function (entries, options) {
+    if (this.persist && this.sessionFile) entries = storedSessionEntries(this.sessionFile, this);
     const header = entries.find(entry => entry.type === "session");
 
     if (this.persist && header) {
@@ -250,10 +266,43 @@ export function validateSessionReferencePublication(entries, previous = inherite
   return incoming;
 }
 
-function storedSessionEntries(path) {
-  const body = storageReadOptional(path);
+function storedSessionEntries(path, manager) {
+  let descriptor;
+  try { descriptor = storageFs.openSync(path, (manager ? storageFs.constants.O_RDWR : storageFs.constants.O_RDONLY) | storageFs.constants.O_NOFOLLOW); }
+  catch (error) { if (error.code === "ENOENT" && !manager) return []; throw error; }
+  let body;
 
-  return body ? body.split("\n").filter(line => line.trim()).map(line => JSON.parse(line)) : [];
+  try {
+    const original = storageFs.fstatSync(descriptor);
+    if (!original.isFile()) throw new Error(`Session storage is not a regular file: ${path}`);
+    body = storageFs.readFileSync(descriptor);
+    const end = body.lastIndexOf(10) + 1;
+    if (manager) {
+      const current = storageFs.lstatSync(path);
+      if (current.dev !== original.dev || current.ino !== original.ino || current.size !== original.size || body.length !== original.size) throw new Error(`The saved session changed unexpectedly: ${path}`);
+    }
+
+    if (end !== body.length) {
+      const dropped = body.length - end;
+      if (manager) {
+        storageFs.ftruncateSync(descriptor, end);
+        storageFs.fsyncSync(descriptor);
+      }
+      console.warn(`${path}: last write was interrupted; ${manager ? "dropped" : "ignored"} ${dropped} bytes`);
+      body = body.subarray(0, end);
+    }
+    if (manager) sessionStorageFiles.set(manager, { path, ...storageFs.fstatSync(descriptor) });
+  } finally { storageFs.closeSync(descriptor); }
+  const lines = body.toString("utf8").split("\n");
+  lines.pop();
+
+  return lines.map((line, index) => {
+    try {
+      const entry = JSON.parse(line);
+      if (!entry || typeof entry.type !== "string") throw new Error("Invalid record");
+      return entry;
+    } catch { throw new Error(`Damaged chat record at line ${index + 1}: ${path}`); }
+  });
 }
 
 function sessionParentPath(entry) {
@@ -496,6 +545,7 @@ function sessionStoragePublish(manager, entries, exclusive) {
       throw error;
     }
 
+    sessionStorageFiles.set(manager, { path, ...storageFs.lstatSync(path) });
     finishManagedTranscript(manager, entries);
     sessionReferenceBaselines.set(manager, { path, entries: manager.fileEntries, references });
   } finally { release(); }
@@ -520,12 +570,25 @@ function sessionStorageAppend(manager, entry) {
 function appendSessionStorage(manager, entry) {
   const path = manager.sessionFile;
   const original = storageFs.lstatSync(path);
+  const expected = sessionStorageFiles.get(manager);
 
-  if (!original.isFile() || original.size === 0) throw new Error("The saved session changed unexpectedly. Reopen the conversation before continuing.");
-  const entries = [...manager.fileEntries, entry];
+  if (!original.isFile() || original.size === 0 || expected?.path !== path || original.dev !== expected.dev || original.ino !== expected.ino || original.size !== expected.size) throw new Error("The saved session changed unexpectedly. Reopen the conversation before continuing.");
+  const line = Buffer.from(JSON.stringify(entry) + "\n", "utf8");
+  const descriptor = storageFs.openSync(path, storageFs.constants.O_WRONLY | storageFs.constants.O_APPEND | storageFs.constants.O_NOFOLLOW);
 
-  try { storagePublish(path, sessionStorageTemporary(path), entries.map(value => JSON.stringify(value) + "\n").join(""), false); }
+  try {
+    const opened = storageFs.fstatSync(descriptor);
+    const current = storageFs.lstatSync(path);
+    if (opened.dev !== original.dev || opened.ino !== original.ino || opened.size !== original.size || current.dev !== original.dev || current.ino !== original.ino) throw new Error("The saved session changed unexpectedly. Reopen the conversation before continuing.");
+    if (storageFs.writeSync(descriptor, line) !== line.length) throw new Error(`Session append was incomplete: ${path}`);
+    storageFs.fsyncSync(descriptor);
+    const saved = storageFs.fstatSync(descriptor);
+    const published = storageFs.lstatSync(path);
+    if (saved.size !== original.size + line.length || published.dev !== saved.dev || published.ino !== saved.ino || published.size !== saved.size) throw new Error(`The saved session changed during append: ${path}`);
+    sessionStorageFiles.set(manager, { path, ...saved });
+  }
   catch (error) { failedSessionStorage.add(manager); throw error; }
+  finally { storageFs.closeSync(descriptor); }
 }
 
 function persistSessionEntry(manager, entry) {
