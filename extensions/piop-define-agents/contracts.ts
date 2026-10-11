@@ -13,7 +13,7 @@ export interface AgentRefreshRequest { ctx: ExtensionContext; ready?: Promise<vo
 
 export interface AgentReloadRequest { ctx: ExtensionCommandContext; ready?: Promise<void> }
 
-interface FastModeChange { enabled?: boolean }
+interface FastModeChange { enabled?: boolean; ready?: Promise<void> }
 
 interface FastModelsChange { ctx: ExtensionContext }
 

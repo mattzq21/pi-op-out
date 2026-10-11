@@ -1,4 +1,4 @@
-import { createComputed, createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
+import { createComputed, createEffect, createMemo, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
 import { appendTerminalOutputs, initialTerminals, MAX_TERMINALS, terminalConversationKey, type QueuedTerminalOutput, type SessionTerminals, type TerminalTarget } from "./appSupport";
 import { reassignTerminals } from "./appRuntime";
 import type { NativeTransport } from "./lib/nativeTransport";
@@ -6,7 +6,7 @@ import { createDependencyEffect, createMemoFields, createRef } from "./lib/solid
 import { isMobile, listen } from "./lib/platform";
 import { z } from "zod";
 import { appendTerminalOutput, TERMINAL_OUTPUT_LIMIT } from "./lib/terminalOutput";
-import { nativeTerminals, type SharedTerminal, type TerminalEvent } from "./lib/nativeTerminals";
+import { nativeTerminals, TRANSCRIPT_BYTE_LIMIT, type SharedTerminal, type TerminalEvent } from "./lib/nativeTerminals";
 
 function appendSharedTerminalEvent(session: SessionTerminals, tab: SessionTerminals["tabs"][number], event: TerminalEvent): SessionTerminals | "resync" {
   if (event.type !== "terminal_output" || event.outputEnd === undefined || event.data === undefined || event.outputEnd <= tab.outputEnd) return session;
@@ -43,7 +43,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
   const [terminalOpen, setTerminalOpen] = createSignal(false);
   const [terminalTarget, setTerminalTarget] = createSignal<TerminalTarget>();
-  const [terminalsBySession, setTerminalsBySession] = createSignal<Record<string, SessionTerminals>>({});
+  const [terminalsBySession, storeTerminalsBySession] = createSignal<Record<string, SessionTerminals>>({});
   const closingTerminals = createRef(new Set<string>());
   const startingTerminals = createRef(new Set<string>());
   const draftRevisions = new Map<string, { data: string }>();
@@ -51,6 +51,30 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const terminalSessionId = createMemo(() => terminalConversationKey(terminalTarget(), conversationKey()));
   const terminalSessionIdRef = createRef(terminalSessionId());
   createComputed(() => { terminalSessionIdRef.current = terminalSessionId(); });
+  const recentSessions = new Map<string, number>();
+  let terminalAccess = 0;
+  const trimTerminalHistory = (sessions: Record<string, SessionTerminals>) => {
+    const active = terminalSessionIdRef.current;
+    const sizes = Object.entries(sessions).map(([key, session]) => ({ key, bytes: session.tabs.reduce((total, tab) => total + (tab.output.length + (tab.snapshot?.length ?? 0)) * 2, 0) }));
+    let bytes = sizes.reduce((total, value) => total + value.bytes, 0);
+    let next = sessions;
+
+    for (const key of recentSessions.keys()) if (key !== active && !(key in sessions)) recentSessions.delete(key);
+    for (const value of sizes.sort((left, right) => (recentSessions.get(left.key) ?? 0) - (recentSessions.get(right.key) ?? 0))) {
+      if (bytes <= TRANSCRIPT_BYTE_LIMIT) break;
+      if (value.key === active || !value.bytes) continue;
+      if (next === sessions) next = { ...sessions };
+      next[value.key] = { ...sessions[value.key], tabs: sessions[value.key].tabs.map(tab => ({ ...tab, output: "", outputEnd: 0, snapshot: undefined, snapshotEnd: undefined })) };
+      bytes -= value.bytes;
+    }
+
+    return next;
+  };
+  const setTerminalsBySession = (update: (current: Record<string, SessionTerminals>) => Record<string, SessionTerminals>) => storeTerminalsBySession(current => trimTerminalHistory(update(current)));
+  createComputed(() => {
+    recentSessions.set(terminalSessionId(), ++terminalAccess);
+    untrack(() => setTerminalsBySession(current => current));
+  });
   const [prepareTerminal, setPrepareTerminal] = createSignal(true);
   createDependencyEffect(() => { setPrepareTerminal(true); }, () => [terminalSessionId()]);
   createEffect(() => { if (terminalOpen()) setPrepareTerminal(true); });

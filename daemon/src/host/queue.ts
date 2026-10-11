@@ -758,6 +758,7 @@ export class SessionQueue {
       await this.reportStorageError(() => this.publish());
       throw error;
     } finally { this.s.sending.delete(id); }
+    if (result?.disposition === 'handled') await this.consumed(id);
     await this.publish();
     return result;
   }

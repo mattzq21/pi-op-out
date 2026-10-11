@@ -13,13 +13,15 @@ export function publicationRetainsDependencies(error: Error): boolean {
 }
 
 export async function writeSessionFile(path: string, entries: unknown[], options?: PublicationOptions) {
-  const release = acquireSessionReferencePublication(path);
+  return await publish(path, entries.map(entry => JSON.stringify(entry)).join("\n") + "\n", async operation => {
+    const release = acquireSessionReferencePublication(path);
 
-  try {
-    validateSessionReferencePublication(entries);
+    try {
+      validateSessionReferencePublication(entries);
 
-    return await publish(path, entries.map(entry => JSON.stringify(entry)).join("\n") + "\n", options);
-  } finally { release(); }
+      return await operation();
+    } finally { release(); }
+  }, options);
 }
 
 export function reserveSessionId(): string {

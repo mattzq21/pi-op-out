@@ -95,11 +95,16 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     finishInput(value, interrupting, revision);
   };
 
+  let restoredRevision = 0;
   createDependencyEffect(() => {
-    commandRevision++;
+    restoredRevision = ++commandRevision;
+  }, () => [componentProps.activeId, componentProps.ownershipRequired]);
+
+  createDependencyEffect(() => {
+    if (commandRevision !== restoredRevision) return;
     setCommand(componentProps.inputDraft ?? "");
     historyIndex = history.length; draft = "";
-  }, () => [componentProps.activeId, componentProps.ownershipRequired]);
+  }, () => [componentProps.activeId, componentProps.ownershipRequired, componentProps.inputDraft]);
 
   const send = () => { void submit(); };
 

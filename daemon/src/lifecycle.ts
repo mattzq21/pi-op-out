@@ -51,16 +51,20 @@ export async function runDaemon(): Promise<void> {
 async function runBackend(): Promise<void> {
   const app = new App();
   failureListener = line => app.emit('pi://daemon-error', { hostId: 'local', line });
-  dictation.start(app);
-  await startSessionBroker(app, app.broker);
-  const settings = await loadAppSettings(app);
-  await prepareDefinedAgentsExtension();
-  await daemon.connect(app, app.pi, app.broker, settings, 'local');
-  await daemonRestart.initializeCandidate(app);
-  await mobile.start(app);
-  await daemonRestart.ready();
-  await waitForShutdown(app);
-  await shutdownBackend(app);
+  try {
+    dictation.start(app);
+    await startSessionBroker(app, app.broker);
+    const settings = await loadAppSettings(app);
+    await prepareDefinedAgentsExtension();
+    await daemon.connect(app, app.pi, app.broker, settings, 'local');
+    await daemonRestart.initializeCandidate(app);
+    await mobile.start(app);
+    await daemonRestart.ready();
+    await waitForShutdown(app);
+  } finally {
+    await shutdownBackend(app);
+    failureListener = undefined;
+  }
 }
 
 function waitForShutdown(app: App): Promise<void> {

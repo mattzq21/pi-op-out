@@ -314,7 +314,7 @@ function sessionParentPath(entry) {
 function inheritedSessionEntries(entries) {
   const parents = entries.map(sessionParentPath).filter(path => path?.constructor === String && storagePath.isAbsolute(path));
 
-  return [...new Set(parents)].flatMap(storedSessionEntries);
+  return [...new Set(parents)].flatMap(path => storedSessionEntries(path));
 }
 
 export function acquireSessionReferencePublication(transcript, sessionId) {

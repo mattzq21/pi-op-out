@@ -1,5 +1,5 @@
 use crate::daemon_endpoint;
-use std::{io::{self, Read}, path::{Path, PathBuf}, process::{Child, ChildStdin, Command, Stdio}, thread, time::Duration, os::{fd::{AsRawFd, FromRawFd, OwnedFd}, unix::{net::UnixStream, process::CommandExt}}};
+use std::{io::{self, Read}, path::{Path, PathBuf}, process::{ChildStdin, Command, Stdio}, thread, time::Duration, os::{fd::{AsRawFd, FromRawFd, OwnedFd}, unix::{net::UnixStream, process::CommandExt}}};
 
 const CAPTURED: &str = "PIOP_DAEMON_LOG_CAPTURED";
 
@@ -7,11 +7,6 @@ fn detach(command: &mut Command) {
     {
         unsafe { command.pre_exec(|| { if libc::setsid() < 0 { return Err(io::Error::last_os_error()); } Ok(()) }); }
     }
-}
-
-pub(crate) fn spawn(mut command: Command) -> Result<Child, String> {
-    detach(&mut command);
-    command.spawn().map_err(|error| format!("Could not start daemon: {error}"))
 }
 
 fn start_consumer(executable: &Path, directory: &Path) -> Result<(ChildStdin, UnixStream), String> {

@@ -7,9 +7,14 @@ const MAX_DAEMON_RESPONSE: usize = piop_protocol::MAX_RESPONSE_BYTES;
 
 #[derive(Default)]
 pub(crate) struct DesktopDaemon {
-    connections: AsyncMutex<HashMap<String, Arc<Connection>>>,
+    connections: AsyncMutex<HashMap<String, Arc<WindowConnection>>>,
     runtimes: Mutex<HashMap<String, Arc<Connection>>>,
     startup: AsyncMutex<()>,
+}
+
+struct WindowConnection {
+    connection: AsyncMutex<Option<Arc<Connection>>>,
+    closed: tokio::sync::watch::Sender<bool>,
 }
 
 pub(crate) struct Connection {
@@ -124,22 +129,38 @@ impl Connection {
 
 impl DesktopDaemon {
     pub(crate) async fn connect(&self, app: &AppHandle, window: &str) -> Result<Arc<Connection>, String> {
-        let mut connections = self.connections.lock().await;
-        if let Some(connection) = connections.get(window).filter(|connection| connection.alive.load(Ordering::SeqCst)) { return Ok(connection.clone()); }
-        let reconnecting = connections.contains_key(window);
-        let _startup = self.startup.lock().await;
+        let slot = {
+            let mut connections = self.connections.lock().await;
+            connections.entry(window.into()).or_insert_with(|| Arc::new(WindowConnection {
+                connection: AsyncMutex::new(None),
+                closed: tokio::sync::watch::channel(false).0,
+            })).clone()
+        };
+        let mut closed = slot.closed.subscribe();
+        if *closed.borrow() { return Err("The client window was closed".into()); }
+        tokio::select! {
+            biased;
+            _ = closed.changed() => Err("The client window was closed".into()),
+            result = self.connect_window(app, window, &slot) => result,
+        }
+    }
+
+    async fn connect_window(&self, app: &AppHandle, window: &str, slot: &WindowConnection) -> Result<Arc<Connection>, String> {
+        let mut registered = slot.connection.lock().await;
+        if let Some(connection) = registered.as_ref().filter(|connection| connection.alive.load(Ordering::SeqCst)) { return Ok(connection.clone()); }
+        let reconnecting = registered.is_some();
         #[cfg(debug_assertions)]
         tokio::task::spawn_blocking(ensure_development_daemon).await.map_err(|error| error.to_string())??;
         let executable = daemon_executable(app)?;
         let build_id = daemon_build_id(&executable).await?;
         let socket = match configured_endpoint()? {
             Some(endpoint) => open(&endpoint, &build_id).await?,
-            None => local_socket(app, &executable, &build_id).await?,
+            None => local_socket(app, &executable, &build_id, &self.startup).await?,
         };
         if app.get_webview_window(window).is_none() { return Err("The client window was closed".into()); }
         let (outgoing, incoming) = async_mpsc::unbounded_channel();
         let connection = Arc::new(Connection { window: window.into(), alive: AtomicBool::new(true), restarting: AtomicBool::new(false), sequence: AtomicU64::new(1), outgoing, pending: Mutex::new(HashMap::new()), terminals: Mutex::new(std::collections::HashSet::new()), log_statuses: Mutex::new(HashMap::new()) });
-        connections.insert(window.into(), connection.clone());
+        *registered = Some(connection.clone());
         let reader = connection.clone();
         tokio::spawn(run_connection(socket, incoming, reader, app.clone()));
         if reconnecting { let _ = app.emit_to(window, "pi://event", json!({"type":"connection_restored"})); }
@@ -147,13 +168,17 @@ impl DesktopDaemon {
     }
 
     pub(crate) async fn close_window(&self, _app: &AppHandle, window: &str) {
-        if let Some(connection) = self.connections.lock().await.remove(window) {
-            {
-                let mut statuses = connection.log_statuses();
-                statuses.clear();
-                connection.alive.store(false, Ordering::SeqCst);
-            }
-            let _ = connection.outgoing.send(Message::Close(None));
+        let slot = self.connections.lock().await.remove(window);
+        if let Some(slot) = slot {
+            slot.closed.send_replace(true);
+            if let Some(connection) = slot.connection.lock().await.take() {
+                {
+                    let mut statuses = connection.log_statuses();
+                    statuses.clear();
+                    connection.alive.store(false, Ordering::SeqCst);
+                }
+                let _ = connection.outgoing.send(Message::Close(None));
+            };
         }
         if let Ok(mut runtimes) = self.runtimes.lock() {
             runtimes.retain(|_, connection| connection.window != window);
@@ -276,21 +301,64 @@ async fn existing_local_socket(build_id: &str) -> Result<Option<Socket>, String>
     Ok(None)
 }
 
-async fn local_socket(app: &AppHandle, executable: &Path, build_id: &str) -> Result<Socket, String> {
+async fn local_socket(app: &AppHandle, executable: &Path, build_id: &str, startup: &AsyncMutex<()>) -> Result<Socket, String> {
+    if let Some(socket) = existing_local_socket(build_id).await? { return Ok(socket); }
+    let _startup = startup.lock().await;
     if let Some(socket) = existing_local_socket(build_id).await? { return Ok(socket); }
     while daemon_endpoint::restart_active() {
         tokio::time::sleep(Duration::from_millis(100)).await;
         if let Some(socket) = existing_local_socket(build_id).await? { return Ok(socket); }
     }
-    let (log_path, mut child) = spawn_local_daemon(app, executable)?;
-    let result = wait_local_socket(&log_path, &mut child, build_id).await;
-    thread::spawn(move || { let _ = child.wait(); });
+    let (log_path, child) = spawn_local_daemon(app, executable)?;
+    let mut startup_child = StartupChild(Some(child));
+    let result = wait_local_socket(&log_path, startup_child.0.as_mut().unwrap(), build_id).await;
+    if result.is_ok() {
+        let mut child = startup_child.0.take().unwrap();
+        tokio::spawn(async move {
+            if let Err(error) = child.wait().await { eprintln!("Could not reap Piop daemon: {error}"); }
+        });
+    } else {
+        startup_child.stop().await;
+    }
     result
+}
+
+struct StartupChild(Option<tokio::process::Child>);
+
+impl StartupChild {
+    async fn stop(&mut self) {
+        let Some(child) = self.0.as_mut() else { return; };
+        stop_startup_child(child).await;
+        self.0.take();
+    }
+}
+
+async fn stop_startup_child(child: &mut tokio::process::Child) {
+    if let Some(pid) = child.id() {
+        if unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) { eprintln!("Could not stop Piop daemon: {error}"); }
+        }
+    }
+    match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+        Ok(Ok(_)) => return,
+        Ok(Err(error)) => eprintln!("Could not wait for Piop daemon shutdown: {error}"),
+        Err(_) => {},
+    }
+    if let Err(error) = child.kill().await { eprintln!("Could not kill and reap Piop daemon: {error}"); }
+}
+
+impl Drop for StartupChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            tokio::spawn(async move { stop_startup_child(&mut child).await; });
+        }
+    }
 }
 
 const ALREADY_RUNNING_EXIT_CODE: i32 = 3;
 
-async fn wait_local_socket(log_path: &Path, child: &mut std::process::Child, build_id: &str) -> Result<Socket, String> {
+async fn wait_local_socket(log_path: &Path, child: &mut tokio::process::Child, build_id: &str) -> Result<Socket, String> {
     let deadline = tokio::time::Instant::now() + daemon_endpoint::STARTUP_TIMEOUT;
     let mut retry_delay = Duration::from_millis(10);
     let mut other_daemon = false;
@@ -313,11 +381,14 @@ async fn wait_local_socket(log_path: &Path, child: &mut std::process::Child, bui
     }
     Err(format!("Piop daemon did not start. See {}", log_path.display()))
 }
-fn spawn_local_daemon(_app: &AppHandle, executable: &Path) -> Result<(PathBuf, std::process::Child), String> {
+fn spawn_local_daemon(_app: &AppHandle, executable: &Path) -> Result<(PathBuf, tokio::process::Child), String> {
     let mut command = Command::new(executable);
     command.arg("--exit-on-disconnect").stdin(Stdio::null()).stdout(Stdio::null());
     let log_path = crate::daemon_log::configure(&mut command, executable)?;
-    let child = crate::daemon_log::spawn(command)?;
+    use std::os::unix::process::CommandExt;
+    unsafe { command.pre_exec(|| { if libc::setsid() < 0 { return Err(std::io::Error::last_os_error()); } Ok(()) }); }
+    let child = tokio::process::Command::from(command).spawn()
+        .map_err(|error| format!("Could not start daemon: {error}"))?;
     Ok((log_path, child))
 }
 
@@ -353,8 +424,10 @@ fn daemon_executable(app: &AppHandle) -> Result<PathBuf, String> {
 #[tauri::command]
 pub(crate) async fn daemon_log_statuses(app: AppHandle, window: tauri::WebviewWindow) -> Vec<Value> {
     let state = app.state::<DesktopDaemon>();
-    let connections = state.connections.lock().await;
-    connections.get(window.label()).map(|connection| connection.log_statuses().values().cloned().collect()).unwrap_or_default()
+    let slot = state.connections.lock().await.get(window.label()).cloned();
+    let Some(slot) = slot else { return Vec::new(); };
+    let connection = slot.connection.lock().await;
+    connection.as_ref().map(|connection| connection.log_statuses().values().cloned().collect()).unwrap_or_default()
 }
 
 #[tauri::command]

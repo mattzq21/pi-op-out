@@ -14,7 +14,7 @@ export type SharedTerminal = z.infer<typeof sharedTerminalsSchema>[number] & { o
 
 type TerminalCommandOptions = { sessionKey?: string; cwd?: string; cols?: number; rows?: number; data?: string; expectedDraft?: string };
 
-const TRANSCRIPT_BYTE_LIMIT = 32 * 1024 * 1024;
+export const TRANSCRIPT_BYTE_LIMIT = 32 * 1024 * 1024;
 
 class NativeTerminals {
   private writes = new Map<string, { tail: Promise<void> }>();

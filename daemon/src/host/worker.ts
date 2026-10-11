@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { ensurePrivateDir } from '../private_fs';
-import { signalProcessGroup } from '../process_cleanup';
+import { descendantProcesses, killVerified, signalProcessGroup } from '../process_cleanup';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
 
 export interface Request { command: any; requestType: string; snapshotState: any }
@@ -40,6 +40,7 @@ export class RuntimeWorker {
   private closedFlag = false;
   private closedWaiters: Array<() => void> = [];
   private deadline: NodeJS.Timeout | undefined;
+  private descendants: ReturnType<typeof descendantProcesses> = [];
 
   private constructor(private child: ChildProcess, private observer: WorkerObserver, private timeout: number) {}
 
@@ -109,9 +110,17 @@ export class RuntimeWorker {
   private signal(hard: boolean): void {
     this.exited = true;
     if (this.child.pid === undefined) return;
-    if (hard) { signalProcessGroup(this.child.pid, 'SIGKILL'); return; }
+    if (hard) {
+      this.descendants.push(...descendantProcesses(this.child.pid, this.child.pid));
+      signalProcessGroup(this.child.pid, 'SIGKILL');
+      killVerified(this.descendants);
+      this.descendants = [];
+      return;
+    }
     if (this.deadline || this.closedFlag) return;
+    this.descendants = descendantProcesses(this.child.pid, this.child.pid);
     signalProcessGroup(this.child.pid, 'SIGTERM');
+    killVerified(this.descendants, 'SIGTERM');
     this.deadline = setTimeout(() => {
       this.signal(true);
       this.deadline = setTimeout(() => {

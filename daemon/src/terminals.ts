@@ -21,6 +21,7 @@ export interface TerminalProcess {
   windowLabel: string;
   /** The shell process. It runs in a Bun pseudo-terminal (PTY), available as child.terminal. */
   child: Subprocess;
+  processSessionId: number;
   rows: number;
   cols: number;
   queued: number;
@@ -116,7 +117,7 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
       },
     });
   } catch (error: any) { throw new Error('Could not start terminal shell: ' + (error?.message ?? error)); }
-  const started: TerminalProcess = { generation, sessionKey, cwd, hostId, windowLabel, child, rows, cols, queued: 0, exited: false };
+  const started: TerminalProcess = { generation, sessionKey, cwd, hostId, windowLabel, child, processSessionId: child.pid, rows, cols, queued: 0, exited: false };
   terminal = started;
   terminalLookup.start(runtime, terminalId, sessionKey, cwd, hostId, windowLabel, generation);
   const size = '\u001b[8;' + rows + ';' + cols + 't';
@@ -176,9 +177,9 @@ export function stopTerminalProcess(process: TerminalProcess): Promise<void> {
 
 async function stopShell(process: TerminalProcess): Promise<void> {
   const child = process.child;
-  const descendants = descendantProcesses(child.pid, child.pid);
+  const descendants = descendantProcesses(child.pid, child.pid, process.processSessionId);
   const signal = (value: NodeJS.Signals) => {
-    descendants.push(...descendantProcesses(child.pid, child.pid));
+    descendants.push(...descendantProcesses(child.pid, child.pid, process.processSessionId));
     signalProcessGroup(child.pid, value);
     killVerified(descendants, value);
     if (child.exitCode === null && child.signalCode === null) {
@@ -195,7 +196,7 @@ async function stopShell(process: TerminalProcess): Promise<void> {
       return false;
     }
   };
-  const settled = () => (child.exitCode !== null || child.signalCode !== null) && !descendants.some(alive) && descendantProcesses(child.pid, child.pid).length === 0;
+  const settled = () => (child.exitCode !== null || child.signalCode !== null) && !descendants.some(alive) && descendantProcesses(child.pid, child.pid, process.processSessionId).length === 0;
   const settle = async (ms: number) => { const deadline = Date.now() + ms; while (Date.now() < deadline) { if (settled()) return true; await sleep(25); } return settled(); };
   signal('SIGHUP');
   if (!await settle(1000)) { signal('SIGTERM'); if (!await settle(500)) { signal('SIGKILL'); if (!await settle(2000)) console.error('Terminal shell ' + child.pid + ' did not exit after SIGKILL'); } }

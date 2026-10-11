@@ -235,10 +235,10 @@ async function publishLocked(root, target, body, options) {
   } finally { if (!retained) fs.closeSync(operation.lease); }
 }
 
-function publish(target, body, options = {}) {
+function publish(target, body, withReferences, options = {}) {
   const root = io.rootForTarget(target);
 
-  return io.lockedAsync(root, () => publishLocked(root, target, body, options));
+  return io.lockedAsync(root, () => withReferences(() => publishLocked(root, target, body, options)));
 }
 
 function quarantine(journal, reason) {

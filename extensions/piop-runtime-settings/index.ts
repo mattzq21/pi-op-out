@@ -226,7 +226,7 @@ function configureImageLimits(pi: ExtensionAPI) {
     return resizeLargeToolImages(event, ctx);
   });
 
-  const originals = new Map<Model, Model["inputLimits"]>();
+  const originals = new WeakMap<Model, Model["inputLimits"]>();
 
   const applyModel = (model: Model | undefined) => {
     if (!model?.input.includes("image")) return;
@@ -253,11 +253,14 @@ function configureImageLimits(pi: ExtensionAPI) {
   pi.on("before_agent_start", (_event, ctx) => { apply(ctx); });
   const unsubscribe = pi.events.on("piop:models-refreshed", ({ ctx }) => { apply(ctx); });
 
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", (_event, ctx) => {
     unsubscribe();
 
-    for (const [model, limits] of originals) model.inputLimits = limits;
-    originals.clear();
+    for (const model of new Set([...ctx.modelRegistry.getAll(), ctx.model])) {
+      if (!model || !originals.has(model)) continue;
+      model.inputLimits = originals.get(model);
+      originals.delete(model);
+    }
   });
 }
 

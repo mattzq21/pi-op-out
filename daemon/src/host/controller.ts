@@ -449,7 +449,11 @@ export class Host implements SessionHost {
   async attach(packet: any): Promise<any> {
     const attachment = new Attachment(this, packet);
     if (flag(attachment.packet.presence, 'readOnly')) return attachment.readonly();
-    const guard = await attachment.ownership();
+    let guard: Guard;
+    try { guard = await attachment.ownership(); } catch (error) {
+      await attachment.cleanup(undefined, false, true);
+      throw error;
+    }
     const owned = guard.owned;
     const opened: { session?: Session } = {};
     let result: any;
@@ -457,7 +461,7 @@ export class Host implements SessionHost {
     try { result = await attachment.open(guard, opened); } catch (error) { failure = error ?? new Error('Attach failed'); }
     let releaseError: unknown;
     try { guard.release(this.ownership(), false); } catch (error) { releaseError = error; }
-    await attachment.cleanup(opened.session, owned);
+    await attachment.cleanup(opened.session, owned, failure !== undefined || releaseError !== undefined);
     if (releaseError !== undefined) throw releaseError;
     if (failure !== undefined) throw failure;
     return result;
@@ -817,12 +821,12 @@ class Attachment {
 
   constructor(private host: Host, readonly packet: any) {
     this.runtime = text(packet, 'runtimeId');
-    host.attachments.set(this.runtime, packet);
     this.spec = parseLaunchSpec(packet.spec);
     const key = text(packet, 'sessionKey');
     this.identity = specIdentity(this.spec, key);
     if (isUuid(key) && this.identity !== key) throw new Error('The saved path belongs to another conversation; resolve its identity again');
     this.path = argument(this.spec, '--session') ?? null;
+    host.attachments.set(this.runtime, packet);
     this.assertCurrent();
   }
 
@@ -895,7 +899,15 @@ class Attachment {
     return (current !== undefined && opened !== undefined && current === opened) || this.host.attachments.get(this.runtime) === this.packet;
   }
 
-  async cleanup(opened: Session | undefined, owned: boolean): Promise<void> {
+  async cleanup(opened: Session | undefined, owned: boolean, failed = false): Promise<void> {
+    if (failed && this.host.attachments.get(this.runtime) === this.packet) {
+      this.host.attachments.delete(this.runtime);
+      this.host.readonlyMap.delete(this.runtime);
+      if (opened && this.host.subscriptions.get(this.runtime) === opened) {
+        this.host.subscriptions.delete(this.runtime);
+        opened.detachView(this.runtime);
+      }
+    }
     if (this.stillAttached(opened)) return;
     if (opened) {
       if (!opened.views().length) {

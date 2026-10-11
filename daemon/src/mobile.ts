@@ -20,6 +20,7 @@ import { errorText, withTimeout } from './util/sync';
 import type { App } from './app';
 
 const MAX_MESSAGE = MAX_REQUEST_BYTES;
+const MAX_OUTGOING_BYTES = 64 * 1024 * 1024;
 const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://groups-changed', 'pi://dictation', 'pi://sessions-changed', 'pi://daemon-error', 'pi://daemon-log-status', 'pi://provider-auth-changed', 'pi://chatgpt-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://daemon-restarting'];
 
 /** A counter that limits how many items may run at once. */
@@ -226,21 +227,30 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
   const pending = new Set<Promise<void>>();
   const owner = 'client:' + randomUUID();
   let queued = 0;
+  let queuedBytes = 0;
   let chain = Promise.resolve();
   let lastSeen = Date.now();
   const send = (text: string, restartId?: string): void => {
     if (ws.closed) return;
+    const bytes = Buffer.byteLength(text, 'utf8');
+    if (queued >= 1024 || bytes > MAX_OUTGOING_BYTES - queuedBytes) {
+      console.error('Disconnecting ' + owner + ': outgoing queue exceeds 1024 messages or 64 MiB');
+      ws.terminate();
+      return;
+    }
     queued += 1;
-    if (queued > 1024) { ws.terminate(); return; }
+    queuedBytes += bytes;
     chain = chain.then(async () => {
       queued -= 1;
-      if (ws.closed) return;
-      try { await withTimeout(ws.sendText(text), 10_000, 'Send timeout'); }
-      catch { ws.terminate(); return; }
-      if (restartId !== undefined) {
-        try { await daemonRestart.commit(app, restartId); }
-        catch (error) { console.error(error); ws.terminate(); }
-      }
+      try {
+        if (ws.closed) return;
+        try { await withTimeout(ws.sendText(text), 10_000, 'Send timeout'); }
+        catch (error) { console.error('Could not send to ' + owner + ':', error); ws.terminate(); return; }
+        if (restartId !== undefined) {
+          try { await daemonRestart.commit(app, restartId); }
+          catch (error) { console.error(error); ws.terminate(); }
+        }
+      } finally { queuedBytes -= bytes; }
     });
   };
   const subscriber: Subscriber = event => {
