@@ -3,7 +3,7 @@ import { useDictationConfiguration } from "../lib/dictation";
 import type { AppSettings, DictationEngine } from "../types";
 
 const engines: Array<{ id: DictationEngine; label: string; program: string; model: string }> = [
-  { id: "transcribe.cpp", label: "transcribe.cpp", program: "transcribe-cli", model: "~/Models/speech-model.gguf" },
+  { id: "transcribe.cpp", label: "transcribe.cpp (Python package transcribe-cpp)", program: "a Python with transcribe-cpp", model: "~/Models/speech/parakeet-unified-en-0.6b-Q8_0.gguf" },
   { id: "needle", label: "Cactus Needle (Whistle)", program: "needle", model: "~/Models/whistle.cact" },
 ];
 

@@ -66,38 +66,54 @@ export function useDictationEnabled() {
   return enabled;
 }
 
-function wavAudio(chunks: Float32Array[], sampleRate: number) {
-  const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
-  const samples = new Float32Array(length);
-  let offset = 0;
+const streamUpdateSchema = z.object({ id: z.string(), committed: z.string().optional(), tentative: z.string().optional(), error: z.string().optional() });
 
-  for (const chunk of chunks) { samples.set(chunk, offset); offset += chunk.length; }
+const FEED_SAMPLES = 4000;
 
-  const count = Math.min(16000 * MAX_SECONDS, Math.floor(length * 16000 / sampleRate));
+/** Turns microphone samples at any rate into 16 kHz signed 16-bit samples, one piece at a time. */
+class Downsampler {
+  private buffer = new Float32Array(0);
+  private position = 0;
 
-  if (!count) throw new Error("No audio was recorded. Try again.");
-  const bytes = new Uint8Array(44 + count * 2);
-  const view = new DataView(bytes.buffer);
-  const text = (at: number, value: string) => { for (let i = 0; i < value.length; i++) bytes[at + i] = value.charCodeAt(i); };
+  constructor(private ratio: number) {}
 
-  text(0, "RIFF"); view.setUint32(4, bytes.length - 8, true); text(8, "WAVEfmt ");
-  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
-  view.setUint32(24, 16000, true); view.setUint32(28, 32000, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
-  text(36, "data"); view.setUint32(40, count * 2, true);
-  const ratio = sampleRate / 16000;
+  push(input: Float32Array) {
+    const data = new Float32Array(this.buffer.length + input.length);
 
-  for (let i = 0; i < count; i++) {
-    const start = Math.floor(i * ratio), end = Math.max(start + 1, Math.min(length, Math.floor((i + 1) * ratio)));
-    let sum = 0;
+    data.set(this.buffer); data.set(input, this.buffer.length);
+    const output: number[] = [];
 
-    for (let index = start; index < end; index++) sum += samples[index];
-    const sample = Math.max(-1, Math.min(1, sum / (end - start)));
-    view.setInt16(44 + i * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
+    for (;;) {
+      const start = Math.floor(this.position), end = Math.max(start + 1, Math.floor(this.position + this.ratio));
+
+      if (end > data.length) break;
+      let sum = 0;
+
+      for (let index = start; index < end; index++) sum += data[index];
+      const sample = Math.max(-1, Math.min(1, sum / (end - start)));
+      output.push(Math.round(sample * (sample < 0 ? 32768 : 32767)));
+      this.position += this.ratio;
+    }
+
+    const keep = Math.floor(this.position);
+    this.buffer = data.slice(keep); this.position -= keep;
+
+    return output;
   }
+}
+
+function pcmBase64(samples: number[]) {
+  const bytes = new Uint8Array(samples.length * 2);
+  const view = new DataView(bytes.buffer);
+
+  samples.forEach((sample, index) => view.setInt16(index * 2, sample, true));
 
   return encodeBase64(bytes);
 }
 
+export type DictationText = { committed: string; tentative: string };
+
+/** One live dictation: it sends microphone audio to the daemon while the user speaks and gets text back as it changes. */
 export class DictationRecording {
   private owner = Symbol("dictation");
   private stream?: MediaStream;
@@ -105,88 +121,123 @@ export class DictationRecording {
   private processor?: ScriptProcessorNode;
   private source?: MediaStreamAudioSourceNode;
   private gain?: GainNode;
-  private chunks: Float32Array[] = [];
   private timer?: ReturnType<typeof setTimeout>;
   private stopped = false;
   private vad?: DictationVad;
-  private detectionError?: Error;
+  private failure?: Error;
+  private id?: string;
+  private unlisten?: () => void;
+  private pending: number[] = [];
+  private samples = 0;
+  private sending: Promise<void> = Promise.resolve();
 
-  async start(onComplete: () => void) {
+  async start(onComplete: () => void, onText: (text: DictationText) => void) {
     if (recordingOwner) throw new Error("Dictation is already recording in another chat.");
     recordingOwner = this.owner;
+    let completionRequested = false;
+
+    const complete = () => {
+      if (this.stopped || completionRequested) return;
+      completionRequested = true;
+      onComplete();
+    };
+
+    const fail = (error: Error) => { this.failure ??= error; complete(); };
+    let started: Promise<{ id: string }> | undefined;
 
     try {
+      this.unlisten = await listen("pi://dictation-stream", ({ payload }) => {
+        if (payload.id !== this.id || this.stopped) return;
+
+        if (payload.error !== undefined) fail(new Error(payload.error));
+        else onText({ committed: payload.committed ?? "", tentative: payload.tentative ?? "" });
+      }, streamUpdateSchema);
       const context = new AudioContext();
       this.context = context;
       await context.resume();
-
-      if (this.stopped) return;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
-
-      if (this.stopped) { stream.getTracks().forEach((track) => track.stop());
-
-      return; }
-
-      this.stream = stream;
       const { DictationVad } = await import("./dictationVad");
-
-      if (this.stopped) return;
       const vad = await DictationVad.create(context.sampleRate);
-
-      if (this.stopped) { vad.close();
-
-      return; }
-
       this.vad = vad;
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
+      this.stream = stream;
+
+      if (this.stopped) { this.cancel(); return; }
+
+      // Start the daemon stream only after the microphone is granted, so a permission prompt cannot hit the stream idle timeout.
+      // Audio recorded while the stream starts waits in `pending` and is sent when the stream ID arrives.
+      started = invoke("dictation_stream_start", undefined, z.object({ id: z.string() }));
+      const downsampler = new Downsampler(context.sampleRate / 16000);
       this.source = context.createMediaStreamSource(stream);
       this.processor = context.createScriptProcessor(4096, 1, 1);
       this.gain = context.createGain(); this.gain.gain.value = 0;
-      let samples = 0;
-      let completionRequested = false;
-
-      const complete = () => {
-        if (this.stopped || completionRequested) return;
-        completionRequested = true;
-        onComplete();
-      };
 
       this.processor.onaudioprocess = (event) => {
         if (this.stopped || completionRequested) return;
-        const remaining = MAX_SECONDS * context.sampleRate - samples;
+        const remaining = 16000 * MAX_SECONDS - this.samples - this.pending.length;
 
-        if (remaining <= 0) { complete();
+        if (remaining <= 0) { complete(); return; }
 
-        return; }
+        const chunk = event.inputBuffer.getChannelData(0).slice();
+        this.pending.push(...downsampler.push(chunk).slice(0, remaining));
 
-        const chunk = event.inputBuffer.getChannelData(0).slice(0, remaining);
-        this.chunks.push(chunk); samples += chunk.length;
-        vad.push(chunk, complete, (error) => {
-          this.detectionError = new Error(`Speech detection failed: ${error instanceof Error ? error.message : String(error)}`);
-          complete();
-        });
+        if (this.pending.length >= FEED_SAMPLES) this.flush(fail);
+        vad.push(chunk, complete, (error) => fail(new Error(`Speech detection failed: ${error instanceof Error ? error.message : String(error)}`)));
       };
 
       this.source.connect(this.processor); this.processor.connect(this.gain); this.gain.connect(context.destination);
       this.timer = setTimeout(complete, MAX_SECONDS * 1000);
-    } catch (error) { this.cancel(); throw error; }
+      this.id = (await started).id;
+
+      if (this.stopped) { this.cancelStream(); return; }
+      this.flush(fail);
+    } catch (error) {
+      this.cancel();
+      if (started && !this.id) void started.then(({ id }) => { this.id = id; this.cancelStream(); }, () => undefined);
+      throw error;
+    }
   }
 
-  finish() {
-    const sampleRate = this.context?.sampleRate;
+  /** Sends the waiting samples. Sends run one after another, so the daemon gets the audio in order. */
+  private flush(fail: (error: Error) => void) {
+    const id = this.id;
+
+    if (!id || !this.pending.length) return;
+    const audio = pcmBase64(this.pending);
+    this.samples += this.pending.length; this.pending = [];
+    this.sending = this.sending.then(() => this.failure ? undefined : invoke("dictation_stream_feed", { id, audio }).then(() => undefined))
+      .catch((error) => fail(error instanceof Error ? error : new Error(String(error))));
+  }
+
+  async finish() {
+    const id = this.id;
     this.release();
-    const chunks = this.chunks; this.chunks = [];
+    this.flush((error) => { this.failure ??= error; });
+    await this.sending;
 
-    if (this.detectionError) throw this.detectionError;
+    if (!id) throw new Error("The microphone was not ready.");
 
-    if (!sampleRate) throw new Error("The microphone was not ready.");
+    if (this.failure) { this.cancelStream(); throw this.failure; }
 
-    return wavAudio(chunks, sampleRate);
+    if (!this.samples) { this.cancelStream(); throw new Error("No audio was recorded. Try again."); }
+
+    this.id = undefined;
+
+    return invoke("dictation_stream_finish", { id }, z.object({ text: z.string() }));
   }
 
-  cancel() { this.release(); this.chunks = []; }
+  cancel() { this.release(); this.cancelStream(); }
+
+  private cancelStream() {
+    const id = this.id;
+    this.id = undefined;
+
+    if (id) void invoke("dictation_stream_cancel", { id }).catch((error) => console.error("Could not cancel dictation:", error));
+  }
 
   private release() {
     this.stopped = true; clearTimeout(this.timer);
+    this.unlisten?.(); this.unlisten = undefined;
     this.vad?.close(); this.vad = undefined;
 
     if (recordingOwner === this.owner) recordingOwner = undefined;
@@ -199,5 +250,3 @@ export class DictationRecording {
     if (this.context && this.context.state !== "closed") void this.context.close().catch(() => undefined);
   }
 }
-
-export const transcribeDictation = (audio: string) => invoke("dictation_transcribe", { audio }, z.object({ text: z.string() }));
