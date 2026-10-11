@@ -105,14 +105,19 @@ export function sessionTerminals(runtime: TerminalRuntime, hostId: string, sessi
 }
 
 export async function discardDrafts(runtime: TerminalRuntime, ownerPrefix: string): Promise<void> {
-  const removed: TerminalProcess[] = [];
+  const removed: Array<[string, TerminalProcess]> = [];
   for (const [id, item] of [...runtime.history]) {
     if (!item.sessionId.startsWith('draft-') || !item.owner.startsWith(ownerPrefix)) continue;
     runtime.history.delete(id);
     const process = runtime.processes.get(id);
-    if (process) { runtime.processes.delete(id); removed.push(process); }
+    if (process) removed.push([id, process]);
   }
-  for (const process of removed) { try { await stopTerminalProcess(process); } catch {} }
+  const failures: string[] = [];
+  for (const [id, process] of removed) {
+    try { await stopTerminalProcess(process); } catch (error: any) { failures.push(id + ': ' + (error?.message ?? error)); }
+    if (runtime.processes.get(id) === process) runtime.processes.delete(id);
+  }
+  if (failures.length) throw new Error('Could not close draft terminals: ' + failures.join('; '));
 }
 
 async function sessionOwned(app: App, sessionId: string, client: string, draftOwned: boolean, allowReleased: boolean): Promise<boolean> {
@@ -214,11 +219,11 @@ async function updateShared(context: SharedRequest, id: string, action: string):
       if (process) process.sessionKey = 'local:' + context.sessionId;
       break;
     case 'close':
-      runtime.processes.delete(id);
-      runtime.history.delete(id);
-      if (process) {
-        try { await stopTerminalProcess(process); }
-        catch (error: any) { throw new Error('Could not close terminal ' + id + ': ' + (error?.message ?? error)); }
+      try { if (process) await stopTerminalProcess(process); }
+      catch (error: any) { throw new Error('Could not close terminal ' + id + ': ' + (error?.message ?? error)); }
+      finally {
+        if (runtime.processes.get(id) === process) runtime.processes.delete(id);
+        runtime.history.delete(id);
       }
       break;
     case 'draft': {

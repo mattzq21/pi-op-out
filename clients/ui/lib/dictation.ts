@@ -13,6 +13,8 @@ let recordingOwner: symbol | undefined;
 
 export function useDictationEnabled() {
   const [enabled, setEnabled] = createSignal(false);
+  const [error, setError] = createSignal<string>();
+  const [listenerError, setListenerError] = createSignal<string>();
   let disposed = false;
   let revision = 0;
   let unlisten: (() => void) | undefined;
@@ -31,29 +33,34 @@ export function useDictationEnabled() {
     try {
       const state = await invoke("dictation_configuration", undefined, dictationConfigurationSchema);
 
-      if (!disposed && request === revision) apply(state);
-    } catch { if (!disposed && request === revision) apply({ enabled: false, loading: false }); }
+      if (!disposed && request === revision) { apply(state); setError(undefined); }
+    } catch (reason) { if (!disposed && request === revision) setError(`Could not refresh dictation settings: ${reason instanceof Error ? reason.message : String(reason)}`); }
   };
 
   const focus = () => void refresh();
-  onMount(() => {
-    void listen("pi://dictation", ({ payload }) => {
+  const subscribe = () => {
+    listenerFailed = false;
+    return listen("pi://dictation", ({ payload }) => {
       if (disposed) return;
-      revision++; apply(payload);
+      revision++; apply(payload); setError(undefined);
     }, dictationConfigurationSchema).then((stop) => {
       if (disposed) { stop(); return; }
-      unlisten = stop;
-      void refresh();
-    }).catch(() => {
+      unlisten = stop; setListenerError(undefined);
+      return refresh();
+    }).catch(reason => {
       if (disposed) return;
       listenerFailed = true;
-      void refresh();
+      setListenerError(`Could not receive dictation settings: ${reason instanceof Error ? reason.message : String(reason)}`);
+      return refresh();
     });
+  };
+  onMount(() => {
+    void subscribe();
     window.addEventListener("focus", focus);
   });
   onCleanup(() => { disposed = true; clearTimeout(timer); unlisten?.(); window.removeEventListener("focus", focus); });
 
-  return enabled;
+  return { enabled, error: () => error() ?? listenerError(), retry: () => listenerFailed ? subscribe() : refresh() };
 }
 
 function wavAudio(chunks: Float32Array[], sampleRate: number) {

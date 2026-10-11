@@ -34,7 +34,7 @@ export function start(app: App): void {
   publish(app);
   void (async () => {
     let loaded: Engine | undefined;
-    try { loaded = await loadEngine(); } catch { loaded = undefined; }
+    try { loaded = await loadEngine(); } catch (error) { console.error('Could not load dictation engine:', error); }
     if (runtime.generation !== generation) return;
     runtime.engine = loaded;
     runtime.loading = false;
@@ -46,7 +46,7 @@ async function loadEngine(): Promise<Engine | undefined> {
   const [executables, model] = await candidates();
   for (const executable of executables) {
     const engine = { executable, model };
-    try { await transcribe(engine, silentWav(), 90_000); return engine; } catch {}
+    try { await transcribe(engine, silentWav(), 90_000); return engine; } catch (error) { console.error('Could not initialize dictation engine ' + executable + ':', error); }
   }
   return undefined;
 }
@@ -71,7 +71,7 @@ async function candidates(): Promise<[string[], string]> {
   const seen = new Set<string>();
   const found = executables.filter(path => {
     if (!isFile(path)) return false;
-    try { const real = realpathSync(path); if (seen.has(real)) return false; seen.add(real); return true; } catch { return false; }
+    try { const real = realpathSync(path); if (seen.has(real)) return false; seen.add(real); return true; } catch (error) { console.error('Could not inspect dictation executable ' + path + ':', error); return false; }
   });
   return [found, model];
 }
@@ -101,7 +101,7 @@ async function transcribe(engine: Engine, wav: Buffer, timeout: number): Promise
     });
     if (!success) throw new Error('The speech model could not transcribe this recording');
     return readTranscript(output);
-  } finally { try { rmSync(directory, { recursive: true, force: true }); } catch {} }
+  } finally { try { rmSync(directory, { recursive: true, force: true }); } catch (error) { console.error('Could not remove dictation audio ' + directory + ':', error); } }
 }
 
 function silentWav(): Buffer {
@@ -135,9 +135,5 @@ export async function dictate(app: App, audio: string): Promise<any> {
   runtime.busy = true;
   try {
     return { text: await transcribe(engine, wav, 180_000) };
-  } catch (error) {
-    runtime.engine = undefined;
-    publish(app);
-    throw error;
   } finally { runtime.busy = false; }
 }

@@ -1,5 +1,5 @@
 import { Key } from "@solid-primitives/keyed";
-import { createMemo, createSignal, For, onCleanup } from "solid-js";
+import { createMemo, createSignal, onCleanup } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import { createTerminalTranscript } from "../lib/terminalTranscript";
 import { Plus, RotateCcw, TerminalSquare, Trash2, X } from "lucide-solid";
@@ -162,7 +162,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
         const element = host.current;
 
         if (element) followOutput = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
-      }}><span><For each={transcript().segments}>{segment => <span style={segment.style}>{segment.text}</span>}</For></span>{!componentProps.ownershipRequired &&
+      }}><span><Key each={transcript().segments} by="id">{segment => <span style={segment().style}>{segment().text}</span>}</Key></span>{!componentProps.ownershipRequired &&
         <form class="terminal-command" onSubmit={event => { event.preventDefault(); send(); }}>
           <span ref={element => { input.current = element; element.textContent = command(); }} role="textbox" aria-label="Terminal command" aria-multiline="true" aria-disabled={disabled()} tabIndex={disabled() ? -1 : 0} contentEditable={disabled() ? false : "plaintext-only"} autocapitalize="off" spellcheck={false} onInput={event => editCommand(event.currentTarget.textContent ?? "")} onKeyDown={event => {
             if (event.isComposing) return;

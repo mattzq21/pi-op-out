@@ -40,7 +40,7 @@ export class Connection {
     });
   }
 
-  close(): void { try { this.child.kill('SIGKILL'); } catch {} }
+  close(): void { try { this.child.kill('SIGKILL'); } catch (error) { console.error('Could not close SSH connection:', error); } }
 
   disconnected(app: App): void {
     if (!this.alive) return;
@@ -116,6 +116,8 @@ function splitKey(key: string): [string, string] { const index = key.indexOf('\u
 export class PeerRuntime {
   connections = new Map<string, [RemoteHost, Connection]>();
   starting = new Map<string, Mutex>();
+  pending = new Map<string, { host: RemoteHost; cancel(): void }>();
+  revision = 0;
   routes = new Map<string, Route>();
   messages = new Map<string, Connection>();
   running = new Set<string>();
@@ -138,11 +140,14 @@ function cachedConnection(state: PeerRuntime, hostId: string, host: RemoteHost):
 }
 
 export async function connect(app: App, hostId: string): Promise<Connection> {
-  const host = await configuredHost(app, hostId);
   const state = app.peers;
   let startup = state.starting.get(hostId);
   if (!startup) { startup = new Mutex(); state.starting.set(hostId, startup); }
   return startup.run(async () => {
+    const revision = state.revision;
+    const host = await configuredHost(app, hostId);
+    const changed = () => new Error('SSH settings changed for ' + host.name + '; retry the command');
+    if (state.revision !== revision) throw changed();
     const cached = cachedConnection(state, hostId, host);
     if (cached) return cached;
     const base = sshBase();
@@ -150,50 +155,62 @@ export async function connect(app: App, hostId: string): Promise<Connection> {
     let child: ChildProcess;
     try { child = spawn(base.program, args, spawnOptions(base, { stdio: ['pipe', 'pipe', 'pipe'] })); }
     catch (error: any) { throw new Error('Could not connect to ' + host.name + ': ' + error.message); }
-    child.stdin!.on('error', () => {});
-    let diagnostics = '';
-    child.stderr!.on('data', (chunk: Buffer) => { if (diagnostics.length < 8192) diagnostics += chunk.toString('utf8'); });
-    const lines = lineReader(child);
-    let ready: any;
+    const close = () => { try { child.kill('SIGKILL'); } catch (error) { console.error('Could not close SSH connection to ' + host.name + ':', error); } };
+    let cancel!: () => void;
+    const cancelled = new Promise<never>((_, reject) => { cancel = () => { reject(changed()); close(); }; });
+    const pending = { host, cancel };
+    state.pending.set(hostId, pending);
+    child.stdin!.on('error', error => console.error('SSH input failed for ' + host.name + ':', error));
     try {
-      const line = await withTimeout(lines.next(), daemonEndpoint.STARTUP_TIMEOUT + 30_000, 'timeout');
-      ready = line === undefined ? undefined : JSON.parse(line);
-    } catch { ready = undefined; }
-    if (ready?.peerProtocol !== PEER_PROTOCOL_VERSION || typeof ready?.daemonId !== 'string') {
-      child.kill('SIGKILL');
-      throw new Error('Could not attach to ' + host.name + '. Install or upgrade piopd on that machine. ' + diagnostics.trim());
-    }
-    if (!BUILD_ID || ready.buildId !== BUILD_ID) {
-      child.kill('SIGKILL');
-      throw new Error('Piop daemon build mismatch on ' + host.name + ': local ' + (BUILD_ID || 'unknown') + ', remote ' + (ready.buildId || 'unknown') + '. Install the same piopd build on both machines and restart the remote daemon.');
-    }
-    if (ready.daemonId === daemonEndpoint.identity()) { child.kill('SIGKILL'); throw new Error('This SSH target is the current daemon; use Local'); }
-    const connection = new Connection(ready.daemonId, child);
-    const existing = [...state.connections.values()].map(([, other]) => other).find(other => other.daemonId === connection.daemonId && other.alive);
-    if (existing) {
-      connection.close();
-      app.removeLogStatus(hostId);
-      state.connections.set(hostId, [host, existing]);
-      if (existing.logStatus !== undefined) app.setLogStatus(hostId, existing.logStatus);
-      return existing;
-    }
-    const previous = state.connections.get(hostId);
-    app.removeLogStatus(hostId);
-    state.connections.set(hostId, [host, connection]);
-    previous?.[1].close();
-    app.emit('pi://plugins-changed', { hostId, _peer: true });
-    void (async () => {
-      for (;;) {
-        const line = await lines.next();
-        if (line === undefined) break;
-        let packet: any;
-        try { packet = JSON.parse(line); } catch { break; }
-        connection.receive(app, packet);
+      let diagnostics = '';
+      child.stderr!.on('data', (chunk: Buffer) => { if (diagnostics.length < 8192) diagnostics += chunk.toString('utf8'); });
+      const lines = lineReader(child);
+      let ready: any;
+      try {
+        const line = await withTimeout(Promise.race([lines.next(), cancelled]), daemonEndpoint.STARTUP_TIMEOUT + 30_000, 'SSH handshake timed out');
+        ready = line === undefined ? undefined : JSON.parse(line);
+      } catch (error: any) { throw new Error('Could not attach to ' + host.name + ': ' + error.message); }
+      const current = await configuredHost(app, hostId);
+      if (state.revision !== revision || current.target !== host.target || current.piPath !== host.piPath) throw changed();
+      if (child.exitCode !== null || child.signalCode !== null) throw new Error('SSH disconnected from ' + host.name);
+      if (ready?.peerProtocol !== PEER_PROTOCOL_VERSION || typeof ready?.daemonId !== 'string') {
+        close();
+        throw new Error('Could not attach to ' + host.name + '. Install or upgrade piopd on that machine. ' + diagnostics.trim());
       }
-      connection.disconnected(app);
-      connection.close();
-    })();
-    return connection;
+      if (!BUILD_ID || ready.buildId !== BUILD_ID) {
+        close();
+        throw new Error('Piop daemon build mismatch on ' + host.name + ': local ' + (BUILD_ID || 'unknown') + ', remote ' + (ready.buildId || 'unknown') + '. Install the same piopd build on both machines and restart the remote daemon.');
+      }
+      if (ready.daemonId === daemonEndpoint.identity()) { close(); throw new Error('This SSH target is the current daemon; use Local'); }
+      const connection = new Connection(ready.daemonId, child);
+      const existing = [...state.connections.values()].map(([, other]) => other).find(other => other.daemonId === connection.daemonId && other.alive);
+      if (existing) {
+        connection.close();
+        app.removeLogStatus(hostId);
+        state.connections.set(hostId, [host, existing]);
+        if (existing.logStatus !== undefined) app.setLogStatus(hostId, existing.logStatus);
+        return existing;
+      }
+      const previous = state.connections.get(hostId);
+      app.removeLogStatus(hostId);
+      state.connections.set(hostId, [host, connection]);
+      previous?.[1].close();
+      app.emit('pi://plugins-changed', { hostId, _peer: true });
+      void (async () => {
+        try {
+          for (;;) {
+            const line = await lines.next();
+            if (line === undefined) break;
+            let packet: any;
+            try { packet = JSON.parse(line); } catch (error) { console.error('Invalid SSH response from ' + host.name + ':', error); break; }
+            connection.receive(app, packet);
+          }
+        } catch (error) { console.error('SSH reader failed for ' + host.name + ':', error); }
+        finally { connection.disconnected(app); connection.close(); }
+      })();
+      return connection;
+    } catch (error) { close(); throw error; }
+    finally { if (state.pending.get(hostId) === pending) state.pending.delete(hostId); }
   });
 }
 
@@ -406,19 +423,29 @@ export async function detachOwner(app: App, owner: string): Promise<void> {
 }
 
 export async function invalidate(app: App): Promise<void> {
-  let settings;
-  try { settings = await loadAppSettings(app); } catch { return; }
   const state = app.peers;
+  state.revision += 1;
+  let settings;
+  try { settings = await loadAppSettings(app); } catch (error) {
+    for (const pending of state.pending.values()) pending.cancel();
+    console.error('Could not reload SSH settings:', error); return;
+  }
+  for (const [id, pending] of state.pending) {
+    const keep = settings.hosts.some(host => host.enabled && host.id === id && host.target === pending.host.target && host.piPath === pending.host.piPath);
+    if (!keep) pending.cancel();
+  }
   const removed: Connection[] = [];
   for (const [id, [previous, connection]] of [...state.connections]) {
     const keep = settings.hosts.some(host => host.enabled && host.id === id && host.target === previous.target && host.piPath === previous.piPath);
     if (!keep) { state.connections.delete(id); app.removeLogStatus(id); removed.push(connection); }
   }
   const retained = new Set([...state.connections.values()].map(([, connection]) => connection));
-  for (const connection of removed) if (!retained.has(connection)) connection.close();
+  for (const connection of removed) if (!retained.has(connection)) { connection.disconnected(app); connection.close(); }
 }
 
 export function shutdown(app: App): void {
+  app.peers.revision += 1;
+  for (const pending of app.peers.pending.values()) pending.cancel();
   for (const [, connection] of app.peers.connections.values()) {
     connection.close();
     connection.disconnected(app);

@@ -1,11 +1,11 @@
 import { App as AndroidApp } from "@capacitor/app";
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
 import { createSignal } from "solid-js";
 import { createDependencyEffect } from "../lib/solid";
 
 type State = "checking" | "active" | "off" | "other-vpn" | "missing" | "unknown";
 
-const tailscale = registerPlugin<{ check(): Promise<{ state: State }>; open(): Promise<void> }>("TailscaleStatus");
+const tailscale = registerPlugin<{ check(): Promise<{ state: State }>; open(): Promise<void>; addListener(event: "statusChanged", listener: (status: { state: State; error?: string }) => void): Promise<PluginListenerHandle> }>("TailscaleStatus");
 
 const messages: Record<State, { title: string; detail: string }> = {
   checking: { title: "Checking Tailscale…", detail: "Checking this phone’s VPN connection." },
@@ -19,14 +19,18 @@ const messages: Record<State, { title: string; detail: string }> = {
 export function MobileTailscaleStatus() {
   const [state, setState] = createSignal<State>("checking");
   const [error, setError] = createSignal("");
+  const [listenerError, setListenerError] = createSignal("");
   let disposed = false;
 
+  let revision = 0;
+  const reportError = (reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)); };
   const check = async () => {
+    const current = ++revision;
     try {
       const status = await tailscale.check();
 
-      if (!disposed) setState(status.state);
-    } catch { if (!disposed) setState("unknown"); }
+      if (!disposed && current === revision) { setState(status.state); setError(""); }
+    } catch (reason) { if (!disposed && current === revision) { setState("unknown"); reportError(reason); } }
   };
 
   const open = async () => {
@@ -39,16 +43,26 @@ export function MobileTailscaleStatus() {
   createDependencyEffect(() => {
     if (Capacitor.getPlatform() !== "android") return;
     disposed = false;
-    void check();
-    const interval = setInterval(() => { if (!document.hidden) void check(); }, 5000);
-    const resume = AndroidApp.addListener("appStateChange", ({ isActive }) => { if (isActive) void check(); });
+    const handles: PluginListenerHandle[] = [];
+    const keep = async (pending: Promise<PluginListenerHandle>) => {
+      try { const handle = await pending; if (disposed) await handle.remove(); else handles.push(handle); }
+      catch (reason) { setListenerError(String(reason)); }
+    };
+    void (async () => {
+      await keep(tailscale.addListener("statusChanged", status => {
+        if (disposed) return;
+        revision++; setState(status.state); setError(status.error ?? "");
+      }));
+      if (!disposed) await check();
+    })();
+    void keep(AndroidApp.addListener("appStateChange", ({ isActive }) => { if (isActive) void check(); }));
 
-    return () => { disposed = true; clearInterval(interval); void resume.then((handle) => handle.remove()); };
+    return () => { disposed = true; for (const handle of handles) void handle.remove().catch(reason => setListenerError(String(reason))); };
   }, () => []);
 
   return Capacitor.getPlatform() === "android" && <div class="mobile-tailscale-status" data-state={state()}>
     <div role="status"><strong><span class="mobile-tailscale-dot" aria-hidden="true" />{messages[state()].title}</strong><p>{messages[state()].detail}</p></div>
     <div class="mobile-host-actions"><button type="button" onClick={() => void check()}>Check again</button>{state() !== "missing" && <button type="button" onClick={() => void open()}>Open Tailscale</button>}</div>
-    {error() && <p role="alert">{error()}</p>}
+    {(listenerError() || error()) && <p role="alert">{listenerError() || error()}</p>}
   </div>;
 }

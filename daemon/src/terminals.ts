@@ -1,5 +1,7 @@
 import type { Subprocess } from 'bun';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { descendantProcesses, killVerified, signalProcessGroup, sleep } from './process_cleanup';
 import { MAX_TERMINALS } from './config';
 import { isDirectory } from './environment';
 import { loadAppSettings } from './settings';
@@ -23,6 +25,7 @@ export interface TerminalProcess {
   cols: number;
   queued: number;
   exited: boolean;
+  stopping?: Promise<void>;
 }
 
 /** State for all running shell terminals and their saved output. */
@@ -122,7 +125,8 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
   void child.exited.then(async () => {
     // Let the PTY deliver the last output before the terminal closes.
     await Promise.race([ptyClosed, new Promise(resolve => setTimeout(resolve, 1000))]);
-    try { child.terminal?.close(); } catch {}
+    if (started.stopping) await started.stopping;
+    try { child.terminal?.close(); } catch (error) { console.error('Could not close terminal PTY ' + terminalId + ':', error); }
     started.exited = true;
     output(decoder.decode());
     if (!current()) return;
@@ -130,7 +134,7 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
     const packet = terminalLookup.event(runtime.history, terminalId, { type: 'terminal_exit', terminalId });
     terminalLookup.finish(runtime.history, terminalId);
     emit(packet);
-  });
+  }).catch(error => console.error('Terminal exit cleanup failed for ' + terminalId + ':', error));
   runtime.processes.set(terminalId, started);
 }
 
@@ -166,39 +170,59 @@ export function closeTerminal(runtime: TerminalRuntime, terminalId: string): Pro
   return stopTerminals(runtime, [terminalId]);
 }
 
-export async function stopTerminalProcess(process: TerminalProcess): Promise<void> {
+export function stopTerminalProcess(process: TerminalProcess): Promise<void> {
+  return process.stopping ??= stopShell(process);
+}
+
+async function stopShell(process: TerminalProcess): Promise<void> {
   const child = process.child;
-  if (child.exitCode === null && child.signalCode === null) {
-    // The shell leads its own process group in the PTY. Hang up the whole group, so the shell also hangs up its background jobs.
-    try { globalThis.process.kill(-child.pid, 'SIGHUP'); } catch {}
-    const stopped = await Promise.race([child.exited.then(() => true), new Promise<boolean>(resolve => setTimeout(() => resolve(false), 1000))]);
-    if (!stopped) {
-      try { child.kill('SIGKILL'); } catch {}
-      await Promise.race([child.exited, new Promise(resolve => setTimeout(resolve, 2000))]);
+  const descendants = descendantProcesses(child.pid, child.pid);
+  const signal = (value: NodeJS.Signals) => {
+    descendants.push(...descendantProcesses(child.pid, child.pid));
+    signalProcessGroup(child.pid, value);
+    killVerified(descendants, value);
+    if (child.exitCode === null && child.signalCode === null) {
+      try { child.kill(value); } catch (error) { console.error('Could not signal terminal ' + child.pid + ':', error); }
     }
-  }
-  try { child.terminal?.close(); } catch {}
+  };
+  const alive = ({ pid, started }: { pid: number; started: string }) => {
+    try {
+      const stat = readFileSync('/proc/' + pid + '/stat', 'utf8');
+      const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/);
+      return fields[0] !== 'Z' && fields[19] === started;
+    } catch (error: any) {
+      if (error.code !== 'ENOENT' && error.code !== 'ESRCH') console.error('Could not check terminal child ' + pid + ':', error);
+      return false;
+    }
+  };
+  const settled = () => (child.exitCode !== null || child.signalCode !== null) && !descendants.some(alive) && descendantProcesses(child.pid, child.pid).length === 0;
+  const settle = async (ms: number) => { const deadline = Date.now() + ms; while (Date.now() < deadline) { if (settled()) return true; await sleep(25); } return settled(); };
+  signal('SIGHUP');
+  if (!await settle(1000)) { signal('SIGTERM'); if (!await settle(500)) { signal('SIGKILL'); if (!await settle(2000)) console.error('Terminal shell ' + child.pid + ' did not exit after SIGKILL'); } }
+  const remaining = new Set(descendants.filter(alive).map(({ pid }) => pid));
+  if (remaining.size) console.error('Terminal children did not exit after SIGKILL: ' + [...remaining].join(', '));
+  try { child.terminal?.close(); } catch (error) { console.error('Could not close terminal PTY ' + child.pid + ':', error); }
 }
 
 export async function stopTerminals(runtime: TerminalRuntime, terminalIds: string[]): Promise<void> {
   for (const id of terminalIds) {
     const process = runtime.processes.get(id);
-    runtime.processes.delete(id);
-    runtime.history.delete(id);
     if (process) {
       try { await stopTerminalProcess(process); }
       catch (error: any) { throw new Error('Could not close terminal ' + id + ': ' + (error?.message ?? error)); }
     }
+    if (runtime.processes.get(id) === process) { runtime.processes.delete(id); runtime.history.delete(id); }
+    else if (!runtime.processes.has(id)) runtime.history.delete(id);
   }
 }
 
 export async function detachOwner(runtime: TerminalRuntime, owner: string): Promise<void> {
-  try { await terminalLookup.discardDrafts(runtime, 'shared:' + owner + ':'); } catch {}
+  try { await terminalLookup.discardDrafts(runtime, 'shared:' + owner + ':'); } catch (error) { console.error('Could not discard terminal drafts for ' + owner + ':', error); }
   const ids = [...runtime.processes].filter(([, process]) => process.windowLabel === owner).map(([id]) => id);
-  try { await stopTerminals(runtime, ids); } catch {}
+  try { await stopTerminals(runtime, ids); } catch (error) { console.error('Could not detach terminals for ' + owner + ':', error); }
   terminalLookup.detach(runtime, owner);
 }
 
 export async function shutdown(runtime: TerminalRuntime): Promise<void> {
-  try { await stopTerminals(runtime, [...runtime.processes.keys()]); } catch {}
+  try { await stopTerminals(runtime, [...runtime.processes.keys()]); } catch (error) { console.error('Could not shut down terminals:', error); }
 }

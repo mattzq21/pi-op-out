@@ -39,7 +39,8 @@ export function createTerminalTranscript() {
   let carriageReturn = false;
   let parameters = "";
   let rendition: TerminalRendition = {};
-  let runs: { start: number; rendition: TerminalRendition }[] = [];
+  type Segment = { id: object; text: string; style: ReturnType<typeof terminalTextStyle> };
+  let runs: { start: number; rendition: TerminalRendition; segment?: Segment }[] = [];
 
   const write = (value: string) => {
     if (runs.at(-1)?.rendition !== rendition) runs.push({ start: text.length, rendition });
@@ -134,7 +135,13 @@ export function createTerminalTranscript() {
       return text;
     },
     segments() {
-      return runs.map((run, index) => ({ text: text.slice(run.start, runs[index + 1]?.start), style: terminalTextStyle(run.rendition) }));
+      return runs.map((run, index) => {
+        const value = text.slice(run.start, runs[index + 1]?.start);
+
+        if (run.segment?.text !== value) run.segment = { id: run.segment?.id ?? {}, text: value, style: run.segment?.style ?? terminalTextStyle(run.rendition) };
+
+        return run.segment;
+      });
     },
   };
 }

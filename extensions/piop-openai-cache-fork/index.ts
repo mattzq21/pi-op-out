@@ -154,15 +154,18 @@ export default function openAICacheFork(pi: ExtensionAPI): void {
       return cacheLineageId;
     }
 
-    cacheLineageId = await inheritedLineage(ctx);
-    runtimeState.activeId = cacheLineageId;
+    const id = await inheritedLineage(ctx);
 
     if (!storedLineage(ctx.sessionManager.getBranch())) {
       try {
-        pi.appendEntry(CACHE_FORK_ENTRY, { id: cacheLineageId });
-      } catch {
+        pi.appendEntry(CACHE_FORK_ENTRY, { id });
+      } catch (error) {
+        throw new Error(`piop-openai-cache-fork could not save cache identity: ${String(error)}`, { cause: error });
       }
     }
+
+    cacheLineageId = id;
+    runtimeState.activeId = id;
 
     return cacheLineageId;
   };

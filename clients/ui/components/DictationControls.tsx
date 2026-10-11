@@ -3,7 +3,8 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { DictationRecording, transcribeDictation, useDictationEnabled } from "../lib/dictation";
 
 export function DictationControls(props: { disabled: boolean; compact?: boolean; onText: (text: string) => void }) {
-  const enabled = useDictationEnabled();
+  const configuration = useDictationEnabled();
+  const enabled = configuration.enabled;
   const [phase, setPhase] = createSignal<"idle" | "starting" | "recording" | "transcribing">("idle");
   const [error, setError] = createSignal<string>();
   let recording: DictationRecording | undefined;
@@ -57,6 +58,7 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
       </button>
       <Show when={phase() !== "idle"}><button type="button" aria-label="Cancel dictation" onClick={cancel}><X size={14} /></button></Show>
     </Show>
+    <Show when={configuration.error()}><span class="dictation-error" role="alert">{configuration.error()} <button type="button" onClick={() => void configuration.retry()}>Retry</button></span></Show>
     <Show when={error()}><span class="dictation-error" role="alert">{error()}</span></Show>
   </span>;
 }

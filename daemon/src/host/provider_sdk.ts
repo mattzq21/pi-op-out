@@ -28,7 +28,15 @@ class Connection {
   pending = new Map<string, Pending>();
   closed = false;
   constructor(readonly child: ChildProcess) {}
-  stop(): void { try { this.child.kill('SIGKILL'); } catch {} }
+  stop(error = new Error('Pi provider SDK stopped')): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const [, reply] of this.pending) reply.reject(error);
+    this.pending.clear();
+    try {
+      if (!this.child.kill('SIGKILL') && this.child.exitCode === null && this.child.signalCode === null) console.error('Could not stop Pi provider SDK process');
+    } catch (failure) { console.error('Could not stop Pi provider SDK:', failure); }
+  }
 }
 
 export async function resolveProviderAuth(executable: string, providerId: string): Promise<any> {
@@ -107,17 +115,15 @@ export class Sdk {
     const id = randomUUID();
     const message = { ...packet, id };
     let timer: NodeJS.Timeout | undefined;
-    const incoming = new Promise<any>((resolve, reject) => connection.pending.set(id, { resolve, reject }));
-    incoming.catch(() => {});
     try {
       if (connection.closed) throw new Error('Pi provider SDK disconnected');
       if (this.plugin !== undefined && packet?.method === 'plugin_call' && (await DaemonRestart.blocking())) throw new Error('The daemon is restarting. Reconnect before retrying.');
       if (connection.closed) throw new Error('Pi provider SDK disconnected');
-      await new Promise<void>((resolve, reject) => connection.child.stdin!.write(JSON.stringify(message) + '\n', error => error ? reject(error) : resolve()));
-      return await Promise.race([
-        incoming,
-        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Pi provider SDK request timed out')), 630_000); }),
-      ]);
+      timer = setTimeout(() => connection.stop(new Error('Pi provider SDK request timed out; unresponsive worker stopped')), 630_000);
+      return await new Promise<any>((resolve, reject) => {
+        connection.pending.set(id, { resolve, reject });
+        connection.child.stdin!.write(JSON.stringify(message) + '\n', error => { if (error) reject(error); });
+      });
     } finally {
       clearTimeout(timer);
       connection.pending.delete(id);

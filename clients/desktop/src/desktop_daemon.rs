@@ -198,10 +198,19 @@ async fn run_connection(socket: Socket, mut incoming: async_mpsc::UnboundedRecei
 fn reconnect_after_restart(app: AppHandle, window: String) {
     tokio::spawn(async move {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+        let mut last_error = "Piop daemon connection timed out".to_string();
         while tokio::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            if app.get_webview_window(&window).is_none() { break; }
-            if app.state::<DesktopDaemon>().connect(&app, &window).await.is_ok() { break; }
+            if app.get_webview_window(&window).is_none() { return; }
+            match tokio::time::timeout_at(deadline, app.state::<DesktopDaemon>().connect(&app, &window)).await {
+                Ok(Ok(_)) => return,
+                Ok(Err(error)) => last_error = error,
+                Err(_) => break,
+            }
+        }
+        let message = format!("Could not reconnect to the Piop daemon after restart: {last_error}. Retry the connection.");
+        if let Err(error) = app.emit_to(&window, "pi://daemon-error", json!({"hostId":"local","line":message})) {
+            eprintln!("{message} Could not report recovery failure: {error}");
         }
     });
 }
@@ -355,12 +364,19 @@ pub(crate) async fn daemon_invoke(app: AppHandle, window: tauri::WebviewWindow, 
     let runtime_id = args["runtimeId"].as_str().map(str::to_owned);
     let starting = command == "start_pi";
     let stopping = command == "stop_pi";
+    if starting {
+        if let Some(id) = &runtime_id {
+            let mut runtimes = state.runtimes.lock().map_err(|_| "Daemon runtime registry unavailable")?;
+            if !connection.alive.load(Ordering::SeqCst) { return Err("Disconnected from the Piop daemon".into()); }
+            runtimes.insert(id.clone(), connection.clone());
+        }
+    }
     let target = connection.clone();
-    let result = tokio::task::spawn_blocking(move || target.invoke(&command, args)).await.map_err(|error| error.to_string())?;
-    if result.is_ok() {
+    let result = tokio::task::spawn_blocking(move || target.invoke(&command, args)).await.map_err(|error| error.to_string()).and_then(|result| result);
+    if starting && result.is_err() || stopping && result.is_ok() {
         if let Some(id) = runtime_id {
             let mut runtimes = state.runtimes.lock().map_err(|_| "Daemon runtime registry unavailable")?;
-            if starting { runtimes.insert(id, connection); } else if stopping { runtimes.remove(&id); }
+            if runtimes.get(&id).is_some_and(|registered| Arc::ptr_eq(registered, &connection)) { runtimes.remove(&id); }
         }
     }
     result
