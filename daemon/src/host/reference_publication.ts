@@ -1,9 +1,6 @@
-import { spawn } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { join, normalize } from 'node:path';
-import { STORAGE_DIRECTORY } from '../config';
-import { goalDependencies } from '../resources';
-import * as Registry from '../session_registry';
+import { hostScript, runHostScript } from '../host_script';
 import { lockPath, type FileLock } from '../util/flock';
 
 export async function lock(root: string): Promise<FileLock> {
@@ -95,31 +92,11 @@ async function goalDependenciesOf(root: string, directory: string): Promise<Set<
   return found;
 }
 
-async function goalTextContents(root: string, directory: string): Promise<string[]> {
-  const module = goalDependencies.replaceAll("require('../session-database.cjs')", "require('./session-database.cjs')");
-  const script = Registry.withDatabase('const goalTextFiles = (() => { const module = {exports: {}}; ' + module + '\nreturn module.exports; })();\nprocess.stdout.write(JSON.stringify(goalTextFiles.textContents(process.argv[1], process.argv[2]).map(entry => entry.text)));');
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['-e', script, root, directory], { env: { ...process.env, BUN_BE_BUN: '1', PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY }, stdio: ['ignore', 'pipe', 'pipe'] });
-    const stdout: Buffer[] = [], stderr: Buffer[] = [];
-    let outputSize = 0, errorSize = 0;
-    let failure: Error | undefined;
-    const collect = (chunks: Buffer[], chunk: Buffer, stream: 'stdout' | 'stderr') => {
-      if (failure) return;
-      if (stream === 'stdout') outputSize += chunk.length; else errorSize += chunk.length;
-      if (outputSize > 1024 * 1024 * 1024 || errorSize > 1024 * 1024 * 1024) {
-        failure = Object.assign(new Error('spawnSync ' + process.execPath + ' ENOBUFS'), { code: 'ENOBUFS' });
-        child.kill();
-      } else chunks.push(chunk);
-    };
-    child.stdout.on('data', chunk => collect(stdout, chunk, 'stdout'));
-    child.stderr.on('data', chunk => collect(stderr, chunk, 'stderr'));
-    child.on('error', reject);
-    child.stdout.on('error', error => { failure = error; child.kill(); });
-    child.stderr.on('error', error => { failure = error; child.kill(); });
-    child.on('close', status => {
-      if (failure) { reject(failure); return; }
-      if (status !== 0) { reject(new Error(Buffer.concat(stderr).toString().trim())); return; }
-      try { resolve(JSON.parse(Buffer.concat(stdout).toString())); } catch (error) { reject(error); }
-    });
-  });
+const goalText = hostScript<{ root: string; directory: string }, string[]>('goal-text', 1024 * 1024 * 1024, value => {
+  if (!Array.isArray(value) || !value.every(item => typeof item === 'string')) throw new Error('expected a list of texts');
+  return value;
+});
+
+function goalTextContents(root: string, directory: string): Promise<string[]> {
+  return runHostScript({ kind: 'local' }, goalText, { root, directory });
 }

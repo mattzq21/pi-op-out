@@ -1,1 +1,112 @@
-eval(require("node:zlib").brotliDecompressSync((()=>{const a="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#",s="8)?N8Ocs89ocXLqll^@ui1Z!1-2Y{(>IKQz=>kE!9ujtf7/IU2NL{-^MVMV]+L0zAl2lixJN1U+e>$adCma/A[CWqQ=dr+McdkgUo2<*b{:b[2[O&-nfsX!4Agpzp=/{XsP<EdJ+xza9?t560-DAVl&xA:m4:dbd^>(Oz1>TLstfVATcvrk1{Weeh(bAG*Nq7<TBDTvigrLbUKv/H7*bd6nS@OAYumD+/a0XgY^tW!@>r}ZkG=q=x{pL6NSmJ>FyAWk<W^N5qU]^Y3l7kvWJb$n8rY-UB8uoD{yYBl{?iBARRmI3*{O+@ZJVJOA!Tz!MWE!pk!4g+GP-@t:y=h[bqK$u}?MlZ{3&r56OPSs&A>bval{m4qwDx)DWl3WcsGw=Uco#*(rDnep*[$l<:(.5sEE[EjdiOOPd2fqo?8(j[N}]e(SiwONME{}EV*Y*j)7gzG(b6vX6oZqWhOCE-Ckg@GA6C{B06?lOOdg5>r)Z>3Z@=CEXTA52qvEB^lqW<n]C]^<Eoel%hItYya)#!ic9vw^(<1D::PTd={1}XNb.@^+R8)BdE>Jd@YR2X/zFWQiJv+:JqTIF%vz^B6^TJqvKgbuHighVXT){&UKza[%Cz=A%0P(rDc&VCxKz:BqWLToa1stXMhO:oGP$<v[.TebVXb)/osBFAj0Sllx)kzsKyI*so2ngVtIf{:lTojdNcNQf8!d[8gc.e8v&Slq>By470m-uy(blg@ib&MSqo[cHv06]sxOy^8wGL!u-.kZm$eAdN0<tSJ3</j1c@AduR^CDTuWIP5d}.dqLVYEC<ShOxvF>dpQmc&%IG7TaMC>WO@?6sJd*E7:]XcE3)Qmi.12N>C@58.e94[}Ye2j=}AHmN{QEqFt9c:e<v}D@uYxA5i@zJ!?AP&N9mDf&>1jsxDq]f&m$&2P)j@HBFEp)ZFZV)]*0eaDwY*l)zyeINfra/-^rW=efv-siE%+^?J2Dl%LNCK]b}paVAWstm%>1WEUP^p[Cj&9$/zPLyQ2!YEx4v[{t-+}d-=]UTjpiNJcRAgA{@oe.%Sbier>GDn#JI-IMe/LN}8I4ss?hi*g97&-0j{6u<-=rHj778DKY20?vU<p6{fPzk.M)+j4/9Co?/4z4SraqpGmha*Sf<jX}6>Ftp&!:GKGRW/bG.+p$nYAGwq6O}#^0dtE3VnK<REt:[2@1{vjM0@v9gN$DT=%zI2FP*OrB4tXeA?W4qb8Y{k8=U8{X(w2ELRP9<Oc%a>gO=%{c]^Y?jMIZ$3^sAPK@yX5gwVt1HEW0Dz29FvU@+F9v>5!3]{wz5z>qFV!@y5qnI4>Tqb(+ioO-VGI>I3P2sxd$QT?GYd#w{vV[!@p+btk6oRN#$5:IKfcT^antMd1zP{f=CT5D3M34<*iWS9KDYMAf-vP-h1mNv>x3%%sq4IKI[Jh<)lh:@MS(n?m$BlBpHd0@%.v9dR48g8o1G6d4zle&JTE}/KnS8V+J=RzB=YW77v&H%}w%83Mf{(vhywrZK%:mRa:*)[3#7:ROI:vm8NJgpr85%z:8spy8AZMtCFcM$^QML{(dyk1/z9.+?/IrMW7e%l>+e@){CVJvYa.1xb4TVf10h>>n2I5q3yf4%3a/<l#dS*LQ)c(5#GJa+L)2}HwP0S-D2TGM3aAM?h<eOM4cs01ggF90q-ZAg+F/U>fhKjWdDYxme7q%v0L/1WMht}YefSxhDnK*e86uon}O:j5bRy-ldXvt7I@0^7oHl>B#LsQ7b*zC&QI!@l+ngJe:vs7]Zm/:b6x5umIdu3/o^.DlqLNH5<aP2ExylsUP2m+{)w>pXJoSV@qI67iA76}dDV6QAkscJwZ{ox+!j?5vwUl^}G2B[}=1l1T@Y{()UGQ{mDy]n*!9Fq5%$xhvQ[Llaebvwz%^[l&E6IN[2{kkX<cGFN&bbZ0kDL1A!3G{JyfM]!XRtp:fp*o*d54^mWF:7DQKnmRoSQ-V^UOUOLrBD4rK2T?pzxVXu&mK*=<}g?wc1Po0eX+xG=61]ei8lL9GTyliX.UNkBnV1<TwQ+/=EBH.l[9McLUmbRf!V9PHX4-#Zq$X&c5Xh+:Vn<hkhA$)3OB5/StYZ{#}}n1BrDT$mY<prw42([Y+%xylhnvUGt8frLiGHYA7+D*/hfk&Fz[Yp?(.dy$>A<Yr2^PI)Jv4e5EubqR2B/BZxx+Zy6!J3*D?P2!l=b/(q-0bgGjz-Krbp=k9Wp%FoPuzL=:l.H{qt2!.J>js4kDuVqLFjj9oThkFFEDnVkF^XFNymEO1)P-bo>6sBZ0WW]ePijjFBpm=[{6uEVI!r}$caqaIDz0iAfT*U!{6?r^aIDKp6(%nt<Dd!sT}1uQ3uEaieM$]$6@ieQC%?NTfanc/5w85i2{F?.^S&/2GnXcI}<Kj:>uASi8kvV=/}(]Ae{lzO}N]2S:^Z>+l[&Q%aIJ(e![/5>1mE>kcA:5hPvQ]Qn@<H=CE1&jQ+/lDlnUX!&H+)zo.lkW.JPKi[^YJJYy(@7}:#O7N*=m^BhDo[0I5Q*z1@fe5s9g/=U]2Ng=R68eY5+44+Ef:Fl!YTx<+^RlN8-4d/c9t&EC^a=MP&dRO0Q!2lt={=K4{YU3GJxgEFD]8(H]>D#xnUA)<b(5X8U[81Qwf&0D*h>NkJb?0TW44VCPG5#8d!g*<t@=NI=Z8Jdi3KiKjMAUvtBX+n8g=:>!]?-nVV6.0R/m9+UgNr4Eig9VS)ko$&gmGY0r/txa9[C>S}mEppGXd*gJ1lHZneR0OdeIm2-A^DmYOuo./*39&E%lSk6+]Ab]G<bNiRdL55%$Pc#APYobX/#)&[Bya}R{^5z}2(7d1irH.mE=JWU(vDT:=d5YLv%f0VP$v1.b#C%2yCwE<R[m.EWbHq^0%L8S=wIf3+^ylA%EKSbgr)HH2eJcGVVxLj80)m7EOp0W!eD@-Ol^j4W8!98C(K#$%smn7oBPYoiL2P)!D)2zd8OkcHsA6kpx/0n!Gcii:s*x+WweRur0C[)KaH1#k6ylPO?ofQ/b>cWWQM*.2mk)He!oFm^s-^]22t/?P?4<!u15TCf@pfIMh.6G1Ak{mc@5w%L:OT=&7gL}=-8!Pd8{sGe1ESz1XQU/r$u.Y}{@yy$762rW+Bqi<[4v04LNN!1*&&jvpl5OY*dTgXTf0Vu7Y&r4M7eo=5r-$>{Y:A6^iOsG:5/=o&cFAK^7#{57l76*zYS-ZHFNfPM{T&1KbL1Dir.N^UM0j}?}kW.!wxj[I0[8{KKi*rADhQ5W0V[QqiIAnG6zVIfu-^*R{Xp!?oMnA{iVT4&TwvWrL)K>slNj6f9a*vy7:B&{0lRc:F:cr90+DHGTtG:o:Vr-6]9OKr(HKo0jY[efzgnGy=dZ:Q}XvP+l:Q3(r0HOjsEaaKsy*Ke3dodv*-.AS{*h<klJFl9X[o^3ix<SsAX:{$QqAR]Du4J/xy.Auc23=R/^GOd>74Wpl6O}sla=NdAJkwB)@KdMoU)<r]*VT7H?yP^Nzac<9mltrCAF3?]&AXA:Q0MoVWo<?g)^?on[%[whCe4jE5=IisyS{MFaFZwp.Q7^rQi/LkO0!spnEOiniOzAe+hilywe}rCwl<hd6&P}:#!)T!3D^8mm6F=dz{QrhZ<O%@31b{.u%V1^<3rZnjP*teN^N*:TdGh:h^ksw[onE0S3*2:uf+[iaRq5RvbNn&D%ekC:Kqv])*k=GLXVu1@oAKO(JA{g(7b#j&Njha4E5E6E7O{Y)1%K]a&Sz7s43}0WUV%Ut>s/PzVk?wOC1n.aSqbF3xyXF>0UmDdFdLl-3%aLQb]FXBY3AL9H.k&>^[E+J!KlDj6tnkj/=G}b-ht/$koT?o/s4W+WMAN+^Ff!x.MXS(-6hp$hZ/}w5oiyQp{l!%jn#sp1e7Ih?<N58MxQeVkf2BQ28&C+//TJ8y6eL0Kp$(-WfRr<:]U]yE3>@{AY^I+)l@&dXqkL>wvCTxS=5G=Cr2gw<d%>NY6hYd3=C6OnM!1VMZf.+}0f2C5qv54$}DOO[TYWXZ<H(bFy8T.xy<fteTbzPaAl5::Bi[8A77)bURSko^(::9qvor1Y+y2c=icMmc{NYWee2O=j{scd-3kcepMWgAhedM&[MtB+BP/XOdTv>yD5mne1xUpsr]A(40/9avbVKwTyOrJ#o61NIfdM=)@1</]0V^wx+0RwwyuMZY=lCu+$y%23zAQeO!6H)^QT{-a9F.H]AJx5S:9jiq869S?5:q)FZ/oj&D>}bNH)!2Qt=cdmMECpVaOt1cEC@p#ccNs$57nv*%^zlUrO4AlHW(IJ}J!:#IE]0!ITD[L&LJn-&=e2sxa}T/3{P:-WE2+K{?Lk@{7u>bi}FZmQ7walF^QhF{sBd8BpnScr]gEq$ZkYNU&#s6+%r1c]2T+nrunJSZ>g!=0AM]gHhEmz$n76=:n.bJ<BIOsX%7]WGGQO:lenX#kr35mr295aSpk6-[V{Zb.71QPdUA@7Pm4OBzbkC+1^j2NvzF?u4B?/K9?}i1r!cyeYNT(t{:wd%e7/iWbL5u8/.H1H^YP69SP/va(1/ZakEUOVDF?B)Oji}oN@sGeL#*aF[E3=S<cc}zZP4=Ym?rN968tPS>uRc<ewWI3k}&R@V})q{6hZM0Z1w]USqc1dU:F<Xh2&SkRDP>1]R:fAgdhvoKE#Udr^%>&2&8d3PEo5T(/o[o$4}C*OC(ilQ=Vpf/j*H&a^OIk6/I3kw2F2v9a6+^r$+[1S[ubuFRgnn&ehFxZ9%P=r0orDy8sZ?nWHI9B1>+b@bWgd%&<4%7eSk>TCXk$Sp7o%DT!uTko&nl<-%kna1bsE>jRWItEtfH:M<!4.MGZUfFJ96JLrw@mV.u$Zk<VE5o.L/bjCB(rAKwG((U6yvp&.braX%a]fF42C7oLtwXZ90f?ST}@(mlV1O0ha7nYHR%vB8aR7]/&}6@]9jE7aoIPz",b=Buffer.alloc(s.length/5*4);for(let i=0;i<s.length;i+=5){let n=0;for(let j=0;j<5;j++)n=n*85+a.indexOf(s[i+j]);b.writeUInt32BE(n,i/5*4)}return b.subarray(0,3946)})()).toString("utf8"));
+"use strict";(()=>{var ee=Object.create;var p=Object.defineProperty;var se=Object.getOwnPropertyDescriptor;var ne=Object.getOwnPropertyNames;var re=Object.getPrototypeOf,oe=Object.prototype.hasOwnProperty;var i=(e=>typeof require<"u"?require:typeof Proxy<"u"?new Proxy(e,{get:(s,n)=>(typeof require<"u"?require:s)[n]}):e)(function(e){if(typeof require<"u")return require.apply(this,arguments);throw Error('Dynamic require of "'+e+'" is not supported')});var u=(e,s)=>()=>(e&&(s=e(e=0)),s);var N=(e,s)=>()=>(s||e((s={exports:{}}).exports,s),s.exports),m=(e,s)=>{for(var n in s)p(e,n,{get:s[n],enumerable:!0})},A=(e,s,n,r)=>{if(s&&typeof s=="object"||typeof s=="function")for(let o of ne(s))!oe.call(e,o)&&o!==n&&p(e,o,{get:()=>s[o],enumerable:!(r=se(s,o))||r.enumerable});return e};var l=(e,s,n)=>(n=e!=null?ee(re(e)):{},A(s||!e||!e.__esModule?p(n,"default",{value:e,enumerable:!0}):n,e)),C=e=>A(p({},"__esModule",{value:!0}),e);var F=N((be,w)=>{"use strict";var ie=i("node:fs"),te="require('node:vm').runInThisContext(require('node:fs').readFileSync(process.argv[1], 'utf8'), { filename: process.argv[1], importModuleDynamically: specifier => import(specifier) })",b=Symbol("host-script-delegated"),g;function X(){return g??=ie.readFileSync(0,"utf8"),g}function ce(e){let s={ok:!1,error:e instanceof Error?e.message:String(e)};return typeof e?.state=="string"&&(s.state=e.state),typeof e?.warning=="string"&&(s.warning=e.warning),s}function ae(e){return Promise.resolve().then(()=>e(JSON.parse(X()))).then(s=>{s!==b&&process.stdout.write(JSON.stringify({ok:!0,result:s??null}))},s=>{process.stdout.write(JSON.stringify(ce(s))),process.exitCode=1})}w.exports={hostScript:ae,readRequestText:X,delegated:b,scriptLoader:te}});function D(e){let s=t.openSync(e,"r");try{t.fsyncSync(s)}finally{t.closeSync(s)}}var t,U=u(()=>{"use strict";t=l(i("node:fs"))});function Te(e,s=!1,n=!1){if(!f){let o="bun:ffi",{dlopen:T,read:_}=i(o),I=T("libc.so.6",{flock:{args:["i32","i32"],returns:"i32"},__errno_location:{args:[],returns:"ptr"}}),h=I.symbols.__errno_location();if(!h)throw new Error("Could not get flock errno address");f={library:I,read:_,errno:h}}let r;do r=f.library.symbols.flock(e,(s?1:2)|(n?4:0))===0?0:f.read.i32(f.errno);while(r===4);if(r===11)return!1;if(r)throw new Error(`flock failed (errno ${r})`);return!0}function ue(){return process.versions.bun?process.execPath:process.env.PIOP_BUN||"bun"}function le(e=!1,s=!1,n=0,r=3){return["-e",de,String(r),String(+e),String(+s),String(n)]}function fe(e,s){if(e===0)return!0;if(e===75)return!1;throw new Error(s.trim()||"Could not acquire file lock")}function M(e,s=!1,n=!1,r=0){if(process.versions.bun)return Te(e,s,n);let o=(0,S.spawnSync)(ue(),le(s,n),{env:{...process.env,BUN_BE_BUN:"1"},timeout:r,stdio:["ignore","ignore","pipe",e]});if(o.error)throw o.error;return fe(o.status,o.stderr.toString())}var S,f,v,de,q=u(()=>{"use strict";S=i("node:child_process");v=`let libc;
+function nativeLock(fd, shared = false, nonblocking = false) {
+  if (!libc) {
+    const module = 'bun:ffi';
+    const { dlopen, read } = require(module);
+    const library = dlopen('libc.so.6', { flock: { args: ['i32', 'i32'], returns: 'i32' }, __errno_location: { args: [], returns: 'ptr' } });
+    const errno = library.symbols.__errno_location();
+    if (!errno) throw new Error('Could not get flock errno address');
+    libc = { library, read, errno };
+  }
+  let error;
+  do { error = libc.library.symbols.flock(fd, (shared ? 1 : 2) | (nonblocking ? 4 : 0)) === 0 ? 0 : libc.read.i32(libc.errno); } while (error === 4);
+  if (error === 11) return false;
+  if (error) throw new Error(\`flock failed (errno \${error})\`);
+  return true;
+}`,de=`${v}
+const [fd, shared, nonblocking, wait] = process.argv.slice(1).map(Number);
+try {
+  if (wait) {
+    const source = ${JSON.stringify(v)} + '; self.onmessage = ({data}) => { try { self.postMessage(nativeLock(...data)); } catch (error) { self.postMessage({error: error.message}); } };';
+    const url = URL.createObjectURL(new Blob([source], {type: 'application/javascript'}));
+    const worker = new Worker(url);
+    setTimeout(() => process.exit(75), wait);
+    worker.onmessage = ({data}) => { if (data?.error) { console.error(data.error); process.exit(1); } process.exit(data ? 0 : 75); };
+    worker.onerror = event => { console.error(event.message); process.exit(1); };
+    worker.postMessage([fd, !!shared, !!nonblocking]);
+  } else process.exit(nativeLock(fd, !!shared, !!nonblocking) ? 0 : 75);
+} catch (error) { console.error(error.message); process.exit(1); }
+`});function _e(e){E.mkdirSync(e,{recursive:!0,mode:448});let s=E.openSync(k.join(e,"reference-publication.lock"),E.constants.O_CREAT|E.constants.O_RDWR|E.constants.O_NOFOLLOW,384);try{if(!E.fstatSync(s).isFile())throw new Error("Invalid reference publication lock");return s}catch(n){throw E.closeSync(s),n}}function pe(e,s,n,r){if(r&&s===75){E.closeSync(e);return}if(s!==0)throw new Error(n.trim()||"Could not lock reference publication");return()=>E.closeSync(e)}function R(e,s=!1,n=!1){let r=_e(e);try{return pe(r,M(r,s,n)?0:75,"",n)}catch(o){throw E.closeSync(r),o}}var E,k,Y=u(()=>{"use strict";q();E=l(i("node:fs")),k=l(i("node:path"))});var B=u(()=>{"use strict";Y()});function Ne(e){e.exec("PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;");try{e.exec(`CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
+      CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE); CREATE TRIGGER IF NOT EXISTS session_file_metadata_moved AFTER UPDATE ON sessions WHEN OLD.session_path IS NOT NEW.session_path BEGIN DELETE FROM session_file_metadata WHERE session_id=OLD.session_id; END;`),e.exec(`      CREATE TABLE IF NOT EXISTS session_goals (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+        objective TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'blocked', 'usage_limited', 'budget_limited', 'complete')),
+        token_budget INTEGER CHECK(token_budget > 0),
+        tokens_used INTEGER NOT NULL CHECK(tokens_used >= 0),
+        elapsed_ms INTEGER NOT NULL CHECK(elapsed_ms >= 0));
+      CREATE TABLE IF NOT EXISTS session_goal_accounting (
+        session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        goal_id TEXT NOT NULL, current INTEGER NOT NULL CHECK(current IN (0, 1)), usage_json TEXT NOT NULL,
+        PRIMARY KEY(session_id, goal_id));
+      CREATE UNIQUE INDEX IF NOT EXISTS session_goal_current ON session_goal_accounting(session_id) WHERE current=1;
+      CREATE TABLE IF NOT EXISTS session_sidebar (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+        fingerprint TEXT NOT NULL, modified_at INTEGER NOT NULL, summary_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_child_state (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+        complete INTEGER NOT NULL CHECK(complete IN (0, 1)));
+      CREATE TABLE IF NOT EXISTS session_children (
+        parent_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        child_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK(kind IN ('subagent', 'review')),
+        PRIMARY KEY(parent_id, child_id));
+      CREATE INDEX IF NOT EXISTS session_children_child ON session_children(child_id);
+      CREATE TABLE IF NOT EXISTS session_mailbox_state (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS session_mailbox (
+        session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        delivery_id TEXT NOT NULL, sequence INTEGER NOT NULL, fingerprint TEXT NOT NULL,
+        message_json TEXT NOT NULL, PRIMARY KEY(session_id, delivery_id));
+      CREATE INDEX IF NOT EXISTS session_mailbox_order ON session_mailbox(session_id, sequence);
+      CREATE TABLE IF NOT EXISTS session_subagent_state (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS session_subagent_runs (
+        session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL, started_at REAL NOT NULL, run_json TEXT NOT NULL,
+        PRIMARY KEY(session_id, run_id));
+      CREATE INDEX IF NOT EXISTS session_subagent_order ON session_subagent_runs(session_id, started_at);
+      CREATE TABLE IF NOT EXISTS session_group_state (id INTEGER PRIMARY KEY CHECK(id=1), initialized INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_groups (
+        group_id TEXT PRIMARY KEY, position INTEGER NOT NULL, name TEXT NOT NULL, cwd TEXT,
+        host_id TEXT, host_name TEXT);
+      CREATE TABLE IF NOT EXISTS session_group_assignments (session_key TEXT PRIMARY KEY, group_id TEXT);
+      CREATE TABLE IF NOT EXISTS session_group_removed_projects (project_id TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS session_publications (publication_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS conversation_ownership (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_restore_receipts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS retention_candidates (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, retry_at REAL NOT NULL);
+      CREATE INDEX IF NOT EXISTS retention_retry_order ON retention_candidates(retry_at, record_id);
+      CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS recovery_directories (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+
+      CREATE TABLE IF NOT EXISTS goal_asset_dependencies (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity));
+      CREATE TABLE IF NOT EXISTS goal_asset_reclamations (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS queue_item_sequence (id INTEGER PRIMARY KEY CHECK(id=1), last_id INTEGER NOT NULL);
+      INSERT OR IGNORE INTO queue_item_sequence VALUES (1, 0);
+      CREATE TABLE IF NOT EXISTS queue_origins (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+        cwd TEXT NOT NULL, session_path TEXT);
+      CREATE TABLE IF NOT EXISTS queue_items (
+        queue_item_id INTEGER PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        queue_position INTEGER NOT NULL CHECK(queue_position BETWEEN 1 AND 100),
+        message TEXT NOT NULL, behavior TEXT NOT NULL CHECK(behavior IN ('steer', 'followUp')),
+        details_json TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS queue_items_order ON queue_items(session_id, queue_position);
+      CREATE TRIGGER IF NOT EXISTS queue_items_limit BEFORE INSERT ON queue_items
+        WHEN NOT EXISTS(SELECT 1 FROM queue_items WHERE queue_item_id=NEW.queue_item_id)
+          AND (SELECT count(*) FROM queue_items WHERE session_id=NEW.session_id)>=100
+        BEGIN SELECT RAISE(ABORT, 'A session can have at most 100 queued items'); END;
+      CREATE TABLE IF NOT EXISTS queue_attachments (
+        attachment_id INTEGER PRIMARY KEY,
+        queue_item_id INTEGER NOT NULL REFERENCES queue_items(queue_item_id) ON DELETE CASCADE,
+        attachment_position INTEGER NOT NULL CHECK(attachment_position>=1),
+        media_type TEXT NOT NULL, data BLOB NOT NULL, details_json TEXT NOT NULL,
+        UNIQUE(queue_item_id, attachment_position));
+      CREATE TABLE IF NOT EXISTS session_directories (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, cwd TEXT NOT NULL, checked_at INTEGER NOT NULL, directory_exists INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS storage_transactions (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('archive', 'delete', 'restore')), state TEXT NOT NULL CHECK(state IN ('prepared', 'committed')), journal_json TEXT NOT NULL);
+`),e.exec("COMMIT")}catch(s){throw e.exec("ROLLBACK"),s}}function y(e){let s=i("node:path").join(e,"sessions.sqlite"),n=new(i("node:sqlite")).DatabaseSync(s);try{return i("node:fs").chmodSync(s,384),Ne(n),n}catch(r){throw n.close(),r}}function L(e){let s=d.dirname(e);for(;d.dirname(s)!==s;){if(["sessions","archived"].includes(d.basename(s)))return d.dirname(s);s=d.dirname(s)}throw new Error("Conversation is outside session storage")}var d,P=u(()=>{"use strict";d=l(i("node:path"))});function x(e){let s;try{s=L(e)}catch{return}let n=y(s);try{n.exec("BEGIN IMMEDIATE"),n.prepare("DELETE FROM session_file_metadata WHERE session_path=?").run(e),n.prepare("INSERT INTO session_file_writes SELECT session_id FROM sessions WHERE session_path=? ON CONFLICT DO NOTHING").run(e),n.exec("COMMIT")}finally{n.close()}}function K(e){let s;try{s=L(e)}catch{return}let n=y(s);try{n.exec("BEGIN IMMEDIATE");let r=Re(e);n.prepare(`INSERT INTO session_file_metadata SELECT session_id, session_path, ?, ? FROM sessions WHERE session_path=?
+      ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, modified_ns=excluded.modified_ns, size=excluded.size`).run(String(r.mtimeNs),r.size,e),n.prepare("DELETE FROM session_file_writes WHERE session_id IN (SELECT session_id FROM sessions WHERE session_path=?)").run(e),n.exec("COMMIT")}finally{n.close()}}function Re(e){let s=c.openSync(e,c.constants.O_RDONLY|c.constants.O_NOFOLLOW),n;try{if(n=c.fstatSync(s,{bigint:!0}),!n.isFile())throw new Error("Saved transcript is not a regular file");c.fsyncSync(s)}finally{c.closeSync(s)}let r=c.openSync(j.dirname(e),c.constants.O_RDONLY|c.constants.O_NOFOLLOW);try{c.fsyncSync(r)}finally{c.closeSync(r)}return n}var c,j,O=u(()=>{"use strict";P();c=l(i("node:fs")),j=l(i("node:path"))});var G={};m(G,{invalidate:()=>x});var H=u(()=>{O()});var W={};m(W,{remember:()=>K});var $=u(()=>{O()});var Z=N((Pe,Q)=>{"use strict";U();B();var a=i("node:fs"),{homedir:ye}=i("node:os"),{dirname:Le,join:J}=i("node:path"),{randomUUID:Oe}=i("node:crypto");function z(){return J(ye(),process.env.PIOP_STORAGE_DIRECTORY||".piop")}function V(e,s){let n=R(z(),!0);try{let r=a.realpathSync(s);if(!a.statSync(r).isDirectory())throw new Error("Project directory does not exist");Ie(e,r)}finally{n()}}function Ie(e,s){let n=a.readFileSync(e,"utf8").split(`
+`),r=JSON.parse(n[0]);if(r.type!=="session")throw new Error("Invalid session header");r.cwd=s,n[0]=JSON.stringify(r);let o=`${e}.${Oe()}.tmp`,T;try{let _=a.statSync(e).mode&511;T=a.openSync(o,"wx",_),a.fchmodSync(T,_),a.writeFileSync(T,n.join(`
+`)),a.fsyncSync(T),a.closeSync(T),T=void 0,(H(),C(G)).invalidate(e),a.renameSync(o,e),D(Le(e)),($(),C(W)).remember(e)}finally{T!==void 0&&a.closeSync(T),a.rmSync(o,{force:!0})}}function he(e){if(typeof e.sessionPath!="string"||typeof e.cwd!="string")throw new Error("Invalid relocation request");let s,n;try{s=a.realpathSync(J(z(),"sessions"))}catch(T){throw new Error(`Could not locate piop sessions: ${T.message}`)}try{n=a.realpathSync(e.sessionPath)}catch(T){throw new Error(`Could not locate session file: ${T.message}`)}if(!n.startsWith(s+"/")||!n.endsWith(".jsonl")||!a.statSync(n).isFile())throw new Error("Refusing to relocate a non-desktop session file");let r=e.cwd.trim(),o=!1;try{o=a.statSync(r).isDirectory()}catch{}if(!o)throw new Error(`Project directory does not exist: ${r}`);V(n,r)}Q.exports={relocateSession:V,checkedRelocation:he}});var Ce=N(()=>{var{hostScript:me}=F(),{checkedRelocation:Ae}=Z();me(Ae)});Ce();})();

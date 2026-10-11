@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const { hostScript } = require('./host-script.cjs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { reviewVisibility } = require('./session-broker/session-publication.cjs');
@@ -134,9 +135,10 @@ class SessionIndex {
     return true;
   }
 
-  print(path) {
+  summary(path) {
     if (!this.header || !this.visible(path)) return;
-    console.log(JSON.stringify({ path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, subagentParentId: this.ownSubagentParentId ?? this.subagentParentId }));
+
+    return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, subagentParentId: this.ownSubagentParentId ?? this.subagentParentId };
   }
 }
 
@@ -158,11 +160,21 @@ async function indexFile(path) {
   }
 
   if (pending.length) index.line(Buffer.concat(pending), false);
-  index.print(path);
+
+  return index.summary(path);
 }
 
-(async () => {
-  for (const path of process.argv.slice(1)) {
-    try { await indexFile(path); } catch (error) { console.error(`${path}: ${error.message}`); }
+hostScript(async request => {
+  if (!Array.isArray(request.paths) || !request.paths.every(path => typeof path === 'string')) throw new Error('Invalid session summary request');
+  const summaries = [];
+
+  for (const path of request.paths) {
+    try {
+      const summary = await indexFile(path);
+
+      if (summary) summaries.push(summary);
+    } catch (error) { console.error(`${path}: ${error.message}`); }
   }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+
+  return summaries;
+});

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { modelSchema } from "./lib/responseSchemas";
+import { agentStateSchema, modelSchema } from "./lib/responseSchemas";
 import { required } from "./lib/required";
 import { createMemo, type Accessor } from "solid-js";
 import type { NativeTransport } from "./lib/nativeTransport";
@@ -77,12 +77,29 @@ export function reassignTerminals(transport: NativeTransport, terminals: readonl
   }
 }
 
-async function applyInherited(transport: NativeTransport, inherited: ProjectControls, models: Model[]) {
+const modelKey = (model: { provider: string; id: string }) => `${model.provider}/${model.id}`;
+
+function useAvailableModel(transport: NativeTransport, model: Model | null, models: Model[]) {
+  if (model && models.some(available => modelKey(available) === modelKey(model))) transport.promptControls.useEffectiveModel(model);
+  else transport.promptControls.clearModel();
+}
+
+async function setStartModel(transport: NativeTransport, wanted: string | undefined, models: Model[]) {
+  const model = models.find((model) => modelKey(model) === wanted);
+
+  if (model) await transport.command({ type: "set_model", provider: model.provider, modelId: model.id });
+  else {
+    const state = await transport.command({ type: "get_state" }, agentStateSchema);
+
+    useAvailableModel(transport, state.model, models);
+  }
+}
+
+async function applyInherited(transport: NativeTransport, inherited: ProjectControls, defaultModel: string, models: Model[]) {
   if (inherited.agent) await transport.command({ type: "select_agent", agent: inherited.agent });
 
-  if (inherited.model && models.some((model) => model.provider === required(inherited.model).provider && model.id === required(inherited.model).id)) {
-    transport.promptControls.model(inherited.model);
-  }
+  if (inherited.model && models.some((model) => model.provider === required(inherited.model).provider && model.id === required(inherited.model).id)) transport.promptControls.model(inherited.model);
+  else await setStartModel(transport, inherited.model ? modelKey(inherited.model) : defaultModel, models);
 
   transport.promptControls.thinking(inherited.thinking);
 
@@ -90,9 +107,7 @@ async function applyInherited(transport: NativeTransport, inherited: ProjectCont
 }
 
 async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], current: () => boolean) {
-  const model = models.find((model) => `${model.provider}/${model.id}` === value.defaultModel);
-
-  if (model) await transport.command({ type: "set_model", provider: model.provider, modelId: model.id });
+  if (models.some(model => modelKey(model) === value.defaultModel)) await setStartModel(transport, value.defaultModel, models);
 
   if (!current()) return;
   await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
@@ -102,6 +117,12 @@ async function applyDefaults(transport: NativeTransport, value: AppSettings, mod
 
   if (!current()) return;
   await transport.command({ type: "select_agent", agent: value.defaultAgent ?? "general" });
+  if (!current()) return;
+  const state = await transport.command({ type: "get_state" }, agentStateSchema);
+
+  if (!current()) return;
+
+  useAvailableModel(transport, state.model, models);
   transport.defaultsApplied();
 }
 
@@ -121,12 +142,12 @@ export async function configureConversationRuntime(value: AppSettings, transport
   const inherited = projectControls.get(transport);
 
   if (!inherited && !transport.needsDefaults()) return;
-  const availableModels = await transport.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).then(result => result.models, () => []);
+  const availableModels = await transport.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).then(result => result.models);
 
   if (!current()) return;
 
   if (inherited) {
-    await applyInherited(transport, inherited, availableModels);
+    await applyInherited(transport, inherited, value.defaultModel, availableModels);
     projectControls.delete(transport); transport.defaultsApplied();
 
     return;

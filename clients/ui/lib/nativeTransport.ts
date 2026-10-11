@@ -1,5 +1,6 @@
+import { hostModelConnected } from "./modelReports";
 import { DraftRuntime } from "./draftRuntime";
-import { sessionGroupsSchema, voidResultSchema, storageReportSchema, rpcEventSchema, sessionSummarySchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
+import { agentStateSchema, sessionGroupsSchema, voidResultSchema, storageReportSchema, rpcEventSchema, sessionSummarySchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
 import { z } from "zod";
 import { jsonResultSchema } from "./transportSchemas";
 import { commandSessionSchema, runtimeEventSchema, runtimeStderrSchema, type CommandSession } from "./rpcSchemas";
@@ -75,6 +76,7 @@ export class NativeTransport {
   }
 
   async submitPrompt(command: RpcCommand) {
+    if (this.promptControls.missingModel()) throw new Error("Choose a model before sending.");
     if (this.promptControls.hasPending()) await this.promptControls.flush(value => this.command(value), enabled => this.setFastMode(enabled));
 
     return this.command(command);
@@ -311,6 +313,7 @@ export class NativeTransport {
     this.sessionPath = state.sessionFile; this.sessionId = state.sessionId;
   }
   private emit(event: RpcEvent) {
+    if (event.type === "connection_restored") hostModelConnected(this.currentHostId());
     if (["disconnected", "connection_restored", "session_switched", "settings_applied", "ownership_lost"].includes(event.type)) {
       this.automaticRetry = undefined;
       this.automaticBehaviorGeneration += 1;
@@ -362,7 +365,7 @@ export class NativeTransport {
 
     if (this.connectPromise) return this.connectPromise;
 
-    if (this.draftOnly() && !forkPath) { await this.draftRuntime.load(); this.temporaryChat = this.cwd === undefined; this.owns = !this.readOnly;
+    if (this.draftOnly() && !forkPath) { await this.draftRuntime.load(); this.temporaryChat = this.cwd === undefined; this.owns = !this.readOnly; hostModelConnected(this.currentHostId());
 
       return; }
 
@@ -441,6 +444,7 @@ export class NativeTransport {
 
     if (version === this.connectionVersion) {
       this.running = true;
+      hostModelConnected(this.currentHostId());
       this.connectedOwnership(attached);
       this.presenceCleanup?.();
       window.addEventListener("focus", this.publishPresence); window.addEventListener("blur", this.publishPresence); window.addEventListener("resize", this.publishPresence); document.addEventListener("visibilitychange", this.publishPresence);
@@ -502,7 +506,16 @@ export class NativeTransport {
   }
   command<S extends z.ZodType>(command: RpcCommand, schema: S): Promise<z.output<S>>;
   command(command: RpcCommand): Promise<z.output<typeof jsonResultSchema>>;
-  command(command: RpcCommand, schema: z.ZodType = jsonResultSchema) { return this.executeCommand(command, schema); }
+  async command(command: RpcCommand, schema: z.ZodType = jsonResultSchema) {
+    const result = await this.executeCommand(command, schema);
+
+    if (command.type === "select_agent" || command.type === "set_model") {
+      const state = await this.executeCommand({ type: "get_state" }, agentStateSchema);
+      this.promptControls.useEffectiveModel(state.model);
+    }
+
+    return result;
+  }
   changePendingMessage(id: string, action: import("../types").PendingMessageAction): Promise<void> {
     return this.executeCommand({ type: "change_pending", id, action }, voidResultSchema);
   }

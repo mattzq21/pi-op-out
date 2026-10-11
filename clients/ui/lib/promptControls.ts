@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import type { AgentState, Model, RpcCommand } from "../types";
 
-type Selection = { model?: Model; thinkingLevel?: string; fastMode?: boolean };
+type Selection = { model?: Model | null; thinkingLevel?: string; fastMode?: boolean };
 
 const fastKey = "pi-desktop-fast-mode";
 
@@ -24,17 +24,22 @@ function clampEffort(level: string, model?: Model) {
 
 export class PromptControls {
   private selection = createSignal<Selection>({});
+  private effectiveModel = createSignal<Model | null | undefined>();
   private applied?: Selection;
   private applying = false;
   isApplying() { return this.applying; }
   hasPending() {
     const selected = this.selection[0]();
 
-    return selected !== this.applied && (selected.model !== undefined || selected.thinkingLevel !== undefined || selected.fastMode !== undefined);
+    return selected !== this.applied && (Boolean(selected.model) || selected.thinkingLevel !== undefined || selected.fastMode !== undefined);
   }
   reset() { this.selection[1]({}); this.applied = undefined; }
+  /** Show no model until the user chooses one. */
+  clearModel() { this.effectiveModel[1](null); this.selection[1](current => ({ ...current, model: null })); }
+  useEffectiveModel(model: Model | null) { this.effectiveModel[1](model); if (model && this.selection[0]().model === null) this.selection[1](current => ({ ...current, model: undefined })); }
+  missingModel() { const selected = this.selection[0]().model; return (selected === undefined ? this.effectiveModel[0]() : selected) == null; }
   model(model: Model, thinkingLevel?: string) { this.selection[1](current => ({ ...current, model, thinkingLevel: clampEffort(thinkingLevel ?? current.thinkingLevel ?? "medium", model) })); }
-  thinking(thinkingLevel: string) { this.selection[1](current => ({ ...current, thinkingLevel: clampEffort(thinkingLevel, current.model) })); }
+  thinking(thinkingLevel: string) { this.selection[1](current => ({ ...current, thinkingLevel: clampEffort(thinkingLevel, current.model ?? undefined) })); }
   fast(fastMode: boolean) { this.selection[1](current => ({ ...current, fastMode })); }
   copyTo(target: PromptControls) { target.selection[1](current => ({ ...current, ...this.selection[0]() })); }
   levels(fallback: string[]) { const model = this.selection[0]().model;
@@ -42,10 +47,11 @@ export class PromptControls {
   return model ? modelLevels(model) : fallback; }
   state(state: AgentState): AgentState {
     const selected = this.selection[0]();
+    const model = selected.model === undefined ? this.effectiveModel[0]() : selected.model;
 
-    if (!selected.model && selected.thinkingLevel === undefined) return state;
+    if ((model === undefined || model === state.model) && selected.thinkingLevel === undefined) return state;
 
-    return { ...state, model: selected.model ?? state.model, thinkingLevel: selected.thinkingLevel ?? state.thinkingLevel };
+    return { ...state, model: model === undefined ? state.model : model, thinkingLevel: selected.thinkingLevel ?? state.thinkingLevel };
   }
   statuses(statuses: Record<string, string>, fastModels?: string[]) {
     const selected = this.selection[0]();
@@ -64,6 +70,7 @@ export class PromptControls {
 
   return Promise.resolve(); }
   acknowledge(state: AgentState) {
+    this.effectiveModel[1](state.model);
     const applied = this.applied;
 
     if (!applied || this.selection[0]() !== applied) return;

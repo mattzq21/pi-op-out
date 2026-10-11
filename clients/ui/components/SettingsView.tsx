@@ -1,3 +1,4 @@
+import { mergeModelIds } from "../lib/modelVisibility";
 import { RefreshSkills } from "./RefreshSkills";
 import { stableSnapshot, settingsSnapshot, agentEditsSnapshot, settingKeys } from "../lib/settingsSnapshots";
 import { applyClientPreferences, clientPreferenceKeys, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "../lib/clientPreferenceMerge";
@@ -25,17 +26,16 @@ import { ToastHistory } from "./ToastHistory";
 import { Toggle } from "./Toggle";
 import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
-export type Section = "review" | "providers" | "general" | "dictation" | "models" | "storage" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
+export type Section = "review" | "inference" | "general" | "dictation" | "storage" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
 
 type SettingsSection = { id: Section; label: string; icon: typeof Settings2 };
 
-const mobileSections: SettingsSection[] = isMobile ? [{ id: "connections", label: "Hosts", icon: Server }] : [];
+const mobileSections: SettingsSection[] = isMobile ? [{ id: "connections", label: "Anchor host", icon: Server }] : [];
 
 export const sections: SettingsSection[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "dictation", label: "Dictation", icon: Mic },
-  { id: "models", label: "Models", icon: Cpu },
-  { id: "providers", label: "Providers", icon: ShieldCheck },
+  { id: "inference", label: "Inference", icon: Cpu },
   { id: "review", label: "Review", icon: ClipboardCheck },
   { id: "storage", label: "Storage", icon: HardDrive },
   { id: "keybinds", label: "Keybinds", icon: Keyboard },
@@ -46,7 +46,9 @@ export const sections: SettingsSection[] = [
   ...mobileSections,
 ];
 
-export const clientSections = new Set<Section>(["models", "dictation", "keybinds", "connections", "toasts"]);
+export const clientSections = new Set<Section>(["dictation", "keybinds", "connections", "toasts"]);
+
+export const daemonSections = (hostId: string) => sections.filter((item) => !clientSections.has(item.id) && (item.id !== "machines" || (hostId === "local" && !isMobile)));
 
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 
@@ -66,6 +68,11 @@ function mergeSettingsDraft(incoming: AppSettings, baseline: AppSettings, local:
   for (const key of settingKeys) {
     if (clientPreferenceKeys.has(key) || !Object.hasOwn(local, key)) continue;
 
+    if (key === "hiddenModels" || key === "knownModels") {
+      Object.assign(merged, { [key]: mergeModelIds(incoming[key], baseline[key], local[key]) });
+      continue;
+    }
+
     const same = (left: AppSettings[keyof AppSettings], right: AppSettings[keyof AppSettings]) => stableSnapshot(left) === stableSnapshot(right);
 
     if (!same(local[key], baseline[key])) {
@@ -77,10 +84,10 @@ function mergeSettingsDraft(incoming: AppSettings, baseline: AppSettings, local:
   return { merged, collisions };
 }
 
-type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; sessions?: SessionSummary[]; models?: Model[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig, baseline?: AppSettings) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
+type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; sessions?: SessionSummary[]; models?: Model[]; loadingModels?: string[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig, baseline?: AppSettings) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
 
-function settingsViewDefaults({ selectedSection, embedded = false, resourceError, scope = "daemon", daemonLabel = "Local daemon", providerHosts, onSavingChange, providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, sessions = [], models = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: SettingsViewProps) {
-  return { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, sessions, models, thinkingLevels, onSave, onDirtyChange };
+function settingsViewDefaults({ selectedSection, embedded = false, resourceError, scope = "daemon", daemonLabel = "Local daemon", providerHosts, onSavingChange, providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, sessions = [], models = [], loadingModels = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: SettingsViewProps) {
+  return { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, sessions, models, loadingModels, thinkingLevels, onSave, onDirtyChange };
 }
 
 export function SettingsView(props: SettingsViewProps) {
@@ -101,6 +108,7 @@ export function SettingsView(props: SettingsViewProps) {
   const [draft, setDraft] = createSignal((() => structuredClone(settingsProps().settings))()); const [agentDrafts, setAgentDrafts] = createSignal((() => structuredClone(agentConfig()?.agents ?? []))()); const [agentIndex, setAgentIndex] = createSignal((() => firstAgentIndex(agentConfig()?.agents ?? []))()); const [section, setSection] = createSignal<Section>(settingsProps().scope === "client" ? "keybinds" : "general"); const [saved, setSaved] = createSignal(false); const savingRef = createRef(false); const [saveError, setSaveError] = createSignal<string>();
   const retainedSaveError = createRef(false);
   const [modelFilter, setModelFilter] = createSignal("");
+  const [inferenceView, setInferenceView] = createSignal<"models" | "providers">("models");
   const [settingsQuery, setSettingsQuery] = createSignal("");
   const [pastHeader, setPastHeader] = createSignal(false);
   createDependencyEffect(() => {
@@ -370,7 +378,7 @@ export function SettingsView(props: SettingsViewProps) {
     const fastModeValidationError = invalidFastModeAgent ? `${invalidFastModeAgent.name}: model ${invalidFastModeAgent.model || draft().defaultModel} does not support fast mode` : undefined;
     const formValid = agentValidation().agentsValid && !validationError() && !fastModeValidationError;
     const searchTerms = settingsQuery().trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    const matchingSections = sections.filter((item) => clientSections.has(item.id) === (settingsProps().scope === "client") && searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
+    const matchingSections = (settingsProps().scope === "client" ? sections.filter((item) => clientSections.has(item.id)) : daemonSections(settingsProps().providerHostId ?? "local")).filter((item) => searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
     const visibleSection = settingsProps().selectedSection ?? (matchingSections.some((item) => item.id === section()) ? section() : matchingSections[0]?.id);
 
     return { invalidFastModeAgent, fastModeValidationError, formValid, searchTerms, matchingSections, visibleSection };
@@ -411,13 +419,14 @@ export function SettingsView(props: SettingsViewProps) {
         </div>
       </SettingsSection>);
 
-      const renderModels = () => (formValidation().visibleSection === "models" && <SettingsSection title="Models" description="Choose which models appear in chat pickers. Existing conversations and default models are unchanged. Newly arrived models start hidden." headerAction={<label class="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter()} onInput={(event) => setModelFilter(event.target.value)} /></label>}>
+      const renderModels = () => (formValidation().visibleSection === "inference" && inferenceView() === "models" && <SettingsSection title="Models" description="Choose which models appear in chat pickers. Existing conversations and default models are unchanged. Newly arrived models start hidden." headerAction={<label class="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter()} onInput={(event) => setModelFilter(event.target.value)} /></label>}>
         <div class="model-bulk-actions" role="group" aria-label="All model visibility">
           <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: draft().hiddenModels.filter(id => !agentValidation().availableModelIds.has(id)) })}>Enable all models</button>
           <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => !agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: [...new Set([...draft().hiddenModels, ...agentValidation().modelChoices.map(model => model.id)])] })}>Disable all models</button>
         </div>
+        {settingsProps().loadingModels.length > 0 && <p class="empty-small" role="status">Loading models from {settingsProps().loadingModels.join(", ")}…</p>}
         <div class="config-list">{<Key each={filteredModelChoices()} by={(model) => model.id}>{(model, _index) => <div class="config-row model-row" ><span class="config-icon"><Cpu size={16} /></span><span><strong>{model().name}</strong><small>{model().id}{!agentValidation().availableModelIds.has(model().id) ? " · Currently unavailable" : ""}</small></span><Toggle label={`Show ${model().id}`} checked={!agentValidation().hiddenModels.has(model().id)} onChange={(visible) => setDraft((current) => ({ ...current, hiddenModels: visible ? current.hiddenModels.filter((id) => id !== model().id) : [...current.hiddenModels, model().id] }))} /></div>}</Key>}</div>
-        {!filteredModelChoices().length && <div class="empty-small">{agentValidation().modelChoices.length ? "No models match your search." : "No models available. Sign in to a provider to see its models."}</div>}
+        {!filteredModelChoices().length && (agentValidation().modelChoices.length > 0 || settingsProps().loadingModels.length === 0) && <div class="empty-small">{agentValidation().modelChoices.length ? "No models match your search." : "No models available. Sign in to a provider to see its models."}</div>}
       </SettingsSection>);
 
       const renderAgents = () => {
@@ -458,11 +467,12 @@ export function SettingsView(props: SettingsViewProps) {
         <Show when={formValidation().visibleSection === "toasts"}><ToastHistory /></Show>
         {formValidation().visibleSection === "plugins" && <PluginSettings hostId={providerHostId()} onBusyChange={settingsProps().onSavingChange} />}
         {!formValidation().matchingSections.length && <div class="empty-small" role="status">No settings match your search.</div>}
-        {formValidation().visibleSection === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
+        {formValidation().visibleSection === "inference" && <div class="segmented-control" role="group" aria-label="Inference view">{(["models", "providers"] as const).map(view => <button type="button" aria-pressed={inferenceView() === view} onClick={() => setInferenceView(view)}>{view === "models" ? "Models" : "Providers"}</button>)}</div>}
+        {formValidation().visibleSection === "inference" && inferenceView() === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
         {renderGeneral()}
         {renderDictation()}
         {renderModels()}
-        {formValidation().visibleSection === "connections" && <SettingsSection title="Hosts" description="Saved daemon connections are stored on this device."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Manage saved hosts</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
+        {formValidation().visibleSection === "connections" && <SettingsSection title="Anchor host" description="This device connects to one host. You can use the machines that this host has added."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Change anchor host</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
         {renderAgents()}
         <Show when={formValidation().visibleSection === "review"}><SettingsSection title="Review" description="Choose the agent and instructions for code reviews."><ReviewSettings settings={draft()} agents={agentDrafts()} onChange={patch} /></SettingsSection></Show>
         {formValidation().visibleSection === "storage" && <StorageSettings hostId={settingsProps().providerHostId} />}

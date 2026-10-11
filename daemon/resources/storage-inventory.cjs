@@ -6,6 +6,7 @@ const { createReadStream } = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const readline = require("node:readline");
+const { hostScript } = require('./host-script.cjs');
 const { discoverRoots } = require('./storage-inventory-roots.cjs');
 const { createObservation, observeEntry, recordSession, resolveOwners, sessionKind } = require('./storage-inventory-owners.cjs');
 const { diskStorage } = require('./storage-inventory-disk.cjs');
@@ -171,9 +172,10 @@ async function registeredSessions(root, warnings) {
   }
 }
 
-async function main() {
+async function main(request) {
+  if (request.piPath !== undefined && !Check(Type.String({ minLength: 1 }), request.piPath)) throw new Error('Invalid Pi executable path');
   const profile = await fs.realpath(piopRoot).catch(() => piopRoot);
-  const discovery = await discoverRoots(profile);
+  const discovery = await discoverRoots(profile, request.piPath);
   discovery.sessions = new Map();
   discovery.headers = new Map();
   discovery.goals = new Map();
@@ -202,11 +204,12 @@ async function main() {
 
   const disk = await diskStorage(profile, discovery);
   archives.sort((left, right) => right.modifiedAt - left.modifiedAt);
-  process.stdout.write(JSON.stringify({
+
+  return {
     categories: inventoryCategories(disk, active.itemCount, archived.itemCount),
     archives,
     warnings: [...new Set([...discovery.warnings, ...disk.warnings])],
-  }));
+  };
 }
 
-main().catch((error) => { console.error(error.message); process.exitCode = 1; });
+hostScript(main);

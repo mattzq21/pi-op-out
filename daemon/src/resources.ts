@@ -1,22 +1,17 @@
+import { HOST_SCRIPT_BUNDLES } from '../resources/host-script-bundles';
 import fileLockSource from '../resources/file-lock.cjs?raw';
 import sessionDatabase from '../resources/session-database.cjs?raw';
 import appSettingsCjs from '../resources/session-broker/app-settings.cjs?raw';
-import relocateSessionBundle from '../resources/relocate-session.bundle.mjs?raw';
 import transcriptReferences from '../resources/transcript-references.cjs?raw';
 import sdkStorageRaw from '../resources/sdk-storage.mjs?raw';
-import sessionRegistryBundle from '../resources/session-registry.bundle.mjs?raw';
 import agentCommands from '../resources/agent-commands.json?raw';
-import goalDependencies from '../resources/session-broker/goal-dependencies.cjs?raw';
 import sdkStorageBundleRaw from '../resources/sdk-storage.bundle.mjs?raw';
 import providerSdk from '../resources/provider-sdk.mjs?raw';
 import fastCapabilities from '../resources/fast-capabilities.mjs?raw';
 import chatgptStream from '../resources/chatgpt-stream.mjs?raw';
 import chatgptStorageRaw from '../resources/chatgpt-storage.mjs?raw';
 import chatgptService from '../resources/chatgpt-service.mjs?raw';
-import agentDefinitionsBundle from '../resources/agent-definitions.bundle.mjs?raw';
 import reviewPrompt from '../resources/session-broker/review-prompt.txt?raw';
-import temporaryChat from '../resources/temporary-chat.cjs?raw';
-import indexSessionsBundle from '../resources/index-sessions.bundle.mjs?raw';
 import traceReader from '../resources/trace-reader.ts?raw';
 import sessionBroker from '../resources/session-broker.ts?raw';
 import sdkSessionList from '../resources/sdk-session-list.mjs?raw';
@@ -26,9 +21,6 @@ import mcpSchemaBundle from '../resources/mcp-schema.bundle.mjs?raw';
 import mcpBridgeBundle from '../resources/mcp-bridge.bundle.mjs?raw';
 import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
 import askUser from '../resources/ask-user.ts?raw';
-import storageInventoryBundle from '../resources/storage-inventory.bundle.mjs?raw';
-import sessionDescendantsBundle from '../resources/session-descendants.bundle.mjs?raw';
-import recoverMissingSessionBundle from '../resources/recover-missing-session.bundle.mjs?raw';
 import sessionCostLimitExtension from '../../extensions/piop-session-cost-limit/index.ts?raw';
 import runtimeSettingsExtension from '../../extensions/piop-runtime-settings/index.ts?raw';
 import rtkExtension from '../../extensions/piop-rtk/rtk.ts?raw';
@@ -117,27 +109,18 @@ const brokerModule40 = embedFileLock(brokerModule40Raw);
 const brokerModule45 = embedFileLock(brokerModule45Raw);
 
 export {
-  storageInventoryBundle,
-  sessionDescendantsBundle,
-  recoverMissingSessionBundle,
   sessionDatabase,
   appSettingsCjs,
-  relocateSessionBundle,
   transcriptReferences,
   sdkStorage,
-  sessionRegistryBundle,
   agentCommands,
-  goalDependencies,
   sdkStorageBundle,
   providerSdk,
   fastCapabilities,
   chatgptStream,
   chatgptStorage,
   chatgptService,
-  agentDefinitionsBundle,
   reviewPrompt,
-  temporaryChat,
-  indexSessionsBundle,
   traceReader,
   sessionBroker,
   sdkSessionList,
@@ -166,6 +149,9 @@ export {
   excalidrawSkill,
   excalidrawCheatsheet,
 };
+
+export { HOST_SCRIPT_BUNDLES };
+export type HostScriptName = keyof typeof HOST_SCRIPT_BUNDLES;
 
 export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['goal-directory-recovery.cjs', brokerModule0],

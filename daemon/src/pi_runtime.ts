@@ -5,16 +5,14 @@ import { homeDir, isDirectory } from './environment';
 import { claimAgent, type BrokerRuntime, type BusyAgent } from './broker';
 import * as daemon from './daemon';
 import { archivedSessionFile, desktopSessionFile } from './archives';
-import { buildPiCommand, remoteHost, remoteLoginCommand, sessionIdentity, ssh } from './pi_launch';
+import { buildPiCommand, remoteHost, sessionIdentity } from './pi_launch';
 import { validateSessionWorkingDirectory } from './session_index';
 import { loadAppSettings } from './settings';
-import { nodeCommand } from './node_command';
-import { output, shellQuote, type CommandSpec } from './process_io';
 import * as storageTransactions from './storage_transactions';
 import * as Registry from './session_registry';
 import { Mutex } from './util/sync';
 import type { AgentAddress, BlankSessionCleanup } from './types';
-import type { AppSettings, RemoteHost } from './settings_types';
+import type { AppSettings } from './settings_types';
 import type { App } from './app';
 
 export interface StartPiOptions { runtimeId: string; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null; hostId?: string | null; presence?: any; clientId: string }
@@ -46,15 +44,9 @@ export class PiRuntime {
   }
 }
 
-function remoteNodeCommand(host: RemoteHost, script: string, args: string): CommandSpec {
-  return ssh(host, remoteLoginCommand('PIOP_STORAGE_DIRECTORY=' + STORAGE_DIRECTORY + ' bun -e ' + shellQuote(script) + ' ' + shellQuote(args)));
-}
-
 export async function reserveSessionId(settings: AppSettings, hostId: string): Promise<string> {
   if (hostId === 'local') return Registry.reserve(join(homeDir(), STORAGE_DIRECTORY));
-  const result = await output(remoteNodeCommand(remoteHost(settings, hostId), Registry.source(), JSON.stringify({ action: 'reserve' })));
-  if (!result.status.success) throw new Error(result.stderr.toString('utf8'));
-  return JSON.parse(result.stdout.toString('utf8'));
+  return Registry.reserveOn({ kind: 'remote', host: remoteHost(settings, hostId) });
 }
 
 export async function cleanupBlankSession(target: BlankSessionCleanup): Promise<void> {

@@ -1,6 +1,5 @@
-import storageTransactionBundle from '../resources/storage-transaction.bundle.mjs?raw';
 import type { Host } from './host_connection';
-import { runHostScript } from './host_script';
+import { hostScript, HostScriptError, runHostScript } from './host_script';
 
 export interface ArchivedSession { sessionId: string; sourcePath: string; sessionPath: string }
 export interface RestoredSession extends ArchivedSession { path: string }
@@ -38,25 +37,25 @@ const restoredSession = (value: unknown): value is RestoredSession => archivedSe
 const restoreResult = (value: unknown): value is RestoreResult => record(value) && text(value.path) && text(value.sessionPath) && text(value.sessionId)
   && Array.isArray(value.sessions) && value.sessions.length > 0 && value.sessions.every(restoredSession);
 
+type Outcome = { state: 'committed'; result?: unknown; warning?: string } | { state: 'skipped'; reason?: string; warning?: string };
+
+const storageTransaction = hostScript<Request, Outcome>('storage-transaction', 64 * 1024 * 1024, value => {
+  if (!record(value) || !['committed', 'skipped'].includes(String(value.state)) || (value.warning !== undefined && !text(value.warning))) throw new Error('unexpected outcome');
+  return value as Outcome;
+});
+
+function failure(error: unknown): StorageTransactionError {
+  if (!(error instanceof HostScriptError)) return new StorageTransactionError('unknown', error instanceof Error ? error.message : String(error));
+  if (error.warning) console.error(error.warning);
+  if (error.kind === 'not-started') return new StorageTransactionError('rolled-back', error.message);
+  if (error.kind === 'failed' && (error.state === 'rolled-back' || error.state === 'pending')) return new StorageTransactionError(error.state, error.message);
+  return new StorageTransactionError('unknown', error.message);
+}
+
 async function run(host: Host, request: Request, options: { signal?: AbortSignal; busyIsOk?: boolean } = {}): Promise<unknown> {
-  let output;
-  try { output = await runHostScript(host, storageTransactionBundle, [JSON.stringify(request)], { maxOutputBytes: 64 * 1024 * 1024, signal: options.signal }); }
-  catch (error: any) { throw new StorageTransactionError('unknown', error?.message ?? String(error)); }
-  const diagnostic = output.stderr.toString().trim();
-  if (output.status.code === 75 && request.action === 'recover' && options.busyIsOk) return;
-  let response: unknown;
-  try { response = JSON.parse(output.stdout.toString()); }
-  catch { throw new StorageTransactionError('unknown', diagnostic || 'The storage script gave no result'); }
-  if (!record(response) || !['committed', 'rolled-back', 'pending', 'skipped'].includes(String(response.state))
-      || (response.warning !== undefined && !text(response.warning)) || (response.error !== undefined && !text(response.error))) {
-    throw new StorageTransactionError('unknown', 'The storage script gave an invalid result');
-  }
-  if (diagnostic) console.error(diagnostic);
-  if (response.state === 'rolled-back' || response.state === 'pending') {
-    if (response.warning) console.error(response.warning);
-    throw new StorageTransactionError(response.state, text(response.error) ? response.error : diagnostic || `Storage transaction ${response.state}`);
-  }
-  if (!output.status.success) throw new StorageTransactionError('unknown', diagnostic || `The storage script stopped with exit code ${output.status.code}`);
+  let response: Outcome;
+  try { response = await runHostScript(host, storageTransaction, request, { signal: options.signal }); }
+  catch (error) { throw failure(error); }
   if (response.warning) console.error(response.warning);
   if (response.state === 'skipped') {
     if (request.action === 'delete' && 'blank' in request && ['busy', 'not-needed'].includes(String(response.reason))) return;

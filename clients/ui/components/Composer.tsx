@@ -523,6 +523,17 @@ export function Composer(props: Props) {
       </div>);
 
     const ComposerBar = () => {
+      const mobileQuery = window.matchMedia("(max-width: 700px)");
+      const [mobileLayout, setMobileLayout] = createSignal(mobileQuery.matches);
+
+      createDependencyEffect(() => {
+        const updateLayout = () => setMobileLayout(mobileQuery.matches);
+        mobileQuery.addEventListener("change", updateLayout);
+        updateLayout();
+
+        return () => mobileQuery.removeEventListener("change", updateLayout);
+      }, () => []);
+
       const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled && !props.ownershipRequired} onClick={(composer().onOpenTerminal)}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`} aria-label={`Cache ${cache().rate}%, ${cache().cachedTokens}/${cache().promptTokens}`} tabIndex={0} data-tooltip={`${cache().cachedTokens.toLocaleString()} / ${cache().promptTokens.toLocaleString()} tokens cached`}><CacheIcon rate={cache().rate} />{cache().rate}%</span>}</Show></div>);
 
       const renderComposerActions = () => {
@@ -548,10 +559,11 @@ export function Composer(props: Props) {
         return (<div class="composer-actions">
           <ComposerSettingsMenu agent={composer().activeAgent ?? "general"}>
             <div class="composer-settings-row"><span>Agent</span>{renderAgentPicker()}</div>
+            <Show when={!mobileLayout()}>{renderModelPicker()}</Show>
             <Show when={fastModeSupported()}><div class="composer-settings-row"><span>Fast mode</span>{renderFastModeIndicator()}</div></Show>
-            <div class="composer-settings-row"><span>Model</span>{renderModelPicker()}</div>
-            <div class="composer-settings-row"><span>Effort</span><ContainedPicker label="Thinking level" selectedLabel={composer().thinkingLevel.charAt(0).toUpperCase() + composer().thinkingLevel.slice(1)} value={composer().thinkingLevel} disabled={controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} /></div>
+            <div class="composer-settings-row composer-effort-row"><span>Effort</span><ContainedPicker label="Thinking level" selectedLabel={composer().thinkingLevel.charAt(0).toUpperCase() + composer().thinkingLevel.slice(1)} value={composer().thinkingLevel} disabled={controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} /></div>
           </ComposerSettingsMenu>
+          <Show when={mobileLayout()}>{renderModelPicker()}</Show>
           <span class="composer-divider" />
           {renderStopButton()}
           {renderSend()}
@@ -663,7 +675,7 @@ function pickerDefaults({ label, selectedLabel, value, options, disabled, menuWi
   return { label, selectedLabel, value, options, disabled, menuWidth, centered, compact, onChange };
 }
 
-function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void; footer?: JSXElement }) {
+export function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; anchorLeft?: boolean; icon?: JSXElement; centered?: boolean; compact?: boolean; onChange: (value: string) => void; footer?: JSXElement }) {
   const pickerFields = createMemoFields(() => pickerDefaults(props));
   const picker = () => pickerFields;
   const [menuStyle, setMenuStyle] = createSignal<CSSProperties>();
@@ -695,13 +707,16 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
     const { leftEdge, rightEdge } = menuEdges();
     const width = Math.max(0, Math.min(props.menuMinWidth ?? picker().menuWidth, rightEdge - leftEdge));
     const right = window.innerWidth - Math.min(rightEdge, Math.max(rect.right, leftEdge + width));
+    const left = Math.max(leftEdge, Math.min(rect.left, rightEdge - width));
     const selectedIndex = picker().options.findIndex((option) => option.value === picker().value && !option.disabled);
     const index = Math.max(0, selectedIndex >= 0 ? selectedIndex : picker().options.findIndex((option) => !option.disabled));
     setActiveIndex(index);
     setMenuStyle({
       ...(props.menuMinWidth === undefined
         ? { left: cssPixels(Math.max(leftEdge, Math.min(rect.right - width, rightEdge - width))), width: cssPixels(width) }
-        : { right: cssPixels(right), width: "max-content", "min-width": cssPixels(width), "max-width": cssPixels(window.innerWidth - right - leftEdge) }),
+        : props.anchorLeft
+          ? { left: cssPixels(left), width: "max-content", "min-width": cssPixels(width), "max-width": cssPixels(rightEdge - left) }
+          : { right: cssPixels(right), width: "max-content", "min-width": cssPixels(width), "max-width": cssPixels(window.innerWidth - right - leftEdge) }),
       bottom: cssPixels(window.innerHeight - rect.top + 6),
       "max-height": cssPixels(Math.max(0, rect.top - 14)),
     });
@@ -730,7 +745,7 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
   };
 
   return <div ref={element => { root.current = element; }} class="composer-picker" onBlur={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); trigger.current?.focus(); } else if (menuStyle() && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
-    <button ref={element => { trigger.current = element; }} type="button" class="select-control composer-picker-trigger" aria-label={picker().label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle())} data-value={picker().value} data-options={picker().options.map((option) => option.value).join(" ")} disabled={picker().disabled} onClick={toggle}>{picker().selectedLabel ?? selectedOption()?.label ?? picker().label}</button>
+    <button ref={element => { trigger.current = element; }} type="button" class="select-control composer-picker-trigger" aria-label={props.icon ? `${picker().label}: ${picker().selectedLabel ?? selectedOption()?.label ?? ""}` : picker().label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle())} data-value={picker().value} data-options={picker().options.map((option) => option.value).join(" ")} disabled={picker().disabled} onClick={toggle}>{props.icon ?? (picker().selectedLabel ?? selectedOption()?.label ?? picker().label)}</button>
     {menuStyle() && <div class={`composer-picker-menu${picker().centered ? " centered" : ""}${picker().compact ? " compact" : ""}`} aria-label={`${picker().label} options`} style={(menuStyle())}><div role="listbox" aria-label={`${picker().label} options`}>{picker().options.length === 0 && <div class="empty-small">No options available</div>}{<Key each={picker().options} by={(option) => `${option.detail ?? picker().label}:${option.value}`}>{(option, index) => <button ref={(element) => { optionRefs.current[index()] = element; }}  type="button" role="option" aria-selected={option().value === picker().value} tabIndex={isActive(index()) ? 0 : -1} data-value={option().value} disabled={picker().disabled || option().disabled} onFocus={() => setActiveIndex(index())} onClick={() => { if (picker().disabled || optionChosenRef.current) return; optionChosenRef.current = true; picker().onChange(option().value); close(); trigger.current?.focus(); }}><span>{option().label}</span>{option().detail && <small>{option().detail}</small>}</button>}</Key>}</div>{props.footer && <div class="composer-picker-footer">{props.footer}</div>}</div>}
   </div>;
 }

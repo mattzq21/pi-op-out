@@ -97,7 +97,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 
     if (generation !== current) return;
 
-    if (!account.configured) throw new Error("Sign in to ChatGPT in Settings → Providers.");
+    if (!account.configured) throw new Error("Sign in to ChatGPT in Settings → Inference.");
 
     provider = "openai-codex"; call = createChatGptCall(provider, leaseId);
     const catalogCall = call;

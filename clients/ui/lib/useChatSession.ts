@@ -1,3 +1,4 @@
+import { registerModelSession, reportModels } from "./modelReports";
 import { z } from "zod";
 import { sessionSnapshotSchema, modelSchema, slashCommandSchema, agentStateSchema } from "./responseSchemas";
 import { ConversationChangedError } from "./conversationChanged";
@@ -37,7 +38,7 @@ function messagePositions(messages: ChatMessage[]) {
   };
 }
 
-export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "promptControls">>>, initialState: Accessor<AgentState> = () => emptyState, options: { poll?: boolean } = {}) {
+export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState> = () => emptyState, options: { poll?: boolean } = {}) {
   const runtime = createMemo(() => {
     const current = transport();
 
@@ -53,7 +54,7 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
   };
 }
 
-function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "promptControls">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
+function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
   const session = useSessionMemory(() => (transport()), () => (initialState()));
   const owner = createRef<ReturnType<typeof transport> | undefined>(transport());
   const loading = new AbortController();
@@ -110,7 +111,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     ]).then(([modelResult, thinkingResult, commandResult]) => {
       if (owner.current !== transport() || capabilityRequest.current !== request) return;
       session.memory.batch(() => {
-        if (modelResult) session.setModels(modelResult.models);
+        if (modelResult) { session.setModels(modelResult.models); void reportModels(transport().currentHostId?.() ?? "local", modelResult.models).catch(reason => console.error("Could not record available models", reason)); }
 
         if (thinkingResult) session.setThinkingLevels(thinkingResult.levels);
 
@@ -124,6 +125,16 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       if (!modelResult || !thinkingResult || !commandResult) capabilityKey.current = undefined;
     }).catch(() => { if (capabilityRequest.current === request) capabilityKey.current = undefined; });
   };
+
+  onCleanup(registerModelSession(() => transport().currentHostId?.() ?? "local", async () => {
+    capabilityKey.current = undefined;
+    const request = ++capabilityRequest.current;
+    const result = await load({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) }));
+
+    if (owner.current !== transport() || request !== capabilityRequest.current) return;
+    session.setModels(result.models);
+    await reportModels(transport().currentHostId?.() ?? "local", result.models);
+  }));
 
   const invalidatesCapabilities = (event: ChatSessionEvent) => ["settings_applied", "model_select", "session_switched", "disconnected", "connection_restored"].includes(event.type) || (event.type === "extension_ui_request" && event.statusKey === DEFINED_AGENTS_STATUS_KEY);
 

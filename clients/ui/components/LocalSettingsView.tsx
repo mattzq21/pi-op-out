@@ -1,3 +1,5 @@
+import { reportModels } from "../lib/modelReports";
+import { localHostLabel } from "../lib/mobileHosts";
 import { modelSchema } from "../lib/responseSchemas";
 import { z } from "zod";
 import { required } from "../lib/required";
@@ -16,7 +18,7 @@ import { SettingsPublication } from "../lib/settingsPublication";
 import { SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { isMobile, listen } from "../lib/platform";
 import type { AgentConfig, AppSettings, Model, SessionSummary, SettingsChange, SettingsPublication as Publication } from "../types";
-import { clientSections, sections, SettingsView, type Section } from "./SettingsView";
+import { clientSections, daemonSections, sections, SettingsView, type Section } from "./SettingsView";
 
 interface Props {
   settings: AppSettings;
@@ -56,12 +58,12 @@ export function LocalSettingsView(props: Props) {
 
   const changeDirty = (value: boolean) => { setDirty(value); props.onDirtyChange(value); };
 
-  const label = createMemo(() => (target() === "client" ? "This client" : target() === "local" ? isMobile ? "Connected daemon" : "Local daemon" : props.settings.hosts.find((host) => host.id === target())?.name ?? target()));
+  const label = createMemo(() => (target() === "client" ? "This client" : target() === "local" ? isMobile ? localHostLabel() : "Local daemon" : props.settings.hosts.find((host) => host.id === target())?.name ?? target()));
 
   return <div class="settings-workspace">
     <nav class="settings-nav settings-machine-nav" aria-label="Settings">
       <div class="settings-nav-group"><p class="eyebrow">This client</p>{<Key each={sections.filter((item) => clientSections.has(item.id))} by={(item) => item.id}>{(item, _index) => <button  disabled={target() !== "client" && (dirty() || saving())} class={target() === "client" && selectedSection() === item().id ? "active" : ""} aria-current={target() === "client" && selectedSection() === item().id ? "page" : undefined} onClick={() => { setTarget("client"); setSelectedSection(item().id); }}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>
-      <div class="settings-nav-group"><p class="eyebrow">Daemons</p>{<Key each={[{ id: "local", name: isMobile ? "Connected daemon" : "This computer" }, ...props.settings.hosts.filter((host) => host.enabled !== false)]} by={(host) => host.id}>{(host, _index) => <div ><button class={target() === host().id ? "active" : ""} disabled={target() !== host().id && (dirty() || saving())} aria-expanded={target() === host().id} onClick={() => { if (target() !== host().id) { setTarget(host().id); setSelectedSection("general"); } }}><Monitor size={16} /><span>{host().name}</span></button>{target() === host().id && <div class="settings-daemon-tabs">{<Key each={sections.filter((item) => !clientSections.has(item.id))} by={(item) => item.id}>{(item, _index) => <button  class={selectedSection() === item().id ? "active" : ""} aria-current={selectedSection() === item().id ? "page" : undefined} onClick={() => setSelectedSection(item().id)}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>}</div>}</Key>}</div>
+      <div class="settings-nav-group"><p class="eyebrow">Daemons</p>{<Key each={[{ id: "local", name: localHostLabel() }, ...props.settings.hosts.filter((host) => host.enabled !== false)]} by={(host) => host.id}>{(host, _index) => <div ><button class={target() === host().id ? "active" : ""} disabled={target() !== host().id && (dirty() || saving())} aria-expanded={target() === host().id} onClick={() => { if (target() !== host().id) { setTarget(host().id); setSelectedSection("general"); } }}><Monitor size={16} /><span>{host().name}</span></button>{target() === host().id && <div class="settings-daemon-tabs">{<Key each={daemonSections(host().id)} by={(item) => item.id}>{(item, _index) => <button  class={selectedSection() === item().id ? "active" : ""} aria-current={selectedSection() === item().id ? "page" : undefined} onClick={() => setSelectedSection(item().id)}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>}</div>}</Key>}</div>
       {dirty() && <p class="settings-switch-hint">Save before switching computers, or <button disabled={saving()} onClick={() => { changeDirty(false); setGeneration((value) => value + 1); }}>discard changes</button>.</p>}
     </nav>
     <div class="settings-editor-content"><Rerun on={() => `${target()}:${generation()}`}>{(_key) => <DaemonSettingsEditor  {...props} preserveHostSettings={preserveHostSettings} target={target()} label={label()} selectedSection={selectedSection()} onDirtyChange={changeDirty} onSavingChange={setSaving} />}</Rerun></div>
@@ -73,9 +75,10 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   const [hostSettings, setHostSettings] = createSignal<AppSettings>();
   const [resources, setResources] = createSignal<{ config: AgentConfig; models: Model[]; levels: string[] }>();
   const [error, setError] = createSignal<string>();
+  const [loadingModels, setLoadingModels] = createSignal<string[]>([]);
   const [saveWarnings, setSaveWarnings] = createSignal<string[]>();
   const [revision, setRevision] = createSignal(0);
-  const needsResources = createMemo(() => componentProps.target !== "client" || componentProps.selectedSection === "models");
+  const needsResources = createMemo(() => componentProps.target !== "client");
 
   const publications = new SettingsPublication();
 
@@ -100,11 +103,13 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   }, () => [hostId()]);
   createDependencyEffect(() => { const capturedHostId = hostId(); const capturedTarget0 = componentProps.target;
     setError(undefined);
+    setLoadingModels([]);
 
     if (!needsResources()) return;
     let cancelled = false;
     const reader = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
     let config: AgentConfig | undefined;
+    setLoadingModels([componentProps.label]);
 
     const unsubscribe = reader.subscribe((event) => {
       const statusText = z.string().safeParse(event.statusText);
@@ -137,9 +142,18 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
           loadAgentConfiguration(reader, capturedTarget0, () => config),
         ]);
 
-        if (!cancelled) setResources({ config: storedConfig, models: models.models, levels: levels.levels });
-      } catch (reason) { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); }
-      finally { unsubscribe(); await reader.dispose().catch(() => undefined); }
+        if (cancelled) return;
+        await reportModels(capturedHostId, models.models);
+
+        if (cancelled) return;
+        const recorded = await reader.loadHostSettingsChange();
+
+        if (cancelled) return;
+        receiveChange(recorded, capturedHostId);
+        setResources({ config: storedConfig, models: models.models, levels: levels.levels });
+      } catch (reason) {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+      } finally { if (!cancelled) setLoadingModels([]); unsubscribe(); await reader.dispose().catch(() => undefined); }
     })();
 
     return () => { cancelled = true; unsubscribe(); void reader.dispose().catch(() => undefined); };
@@ -207,5 +221,5 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     return warnings && warnings.length > 0 && <p role="alert">Settings saved with synchronization warnings: {warnings.join(" ")}</p>;
   };
 
-  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : resources()?.config} models={resources()?.models} thinkingLevels={resources()?.levels} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
+  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : resources()?.config} models={resources()?.models} loadingModels={loadingModels()} thinkingLevels={resources()?.levels} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
 }

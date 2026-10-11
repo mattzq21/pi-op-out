@@ -196,8 +196,6 @@ function removeOwned(root, entries) {
   }
 }
 
-function lock(root) { return require('./storage-transaction-lock.cjs').lockStorage(root); }
-
 function recover(root) {
   const failures = [];
 
@@ -217,4 +215,4 @@ function recoverPublications(root) {
   for (const retained of result.quarantined) console.error(`Session publication retained: ${retained.path}: ${retained.reason}`);
 }
 
-module.exports = { inside, exists, sync, syncTree, mkdir, write, identity, describe, matches, sameContents, move, undo, removalPlan, removeOwned, lock, recover };
+module.exports = { inside, exists, sync, syncTree, mkdir, write, identity, describe, matches, sameContents, move, undo, removalPlan, removeOwned, recover };

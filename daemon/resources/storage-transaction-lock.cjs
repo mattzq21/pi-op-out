@@ -1,13 +1,15 @@
 const { shellLock, bunExecutable } = require('./file-lock.cjs');
+const { readRequestText, scriptLoader } = require('./host-script.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-function lockStorage(root, nonblocking = false, onBusy) {
+/** Returns 'locked' when this process holds the storage lock, 'delegated' when a child process held it and wrote the reply, or 'busy'. */
+function lockStorage(root, nonblocking = false) {
   if (process.argv.at(-1) === '--storage-transaction-locked') {
     process.argv.pop();
 
-    return true;
+    return 'locked';
   }
 
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -25,17 +27,18 @@ function lockStorage(root, nonblocking = false, onBusy) {
       if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid storage transaction lock');
     }
 
+    const script = fs.openSync(process.argv[1], 'r');
+    descriptors.push(script);
     const command = [4, 5, 3, 6].map(fd => `${shellLock(fd, nonblocking)} || exit $?`).join('; ') + '; exec "$@"';
-    const child = spawnSync('sh', ['-c', command, 'piop-storage', process.execPath, ...process.execArgv, '--', ...process.argv.slice(1), '--storage-transaction-locked'], { env: { ...process.env, PIOP_BUN: bunExecutable() }, stdio: ['inherit', 'inherit', 'inherit', ...descriptors] });
+    const child = spawnSync('sh', ['-c', command, 'piop-storage', process.execPath, '-e', scriptLoader, '--', '/proc/self/fd/7', ...process.argv.slice(2), '--storage-transaction-locked'], { env: { ...process.env, PIOP_BUN: bunExecutable() }, input: readRequestText(), stdio: ['pipe', 'inherit', 'inherit', ...descriptors] });
 
     if (child.error) throw child.error;
-    if (nonblocking && child.status === 75) onBusy?.();
-    process.exitCode = transactionExitCode(child.status, nonblocking);
 
-    return false;
+    if (nonblocking && child.status === 75) return 'busy';
+    process.exitCode = child.status ?? 1;
+
+    return 'delegated';
   } finally { descriptors.forEach(descriptor => fs.closeSync(descriptor)); }
 }
-
-function transactionExitCode(status, nonblocking) { return nonblocking && status === 75 ? 0 : status ?? 1; }
 
 module.exports = { lockStorage };

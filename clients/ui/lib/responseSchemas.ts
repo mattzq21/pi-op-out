@@ -17,7 +17,7 @@ export const dictationEngineSettingsSchema = z.object({ engine: dictationEngineS
 export const dictationFoundEnginesSchema = z.record(dictationEngineSchema, z.object({ executable: z.string().optional(), error: z.string().optional() }));
 export const appSettingsSchema = z.object({ settingsRevision: z.string().optional(), clientSettingsRevision: z.string().optional(), settingsDurabilityError: z.string().optional(), clientSettingsDurabilityError: z.string().optional(), dictationEngine: dictationEngineSchema.optional(), dictationEngines: z.array(dictationEngineSettingsSchema).optional(), dictationModelPath: z.string().optional(), dictationArgs: z.string().optional(), localEnabled: z.boolean().optional(), defaultAgent: z.string().optional(), reviewAgent: z.string().optional(), reviewPrompt: z.string().optional(), defaultModel: z.string(), hiddenModels: z.array(z.string()), knownModels: z.array(z.string()).optional(), defaultThinking: z.string(), defaultFastMode: z.boolean(), contextWindowCap: z.number(), contextWindowCapEnabled: z.boolean(), autoRetry: z.boolean(), debugMode: z.boolean(), keybindings: z.object({ newConversation: z.string(), toggleConversations: z.string(), toggleTerminal: z.string(), toggleDebugMode: z.string(), focusComposer: z.string(), openSettings: z.string() }), tools: z.array(toolConfigSchema), skills: z.array(skillConfigSchema), hosts: z.array(remoteHostSchema) });
 
-export const clientSettingsSchema = appSettingsSchema.pick({ "keybindings": true, "hiddenModels": true, "knownModels": true, "debugMode": true });
+export const clientSettingsSchema = appSettingsSchema.pick({ "keybindings": true, "debugMode": true });
 
 export const agentConfigChangeSchema = z.object({ hostId: z.string(), revision: z.number() });
 

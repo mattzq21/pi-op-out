@@ -27,7 +27,7 @@ export function sshBase(): CommandSpec {
   const args: string[] = [];
   const config = userSshConfig();
   if (config) args.push('-F', config);
-  args.push('-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=5');
+  args.push('-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=5', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3');
   return { program: 'ssh', args };
 }
 
