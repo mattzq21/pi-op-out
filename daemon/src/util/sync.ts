@@ -67,6 +67,23 @@ export class RwLock {
     return this.writeRelease();
   }
 
+  async writeWithin(ms: number, message: string): Promise<() => void> {
+    const release = this.tryWrite();
+    if (release) return release;
+    await new Promise<void>((resolve, reject) => {
+      const entry = { write: true, resolve: () => { clearTimeout(timer); resolve(); } };
+      const timer = setTimeout(() => {
+        const index = this.queue.indexOf(entry);
+        if (index < 0) return;
+        this.queue.splice(index, 1);
+        reject(new Error(message));
+        this.drain();
+      }, ms);
+      this.queue.push(entry);
+    });
+    return this.writeRelease();
+  }
+
   private readRelease(): () => void {
     let released = false;
     return () => { if (released) return; released = true; this.readers -= 1; this.drain(); };

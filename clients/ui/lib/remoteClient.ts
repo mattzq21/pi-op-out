@@ -1,6 +1,6 @@
 import { z, type JSONType } from "zod";
 import { jsonResultSchema, remotePacketSchema, type NativeArguments, type RemotePacket } from "./transportSchemas";
-import { isMobileDebugConnection } from "./mobileDebug";
+import { isMobileDebugConnection, mobileDebugToken } from "./mobileDebug";
 import { busyRetryDelay, HOST_BUSY } from "./backpressure";
 
 export interface HostConnection { url: string }
@@ -45,7 +45,7 @@ export class RemoteClient {
       const settleResolve = () => { if (!settled) { settled = true; resolve(); } };
 
       const timer = setTimeout(() => { reject(new Error("Connection timed out. Check the host address and Tailscale Serve.")); socket.close(); }, 15000);
-      socket.onopen = () => { if (!isMobileDebugConnection(validateHost(connection))) socket.send(JSON.stringify({ type: "authenticate", mode: "tailscale" })); };
+      socket.onopen = () => { socket.send(JSON.stringify(isMobileDebugConnection(destination) ? { type: "authenticate", token: mobileDebugToken(destination) } : { type: "authenticate", mode: "tailscale" })); };
 
       socket.onmessage = ({ data }) => {
         if (this.socket !== socket) return;

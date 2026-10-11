@@ -27,11 +27,12 @@ if (result.error || result.status !== 0) {
   throw new Error("Could not start the worktree daemon. Build it first with bun run daemon:dev.", { cause: result.error });
 }
 
-async function ready(url) {
+async function ready(url, token) {
   return new Promise((resolve) => {
     const socket = new WebSocket(url);
     const timer = setTimeout(() => finish(false), 1500);
     const finish = (value) => { clearTimeout(timer); resolve(value); socket.close(); };
+    socket.addEventListener("open", () => socket.send(JSON.stringify({ type: "authenticate", token })), { once: true });
 
     socket.addEventListener("message", ({ data }) => {
       try {
@@ -45,6 +46,7 @@ async function ready(url) {
 }
 
 let connection;
+let token;
 
 let runtime;
 
@@ -57,8 +59,8 @@ while (Date.now() < deadline) {
     const endpoint = readDaemonEndpoint(endpointDirectory, "debug-mobile.json");
     const url = new URL(endpoint.url);
 
-    if (endpoint.protocol === 1 && url.protocol === "ws:" && url.hostname === "127.0.0.1" && url.port) {
-      const packet = await ready(url.href);
+    if (endpoint.protocol === 1 && typeof endpoint.token === "string" && endpoint.token.length >= 32 && url.protocol === "ws:" && url.hostname === "127.0.0.1" && url.port) {
+      const packet = await ready(url.href, endpoint.token);
 
       if (packet) {
         let runningIdentity;
@@ -74,6 +76,7 @@ while (Date.now() < deadline) {
 
         url.hostname = "10.0.2.2";
         connection = url.href;
+        token = endpoint.token;
         runtime = packet.debugRuntime ?? { processId: packet.debugProcessId, buildIdentity: runningIdentity };
         break;
       }
@@ -92,5 +95,5 @@ process.stdout.write(JSON.stringify({
   runtime,
   apk: join(project, "clients/android/app/build/outputs/apk/debug/app-debug.apk"),
   url: connection,
-  exec: { argv: ["am", "start", "-S", "-n", "dev.pi.mobile/.MainActivity", "--es", "piopDebugUrl", connection] },
+  exec: { argv: ["am", "start", "-S", "-n", "dev.pi.mobile/.MainActivity", "--es", "piopDebugUrl", connection, "--es", "piopDebugToken", token] },
 }, null, 2) + "\n");

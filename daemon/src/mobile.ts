@@ -107,7 +107,7 @@ export async function start(app: App): Promise<void> {
     });
   }
   await startTailscale(shared);
-  if (DEVELOPMENT) await startDebug(shared);
+  if (DEVELOPMENT) await startDebug(shared, secret);
   process.stderr.write('Piop daemon listening on ' + bind + ' (TLS proxy required)\n');
 }
 
@@ -117,15 +117,16 @@ function isLoopback(address: string | undefined): boolean {
   return address === '::1' || address.startsWith('127.');
 }
 
-async function startDebug(shared: Shared): Promise<void> {
+async function startDebug(shared: Shared, token: string): Promise<void> {
   const server = upgradeServer(shared, (request, socket, head) => {
+    if (request.headers.origin !== undefined && request.headers.origin !== 'https://localhost') { reject(socket, 403, 'Forbidden'); return; }
     const ws = acceptUpgrade(request, socket, head, MAX_MESSAGE);
     if (!ws) return;
-    serveConnection(shared, ws, false).catch(() => undefined).finally(() => ws.terminate());
+    connection(shared, ws, token, isLoopback(request.socket.remoteAddress)).catch(() => undefined).finally(() => ws.terminate());
   });
   const address = await listen(server, process.env.PIOP_DEBUG_MOBILE_BIND ?? '127.0.0.1:0');
   const host = address.address.includes(':') ? '[' + address.address + ']' : address.address;
-  records.publish(join(endpoint.directory(), 'debug-mobile.json'), JSON.stringify({ url: 'ws://' + host + ':' + address.port, protocol: 1 }));
+  records.publish(join(endpoint.directory(), 'debug-mobile.json'), JSON.stringify({ url: 'ws://' + host + ':' + address.port, token, protocol: 1 }));
 }
 
 function authenticated(value: any, expected: string): boolean {
