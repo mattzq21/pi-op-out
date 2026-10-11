@@ -37,7 +37,7 @@ async function readRemoteImage(app: App, cwd: string, path: string, hostId: stri
   const settings = await loadAppSettings(app);
   const host = remoteHost(settings, hostId);
   const script = "const fs=require('fs'),p=require('path');const fd=fs.openSync(p.resolve(process.argv[1],process.argv[2]),'r');const s=fs.fstatSync(fd);if(!s.isFile()||s.size>10485760)throw Error('Select an image file up to 10 MB');const b=Buffer.alloc(10485761);let n=0,k;while(n<b.length&&(k=fs.readSync(fd,b,n,b.length-n,null)))n+=k;fs.closeSync(fd);process.stdout.write(b.subarray(0,n));";
-  const command = `node -e ${shellQuote(script)} ${shellQuote(cwd)} ${shellQuote(path)}`;
+  const command = `bun -e ${shellQuote(script)} ${shellQuote(cwd)} ${shellQuote(path)}`;
   const result = await runLimited(ssh(host, remoteLoginCommand(command)), IMAGE_LIMIT + 1, 'Could not read image');
   if (!result.status.success) throw new Error(result.stderr.toString().trim());
   return result.stdout;

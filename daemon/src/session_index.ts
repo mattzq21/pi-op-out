@@ -43,7 +43,7 @@ async function inspectSessionProjects(index: SessionIndexRuntime, sessions: Sess
 
 export function readSessionSummaries(candidates: SessionCandidate[], host: RemoteHost | undefined): Promise<Map<string, CachedSession>> {
   return readSessionSummariesWith(candidates, host, (script, batch) => {
-    if (host) return ssh(host, remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${shellQuote(script)} ${batch.map(item => shellQuote(item[0])).join(' ')}`));
+    if (host) return ssh(host, remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(script)} ${batch.map(item => shellQuote(item[0])).join(' ')}`));
     return nodeCommand(['-e', script, ...batch.map(item => item[0])]);
   });
 }
@@ -203,7 +203,7 @@ export async function removeTemporaryChat(app: App, path: string, hostId: string
   const id = temporaryChatId(path);
   if (!id) throw new Error('Refusing to remove a directory not created as a temporary chat');
   const request = JSON.stringify({ action: 'remove', id, path });
-  const remote = `PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${shellQuote(temporaryChatScript())} ${shellQuote(request)}`;
+  const remote = `PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(temporaryChatScript())} ${shellQuote(request)}`;
   try { await temporaryChatOutput(ssh(host, remoteLoginCommand(remote))); }
   catch (error: any) { throw new Error(`Could not remove temporary chat directory on ${host.name}: ${error.message}`); }
 }
@@ -274,7 +274,7 @@ export async function createTemporaryChat(app: App, hostId: string): Promise<Tem
     const host = remoteHost(await loadAppSettings(app), hostId);
     if (!canonicalUuid(sessionId)) throw new Error('Invalid temporary chat session ID');
     const request = JSON.stringify({ action: 'create', id: sessionId });
-    const remote = `PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${shellQuote(temporaryChatScript())} ${shellQuote(request)}`;
+    const remote = `PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(temporaryChatScript())} ${shellQuote(request)}`;
     try { cwd = await temporaryChatOutput(ssh(host, remoteLoginCommand(remote))); }
     catch (error: any) { throw new Error(`Could not create temporary chat directory on ${host.name}: ${error.message}`); }
     if (!cwd) throw new Error('Remote temporary chat directory was unavailable');

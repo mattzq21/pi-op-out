@@ -134,7 +134,7 @@ async function discover(settings: AppSettings, hostId: string): Promise<string[]
   const request = '{"action":"ids"}';
   const command = hostId === 'local'
     ? nodeCommand(['-e', script, request])
-    : ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${shellQuote(STORAGE_DIRECTORY)} node -e ${shellQuote(script)} ${shellQuote(request)}`));
+    : ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${shellQuote(STORAGE_DIRECTORY)} bun -e ${shellQuote(script)} ${shellQuote(request)}`));
   const result = await runLimited(command, 16 * 1024 * 1024, 'Could not read current session IDs');
   if (!result.status.success) throw new Error(result.stderr.toString());
   return JSON.parse(result.stdout.toString());

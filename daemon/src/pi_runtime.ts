@@ -47,7 +47,7 @@ export class PiRuntime {
 }
 
 function remoteNodeCommand(host: RemoteHost, script: string, args: string): CommandSpec {
-  return ssh(host, remoteLoginCommand('PIOP_STORAGE_DIRECTORY=' + STORAGE_DIRECTORY + ' node -e ' + shellQuote(script) + ' ' + shellQuote(args)));
+  return ssh(host, remoteLoginCommand('PIOP_STORAGE_DIRECTORY=' + STORAGE_DIRECTORY + ' bun -e ' + shellQuote(script) + ' ' + shellQuote(args)));
 }
 
 export async function reserveSessionId(settings: AppSettings, hostId: string): Promise<string> {

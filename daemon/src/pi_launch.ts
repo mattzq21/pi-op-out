@@ -37,7 +37,7 @@ export function userSshConfig(): string | undefined {
   try { const path = join(homeDir(), '.ssh/config'); return isFile(path) ? path : undefined; } catch { return undefined; }
 }
 
-export function remoteLoginCommand(command: string): string { return `bash -lc ${shellQuote(command)}`; }
+export function remoteLoginCommand(command: string): string { return `bash -lc ${shellQuote('PATH="$PATH:$HOME/.bun/bin"; ' + command)}`; }
 
 export function sshBase(): CommandSpec {
   const args: string[] = [];
@@ -139,7 +139,7 @@ function importExternalIdentity(path: string): string {
 
 async function remoteRegisteredIdentity(host: RemoteHost, path: string): Promise<string | undefined> {
   const request = JSON.stringify({ action: 'identity', path });
-  const script = `PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${shellQuote(Registry.source())} ${shellQuote(request)}`;
+  const script = `PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(Registry.source())} ${shellQuote(request)}`;
   const output = await runLimited(ssh(host, remoteLoginCommand(script)), 64 * 1024, 'Could not read registered session identity');
   if (!output.status.success) throw new Error(output.stderr.toString().trim());
   return JSON.parse(output.stdout.toString()) ?? undefined;

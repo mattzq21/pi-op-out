@@ -37,7 +37,7 @@ export async function inspectStorage(host: RemoteHost | undefined): Promise<Host
   if (!host) await restoreRecovery.recover(join(homeDir(), STORAGE_DIRECTORY));
   else await restoreRecovery.recoverRemote(host);
   const command = host
-    ? ssh(host, remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${shellQuote(storageInventoryBundle)}`))
+    ? ssh(host, remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(storageInventoryBundle)}`))
     : nodeCommand(['-e', storageInventoryBundle]);
   const label = host?.name ?? 'Local';
   const result = await runLimited(command, MAX_SESSION_INDEX_BATCH_BYTES, `Could not inspect storage on ${label}`);
@@ -185,7 +185,7 @@ async function sessionDescendants(app: App, hostId: string, sessionPath: string,
   const argumentsText = JSON.stringify({ path: sessionPath, root, archived, includeOtherArea });
   const command = hostId === 'local'
     ? nodeCommand(['-e', sessionDescendantsBundle, argumentsText])
-    : ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${shellQuote(sessionDescendantsBundle)} ${shellQuote(argumentsText)}`));
+    : ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(sessionDescendantsBundle)} ${shellQuote(argumentsText)}`));
   const result = await runLimited(command, MAX_SESSION_INDEX_BATCH_BYTES, 'Could not find subagent conversations');
   if (!result.status.success) throw new Error(result.stderr.toString().trim());
   let value: any;
@@ -272,7 +272,7 @@ async function deleteSessionTargets(runtime: PiRuntime, targets: any[], hostId: 
   if (hostId === 'local') command = nodeCommand(['-e', storageTransactionBundle, argumentsText]);
   else {
     if (!host) throw new Error('Remote host is required');
-    command = ssh(host, remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${shellQuote(storageTransactionBundle)} ${shellQuote(argumentsText)}`));
+    command = ssh(host, remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(storageTransactionBundle)} ${shellQuote(argumentsText)}`));
   }
   await runSessionDeletion(command);
 }
@@ -294,7 +294,7 @@ export function deleteArchivedSession(app: App, runtime: PiRuntime, sessionPath:
 function restoreSessionCommand(settings: AppSettings, hostId: string, request: unknown): CommandSpec {
   const text = JSON.stringify(request);
   if (hostId === 'local') return nodeCommand(['-e', storageTransactionBundle, text]);
-  return ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${shellQuote(storageTransactionBundle)} ${shellQuote(text)}`));
+  return ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(storageTransactionBundle)} ${shellQuote(text)}`));
 }
 
 export async function restoreArchivedSession(app: App, sessionPath: string, hostId: string | undefined | null, clientId: string): Promise<void> {
@@ -385,7 +385,7 @@ export async function recoverMissingSession(app: App, sessionPath: string, hostI
       const registry = Registry.source();
       const command = hostId === 'local'
         ? nodeCommand(['-e', recoverMissingSessionBundle, argumentsText, relocateSessionBundle, registry])
-        : ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${shellQuote(recoverMissingSessionBundle)} ${shellQuote(argumentsText)} ${shellQuote(relocateSessionBundle)} ${shellQuote(registry)}`));
+        : ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(recoverMissingSessionBundle)} ${shellQuote(argumentsText)} ${shellQuote(relocateSessionBundle)} ${shellQuote(registry)}`));
       const result = await runLimited(command, 64 * 1024, 'Could not recover the session directory');
       if (!result.status.success) throw new Error(result.stderr.toString().trim());
       let value: any;
@@ -400,7 +400,7 @@ export async function recoverMissingSession(app: App, sessionPath: string, hostI
 export async function relocateRemoteSession(sessionPath: string, cwd: string, hostName: string, command: (script: string) => CommandSpec): Promise<void> {
   const session = shellQuote(sessionPath); const replacement = shellQuote(cwd.trim());
   const relocate = shellQuote(relocateSessionBundle);
-  const script = `root=$(cd "$HOME/${STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- ${session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement=${replacement}; [ -d "$replacement" ] || { printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }; PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${relocate} "$path" "$replacement"`;
+  const script = `root=$(cd "$HOME/${STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- ${session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement=${replacement}; [ -d "$replacement" ] || { printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }; PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${relocate} "$path" "$replacement"`;
   const result = await runLimited(command(script), 64 * 1024, `Could not relocate conversation on ${hostName}`);
   if (result.status.success) return;
   throw new Error(result.stderr.toString().trim() || `Could not relocate conversation on ${hostName}`);

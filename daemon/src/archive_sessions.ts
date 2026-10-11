@@ -19,7 +19,7 @@ async function archiveCommand(settings: AppSettings, hostId: string, request: un
   const argumentsText = JSON.stringify(request);
   const command: CommandSpec = hostId === 'local'
     ? nodeCommand(['-e', storageTransactionBundle, argumentsText])
-    : ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${shellQuote(storageTransactionBundle)} ${shellQuote(argumentsText)}`));
+    : ssh(remoteHost(settings, hostId), remoteLoginCommand(`PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(storageTransactionBundle)} ${shellQuote(argumentsText)}`));
   const result = await runLimited(command, 64 * 1024, 'Could not archive conversations');
   if (!result.status.success) throw new Error(result.stderr.toString().trim());
   if (result.stderr.length) console.error(result.stderr.toString().trim());

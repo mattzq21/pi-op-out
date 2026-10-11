@@ -7,7 +7,7 @@ import * as Registry from './session_registry';
 import type { RemoteHost } from './settings_types';
 
 export async function recoverRemote(host: RemoteHost): Promise<void> {
-  const command = `PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} node -e ${shellQuote(storageTransactionBundle)} ${shellQuote('{"action":"recover"}')}`;
+  const command = `PIOP_STORAGE_DIRECTORY=${STORAGE_DIRECTORY} bun -e ${shellQuote(storageTransactionBundle)} ${shellQuote('{"action":"recover"}')}`;
   const result = await runLimited(ssh(host, remoteLoginCommand(command)), 256 * 1024, 'Could not recover session transactions');
   if (!result.status.success) throw new Error(result.stderr.toString().trim());
   if (result.stderr.length) console.error(result.stderr.toString().trim());
