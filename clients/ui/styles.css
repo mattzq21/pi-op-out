@@ -644,9 +644,10 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .dictation-engine:hover { background: var(--accent-05); }
 .dictation-engine.active { border-color: var(--accent); background: var(--accent-08); }
 .dictation-engine.open { grid-column: 1 / -1; }
-.dictation-engine-pick { flex-basis: 100%; min-width: 0; aspect-ratio: 16 / 10; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 14px; border: 0; background: transparent; color: var(--ink); text-align: left; }
+.dictation-engine-pick { position: relative; flex-basis: 100%; min-width: 0; aspect-ratio: 16 / 10; display: grid; place-items: center; padding: 36px 14px; border: 0; background: transparent; color: var(--ink); text-align: center; }
+.dictation-engine-pick > .dictation-radio { position: absolute; top: 14px; left: 14px; }
 .dictation-engine.open .dictation-engine-pick { aspect-ratio: auto; min-height: 96px; }
-.dictation-engine-pick > span { display: grid; gap: 4px; min-width: 0; }
+.dictation-engine-pick > span { display: grid; justify-items: center; gap: 4px; min-width: 0; }
 .dictation-engine-pick strong { font-size: calc(14px + var(--settings-font-offset, 0px)); font-weight: 600; }
 .dictation-engine-pick small { display: flex; align-items: baseline; gap: 6px; color: var(--muted); font-size: calc(11px + var(--settings-font-offset, 0px)); }
 .dictation-engine-tools { position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; }
