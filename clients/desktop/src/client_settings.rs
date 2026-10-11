@@ -4,20 +4,15 @@ use crate::settings_concurrency::{lock_settings, settings_revision};
 #[path = "../../../shared/rust/settings_records.rs"]
 pub(crate) mod records;
 
-/// A model file the user saved, with the engine and language to use it with. The path identifies it.
+/// A saved dictation setup: the model file, the engine program ("" finds it automatically) and the arguments.
+/// All three fields together identify it.
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub(crate) struct SavedDictationModel {
-    engine: String,
     path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    language: Option<String>,
-}
-
-/// A speech program the user saved. The path identifies it.
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
-pub(crate) struct SavedDictationEngine {
-    engine: String,
-    path: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    program: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    args: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -29,28 +24,22 @@ pub(crate) struct ClientSettings {
     known_models: Option<Vec<String>>,
     debug_mode: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    dictation_engine: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     dictation_engine_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dictation_model_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    dictation_language: Option<String>,
+    dictation_args: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dictation_models: Option<Vec<SavedDictationModel>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    dictation_engines: Option<Vec<SavedDictationEngine>>,
 }
 
 impl ClientSettings {
     fn dictation(&self) -> crate::dictation::DictationSettings {
         let field = |value: &Option<String>| value.as_deref().unwrap_or_default().trim().to_owned();
-        let engine = field(&self.dictation_engine);
         crate::dictation::DictationSettings {
-            engine: if engine.is_empty() { "transcribe.cpp".into() } else { engine },
             program: field(&self.dictation_engine_path),
             model: field(&self.dictation_model_path),
-            language: field(&self.dictation_language).to_lowercase(),
+            args: field(&self.dictation_args),
         }
     }
 }
@@ -61,7 +50,7 @@ pub(crate) fn stored_dictation_settings() -> Result<crate::dictation::DictationS
     let _guard = lock_settings(&path)?;
     Ok(match read_preferences(&path)? {
         Some(settings) => settings.dictation(),
-        None => crate::dictation::DictationSettings { engine: "transcribe.cpp".into(), program: String::new(), model: String::new(), language: String::new() },
+        None => crate::dictation::DictationSettings { program: String::new(), model: String::new(), args: String::new() },
     })
 }
 
@@ -75,24 +64,11 @@ fn read_preferences(path: &Path) -> Result<Option<ClientSettings>, String> {
     records::read(path)?.map(|body| serde_json::from_slice(&body).map_err(|error| format!("Could not read client preferences: {error}"))).transpose()
 }
 
-fn merge_memberships(latest: &[String], baseline: &[String], intended: &[String]) -> Vec<String> {
-    let mut merged: Vec<String> = latest.iter().filter(|id| !baseline.contains(id) || intended.contains(id)).cloned().collect();
+/// Keeps entries from other windows. This window's removals and additions win.
+fn merge_memberships<T: Clone + PartialEq>(latest: &[T], baseline: &[T], intended: &[T]) -> Vec<T> {
+    let mut merged: Vec<T> = latest.iter().filter(|id| !baseline.contains(id) || intended.contains(id)).cloned().collect();
     for id in intended {
         if !baseline.contains(id) && !merged.contains(id) { merged.push(id.clone()); }
-    }
-    merged
-}
-
-/// Keeps saved models or engines from other windows. This window's removals, additions and changes win for the paths it edited.
-fn merge_saved<T: Clone + PartialEq>(latest: &[T], baseline: &[T], intended: &[T], path: impl Fn(&T) -> &str) -> Vec<T> {
-    let has = |entries: &[T], key: &str| entries.iter().any(|entry| path(entry) == key);
-    let mut merged: Vec<T> = latest.iter().filter(|entry| !has(baseline, path(entry)) || has(intended, path(entry))).cloned().collect();
-    for model in intended {
-        if baseline.contains(model) { continue; }
-        match merged.iter_mut().find(|item| path(item) == path(model)) {
-            Some(item) => *item = model.clone(),
-            None => merged.push(model.clone()),
-        }
     }
     merged
 }
@@ -120,15 +96,11 @@ fn merge_preferences(mut latest: ClientSettings, baseline: &ClientSettings, inte
         latest.known_models = Some(merge_memberships(latest.known_models.as_deref().unwrap_or_default(), baseline.known_models.as_deref().unwrap_or_default(), intended.known_models.as_deref().unwrap_or_default()));
     }
     if intended.debug_mode != baseline.debug_mode { latest.debug_mode = intended.debug_mode; }
-    if intended.dictation_engine != baseline.dictation_engine { latest.dictation_engine = intended.dictation_engine.clone(); }
     if intended.dictation_engine_path != baseline.dictation_engine_path { latest.dictation_engine_path = intended.dictation_engine_path.clone(); }
     if intended.dictation_model_path != baseline.dictation_model_path { latest.dictation_model_path = intended.dictation_model_path.clone(); }
-    if intended.dictation_language != baseline.dictation_language { latest.dictation_language = intended.dictation_language.clone(); }
+    if intended.dictation_args != baseline.dictation_args { latest.dictation_args = intended.dictation_args.clone(); }
     if latest.dictation_models.is_some() || intended.dictation_models.is_some() {
-        latest.dictation_models = Some(merge_saved(latest.dictation_models.as_deref().unwrap_or_default(), baseline.dictation_models.as_deref().unwrap_or_default(), intended.dictation_models.as_deref().unwrap_or_default(), |model| &model.path));
-    }
-    if latest.dictation_engines.is_some() || intended.dictation_engines.is_some() {
-        latest.dictation_engines = Some(merge_saved(latest.dictation_engines.as_deref().unwrap_or_default(), baseline.dictation_engines.as_deref().unwrap_or_default(), intended.dictation_engines.as_deref().unwrap_or_default(), |engine| &engine.path));
+        latest.dictation_models = Some(merge_memberships(latest.dictation_models.as_deref().unwrap_or_default(), baseline.dictation_models.as_deref().unwrap_or_default(), intended.dictation_models.as_deref().unwrap_or_default()));
     }
     Ok(latest)
 }

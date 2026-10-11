@@ -107,24 +107,47 @@ public class DictationPlugin extends Plugin {
         return value;
     }
 
+    /** The engine type of a model file: Cactus Needle reads .cact files and transcribe.cpp reads .gguf files. */
+    private static String engineKind(String model) {
+        String name = model.toLowerCase(Locale.ROOT);
+        if (name.endsWith(".cact")) return "needle";
+        if (name.endsWith(".gguf")) return "transcribe.cpp";
+        throw new IllegalArgumentException("Cannot tell the engine from the model file " + model + ". Use a .cact file (Cactus Needle) or a .gguf file (transcribe.cpp).");
+    }
+
+    /** Reads the engine arguments. The only argument is "--language <code>" (or "--language=<code>"); no language lets the model choose. */
+    private static String languageArgument(String args) {
+        String[] words = args.trim().isEmpty() ? new String[0] : args.trim().split("\\s+");
+        String language = "";
+        for (int index = 0; index < words.length; index++) {
+            String word = words[index];
+            if (word.equals("--language")) {
+                if (++index >= words.length) throw new IllegalArgumentException("The argument --language needs a language code, for example --language en");
+                language = words[index];
+            } else if (word.startsWith("--language=")) {
+                language = word.substring("--language=".length());
+            } else {
+                throw new IllegalArgumentException("Unknown dictation argument " + word + ". The only argument is --language <code>.");
+            }
+        }
+        return language.toLowerCase(Locale.ROOT);
+    }
+
     /** Reads the client preferences and reloads the engine when its settings changed. */
     void reload() {
-        String kind;
         String model;
-        String language;
+        String args;
         try (ClientPreferencesStorage storage = new ClientPreferencesStorage(getContext())) {
             String stored = storage.read().settings;
             storage.commit();
             JSONObject settings = stored == null ? null : new JSONObject(stored);
-            kind = setting(settings, "dictationEngine");
-            if (kind.isEmpty()) kind = "transcribe.cpp";
             model = setting(settings, "dictationModelPath");
-            language = setting(settings, "dictationLanguage").toLowerCase(Locale.ROOT);
+            args = setting(settings, "dictationArgs");
         } catch (Exception error) {
             publish(state(false, "Could not read the dictation settings: " + error.getMessage()), null);
             return;
         }
-        String key = kind + "\n" + model + "\n" + language;
+        String key = model + "\n" + args;
         int current;
         synchronized (lock) {
             if (key.equals(settingsKey)) return;
@@ -134,11 +157,11 @@ public class DictationPlugin extends Plugin {
             configuration = state(true, null);
         }
         notifyListeners("dictation", configuration);
-        final String engineKind = kind;
         engine.execute(() -> {
             JSObject result;
             try {
-                result = loadEngine(engineKind, model, language);
+                unload();
+                result = model.isEmpty() ? state(false, "No dictation model is configured") : loadEngine(engineKind(model), model, languageArgument(args));
             } catch (Throwable error) {
                 result = state(false, message(error));
             }

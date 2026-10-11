@@ -29,5 +29,5 @@ export function agentEditsSnapshot(config?: AgentConfig) {
 }
 
 export const settingKeys: Array<keyof AppSettings> = [
-  "dictationEngine", "dictationEnginePath", "dictationModelPath", "dictationLanguage", "dictationModels", "dictationEngines", "localEnabled", "defaultAgent", "defaultModel", "hiddenModels", "knownModels", "defaultThinking", "defaultFastMode", "contextWindowCap", "contextWindowCapEnabled", "autoRetry", "debugMode", "keybindings", "tools", "skills", "hosts",
+  "dictationEnginePath", "dictationModelPath", "dictationArgs", "dictationModels", "localEnabled", "defaultAgent", "defaultModel", "hiddenModels", "knownModels", "defaultThinking", "defaultFastMode", "contextWindowCap", "contextWindowCapEnabled", "autoRetry", "debugMode", "keybindings", "tools", "skills", "hosts",
 ];

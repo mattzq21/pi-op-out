@@ -18,8 +18,9 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const UNCONFIGURED: &str = "No dictation model is configured";
 
 /// The dictation fields of the client preferences. Empty strings mean "not set".
+/// The model file names the engine type; args holds engine options such as "--language en".
 #[derive(Clone, PartialEq)]
-pub(crate) struct DictationSettings { pub engine: String, pub program: String, pub model: String, pub language: String }
+pub(crate) struct DictationSettings { pub program: String, pub model: String, pub args: String }
 
 /// A speech-to-text setup that can run: the Python command, the model file and the language ("" lets the model choose).
 #[derive(Clone)]
@@ -178,18 +179,44 @@ fn interpreter(kind: &str, executable: &str) -> Result<Vec<String>, String> {
     Ok(command)
 }
 
+/// The engine type of a model file: Cactus Needle reads .cact files and transcribe.cpp reads .gguf files.
+fn engine_kind(model: &str) -> Result<&'static str, String> {
+    match Path::new(model).extension().map(|extension| extension.to_string_lossy().to_lowercase()).as_deref() {
+        Some("cact") => Ok("needle"),
+        Some("gguf") => Ok("transcribe.cpp"),
+        _ => Err(format!("Cannot tell the engine from the model file {model}. Use a .cact file (Cactus Needle) or a .gguf file (transcribe.cpp).")),
+    }
+}
+
+/// Reads the engine arguments. The only argument is "--language <code>" (or "--language=<code>"); no language lets the model choose.
+fn language_argument(args: &str) -> Result<String, String> {
+    let mut words = args.split_whitespace();
+    let mut language = String::new();
+    while let Some(word) = words.next() {
+        let value = match word.strip_prefix("--language") {
+            Some("") => words.next().ok_or("The argument --language needs a language code, for example --language en")?.to_owned(),
+            Some(rest) if rest.starts_with('=') => rest[1..].to_owned(),
+            _ => return Err(format!("Unknown dictation argument {word}. The only argument is --language <code>.")),
+        };
+        language = value.to_lowercase();
+    }
+    Ok(language)
+}
+
 fn load_engine(settings: &DictationSettings) -> Result<(Engine, Languages), String> {
     if settings.model.is_empty() { return Err(UNCONFIGURED.into()); }
     let model = expand(&settings.model);
     if !Path::new(&model).is_file() { return Err(format!("The model file {model} does not exist")); }
-    let executables = candidates(&settings.engine, &settings.program);
+    let kind = engine_kind(&model)?;
+    let language = language_argument(&settings.args)?;
+    let executables = candidates(kind, &settings.program);
     if executables.is_empty() {
-        return Err(if settings.program.is_empty() { format!("Could not find {}. Install it or set its path.", program_name(&settings.engine)) } else { format!("The program {} does not exist", expand(&settings.program)) });
+        return Err(if settings.program.is_empty() { format!("Could not find {}. Install it or set its path.", program_name(kind)) } else { format!("The program {} does not exist", expand(&settings.program)) });
     }
     let mut failures = Vec::new();
     for executable in executables {
-        let attempt = interpreter(&settings.engine, &executable).and_then(|interpreter| {
-            let engine = Engine { kind: settings.engine.clone(), executable: executable.clone(), interpreter, model: model.clone(), language: settings.language.clone() };
+        let attempt = interpreter(kind, &executable).and_then(|interpreter| {
+            let engine = Engine { kind: kind.to_owned(), executable: executable.clone(), interpreter, model: model.clone(), language: language.clone() };
             probe(&engine).map(|languages| (engine, languages))
         });
         match attempt { Ok(loaded) => return Ok(loaded), Err(error) => failures.push(format!("{executable}: {error}")) }

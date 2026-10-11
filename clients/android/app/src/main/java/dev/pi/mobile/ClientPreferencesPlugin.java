@@ -15,7 +15,7 @@ import org.json.JSONObject;
 @CapacitorPlugin(name = "ClientPreferences")
 public class ClientPreferencesPlugin extends Plugin {
     private static final Object STORAGE_LOCK = new Object();
-    private static final String[] DICTATION_FIELDS = {"dictationEngine", "dictationEnginePath", "dictationModelPath", "dictationLanguage"};
+    private static final String[] DICTATION_FIELDS = {"dictationEnginePath", "dictationModelPath", "dictationArgs"};
 
     @PluginMethod
     public void load(PluginCall call) {
@@ -60,40 +60,34 @@ public class ClientPreferencesPlugin extends Plugin {
         for (String field : DICTATION_FIELDS) {
             if (settings.has(field) && !(settings.get(field) instanceof String)) throw new JSONException("Invalid client preference " + field);
         }
-        savedEntries(settings, "dictationModels");
-        savedEntries(settings, "dictationEngines");
+        savedModels(settings);
     }
 
-    /** Saved dictation models or engines by path. Each has an engine, a path and, for models, maybe a language. */
-    private static java.util.LinkedHashMap<String, JSONObject> savedEntries(JSONObject settings, String field) throws JSONException {
+    /**
+     * Saved dictation setups by identity. Each has a model path and maybe a program path and arguments.
+     * All three fields together identify a setup.
+     */
+    private static java.util.LinkedHashMap<String, JSONObject> savedModels(JSONObject settings) throws JSONException {
         java.util.LinkedHashMap<String, JSONObject> result = new java.util.LinkedHashMap<>();
-        if (!settings.has(field)) return result;
-        JSONArray values = settings.getJSONArray(field);
+        if (!settings.has("dictationModels")) return result;
+        JSONArray values = settings.getJSONArray("dictationModels");
         for (int index = 0; index < values.length(); index++) {
             JSONObject model = values.getJSONObject(index);
-            if (!(model.get("engine") instanceof String) || !(model.get("path") instanceof String) || (model.has("language") && !(model.get("language") instanceof String))) throw new JSONException("Invalid client preference " + field);
-            result.put(model.getString("path"), model);
+            if (!(model.get("path") instanceof String) || (model.has("program") && !(model.get("program") instanceof String)) || (model.has("args") && !(model.get("args") instanceof String))) throw new JSONException("Invalid client preference dictationModels");
+            result.put(model.getString("path") + "\n" + model.optString("program", "") + "\n" + model.optString("args", ""), model);
         }
         return result;
     }
 
-    private static boolean sameEntry(JSONObject left, JSONObject right) {
-        if (left == null) return false;
-        for (String key : new String[] {"engine", "path", "language"}) if (!java.util.Objects.equals(left.opt(key), right.opt(key))) return false;
-        return true;
-    }
-
-    /** Keeps saved models or engines from other windows. This window's removals, additions and changes win for the paths it edited. */
-    private static void mergeSavedEntries(JSONObject latest, JSONObject baseline, JSONObject intended, String field) throws JSONException {
-        if (!latest.has(field) && !intended.has(field)) return;
-        java.util.LinkedHashMap<String, JSONObject> before = savedEntries(baseline, field);
-        java.util.LinkedHashMap<String, JSONObject> after = savedEntries(intended, field);
-        java.util.LinkedHashMap<String, JSONObject> merged = savedEntries(latest, field);
-        for (String path : before.keySet()) if (!after.containsKey(path)) merged.remove(path);
-        for (java.util.Map.Entry<String, JSONObject> entry : after.entrySet()) {
-            if (!sameEntry(before.get(entry.getKey()), entry.getValue())) merged.put(entry.getKey(), entry.getValue());
-        }
-        latest.put(field, new JSONArray(merged.values()));
+    /** Keeps saved setups from other windows. This window's removals and additions win. */
+    private static void mergeSavedModels(JSONObject latest, JSONObject baseline, JSONObject intended) throws JSONException {
+        if (!latest.has("dictationModels") && !intended.has("dictationModels")) return;
+        java.util.LinkedHashMap<String, JSONObject> before = savedModels(baseline);
+        java.util.LinkedHashMap<String, JSONObject> after = savedModels(intended);
+        java.util.LinkedHashMap<String, JSONObject> merged = savedModels(latest);
+        for (String key : before.keySet()) if (!after.containsKey(key)) merged.remove(key);
+        for (java.util.Map.Entry<String, JSONObject> entry : after.entrySet()) if (!before.containsKey(entry.getKey())) merged.put(entry.getKey(), entry.getValue());
+        latest.put("dictationModels", new JSONArray(merged.values()));
     }
 
     private static void mergeMemberships(JSONObject latest, JSONObject baseline, JSONObject intended, String field) throws JSONException {
@@ -129,8 +123,7 @@ public class ClientPreferencesPlugin extends Plugin {
         mergeKeybindings(latest, baseline, intended);
         mergeMemberships(latest, baseline, intended, "hiddenModels");
         mergeMemberships(latest, baseline, intended, "knownModels");
-        mergeSavedEntries(latest, baseline, intended, "dictationModels");
-        mergeSavedEntries(latest, baseline, intended, "dictationEngines");
+        mergeSavedModels(latest, baseline, intended);
         if (!intended.get("debugMode").equals(baseline.get("debugMode"))) latest.put("debugMode", intended.get("debugMode"));
         for (String field : DICTATION_FIELDS) {
             Object before = baseline.opt(field);
