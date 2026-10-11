@@ -1,65 +1,15 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { Subprocess } from 'bun';
 import { randomUUID } from 'node:crypto';
 import { MAX_TERMINALS } from './config';
 import { isDirectory } from './environment';
 import { loadAppSettings } from './settings';
 import { remoteHost, userSshConfig } from './pi_launch';
 import { shellQuote } from './process_io';
-import { waitForExit } from './process_cleanup';
 import * as terminalLookup from './terminal_lookup';
 import type { App } from './app';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
 const INPUT_QUEUE = 32;
-
-/** Python program that runs a command in a pseudo-terminal (PTY). It relays stdin and stdout and reads "rows cols" lines on fd 3 to resize. */
-const PTY_HELPER = [
-  'import os, sys, pty, fcntl, termios, struct, select, signal',
-  'rows, cols = int(sys.argv[1]), int(sys.argv[2]); argv = sys.argv[3:]',
-  'def size(fd, r, c): fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", r, c, 0, 0))',
-  'pid, master = pty.fork()',
-  'if pid == 0:',
-  '    try: size(0, rows, cols)',
-  '    except Exception: pass',
-  '    try: os.execvp(argv[0], argv)',
-  '    except Exception as error: sys.stderr.write(str(error) + "\\n"); os._exit(127)',
-  'def stop(*_):',
-  '    try: os.killpg(pid, signal.SIGHUP)',
-  '    except Exception: pass',
-  '    try: os.kill(pid, signal.SIGKILL)',
-  '    except Exception: pass',
-  '    os._exit(0)',
-  'signal.signal(signal.SIGTERM, stop)',
-  'signal.signal(signal.SIGHUP, stop)',
-  'inputs = [0, 3, master]; pending = b""; control = b""',
-  'while True:',
-  '    writers = [master] if pending else []',
-  '    try: readable, writable, _ = select.select(inputs, writers, [])',
-  '    except InterruptedError: continue',
-  '    if master in writable:',
-  '        try: pending = pending[os.write(master, pending):]',
-  '        except OSError: pending = b""',
-  '    if master in readable:',
-  '        try: data = os.read(master, 65536)',
-  '        except OSError: data = b""',
-  '        if not data: break',
-  '        view = memoryview(data)',
-  '        while view: view = view[os.write(1, view):]',
-  '    if 0 in readable:',
-  '        data = os.read(0, 65536)',
-  '        if data: pending += data',
-  '        else: inputs.remove(0)',
-  '    if 3 in readable:',
-  '        data = os.read(3, 4096)',
-  '        if not data: inputs.remove(3)',
-  '        control += data',
-  '        while b"\\n" in control:',
-  '            line, control = control.split(b"\\n", 1)',
-  '            try: r, c = map(int, line.split()); size(master, r, c); os.kill(pid, signal.SIGWINCH)',
-  '            except Exception: pass',
-  'try: os.waitpid(pid, 0)',
-  'except Exception: pass',
-].join('\n');
 
 export interface TerminalProcess {
   generation: string;
@@ -67,7 +17,8 @@ export interface TerminalProcess {
   cwd: string;
   hostId: string;
   windowLabel: string;
-  child: ChildProcess;
+  /** The shell process. It runs in a Bun pseudo-terminal (PTY), available as child.terminal. */
+  child: Subprocess;
   rows: number;
   cols: number;
   queued: number;
@@ -138,32 +89,41 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
   const { terminalId, sessionKey, cwd, cols, rows, hostId, windowLabel } = launch;
   if (terminalAlreadyRunning(runtime, terminalId, windowLabel)) return;
   if ([...runtime.processes.values()].filter(process => process.sessionKey === sessionKey).length >= MAX_TERMINALS) throw new Error('At most ' + MAX_TERMINALS + ' terminals may run for one conversation');
-  let child: ChildProcess;
-  try {
-    child = spawn('python3', ['-c', PTY_HELPER, String(rows), String(cols), command.program, ...command.args], {
-      cwd: command.cwd, env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' }, stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
-    });
-  } catch (error: any) { throw new Error('Could not start terminal shell: ' + (error?.message ?? error)); }
   const generation = randomUUID();
-  const terminal: TerminalProcess = { generation, sessionKey, cwd, hostId, windowLabel, child, rows, cols, queued: 0, exited: false };
-  child.stdin!.on('error', () => {});
-  (child.stdio[3] as any)?.on?.('error', () => {});
-  child.on('error', error => console.error('Terminal ' + terminalId + ' failed: ' + error.message));
   const current = () => runtime.processes.get(terminalId)?.generation === generation;
-  terminalLookup.start(runtime, terminalId, sessionKey, cwd, hostId, windowLabel, generation);
-  const size = '\u001b[8;' + rows + ';' + cols + 't';
-  terminalLookup.record(runtime.history, terminalId, size);
-  emit(terminalLookup.event(runtime.history, terminalId, { type: 'terminal_output', terminalId, data: size }));
   const decoder = new TextDecoder('utf-8');
   const output = (data: string) => {
     if (!data || !current()) return;
     terminalLookup.record(runtime.history, terminalId, data);
     emit(terminalLookup.event(runtime.history, terminalId, { type: 'terminal_output', terminalId, data }));
   };
-  child.stdout!.on('data', (chunk: Buffer) => output(decoder.decode(chunk, { stream: true })));
-  child.stderr!.on('data', (chunk: Buffer) => console.error('Terminal helper: ' + chunk.toString('utf8').trimEnd()));
-  child.on('close', () => {
-    terminal.exited = true;
+  let terminal: TerminalProcess | undefined;
+  let ptyEnded!: () => void;
+  const ptyClosed = new Promise<void>(resolve => { ptyEnded = resolve; });
+  let child: Subprocess;
+  try {
+    child = Bun.spawn([command.program, ...command.args], {
+      cwd: command.cwd,
+      env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+      terminal: {
+        cols, rows, name: 'xterm-256color',
+        data: (_pty, chunk) => output(decoder.decode(chunk, { stream: true })),
+        drain: () => { if (terminal) terminal.queued = 0; },
+        exit: () => ptyEnded(),
+      },
+    });
+  } catch (error: any) { throw new Error('Could not start terminal shell: ' + (error?.message ?? error)); }
+  const started: TerminalProcess = { generation, sessionKey, cwd, hostId, windowLabel, child, rows, cols, queued: 0, exited: false };
+  terminal = started;
+  terminalLookup.start(runtime, terminalId, sessionKey, cwd, hostId, windowLabel, generation);
+  const size = '\u001b[8;' + rows + ';' + cols + 't';
+  terminalLookup.record(runtime.history, terminalId, size);
+  emit(terminalLookup.event(runtime.history, terminalId, { type: 'terminal_output', terminalId, data: size }));
+  void child.exited.then(async () => {
+    // Let the PTY deliver the last output before the terminal closes.
+    await Promise.race([ptyClosed, new Promise(resolve => setTimeout(resolve, 1000))]);
+    try { child.terminal?.close(); } catch {}
+    started.exited = true;
     output(decoder.decode());
     if (!current()) return;
     runtime.processes.delete(terminalId);
@@ -171,13 +131,15 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
     terminalLookup.finish(runtime.history, terminalId);
     emit(packet);
   });
-  runtime.processes.set(terminalId, terminal);
+  runtime.processes.set(terminalId, started);
 }
 
 export function queueInput(process: TerminalProcess, data: string, busy: string): void {
   if (process.queued >= INPUT_QUEUE) throw new Error(busy);
+  const pty = process.child.terminal;
+  if (!pty || pty.closed) throw new Error('Terminal is not running');
   process.queued += 1;
-  process.child.stdin!.write(data, () => { process.queued -= 1; });
+  pty.write(data);
 }
 
 export function writeTerminal(runtime: TerminalRuntime, terminalId: string, data: string): void {
@@ -190,7 +152,8 @@ export function writeTerminal(runtime: TerminalRuntime, terminalId: string, data
 
 export function resizeProcess(process: TerminalProcess, cols: number, rows: number): void {
   process.cols = cols; process.rows = rows;
-  (process.child.stdio[3] as any).write(rows + ' ' + cols + '\n');
+  const pty = process.child.terminal;
+  if (pty && !pty.closed) pty.resize(cols, rows);
 }
 
 export function resizeTerminal(runtime: TerminalRuntime, terminalId: string, cols: number, rows: number): void {
@@ -204,12 +167,17 @@ export function closeTerminal(runtime: TerminalRuntime, terminalId: string): Pro
 }
 
 export async function stopTerminalProcess(process: TerminalProcess): Promise<void> {
-  if (process.exited) return;
-  process.child.kill('SIGTERM');
-  if (!(await waitForExit(process.child, 2000))) {
-    process.child.kill('SIGKILL');
-    await waitForExit(process.child, 2000);
+  const child = process.child;
+  if (child.exitCode === null && child.signalCode === null) {
+    // The shell leads its own process group in the PTY. Hang up the whole group, so the shell also hangs up its background jobs.
+    try { globalThis.process.kill(-child.pid, 'SIGHUP'); } catch {}
+    const stopped = await Promise.race([child.exited.then(() => true), new Promise<boolean>(resolve => setTimeout(() => resolve(false), 1000))]);
+    if (!stopped) {
+      try { child.kill('SIGKILL'); } catch {}
+      await Promise.race([child.exited, new Promise(resolve => setTimeout(resolve, 2000))]);
+    }
   }
+  try { child.terminal?.close(); } catch {}
 }
 
 export async function stopTerminals(runtime: TerminalRuntime, terminalIds: string[]): Promise<void> {
