@@ -88,7 +88,12 @@ export interface ImageAttachment { type: "image"; data: string; mimeType: string
 
 export interface ComposerUpload { id: string; name: string; kind: "image" | "text"; byteSize: number; image?: ImageAttachment; text?: string; }
 
- export interface AppSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; dictationModelPath?: string; localEnabled?: boolean; defaultAgent?: string; reviewAgent?: string; reviewPrompt?: string; defaultModel: string; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
+ /** The speech-to-text program the daemon runs: transcribe.cpp or Cactus Needle. */
+ export type DictationEngine = "transcribe.cpp" | "needle";
+ /** A saved dictation setup: the model file, the engine program ("" finds it automatically) and the arguments. All three identify it. */
+ export interface DictationModelEntry { name?: string; path: string; args?: string; }
+ export interface DictationEngineSettings { engine: DictationEngine; path?: string; models: DictationModelEntry[]; }
+ export interface AppSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; dictationEngine?: DictationEngine; dictationEngines?: DictationEngineSettings[]; dictationModelPath?: string; dictationArgs?: string; localEnabled?: boolean; defaultAgent?: string; reviewAgent?: string; reviewPrompt?: string; defaultModel: string; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
 
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 

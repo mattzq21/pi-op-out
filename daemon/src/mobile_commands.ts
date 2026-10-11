@@ -3,7 +3,6 @@ import * as endpoint from './daemon_endpoint';
 import * as daemonRestart from './daemon_restart';
 import * as peers from './peers';
 import * as plugins from './plugins';
-import * as dictation from './dictation';
 import * as providerAuth from './provider_auth';
 import * as terminalLookup from './terminal_lookup';
 import * as projectFiles from './project_files';
@@ -129,8 +128,6 @@ const COMMANDS: Record<string, Handler> = {
   plugin_status: (app, _owner, args) => plugins.dispatch(app, 'plugin_status', args),
   shared_terminal: (app, owner, args) => terminalLookup.shared(app, owner, args),
   reassign_terminal: (app, owner, args) => { terminalLookup.reassign(app.terminals, owner, argument(args, 'terminalId', 'string'), argument(args, 'sessionKey', 'string')); return null; },
-  dictation_configuration: app => dictation.configuration(app),
-  dictation_transcribe: (app, _owner, args) => dictation.dictate(app, argument(args, 'audio', 'string')),
   broker_request: (app, _owner, args) => peers.localBrokerRequest(app, argument(args, 'path', 'string'), argument(args, 'body', 'any')),
   load_host_settings: (app, _owner, args) => loadSettings(app, args),
   load_host_settings_change: app => loadSettingsChange(app),

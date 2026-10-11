@@ -14,7 +14,6 @@ export interface AppSettings {
   settingsRevision?: string;
   reviewAgent: string;
   reviewPrompt: string;
-  dictationModelPath?: string;
   localEnabled: boolean;
   defaultAgent: string;
   defaultModel: string;
@@ -98,7 +97,6 @@ export function parseAppSettings(value: any): AppSettings {
     settingsRevision: optionalString(value.settingsRevision, 'settingsRevision'),
     reviewAgent: stringField(value.reviewAgent, 'reviewAgent', defaultAgent),
     reviewPrompt: stringField(value.reviewPrompt, 'reviewPrompt', defaultReviewPrompt),
-    dictationModelPath: optionalString(value.dictationModelPath, 'dictationModelPath'),
     localEnabled: boolField(value.localEnabled, 'localEnabled', true),
     defaultAgent: stringField(value.defaultAgent, 'defaultAgent', defaultAgent),
     defaultModel: stringField(value.defaultModel, 'defaultModel'),
@@ -124,7 +122,6 @@ export function serializeAppSettings(settings: AppSettings): Record<string, unkn
   if (settings.settingsRevision !== undefined) result.settingsRevision = settings.settingsRevision;
   result.reviewAgent = settings.reviewAgent;
   result.reviewPrompt = settings.reviewPrompt;
-  if (settings.dictationModelPath !== undefined) result.dictationModelPath = settings.dictationModelPath;
   result.localEnabled = settings.localEnabled;
   result.defaultAgent = settings.defaultAgent;
   result.defaultModel = settings.defaultModel;

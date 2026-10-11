@@ -4,6 +4,26 @@ use crate::settings_concurrency::{lock_settings, settings_revision};
 #[path = "../../../shared/rust/settings_records.rs"]
 pub(crate) mod records;
 
+/// A model added to an engine, with its arguments. The path and the arguments together identify it.
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub(crate) struct DictationModel {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    name: String,
+    path: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    args: String,
+}
+
+/// The settings of one engine type: its program path ("" searches PATH) and its models. The engine type identifies it.
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub(crate) struct DictationEngineEntry {
+    engine: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    path: String,
+    #[serde(default)]
+    models: Vec<DictationModel>,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClientSettings {
@@ -12,6 +32,50 @@ pub(crate) struct ClientSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     known_models: Option<Vec<String>>,
     debug_mode: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dictation_engine: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dictation_engines: Option<Vec<DictationEngineEntry>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dictation_model_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dictation_args: Option<String>,
+}
+
+impl ClientSettings {
+    fn dictation(&self) -> crate::dictation::DictationSettings {
+        let field = |value: &Option<String>| value.as_deref().unwrap_or_default().trim().to_owned();
+        let engine = field(&self.dictation_engine);
+        let engine = if engine.is_empty() { "transcribe.cpp".to_owned() } else { engine };
+        let program = self.dictation_engines.iter().flatten().find(|entry| entry.engine == engine).map(|entry| entry.path.trim().to_owned()).unwrap_or_default();
+        crate::dictation::DictationSettings {
+            engine,
+            program,
+            model: field(&self.dictation_model_path),
+            args: field(&self.dictation_args),
+        }
+    }
+}
+
+/// Merges the engines by engine type. An engine that this window changed takes this window's value.
+fn merge_engines(latest: &[DictationEngineEntry], baseline: &[DictationEngineEntry], intended: &[DictationEngineEntry]) -> Vec<DictationEngineEntry> {
+    let find = |entries: &[DictationEngineEntry], engine: &str| entries.iter().find(|entry| entry.engine == engine).cloned();
+    let mut engines: Vec<String> = latest.iter().map(|entry| entry.engine.clone()).collect();
+    for entry in intended { if !engines.contains(&entry.engine) { engines.push(entry.engine.clone()); } }
+    engines.into_iter().filter_map(|engine| {
+        let (before, after) = (find(baseline, &engine), find(intended, &engine));
+        if before != after { after } else { find(latest, &engine) }
+    }).collect()
+}
+
+/// The dictation settings saved on this computer. Missing preferences use the defaults.
+pub(crate) fn stored_dictation_settings() -> Result<crate::dictation::DictationSettings, String> {
+    let path = storage_path()?;
+    let _guard = lock_settings(&path)?;
+    Ok(match read_preferences(&path)? {
+        Some(settings) => settings.dictation(),
+        None => crate::dictation::DictationSettings { engine: "transcribe.cpp".into(), program: String::new(), model: String::new(), args: String::new() },
+    })
 }
 
 fn storage_path() -> Result<PathBuf, String> {
@@ -24,8 +88,9 @@ fn read_preferences(path: &Path) -> Result<Option<ClientSettings>, String> {
     records::read(path)?.map(|body| serde_json::from_slice(&body).map_err(|error| format!("Could not read client preferences: {error}"))).transpose()
 }
 
-fn merge_memberships(latest: &[String], baseline: &[String], intended: &[String]) -> Vec<String> {
-    let mut merged: Vec<String> = latest.iter().filter(|id| !baseline.contains(id) || intended.contains(id)).cloned().collect();
+/// Keeps entries from other windows. This window's removals and additions win.
+fn merge_memberships<T: Clone + PartialEq>(latest: &[T], baseline: &[T], intended: &[T]) -> Vec<T> {
+    let mut merged: Vec<T> = latest.iter().filter(|id| !baseline.contains(id) || intended.contains(id)).cloned().collect();
     for id in intended {
         if !baseline.contains(id) && !merged.contains(id) { merged.push(id.clone()); }
     }
@@ -55,6 +120,12 @@ fn merge_preferences(mut latest: ClientSettings, baseline: &ClientSettings, inte
         latest.known_models = Some(merge_memberships(latest.known_models.as_deref().unwrap_or_default(), baseline.known_models.as_deref().unwrap_or_default(), intended.known_models.as_deref().unwrap_or_default()));
     }
     if intended.debug_mode != baseline.debug_mode { latest.debug_mode = intended.debug_mode; }
+    if intended.dictation_engine != baseline.dictation_engine { latest.dictation_engine = intended.dictation_engine.clone(); }
+    if intended.dictation_model_path != baseline.dictation_model_path { latest.dictation_model_path = intended.dictation_model_path.clone(); }
+    if intended.dictation_args != baseline.dictation_args { latest.dictation_args = intended.dictation_args.clone(); }
+    if latest.dictation_engines.is_some() || intended.dictation_engines.is_some() {
+        latest.dictation_engines = Some(merge_engines(latest.dictation_engines.as_deref().unwrap_or_default(), baseline.dictation_engines.as_deref().unwrap_or_default(), intended.dictation_engines.as_deref().unwrap_or_default()));
+    }
     Ok(latest)
 }
 
@@ -86,6 +157,7 @@ pub(crate) fn save_client_settings(app: AppHandle, settings: ClientSettings, bas
     let settings = intended_preferences(&path, &baseline, settings, initialize.unwrap_or(false))?;
     let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
     let publication = records::publish(&path, &body)?;
+    crate::dictation::reload(&app, settings.dictation());
     for window in app.webview_windows().values() { let _ = window.emit("pi://client-settings-changed", ()); }
     Ok(json!({"settings":settings,"revision":settings_revision(Some(&body)),"publication":publication}))
 }

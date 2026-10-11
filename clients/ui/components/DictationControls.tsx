@@ -1,11 +1,13 @@
 import { Mic, Square, X } from "lucide-solid";
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
-import { DictationRecording, transcribeDictation, useDictationEnabled } from "../lib/dictation";
+import { DictationRecording, useDictationEnabled } from "../lib/dictation";
 
 export function DictationControls(props: { disabled: boolean; compact?: boolean; onText: (text: string) => void }) {
   const enabled = useDictationEnabled();
   const [phase, setPhase] = createSignal<"idle" | "starting" | "recording" | "transcribing">("idle");
   const [error, setError] = createSignal<string>();
+  const [committed, setCommitted] = createSignal("");
+  const [tentative, setTentative] = createSignal("");
   let recording: DictationRecording | undefined;
   let generation = 0;
   let transcriptionPending = false;
@@ -25,21 +27,21 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
     transcriptionPending = true;
 
     try {
-      const audio = recording.finish(); recording = undefined;
-      const result = await transcribeDictation(audio);
+      const capture = recording; recording = undefined;
+      const result = await capture.finish();
 
       if (current === generation && !props.disabled && result.text.trim()) props.onText(result.text.trim());
     } catch (reason) { if (current === generation) setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { transcriptionPending = false; setPhase("idle"); }
+    finally { transcriptionPending = false; setPhase("idle"); setCommitted(""); setTentative(""); }
   };
 
   const start = async () => {
     if (!enabled() || props.disabled || phase() !== "idle") return;
     const current = ++generation;
     const capture = new DictationRecording(); recording = capture;
-    setError(undefined); setPhase("starting");
+    setError(undefined); setCommitted(""); setTentative(""); setPhase("starting");
 
-    try { await capture.start(() => void finish());
+    try { await capture.start(() => void finish(), (text) => { if (current === generation) { setCommitted(text.committed); setTentative(text.tentative); } });
 
     if (current === generation) setPhase("recording"); }
     catch (reason) {
@@ -57,6 +59,7 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
       </button>
       <Show when={phase() !== "idle"}><button type="button" aria-label="Cancel dictation" onClick={cancel}><X size={14} /></button></Show>
     </Show>
+    <Show when={committed() || tentative()}><span class="dictation-live" aria-live="polite">{committed().length > 160 ? "…" + committed().slice(-160) : committed()}<span class="dictation-tentative">{committed() && tentative() ? " " : ""}{tentative()}</span></span></Show>
     <Show when={error()}><span class="dictation-error" role="alert">{error()}</span></Show>
   </span>;
 }

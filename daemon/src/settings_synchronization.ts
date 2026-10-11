@@ -8,7 +8,6 @@ import * as daemon from './daemon';
 import * as daemonEndpoint from './daemon_endpoint';
 import * as daemonRestart from './daemon_restart';
 import * as peers from './peers';
-import * as dictation from './dictation';
 import { sleep } from './util/sync';
 import type { App } from './app';
 import type { PiRuntime } from './pi_runtime';
@@ -213,13 +212,11 @@ function addPendingWarning(change: any, pending: boolean, revision: number): voi
 interface Applied {
   revision?: number;
   notifiedRevision?: number;
-  dictationModel?: { value: string | undefined };
-  dictationChanged: boolean;
   warnings: string[];
   sweep?: number;
 }
 
-function newApplied(): Applied { return { dictationChanged: false, warnings: [] }; }
+function newApplied(): Applied { return { warnings: [] }; }
 
 async function applyCurrent(app: App, runtime: PiRuntime, journal: Journal, current: AppSettings, change: any): Promise<string[]> {
   const warnings: string[] = [];
@@ -241,7 +238,6 @@ async function retryLocked(app: App, runtime: PiRuntime, path: string, applied: 
   const phaseRevision = progress.revision === journal.revision ? progress.phase_revision : 0;
   writeRecord(ownerPath, { ...defaultProgress(), revision: journal.revision, phase_revision: phaseRevision });
   const current = settingsWithSkills(path);
-  scheduleEffects(current, applied);
   const change = currentChange(path, journal);
   const warnings = await applyCurrent(app, runtime, journal, current, change);
   change.warnings = warnings;
@@ -253,13 +249,6 @@ async function retryLocked(app: App, runtime: PiRuntime, path: string, applied: 
 function needsRetry(journal: Journal, progress: Progress, applied: Applied): boolean {
   const sweep = applied.sweep === undefined || Date.now() - applied.sweep >= 30_000;
   return applied.revision !== journal.revision || progress.revision !== journal.revision || !progress.synchronized || !progress.notified || sweep;
-}
-
-function scheduleEffects(current: AppSettings, applied: Applied): void {
-  if (!applied.dictationModel || applied.dictationModel.value !== current.dictationModelPath) {
-    applied.dictationChanged = true;
-    applied.dictationModel = { value: current.dictationModelPath };
-  }
 }
 
 function sameWarnings(left: string[], right: string[]): boolean { return left.length === right.length && left.every((value, index) => value === right[index]); }
@@ -335,7 +324,6 @@ export function start(app: App): void {
 
 function applyEffects(app: App, applied: Applied, refreshed: boolean): void {
   if (refreshed) peers.invalidate(app);
-  if (applied.dictationChanged) { applied.dictationChanged = false; dictation.start(app); }
 }
 
 function settingsWithSkills(path: string): AppSettings {

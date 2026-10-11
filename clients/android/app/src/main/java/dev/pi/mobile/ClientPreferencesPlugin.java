@@ -15,6 +15,7 @@ import org.json.JSONObject;
 @CapacitorPlugin(name = "ClientPreferences")
 public class ClientPreferencesPlugin extends Plugin {
     private static final Object STORAGE_LOCK = new Object();
+    private static final String[] DICTATION_FIELDS = {"dictationEngine", "dictationModelPath", "dictationArgs"};
 
     @PluginMethod
     public void load(PluginCall call) {
@@ -56,6 +57,46 @@ public class ClientPreferencesPlugin extends Plugin {
         memberships(settings, "hiddenModels");
         memberships(settings, "knownModels");
         if (!(settings.get("debugMode") instanceof Boolean)) throw new JSONException("Invalid client preference debugMode");
+        for (String field : DICTATION_FIELDS) {
+            if (settings.has(field) && !(settings.get(field) instanceof String)) throw new JSONException("Invalid client preference " + field);
+        }
+        engines(settings);
+    }
+
+    /** The dictation engines by engine type. Each has an optional program path and a list of models with optional arguments. */
+    private static java.util.LinkedHashMap<String, JSONObject> engines(JSONObject settings) throws JSONException {
+        java.util.LinkedHashMap<String, JSONObject> result = new java.util.LinkedHashMap<>();
+        if (!settings.has("dictationEngines")) return result;
+        JSONArray values = settings.getJSONArray("dictationEngines");
+        for (int index = 0; index < values.length(); index++) {
+            JSONObject engine = values.getJSONObject(index);
+            if (!(engine.get("engine") instanceof String) || (engine.has("path") && !(engine.get("path") instanceof String)) || result.containsKey(engine.getString("engine"))) throw new JSONException("Invalid client preference dictationEngines");
+            JSONArray models = engine.getJSONArray("models");
+            for (int position = 0; position < models.length(); position++) {
+                JSONObject model = models.getJSONObject(position);
+                if (!(model.get("path") instanceof String) || (model.has("name") && !(model.get("name") instanceof String)) || (model.has("args") && !(model.get("args") instanceof String))) throw new JSONException("Invalid client preference dictationEngines");
+            }
+            result.put(engine.getString("engine"), engine);
+        }
+        return result;
+    }
+
+    /** Merges the engines by engine type. An engine that this window changed takes this window's value. */
+    private static void mergeEngines(JSONObject latest, JSONObject baseline, JSONObject intended) throws JSONException {
+        if (!latest.has("dictationEngines") && !intended.has("dictationEngines")) return;
+        java.util.LinkedHashMap<String, JSONObject> before = engines(baseline);
+        java.util.LinkedHashMap<String, JSONObject> after = engines(intended);
+        java.util.LinkedHashMap<String, JSONObject> merged = engines(latest);
+        Set<String> types = new LinkedHashSet<>(merged.keySet());
+        types.addAll(after.keySet());
+        for (String type : types) {
+            JSONObject old = before.get(type);
+            JSONObject updated = after.get(type);
+            if (java.util.Objects.equals(old == null ? null : old.toString(), updated == null ? null : updated.toString())) continue;
+            if (updated == null) merged.remove(type);
+            else merged.put(type, updated);
+        }
+        latest.put("dictationEngines", new JSONArray(merged.values()));
     }
 
     private static void mergeMemberships(JSONObject latest, JSONObject baseline, JSONObject intended, String field) throws JSONException {
@@ -91,7 +132,15 @@ public class ClientPreferencesPlugin extends Plugin {
         mergeKeybindings(latest, baseline, intended);
         mergeMemberships(latest, baseline, intended, "hiddenModels");
         mergeMemberships(latest, baseline, intended, "knownModels");
+        mergeEngines(latest, baseline, intended);
         if (!intended.get("debugMode").equals(baseline.get("debugMode"))) latest.put("debugMode", intended.get("debugMode"));
+        for (String field : DICTATION_FIELDS) {
+            Object before = baseline.opt(field);
+            Object after = intended.opt(field);
+            if (java.util.Objects.equals(before, after)) continue;
+            if (after == null) latest.remove(field);
+            else latest.put(field, after);
+        }
         return latest;
     }
 
@@ -112,6 +161,8 @@ public class ClientPreferencesPlugin extends Plugin {
                 String revision = java.util.UUID.randomUUID().toString();
                 storage.write(serialized, revision);
                 storage.commit();
+                com.getcapacitor.PluginHandle dictation = getBridge().getPlugin("Dictation");
+                if (dictation != null) ((DictationPlugin) dictation.getInstance()).reload();
                 JSObject publication = new JSObject();
                 publication.put("committed", true);
                 publication.put("durable", true);
