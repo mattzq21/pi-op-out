@@ -71,7 +71,7 @@ async function dispatchLocal(app: App, owner: string, command: string, args: any
   if (DEVELOPMENT && command === 'debug_runtime') return endpoint.debugRuntime();
   if (command === 'daemon_restart_status') return daemonRestart.status(argument(args, 'restartId', 'string'));
   if (command === 'restart_daemon') {
-    const release = await app.restart.gate.writeWithin(30_000, 'Pending daemon requests did not finish within 30 seconds. Try restarting again once they finish.');
+    const release = await app.restart.gate.writeWithin(10_000, 'Pending daemon requests did not finish within 10 seconds. Try restarting again once they finish.');
     try { return await daemonRestart.prepare(app, args); } finally { release(); }
   }
   if (command === 'plugin_call') {
