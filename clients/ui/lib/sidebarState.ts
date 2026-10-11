@@ -283,11 +283,12 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     });
   }, () => [projectOrderKey()]);
 
+  const dirlessSessions = createMemo(() => orderedSessions(DIRLESS_KEY, groupedSessions()[DIRLESS_KEY] ?? [], sessionOrders()));
   const groups = createMemo<SidebarGroup[]>(() => ([
     ...customVisualGroups().filter(([key, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0 || [...customVisualGroups(), ...physicalGroups()].some(([id, , , , children]) => children.length > 0 && groupAncestors(id).includes(key))),
     ...physicalGroups().filter(([, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0),
     [RECENT_KEY, RECENT_LABEL, "", undefined, recentSessions()],
-    [DIRLESS_KEY, "Dirless", "", undefined, orderedSessions(DIRLESS_KEY, groupedSessions()[DIRLESS_KEY] ?? [], sessionOrders())],
+    ...(dirlessSessions().length ? [[DIRLESS_KEY, "Dirless", "", undefined, dirlessSessions()] satisfies SidebarGroup] : []),
   ]));
 
   const displayedSessions = createMemo(() => new Map([[RECENT_KEY, recentSessions()], ...groups().map(([key, , , , projectSessions]): [string, SessionSummary[]] => [key, projectSessions])]));

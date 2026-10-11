@@ -27,9 +27,7 @@ type DraggedItem = DraggedSession | { projectKey: string };
 
 type MouseDrag = DraggedItem & { startX: number; startY: number; active: boolean; };
 
-function isManualDirlessMove(drag: MouseDrag, target?: DropTarget) {
-  return "session" in drag && target?.projectKey === DIRLESS_KEY && drag.projectKey !== DIRLESS_KEY;
-}
+const isDirlessTarget = (target?: DropTarget) => target?.projectKey === DIRLESS_KEY;
 
 const actions: ReadonlyArray<readonly [SessionAction, typeof AppWindow, string]> = [
   ["new-window", AppWindow, "Open in new window"], ["rename", Pencil, "Rename conversation"], ["open-directory", FolderOpen, "Open project directory"], ["copy-id", Copy, "Copy session ID"], ["open-rollout", FileText, "Open rollout file"]
@@ -300,7 +298,7 @@ export function SessionPanel(props: Props) {
         nextTarget = emptyProjectDrop(hit);
       }
 
-      if (isManualDirlessMove(current, nextTarget)) nextTarget = undefined;
+      if (isDirlessTarget(nextTarget)) nextTarget = undefined;
 
       mouseDropTargetRef.current = nextTarget;
       setDropTarget(nextTarget);
@@ -521,7 +519,7 @@ export function SessionPanel(props: Props) {
           </div>);
         };
 
-        return [renderDropZone(token(), parentKey), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${(draggedSession() || draggedProject()) && dropTarget()?.projectKey === projectKey && dropTarget()?.layoutBefore === undefined ? "drop-project" : ""}`} >
+        return [projectKey !== DIRLESS_KEY && renderDropZone(token(), parentKey), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${(draggedSession() || draggedProject()) && dropTarget()?.projectKey === projectKey && dropTarget()?.layoutBefore === undefined ? "drop-project" : ""}`} >
           {renderProjectHeading()}
           <div id={groupId} class={!isFixedGroup(projectKey) ? "project-children" : undefined} hidden={collapsed()}>
             <Show when={customGroupsByKey().has(projectKey)} fallback={<Key each={visibleSessions()} by={sessionKey}>{session => <SessionRow session={session()} projectKey={projectKey} />}</Key>}>
