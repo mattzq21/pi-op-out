@@ -128,9 +128,13 @@ impl DesktopDaemon {
         if let Some(connection) = connections.get(window).filter(|connection| connection.alive.load(Ordering::SeqCst)) { return Ok(connection.clone()); }
         let reconnecting = connections.contains_key(window);
         let _startup = self.startup.lock().await;
+        #[cfg(debug_assertions)]
+        tokio::task::spawn_blocking(ensure_development_daemon).await.map_err(|error| error.to_string())??;
+        let executable = daemon_executable(app)?;
+        let build_id = daemon_build_id(&executable).await?;
         let socket = match configured_endpoint()? {
-            Some(endpoint) => open(&endpoint).await?,
-            None => local_socket(app).await?,
+            Some(endpoint) => open(&endpoint, &build_id).await?,
+            None => local_socket(app, &executable, &build_id).await?,
         };
         if app.get_webview_window(window).is_none() { return Err("The client window was closed".into()); }
         let (outgoing, incoming) = async_mpsc::unbounded_channel();
@@ -212,7 +216,19 @@ fn configured_endpoint() -> Result<Option<daemon_endpoint::Endpoint>, String> {
     if !parsed.username().is_empty() || parsed.password().is_some() || parsed.query().is_some() || parsed.fragment().is_some() { return Err("Daemon URL must not contain credentials, a query, or a fragment".into()); }
     Ok(Some(daemon_endpoint::Endpoint { url, token, protocol: piop_protocol::PROTOCOL_VERSION }))
 }
-async fn open(endpoint: &daemon_endpoint::Endpoint) -> Result<Socket, String> {
+async fn daemon_build_id(executable: &Path) -> Result<String, String> {
+    let output = tokio::time::timeout(Duration::from_secs(10), tokio::process::Command::new(executable)
+        .arg("--build-id").kill_on_drop(true).output()).await
+        .map_err(|_| "Reading the bundled Piop daemon build timed out")?
+        .map_err(|error| format!("Could not read the bundled Piop daemon build: {error}"))?;
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if !output.status.success() || !id.strip_prefix("piop-build-").is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())) {
+        return Err("The bundled Piop daemon build ID is missing. Rebuild Piop with its daemon companion.".into());
+    }
+    Ok(id)
+}
+
+async fn open(endpoint: &daemon_endpoint::Endpoint, build_id: &str) -> Result<Socket, String> {
     if endpoint.protocol != piop_protocol::PROTOCOL_VERSION || endpoint.token.len() < 32 { return Err("Invalid Piop daemon connection configuration".into()); }
     tokio::time::timeout(Duration::from_secs(5), async {
         let config = WebSocketConfig::default().max_message_size(Some(MAX_DAEMON_RESPONSE)).max_frame_size(Some(MAX_DAEMON_RESPONSE));
@@ -220,7 +236,7 @@ async fn open(endpoint: &daemon_endpoint::Endpoint) -> Result<Socket, String> {
         socket.send(Message::Text(json!({"type":"authenticate","token":endpoint.token}).to_string().into())).await.map_err(|_| "Could not authenticate with the Piop daemon")?;
         let message = socket.next().await.ok_or("Piop daemon rejected the connection")?.map_err(|_| "Piop daemon rejected the connection")?;
         let reply = parse_handshake(&message)?;
-        validate_handshake(&reply)?;
+        validate_handshake(&reply, build_id)?;
         Ok(socket)
     }).await.map_err(|_| "Piop daemon connection timed out".to_string())?
 }
@@ -229,44 +245,59 @@ fn parse_handshake(message: &Message) -> Result<Value, String> {
     serde_json::from_str(message.to_text().map_err(|_| "Invalid daemon handshake")?).map_err(|_| "Invalid daemon handshake".into())
 }
 
-fn validate_handshake(reply: &Value) -> Result<(), String> {
+fn validate_handshake(reply: &Value, build_id: &str) -> Result<(), String> {
     if reply["type"] != "ready" || reply["backend"] != "daemon" || reply["protocol"] != piop_protocol::PROTOCOL_VERSION { return Err("Incompatible Piop daemon; restart it after upgrading".into()); }
+    if reply["buildId"].as_str() != Some(build_id) {
+        return Err(format!("Piop daemon is from another build; restart it. Bundled: {build_id}; running: {}", reply["buildId"].as_str().unwrap_or("unknown")));
+    }
     Ok(())
 }
-async fn existing_local_socket() -> Result<Option<Socket>, String> {
+fn incompatible_daemon(error: &str) -> bool {
+    error.starts_with("Incompatible Piop daemon") || error.starts_with("Piop daemon is from another build")
+}
+
+async fn existing_local_socket(build_id: &str) -> Result<Option<Socket>, String> {
     if let Ok(endpoint) = daemon_endpoint::read() {
-        match open(&endpoint).await {
+        match open(&endpoint, build_id).await {
             Ok(socket) => return Ok(Some(socket)),
-            Err(error) if error.starts_with("Incompatible Piop daemon") => return Err(error),
+            Err(error) if incompatible_daemon(&error) => return Err(error),
             Err(_) => {},
         }
     }
     Ok(None)
 }
 
-async fn local_socket(app: &AppHandle) -> Result<Socket, String> {
-    if let Some(socket) = existing_local_socket().await? { return Ok(socket); }
+async fn local_socket(app: &AppHandle, executable: &Path, build_id: &str) -> Result<Socket, String> {
+    if let Some(socket) = existing_local_socket(build_id).await? { return Ok(socket); }
     while daemon_endpoint::restart_active() {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        if let Some(socket) = existing_local_socket().await? { return Ok(socket); }
+        if let Some(socket) = existing_local_socket(build_id).await? { return Ok(socket); }
     }
-    #[cfg(debug_assertions)]
-    tokio::task::spawn_blocking(ensure_development_daemon).await.map_err(|error| error.to_string())??;
-    let executable = daemon_executable(app)?;
-    let (log_path, mut child) = spawn_local_daemon(app, &executable)?;
-    let result = wait_local_socket(app, &log_path, &executable, &mut child).await;
+    let (log_path, mut child) = spawn_local_daemon(app, executable)?;
+    let result = wait_local_socket(&log_path, &mut child, build_id).await;
     thread::spawn(move || { let _ = child.wait(); });
     result
 }
 
-async fn wait_local_socket(app: &AppHandle, log_path: &Path, executable: &Path, child: &mut std::process::Child) -> Result<Socket, String> {
+const ALREADY_RUNNING_EXIT_CODE: i32 = 3;
+
+async fn wait_local_socket(log_path: &Path, child: &mut std::process::Child, build_id: &str) -> Result<Socket, String> {
     let deadline = tokio::time::Instant::now() + daemon_endpoint::STARTUP_TIMEOUT;
     let mut retry_delay = Duration::from_millis(10);
+    let mut other_daemon = false;
     while tokio::time::Instant::now() < deadline {
-        if let Ok(endpoint) = daemon_endpoint::read() { if let Ok(Ok(socket)) = tokio::time::timeout_at(deadline, open(&endpoint)).await { return Ok(socket); } }
-        if child.try_wait().map_err(|error| error.to_string())?.is_some() {
-            tokio::time::sleep(Duration::from_millis(400)).await;
-            *child = spawn_local_daemon(app, executable)?.1;
+        if let Ok(endpoint) = daemon_endpoint::read() {
+            match tokio::time::timeout_at(deadline, open(&endpoint, build_id)).await {
+                Ok(Ok(socket)) => return Ok(socket),
+                Ok(Err(error)) if incompatible_daemon(&error) => return Err(error),
+                _ => {},
+            }
+        }
+        if !other_daemon {
+            if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+                if status.code() != Some(ALREADY_RUNNING_EXIT_CODE) { return Err(format!("Piop daemon could not start ({status}). See {}", log_path.display())); }
+                other_daemon = true;
+            }
         }
         tokio::time::sleep(retry_delay).await;
         retry_delay = (retry_delay * 2).min(Duration::from_millis(100));

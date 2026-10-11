@@ -102,7 +102,7 @@ function controlAction(command: string): string | undefined {
 
 const APP_REQUESTS = new Set(['queue_prompt', 'prepare_goal_prompt', 'get_goal_preparation', 'orchestration_message', 'recover_subagent_usage', 'activate_usage_recovery', 'answer_question', 'provider_auth_refresh', 'runtime_settings',
   'fork_and_forget', 'fork_after', 'prepare_fork', 'select_agent', 'configure_agents', 'get_agent_configuration',
-  'review_feedback', 'open_review', 'fast_mode_status', 'html_preview_viewport']);
+  'review_feedback', 'open_review', 'fast_mode_status', 'html_preview_viewport', 'conversation_client']);
 
 export function wireCommand(command: any, id: string): any {
   const name = kind(command);

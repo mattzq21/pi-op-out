@@ -26,11 +26,11 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
   const sessionId = reserveSessionId();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
-  const nameId = randomUUID().slice(0, 8);
+  const nameId = randomUUID();
   await writeSessionFile(sessionPath, [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: ctx.cwd },
     { type: "session_info", id: nameId, parentId: null, timestamp, name: title },
-    { type: "custom", id: randomUUID().slice(0, 8), parentId: nameId, timestamp, customType: "pi-define-agents-state", data: { ...state, locked: true } },
+    { type: "custom", id: randomUUID(), parentId: nameId, timestamp, customType: "pi-define-agents-state", data: { ...state, locked: true } },
   ], { dependencies: { workspace: { path: ctx.cwd, kind: "existing" } } });
 
   return { threadId: sessionId, hostId: currentHost(), sessionPath, agent: state.active };

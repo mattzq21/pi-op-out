@@ -123,6 +123,7 @@ function collect(directory: string): Promise<void> {
     let reportBytes = 0;
     let failed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let endTimer: ReturnType<typeof setTimeout> | undefined;
     let ended = false;
     let inputError: Error | undefined;
     let stopped = false;
@@ -134,18 +135,22 @@ function collect(directory: string): Promise<void> {
     const cleanup = () => {
       stopped = true;
       if (timer) clearTimeout(timer);
+      if (endTimer) clearTimeout(endTimer);
       process.stdin.off('data', onData);
       process.stdin.off('end', onEnd);
       process.stdin.off('error', onError);
       process.stdout.off('drain', onDrain);
-      process.stdout.off('error', onStatusError);
+      process.stdout.off('close', onStatusClose);
     };
     const onStatusError = (error: Error) => {
       if (stopped) return;
       cleanup();
       process.stdin.pause();
-      reject(new Error('Could not write daemon log status: ' + errorMessage(error)));
+      const failure = new Error('Could not write daemon log status: ' + errorMessage(error));
+      process.stderr.write(failure.message + '\n');
+      reject(failure);
     };
+    const onStatusClose = () => onStatusError(new Error('Status channel closed'));
     const sendStatus = () => {
       if (stopped || writingStatus || blockedStatus || latestStatus === sentStatus) return;
       sentStatus = latestStatus;
@@ -153,8 +158,8 @@ function collect(directory: string): Promise<void> {
       try {
         blockedStatus = !process.stdout.write(JSON.stringify({ error: sentStatus }) + '\n', error => {
           writingStatus = false;
-          // The stream's error event reports write failures.
-          if (error || stopped) return;
+          if (error) { onStatusError(error); return; }
+          if (stopped) return;
           sendStatus();
           finish();
         });
@@ -214,6 +219,7 @@ function collect(directory: string): Promise<void> {
       if (timer || stopped) return;
       timer = setTimeout(() => {
         timer = undefined;
+        sentStatus = undefined;
         try {
           while (queue.length) {
             const entry = queue[0];
@@ -251,16 +257,28 @@ function collect(directory: string): Promise<void> {
         schedule();
       }
     };
-    const onEnd = () => { ended = true; finish(); };
+    const onEnd = () => {
+      ended = true;
+      if (!endTimer) endTimer = setTimeout(() => {
+        if (stopped) return;
+        const failure = new Error('Daemon log could not finish within 10 seconds after input closed: ' + (latestStatus ?? 'status channel blocked'));
+        cleanup();
+        process.stderr.write(failure.message + '\n');
+        reject(failure);
+      }, 10_000);
+      finish();
+    };
     const onError = (error: Error) => {
       inputError = error;
       ended = true;
       process.stdin.pause();
       record('Could not read daemon diagnostics from stdin', error);
       schedule();
+      onEnd();
     };
     process.stdout.on('drain', onDrain);
     process.stdout.on('error', onStatusError);
+    process.stdout.once('close', onStatusClose);
     process.stdin.on('data', onData);
     process.stdin.once('end', onEnd);
     process.stdin.once('error', onError);

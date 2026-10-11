@@ -144,13 +144,17 @@ function originalUserText(text: string, resumeMessages: Set<string>) {
   return !syntheticUserMessage(text) && !resumeMessages.has(text);
 }
 
-export function cleanTrace(content: string): CleanMessage[] {
-  const entries = content.split(/\r?\n/).flatMap((line) => {
+export function cleanTrace(content: string, path = "Transcript"): CleanMessage[] {
+  const lines = content.split(/\r?\n/);
+  const tail = lines.pop()!;
+  if (tail) console.warn(`${path}: last write was interrupted; ignored ${Buffer.byteLength(tail)} bytes`);
+  const entries = lines.map((line, index) => {
     try {
       const entry: unknown = JSON.parse(line);
 
-      return Check(entrySchema, entry) ? [entry] : [];
-    } catch { return []; }
+      if (!Check(entrySchema, entry)) throw new Error('Invalid record');
+      return entry;
+    } catch { throw new Error(`Damaged chat record at line ${index + 1}`); }
   });
 
   const indexed = new Map(entries.flatMap((entry): Array<[string, Entry]> => entry.id !== undefined ? [[entry.id, entry]] : []));
@@ -212,7 +216,7 @@ export default function traceReader(pi: ExtensionAPI) {
       const header = Schema.Object({ type: Schema.Literal("session"), id: Schema.Literal(sessionId) });
 
       if (!Check(header, JSON.parse(body.split(/\r?\n/, 1)[0]))) throw new Error("The conversation file no longer matches its registered session");
-      const messages = cleanTrace(body);
+      const messages = cleanTrace(body, selected);
 
       if (!messages.length) throw new Error("The trace contains no user prompts or completed assistant messages on its active branch");
       const text = transcript(messages); const offset = params.offset ?? 0; const end = Math.min(text.length, offset + (params.limit ?? 16000));

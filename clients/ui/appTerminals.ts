@@ -30,12 +30,14 @@ export function createTerminalController({ transport, sessionTransport, conversa
   let restarting = false;
 
   const restartListener = listen("pi://daemon-restarting", ({ payload }) => {
+    nativeTerminals.invalidateWrites(payload.hostId ?? "local");
     if (!payload.hostId || payload.hostId === "local" || payload.hostId === location().hostId) restarting = true;
   }, z.object({ hostId: z.string().optional() }).passthrough());
 
   const reconnectListener = listen("pi://event", ({ payload }) => {
+    if (payload.type === "disconnected" || payload.type === "connection_restored") nativeTerminals.invalidateWrites(payload.hostId);
     if (payload.type === "connection_restored") restarting = false;
-  }, z.object({ type: z.string().optional() }).passthrough());
+  }, z.object({ type: z.string().optional(), hostId: z.string().optional() }).passthrough());
 
   onCleanup(() => { void restartListener.then(stop => stop()); void reconnectListener.then(stop => stop()); });
 

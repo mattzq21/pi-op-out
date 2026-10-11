@@ -3,8 +3,8 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { loadAppSettings } from './settings';
-import { remoteHost, remoteLoginCommand, ssh } from './pi_launch';
-import { runLimited, shellQuote } from './process_io';
+import { remoteHost } from './pi_launch';
+import { hostScript, runHostScript } from './host_script';
 import type { App } from './app';
 
 const IMAGE_LIMIT = 10 * 1024 * 1024;
@@ -45,33 +45,17 @@ function readLocalImage(cwd: string, path: string): Buffer {
   } finally { closeSync(fd); }
 }
 
+const imageScript = hostScript<{ cwd: string; path: string }, Buffer>('read-image', 4 * Math.ceil(IMAGE_LIMIT / 3) + 1024, value => {
+  if (typeof value !== 'string' || value.length > 4 * Math.ceil(IMAGE_LIMIT / 3)) throw new Error('Invalid image data');
+  const bytes = Buffer.from(value, 'base64');
+  if (bytes.length > IMAGE_LIMIT || bytes.toString('base64') !== value) throw new Error('Invalid image data');
+  return bytes;
+});
+
 async function readRemoteImage(app: App, cwd: string, path: string, hostId: string): Promise<Buffer> {
   const settings = await loadAppSettings(app);
   const host = remoteHost(settings, hostId);
-  const script = `const fs=require('fs'),p=require('path');
-const target=fs.realpathSync(p.resolve(process.argv[1],process.argv[2]));
-let root;
-try{root=fs.realpathSync(process.argv[1]);}catch(error){if(error.code!=='ENOENT')throw error;}
-const location=root===undefined?undefined:p.relative(root,target);
-if(location===undefined||location==='..'||location.startsWith('..'+p.sep)||p.isAbsolute(location)){
-  let storage;
-  try{storage=fs.realpathSync(p.join(process.env.HOME,${JSON.stringify(STORAGE_DIRECTORY)}));}catch(error){if(error.code!=='ENOENT')throw error;}
-  if(!storage||!new RegExp(${JSON.stringify(GOAL_IMAGE_PATH.source)}).test(p.relative(storage,target).split(p.sep).join('/')))throw Error('Image is outside the project');
-}
-const fd=fs.openSync(target,fs.constants.O_RDONLY|fs.constants.O_NONBLOCK);
-try{
-  const s=fs.fstatSync(fd,{bigint:true});
-  const opened=fs.realpathSync('/proc/self/fd/'+fd);
-  if(opened!==target)throw Error('Image file changed while opening');
-  if(!s.isFile()||s.size>10485760)throw Error('Select an image file up to 10 MB');
-  const b=Buffer.alloc(10485761);let n=0,k;
-  while(n<b.length&&(k=fs.readSync(fd,b,n,b.length-n,null)))n+=k;
-  process.stdout.write(b.subarray(0,n));
-}finally{fs.closeSync(fd);}`;
-  const command = `bun -e ${shellQuote(script)} ${shellQuote(cwd)} ${shellQuote(path)}`;
-  const result = await runLimited(ssh(host, remoteLoginCommand(command)), IMAGE_LIMIT + 1, 'Could not read image');
-  if (!result.status.success) throw new Error(result.stderr.toString().trim());
-  return result.stdout;
+  return runHostScript({ kind: 'remote', host }, imageScript, { cwd, path });
 }
 
 function imageMime(bytes: Buffer): string {

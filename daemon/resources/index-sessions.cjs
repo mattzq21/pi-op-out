@@ -43,6 +43,9 @@ class SessionIndex {
   cost = 0;
   lastMessageAt = 0;
   bytes = 0;
+  lineNumber = 0;
+  damagedLines = [];
+  interruptedBytes = 0;
   resumes = new Set();
 
   metadata(entry) {
@@ -105,13 +108,13 @@ class SessionIndex {
 
   line(line, terminated = true) {
     this.bytes += line.length + Number(terminated);
+    this.lineNumber++;
+    if (!terminated) { this.interruptedBytes = line.length; return; }
     let entry;
 
-    try { entry = JSON.parse(line.toString('utf8')); } catch { return; }
+    try { entry = JSON.parse(line.toString('utf8')); } catch { this.damagedLines.push(this.lineNumber); return; }
 
-    if (!Check(entrySchema, entry)) { console.error('Skipped a malformed conversation record while indexing');
-
-    return; }
+    if (!Check(entrySchema, entry)) { this.damagedLines.push(this.lineNumber); return; }
 
     if (!this.header) {
       if (entry.type !== 'session') throw Error('Invalid session header');
@@ -136,6 +139,12 @@ class SessionIndex {
   }
 
   summary(path) {
+    if (this.interruptedBytes) console.warn(`${path}: last write was interrupted; ignored ${this.interruptedBytes} bytes`);
+    if (this.damagedLines.length) {
+      const notice = `Incomplete chat history; damaged record lines: ${this.damagedLines.join(', ')}`;
+      console.error(`${path}: ${notice}`);
+      this.preview = notice;
+    }
     if (!this.header || !this.visible(path)) return;
 
     return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, subagentParentId: this.ownSubagentParentId ?? this.subagentParentId };

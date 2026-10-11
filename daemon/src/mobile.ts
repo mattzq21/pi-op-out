@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
-import { createServer as createNetServer, isIP, type Socket } from 'node:net';
+import { createServer as createNetServer, isIP, type Socket, type Server as NetServer } from 'node:net';
 import { lstatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { dlopen, FFIType, ptr } from 'bun:ffi';
 import type { Duplex } from 'node:stream';
-import { DEVELOPMENT, MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
+import { BUILD_ID, DEVELOPMENT, MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
 import * as endpoint from './daemon_endpoint';
 import * as daemonLog from './daemon_log';
 import * as daemonRestart from './daemon_restart';
@@ -40,6 +40,33 @@ type Subscriber = (event: Broadcast) => void;
 /** Values shared by all mobile listeners. */
 interface Shared { app: App; subscribers: Set<Subscriber>; connections: Slots; jobs: Slots }
 
+const listeners = new WeakMap<App, Set<NetServer>>();
+const sockets = new WeakMap<App, Set<Socket>>();
+
+function trackListener(app: App, server: NetServer): void {
+  let active = listeners.get(app);
+  if (!active) listeners.set(app, active = new Set());
+  active.add(server);
+  server.once('close', () => active.delete(server));
+  server.on('connection', (socket: Socket) => {
+    if (app.clients.closing()) { socket.destroy(); return; }
+    let connected = sockets.get(app);
+    if (!connected) sockets.set(app, connected = new Set());
+    connected.add(socket);
+    socket.once('close', () => connected.delete(socket));
+  });
+}
+
+export function stopAccepting(app: App): void {
+  for (const server of listeners.get(app) ?? []) {
+    server.close(error => { if (error) console.error('Could not close daemon listener:', error); });
+  }
+}
+
+export function closeConnections(app: App): void {
+  for (const socket of sockets.get(app) ?? []) socket.destroy();
+}
+
 function splitBind(bind: string): [string, number] {
   const index = bind.lastIndexOf(':');
   if (index < 0) throw new Error('invalid socket address syntax');
@@ -67,6 +94,7 @@ function listen(server: Server, bind: string): Promise<{ address: string; port: 
 /** An HTTP server that only answers WebSocket upgrades and limits open connections. */
 function upgradeServer(shared: Shared, onUpgrade: (request: IncomingMessage, socket: Duplex, head: Buffer) => void): Server {
   const server = createServer((_request, response) => { response.writeHead(426, { Connection: 'close' }); response.end(); });
+  trackListener(shared.app, server);
   server.on('connection', (socket: Socket) => {
     const release = shared.connections.tryAcquire();
     if (!release) { socket.destroy(); return; }
@@ -151,6 +179,7 @@ async function firstText(ws: WebSocketConnection, timeoutMessage: string, invali
 async function connection(shared: Shared, ws: WebSocketConnection, token: string, local: boolean): Promise<void> {
   const value = await firstText(ws, 'Authentication timeout', 'authentication');
   if (!authenticated(value, token)) { await ws.close(); throw new Error('Unauthorized'); }
+  ws.markAuthenticated();
   if (value.scope === 'control') {
     if (!local) throw new Error('Daemon control requires a local connection');
     return controlConnection(shared.app, ws);
@@ -165,15 +194,16 @@ async function controlConnection(app: App, ws: WebSocketConnection): Promise<voi
   if (typeof action !== 'string') throw new Error('Missing control action');
   if (action === 'start') app.clients.persist();
   else if (action !== 'stop') throw new Error('Unknown control action');
-  let failure: unknown;
-  try { await ws.sendText(JSON.stringify({ type: 'controlled', action })); } catch (error) { failure = error; }
-  if (action === 'stop') app.clients.stop();
-  if (failure) throw failure;
+  const finish = app.clients.beginRequest();
+  try {
+    if (action === 'stop') app.clients.stop();
+    await withTimeout(ws.sendText(JSON.stringify({ type: 'controlled', action })), 10_000, 'Send timeout');
+  } finally { finish(); }
   await ws.close();
 }
 
 async function sendReady(ws: WebSocketConnection): Promise<void> {
-  const packet: any = { type: 'ready', protocol: PROTOCOL_VERSION, backend: 'daemon', peerProtocol: PEER_PROTOCOL_VERSION, daemonId: endpoint.identity() };
+  const packet: any = { type: 'ready', protocol: PROTOCOL_VERSION, backend: 'daemon', peerProtocol: PEER_PROTOCOL_VERSION, daemonId: endpoint.identity(), buildId: BUILD_ID };
   if (DEVELOPMENT) {
     packet.debugProcessId = process.pid;
     packet.debugRuntime = endpoint.debugRuntime();
@@ -243,6 +273,7 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
       const id: number = request.id;
       const command: string = request.command;
       const args = request.args === undefined ? {} : request.args;
+      if (app.clients.closing()) { send(JSON.stringify({ id, error: 'Piop daemon is shutting down' })); continue; }
       const control = command === 'stop_pi' || (command === 'pi_command' && args?.command?.type === 'abort');
       const permit = shared.jobs.tryAcquire() ?? (control ? controls.tryAcquire() : undefined);
       if (!permit) { send(JSON.stringify({ id, error: 'Host is busy; try again' })); continue; }
@@ -374,6 +405,7 @@ async function startTailscale(shared: Shared): Promise<void> {
     (async () => {
       const packet = await firstText(ws, 'Authentication timeout', 'authentication');
       if (packet?.type !== 'authenticate' || packet?.mode !== 'tailscale') { await ws.close(); throw new Error('Select Tailscale authentication'); }
+      ws.markAuthenticated();
       await serveConnection(shared, ws, false);
     })().catch(error => process.stderr.write('Tailscale connection rejected: ' + errorText(error) + '\n')).finally(() => ws.terminate());
   });
@@ -394,6 +426,7 @@ async function startTailscale(shared: Shared): Promise<void> {
       socket.destroy();
     });
   });
+  trackListener(shared.app, server);
   await new Promise<void>((resolve, rejectListen) => {
     server.once('error', rejectListen);
     server.listen(path, () => { server.off('error', rejectListen); resolve(); });

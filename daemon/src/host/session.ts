@@ -21,6 +21,7 @@ export interface SessionHost {
   rekey(old: string, next: string, epoch: string): void;
   finished(key: string, epoch: string, transient: boolean): void;
   maintenance(key: string): void;
+  canStopIdle(session: Session): boolean;
   refreshProviders(): Promise<number>;
 }
 
@@ -67,6 +68,11 @@ export class Session {
   private worker: RuntimeWorker | undefined;
   private configurationGate = new Mutex();
   private events: Promise<void> = Promise.resolve();
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private dialogTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private pendingRequests = 0;
+  private checkingIdle = false;
+  private idleRevision = 0;
 
   key: string;
   state: any = null;
@@ -160,7 +166,11 @@ export class Session {
   }
 
   clientId(): string { return this.clientIdValue; }
-  setClientId(client: string): void { this.clientIdValue = client; }
+  async setClientId(client: string): Promise<void> {
+    await this.raw({ type: 'conversation_client', clientId: client });
+    this.clientIdValue = client;
+    this.spec.env.PIOP_CONVERSATION_CLIENT = client;
+  }
 
   private async reconcileQueue(): Promise<void> {
     try { await this.queue.confirmConsumed(); } catch (error) {
@@ -207,6 +217,52 @@ export class Session {
     if (this.busy(null)) return false;
     return this.viewsList.length === 0 && !this.configuring && !flag(this.pauseState, 'isPausing')
       && !this.dialogs.some(([, dialog]) => typeof dialog.event?.asyncQuestion !== 'string' || dialog.answering);
+  }
+
+  cancelIdleStop(): void {
+    this.idleRevision += 1;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = undefined;
+  }
+
+  idle(): boolean {
+    return !this.closed() && !this.stopping() && !this.transient() && this.unused()
+      && this.pendingRequests === 0 && this.dialogs.length === 0 && this.queue.pending().length === 0
+      && this.queue.heldCount() === 0 && (!this.orchestrationTask || this.orchestrationTask.finished);
+  }
+
+  scheduleIdleStop(): void {
+    if (this.checkingIdle) return;
+    if (!this.idle()) { this.cancelIdleStop(); return; }
+    if (this.idleTimer !== undefined) return;
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = undefined;
+      void this.stopIdle().catch(error => {
+        this.host.output({ type: 'diagnostic', line: 'Could not stop idle session ' + this.key + ': ' + errorText(error) });
+      });
+    }, 120_000);
+  }
+
+  private async stopIdle(): Promise<void> {
+    this.checkingIdle = true;
+    const revision = this.idleRevision;
+    const release = await this.queue.gate.lock();
+    try {
+      if (!this.idle() || !this.host.canStopIdle(this)) return;
+      const state = await this.execute({ type: 'get_state' });
+      if (revision !== this.idleRevision) return;
+      if (!this.idle() || this.busy(state) || flag(state, 'isPausing') || !this.host.canStopIdle(this)) return;
+      await this.stop();
+    } finally {
+      this.checkingIdle = false;
+      release();
+      if (revision !== this.idleRevision) this.scheduleIdleStop();
+    }
+  }
+
+  private clearDialogTimers(): void {
+    for (const timer of this.dialogTimers.values()) clearTimeout(timer);
+    this.dialogTimers.clear();
   }
 
   publish(event: any, target: string | null): void {
@@ -264,6 +320,7 @@ export class Session {
   }
 
   attach(runtime: string, presence: any): void {
+    this.cancelIdleStop();
     setEntry(this.viewsList, runtime, presence);
     for (const [, event] of [...this.statuses]) this.publish(event, runtime);
     this.publish(this.queue.view(), runtime);
@@ -275,6 +332,7 @@ export class Session {
   }
 
   presence(runtime: string, presence: any): void {
+    this.cancelIdleStop();
     setEntry(this.viewsList, runtime, presence);
     this.routeDialogs();
     this.publishPresence();
@@ -287,7 +345,7 @@ export class Session {
   }
 
   async finishDetach(discardBlank: boolean, preserveRunning: boolean): Promise<any> {
-    const stopped = !preserveRunning && this.viewsList.length === 0 && discardBlank && !this.isSubmitted && !this.isWorking;
+    const stopped = !preserveRunning && discardBlank && !this.isSubmitted && this.idle() && this.host.canStopIdle(this);
     const submitted = this.isSubmitted;
     if (stopped) await this.stop();
     this.host.maintenance(this.key);
@@ -296,6 +354,8 @@ export class Session {
 
   async stop(): Promise<void> {
     this.isStopping = true;
+    this.cancelIdleStop();
+    this.clearDialogTimers();
     if (this.worker) await this.worker.stop();
     await this.events;
     await this.queue.flush();
@@ -334,11 +394,14 @@ export class Session {
   private finish(): void {
     if (this.isClosed) return;
     this.isClosed = true;
+    this.cancelIdleStop();
+    this.clearDialogTimers();
     this.queue.close();
     void this.inOrder(() => this.finishQueue());
   }
 
   private async finishQueue(): Promise<void> {
+    this.clearDialogTimers();
     this.dialogs = [];
     const key = this.key;
     const transient = this.isTransient;
@@ -359,7 +422,13 @@ export class Session {
       this.commandErrors.clear();
     }
     if (!this.worker) throw new Error('Pi is not running');
-    return this.worker.request(command, requestType, snapshot);
+    if (!this.checkingIdle || !requestType.startsWith('get_')) this.cancelIdleStop();
+    this.pendingRequests += 1;
+    try { return await this.worker.request(command, requestType, snapshot); }
+    finally {
+      this.pendingRequests -= 1;
+      this.scheduleIdleStop();
+    }
   }
 
   async send(command: any): Promise<void> {
@@ -420,6 +489,12 @@ export class Session {
   // Events from Pi.
 
   private async receive(event: any): Promise<void> {
+    this.cancelIdleStop();
+    try { await this.receiveEvent(event); }
+    finally { this.scheduleIdleStop(); }
+  }
+
+  private async receiveEvent(event: any): Promise<void> {
     if (kind(event) === 'queue_consumed') {
       if (event.sessionId === this.identity) await this.queue.consumed(text(event, 'queueId'));
       return;
@@ -506,15 +581,18 @@ export class Session {
   }
 
   private receiveDialog(event: any): void {
+    if (this.closed() || this.stopping()) return;
     const id = text(event, 'id');
+    clearTimeout(this.dialogTimers.get(id));
+    this.dialogTimers.delete(id);
     const dialog = newDialog(clone(event));
     setEntry(this.dialogs, id, dialog);
     const timeout = event.timeout;
     if (typeof timeout === 'number' && Number.isFinite(timeout) && timeout >= 0) {
       const generation = dialog.generation;
-      setTimeout(() => {
+      this.dialogTimers.set(id, setTimeout(() => {
         if (this.dialog(id)?.generation === generation) this.resolveDialog(id);
-      }, Math.min(timeout, 2147483647));
+      }, Math.min(timeout, 2147483647)));
     }
     this.routeDialogs();
   }
@@ -576,6 +654,8 @@ export class Session {
   }
 
   resolveDialog(id: string): void {
+    clearTimeout(this.dialogTimers.get(id));
+    this.dialogTimers.delete(id);
     const count = this.dialogs.length;
     this.dialogs = this.dialogs.filter(([key]) => key !== id);
     if (count === this.dialogs.length) return;

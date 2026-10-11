@@ -64,7 +64,7 @@ function missingEntries(saved, record) {
 
   let parentId = saved.findLast(entry => Check(entrySchema, entry) && entry.type !== 'session' && entry.id)?.id ?? null;
 
-  const append = entry => { const next = { ...entry, id: randomUUID().slice(0, 8), parentId, timestamp: new Date().toISOString() }; result.push(next); parentId = next.id; };
+  const append = entry => { const next = { ...entry, id: randomUUID(), parentId, timestamp: new Date().toISOString() }; result.push(next); parentId = next.id; };
 
   if (!state.metadata) append({ type: 'custom', customType: 'piop-review', data: record });
 

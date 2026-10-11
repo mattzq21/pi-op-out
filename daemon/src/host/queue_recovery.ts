@@ -5,12 +5,26 @@ import * as Registry from '../session_registry';
 import { ensurePrivateDir } from '../private_fs';
 import { transaction } from '../util/db';
 import { errorText } from '../util/sync';
-import { flockDescriptorSync, FileLock } from '../util/flock';
+import { flockDescriptor, flockDescriptorSync, FileLock } from '../util/flock';
 import { readHeaderLine } from './protocol';
 import { ConversationOwnership, within } from './ownership';
 import { QueueStorage } from './queue_storage';
 
-export interface Recovery { errors: string[]; recovered: boolean; retry: boolean; transactionsPending: boolean }
+export interface Recovery { errors: string[]; recovered: boolean; retry: boolean; transactionsPending: boolean; waiting?: Promise<void> }
+
+const waitingLocks = new Map<string, Promise<void>>();
+
+function waitForLock(path: string): Promise<void> {
+  const waiting = waitingLocks.get(path);
+  if (waiting) return waiting;
+  console.error('Queued input recovery skipped while lock is busy: ' + path);
+  const fd = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+  const result = flockDescriptor(fd).then(() => {
+    console.error('Queued input recovery retry after lock release: ' + path);
+  }).finally(() => { closeSync(fd); waitingLocks.delete(path); });
+  waitingLocks.set(path, result);
+  return result;
+}
 
 function empty(): Recovery { return { errors: [], recovered: false, retry: false, transactionsPending: false }; }
 
@@ -20,38 +34,42 @@ export function recoverMissingTranscripts(root: string, ownership: ConversationO
 
 function recoverStorage(root: string, ownership: ConversationOwnership): Recovery {
   const notes = tryLock(join(root, 'notes', 'ownership.lock'));
-  if (!notes) return { ...empty(), retry: true };
+  if (!notes) return { ...empty(), retry: true, waiting: waitForLock(join(root, 'notes', 'ownership.lock')) };
   try {
     const restore = tryLock(join(root, 'restore.lock'));
-    if (!restore) return { ...empty(), retry: true };
+    if (!restore) return { ...empty(), retry: true, waiting: waitForLock(join(root, 'restore.lock')) };
     try {
       if (Registry.pending(root, 'transaction')) return { ...empty(), retry: true, transactionsPending: true };
       const db = Registry.open(root);
       let entries: string[];
       try { entries = (db.prepare('SELECT DISTINCT session_id FROM queue_items').all() as any[]).map(row => String(row.session_id)); } finally { db.close(); }
       const recovery = empty();
+      const waiting: Promise<void>[] = [];
       for (const entry of entries) {
-        try { recovery.recovered = recoverJournal(root, ownership, join(root, 'queued-input', entry + '.json')) || recovery.recovered; }
+        try { recovery.recovered = recoverJournal(root, ownership, join(root, 'queued-input', entry + '.json'), waiting) || recovery.recovered; }
         catch (error) { recovery.errors.push(errorText(error)); }
       }
+      if (waiting.length) { recovery.retry = true; recovery.waiting = Promise.race(waiting); }
       return recovery;
     } finally { restore.release(); }
   } finally { notes.release(); }
 }
 
-function recoverJournal(root: string, ownership: ConversationOwnership, path: string): boolean {
+function recoverJournal(root: string, ownership: ConversationOwnership, path: string, waiting: Promise<void>[]): boolean {
   if (extname(path) !== '.json') return false;
   const id = basename(path, '.json');
   const key = ConversationOwnership.key(id);
   const ownershipLock = tryLock(join(root, 'conversation-ownership', key + '.lock'));
-  if (!ownershipLock) return false;
+  if (!ownershipLock) { waiting.push(waitForLock(join(root, 'conversation-ownership', key + '.lock'))); return false; }
   try {
     const workerLock = tryLock(join(root, 'session-claims', 'id-' + key + '.lock'));
-    if (!workerLock) return false;
+    if (!workerLock) { waiting.push(waitForLock(join(root, 'session-claims', 'id-' + key + '.lock'))); return false; }
     try {
       removeTemporary(join(root, 'sessions', '.queued-input-recovery-' + id));
       if (ownership.removed(id) || transcriptExists(root, id)) return false;
-      return recoverContents(root, id);
+      const recovered = recoverContents(root, id);
+      if (recovered) console.error('Queued input recovered for session ' + id);
+      return recovered;
     } finally { workerLock.release(); }
   } finally { ownershipLock.release(); }
 }

@@ -4,6 +4,9 @@ import type { Duplex } from 'node:stream';
 import { Channel } from './util/sync';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+const MAX_AUTH_BYTES = 4096;
+const MAX_PENDING_PONGS = 32;
+const MAX_BUFFERED_BYTES = 64 * 1024 * 1024;
 
 export type Incoming = { type: 'text'; data: string } | { type: 'binary'; data: Buffer };
 
@@ -36,6 +39,10 @@ export class WebSocketConnection {
   private fragmentType = 0;
   private messages = new Channel<Incoming>();
   private closeSent = false;
+  private closeTimer: ReturnType<typeof setTimeout> | undefined;
+  private authenticated = false;
+  private authBytes = 0;
+  private pendingPongs = 0;
   closed = false;
 
   constructor(private socket: Duplex, head: Buffer, private maxMessage: number) {
@@ -49,20 +56,24 @@ export class WebSocketConnection {
   /** Returns the next text or binary message, or undefined after the connection closes. */
   next(): Promise<Incoming | undefined> { return this.messages.recv(); }
 
+  markAuthenticated(): void { this.authenticated = true; }
+
+  private get messageLimit(): number { return this.authenticated ? this.maxMessage : Math.min(this.maxMessage, MAX_AUTH_BYTES); }
+
   sendText(text: string): Promise<void> { return this.frame(0x1, Buffer.from(text, 'utf8')); }
 
   ping(): Promise<void> { return this.frame(0x9, Buffer.alloc(0)); }
 
-  async close(code = 1000): Promise<void> {
-    if (this.closed) return;
-    if (!this.closeSent) {
-      this.closeSent = true;
-      const body = Buffer.alloc(2);
-      body.writeUInt16BE(code);
-      try { await this.frame(0x8, body, true); } catch { /* closing anyway */ }
-    }
+  async close(code = 1000, discardReceived = true): Promise<void> {
+    if (this.closed || this.closeSent) return;
+    this.closeSent = true;
+    this.stopReceiving(discardReceived);
+    this.closeTimer = setTimeout(() => this.terminate(), 2000);
+    this.closeTimer.unref();
+    const body = Buffer.alloc(2);
+    body.writeUInt16BE(code);
+    try { await this.frame(0x8, body, true); } catch { this.terminate(); return; }
     try { this.socket.end(); } catch { /* closed */ }
-    setTimeout(() => this.terminate(), 2000).unref();
   }
 
   terminate(): void {
@@ -73,8 +84,20 @@ export class WebSocketConnection {
   private finish(): void {
     if (this.closed) return;
     this.closed = true;
-    this.messages.close();
+    clearTimeout(this.closeTimer);
+    this.stopReceiving(false);
     try { this.socket.destroy(); } catch { /* closed */ }
+  }
+
+  private stopReceiving(discardReceived = true): void {
+    this.socket.pause();
+    this.messages.close();
+    if (discardReceived) while (this.messages.tryRecv() !== undefined) { /* discard queued messages */ }
+    this.chunks = [];
+    this.buffered = 0;
+    this.fragments = [];
+    this.fragmentBytes = 0;
+    this.fragmentType = 0;
   }
 
   private frame(opcode: number, payload: Buffer, force = false): Promise<void> {
@@ -84,8 +107,13 @@ export class WebSocketConnection {
     else if (payload.length < 65536) { header = Buffer.alloc(4); header[1] = 126; header.writeUInt16BE(payload.length, 2); }
     else { header = Buffer.alloc(10); header[1] = 127; header.writeBigUInt64BE(BigInt(payload.length), 2); }
     header[0] = 0x80 | opcode;
+    if (this.socket.writableLength + header.length + payload.length > MAX_BUFFERED_BYTES) {
+      this.terminate();
+      return Promise.reject(new Error('WebSocket output buffer limit exceeded'));
+    }
     return new Promise((resolve, rejectWrite) => {
       this.socket.write(Buffer.concat([header, payload]), error => error ? rejectWrite(error) : resolve());
+      if (this.socket.writableLength > MAX_BUFFERED_BYTES) this.terminate();
     });
   }
 
@@ -107,13 +135,14 @@ export class WebSocketConnection {
 
   private fail(code: number): void {
     this.close(code).catch(() => undefined);
-    this.messages.close();
-    this.chunks = [];
-    this.buffered = 0;
   }
 
   private receive(data: Buffer): void {
     if (this.closed || this.messages.isClosed) return;
+    if (!this.authenticated) {
+      this.authBytes += data.length;
+      if (this.authBytes > MAX_AUTH_BYTES) { this.fail(1009); return; }
+    }
     this.chunks.push(data);
     this.buffered += data.length;
     while (this.buffered >= 2 && !this.messages.isClosed) {
@@ -130,12 +159,12 @@ export class WebSocketConnection {
       } else if (length === 127) {
         if (this.buffered < 10) return;
         const big = this.peek(10).readBigUInt64BE(2);
-        if (big > BigInt(this.maxMessage)) { this.fail(1009); return; }
+        if (big > BigInt(this.messageLimit)) { this.fail(1009); return; }
         length = Number(big);
         offset = 10;
       }
       if (!masked) { this.fail(1002); return; }
-      if (length > this.maxMessage) { this.fail(1009); return; }
+      if (length > this.messageLimit) { this.fail(1009); return; }
       if (this.buffered < offset + 4 + length) return;
       const frame = this.take(offset + 4 + length);
       const mask = frame.subarray(offset, offset + 4);
@@ -149,15 +178,15 @@ export class WebSocketConnection {
     if (opcode >= 0x8) {
       if (!fin || payload.length > 125) { this.fail(1002); return; }
       if (opcode === 0x8) {
-        if (!this.closeSent) {
-          this.closeSent = true;
-          this.frame(0x8, payload.subarray(0, 2), true).catch(() => undefined).finally(() => { try { this.socket.end(); } catch { /* closed */ } });
-        }
-        this.messages.close();
-        setTimeout(() => this.terminate(), 2000).unref();
+        void this.close(payload.length >= 2 ? payload.readUInt16BE(0) : 1000, this.authenticated ? false : true);
         return;
       }
-      if (opcode === 0x9) { this.frame(0xa, payload).catch(() => undefined); return; }
+      if (opcode === 0x9) {
+        if (this.pendingPongs >= MAX_PENDING_PONGS) { this.terminate(); return; }
+        this.pendingPongs += 1;
+        this.frame(0xa, payload).catch(() => this.terminate()).finally(() => { this.pendingPongs -= 1; });
+        return;
+      }
       if (opcode === 0xa) { this.messages.send({ type: 'binary', data: Buffer.alloc(0) }); return; }
       this.fail(1002);
       return;
@@ -169,7 +198,7 @@ export class WebSocketConnection {
       this.fragmentType = opcode;
     } else { this.fail(1002); return; }
     this.fragmentBytes += payload.length;
-    if (this.fragmentBytes > this.maxMessage) { this.fail(1009); return; }
+    if (this.fragmentBytes > this.messageLimit || this.fragments.length >= 1024) { this.fail(1009); return; }
     this.fragments.push(payload);
     if (!fin) return;
     const body = this.fragments.length === 1 ? this.fragments[0]! : Buffer.concat(this.fragments);

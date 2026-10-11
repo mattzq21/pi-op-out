@@ -249,8 +249,8 @@ function execute(journal) {
     const unchecked = journal.steps.find(step => !steps[step.type].done(step));
 
     if (unchecked) throw new Error(`Step could not be checked: ${unchecked.type} ${unchecked.source ?? unchecked.file}`);
+    save({ ...journal, state: 'committed' });
     journal.state = 'committed';
-    save(journal);
   } catch (error) {
     try { rollback(journal); }
     catch (failure) {

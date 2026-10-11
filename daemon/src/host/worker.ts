@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { ensurePrivateDir } from '../private_fs';
+import { signalProcessGroup } from '../process_cleanup';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
 
 export interface Request { command: any; requestType: string; snapshotState: any }
@@ -20,7 +21,7 @@ export interface WorkerObserver {
 interface Pending extends Request { resolve(value: any): void; reject(error: Error): void }
 
 const running = new Set<ChildProcess>();
-process.on('exit', () => { for (const child of running) { try { child.kill('SIGKILL'); } catch {} } });
+process.on('exit', () => { for (const child of running) if (child.pid !== undefined) signalProcessGroup(child.pid, 'SIGKILL'); });
 
 function launchCommand(spec: LaunchSpec, identity: string, home: string): { program: string; args: string[] } {
   const claims = spec.env.PIOP_REMOTE_SESSION_CLAIMS;
@@ -48,6 +49,7 @@ export class RuntimeWorker {
       cwd: spec.cwd ? spec.cwd : undefined,
       env: { ...process.env, ...spec.env, PIOP_BUN: process.execPath },
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: true,
     });
     if (child.pid === undefined) {
       let message = 'No such file or directory (os error 2)';
@@ -58,7 +60,7 @@ export class RuntimeWorker {
     running.add(child);
     const worker = new RuntimeWorker(child, observer, timeout);
     child.on('error', error => observer.diagnostic(error.message));
-    child.stdin!.on('error', () => {});
+    child.stdin!.on('error', error => observer.diagnostic(error.message));
     let open = 3;
     const done = () => { if (--open === 0) worker.close(); };
     const lines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
@@ -71,18 +73,20 @@ export class RuntimeWorker {
     const errors = createInterface({ input: child.stderr!, crlfDelay: Infinity });
     errors.on('line', line => observer.stderr(line));
     errors.on('close', done);
-    child.on('close', () => { running.delete(child); if (worker.deadline) clearTimeout(worker.deadline); done(); });
+    child.on('exit', () => worker.signal(false));
+    child.on('close', () => { worker.signal(true); running.delete(child); if (worker.deadline) clearTimeout(worker.deadline); done(); });
     return worker;
   }
 
   private close(): void {
+    if (this.closedFlag) return;
+    this.closedFlag = true;
     this.exited = true;
     const error = this.observer.disconnectError();
     const pending = [...this.pending.values()];
     this.pending.clear();
     for (const request of pending) request.reject(new Error(error));
     this.observer.finished();
-    this.closedFlag = true;
     for (const waiter of this.closedWaiters.splice(0)) waiter();
   }
 
@@ -103,10 +107,22 @@ export class RuntimeWorker {
 
   /** Sends SIGKILL when hard is true; otherwise SIGTERM, then SIGKILL after five seconds. */
   private signal(hard: boolean): void {
-    if (this.child.exitCode !== null || this.child.signalCode !== null) return;
-    if (hard) { try { this.child.kill('SIGKILL'); } catch {} return; }
-    try { this.child.kill('SIGTERM'); } catch {}
-    if (!this.deadline) this.deadline = setTimeout(() => { this.deadline = undefined; try { this.child.kill('SIGKILL'); } catch {} }, 5000);
+    this.exited = true;
+    if (this.child.pid === undefined) return;
+    if (hard) { signalProcessGroup(this.child.pid, 'SIGKILL'); return; }
+    if (this.deadline || this.closedFlag) return;
+    signalProcessGroup(this.child.pid, 'SIGTERM');
+    this.deadline = setTimeout(() => {
+      this.signal(true);
+      this.deadline = setTimeout(() => {
+        this.deadline = undefined;
+        this.observer.diagnostic('Pi output pipes did not close after SIGKILL; closing them');
+        this.child.stdin!.destroy();
+        this.child.stdout!.destroy();
+        this.child.stderr!.destroy();
+        this.close();
+      }, 1000);
+    }, 5000);
   }
 
   isClosed(): boolean { return this.exited; }
@@ -128,14 +144,22 @@ export class RuntimeWorker {
     const reply = new Promise<any>((resolve, reject) => { entry = { command, requestType, snapshotState, resolve, reject }; });
     reply.catch(() => {});
     this.pending.set(id, entry);
-    try {
-      await this.send(wire);
-      let timer: NodeJS.Timeout | undefined;
-      const expired = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { if (abort) this.signal(false); reject(new Error('Pi command timed out')); }, timeout);
-      });
-      try { return await Promise.race([reply, expired]); } finally { clearTimeout(timer); }
-    } finally { this.pending.delete(id); }
+    let timer: NodeJS.Timeout | undefined;
+    let written = false;
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        if (!written) {
+          this.observer.diagnostic('Pi stopped reading its input; stopping it');
+          this.signal(false);
+          reject(new Error('Pi stopped reading its input'));
+          return;
+        }
+        if (abort) this.signal(false);
+        reject(new Error('Pi command timed out'));
+      }, timeout);
+    });
+    try { return await Promise.race([this.send(wire).then(() => { written = true; return reply; }), expired]); }
+    finally { clearTimeout(timer); this.pending.delete(id); }
   }
 
   async stop(): Promise<void> {

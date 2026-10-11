@@ -13,6 +13,7 @@ export const MAX_PATH_LIST_BYTES = 1024 * 1024;
 
 export const PROTOCOL_VERSION = 1;
 export const PEER_PROTOCOL_VERSION = 1;
+export const BUILD_ID: string = typeof __PIOP_BUILD_ID__ === 'string' ? __PIOP_BUILD_ID__ : '';
 export const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 export const MAX_RESPONSE_BYTES = 128 * 1024 * 1024;
 

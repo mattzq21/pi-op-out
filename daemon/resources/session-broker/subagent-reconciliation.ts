@@ -55,10 +55,10 @@ async function legacyOffset(run: SubagentRun, snapshot: Awaited<ReturnType<typeo
   const id = run.usageBoundaryId ?? branch[index].id;
   let offset: number | undefined;
 
-  for await (const { line, next } of transcriptLines(run.sessionPath, 0, run.sessionId)) {
+  for await (const { line, offset: recordOffset, next } of transcriptLines(run.sessionPath, 0, run.sessionId)) {
     let entry;
 
-    try { entry = JSON.parse(line); } catch { continue; }
+    try { entry = JSON.parse(line); } catch { throw new Error(`Damaged chat record at byte ${recordOffset}: ${run.sessionPath}`); }
 
     if (Check(Schema.Object({ id: Schema.Literal(id) }), entry)) offset = next;
   }
@@ -339,17 +339,49 @@ class SubagentObserver {
     this.run.submission = "submitted";
     this.save();
 
+    try { await this.deliver(); }
+    catch (error) { this.interrupted(String(error)); }
+  }
+
+  private async deliver() {
+    const deliveryId = this.run.deliveryIds?.at(-1);
+
+    if (!deliveryId) throw new Error("Submitted subagent task has no saved delivery ID");
+    const remaining = this.run.startedAt + 600_000 - Date.now();
+
+    if (remaining <= 0) throw new Error("Subagent task delivery timed out");
+    const signal = AbortSignal.any([this.observation.signal, AbortSignal.timeout(remaining)]);
+    this.lifecycle.pendingDeliveries++;
+
     try {
-      const receipt = await sendSessionMessage(ctx, this.run.sessionId, this.run.hostId, this.run.task, true, undefined, deliveryId);
+      const receipt = await sendSessionMessage(this.observation.ctx, this.run.sessionId, this.run.hostId, this.run.task, true, signal, deliveryId);
       acceptedSubmission(this.run, Parse(subagentReceiptSchema, receipt));
-      this.run.usageNotificationId = this.run.taskNotificationId;
+
+      if (!this.run.taskStartedAt) this.run.usageNotificationId = this.run.taskNotificationId;
       this.save();
-    } catch (error) { this.interrupted(String(error)); }
+    } finally { this.lifecycle.pendingDeliveries--; }
   }
 
   private async cancellation() {
-    try { await confirmCancellation(this.run); }
-    catch (error) { this.interrupted(String(error)); await delay(2000); }
+    const signal = AbortSignal.timeout(10_000);
+
+    try {
+      while (this.run.status === "running") {
+        signal.throwIfAborted();
+
+        try { await confirmCancellation(this.run, signal); }
+        catch (error) {
+          signal.throwIfAborted();
+          this.interrupted(String(error));
+          await delay(2000, undefined, { signal });
+        }
+      }
+    } catch (error) {
+      this.run.observation = "interrupted";
+      this.save();
+      this.observation.ctx.ui.notify(`Cancellation of ${this.run.name} remains pending; the saved stop will be retried on reconciliation: ${String(error)}`, "error");
+      throw error;
+    }
   }
 
   private async poll() {
@@ -387,14 +419,17 @@ class SubagentObserver {
 
       signal.throwIfAborted();
 
-      if (this.polled && Date.now() >= this.run.startedAt + 600_000) {
+      if ((this.polled || this.run.submission === "submitted") && Date.now() >= this.run.startedAt + 600_000) {
         this.run.cancelRequested = true;
         this.run.cancelReason = "Subagent timed out after ten minutes";
         this.save();
         continue;
       }
 
-      try { await this.poll(); }
+      try {
+        if (this.run.submission === "submitted" && !this.lifecycle.pendingDeliveries) await this.deliver();
+        await this.poll();
+      }
       catch (error) { this.interrupted(String(error)); this.failures++; }
 
       this.polled = true;

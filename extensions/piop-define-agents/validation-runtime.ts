@@ -66,7 +66,7 @@ export async function extensionValidator(registeredToolNames: string[]) {
     try {
       await loadExtensionFromFactory(async (pi: ExtensionAPI) => {
         const extensions = agentExtensions(pi, base, entry => loader.import(entry));
-        const group = await extensions.prepare(paths);
+        const group = await extensions.prepare(paths, runner.createContext());
         activate = () => extensions.activate(group, runner.createContext());
         deactivate = () => extensions.deactivate(runner.createContext(), { type: "session_shutdown", reason: "reload" });
         tools = extensions.tools(group);

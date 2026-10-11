@@ -2,7 +2,7 @@ import { registerModelSession, reportModels } from "./modelReports";
 import { z } from "zod";
 import { sessionSnapshotSchema, modelSchema, slashCommandSchema, agentStateSchema } from "./responseSchemas";
 import { ConversationChangedError } from "./conversationChanged";
-import { type Accessor, createComputed, createMemo, onCleanup, untrack } from "solid-js";
+import { type Accessor, createComputed, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { createDependencyEffect, createRef } from "./solid";
 
 import type { AgentState, ChatMessage, RpcEvent } from "../types";
@@ -15,7 +15,7 @@ import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
 import { matchesSubmittedMessage, reconcileMessages, sameUserContent, upsertLiveMessage } from "./reconcileMessages";
 
-interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
+interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number; incomplete?: boolean; damagedLines?: number[] }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 
 type MessageUpdate = (messages: ChatMessage[], positions: (id: string | undefined) => number[]) => boolean;
 
@@ -50,6 +50,7 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
     get messages() { return runtime().messages; }, get setMessages() { return runtime().setMessages; },
     get models() { return runtime().models; }, get commands() { return runtime().commands; },
     get thinkingLevels() { return runtime().thinkingLevels; }, get refresh() { return runtime().refresh; },
+    get capabilityErrors() { return runtime().capabilityErrors; }, get capabilitiesLoading() { return runtime().capabilitiesLoading; }, get retryCapabilities() { return runtime().retryCapabilities; },
     get handleEvent() { return runtime().handleEvent; }, get discardPendingUpdates() { return runtime().discardPendingUpdates; },
   };
 }
@@ -72,6 +73,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
   const capabilityRequest = createRef(0);
   const capabilityKey = createRef<string | undefined>(undefined);
+  const [capabilityErrors, setCapabilityErrors] = createSignal<string[]>([]);
+  const [capabilitiesLoading, setCapabilitiesLoading] = createSignal(false);
   const sessionEpoch = createRef("");
   const statsOperation = createRef<{ sessionId: string; revision: number; promise: Promise<void> } | undefined>(undefined);
   const refreshOperation = createRef<{ transport: ReturnType<typeof transport>; promise: Promise<AgentState>; buffer: RpcEvent[] } | undefined>(undefined);
@@ -104,10 +107,16 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     if (capabilityKey.current === key) return;
     capabilityKey.current = key;
     const request = ++capabilityRequest.current;
+    setCapabilityErrors([]);
+    setCapabilitiesLoading(true);
+    const failed = (list: string) => (reason: unknown) => {
+      if (owner.current !== transport() || capabilityRequest.current !== request || reason instanceof ConversationChangedError) return;
+      setCapabilityErrors(current => [...current, `Could not load ${list}: ${reason instanceof Error ? reason.message : String(reason)}`]);
+    };
     void Promise.all([
-      load({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).catch(() => undefined),
-      load({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })).catch(() => undefined),
-      load({ type: "get_commands" }, z.object({ commands: z.array(slashCommandSchema) })).catch(() => undefined),
+      load({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).catch(failed("models")),
+      load({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })).catch(failed("thinking levels")),
+      load({ type: "get_commands" }, z.object({ commands: z.array(slashCommandSchema) })).catch(failed("commands")),
     ]).then(([modelResult, thinkingResult, commandResult]) => {
       if (owner.current !== transport() || capabilityRequest.current !== request) return;
       session.memory.batch(() => {
@@ -123,15 +132,27 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       });
 
       if (!modelResult || !thinkingResult || !commandResult) capabilityKey.current = undefined;
-    }).catch(() => { if (capabilityRequest.current === request) capabilityKey.current = undefined; });
+    }).catch(reason => {
+      if (capabilityRequest.current === request) capabilityKey.current = undefined;
+      failed("chat choices")(reason);
+    }).finally(() => {
+      if (owner.current === transport() && capabilityRequest.current === request) setCapabilitiesLoading(false);
+    });
   };
 
   onCleanup(registerModelSession(() => transport().currentHostId?.() ?? "local", async () => {
     capabilityKey.current = undefined;
     const request = ++capabilityRequest.current;
-    const result = await load({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) }));
+    setCapabilitiesLoading(true);
+    const result = await load({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).catch(reason => {
+      if (owner.current === transport() && request === capabilityRequest.current && !(reason instanceof ConversationChangedError)) setCapabilityErrors(current => [...current.filter(message => !message.startsWith("Could not load models:")), `Could not load models: ${reason instanceof Error ? reason.message : String(reason)}`]);
+      throw reason;
+    }).finally(() => {
+      if (owner.current === transport() && request === capabilityRequest.current) setCapabilitiesLoading(false);
+    });
 
     if (owner.current !== transport() || request !== capabilityRequest.current) return;
+    setCapabilityErrors(current => current.filter(message => !message.startsWith("Could not load models:")));
     session.setModels(result.models);
     await reportModels(transport().currentHostId?.() ?? "local", result.models);
   }));
@@ -220,6 +241,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       });
 
       if (snapshot.history.omittedEntries) nextMessages.unshift({ id: "client-memory-limit", role: "system", content: "Older history was omitted to fit this client's memory limit. The full conversation remains on the host." });
+      if (snapshot.history.incomplete) nextMessages.push({ id: `client-transcript-damage:${snapshot.state.sessionId}`, role: "system", content: `Chat history is incomplete. Damaged record lines: ${snapshot.history.damagedLines?.join(", ") ?? "unknown"}. Some messages may be missing.` });
       activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
       activeMessageIds.current.clear();
 
@@ -544,5 +566,5 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
   createComputed(() => { eventHandler.current = handleEvent; });
 
-  return { get state() { return session.state; }, get setState() { return session.setState; }, get messages() { return session.messages; }, get setMessages() { return session.setMessages; }, get models() { return session.models; }, get commands() { return session.commands; }, get thinkingLevels() { return session.thinkingLevels; }, get refresh() { return refresh; }, get handleEvent() { return handleEvent; }, get discardPendingUpdates() { return discardPendingUpdates; } };
+  return { get capabilityErrors() { return capabilityErrors(); }, get capabilitiesLoading() { return capabilitiesLoading(); }, get retryCapabilities() { return refreshCapabilities; }, get state() { return session.state; }, get setState() { return session.setState; }, get messages() { return session.messages; }, get setMessages() { return session.setMessages; }, get models() { return session.models; }, get commands() { return session.commands; }, get thinkingLevels() { return session.thinkingLevels; }, get refresh() { return refresh; }, get handleEvent() { return handleEvent; }, get discardPendingUpdates() { return discardPendingUpdates; } };
 }

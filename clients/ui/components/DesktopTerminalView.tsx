@@ -14,13 +14,16 @@ import { terminalTheme } from "../lib/terminalColors";
 
 import type { TerminalViewProps } from "./TerminalView";
 
-const terminalSizeSchema = z.tuple([z.literal(8), z.number().int().min(1).max(65535), z.number().int().min(1).max(65535)]);
+const MAX_PENDING_OUTPUT_BYTES = 8 * 1024 * 1024;
+const MAX_TERMINAL_CELLS = 250_000;
+
+const terminalSizeSchema = z.tuple([z.literal(8), z.number().int().min(1).max(1000), z.number().int().min(1).max(1000)]);
 
 export function DesktopTerminalView(componentProps: TerminalViewProps) {
   const [copyError, setCopyError] = createSignal(false);
   const [draftStyle, setDraftStyle] = createSignal<CSSProperties>({ display: "none" });
   const terminalMount = createRef<HTMLDivElement>(null);
-  const outputWrites = createRef(Promise.resolve());
+  const queueOutput = createRef<((data: string, end: number, reset: boolean, transcript: string) => void) | undefined>(undefined);
   const resizeToHost = createRef<(() => void) | undefined>(undefined);
   const host = createRef<HTMLDivElement>(null); const terminal = createRef<Terminal | undefined>(undefined); const lastOutputEnd = createRef(0); const queuedOutputEnd = createRef(0); const tabRefs = createRef(new Map<string, HTMLButtonElement>());
   const callbacks = createRef({ onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }); createComputed(() => { callbacks.current = { onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }; });
@@ -58,8 +61,10 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     const sizeHandler = instance.parser.registerCsiHandler({ final: "t" }, params => {
       const size = terminalSizeSchema.safeParse(params);
 
-      if (!size.success) return false;
+      if (!size.success) return params[0] === 8;
       const [, rows, cols] = size.data;
+
+      if (rows * cols > MAX_TERMINAL_CELLS) return true;
       instance.resize(cols, rows);
 
       return true;
@@ -67,16 +72,52 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
 
     if (!componentProps.started) fit.fit();
     let restored = !capturedSnapshot1;
-    outputWrites.current = Promise.resolve();
+    let pending: { data: string; end: number; reset: boolean }[] = [];
+    let pendingBytes = 0;
+    let writing = false;
 
-    if (capturedSnapshot1) {
-      queuedOutputEnd.current = capturedSnapshotEnd2 ?? 0;
-      outputWrites.current = new Promise<void>(resolve => instance.write(capturedSnapshot1, () => {
-        if (terminal.current === instance) { lastOutputEnd.current = capturedSnapshotEnd2 ?? 0; restored = true; }
+    const drain = () => {
+      if (writing || terminal.current !== instance) return;
+      const chunk = pending.shift();
 
-        resolve();
-      }));
-    }
+      if (!chunk) return;
+      writing = true;
+
+      try {
+        if (chunk.reset) { restored = false; instance.reset(); }
+        instance.write(chunk.data, () => {
+          pendingBytes -= chunk.data.length * 2;
+          writing = false;
+
+          if (terminal.current !== instance) return;
+          lastOutputEnd.current = chunk.end;
+          restored = true;
+          drain();
+        });
+      } catch (reason) {
+        pending = [];
+        pendingBytes = 0;
+        writing = false;
+        queuedOutputEnd.current = lastOutputEnd.current;
+        console.error("Could not render terminal output", reason);
+      }
+    };
+
+    queueOutput.current = (data, end, reset, transcript) => {
+      if (pendingBytes + data.length * 2 > MAX_PENDING_OUTPUT_BYTES) {
+        pendingBytes -= pending.reduce((bytes, chunk) => bytes + chunk.data.length * 2, 0);
+        pending = [];
+        data = transcript;
+        reset = true;
+      }
+
+      pending.push({ data, end, reset });
+      pendingBytes += data.length * 2;
+      queuedOutputEnd.current = end;
+      drain();
+    };
+
+    if (capturedSnapshot1) queueOutput.current(capturedSnapshot1, capturedSnapshotEnd2 ?? 0, false, capturedSnapshot1);
 
     instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
     const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value); });
@@ -150,7 +191,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(scheduleResize); observer?.observe(host.current);
 
     return () => { saveSnapshot(restored ? `\u001b[8;${instance.rows};${instance.cols}t${serializer.serialize()}` : capturedSnapshot1 || "", restored ? lastOutputEnd.current : capturedSnapshotEnd2 ?? 0); observer?.disconnect();
-    window.clearTimeout(resizeTimer); resizeToHost.current = undefined;
+    window.clearTimeout(resizeTimer); resizeToHost.current = undefined; queueOutput.current = undefined; pending = [];
 
     if (cursorFrame !== undefined) cancelAnimationFrame(cursorFrame); cursor.dispose(); draftRender.dispose(); draftScroll.dispose(); data.dispose(); sizeHandler.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
   }, () => [componentProps.activeId, componentProps.cwd]);
@@ -189,24 +230,12 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
 
     if (!instance) return;
     const outputStart = capturedOutputEnd0 - capturedOutput1.length;
-    const parsed = () => { if (terminal.current === instance) lastOutputEnd.current = capturedOutputEnd0; };
 
     if (capturedOutputEnd0 <= queuedOutputEnd.current) return;
 
     const reset = queuedOutputEnd.current < outputStart;
     const data = reset ? capturedOutput1 : capturedOutput1.slice(queuedOutputEnd.current - outputStart);
-    outputWrites.current = outputWrites.current.then(() => new Promise<void>(resolve => {
-      if (terminal.current !== instance) {
-        resolve();
-
-        return;
-      }
-
-      if (reset) instance.reset();
-      instance.write(data, () => { parsed(); resolve(); });
-    }));
-
-    queuedOutputEnd.current = capturedOutputEnd0;
+    queueOutput.current?.(data, capturedOutputEnd0, reset, capturedOutput1);
   }, () => [componentProps.output, componentProps.outputEnd]);
   createDependencyEffect(() => {
     const capturedActiveId0 = componentProps.activeId;

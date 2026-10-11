@@ -26,8 +26,6 @@ html[data-mobile] .conversation-unowned .composer-interaction { opacity: 1; }
 .mobile-connect label { display: grid; gap: 8px; font-size: 14px; }
 .mobile-connect input, .mobile-connect select { width: 100%; min-height: 48px; border: 1px solid #48453e; border-radius: 9px; padding: 12px; background: #24231f; color: #eee; font-size: 16px; }
 .mobile-connect .mobile-connect-hint { font-size: 12px; }
-.mobile-connect .mobile-auto-reconnect { display: flex; align-items: center; gap: 10px; }
-.mobile-connect .mobile-auto-reconnect input { width: 20px; min-height: 20px; margin: 0; accent-color: var(--accent); }
 .mobile-host-actions { display: flex; gap: 10px; }
 .mobile-host-actions button, .mobile-connect button[type="button"] { min-height: 40px; padding: 8px 12px; border: 1px solid #48453e; border-radius: 8px; background: #24231f; color: #eee; }
 .mobile-connect [role=alert] { color: #f19b89; }
