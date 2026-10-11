@@ -1,7 +1,7 @@
 import type { AppSettings } from "../types";
 import { invoke } from "./platform";
 import { z } from "zod";
-import { savedDictationModelSchema, settingsPublicationSchema } from "./responseSchemas";
+import { dictationEngineSchema, dictationEngineSettingsSchema, settingsPublicationSchema } from "./responseSchemas";
 import { applyClientPreferences, clientPreferences, clientPreferencesSchema, ClientPreferenceConflictError } from "./clientPreferenceMerge";
 
 const storageKey = "piop-client-settings";
@@ -13,10 +13,10 @@ const clientSettingsSchema = z.object({
   hiddenModels: z.array(z.string()).optional().catch(undefined),
   knownModels: z.array(z.string()).optional().catch(undefined),
   debugMode: z.boolean().optional().catch(undefined),
-  dictationEnginePath: z.string().optional().catch(undefined),
+  dictationEngine: dictationEngineSchema.optional().catch(undefined),
+  dictationEngines: z.array(dictationEngineSettingsSchema).optional().catch(undefined),
   dictationModelPath: z.string().optional().catch(undefined),
   dictationArgs: z.string().optional().catch(undefined),
-  dictationModels: z.array(savedDictationModelSchema).optional().catch(undefined),
 }).catch({});
 
 type StoredPreferences = z.infer<typeof clientSettingsSchema>;
@@ -44,10 +44,10 @@ function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): 
     hiddenModels: stored.hiddenModels ?? settings.hiddenModels,
     knownModels: stored.knownModels ?? (stored.hiddenModels ? undefined : settings.knownModels),
     debugMode: stored.debugMode ?? settings.debugMode,
-    dictationEnginePath: stored.dictationEnginePath,
+    dictationEngine: stored.dictationEngine,
+    dictationEngines: stored.dictationEngines,
     dictationModelPath: stored.dictationModelPath,
     dictationArgs: stored.dictationArgs,
-    dictationModels: stored.dictationModels,
   };
 }
 

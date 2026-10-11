@@ -639,6 +639,10 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .review-feedback-button:hover:not(:disabled), .review-feedback-button[aria-pressed="true"] { background: var(--hover); }
 .review-feedback-button:disabled { opacity: .5; }
 .dictation-settings { display: grid; gap: 26px; margin-top: 20px; }
+.dictation-group > .dictation-field { margin: 0 0 14px; }
+.dictation-found { margin: -6px 0 0; display: flex; align-items: baseline; gap: 8px; color: var(--muted); font-size: calc(12px + var(--settings-font-offset, 0px)); overflow-wrap: anywhere; }
+.dictation-found code, .dictation-choice strong code { font: calc(11px + var(--settings-font-offset, 0px)) ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--ink); }
+.dictation-choice strong code { margin-left: 8px; color: var(--muted); }
 .dictation-group h3 { margin: 0 0 8px; font-size: calc(11px + var(--settings-font-offset, 0px)); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 .dictation-choices { margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .dictation-choices:empty { display: none; }

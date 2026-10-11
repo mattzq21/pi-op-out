@@ -18,9 +18,9 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const UNCONFIGURED: &str = "No dictation model is configured";
 
 /// The dictation fields of the client preferences. Empty strings mean "not set".
-/// The model file names the engine type; args holds engine options such as "--language en".
+/// engine is "transcribe.cpp" or "needle"; program is its optional path; args holds engine options such as "--language en".
 #[derive(Clone, PartialEq)]
-pub(crate) struct DictationSettings { pub program: String, pub model: String, pub args: String }
+pub(crate) struct DictationSettings { pub engine: String, pub program: String, pub model: String, pub args: String }
 
 /// A speech-to-text setup that can run: the Python command, the model file and the language ("" lets the model choose).
 #[derive(Clone)]
@@ -179,13 +179,36 @@ fn interpreter(kind: &str, executable: &str) -> Result<Vec<String>, String> {
     Ok(command)
 }
 
-/// The engine type of a model file: Cactus Needle reads .cact files and transcribe.cpp reads .gguf files.
-fn engine_kind(model: &str) -> Result<&'static str, String> {
-    match Path::new(model).extension().map(|extension| extension.to_string_lossy().to_lowercase()).as_deref() {
-        Some("cact") => Ok("needle"),
-        Some("gguf") => Ok("transcribe.cpp"),
-        _ => Err(format!("Cannot tell the engine from the model file {model}. Use a .cact file (Cactus Needle) or a .gguf file (transcribe.cpp).")),
+/// The engine type: Cactus Needle reads .cact model files and transcribe.cpp reads .gguf model files.
+fn engine_kind(engine: &str, model: &str) -> Result<&'static str, String> {
+    let (kind, extension) = match engine { "needle" => ("needle", "cact"), "transcribe.cpp" => ("transcribe.cpp", "gguf"), _ => return Err(format!("Unknown dictation engine {engine}")) };
+    let actual = Path::new(model).extension().map(|value| value.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if actual != extension { return Err(format!("The model file {model} is not a .{extension} file. {} needs a .{extension} model.", engine_label(kind))); }
+    Ok(kind)
+}
+
+fn engine_label(kind: &str) -> &'static str { if kind == "needle" { "Cactus Needle" } else { "transcribe.cpp" } }
+
+/// The Python module that the engine program must provide.
+fn engine_module(kind: &str) -> &'static str { if kind == "needle" { "needle" } else { "transcribe_cpp" } }
+
+/// Finds the first program that has the engine installed. Returns the program path and its Python command.
+fn find_engine(kind: &str, configured: &str) -> Result<(String, Vec<String>), String> {
+    let executables = candidates(kind, configured);
+    if executables.is_empty() {
+        return Err(if configured.is_empty() { format!("Could not find {}. Install it or set its path.", program_name(kind)) } else { format!("The program {} does not exist", expand(configured)) });
     }
+    let mut failures = Vec::new();
+    for executable in executables {
+        let check = interpreter(kind, &executable).and_then(|command| {
+            let mut process = Command::new(&command[0]);
+            process.args(&command[1..]).arg("-c").arg(format!("import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('{}') else 1)", engine_module(kind)));
+            let status = process.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not run {}: {error}", command[0]))?;
+            if status.success() { Ok(command) } else { Err(format!("{} does not have {} installed", command[0], engine_label(kind))) }
+        });
+        match check { Ok(command) => return Ok((executable, command)), Err(error) => failures.push(format!("{executable}: {error}")) }
+    }
+    Err(failures.join("\n"))
 }
 
 /// Reads the engine arguments. The only argument is "--language <code>" (or "--language=<code>"); no language lets the model choose.
@@ -207,21 +230,11 @@ fn load_engine(settings: &DictationSettings) -> Result<(Engine, Languages), Stri
     if settings.model.is_empty() { return Err(UNCONFIGURED.into()); }
     let model = expand(&settings.model);
     if !Path::new(&model).is_file() { return Err(format!("The model file {model} does not exist")); }
-    let kind = engine_kind(&model)?;
+    let kind = engine_kind(&settings.engine, &model)?;
     let language = language_argument(&settings.args)?;
-    let executables = candidates(kind, &settings.program);
-    if executables.is_empty() {
-        return Err(if settings.program.is_empty() { format!("Could not find {}. Install it or set its path.", program_name(kind)) } else { format!("The program {} does not exist", expand(&settings.program)) });
-    }
-    let mut failures = Vec::new();
-    for executable in executables {
-        let attempt = interpreter(kind, &executable).and_then(|interpreter| {
-            let engine = Engine { kind: kind.to_owned(), executable: executable.clone(), interpreter, model: model.clone(), language: language.clone() };
-            probe(&engine).map(|languages| (engine, languages))
-        });
-        match attempt { Ok(loaded) => return Ok(loaded), Err(error) => failures.push(format!("{executable}: {error}")) }
-    }
-    Err(failures.join("\n"))
+    let (executable, interpreter) = find_engine(kind, &settings.program)?;
+    let engine = Engine { kind: kind.to_owned(), executable, interpreter, model, language };
+    probe(&engine).map(|languages| (engine, languages))
 }
 
 /// Runs one second of silence through the engine to prove that the program, the model and the language load.
@@ -320,6 +333,18 @@ fn spawn_worker(engine: &Engine, on_text: TextHandler, on_ready: ReadyHandler, o
 }
 
 fn new_id() -> String { Uuid::new_v4().to_string() }
+
+/// Searches for each engine. paths maps an engine type to its set path ("" searches PATH).
+/// Returns, for each engine type, { "executable": path } or { "error": text }.
+#[tauri::command(async)]
+pub(crate) fn dictation_find_engines(paths: std::collections::HashMap<String, String>) -> Value {
+    let mut result = serde_json::Map::new();
+    for kind in ["transcribe.cpp", "needle"] {
+        let configured = paths.get(kind).map(String::as_str).unwrap_or_default();
+        result.insert(kind.into(), match find_engine(kind, configured) { Ok((executable, _)) => json!({ "executable": executable }), Err(error) => json!({ "error": error }) });
+    }
+    Value::Object(result)
+}
 
 #[tauri::command(async)]
 pub(crate) fn dictation_configuration(app: AppHandle) -> Value { configuration(&lock_state(&app)) }

@@ -74,7 +74,7 @@ async function invokeDaemon(command: string, args: NativeArguments | undefined, 
   args = nativeArgumentsSchema.parse({ ...args, clientId: await clientIdentity(isMobile ? "mobile" : "desktop") });
 
   if (!isMobile) {
-    const local = ["load_client_settings", "save_client_settings", "sync_prompt_history", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file"];
+    const local = ["load_client_settings", "save_client_settings", "sync_prompt_history", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file", "dictation_find_engines"];
 
     const response = await (local.includes(command) || command in dictationCommands ? nativeInvoke(command, args) : invokeWithBackpressure(() => nativeInvoke("daemon_invoke", { command, args })));
 
