@@ -77,34 +77,28 @@ export function reassignTerminals(transport: NativeTransport, terminals: readonl
   }
 }
 
-type Notice = (notice: { title: string; message: string }) => void;
-
 const modelKey = (model: { provider: string; id: string }) => `${model.provider}/${model.id}`;
 
-async function setStartModel(transport: NativeTransport, wanted: string | undefined, models: Model[], hiddenModels: readonly string[], addNotice: Notice) {
+async function setStartModel(transport: NativeTransport, wanted: string | undefined, models: Model[]) {
   const model = models.find((model) => modelKey(model) === wanted);
 
-  if (model) { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); return; }
-  const fallback = models.find((model) => !hiddenModels.includes(modelKey(model)));
-
-  if (!fallback) throw new Error(`Model ${wanted ?? "(none)"} is not available on this machine and no enabled model exists. Enable a model in Settings → Models.`);
-  await transport.command({ type: "set_model", provider: fallback.provider, modelId: fallback.id });
-  addNotice({ title: "Default model unavailable", message: `${wanted ?? "No default model"} is not available on this machine. Using ${fallback.name || modelKey(fallback)}.` });
+  if (model) await transport.command({ type: "set_model", provider: model.provider, modelId: model.id });
+  else transport.promptControls.clearModel();
 }
 
-async function applyInherited(transport: NativeTransport, inherited: ProjectControls, defaultModel: string, models: Model[], hiddenModels: readonly string[], addNotice: Notice) {
+async function applyInherited(transport: NativeTransport, inherited: ProjectControls, defaultModel: string, models: Model[]) {
   if (inherited.agent) await transport.command({ type: "select_agent", agent: inherited.agent });
 
   if (inherited.model && models.some((model) => model.provider === required(inherited.model).provider && model.id === required(inherited.model).id)) transport.promptControls.model(inherited.model);
-  else await setStartModel(transport, inherited.model ? modelKey(inherited.model) : defaultModel, models, hiddenModels, addNotice);
+  else await setStartModel(transport, inherited.model ? modelKey(inherited.model) : defaultModel, models);
 
   transport.promptControls.thinking(inherited.thinking);
 
   if (inherited.fastMode !== undefined) transport.promptControls.fast(inherited.fastMode);
 }
 
-async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], hiddenModels: readonly string[], current: () => boolean, addNotice: Notice) {
-  await setStartModel(transport, value.defaultModel, models, hiddenModels, addNotice);
+async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], current: () => boolean) {
+  await setStartModel(transport, value.defaultModel, models);
 
   if (!current()) return;
   await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
@@ -117,7 +111,7 @@ async function applyDefaults(transport: NativeTransport, value: AppSettings, mod
   transport.defaultsApplied();
 }
 
-export async function configureConversationRuntime(value: AppSettings, transport: NativeTransport, activeTransport: () => NativeTransport, projectControls: WeakMap<NativeTransport, ProjectControls>, addNotice: Notice) {
+export async function configureConversationRuntime(value: AppSettings, transport: NativeTransport, activeTransport: () => NativeTransport, projectControls: WeakMap<NativeTransport, ProjectControls>) {
   const current = () => activeTransport() === transport;
 
   if (!current() || !transport.ownsConversation()) return;
@@ -125,7 +119,6 @@ export async function configureConversationRuntime(value: AppSettings, transport
   if (transport.currentHostId() !== "local") value = await transport.loadHostSettings();
 
   if (!current()) return;
-  const hiddenModels = value.hiddenModels;
   transport.setDefaultFastMode(value.defaultFastMode);
 
   await transport.configureAutomaticBehavior(value.autoRetry);
@@ -139,11 +132,11 @@ export async function configureConversationRuntime(value: AppSettings, transport
   if (!current()) return;
 
   if (inherited) {
-    await applyInherited(transport, inherited, value.defaultModel, availableModels, hiddenModels, addNotice);
+    await applyInherited(transport, inherited, value.defaultModel, availableModels);
     projectControls.delete(transport); transport.defaultsApplied();
 
     return;
   }
 
-  await applyDefaults(transport, value, availableModels, hiddenModels, current, addNotice);
+  await applyDefaults(transport, value, availableModels, current);
 }

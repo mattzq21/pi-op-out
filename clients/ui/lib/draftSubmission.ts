@@ -69,6 +69,8 @@ export async function submitDraftPrompt(owner: NativeTransport, command: RpcComm
 
   if (!submission) throw new Error("The message is not ready to send");
 
+  if (owner.promptControls.missingModel()) throw new Error("Choose a model before sending.");
+
   await owner.startDraft();
 
   if (owner.promptControls.hasPending()) await owner.promptControls.flush(value => owner.command(value), enabled => owner.setFastMode(enabled));

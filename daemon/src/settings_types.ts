@@ -1,5 +1,4 @@
 import reviewPrompt from '../resources/session-broker/review-prompt.txt?raw';
-import { DEVELOPMENT } from './config';
 import { defaultKeybindings } from './keybindings';
 
 export interface RemoteHost {
@@ -33,7 +32,6 @@ export interface AppSettings {
 }
 
 export const MAX_REMOTE_HOSTS = 16;
-export const DEFAULT_MODEL = DEVELOPMENT ? 'openai-codex/gpt-6-luna' : 'openai-codex/gpt-5.6-sol';
 
 export function defaultAgent(): string { return 'general'; }
 export function defaultReviewPrompt(): string { return reviewPrompt.trim(); }
@@ -154,7 +152,7 @@ export function defaultSettings(): AppSettings {
     localEnabled: true,
     defaultAgent: defaultAgent(),
     defaultFastMode: false,
-    defaultModel: DEFAULT_MODEL,
+    defaultModel: '',
     hiddenModels: [],
     defaultThinking: 'medium',
     contextWindowCap: 300_000,

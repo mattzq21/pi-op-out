@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import type { AgentState, Model, RpcCommand } from "../types";
 
-type Selection = { model?: Model; thinkingLevel?: string; fastMode?: boolean };
+type Selection = { model?: Model | null; thinkingLevel?: string; fastMode?: boolean };
 
 const fastKey = "pi-desktop-fast-mode";
 
@@ -30,11 +30,14 @@ export class PromptControls {
   hasPending() {
     const selected = this.selection[0]();
 
-    return selected !== this.applied && (selected.model !== undefined || selected.thinkingLevel !== undefined || selected.fastMode !== undefined);
+    return selected !== this.applied && (Boolean(selected.model) || selected.thinkingLevel !== undefined || selected.fastMode !== undefined);
   }
-  reset() { this.selection[1]({}); this.applied = undefined; }
+  reset() { this.selection[1](current => current.model === null ? { model: null } : {}); this.applied = undefined; }
+  /** Show no model until the user chooses one. */
+  clearModel() { this.selection[1](current => ({ ...current, model: null })); }
+  missingModel() { return this.selection[0]().model === null; }
   model(model: Model, thinkingLevel?: string) { this.selection[1](current => ({ ...current, model, thinkingLevel: clampEffort(thinkingLevel ?? current.thinkingLevel ?? "medium", model) })); }
-  thinking(thinkingLevel: string) { this.selection[1](current => ({ ...current, thinkingLevel: clampEffort(thinkingLevel, current.model) })); }
+  thinking(thinkingLevel: string) { this.selection[1](current => ({ ...current, thinkingLevel: clampEffort(thinkingLevel, current.model ?? undefined) })); }
   fast(fastMode: boolean) { this.selection[1](current => ({ ...current, fastMode })); }
   copyTo(target: PromptControls) { target.selection[1](current => ({ ...current, ...this.selection[0]() })); }
   levels(fallback: string[]) { const model = this.selection[0]().model;
@@ -43,9 +46,9 @@ export class PromptControls {
   state(state: AgentState): AgentState {
     const selected = this.selection[0]();
 
-    if (!selected.model && selected.thinkingLevel === undefined) return state;
+    if (selected.model === undefined && selected.thinkingLevel === undefined) return state;
 
-    return { ...state, model: selected.model ?? state.model, thinkingLevel: selected.thinkingLevel ?? state.thinkingLevel };
+    return { ...state, model: selected.model === undefined ? state.model : selected.model, thinkingLevel: selected.thinkingLevel ?? state.thinkingLevel };
   }
   statuses(statuses: Record<string, string>, fastModels?: string[]) {
     const selected = this.selection[0]();

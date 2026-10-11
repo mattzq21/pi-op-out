@@ -75,6 +75,7 @@ export class NativeTransport {
   }
 
   async submitPrompt(command: RpcCommand) {
+    if (this.promptControls.missingModel()) throw new Error("Choose a model before sending.");
     if (this.promptControls.hasPending()) await this.promptControls.flush(value => this.command(value), enabled => this.setFastMode(enabled));
 
     return this.command(command);
