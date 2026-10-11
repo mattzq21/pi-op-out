@@ -83,8 +83,10 @@ function EngineTile(props: { entry: DictationEngineSettings; found?: Found; acti
       <i class="dictation-radio" />
       <span><strong>{label()}</strong><Show when={missing()}><small><i class="dictation-dot failed" />Not found</small></Show></span>
     </button>
-    <Show when={!isMobile}><IconButton type="button" label={label() + " settings"} aria-expanded={open()} onClick={() => setOpen(value => !value)}><Settings2 size={14} /></IconButton></Show>
-    <IconButton type="button" label={"Remove " + label()} onClick={() => props.onRemove()}><Trash2 size={14} /></IconButton>
+    <span class="dictation-engine-tools">
+      <Show when={!isMobile}><IconButton type="button" label={label() + " settings"} aria-expanded={open()} onClick={() => setOpen(value => !value)}><Settings2 size={14} /></IconButton></Show>
+      <IconButton type="button" label={"Remove " + label()} onClick={() => props.onRemove()}><Trash2 size={14} /></IconButton>
+    </span>
     <Show when={open()}>
       <div class="dictation-engine-settings">
         <label><span>Engine path</span><input aria-label={label() + " path"} placeholder={"Search PATH for " + engines[props.entry.engine].program} value={props.entry.path ?? ""} onChange={event => props.onPath(event.currentTarget.value)} /></label>
@@ -162,20 +164,20 @@ export function DictationSettings(props: { settings: AppSettings; onChange: (pat
   return <div class="dictation-settings">
     <section class="dictation-group">
       <h3>Engines</h3>
-      <Show when={entries().length} fallback={<p class="dictation-empty">No engines yet.</p>}>
-        <ul class="dictation-engines" role="radiogroup" aria-label="Dictation engine">
-          <For each={entries().map(item => item.engine)}>{type => <EngineTile entry={entry(type)} found={found()[type]} active={type === engine()} onUse={() => chooseEngine(type)}
-            onPath={path => props.onChange({ dictationEngines: updateEntry(type, { path }) })} onRemove={() => removeEngine(type)} />}</For>
-        </ul>
-      </Show>
-      <Show when={unsaved().length}>
-        <Show when={adding()} fallback={<button type="button" class="dictation-link" onClick={() => setAdding(true)}><Plus size={14} />Add engine</button>}>
-          <div class="dictation-add-engine">
-            <For each={unsaved()}>{type => <button type="button" class="dictation-engine-option" onClick={() => addEngine(type)}><Plus size={13} />{engines[type].label}</button>}</For>
-            <button type="button" class="dictation-link" onClick={() => setAdding(false)}>Cancel</button>
-          </div>
+      <ul class="dictation-engines" role="radiogroup" aria-label="Dictation engine">
+        <For each={entries().map(item => item.engine)}>{type => <EngineTile entry={entry(type)} found={found()[type]} active={type === engine()} onUse={() => chooseEngine(type)}
+          onPath={path => props.onChange({ dictationEngines: updateEntry(type, { path }) })} onRemove={() => removeEngine(type)} />}</For>
+        <Show when={unsaved().length}>
+          <li class="dictation-engine-add">
+            <Show when={adding()} fallback={<button type="button" class="dictation-engine-add-button" onClick={() => setAdding(true)}><Plus size={18} />Add engine</button>}>
+              <div class="dictation-add-engine">
+                <For each={unsaved()}>{type => <button type="button" class="dictation-engine-option" onClick={() => addEngine(type)}><Plus size={13} />{engines[type].label}</button>}</For>
+                <button type="button" class="dictation-link" onClick={() => setAdding(false)}>Cancel</button>
+              </div>
+            </Show>
+          </li>
         </Show>
-      </Show>
+      </ul>
     </section>
     <Show when={engine()} keyed>{type => <section class="dictation-group">
       <h3>{engines[type].label} models</h3>
