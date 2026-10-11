@@ -1,4 +1,3 @@
-const records = require('./archive-records.cjs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { Type } = require('typebox');
@@ -68,20 +67,6 @@ function observeRegistered(root, record, observation, deleted) {
   observe(root, record.session_path, observation);
 }
 
-function deletionFiles(root, observation) {
-  for (const { record } of require('./deletion-records.cjs').list(root)) {
-    if (!record || !assets.exists(record.container)) continue;
-
-    for (const file of recoveryFiles(record, 'delete')) {
-      if (path.dirname(file) !== record.container) throw new Error('Ambiguous goal asset transaction references retained');
-
-      if (assets.exists(file)) observe(root, file, observation, false);
-    }
-  }
-
-  stagedFiles(root, observation);
-}
-
 function stagedFiles(root, observation) {
   for (const staged of require('./storage-transaction.cjs').stagedTranscripts(root)) {
     if (staged.state !== 'prepared') continue;
@@ -92,40 +77,12 @@ function stagedFiles(root, observation) {
   }
 }
 
-function transactionFiles(root, kind, observation) {
-  if (kind === 'delete') return deletionFiles(root, observation);
-
-  for (const directory of records.list(root)) {
-    const transaction = records.read(directory);
-
-    if (!transaction) continue;
-    const files = recoveryFiles(transaction, kind);
-
-    for (const file of files) {
-      if (path.dirname(file) !== directory) throw new Error('Ambiguous goal asset transaction references retained');
-
-      if (assets.exists(file)) observe(root, file, observation, false);
-    }
-  }
-}
-
-function recoveryFiles(transaction, kind) {
-  if (transaction.kind !== kind || transaction.version !== 3) throw new Error('Unrecognized session recovery prevents goal cleanup');
-
-  if (kind === 'archive') {
-    return transaction.records.flatMap(record => [record.backup, record.prepared, record.rollbackCopy]);
-  }
-
-  return transaction.files.filter(file => file.source.endsWith('.jsonl')).map(file => file.staged);
-}
-
 function surviving(root, deleted) {
   const observation = { files: new Map(), sessions: new Set(), directories: new Set() };
   registered(root, observation, deleted);
   queued(root, observation, deleted);
   external(root, observation);
-  transactionFiles(root, 'archive', observation);
-  transactionFiles(root, 'delete', observation);
+  stagedFiles(root, observation);
   publicationDiagnostics(root, observation);
 
   return observation;

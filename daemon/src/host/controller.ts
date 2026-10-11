@@ -893,7 +893,7 @@ export async function queueCommand(session: Session, original: any): Promise<any
 function retentionPending(root: string): boolean {
   const database = Registry.open(root);
   try {
-    const row: any = database.prepare('SELECT (EXISTS(SELECT 1 FROM retention_candidates) OR EXISTS(SELECT 1 FROM cleanup_requests) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM storage_transactions)) AS pending').get();
+    const row: any = database.prepare('SELECT (EXISTS(SELECT 1 FROM retention_candidates) OR EXISTS(SELECT 1 FROM cleanup_requests) OR EXISTS(SELECT 1 FROM storage_transactions)) AS pending').get();
     return Boolean(row.pending);
   } finally { database.close(); }
 }

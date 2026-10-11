@@ -8,43 +8,7 @@ const { Check } = require('typebox/value');
 const { createObservation, observeEntry, recordGoals } = require('./storage-inventory-owners.cjs');
 const { discoverPublicationDiagnostics } = require('./storage-inventory-publications.cjs');
 
-const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
-
-const journalSchema = Type.Object({ version: Type.Union([Type.Literal(2), Type.Literal(3)]), kind: Type.Union([Type.Literal('archive'), Type.Literal('delete')]), id: Type.String({ pattern: '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$' }), root: Type.String(), container: Type.String(), containerIdentity: identitySchema, state: Type.String() });
-
-const archiveSchema = Type.Object({ sessionId: Type.String(), backup: Type.String(), prepared: Type.String(), backupIdentity: Type.Optional(Type.Object({ identity: identitySchema })), preparedIdentity: Type.Optional(Type.Object({ identity: identitySchema })) });
-
-const deletedSchema = Type.Object({ source: Type.String(), staged: Type.String(), identity: Type.Object({ identity: identitySchema }) });
-
 const headerSchema = Type.Object({ type: Type.Literal('session'), id: Type.String({ minLength: 1 }) });
-
-function archiveSources(journal) {
-  if (!Check(Type.Array(archiveSchema), journal.records)) throw new Error('Invalid archive diagnostic transcript mapping');
-
-  const records = journal.records;
-
-  return records.flatMap(record => [
-    { file: record.backup, sessionId: record.sessionId, identity: record.backupIdentity?.identity },
-    { file: record.prepared, sessionId: record.sessionId, identity: record.preparedIdentity?.identity },
-    { file: record.rollbackCopy ?? record.rollback, sessionId: record.sessionId, identity: record.rollbackIdentity?.identity },
-  ]);
-}
-
-function diagnosticSources(journal) {
-  if (journal.kind === 'archive') return archiveSources(journal);
-
-  if (!Check(Type.Array(deletedSchema), journal.files)) throw new Error('Invalid deletion diagnostic transcript mapping');
-
-  return journal.files.flatMap(file => file.source.endsWith('.jsonl') ? [{ file: file.staged, identity: file.identity.identity }] : []);
-}
-
-function validateLocation(profile, namespace, directory, journal, metadata) {
-  if (!Check(journalSchema, journal) || journal.root !== profile || journal.id !== path.basename(directory)) throw new Error('Diagnostic journal ownership is unresolved');
-
-  if (journal.container !== path.join(profile, journal.kind + '-transactions', journal.id) || journal.containerIdentity !== metadata.dev + ':' + metadata.ino) throw new Error('Diagnostic journal container identity changed');
-
-  if (namespace !== journal.kind + '-transactions' && !(journal.kind === 'delete' && namespace === 'deleted-sessions')) throw new Error('Diagnostic journal kind differs from its storage namespace');
-}
 
 function verifyHeader(header, source) {
   if (!Check(headerSchema, header) || source.sessionId && source.sessionId !== header.id) throw new Error('Diagnostic transcript header differs from its journal');
@@ -94,50 +58,9 @@ async function transcript(file, source, discovery, kind) {
   } finally { await handle.close(); }
 }
 
-async function inspectDirectory(profile, namespace, directory, discovery, journal) {
-  const metadata = await fs.lstat(directory, { bigint: true });
-
-  if (!metadata.isDirectory() || await fs.realpath(directory) !== directory) throw new Error('Diagnostic journal container has ambiguous ancestry');
-  validateLocation(profile, namespace, directory, journal, metadata);
-
-  for (const source of diagnosticSources(journal)) {
-    if (!source.file) continue;
-
-    if (path.dirname(source.file) !== journal.container) throw new Error('Diagnostic transcript is outside its journal container');
-    const file = path.join(directory, path.basename(source.file));
-
-    try { await transcript(file, source, discovery, 'diagnostic-' + journal.kind + '-' + journal.state); }
-    catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(file + ': diagnostic goal reference coverage unavailable: ' + error.message); }
-  }
-}
-
 async function discoverGoalDiagnostics(profile, discovery) {
   await discoverPublicationDiagnostics(profile, discovery, transcript);
-
-  for (const { record } of require('./deletion-records.cjs').list(profile)) {
-    if (!record) continue;
-
-    const directory = await fs.lstat(record.container).then(() => record.container, error => {
-      if (error.code !== 'ENOENT') throw error;
-
-      return record.garbagePath;
-    });
-
-    try { await inspectDirectory(profile, path.basename(path.dirname(directory)), directory, discovery, record); }
-    catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(directory + ': diagnostic goal ownership unavailable: ' + error.message); }
-  }
-
   await discoverTransactionDiagnostics(profile, discovery);
-
-  const archives = require('./archive-records.cjs');
-
-  for (const directory of archives.list(profile)) {
-    try {
-      const record = archives.read(directory);
-
-      if (record) await inspectDirectory(profile, 'archive-transactions', directory, discovery, record);
-    } catch (error) { if (error.code !== 'ENOENT') discovery.warnings.push(directory + ': diagnostic goal ownership unavailable: ' + error.message); }
-  }
 }
 
 async function discoverTransactionDiagnostics(profile, discovery) {

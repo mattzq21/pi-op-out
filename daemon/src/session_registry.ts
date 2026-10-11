@@ -15,7 +15,7 @@ export function withDatabase(script: string): string {
 export function reserve(root: string): string {
   const database = open(root);
   try {
-    const statement = database.prepare("INSERT INTO sessions (session_id) SELECT ?1 WHERE NOT EXISTS (SELECT 1 FROM deletion_records d, json_each(d.record_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) AND NOT EXISTS (SELECT 1 FROM storage_transactions s, json_each(s.journal_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) ON CONFLICT(session_id) DO NOTHING");
+    const statement = database.prepare("INSERT INTO sessions (session_id) SELECT ?1 WHERE NOT EXISTS (SELECT 1 FROM storage_transactions s, json_each(s.journal_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) ON CONFLICT(session_id) DO NOTHING");
     for (;;) {
       const id = randomUUID();
       if (Number(statement.run(id).changes) === 1) return id;

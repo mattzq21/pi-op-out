@@ -449,7 +449,6 @@ function recoverEarlier(root, kind) {
 
 function recoverStorage(root) {
   io.recover(root);
-  require('./deletion-retention.cjs').pruneReceipts(root);
 }
 
 function run(root, kind, plan, resultOf) {
@@ -485,12 +484,8 @@ function restoredResult(root, source) {
   const earlier = recoverEarlier(root, 'restore');
 
   if (earlier) return { state: 'pending', error: earlier.error };
-  const result = require('./restore-receipts.cjs').result(root, source);
-  const receipt = path.join(root, 'restore-receipts', `${createHash('sha256').update(source).digest('hex')}.json`);
 
-  if (result?.sessions && !require('./deletion-retention.cjs').validReceipt(receipt, new Set())) return { state: 'committed', result: null };
-
-  return { state: 'committed', result: result ?? null };
+  return { state: 'committed', result: require('./restore-receipts.cjs').result(root, source) };
 }
 
 function afterCommit(root, outcome) {

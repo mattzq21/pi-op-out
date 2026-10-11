@@ -42,7 +42,7 @@ function recoverStorage(root: string, ownership: ConversationOwnership): Recover
 function restorationPending(root: string): boolean {
   const db = Registry.open(root);
   try {
-    const row: any = db.prepare("SELECT (EXISTS(SELECT 1 FROM session_restorations) OR EXISTS(SELECT 1 FROM deletion_records) OR EXISTS(SELECT 1 FROM storage_transactions) OR EXISTS(SELECT 1 FROM archive_records WHERE record_json IS NULL OR (COALESCE(json_extract(record_json, '$.finished'), 0) != 1 AND COALESCE(json_extract(record_json, '$.state'), '') != 'planned'))) AS pending").get();
+    const row: any = db.prepare('SELECT EXISTS(SELECT 1 FROM storage_transactions) AS pending').get();
     return Boolean(row.pending);
   } finally { db.close(); }
 }

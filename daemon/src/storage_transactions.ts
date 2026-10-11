@@ -93,11 +93,7 @@ export async function restore(host: Host, paths: string[]): Promise<RestoreResul
 }
 
 export async function committedRestore(host: Host, path: string): Promise<RestoreResult | null> {
-  let value = await run(host, { action: 'result', path });
-  if (record(value) && value.sessions === undefined && text(value.path) && text(value.sessionPath) && text(value.sessionId)) {
-    value = { ...value, sessions: [{ path: value.path, sessionPath: value.sessionPath, sessionId: value.sessionId, sourcePath: path }] };
-  }
-  return checked(value, (value): value is RestoreResult | null => value === null || restoreResult(value));
+  return checked(await run(host, { action: 'result', path }), (value): value is RestoreResult | null => value === null || restoreResult(value));
 }
 
 export async function recover(host: Host, options: { root?: string; signal?: AbortSignal; busyIsOk?: boolean } = {}): Promise<void> {

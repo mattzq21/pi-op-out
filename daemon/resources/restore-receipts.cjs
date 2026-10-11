@@ -1,38 +1,49 @@
 const { lockSync } = require('./file-lock.cjs');
-const records = require('./archive-records.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { isDeepStrictEqual } = require('node:util');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('./session-transactions.cjs');
+const database = require('./session-database.cjs');
 
 const traceSchema = Type.Object({ source: Type.String(), destination: Type.String(), identity: Type.String({ pattern: '^\\d+:\\d+$' }) });
 
-const receiptSchema = Type.Object({
-  trace: traceSchema,
-  result: Type.Object({ sessionId: Type.String({ minLength: 1 }) }),
-});
-
 const operationIdSchema = Type.String({ pattern: '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$' });
 
-const publishedSchema = Type.Object({
+const receiptSchema = Type.Object({
   version: Type.Literal(1), operationId: operationIdSchema, trace: traceSchema,
-  result: Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.String(), path: Type.String() }),
+  result: Type.Object({
+    sessionId: Type.String({ minLength: 1 }), sessionPath: Type.String(), path: Type.String(),
+    sessions: Type.Array(Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.String() }), { minItems: 1 }),
+  }),
 });
-
-const transactionSchema = Type.Object({ version: Type.Literal(3), committed: Type.Optional(Type.Boolean()) });
 
 const headerSchema = Type.Object({ type: Type.Literal('session'), id: Type.String({ minLength: 1 }) });
 
-const finishedArchiveSchema = Type.Object({
-  version: Type.Literal(3), kind: Type.Literal('archive'), id: operationIdSchema, root: Type.String(),
-  container: Type.String(), containerIdentity: Type.String({ pattern: '^\\d+:\\d+$' }), state: Type.Literal('committed'), finished: Type.Literal(true),
-});
+function key(source) { return createHash('sha256').update(source).digest('hex'); }
 
-function receiptPath(root, source) {
-  return path.join(root, 'restore-receipts', `${createHash('sha256').update(source).digest('hex')}.json`);
+function withDatabase(root, operation) {
+  const db = database.open(root);
+
+  try { return operation(db); }
+  finally { db.close(); }
+}
+
+function readReceipt(root, id) {
+  const row = withDatabase(root, db => db.prepare('SELECT record_json FROM session_restore_receipts WHERE record_id=?').get(id));
+
+  return row ? { id, body: row.record_json, value: parse(row.record_json) } : null;
+}
+
+function receiptIds(root) {
+  return withDatabase(root, db => db.prepare('SELECT record_id FROM session_restore_receipts ORDER BY record_id').all().map(row => row.record_id));
+}
+
+function unchanged(root, snapshot) { return readReceipt(root, snapshot.id)?.body === snapshot.body; }
+
+function removeReceipt(root, snapshot) {
+  return withDatabase(root, db => db.prepare('DELETE FROM session_restore_receipts WHERE record_id=? AND record_json=?').run(snapshot.id, snapshot.body).changes === 1);
 }
 
 function canonicalRoot(root) {
@@ -65,32 +76,6 @@ function parse(body) {
   catch (_error) { return undefined; }
 }
 
-function readRecord(file) {
-  if (['restore-transactions', 'restore-receipts'].includes(path.basename(path.dirname(file)))) return require('./restore-records.cjs').read(file);
-  const metadata = io.exists(file);
-
-  if (!metadata) return null;
-
-  if (!metadata.isFile() || fs.realpathSync(file) !== file) return { file };
-  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-
-  try { return readRecordDescriptor(file, descriptor); }
-  finally { fs.closeSync(descriptor); }
-}
-
-function readRecordDescriptor(file, descriptor) {
-  const before = fs.fstatSync(descriptor, { bigint: true });
-
-  if (!before.isFile()) return { file };
-  const body = fs.readFileSync(descriptor, 'utf8');
-
-  const saved = fingerprint(before);
-
-  if (fingerprint(fs.fstatSync(descriptor, { bigint: true })) !== saved || !sameEntry(file, saved)) return { file };
-
-  return { file, fingerprint: saved, body, value: parse(body) };
-}
-
 function canonicalLocation(base, file) {
   if (!io.inside(base, file) || file === base || !file.endsWith('.jsonl')) return false;
   let parent = path.dirname(file);
@@ -100,30 +85,22 @@ function canonicalLocation(base, file) {
   return io.exists(parent).isDirectory() && fs.realpathSync(parent) === parent;
 }
 
-function recognizedReceipt(receipt) {
-  if (!Check(receiptSchema, receipt)) return false;
-
-  if (!Object.hasOwn(receipt, 'version') && !Object.hasOwn(receipt, 'operationId')) return true;
-
-  return Check(publishedSchema, receipt) && receipt.result.sessionPath === receipt.trace.destination && path.isAbsolute(receipt.result.path);
-}
-
 function validReceipt(root, receipt) {
-  if (!recognizedReceipt(receipt)) return false;
+  if (!Check(receiptSchema, receipt) || receipt.result.sessionPath !== receipt.trace.destination || !path.isAbsolute(receipt.result.path)) return false;
 
   return canonicalLocation(path.join(root, 'archived'), receipt.trace.source) && canonicalLocation(path.join(root, 'sessions'), receipt.trace.destination);
 }
 
-function ownsReceipt(root, snapshot) {
-  if (!snapshot || !validReceipt(root, snapshot.value)) return false;
+function ownedReceipt(root, id) {
+  const snapshot = readReceipt(root, id);
 
-  return snapshot.file === receiptPath(root, snapshot.value.trace.source);
+  return snapshot && validReceipt(root, snapshot.value) && key(snapshot.value.trace.source) === id ? snapshot : null;
 }
 
-function ownedReceipt(root, file) {
-  const snapshot = readRecord(file);
+function sessionsSurvive(root, receipt) {
+  const { survivingSession } = require('./deletion-retention.cjs');
 
-  return ownsReceipt(root, snapshot) ? snapshot : null;
+  return receipt.result.sessions.every(session => survivingSession(root, session.sessionPath, session.sessionId, new Set()));
 }
 
 function readHeader(descriptor) {
@@ -187,124 +164,55 @@ function destinationState(receipt) {
 
 function result(root, source) {
   canonicalRoot(root);
-  const snapshot = ownedReceipt(root, receiptPath(root, source));
+  const snapshot = ownedReceipt(root, key(source));
 
   if (!snapshot || snapshot.value.trace.source !== source) return null;
 
-  return destinationState(snapshot.value).kind === 'valid' && unchanged(snapshot) ? snapshot.value.result : null;
-}
+  if (destinationState(snapshot.value).kind !== 'valid' || !sessionsSurvive(root, snapshot.value)) return null;
 
-function finishedArchive(root, directory, transaction) {
-  if (!Check(finishedArchiveSchema, transaction)) return false;
-
-  if (transaction.root !== root || transaction.container !== directory || directory !== path.join(root, 'archive-transactions', transaction.id)) return false;
-
-  if (fs.realpathSync(directory) !== directory || io.identity(directory) !== transaction.containerIdentity) return false;
-
-  return JSON.stringify(transaction) === JSON.stringify(require('./archive-records.cjs').read(directory));
-}
-
-function archivePending(root) {
-
-  try {
-    return records.list(root).some(directory => !finishedArchive(root, directory, records.read(directory)));
-  } catch (_error) { return true; }
-}
-
-function pending(root, ignoredJournal) {
-  if (require('./restore-records.cjs').list(root).some(file => file !== ignoredJournal)) return true;
-
-  if (archivePending(root) || require('./deletion-records.cjs').list(root).length || require('./storage-transaction.cjs').pending(root)) return true;
-
-  return false;
-}
-
-function unchanged(snapshot) {
-  const current = readRecord(snapshot.file);
-
-  return Boolean(current) && current.fingerprint === snapshot.fingerprint && current.body === snapshot.body;
-}
-
-function removeReceipt(snapshot) {
-  if (!unchanged(snapshot)) return false;
-  require('./restore-records.cjs').remove(snapshot.file);
-
-  return true;
-}
-
-function operationJournal(root, transaction, journal) {
-  if (!Check(transactionSchema, transaction) || transaction.committed) return null;
-
-  if (!validReceipt(root, { trace: transaction.trace, result: transaction.result })) return null;
-
-  if (!Check(operationIdSchema, transaction.receiptId)) return null;
-  const key = createHash('sha256').update(transaction.result.sessionId.toLowerCase()).digest('hex').slice(0, 40);
-
-  if (journal !== path.join(root, 'restore-transactions', `${key}.json`)) return null;
-  const snapshot = readRecord(journal);
-
-  return snapshot && isDeepStrictEqual(snapshot.value, parse(JSON.stringify(transaction))) ? snapshot : null;
-}
-
-function matchingReceipt(snapshot, transaction) {
-  if (!snapshot || !Check(publishedSchema, snapshot.value) || snapshot.value.operationId !== transaction.receiptId) return false;
-  const expected = parse(JSON.stringify({ trace: transaction.trace, result: transaction.result }));
-
-  return isDeepStrictEqual(snapshot.value.trace, expected.trace) && isDeepStrictEqual(snapshot.value.result, expected.result);
-}
-
-function discardRolledBack(root, transaction, journal) {
-  assertLocked(root);
-  const active = operationJournal(root, transaction, journal);
-
-  if (!active || pending(root, journal)) return false;
-  const snapshot = ownedReceipt(root, receiptPath(root, transaction.trace.source));
-
-  if (!matchingReceipt(snapshot, transaction)) return false;
-  const source = fileState(transaction.trace.source, transaction.trace.identity, transaction.result.sessionId);
-
-  if (source.kind !== 'valid' || io.exists(transaction.trace.destination)) return false;
-
-  if (!unchanged(active) || !sameEntry(transaction.trace.source, source.proof) || io.exists(transaction.trace.destination)) return false;
-
-  return removeReceipt(snapshot);
+  return unchanged(root, snapshot) ? snapshot.value.result : null;
 }
 
 function record(root, journal) {
   assertLocked(root);
   const receipt = parse(JSON.stringify({ version: 1, operationId: journal.id, trace: journal.trace, result: journal.result }));
 
-  if (!Check(publishedSchema, receipt) || !validReceipt(root, receipt)) throw new Error('Invalid restore receipt publication');
+  if (!validReceipt(root, receipt)) throw new Error('Invalid restore receipt publication');
 
   if (destinationState(receipt).kind !== 'valid') return;
 
-  require('./restore-records.cjs').write(receiptPath(root, receipt.trace.source), JSON.stringify(receipt));
+  withDatabase(root, db => db.prepare('INSERT INTO session_restore_receipts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json')
+    .run(key(receipt.trace.source), JSON.stringify(receipt)));
 }
 
-function pruneReceipt(root, file) {
-  const snapshot = ownedReceipt(root, file);
+function pruneReceipt(root, id) {
+  const snapshot = readReceipt(root, id);
 
   if (!snapshot) return false;
+
+  if (!ownedReceipt(root, id)) return removeReceipt(root, snapshot);
   const state = destinationState(snapshot.value);
 
-  if (state.kind !== 'stale') return false;
+  if (state.kind === 'uncertain') return false;
+
+  if (state.kind === 'valid') return sessionsSurvive(root, snapshot.value) ? false : removeReceipt(root, snapshot);
   const current = destinationState(snapshot.value);
 
   if (current.kind !== 'stale' || current.proof !== state.proof) return false;
 
-  return removeReceipt(snapshot);
+  return removeReceipt(root, snapshot);
 }
 
 function prune(root) {
   assertLocked(root);
-  const files = require('./restore-records.cjs').list(root, true);
+  const ids = receiptIds(root);
 
-  if (pending(root)) return { removed: 0, retained: files.length, deferred: true };
+  if (require('./storage-transaction.cjs').pending(root)) return { removed: 0, retained: ids.length, deferred: true };
   let removed = 0;
 
-  for (const file of files) if (pruneReceipt(root, file)) removed += 1;
+  for (const id of ids) if (pruneReceipt(root, id)) removed += 1;
 
-  return { removed, retained: files.length - removed, deferred: false };
+  return { removed, retained: ids.length - removed, deferred: false };
 }
 
-module.exports = { record, result, discardRolledBack, prune };
+module.exports = { record, result, prune };

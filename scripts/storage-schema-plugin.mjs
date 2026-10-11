@@ -36,13 +36,11 @@ export function storageSchemaImports() {
 
 const canonicalModules = new Set([
   "file-lock.cjs",
-  "archive-records.cjs", "deletion-records.cjs", "external-transcripts.cjs",
-  "restore-records.cjs", "transcript-metadata.cjs", "conversation-storage.cjs",
+  "external-transcripts.cjs", "transcript-metadata.cjs", "conversation-storage.cjs",
   "session-database.cjs", "goal-storage.cjs", "temporary-chat.cjs", "transcript-references.cjs", "goal-dependencies.cjs", "goal-preparations.cjs", "goal-ownership.cjs",
 
-  "legacy-archive-transaction.cjs", "archive-plan.cjs",
-  "legacy-delete-transaction.cjs", "storage-transaction.cjs", "deletion-retention.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
-  "restore-receipts.cjs", "legacy-restore-transaction.cjs", "restore-plan.cjs", "retention-candidates.cjs", "retention-collection.cjs", "session-transactions.cjs", "storage-lock.cjs", "reference-publication-lock.cjs", "storage-transaction-lock.cjs",
+  "archive-plan.cjs", "storage-transaction.cjs", "deletion-retention.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
+  "restore-receipts.cjs", "restore-plan.cjs", "retention-candidates.cjs", "retention-collection.cjs", "session-transactions.cjs", "storage-lock.cjs", "reference-publication-lock.cjs", "storage-transaction-lock.cjs",
   "transcript-identity.cjs",
   "session-publication.cjs", "session-publication-io.cjs", "session-publication-dependencies.cjs", "session-child-index.cjs", "review-publication.cjs", "goal-assets.cjs",
 ]);

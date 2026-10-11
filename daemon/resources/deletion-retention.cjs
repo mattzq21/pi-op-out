@@ -1,7 +1,6 @@
 const { lockSync } = require('./file-lock.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { validSessionHeader } = require('./session-header.cjs');
@@ -9,13 +8,6 @@ const { describeCandidates } = require('./retention-candidates.cjs');
 const transcriptRecords = require('./transcript-references.cjs');
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const restoredSessionSchema = Type.Object({ sessionId: Type.String(), sessionPath: Type.String() });
-
-const receiptSchema = Type.Object({
-  trace: Type.Object({ source: Type.String(), destination: Type.String(), identity: Type.String({ pattern: '^\\d+:\\d+$' }) }),
-  result: Type.Object({ sessionId: Type.String(), sessions: Type.Optional(Type.Array(restoredSessionSchema)) }),
-});
 
 function metadata(file) {
   try { return fs.lstatSync(file); }
@@ -182,52 +174,8 @@ function survivingSession(root, file, id, excluded, connection) {
   return validSessionHeader(header) && header.id === id;
 }
 
-function validReceipt(file, excluded) {
-  let receipt;
-
-  try { receipt = require('./restore-records.cjs').read(file)?.value; }
-  catch (error) { if (error instanceof SyntaxError) return false; throw error; }
-
-  if (!Check(receiptSchema, receipt)) return false;
-  const { trace, result } = receipt;
-  const root = path.dirname(path.dirname(file));
-
-  if (path.basename(file) !== `${createHash('sha256').update(trace.source).digest('hex')}.json`) return false;
-
-  if (!survivingSession(root, trace.destination, result.sessionId, excluded)) return false;
-  const info = fs.lstatSync(trace.destination, { bigint: true });
-
-  if (`${info.dev}:${info.ino}` !== trace.identity) return false;
-
-  return (result.sessions ?? []).every(session => survivingSession(root, session.sessionPath, session.sessionId, excluded));
-}
-
-function invalidReceipts(root, excluded) {
-  return require('./restore-records.cjs').list(root, true).filter(file => !validReceipt(file, excluded));
-}
-
-function discardReceipt(file) {
-  if (path.basename(path.dirname(file)) === 'restore-receipts') return require('./restore-records.cjs').remove(file);
-
-  fs.unlinkSync(file);
-  const directory = fs.openSync(path.dirname(file), 'r');
-
-  try { fs.fsyncSync(directory); }
-  finally { fs.closeSync(directory); }
-}
-
-function pruneReceipts(root) {
-  for (const file of invalidReceipts(root, new Set())) discardReceipt(file);
-}
-
-function recoveryPending(root) {
-  return require('./restore-records.cjs').list(root).length > 0
-    || require('./deletion-records.cjs').list(root).length > 0
-    || require('./storage-transaction.cjs').pending(root);
-}
-
 function collectRetention(root, sources, savedFiles, deferred = { directories: [], sessionIds: [] }, unpublishedGoals = false) {
-  const inventory = { goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: recoveryPending(root) };
+  const inventory = { goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: require('./storage-transaction.cjs').pending(root) };
 
   registeredGoals(root, inventory);
   registeredTranscripts(root, inventory);
@@ -253,7 +201,6 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
     uncertain: inventory.uncertain,
     pendingGoals,
     directories: inventory.uncertain ? [] : [...owned].filter(file => !retained.has(file)),
-    files: invalidReceipts(root, excluded),
     registryIds: inventory.uncertain ? [] : requestedIds.filter(id => !inventory.sessionIds.has(id.toLowerCase())),
     deferred: describeCandidates([...owned], requestedIds),
   };
@@ -307,4 +254,4 @@ function removeRegistryRows(db, sessionIds) {
   return completed;
 }
 
-module.exports = { collectRetention, cleanupRegistry, validReceipt, discardReceipt, pruneReceipts };
+module.exports = { collectRetention, cleanupRegistry, survivingSession };
