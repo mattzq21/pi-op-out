@@ -11,4 +11,5 @@
 **Task** - from agent prompted to agent settled.  
 **Session tree** - a root session and all its subagent sessions. Avoid: conversation.  
 **Storage transaction** - an archive, delete or restore of one or more sessions that fully happens or fully rolls back, also after a crash.  
-**Host** - a machine that stores sessions and runs agents: the local machine or a remote machine over SSH. "Machine" is the UI word for it.
+**Host** - a machine that stores sessions and runs agents: the local machine or a remote machine over SSH. "Machine" is the UI word for it.  
+**Host script** - a piop script that runs on a Host to read or change its stored data.
