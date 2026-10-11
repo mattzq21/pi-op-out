@@ -13,7 +13,7 @@ import { CustomProviderForm } from "./CustomProviderForm";
 
 type AuthControls = ReturnType<typeof useProviderAuth>;
 
-const localHostLabel = isMobile ? "Connected daemon" : "This computer";
+const localHostLabel = isMobile ? "Connected daemon" : "Local";
 
 function selectedHostName(hosts: RemoteHost[], hostId: string) {
   return hostId === "local" ? localHostLabel : hosts.find((host) => host.id === hostId)?.name || hostId;
