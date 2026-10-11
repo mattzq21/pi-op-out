@@ -663,7 +663,7 @@ function pickerDefaults({ label, selectedLabel, value, options, disabled, menuWi
   return { label, selectedLabel, value, options, disabled, menuWidth, centered, compact, onChange };
 }
 
-export function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void; footer?: JSXElement }) {
+export function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; anchorLeft?: boolean; centered?: boolean; compact?: boolean; onChange: (value: string) => void; footer?: JSXElement }) {
   const pickerFields = createMemoFields(() => pickerDefaults(props));
   const picker = () => pickerFields;
   const [menuStyle, setMenuStyle] = createSignal<CSSProperties>();
@@ -695,13 +695,16 @@ export function ContainedPicker(props: { label: string; selectedLabel?: string; 
     const { leftEdge, rightEdge } = menuEdges();
     const width = Math.max(0, Math.min(props.menuMinWidth ?? picker().menuWidth, rightEdge - leftEdge));
     const right = window.innerWidth - Math.min(rightEdge, Math.max(rect.right, leftEdge + width));
+    const left = Math.max(leftEdge, Math.min(rect.left, rightEdge - width));
     const selectedIndex = picker().options.findIndex((option) => option.value === picker().value && !option.disabled);
     const index = Math.max(0, selectedIndex >= 0 ? selectedIndex : picker().options.findIndex((option) => !option.disabled));
     setActiveIndex(index);
     setMenuStyle({
       ...(props.menuMinWidth === undefined
         ? { left: cssPixels(Math.max(leftEdge, Math.min(rect.right - width, rightEdge - width))), width: cssPixels(width) }
-        : { right: cssPixels(right), width: "max-content", "min-width": cssPixels(width), "max-width": cssPixels(window.innerWidth - right - leftEdge) }),
+        : props.anchorLeft
+          ? { left: cssPixels(left), width: "max-content", "min-width": cssPixels(width), "max-width": cssPixels(rightEdge - left) }
+          : { right: cssPixels(right), width: "max-content", "min-width": cssPixels(width), "max-width": cssPixels(window.innerWidth - right - leftEdge) }),
       bottom: cssPixels(window.innerHeight - rect.top + 6),
       "max-height": cssPixels(Math.max(0, rect.top - 14)),
     });
