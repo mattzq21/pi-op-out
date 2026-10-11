@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-function lockStorage(root, nonblocking = false) {
+function lockStorage(root, nonblocking = false, onBusy) {
   if (process.argv.at(-1) === '--storage-transaction-locked') {
     process.argv.pop();
 
@@ -29,6 +29,7 @@ function lockStorage(root, nonblocking = false) {
     const child = spawnSync('sh', ['-c', command, 'piop-storage', process.execPath, ...process.execArgv, '--', ...process.argv.slice(1), '--storage-transaction-locked'], { stdio: ['inherit', 'inherit', 'inherit', ...descriptors] });
 
     if (child.error) throw child.error;
+    if (nonblocking && child.status === 75) onBusy?.();
     process.exitCode = transactionExitCode(child.status, nonblocking);
 
     return false;

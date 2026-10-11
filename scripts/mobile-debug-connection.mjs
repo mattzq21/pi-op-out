@@ -63,7 +63,12 @@ while (Date.now() < deadline) {
       const packet = await ready(url.href, endpoint.token);
 
       if (packet) {
-        const runningIdentity = packet.debugRuntime?.buildIdentity;
+        let runningIdentity;
+
+        if (typeof packet.debugRuntime?.buildIdentity === "string") runningIdentity = packet.debugRuntime.buildIdentity;
+        else if (Number.isSafeInteger(packet.debugProcessId) && packet.debugProcessId > 0) {
+          try { runningIdentity = createHash("sha256").update(readFileSync(`/proc/${packet.debugProcessId}/exe`)).digest("hex"); } catch { }
+        }
 
         if (runningIdentity !== builtIdentity) {
           outdatedBuild = true;

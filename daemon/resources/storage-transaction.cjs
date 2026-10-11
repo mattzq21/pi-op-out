@@ -9,8 +9,6 @@ const { Check } = require('typebox/value');
 
 const labels = { archive: 'Archive', delete: 'Deletion', restore: 'Restore' };
 
-const outcomes = { archive: 'archived', delete: 'deleted', restore: 'restored' };
-
 const stepSchema = Type.Object({ type: Type.String() });
 
 const moveSchema = Type.Object({ type: Type.Literal('move'), source: Type.String(), staged: Type.String(), identity: Type.Object({ identity: Type.String() }) });
@@ -259,7 +257,7 @@ function execute(journal) {
       return { state: 'pending', error: `${label} failed: ${error.message}\n${label} recovery is pending: ${failure.message}` };
     }
 
-    return { state: 'rolled-back', error: `${label} failed: ${error.message}\n${label} was rolled back.` };
+    return { state: 'rolled-back', error: `${label} failed: ${error.message}` };
   }
 
   const failure = finish(journal);
@@ -268,7 +266,7 @@ function execute(journal) {
 }
 
 function rejected(kind, error) {
-  return { state: 'rolled-back', error: `${labels[kind]} failed: ${error.message}\n${labels[kind]} was rolled back.` };
+  return { state: 'rolled-back', error: `${labels[kind]} failed: ${error.message}` };
 }
 
 function inside(parent, file) { return io.inside(parent, file) && file !== parent; }
@@ -432,7 +430,7 @@ function planRestore(root, request) {
   const sessions = planned.map(target => ({ path: target.cwd, sessionPath: target.destination, sessionId: target.sessionId, sourcePath: target.path }));
   const result = { path: sessions[0].path, sessionPath: sessions[0].sessionPath, sessionId: sessions[0].sessionId, sessions };
 
-  if (Buffer.byteLength(JSON.stringify(result)) + 1 > 64 * 1024 * 1024) throw new Rejected('Restore group is too large; restore fewer sessions at a time');
+  if (Buffer.byteLength(JSON.stringify({ state: 'committed', result })) + 1 > 64 * 1024 * 1024) throw new Rejected('Restore group is too large; restore fewer sessions at a time');
   const steps = [...targets.map(claimStep), ...placeSteps(targets), ...targets.map(target => restoreRecord(root, target.sessionId, target.destination))];
 
   const id = randomUUID();
@@ -446,7 +444,7 @@ function planRestore(root, request) {
 
 function recoverEarlier(root, kind) {
   try { recoverStorage(root); }
-  catch (error) { return { state: 'rolled-back', error: `${labels[kind]} failed: earlier storage recovery is pending: ${error.message}\nNothing was ${outcomes[kind]}.` }; }
+  catch (error) { return { state: 'rolled-back', error: `${labels[kind]} failed: earlier storage recovery is pending: ${error.message}` }; }
 }
 
 function recoverStorage(root) {
@@ -492,7 +490,7 @@ function restoredResult(root, source) {
 
   if (result?.sessions && !require('./deletion-retention.cjs').validReceipt(receipt, new Set())) return { state: 'committed', result: null };
 
-  return { state: 'committed', result };
+  return { state: 'committed', result: result ?? null };
 }
 
 function afterCommit(root, outcome) {
@@ -512,11 +510,10 @@ function afterCommit(root, outcome) {
 }
 
 function cleanupTemporaryChats(root) {
-  const revision = database.cleanupRequest(root, 'temporary-chat');
-
-  if (revision === undefined) return;
-
   try {
+    const revision = database.cleanupRequest(root, 'temporary-chat');
+
+    if (revision === undefined) return;
     require('./temporary-chat.cjs').cleanupDeleted(root);
     database.finishCleanup(root, 'temporary-chat', revision);
   } catch (error) { return `Temporary folder cleanup will retry: ${error.message}`; }

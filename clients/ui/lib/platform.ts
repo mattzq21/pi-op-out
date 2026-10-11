@@ -9,6 +9,7 @@ import { jsonResultSchema, nativeArgumentsSchema, type NativeArguments } from ".
 import { invokeWithBackpressure } from "./backpressure";
 import type { SettingsPublication } from "../types";
 import { clientIdentity } from "./clientIdentity";
+import { daemonError } from "./storageFailure";
 
 export type { UnlistenFn };
 
@@ -46,6 +47,11 @@ export function captureDaemonTransport() {
 export function invoke<S extends z.ZodType>(command: string, args: NativeArguments | undefined, schema: S): Promise<z.output<S>>;
 export function invoke(command: string, args?: NativeArguments): Promise<JSONType | undefined>;
 export async function invoke(command: string, args?: NativeArguments, schema: z.ZodType = jsonResultSchema) {
+  try { return await invokeDaemon(command, args, schema); }
+  catch (reason) { throw daemonError(reason); }
+}
+
+async function invokeDaemon(command: string, args: NativeArguments | undefined, schema: z.ZodType) {
   const destination = isMobile ? remoteClient.connectionIdentity() : undefined;
   args = nativeArgumentsSchema.parse({ ...args, clientId: await clientIdentity(isMobile ? "mobile" : "desktop") });
 

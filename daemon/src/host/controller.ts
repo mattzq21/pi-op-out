@@ -1,12 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import * as Registry from '../session_registry';
 import * as Settings from '../settings';
 import * as Extensions from '../extensions';
 import * as DaemonRestart from '../daemon_restart';
-import { nodeCommand } from '../node_command';
-import { storageTransactionBundle } from '../resources';
+import * as storageTransactions from '../storage_transactions';
 import { Mutex, errorText, sleep } from '../util/sync';
 import { flag, kind, text, jsonEqual } from './json';
 import * as Agents from './agents';
@@ -854,24 +852,6 @@ async function retentionPass(root: string, initialize: boolean): Promise<void> {
   finally { clearTimeout(timer); controller.abort(); }
 }
 
-/** Runs the storage-transaction recovery script. Exit code 75 means another process holds the work, which is fine. */
 export function collectRetention(root: string, signal?: AbortSignal): Promise<void> {
-  const request = JSON.stringify({ action: 'recover', root });
-  const spec = nodeCommand(['-e', storageTransactionBundle, request]);
-  return new Promise((resolve, reject) => {
-    const child = spawn(spec.program, spec.args ?? [], { env: { ...process.env, ...spec.env, PIOP_RESTORE_ROOT: root }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
-    let stderr = '';
-    let finished = false;
-    const kill = () => { if (!finished && child.pid !== undefined) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} } };
-    signal?.addEventListener('abort', kill, { once: true });
-    child.stdout!.resume();
-    child.stderr!.on('data', chunk => { if (stderr.length < 65536) stderr += chunk; });
-    child.on('error', error => { finished = true; reject(error); });
-    child.on('close', code => {
-      finished = true;
-      signal?.removeEventListener('abort', kill);
-      if (code === 0 || code === 75) resolve();
-      else reject(new Error('Session storage recovery is pending: ' + stderr.trim()));
-    });
-  });
+  return storageTransactions.recover({ kind: 'local' }, { root, signal, busyIsOk: true });
 }

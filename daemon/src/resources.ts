@@ -1,7 +1,6 @@
 import sessionDatabase from '../resources/session-database.cjs?raw';
 import appSettingsCjs from '../resources/session-broker/app-settings.cjs?raw';
 import relocateSessionBundle from '../resources/relocate-session.bundle.mjs?raw';
-import storageTransactionBundle from '../resources/storage-transaction.bundle.mjs?raw';
 import transcriptReferences from '../resources/transcript-references.cjs?raw';
 import sdkStorage from '../resources/sdk-storage.mjs?raw';
 import sessionRegistryBundle from '../resources/session-registry.bundle.mjs?raw';
@@ -107,7 +106,6 @@ export {
   sessionDatabase,
   appSettingsCjs,
   relocateSessionBundle,
-  storageTransactionBundle,
   transcriptReferences,
   sdkStorage,
   sessionRegistryBundle,

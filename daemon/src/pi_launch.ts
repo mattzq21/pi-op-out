@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
-import { homeDir, isFile, piExecutable } from './environment';
+import { homeDir, piExecutable } from './environment';
 import * as Ext from './extensions';
 import { ensureDesktopSessionsDir, runLimited, shellQuote, type CommandSpec } from './process_io';
 import * as Registry from './session_registry';
@@ -11,8 +11,10 @@ import { transaction } from './util/db';
 import { sessionWorkerCommand } from './session_worker';
 import type { BrokerRuntime } from './broker';
 import { brokerEnvironment } from './broker';
+import { remoteHost, remoteLoginCommand, ssh } from './host_connection';
 
 export { validateRemoteHost };
+export { remoteHost, remoteLoginCommand, ssh, sshBase, userSshConfig } from './host_connection';
 
 export interface LaunchCommand {
   program: string;
@@ -23,34 +25,6 @@ export interface LaunchCommand {
 
 export function launchSpec(command: LaunchCommand): any {
   return { program: command.program, args: command.args, cwd: command.cwd ?? null, env: command.env };
-}
-
-export function remoteHost(settings: AppSettings, hostId: string): RemoteHost {
-  const host = settings.hosts.find(host => host.id === hostId);
-  if (!host) throw new Error(`Unknown machine: ${hostId}`);
-  if (!host.enabled) throw new Error(`Machine ${host.name} is disabled`);
-  validateRemoteHost(host);
-  return host;
-}
-
-export function userSshConfig(): string | undefined {
-  try { const path = join(homeDir(), '.ssh/config'); return isFile(path) ? path : undefined; } catch { return undefined; }
-}
-
-export function remoteLoginCommand(command: string): string { return `bash -lc ${shellQuote('PATH="$PATH:$HOME/.bun/bin"; ' + command)}`; }
-
-export function sshBase(): CommandSpec {
-  const args: string[] = [];
-  const config = userSshConfig();
-  if (config) args.push('-F', config);
-  args.push('-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=5');
-  return { program: 'ssh', args };
-}
-
-export function ssh(host: RemoteHost, ...extra: string[]): CommandSpec {
-  const command = sshBase();
-  command.args!.push(host.target, ...extra);
-  return command;
 }
 
 export function remotePiPath(path: string): string {

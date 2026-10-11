@@ -11,12 +11,16 @@ function areaRoot(target) {
 
 function report(outcome) {
   if (!outcome) return;
-  process.stdout.write(JSON.stringify({ state: outcome.state, result: outcome.result }) + '\n');
+  process.stdout.write(JSON.stringify(outcome) + '\n');
+  process.exitCode = ['committed', 'skipped'].includes(outcome.state) ? 0 : 1;
+}
 
-  if (outcome.warning) console.error(outcome.warning);
+function lock(root, nonblocking = false) {
+  return lockStorage(root, nonblocking, () => report({ state: 'skipped', reason: 'busy' }));
+}
 
-  if (outcome.error) console.error(outcome.error);
-  process.exitCode = outcome.state === 'committed' ? 0 : 1;
+async function nonblocking(root, operation) {
+  return await withReferencePublicationLock(root, operation, true) ?? { state: 'skipped', reason: 'busy' };
 }
 
 async function deleteSessions(request) {
@@ -28,7 +32,7 @@ async function deleteSessions(request) {
   if (roots.size !== 1) throw new Error('Session deletion targets must share storage');
   const [root] = roots;
 
-  if (!lockStorage(root)) return;
+  if (!lock(root)) return;
 
   return withReferencePublicationLock(root, () => transaction.deleteSessions(root, request));
 }
@@ -37,15 +41,16 @@ async function deleteBlank(target) {
   const blank = require('./blank-session-target.cjs');
   const candidate = blank.prepare(target);
 
-  if (!candidate || !lockStorage(candidate.root, true)) return;
+  if (!candidate) return { state: 'skipped', reason: 'not-needed' };
+  if (!lock(candidate.root, true)) return;
 
-  return withReferencePublicationLock(candidate.root, () => {
+  return nonblocking(candidate.root, () => {
     const current = blank.prepare(target);
 
-    if (!current || current.id !== candidate.id || current.target.path !== candidate.target.path) return;
+    if (!current || current.id !== candidate.id || current.target.path !== candidate.target.path) return { state: 'skipped', reason: 'not-needed' };
 
     return transaction.deleteSessions(current.root, { targets: [current.target], activeSessionIds: [] });
-  }, true);
+  });
 }
 
 function storageRoot(request) {
@@ -57,7 +62,7 @@ function storageRoot(request) {
 async function locked(request, operation) {
   const root = storageRoot(request);
 
-  if (!lockStorage(root)) return;
+  if (!lock(root)) return;
 
   return withReferencePublicationLock(root, () => operation(root));
 }
@@ -65,9 +70,9 @@ async function locked(request, operation) {
 async function recover(request) {
   const root = storageRoot(request);
 
-  if (!lockStorage(root, true)) return;
+  if (!lock(root, true)) return;
 
-  return withReferencePublicationLock(root, () => transaction.recover(root), true);
+  return nonblocking(root, () => transaction.recover(root));
 }
 
 async function start() {
@@ -85,4 +90,5 @@ async function start() {
   throw new Error(`Unknown storage transaction action: ${request.action}`);
 }
 
-start().then(report, error => { console.error(error.message); process.exitCode = 1; });
+// Every write happens inside a journaled transaction that reports its own state, so an error that reaches here changed nothing.
+start().then(report, error => report({ state: 'rolled-back', error: error.message }));

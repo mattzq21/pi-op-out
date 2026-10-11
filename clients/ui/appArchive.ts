@@ -5,6 +5,7 @@ import { createRef, type RefObject } from "./lib/solid";
 import type { useChatSession } from "./lib/useChatSession";
 import type { SessionSummary } from "./types";
 import { isTemporaryChatCwd } from "./lib/sessionGroups";
+import { StorageTransactionError, storageFailure } from "./lib/storageFailure";
 
 type ArchiveContext = {
   reuseSessionDraft: () => boolean;
@@ -78,7 +79,9 @@ export function createConversationArchive(context: ArchiveContext) {
 
     const recoverArchiveFailure = async (cause: unknown) => { if (isActiveSession && activeTransportRef.current === ownerTransport) { try { await ownerTransport.connect(); await capturedSession.refresh(); updateConnected(true); } catch { updateConnected(false); } }
 
-    addNotice({ title: "Could not archive conversation", message: cause instanceof Error ? cause.message : String(cause) }); };
+    addNotice(storageFailure("archive", cause));
+
+    if (cause instanceof StorageTransactionError && cause.state !== "rolled-back") void syncSessionIndex(); };
 
     const startTemporaryReplacement = async (hostId: string, conversationKey: string) => {
       const nextTransport = capturedRuntimePool.create({ hostId });
