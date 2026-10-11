@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { dlopen, FFIType, ptr } from 'bun:ffi';
 import type { Duplex } from 'node:stream';
-import { BUILD_ID, DEVELOPMENT, MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
+import { BUILD_ID, DEVELOPMENT, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
 import * as endpoint from './daemon_endpoint';
 import * as daemonLog from './daemon_log';
 import * as daemonRestart from './daemon_restart';
@@ -20,7 +20,9 @@ import { errorText, withTimeout } from './util/sync';
 import type { App } from './app';
 
 const MAX_MESSAGE = MAX_REQUEST_BYTES;
-const MAX_OUTGOING_BYTES = 64 * 1024 * 1024;
+const MAX_OUTGOING_BYTES = MAX_RESPONSE_BYTES;
+const MAX_OUTGOING_MESSAGES = 1024;
+const MAX_CONNECTIONS = 8;
 const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://groups-changed', 'pi://dictation', 'pi://sessions-changed', 'pi://daemon-error', 'pi://daemon-log-status', 'pi://provider-auth-changed', 'pi://chatgpt-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://daemon-restarting'];
 
 /** A counter that limits how many items may run at once. */
@@ -133,7 +135,7 @@ export async function start(app: App): Promise<void> {
   if (typeof token !== 'string') token = randomUUID() + randomUUID();
   if (token.length < 32) throw new Error('PIOP_MOBILE_TOKEN must contain at least 32 characters');
   const bind = process.env.PIOP_MOBILE_BIND ?? (DEVELOPMENT ? '127.0.0.1:0' : '127.0.0.1:9847');
-  const shared: Shared = { app, subscribers: new Set(), handshakes: new Slots(16), connections: new Slots(8), jobs: new Slots(16) };
+  const shared: Shared = { app, subscribers: new Set(), handshakes: new Slots(16), connections: new Slots(MAX_CONNECTIONS), jobs: new Slots(16) };
   const secret = token;
   const server = upgradeServer(shared, (request, socket, head) => {
     const ws = acceptUpgrade(request, socket, head, MAX_MESSAGE);
@@ -257,12 +259,24 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
   let queuedBytes = 0;
   let chain = Promise.resolve();
   let lastSeen = Date.now();
-  const send = (text: string, restartId?: string): void => {
-    if (ws.closed) return;
-    const bytes = Buffer.byteLength(text, 'utf8');
-    if (queued >= 1024 || bytes > MAX_OUTGOING_BYTES - queuedBytes) {
-      console.error('Disconnecting ' + owner + ': outgoing queue exceeds 1024 messages or 64 MiB');
+  // A restart the client asked for goes ahead even when the reply cannot reach it; clients learn about it from the restarting event.
+  const commitRestart = async (restartId: string) => {
+    try { await daemonRestart.commit(app, restartId); }
+    catch (error) { console.error('Could not commit daemon restart ' + restartId + ': ' + errorText(error)); ws.terminate(); }
+  };
+  const send = (text: string, restartId?: string, id?: number): void => {
+    if (ws.closed) { if (restartId !== undefined) void commitRestart(restartId); return; }
+    let bytes = Buffer.byteLength(text, 'utf8');
+    if (bytes > MAX_RESPONSE_BYTES) {
+      // One oversized reply fails on its own instead of closing the connection and every other request on it.
+      if (id === undefined) { console.error('Dropped an event to ' + owner + ' of ' + bytes + ' bytes: it exceeds the response limit'); return; }
+      text = JSON.stringify({ id, error: 'Response of ' + bytes + ' bytes exceeds the ' + Math.floor(MAX_RESPONSE_BYTES / 1024 / 1024) + ' MiB limit' });
+      bytes = Buffer.byteLength(text, 'utf8');
+    }
+    if (queued >= MAX_OUTGOING_MESSAGES || bytes > MAX_OUTGOING_BYTES - queuedBytes) {
+      console.error('Disconnecting ' + owner + ': outgoing queue exceeds ' + MAX_OUTGOING_MESSAGES + ' messages or ' + Math.floor(MAX_OUTGOING_BYTES / 1024 / 1024) + ' MiB');
       ws.terminate();
+      if (restartId !== undefined) void commitRestart(restartId);
       return;
     }
     queued += 1;
@@ -270,13 +284,10 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
     chain = chain.then(async () => {
       queued -= 1;
       try {
-        if (ws.closed) return;
+        if (ws.closed) { if (restartId !== undefined) await commitRestart(restartId); return; }
         try { await withTimeout(ws.sendText(text), 10_000, 'Send timeout'); }
-        catch (error) { console.error('Could not send to ' + owner + ':', error); ws.terminate(); return; }
-        if (restartId !== undefined) {
-          try { await daemonRestart.commit(app, restartId); }
-          catch (error) { console.error(error); ws.terminate(); }
-        }
+        catch (error) { console.error('Could not send to ' + owner + ':', error); ws.terminate(); if (restartId !== undefined) await commitRestart(restartId); return; }
+        if (restartId !== undefined) await commitRestart(restartId);
       } finally { queuedBytes -= bytes; }
     });
   };
@@ -301,12 +312,12 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
       if (!message) break;
       if (message.type !== 'text') continue;
       let request: any;
-      try { request = JSON.parse(message.data); } catch { break; }
+      try { request = JSON.parse(message.data); } catch (error) { send(JSON.stringify({ error: 'Invalid request: ' + errorText(error) })); console.error('Closing ' + owner + ': request is not valid JSON'); break; }
       if (request?.type === 'ping') {
         try { await withTimeout(ws.sendText(JSON.stringify({ type: 'pong' })), 10_000, 'Send timeout'); } catch { break; }
         continue;
       }
-      if (!validRequest(request)) break;
+      if (!validRequest(request)) { send(JSON.stringify({ error: 'Invalid request: expected {id, command, args}' })); console.error('Closing ' + owner + ': request has no valid id or command'); break; }
       const id: number = request.id;
       const command: string = request.command;
       const args = request.args === undefined ? {} : request.args;
@@ -322,7 +333,7 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
         } catch (error) { response = { id, error: responseErrorText(error) }; }
         finally { permit(); }
         const restartId = typeof response.result?.restartId === 'string' ? response.result.restartId : undefined;
-        send(JSON.stringify(response), restartId);
+        send(JSON.stringify(response), restartId, id);
       })();
       pending.add(job);
       job.finally(() => pending.delete(job));
@@ -448,7 +459,7 @@ async function startTailscale(shared: Shared): Promise<void> {
   });
   const server = createNetServer({ pauseOnConnect: true }, socket => {
     const release = shared.connections.tryAcquire();
-    if (!release) { socket.destroy(); return; }
+    if (!release) { process.stderr.write('Tailscale connection rejected: all ' + MAX_CONNECTIONS + ' connection slots are in use\n'); socket.destroy(); return; }
     socket.once('close', release);
     const timer = setTimeout(() => { if (!(socket as any).piopUpgraded) socket.destroy(); }, 10_000);
     timer.unref();
