@@ -1,0 +1,5 @@
+gradle.beforeProject { project ->
+    if (project != project.rootProject && project.name != 'app') {
+        project.layout.buildDirectory.set(new File(project.rootProject.projectDir, "build/modules/${project.name}"))
+    }
+}

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Mobile piop"
+  short_description: "Set up and inspect Piop in a private Android debug VM."
+policy:
+  allow_implicit_invocation: false
