@@ -11,8 +11,8 @@ import type { Host } from './controller';
 
 export { preserveLeasesForRestart } from './markdown';
 
-const BUNDLED = ['chatgpt', 'markdown', 'diff'];
-const NAMES: Record<string, string> = { chatgpt: 'ChatGPT', markdown: 'Notes', diff: 'Diff' };
+const BUNDLED = ['chatgpt', 'markdown'];
+const NAMES: Record<string, string> = { chatgpt: 'ChatGPT', markdown: 'Notes' };
 const CHATGPT_SOURCE = chatgptStream + '\n' + chatgptStorage + '\n' + chatgptService +
   '\nconst bundledPlugin = { call: handleChatGpt, idle: chatGptIdle, checkpoint: chatGptTicketSnapshot, restore: chatGptRestore };';
 
@@ -148,7 +148,8 @@ export async function validateConfiguration(executable: string, enabled: string[
   if (runtime.failures.length) throw new Error(runtime.failures.join('; '));
 }
 
-interface State { runtime: Runtime; revision: string; error: string | null }
+/** error holds startup problems; workerError holds only the latest unexpected ChatGPT worker stop, so repeated stops do not grow the text. */
+interface State { runtime: Runtime; revision: string; error: string | null; workerError: string | null }
 
 export class PluginService {
   private state: State | null = null;
@@ -170,7 +171,7 @@ export class PluginService {
         if (!state?.runtime.chatgpt) return;
         const message = 'The ChatGPT worker stopped unexpectedly (' + errorText(error) + '). Replies in progress and edit locks were lost. ChatGPT starts again on the next request.';
         console.error(message);
-        state.error = state.error ? state.error + '\n' + message : message;
+        state.workerError = message;
         this.host?.output({ type: 'plugins_changed' });
       },
     };
@@ -193,7 +194,7 @@ export class PluginService {
       const runtime = await Runtime.load(this.executable, enabled, this.events());
       if (runtime.failures.length) errors.push('Some plugins could not start: ' + runtime.failures.map(failure => failure.replace(/\.$/, '')).join('; ') + '. Restart the plugins to try again.');
       try { await runtime.restoreStartup(); } catch (reason) { errors.push(errorText(reason)); }
-      this.state = { runtime, revision: randomUUID(), error: errors.length ? errors.join('\n') : null };
+      this.state = { runtime, revision: randomUUID(), error: errors.length ? errors.join('\n') : null, workerError: null };
     } finally { release(); }
   }
 
@@ -205,7 +206,7 @@ export class PluginService {
     try {
       const state = this.state;
       if (!state) throw new Error('Plugins are unavailable');
-      if (packet?.type === 'plugin_status') return { enabled: [...state.runtime.enabled], configured: [...state.runtime.configured], revision: state.revision, error: state.error };
+      if (packet?.type === 'plugin_status') return { enabled: [...state.runtime.enabled], configured: [...state.runtime.configured], revision: state.revision, error: [state.error, state.workerError].filter(Boolean).join('\n') || null };
       runtime = state.runtime;
     } finally { release(); }
     return runtime.call(packet);

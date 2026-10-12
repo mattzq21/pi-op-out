@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { Check, ChevronDown, Plus } from "lucide-solid";
 import type { RegularChat } from "./chatSchemas";
 
@@ -8,6 +8,9 @@ export function ChatHistoryPicker(props: { chats: RegularChat[]; selected?: Regu
   let trigger: HTMLButtonElement | undefined;
   let menu: HTMLDivElement | undefined;
   const close = () => { setOpen(false); trigger?.focus(); };
+  /** Rows are keyed by chat ID, so a new copy of a chat updates its row in place and keeps keyboard focus. */
+  const ids = createMemo(() => props.chats.map(chat => chat.id), [], { equals: (left, right) => left.length === right.length && left.every((id, index) => id === right[index]) });
+  const byId = createMemo(() => new Map(props.chats.map(chat => [chat.id, chat])));
 
   const choose = (id?: string) => { close(); props.onSelect(id); };
 
@@ -44,9 +47,15 @@ export function ChatHistoryPicker(props: { chats: RegularChat[]; selected?: Regu
     </button>
     <Show when={open()}><div ref={menu} class="quick-chat-history-menu" role="menu" aria-label="ChatGPT chats" onKeyDown={navigate}>
       <button type="button" role="menuitemradio" aria-checked={!props.selected} class="quick-chat-history-new" onClick={() => choose()}><Plus size={15} /><span>New chat</span></button>
-      <For each={props.chats}>{chat => <div><button type="button" role="menuitemradio" disabled={Boolean(chat.storageDiagnostic)} aria-checked={props.selected?.id === chat.id} onClick={() => choose(chat.id)}>
-        <span>{chat.title}</span><Show when={props.selected?.id === chat.id}><Check size={14} /></Show>
-      </button><Show when={chat.storageDiagnostic}>{diagnostic => <p role="alert">{diagnostic().message}</p>}</Show></div>}</For>
+      <For each={ids()}>{id => {
+        const chat = createMemo(() => byId().get(id));
+        const title = () => chat()?.title;
+        const diagnostic = createMemo(() => chat()?.storageDiagnostic?.message);
+
+        return <div><button type="button" role="menuitemradio" disabled={Boolean(diagnostic())} aria-checked={props.selected?.id === id} onClick={() => choose(id)}>
+          <span>{title()}</span><Show when={props.selected?.id === id}><Check size={14} /></Show>
+        </button><Show when={diagnostic()}>{message => <p role="alert">{message()}</p>}</Show></div>;
+      }}</For>
     </div></Show>
   </div>;
 }

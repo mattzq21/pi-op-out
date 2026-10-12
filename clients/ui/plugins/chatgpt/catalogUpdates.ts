@@ -1,9 +1,9 @@
 import { onCleanup, type Accessor } from "solid-js";
 import { z } from "zod";
-import { listen } from "../../lib/platform";
+import { listen, type UnlistenFn } from "../../lib/platform";
 import { createDependencyEffect } from "../../lib/solid";
 
-export function watchChatGptCatalog(provider: Accessor<string>, open: Accessor<boolean>, refresh: (catalog: boolean) => Promise<void>, reconnect: () => void) {
+export function watchChatGptCatalog(provider: Accessor<string>, open: Accessor<boolean>, refresh: (catalog: boolean) => Promise<void>, reconnect: () => void, reportError: (message?: string) => void) {
   let disposed = false;
   let running = false;
   let pending = false;
@@ -33,24 +33,45 @@ export function watchChatGptCatalog(provider: Accessor<string>, open: Accessor<b
     }
   };
 
-  const changes = listen("pi://chatgpt-changed", ({ payload }) => {
+  const stops: UnlistenFn[] = [];
+  const failures = new Map<string, string>();
+  const retryTimers = new Set<ReturnType<typeof setTimeout>>();
+
+  const report = () => reportError(failures.size ? `Could not listen for ChatGPT changes, so the chat list may be out of date. Retrying. ${[...failures.values()].join(" ")}` : undefined);
+
+  /** Registers one listener. When registration fails, shows the error and tries again with a longer wait each time. */
+  const subscribe = (register: () => Promise<UnlistenFn>, name: string, delay = 1000) => {
+    register().then(stop => {
+      if (disposed) { stop(); return; }
+      stops.push(stop);
+
+      if (failures.delete(name)) { report(); schedule(true); }
+    }, reason => {
+      if (disposed) return;
+      failures.set(name, String(reason)); report();
+      const timer = setTimeout(() => { retryTimers.delete(timer); subscribe(register, name, Math.min(delay * 2, 30000)); }, delay);
+      retryTimers.add(timer);
+    });
+  };
+
+  subscribe(() => listen("pi://chatgpt-changed", ({ payload }) => {
     if (payload.hostId === "local" && payload.providerId === provider()) schedule(payload.scope === "catalog");
-  }, z.object({ hostId: z.string(), providerId: z.string(), scope: z.enum(["chats", "catalog"]) }));
+  }, z.object({ hostId: z.string(), providerId: z.string(), scope: z.enum(["chats", "catalog"]) })), "changes");
 
-  const accounts = listen("pi://provider-auth-changed", ({ payload }) => {
+  subscribe(() => listen("pi://provider-auth-changed", ({ payload }) => {
     if (payload.hostId === "local") schedule(true);
-  }, z.object({ hostId: z.string() }));
+  }, z.object({ hostId: z.string() })), "accounts");
 
-  const restored = listen("pi://event", ({ payload }) => {
+  subscribe(() => listen("pi://event", ({ payload }) => {
     if (!disposed && payload.type === "connection_restored") { reconnect(); schedule(true); }
-  }, z.object({ type: z.string().optional() }).passthrough());
+  }, z.object({ type: z.string().optional() }).passthrough()), "connection");
 
   createDependencyEffect(() => { if (open()) schedule(true); }, () => [open()]);
   onCleanup(() => {
     disposed = true; clearTimeout(timer);
 
-    for (const listener of [changes, accounts, restored]) void listener.then(stop => stop()).catch(() => undefined);
-  });
+    for (const retry of retryTimers) clearTimeout(retry);
 
-  for (const listener of [changes, accounts, restored]) void listener.catch(() => undefined);
+    for (const stop of stops) stop();
+  });
 }
