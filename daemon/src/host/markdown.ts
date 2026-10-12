@@ -151,20 +151,33 @@ function writeLease(path: string, lease: Lease | undefined): void {
 
 function sameLease(left: Lease | undefined, right: Lease | undefined): boolean {
   if (!left || !right) return left === right;
-  return left.client === right.client && left.editor === right.editor && left.token === right.token && left.expires === right.expires;
+  return sameHolder(left, right) && left.expires === right.expires;
 }
+
+function sameHolder(left: Lease, right: Lease): boolean {
+  return left.client === right.client && left.editor === right.editor && left.token === right.token;
+}
+
+/** While a restart is being prepared: the latest expiry that each lease holder asked for, by lease path. A rollback keeps these renewals. */
+let restartRenewals: Map<string, number> | undefined;
 
 /** Keeps note editor leases alive during a daemon restart. Call commit() when the restart goes on; otherwise call drop() to undo. */
 export class RestartLeases {
   constructor(private preserved: Array<[string, Lease, Lease]> = []) {}
-  commit(): void { this.preserved = []; }
+  commit(): void { this.preserved = []; restartRenewals = undefined; }
   async drop(): Promise<void> {
-    if (!this.preserved.length) return;
     const preserved = this.preserved;
     this.preserved = [];
     try {
       await withNotes(() => {
-        for (const [path, original, extended] of preserved) if (sameLease(readLease(path), extended)) writeLease(path, original);
+        const renewals = restartRenewals ?? new Map<string, number>();
+        restartRenewals = undefined;
+        for (const [path, original, extended] of preserved) {
+          const current = readLease(path);
+          if (!current || !sameHolder(current, extended)) continue;
+          const expires = Math.max(original.expires, renewals.get(path) ?? 0);
+          if (expires !== current.expires) writeLease(path, { ...original, expires });
+        }
       });
     } catch (error: any) {
       console.error('Could not restore note leases after failed restart preparation: ' + (error?.message ?? error));
@@ -176,6 +189,7 @@ export async function preserveLeasesForRestart(): Promise<RestartLeases> {
   const leases = new RestartLeases();
   try {
     await withNotes(() => {
+      restartRenewals = new Map();
       for (const path of Leases.list(storageRoot())) {
         if (!path.endsWith('.json')) continue;
         const lease = readLease(path);
@@ -280,8 +294,10 @@ function dispatchNote(args: any, session: string, path: string): any {
   const previous = readLease(path);
   const editor = editorFor(args);
   const action = field(args, 'action');
-  const result = perform(note, args, action, controls(previous, editor));
+  const controlled = controls(previous, editor);
+  const result = perform(note, args, action, controlled);
   const lease = updateLease(previous, editor, action);
+  if (controlled && (action === 'renew' || action === 'save')) restartRenewals?.set(path, Math.max(restartRenewals.get(path) ?? 0, now() + 30));
   if (!sameLease(lease, previous)) writeLease(path, lease);
   result.ownership = ownership(lease, editor);
   return result;

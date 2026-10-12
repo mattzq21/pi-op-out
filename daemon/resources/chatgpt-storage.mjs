@@ -65,6 +65,9 @@ export const chatGptRevisions = new WeakMap();
 
 export const chatGptSaveErrors = new Map();
 
+/** Chats whose final save failed, kept here so their latest reply survives until a later save succeeds. */
+export const chatGptUnsaved = new Map();
+
 function chatGptLeaseBusy(key, lease) { return lease.busy > 0 || chatGptActive.has(key) || chatGptStopping.has(key); }
 
 function chatGptLeaseLive(key, lease) { return Boolean(lease && (lease.expires > Date.now() || chatGptLeaseBusy(key, lease))); }
@@ -331,6 +334,7 @@ async function chatGptPublish(identity, chat, lease, baseline, data) {
 
   baseline.value = chatGptRevision(data);
   chatGptSaveErrors.delete(key);
+  chatGptUnsaved.delete(key);
   chatGptChanged(identity.providerId, 'chats');
 }
 
@@ -362,6 +366,10 @@ export async function chatGptLoad(identity, id) {
 
   if (live?.chat) return live.chat;
 
+  const unsaved = chatGptUnsaved.get(chatGptKey(identity, id));
+
+  if (unsaved) return unsaved;
+
   return chatGptStoredChat(identity, id);
 }
 
@@ -371,15 +379,20 @@ export function chatGptTicketSnapshot() {
   return {
     tickets: [...chatGptTickets].filter(([_id, ticket]) => ticket.expires > Date.now()),
     leases: [...chatGptLeases].flatMap(([id, lease]) => lease.owner && !lease.released && chatGptLeaseLive(id, lease) ? [[id, { owner: lease.owner }]] : []),
+    unsaved: [...chatGptUnsaved].map(([key, chat]) => [key, chat, chatGptRevisions.get(chat)?.value ?? null]),
   };
 }
 
 export function chatGptRestore(snapshot) {
-  const tickets = Array.isArray(snapshot) ? snapshot : snapshot.tickets;
+  for (const [id, ticket] of snapshot.tickets) if (ticket.expires > Date.now()) chatGptTickets.set(id, ticket);
 
-  for (const [id, ticket] of tickets) if (ticket.expires > Date.now()) chatGptTickets.set(id, ticket);
+  for (const [key, chat, baseline] of snapshot.unsaved) {
+    if (chatGptUnsaved.has(key)) continue;
+    chatGptRevisions.set(chat, { value: baseline });
+    chatGptUnsaved.set(key, chat);
+  }
 
-  for (const [id, saved] of snapshot.leases ?? []) {
+  for (const [id, saved] of snapshot.leases) {
     if (chatGptLeases.has(id)) continue;
     const lease = { owner: saved.owner, busy: 0, expires: 0 };
     chatGptLeases.set(id, lease);

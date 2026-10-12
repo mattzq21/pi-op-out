@@ -114,15 +114,18 @@ const restartStatusSchema = z.object({ phase: z.string(), error: z.string().null
 
 async function waitForRestart(host: string, restartId: string) {
   const deadline = Date.now() + 240000;
+  let lastError: unknown;
 
   while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 500));
-    const result = await invoke("daemon_restart_status", { hostId: host, restartId }, restartStatusSchema).catch(() => undefined);
+    // The daemon stops and starts during the restart, so a failed status read is expected until it is back.
+    const result = await invoke("daemon_restart_status", { hostId: host, restartId }, restartStatusSchema).catch((reason: unknown) => { lastError = reason; return undefined; });
 
     if (result?.phase === "failed") throw new Error(result.error ?? "Daemon restart failed");
 
     if (result?.phase === "complete" || result?.phase === "rolled_back") return result;
   }
 
-  throw new Error("Could not confirm the daemon restart. Reconnect and reload the plugin setup.");
+  const detail = lastError === undefined ? "" : ` Last status error: ${lastError instanceof Error ? lastError.message : String(lastError)}`;
+  throw new Error(`Could not confirm the daemon restart. Reconnect and reload the plugin setup.${detail}`);
 }

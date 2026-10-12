@@ -16,6 +16,7 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; scr
   const frame = createRef<number | undefined>(undefined);
   const navigationFrame = createRef<number | undefined>(undefined);
   const rail = createRef<HTMLElement>(null);
+  const targets: { messageId: string; turnId: string; element: HTMLElement }[] = [];
   const visible = () => props.responses.length >= 2 && overflowing();
 
   createDependencyEffect(() => {
@@ -42,17 +43,29 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; scr
     const update = () => {
       frame.current = undefined;
       setOverflowing(root.scrollHeight > root.clientHeight + 2);
-      const top = root.getBoundingClientRect().top + 24;
+      targets.length = props.responses.length;
       let current: string | undefined = props.responses[0]?.messageId;
 
-      for (const response of props.responses) {
-        const target = responseTarget(root, response);
+      if (root.scrollHeight - root.scrollTop - root.clientHeight <= 2) current = props.responses.at(-1)?.messageId;
+      else {
+        const top = root.getBoundingClientRect().top + 24;
+        let low = 0, high = props.responses.length;
 
-        if (!target || target.getBoundingClientRect().top > top) break;
-        current = response.messageId;
+        while (low < high) {
+          const index = (low + high) >>> 1;
+          const response = props.responses[index];
+          const cached = targets[index];
+          let target = cached?.messageId === response.messageId && cached.turnId === response.turnId && root.contains(cached.element) ? cached.element : responseTarget(root, response);
+
+          if (target?.hasAttribute("data-response-turn")) target = target.querySelector<HTMLElement>(`[data-response-id="${CSS.escape(response.messageId)}"]`) ?? target;
+
+          if (target) targets[index] = { messageId: response.messageId, turnId: response.turnId, element: target };
+
+          if (!target || target.getBoundingClientRect().top > top) high = index;
+          else { current = response.messageId; low = index + 1; }
+        }
       }
 
-      if (root.scrollHeight - root.scrollTop - root.clientHeight <= 2) current = props.responses.at(-1)?.messageId;
       setActive(current);
       setBottom(`calc(${root.style.getPropertyValue("--composer-height") || "0px"} + 14px)`);
     };

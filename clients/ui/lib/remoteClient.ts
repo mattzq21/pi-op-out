@@ -34,6 +34,8 @@ export class RemoteClient {
   private heartbeatCleanup?: () => void;
   onDisconnect?: (message: string) => void;
   connectionIdentity() { return this.destination; }
+  /** True while the socket is open and the host accepted it. */
+  isConnected() { return this.ready && this.socket?.readyState === WebSocket.OPEN; }
   async connect(connection: HostConnection): Promise<void> {
     const destination = validateHost(connection);
     this.close();

@@ -17,7 +17,8 @@ type TerminalCommandOptions = { sessionKey?: string; cwd?: string; cols?: number
 export const TRANSCRIPT_BYTE_LIMIT = 32 * 1024 * 1024;
 
 class NativeTerminals {
-  private writes = new Map<string, { tail: Promise<void> }>();
+  /** Per terminal: the end of its command queue, and a draft write that has not started. A newer draft replaces the text of that write. */
+  private writes = new Map<string, { tail: Promise<void>; draft?: { args: TerminalCommandOptions; result: Promise<void> } }>();
   private starts = new Map<string, Promise<void>>();
   private hosts = new Map<string, string>();
   private generations = new Map<string, string>();
@@ -131,16 +132,26 @@ class NativeTerminals {
   private enqueue(action: string, terminalId: string, args: TerminalCommandOptions) {
     const starting = this.starts.get(terminalId);
     const connection = captureDaemonTransport();
-    const queue = this.writes.get(terminalId) ?? { tail: Promise.resolve() };
+    const queue: { tail: Promise<void>; draft?: { args: TerminalCommandOptions; result: Promise<void> } } = this.writes.get(terminalId) ?? { tail: Promise.resolve() };
+    const draft = action === "draft" ? { args } : undefined;
+
+    if (draft && queue.draft) { queue.draft.args = args;
+
+    return queue.draft.result; }
+
+    queue.draft = undefined;
 
     const next = queue.tail.then(() => starting).then(() => whenBranchesSettled())
       .then(() => this.terminalReassignments.get(terminalId))
       .then(() => {
+        if (queue.draft?.result === next) queue.draft = undefined;
+
         if (this.writes.get(terminalId) !== queue || !connection.active()) throw new Error("Terminal connection changed. Enter the input again.");
 
-        return this.command(action, terminalId, args);
+        return this.command(action, terminalId, draft?.args ?? args);
       });
 
+    if (draft) queue.draft = Object.assign(draft, { result: next });
     queue.tail = next;
     this.writes.set(terminalId, queue);
     const clear = () => { if (this.writes.get(terminalId) === queue && queue.tail === next) this.writes.delete(terminalId); };
@@ -156,6 +167,17 @@ class NativeTerminals {
 
   writeAndClearDraft(terminalId: string, data: string, expectedDraft: string) {
     return this.enqueue("write_and_clear_draft", terminalId, { data, expectedDraft });
+  }
+
+  /** Sends Ctrl+C at once, before queued input. The draft clears through the queue, so an older draft write cannot restore it. */
+  async interrupt(terminalId: string) {
+    const connection = captureDaemonTransport();
+    const clearing = this.write(terminalId, "", "draft");
+    await this.starts.get(terminalId);
+
+    if (!connection.active()) throw new Error("Terminal connection changed. Press Ctrl+C again.");
+    await this.command("write", terminalId, { data: "\u0003" });
+    await clearing;
   }
 
   resize(terminalId: string, cols: number, rows: number) {

@@ -423,8 +423,12 @@ async function chatGptSendTurn(identity, request, lease) {
   chatGptActive.set(key, active);
 
   try {
-    const data = await chatGptStoredData(identity, request.chatId);
-    const chat = data === null ? chatGptNew(request) : chatGptDecodeRecord(request.chatId, data);
+    let chat = chatGptUnsaved.get(key);
+
+    if (!chat) {
+      const data = await chatGptStoredData(identity, request.chatId);
+      chat = data === null ? chatGptNew(request) : chatGptDecodeRecord(request.chatId, data);
+    }
 
     if (chatGptHasSubmission(chat, request.submissionId)) { chatGptActive.delete(key);
 
@@ -584,7 +588,11 @@ async function chatGptRun(identity, key, active, body) {
     chat.updatedAt = Date.now();
 
     try { await chatGptSave(identity, chat, active.lease); }
-    catch (error) { active.finalSaveError = error; chat.status = 'error'; chat.error = error.message || 'Could not save this chat on the host.'; }
+    catch (error) {
+      active.finalSaveError = error; chat.status = 'error';
+      chat.error = `Could not save this chat on the host (${error.message || 'storage error'}). The latest reply is kept in memory until the next save succeeds.`;
+      chatGptUnsaved.set(key, chat);
+    }
 
     chatGptActive.delete(key);
     await chatGptLeaseOperation(key, () => chatGptExpireLease(key));

@@ -54,15 +54,18 @@ impl ClientSettings {
     }
 }
 
-/// Merges the engines by engine type. An engine that this window changed takes this window's value.
-fn merge_engines(latest: &[DictationEngineEntry], baseline: &[DictationEngineEntry], intended: &[DictationEngineEntry]) -> Vec<DictationEngineEntry> {
+fn merge_engines(latest: &[DictationEngineEntry], baseline: &[DictationEngineEntry], intended: &[DictationEngineEntry]) -> Result<Vec<DictationEngineEntry>, String> {
     let find = |entries: &[DictationEngineEntry], engine: &str| entries.iter().find(|entry| entry.engine == engine).cloned();
     let mut engines: Vec<String> = latest.iter().map(|entry| entry.engine.clone()).collect();
     for entry in intended { if !engines.contains(&entry.engine) { engines.push(entry.engine.clone()); } }
-    engines.into_iter().filter_map(|engine| {
+    let mut merged = Vec::new();
+    for engine in engines {
         let (before, after) = (find(baseline, &engine), find(intended, &engine));
-        if before != after { after } else { find(latest, &engine) }
-    }).collect()
+        let current = find(latest, &engine);
+        if before != after && current != before && current != after { return Err(format!("Client preference conflict at dictationEngines.{engine}: another window changed this engine. Reload the latest preferences and apply your edits again.")); }
+        if let Some(entry) = if before != after { after } else { current } { merged.push(entry); }
+    }
+    Ok(merged)
 }
 
 /// The dictation settings saved on this computer. Missing preferences use the defaults.
@@ -101,6 +104,27 @@ fn merge_keybindings(latest: &mut HashMap<String, String>, baseline: &HashMap<St
     Ok(())
 }
 
+fn validate_keybindings(keybindings: &HashMap<String, String>) -> Result<(), String> {
+    let mut shortcuts = Vec::new();
+    for (action, shortcut) in keybindings {
+        if shortcut.trim().is_empty() { continue; }
+        let mut raw: Vec<_> = shortcut.split('+').collect();
+        let plus = raw.len() > 1 && raw.last().is_some_and(|part| part.trim().is_empty());
+        if plus { raw.pop(); }
+        let mut parts: Vec<String> = raw.into_iter().map(|part| part.trim().to_lowercase()).filter(|part| !part.is_empty()).collect();
+        if plus { parts.push("+".into()); }
+        let has = |part: &str| parts.iter().any(|value| value == part);
+        let keys: Vec<_> = parts.iter().filter(|part| !matches!(part.as_str(), "mod" | "ctrl" | "meta" | "alt" | "shift")).collect();
+        if keys.len() != 1 || keys[0] == "control" || !(has("mod") || has("ctrl") || has("meta") || has("alt")) { return Err(format!("Invalid shortcut for {action}: {shortcut}")); }
+        if matches!(keys[0].as_str(), "f" | "g") && !has("alt") && !has("shift") && (has("mod") || has("ctrl") || has("meta")) { return Err(format!("Shortcut {shortcut} is reserved for search")); }
+        let primary = u8::from(has("mod") || has("ctrl")) | (u8::from(has("mod") || has("meta")) << 1);
+        let parsed = (keys[0].clone(), has("alt"), has("shift"), primary);
+        if shortcuts.iter().any(|other: &(String, bool, bool, u8)| other.0 == parsed.0 && other.1 == parsed.1 && other.2 == parsed.2 && (other.3 & primary != 0 || (other.3 == 0 && primary == 0))) { return Err(format!("Client preference conflict at keybindings.{action}: shortcut {shortcut} is assigned more than once. Choose another shortcut.")); }
+        shortcuts.push(parsed);
+    }
+    Ok(())
+}
+
 fn merge_preferences(mut latest: ClientSettings, baseline: &ClientSettings, intended: &ClientSettings) -> Result<ClientSettings, String> {
     merge_keybindings(&mut latest.keybindings, &baseline.keybindings, &intended.keybindings)?;
     if intended.debug_mode != baseline.debug_mode { latest.debug_mode = intended.debug_mode; }
@@ -108,7 +132,7 @@ fn merge_preferences(mut latest: ClientSettings, baseline: &ClientSettings, inte
     if intended.dictation_model_path != baseline.dictation_model_path { latest.dictation_model_path = intended.dictation_model_path.clone(); }
     if intended.dictation_args != baseline.dictation_args { latest.dictation_args = intended.dictation_args.clone(); }
     if latest.dictation_engines.is_some() || intended.dictation_engines.is_some() {
-        latest.dictation_engines = Some(merge_engines(latest.dictation_engines.as_deref().unwrap_or_default(), baseline.dictation_engines.as_deref().unwrap_or_default(), intended.dictation_engines.as_deref().unwrap_or_default()));
+        latest.dictation_engines = Some(merge_engines(latest.dictation_engines.as_deref().unwrap_or_default(), baseline.dictation_engines.as_deref().unwrap_or_default(), intended.dictation_engines.as_deref().unwrap_or_default())?);
     }
     Ok(latest)
 }
@@ -142,6 +166,7 @@ pub(crate) async fn save_client_settings(app: AppHandle, settings: ClientSetting
         let path = storage_path()?;
         let _guard = lock_settings(&path)?;
         let settings = intended_preferences(&path, &baseline, settings, initialize.unwrap_or(false))?;
+        validate_keybindings(&settings.keybindings)?;
         let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
         let publication = records::publish(&path, &body)?;
         crate::dictation::reload(&app, settings.dictation());

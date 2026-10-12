@@ -109,6 +109,7 @@ function installQueueProtocol(session, output) {
 
           if (message?.role === "user") {
             message.piopQueueId = scope.queueId;
+            if (scope.submissionId) message.piopSubmissionId = scope.submissionId;
             scope.tagged = true;
           }
         }
@@ -222,7 +223,7 @@ async function dispatchQueuedPrompt(command, session, output) {
     source: "rpc",
     goalSubmissionId: payload.goalSubmissionId,
     goalPrepared: payload.goalPrepared,
-    [queuePromptScope]: { session, queueId: payload.queueId, tagged: false },
+    [queuePromptScope]: { session, queueId: payload.queueId, submissionId: payload.goalSubmissionId, tagged: false },
     preflightResult: (disposition, submittedText) => {
       preflightSucceeded = true;
       output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition, submittedText } });

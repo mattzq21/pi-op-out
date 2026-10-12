@@ -13,7 +13,7 @@ import { contextUsageAfterCompaction } from "./contextUsage";
 import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
-import { matchesSubmittedMessage, reconcileMessages, sameUserContent, upsertLiveMessage } from "./reconcileMessages";
+import { matchesSubmittedMessage, reconcileMessages, reconcilePendingMessages, sameUserContent, upsertLiveMessage } from "./reconcileMessages";
 
 interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number; incomplete?: boolean; damagedLines?: number[] }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 
@@ -247,7 +247,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       activeMessageIds.current.clear();
 
       for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
-      session.setMessages(reconcileMessages(cachedMessages, nextMessages));
+      session.setMessages(reconcileMessages(cachedMessages, nextMessages, pendingMessagesSchema.parse(snapshot.queue.pendingMessages)));
     };
 
     const replaySnapshotEvents = (snapshot: SessionSnapshot) => {
@@ -441,12 +441,15 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const messageLiveId = (rawMessage: WireMessage, roleKey: string, normalized: ChatMessage) => {
+      const started = event.type === "message_end" ? activeMessageIds.current.get(roleKey) : undefined;
+
+      if (started) return started;
+      const savedUser = normalized.timestamp !== undefined ? session.messages.find(message => !message.submissionId && message.timestamp === normalized.timestamp && sameUserContent(message, normalized)) : undefined;
+
+      if (savedUser) return savedUser.id;
       const submitted = session.messages.find(message => matchesSubmittedMessage(message, normalized));
 
       if (submitted) return submitted.id;
-      const savedUser = event.type === "message_end" ? session.messages.find(message => message.timestamp === normalized.timestamp && sameUserContent(message, normalized)) : undefined;
-
-      if (savedUser) return savedUser.id;
       const toolCallId = rawMessage.toolCallId;
 
       return rawMessage.role === "toolResult" && toolCallId !== undefined ? toolCallId : event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
@@ -529,6 +532,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleQueueUpdate = () => {
+      session.setMessages(current => reconcilePendingMessages(current, event.pendingMessages));
       session.setState((current) => ({ ...current, pendingMessages: event.pendingMessages, pendingMessageCount: (event.steering?.length ?? 0) + (event.followUp?.length ?? 0) }));
     };
 

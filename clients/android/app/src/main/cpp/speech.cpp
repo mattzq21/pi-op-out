@@ -30,7 +30,35 @@ std::string text(JNIEnv * env, jstring value) {
     return result;
 }
 
-jstring java(JNIEnv * env, const std::string & value) { return env->NewStringUTF(value.c_str()); }
+/** Makes a Java string from engine UTF-8. NewStringUTF reads modified UTF-8 and stops debug builds on 4-byte characters such as emoji. Invalid bytes become U+FFFD. */
+jstring java(JNIEnv * env, const std::string & value) {
+    std::u16string units;
+    units.reserve(value.size());
+    const auto * bytes = reinterpret_cast<const unsigned char *>(value.data());
+    const size_t size = value.size();
+    size_t index = 0;
+    while (index < size) {
+        const unsigned char lead = bytes[index];
+        int length = lead < 0x80 ? 1 : (lead & 0xE0) == 0xC0 ? 2 : (lead & 0xF0) == 0xE0 ? 3 : (lead & 0xF8) == 0xF0 ? 4 : 0;
+        char32_t point = length == 1 ? lead : length == 2 ? lead & 0x1F : length == 3 ? lead & 0x0F : lead & 0x07;
+        bool valid = length > 0 && index + length <= size;
+        for (int position = 1; valid && position < length; position++) {
+            const unsigned char next = bytes[index + position];
+            if ((next & 0xC0) != 0x80) valid = false;
+            else point = (point << 6) | (next & 0x3F);
+        }
+        static constexpr char32_t smallest[] = {0, 0, 0x80, 0x800, 0x10000};
+        if (valid && (point < smallest[length] || point > 0x10FFFF || (point >= 0xD800 && point <= 0xDFFF))) valid = false;
+        if (!valid) { units.push_back(u'\uFFFD'); index++; continue; }
+        if (point >= 0x10000) {
+            point -= 0x10000;
+            units.push_back(static_cast<char16_t>(0xD800 + (point >> 10)));
+            units.push_back(static_cast<char16_t>(0xDC00 + (point & 0x3FF)));
+        } else units.push_back(static_cast<char16_t>(point));
+        index += length;
+    }
+    return env->NewString(reinterpret_cast<const jchar *>(units.data()), static_cast<jsize>(units.size()));
+}
 
 std::vector<float> samples(JNIEnv * env, jfloatArray pcm) {
     std::vector<float> result(env->GetArrayLength(pcm));

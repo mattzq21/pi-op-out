@@ -103,8 +103,8 @@ export interface OpencodeGoUsage { rolling: UsageWindow; weekly: UsageWindow; mo
 
 export interface ChatMessage { toolCallId?: string; details?: unknown; }
 
-export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; toolPayloadVersion?: number; loadedToolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
+export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; /** The memory limit removed the loaded tool payload. It loads again only on request. */ toolPayloadEvicted?: boolean; toolPayloadVersion?: number; loadedToolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
 
-export interface ChatMessage { submissionId?: string; }
+export interface ChatMessage { submissionId?: string; piopQueueId?: string; piopSubmissionId?: string; }
 
 export type PendingMessageAction = "steer" | "followUp" | "remove" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" };

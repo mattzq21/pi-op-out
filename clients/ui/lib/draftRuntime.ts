@@ -96,8 +96,8 @@ export class DraftRuntime {
     this.fastMode = agent.fastMode ?? this.defaultFastMode;
     this.changes.delete("set_model"); this.changes.delete("set_thinking_level");
     this.changes.set("select_agent", { type: "select_agent", agent: name }); this.revision++;
-    this.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: this.fastMode ? "Fast mode on" : "" });
-    this.emit({ type: "extension_ui_request", method: "setStatus", statusKey: DEFINED_AGENTS_STATUS_KEY, statusText: encodeAgentValue({ version: 1, active: this.agent, locked: false, saved: false, config: this.catalog?.config ?? { agents: [] } }) });
+    this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: this.fastMode ? "Fast mode on" : "" });
+    this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: DEFINED_AGENTS_STATUS_KEY, statusText: encodeAgentValue({ version: 1, active: this.agent, locked: false, saved: false, config: this.catalog?.config ?? { agents: [] } }) });
 
     return {};
   }

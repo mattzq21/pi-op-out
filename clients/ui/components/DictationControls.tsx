@@ -17,7 +17,7 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
   setPhase("idle"); setCommitted(""); setTentative(""); };
 
   onCleanup(cancel);
-  createEffect(() => { if (props.disabled) cancel(); });
+  // Dictation runs on this device. A lost host connection only blocks a new start; a running dictation still ends in the draft.
   createEffect(() => { if (!enabled() && (phase() === "starting" || phase() === "recording")) cancel(); });
 
   const finish = async () => {
@@ -29,7 +29,7 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
       const capture = recording;
       const result = await capture.finish();
 
-      if (current === generation && !props.disabled && result?.text.trim()) props.onText(result.text.trim());
+      if (current === generation && result?.text.trim()) props.onText(result.text.trim());
     } catch (reason) { if (current === generation) setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { if (current === generation) { recording = undefined; setPhase("idle"); setCommitted(""); setTentative(""); } }
   };
@@ -52,7 +52,7 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
 
   return <span class="dictation-controls">
     <Show when={enabled()}>
-      <button type="button" class={phase() === "recording" ? "dictation-recording" : ""} aria-label={phase() === "recording" ? "Stop dictation" : "Dictate"} aria-pressed={phase() === "recording"} disabled={props.disabled || phase() === "starting" || phase() === "transcribing"} onClick={() => void (phase() === "recording" ? finish() : start())}>
+      <button type="button" class={phase() === "recording" ? "dictation-recording" : ""} aria-label={phase() === "recording" ? "Stop dictation" : "Dictate"} aria-pressed={phase() === "recording"} disabled={(props.disabled && phase() === "idle") || phase() === "starting" || phase() === "transcribing"} onClick={() => void (phase() === "recording" ? finish() : start())}>
         {phase() === "recording" ? <Square size={14} /> : <Mic size={14} />}
         <Show when={showLabel()}><span class="dictation-label">{phase() === "recording" ? "Stop dictation" : phase() === "transcribing" ? "Transcribing…" : phase() === "starting" ? "Microphone…" : "Dictate"}</span></Show>
       </button>

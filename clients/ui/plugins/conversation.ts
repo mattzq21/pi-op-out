@@ -17,9 +17,11 @@ export function followConversation(pool: SessionRuntimePool, transport: NativeTr
   let stopped = false;
   let reconnecting = false;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Wait before the next reconnect after a failure. It doubles up to 30 seconds and resets after a success. */
+  let retryDelay = 2000;
   const following = () => !stopped && !pool.isInteractive(transport) && !pool.isActive(transport);
   const ownsSession = (current: ReturnType<typeof useChatSession>) => following() && session === current;
-  const refresh = () => { void session?.refresh().catch(() => undefined); };
+  const refresh = () => { void session?.refresh().catch((reason: unknown) => console.error("Could not refresh the followed conversation:", reason)); };
 
   const scheduleReconnect = (delay: number) => {
     clearTimeout(retryTimer);
@@ -44,9 +46,12 @@ export function followConversation(pool: SessionRuntimePool, transport: NativeTr
       await current.refresh();
 
       if (!ownsSession(current)) return;
-
-    } catch {
-      if (ownsSession(current)) scheduleReconnect(2000);
+      retryDelay = 2000;
+    } catch (reason) {
+      if (!ownsSession(current)) return;
+      console.error(`Could not reconnect the followed conversation. Trying again in ${retryDelay / 1000} seconds:`, reason);
+      scheduleReconnect(retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 30000);
     } finally { reconnecting = false; }
   };
 

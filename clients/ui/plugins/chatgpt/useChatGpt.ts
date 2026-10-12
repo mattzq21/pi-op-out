@@ -48,6 +48,8 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const [pollError, setPollError] = createSignal<string>();
   const [cancellationError, setCancellationError] = createSignal<string>();
   const [catalogError, setCatalogError] = createSignal<string>();
+  const [subscriptionError, setSubscriptionError] = createSignal<string>();
+  const [leaseError, setLeaseError] = createSignal<string>();
   const [leaseRevision, setLeaseRevision] = createSignal(0);
   const leaseId = crypto.randomUUID();
   let desiredChat: string | undefined;
@@ -90,7 +92,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     drafts.requestId = request()?.id; drafts.chatId = undefined;
     desiredChat = undefined; submission?.abort(); submission = undefined; stopOperation = undefined; setBusy(false);
     release();
-    selection++; setLoading(false); setDraftId(crypto.randomUUID()); setChat(undefined); setError(undefined); setPollError(undefined); setCancellationError(undefined);
+    selection++; setLoading(false); setDraftId(crypto.randomUUID()); setChat(undefined); setError(undefined); setPollError(undefined); setCancellationError(undefined); setLeaseError(undefined);
   };
 
   const loadCatalog = async (current: number) => {
@@ -157,7 +159,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     } finally { if (generation === current) setCatalogLoading(false); }
   };
 
-  watchChatGptCatalog(() => provider, open, refreshCatalog, () => setLeaseRevision(value => value + 1));
+  watchChatGptCatalog(() => provider, open, refreshCatalog, () => setLeaseRevision(value => value + 1), setSubscriptionError);
 
   const remember = (value: RegularChat) => {
     setChats(previous => [value, ...previous.filter(item => item.id !== value.id)].sort((a, b) => b.updatedAt - a.updatedAt));
@@ -292,7 +294,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     setBusy(true); setError(undefined); setCancellationError(undefined);
 
     try {
-      const ownership = await claim(id);
+      const ownership = await abortable(claim(id), controller.signal);
 
       if (!ownership.owned) throw new Error("Another client holds this chat's editing lease.");
       controller.signal.throwIfAborted();
@@ -302,12 +304,12 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
       if (drafts.prompt(draftKey) === text) drafts.setPrompt(draftKey, "");
       acceptSubmission(attemptId, currentRequest);
 
-      if (generation !== current) return;
+      if (generation !== current || sendCall !== call) return;
       remember(value);
 
       if (selection === selected && submission === controller) { drafts.chatId = value.id; setCancellationError(result.cancellationError); setChat(value); }
     } catch (reason) {
-      if (generation !== current) return;
+      if (generation !== current || sendCall !== call) return;
 
       if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason));
     } finally { finishSubmission(current, controller); }
@@ -382,7 +384,11 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
 
           receiveLease(id, ownership, refreshed);
         }
-      } catch {}
+
+        if (!cancelled && current === generation) setLeaseError(undefined);
+      } catch (reason) {
+        if (!cancelled && current === generation && desiredChat === id) setLeaseError(`Could not renew editing access to this chat: ${reason instanceof Error ? reason.message : String(reason)}`);
+      }
       finally { if (!cancelled) timer = setTimeout(() => void renew(), 8000); }
     };
 
@@ -394,10 +400,23 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   onCleanup(() => { disposed = true; desiredChat = undefined; generation++; submission?.abort(); release(); });
 
   return { models, modelSelection, chats, chat, prompt, setPrompt, source, includeContext, setIncludeContext, canChooseContext, responding, recovering,
-    busy, loading: () => loading() || catalogLoading(), editable, error: () => error() ?? cancellationError() ?? catalogError() ?? pollError(), fresh, select, send, stop };
+    busy, loading: () => loading() || catalogLoading(), editable, error: () => error() ?? cancellationError() ?? catalogError() ?? subscriptionError() ?? leaseError() ?? pollError(), fresh, select, send, stop };
 }
 
 type ChatGptCall = <S extends z.ZodType>(action: string, schema: S, args: Record<string, import("zod").JSONType | undefined>) => Promise<z.output<S>>;
+
+/** Stops waiting for a request when the user presses Stop. The request itself still finishes on the host. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) { promise.catch(() => undefined);
+
+  return Promise.reject(signal.reason); }
+
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
 
 function createChatGptCall(providerId: string, leaseId: string, account: string | undefined) {
   return <S extends z.ZodType,>(action: string, schema: S, args: Record<string, import("zod").JSONType | undefined> = {}) => invoke("plugin_call", { hostId: "local", pluginId: "chatgpt", request: { ...args, action, providerId, leaseId, account } }, schema);
@@ -417,11 +436,11 @@ async function submitChatGpt(call: ChatGptCall, input: Record<string, import("zo
   const context = source ? await chatGptContext(source, signal) : undefined;
   signal.throwIfAborted();
   const p = chatGptPrepareToken();
-  const prepared = await call("prepare", chatRequirementsSchema, { p });
+  const prepared = await abortable(call("prepare", chatRequirementsSchema, { p }), signal);
   signal.throwIfAborted();
   const integrity = await solveChatGptRequirements(prepared, p, signal);
   signal.throwIfAborted();
-  const ownership = await call("claim", ownershipSchema, { chatId: input.chatId });
+  const ownership = await abortable(call("claim", ownershipSchema, { chatId: input.chatId }), signal);
 
   if (!ownership.owned) throw new Error("Another client holds this chat's editing lease.");
   signal.throwIfAborted();
