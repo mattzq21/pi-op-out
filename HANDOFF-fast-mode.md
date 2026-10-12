@@ -1,6 +1,6 @@
 # Fast-mode refactor handoff
 
-Planning is complete for ownership and scan timing; implementation remains. The user-edited [ADR 0003](docs/adr/0003-separate-fast-model-discovery-from-session-state.md) is authoritative.
+Ownership, scan timing, and the public interfaces are defined; implementation remains. The user-edited [ADR 0003](docs/adr/0003-separate-fast-model-discovery-from-session-state.md) is authoritative.
 
 ## Decisions
 
@@ -26,9 +26,27 @@ interface FastModeSession {
 
 Save before reporting success; a failed save leaves the choice unchanged. Subscribe sends the initial choice and subsequent changes, and returns an unsubscribe function.
 
+## Discovery interface
+
+The contract is saved in [fast-model-discovery.proposed.ts](daemon/resources/fast-model-discovery.proposed.ts). It is not connected to runtime code yet.
+
+```ts
+type FastModelScanResult =
+  | { provider: string; status: "ok"; supportedModelIds: readonly string[] }
+  | { provider: string; status: "error"; message: string };
+
+interface FastModelDiscovery {
+  scan(provider?: string): Promise<readonly FastModelScanResult[]>;
+}
+```
+
+Each instance uses one host's model runtime and authentication. `scan()` checks all registered providers the module supports, including built-ins; `scan(provider)` checks one provider. Every call attempts discovery. The host owns the refresh limit, saved results, and client updates.
+
+Each attempted provider returns one result with unique model IDs. Success replaces its saved list, including an empty list. An error preserves previous results for the same account/configuration context and is reported. Discard results if that context changes during the scan. Unsupported providers produce no result; unknown providers produce an error. Failures that prevent the entire scan reject the promise.
+
 ## Remaining work
 
-Define the discovery module's final interface and connect both paths. The earlier `extensions/piop-openai-fast-mode/src/interface.proposed.ts` is outdated: its combined support/session contract is superseded by this decision. Session-broker request names and interface registration are not finalized.
+Implement the discovery and session interfaces and connect both paths. The earlier `extensions/piop-openai-fast-mode/src/interface.proposed.ts` is outdated: its combined support/session contract is superseded by this decision. Session-broker request names and interface registration are not finalized.
 
 Start with `daemon/src/host/providers.ts`, `daemon/resources/fast-capabilities.mjs`, `extensions/piop-openai-fast-mode/src/`, and `extensions/piop-define-agents/`. Check drafts, settings, child-session inheritance, and UI callers when moving ownership.
 
