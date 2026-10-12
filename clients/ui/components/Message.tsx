@@ -19,6 +19,7 @@ import { WorkingIndicator } from "./WorkingIndicator";
 import { ZoomableImage } from "./ZoomableImage";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
 import type { FileReference } from "../lib/projectFiles";
+import { copyText } from "../lib/clipboard";
 
 interface Props { message: ChatMessage; onOpenFile?: (file: FileReference) => void; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
 
@@ -220,8 +221,7 @@ export function Message(componentProps: Props) {
   const copy = async () => { const capturedMessage0 = componentProps.message;
 
     try {
-      if (!navigator.clipboard) throw new Error("Clipboard access is unavailable");
-      await navigator.clipboard.writeText(textOf(capturedMessage0.content));
+      await copyText(textOf(capturedMessage0.content));
       setCopyState("copied");
     } catch {
       setCopyState("error");

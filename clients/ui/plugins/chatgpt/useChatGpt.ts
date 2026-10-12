@@ -35,7 +35,9 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   const prompt = () => drafts.prompt(chat()?.id);
   const setPrompt = (value: string) => drafts.setPrompt(chat()?.id, value);
   const [draftIncludeContext, setDraftIncludeContext] = createSignal(true);
-  const includeContext = () => chat()?.messages.length ? Boolean(chat()?.contextSource) : draftIncludeContext();
+  // An empty Piop conversation has no context to include, so the chat must show "Chat" mode.
+  const contextAvailable = () => { const value = request()?.source(); return Boolean(value?.messages.length || value?.selected); };
+  const includeContext = () => chat()?.messages.length ? Boolean(chat()?.contextSource) : draftIncludeContext() && contextAvailable();
   const modelSelection = createModelSelection(models);
   const source = () => includeContext() ? request()?.source() : undefined;
   const responding = () => isResponding(chat());
@@ -257,7 +259,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   }, () => [chat()?.id, open(), loading()]);
 
   const editable = () => open() && (!chat() || chat()?.ownership?.owned === true);
-  const canChooseContext = () => !chat()?.messages.length && !busy() && !loading() && !catalogLoading() && !responding();
+  const canChooseContext = () => !chat()?.messages.length && contextAvailable() && !busy() && !loading() && !catalogLoading() && !responding();
   const setIncludeContext = (value: boolean) => { if (canChooseContext()) setDraftIncludeContext(value); };
 
   const canSend = () => editable() && !busy() && !loading() && !catalogLoading() && models().length > 0 && !responding() && Boolean(prompt().trim());

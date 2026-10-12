@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { agentStateSchema, modelSchema } from "./lib/responseSchemas";
+import { agentConfigSchema } from "./lib/agentSchemas";
 import { required } from "./lib/required";
 import { createMemo, type Accessor } from "solid-js";
 import type { NativeTransport } from "./lib/nativeTransport";
@@ -114,7 +115,11 @@ async function applyDefaults(transport: NativeTransport, value: AppSettings, mod
   const agent = value.defaultAgent ?? "general";
   await transport.command({ type: "select_agent", agent });
   if (!current()) return;
-  const wanted = agentModel(agents, agent) || value.defaultModel;
+  // A new conversation can apply defaults before the agent list arrives, so read the agents from the runtime.
+  const config = agents?.config ?? await transport.command({ type: "get_agent_configuration" }, agentConfigSchema.nullable());
+
+  if (!current()) return;
+  const wanted = config?.agents.find(item => item.name === agent)?.model.trim() || value.defaultModel;
 
   if (models.some(model => modelKey(model) === wanted)) {
     const state = await transport.command({ type: "get_state" }, agentStateSchema);

@@ -462,7 +462,10 @@ export class NativeTransport {
   }
   private connectedOwnership(attached: { attached: boolean; owned?: boolean } | undefined) {
     if (attached?.attached) this.fresh = false;
-    this.owns = !this.readOnly && attached?.owned !== false;
+    const owns = !this.readOnly && attached?.owned !== false;
+
+    if (this.initializingChat && owns === this.owns) return;
+    this.owns = owns;
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
   async disconnect(discardBlank = false) { const owned = this.hasConfirmedOwnership(); ++this.connectionVersion; this.connectPromise = undefined; this.running = false; this.owns = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();

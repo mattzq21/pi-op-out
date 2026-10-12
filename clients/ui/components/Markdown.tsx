@@ -13,6 +13,7 @@ import { markdownBlocks } from "./markdownBlocks";
 import { streamingMarkdown } from "./streamingMarkdown";
 import { imageFileReference, markdownImages } from "./markdownImages";
 import { markdownHooks, markdownTokenizer } from "../lib/markdownTokenizer";
+import { copyText } from "../lib/clipboard";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]));
 
@@ -155,7 +156,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
     button.closest(".code-block")?.querySelector("[role=status]")?.remove();
 
     try {
-      await navigator.clipboard.writeText((button.closest(".code-block")?.querySelector("code")?.textContent ?? "").replace(/\n$/, ""));
+      await copyText((button.closest(".code-block")?.querySelector("code")?.textContent ?? "").replace(/\n$/, ""));
       button.textContent = "✓"; button.setAttribute("aria-label", "Code copied");
     } catch {
       button.textContent = "!"; button.setAttribute("aria-label", "Copy failed");
@@ -219,7 +220,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
     if (!current) return;
     setError(undefined);
 
-    try { await navigator.clipboard.writeText(current.href); } catch { setError("Could not copy link"); }
+    try { await copyText(current.href); } catch { setError("Could not copy link"); }
 
     close(true);
   };

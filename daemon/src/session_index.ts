@@ -13,7 +13,7 @@ import * as sidebarStorage from './sidebar_storage';
 import * as Registry from './session_registry';
 import * as restoreRecovery from './restore_recovery';
 import { loadAppSettings } from './settings';
-import { MAX_REMOTE_HOSTS, type AppSettings, type RemoteHost } from './settings_types';
+import { type AppSettings, type RemoteHost } from './settings_types';
 import { canonicalUuid } from './session_worker';
 import { transaction } from './util/db';
 import { Mutex } from './util/sync';
@@ -343,21 +343,6 @@ export function parseRemoteDirectories(bytes: Buffer): DirectoryListing {
   return { path: first, parent: parentOf(first), directories: sortLowercase(directories) };
 }
 
-export function collectSessions(app: App, index: SessionIndexRuntime): Promise<SessionSummary[]> { return peers.allSummaries(app, index); }
-
-export async function collectHostSessions(sessions: SessionSummary[], hosts: RemoteHost[], list: (host: RemoteHost) => Promise<SessionSummary[]>, assign: (sessions: SessionSummary[]) => Promise<void> | void): Promise<SessionSummary[]> {
-  const queue = hosts.filter(host => host.enabled);
-  const workers = Math.min(MAX_REMOTE_HOSTS, 4, queue.length);
-  await Promise.all(Array.from({ length: workers }, async () => {
-    for (;;) {
-      const host = queue.pop();
-      if (!host) return;
-      try { sessions.push(...await list(host)); } catch {}
-    }
-  }));
-  await assign(sessions);
-  sessions.sort((left, right) => right.modifiedAt - left.modifiedAt);
-  return sessions;
-}
+export function collectSessions(app: App, index: SessionIndexRuntime, waitForRemote = false): Promise<SessionSummary[]> { return peers.allSummaries(app, index, waitForRemote); }
 
 export function listSessions(app: App, index: SessionIndexRuntime): Promise<SessionSummary[]> { return collectSessions(app, index); }

@@ -82,7 +82,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const terminalLocationState = createMemo(() => ({
     terminalCwd: terminalTarget()?.cwd ?? location().cwd,
     terminalHostId: terminalTarget()?.hostId ?? location().hostId,
-  }));
+  }), undefined, { equals: (previous, next) => previous.terminalCwd === next.terminalCwd && previous.terminalHostId === next.terminalHostId });
 
   createEffect(() => {
     if (!terminalOpen()) return;
@@ -404,8 +404,15 @@ export function createTerminalController({ transport, sessionTransport, conversa
     }])));
   };
 
+  const chatStartedFor = (key: string) => {
+    if (sessionTransport(key)?.hasSentMessage()) return true;
+    addNotice({ title: "Terminal unavailable", message: "Send a message first. The terminal opens in the conversation's directory." });
+
+    return false;
+  };
+
   const toggleFor = (target: TerminalTarget) => {
-    if (!sessionTransport(target.sessionKey)?.hasSentMessage()) return;
+    if (!chatStartedFor(target.sessionKey)) return;
     const close = terminalOpen() && terminalSessionId() === target.sessionKey;
     terminalPanelRevision.current += 1;
     setTerminalTarget(target); setTerminalOpen(!close);
@@ -417,7 +424,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     if (!terminalOpen()) {
       const next = target();
 
-      if (!sessionTransport(next.sessionKey)?.hasSentMessage()) return;
+      if (!chatStartedFor(next.sessionKey)) return;
       setTerminalTarget(next);
     }
 

@@ -363,7 +363,7 @@ async function processBrokerMessage(app: App, broker: BrokerRuntime, body: Buffe
 async function brokerAgents(app: App, broker: BrokerRuntime): Promise<any> {
   const active = [...app.pi.activeAgents.values()];
   const busy = new Set(broker.busy);
-  const sessions = await collectSessions(app, app.sessionIndex);
+  const sessions = await collectSessions(app, app.sessionIndex, true);
   return sessions.filter(session => session.subagentParentId === undefined).map(session => ({
     hostId: session.hostId, sessionId: session.id, name: session.name, project: session.project, cwd: session.cwd,
     active: busy.has(`${session.hostId}\0${session.id}`) || active.some(agent => agentIsActive(session, agent)),
@@ -372,7 +372,7 @@ async function brokerAgents(app: App, broker: BrokerRuntime): Promise<any> {
 
 async function brokerMessageSessions(app: App, hostId: string): Promise<SessionSummary[]> {
   if (hostId === 'local') return listLocalSessions(app.sessionIndex, ensureDesktopSessionsDir(homeDir()));
-  return collectSessions(app, app.sessionIndex);
+  return collectSessions(app, app.sessionIndex, true);
 }
 
 async function brokerOrchestration(app: App, broker: BrokerRuntime, value: any): Promise<any> {

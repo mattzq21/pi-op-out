@@ -9,6 +9,7 @@ import { type CSSProperties } from "../lib/solid";
 import type { PromptContextInfo } from "../types";
 import { separatePromptInstructions } from "../lib/promptInstructions";
 import { promptContextSchema } from "../lib/messageSchemas";
+import { copyText } from "../lib/clipboard";
 
 type Section = "system" | "instructions" | "tools" | "skills";
 
@@ -21,7 +22,7 @@ function ContextCopyButton(props: { content: () => string }) {
   const copy = async () => {
     clearTimeout(timer);
 
-    try { await navigator.clipboard.writeText(props.content());
+    try { await copyText(props.content());
 
     if (!disposed) setState("copied"); }
     catch { if (!disposed) setState("error"); }

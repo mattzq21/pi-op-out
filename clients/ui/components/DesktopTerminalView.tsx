@@ -13,6 +13,7 @@ import { z } from "zod";
 import { terminalTheme } from "../lib/terminalColors";
 
 import type { TerminalViewProps } from "./TerminalView";
+import { copyText } from "../lib/clipboard";
 
 const MAX_PENDING_OUTPUT_BYTES = 8 * 1024 * 1024;
 const MAX_TERMINAL_CELLS = 250_000;
@@ -47,7 +48,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
 
         if (selection) {
           const copy = async () => {
-            try { await navigator.clipboard.writeText(selection); }
+            try { await copyText(selection); }
             catch { if (terminal.current === instance) setCopyError(true); }
           };
 

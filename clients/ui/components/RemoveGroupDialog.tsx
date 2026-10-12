@@ -29,9 +29,9 @@ export function RemoveGroupDialog(componentProps: { name: string; onRemove: () =
   return <dialog ref={element => { dialogRef.current = element; }} class="extension-dialog" aria-labelledby={titleId} aria-describedby={descriptionId} onCancel={(event) => { event.preventDefault();
 
   if (!pendingRef.current) componentProps.onCancel(); }}>
-    <h2 id={titleId}>Remove group “{componentProps.name}”?</h2>
+    <h2 id={titleId}>Forget group “{componentProps.name}”?</h2>
     <p id={descriptionId}>All its chats will move outside all groups. No chats or directories will be deleted.</p>
     {error() && <p class="dialog-error" role="alert">{(error())}</p>}
-    <div class="dialog-actions"><button autofocus disabled={pending()} onClick={componentProps.onCancel}>Cancel</button><button class="primary-button" disabled={pending()} onClick={() => void remove()}>{pending() ? "Removing…" : "Remove group"}</button></div>
+    <div class="dialog-actions"><button autofocus disabled={pending()} onClick={componentProps.onCancel}>Cancel</button><button class="primary-button" disabled={pending()} onClick={() => void remove()}>{pending() ? "Forgetting…" : "Forget group"}</button></div>
   </dialog>;
 }

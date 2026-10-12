@@ -5,7 +5,7 @@ import { createRef, type RefObject } from "./lib/solid";
 import type { useChatSession } from "./lib/useChatSession";
 import type { SessionSummary } from "./types";
 import { isTemporaryChatCwd } from "./lib/sessionGroups";
-import { StorageTransactionError, storageFailure } from "./lib/storageFailure";
+import { storageFailure } from "./lib/storageFailure";
 
 type ArchiveContext = {
   reuseSessionDraft: () => boolean;
@@ -30,6 +30,7 @@ type ArchiveContext = {
   closeSplitPane: () => void;
   syncSessionIndex: () => Promise<void>;
   addNotice: (notice: { title: string; message: string }) => void;
+  archiveCount: { current: number };
 };
 
 function temporaryConversation(owner: NativeTransport, session: SessionSummary) {
@@ -39,7 +40,9 @@ function temporaryConversation(owner: NativeTransport, session: SessionSummary) 
 export function createConversationArchive(context: ArchiveContext) {
   const { runtimePool, transport, chatSession, activeHostId, activeTransportRef, activeConversationKeyRef, transportConversationKeys, isSelectedSession, isSplitSession, conversationTerminalIds, removeConversationTerminals, removeDraft, setSessions, setActiveCwd, activateTransport, activateConversationKey, updateConnected, closeSplitPane, syncSessionIndex, addNotice } = context;
   const [archivePending, setArchivePending] = createSignal(new Set<string>());
-  const archivedSessionKeys = createRef(new Set<string>());
+  // Each archived key keeps the archive count at the time it was archived, so a session list loaded before the archive can not restore it.
+  const archivedSessionKeys = createRef(new Map<string, number>());
+  const { archiveCount } = context;
   const removalPending = new Set<string>();
   const ownsSelectedSession = (owner: NativeTransport, session: SessionSummary) => owner === transport() && isSelectedSession(session);
   const ownsConversationUi = (owner: NativeTransport, key: string) => activeTransportRef.current === owner && activeConversationKeyRef.current === key;
@@ -71,7 +74,7 @@ export function createConversationArchive(context: ArchiveContext) {
     const terminalIds = conversationTerminalIds(archivedSessionKey);
 
     const removeArchivedUi = () => {
-      archivedSessionKeys.current.add(archivedSessionKey);
+      archivedSessionKeys.current.set(archivedSessionKey, ++archiveCount.current);
       setSessions((current) => current.filter((item) => item.path !== session.path || (item.hostId ?? "local") !== (session.hostId ?? "local")));
       removeDraft(archivedSessionKey);
       removeConversationTerminals(archivedSessionKey);
@@ -81,7 +84,7 @@ export function createConversationArchive(context: ArchiveContext) {
 
     addNotice(storageFailure("archive", cause));
 
-    if (cause instanceof StorageTransactionError && cause.state !== "rolled-back") void syncSessionIndex(); };
+    void syncSessionIndex(); };
 
     const startTemporaryReplacement = async (hostId: string, conversationKey: string) => {
       const nextTransport = capturedRuntimePool.create({ hostId });
@@ -178,22 +181,8 @@ export function createConversationArchive(context: ArchiveContext) {
     return activeHostId() === hostId && (current.sessionId === sessionId || Boolean(sessionPath && current.sessionFile === sessionPath));
   };
 
-  const closeRemovedTerminals = async (keys: Set<string>) => {
-    const terminalIds = new Set([...keys].flatMap(conversationTerminalIds));
-    const owner = transport();
-    const closed = await Promise.allSettled([...terminalIds].map(id => owner.closeTerminal(id)));
-    const failed = closed.find(result => result.status === "rejected");
-
-    if (failed?.status === "rejected") {
-      addNotice({ title: "Could not close archived conversation terminals", message: String(failed.reason) });
-
-      return false;
-    }
-
-    for (const key of keys) removeConversationTerminals(key);
-
-    return true;
-  };
+  // The daemon stops the terminals of a removed conversation before it reports the removal.
+  const forgetRemovedTerminals = (keys: Set<string>) => { for (const key of keys) removeConversationTerminals(key); };
 
   const replaceRemovedConversation = (pool: SessionRuntimePool, hostId: string) => {
     const previous = transport();
@@ -217,7 +206,7 @@ export function createConversationArchive(context: ArchiveContext) {
   const finishRemovedConversation = (pool: SessionRuntimePool, hostId: string, sessionPath: string | undefined, sessionId: string | undefined, summaries: SessionSummary[], id: string | undefined) => {
     context.removeSessionDrafts(hostId, sessionPath, sessionId ?? id);
 
-    if (id) archivedSessionKeys.current.add(hostId + ":" + id);
+    if (id) archivedSessionKeys.current.set(hostId + ":" + id, ++archiveCount.current);
 
     for (const session of summaries) {
       if (isSplitSession(session)) closeSplitPane();
@@ -250,13 +239,18 @@ export function createConversationArchive(context: ArchiveContext) {
 
         if (id) keys.add(`${hostId}:${id}`);
 
-        if (!await closeRemovedTerminals(keys)) return false;
+        forgetRemovedTerminals(keys);
         finishRemovedConversation(pool, hostId, sessionPath, sessionId, summaries, id);
 
         return true;
       } finally { removalPending.delete(removalKey); }
     },
-    restored: (hostId: string, sessionId: string) => archivedSessionKeys.current.delete(`${hostId}:${sessionId}`),
+    restored: (hostId: string, sessionId: string, listedAfter?: number) => {
+      const key = `${hostId}:${sessionId}`;
+      const archivedAt = archivedSessionKeys.current.get(key);
+
+      if (archivedAt !== undefined && (listedAfter === undefined || archivedAt <= listedAfter)) archivedSessionKeys.current.delete(key);
+    },
     isPending: (session: SessionSummary) => archivePending().has(`${session.hostId ?? "local"}:${session.id}`),
     isArchived: (session: SessionSummary) => archivedSessionKeys.current.has(`${session.hostId ?? "local"}:${session.id}`),
   };

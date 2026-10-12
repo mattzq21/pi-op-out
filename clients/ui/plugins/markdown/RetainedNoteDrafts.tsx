@@ -1,13 +1,14 @@
 import { createSignal, For, Show } from "solid-js";
 import { unavailableNoteDrafts } from "./noteSessions";
 import "./notes.css";
+import { copyText } from "../../lib/clipboard";
 
 export function RetainedNoteDrafts(props: { hostId: string; busy: boolean }) {
   return <For each={unavailableNoteDrafts(props.hostId)}>{session => {
     const [message, setMessage] = createSignal("");
 
     const copy = async () => {
-      try { await navigator.clipboard.writeText(session.note.content()); setMessage("Draft copied."); }
+      try { await copyText(session.note.content()); setMessage("Draft copied."); }
       catch { setMessage("Could not copy the draft. Select its text below to copy it."); }
     };
 

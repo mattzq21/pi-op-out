@@ -6,7 +6,7 @@ import { homeDir } from './environment';
 import { loadAppSettings } from './settings';
 import { remoteHost, remoteLoginCommand, sshBase } from './pi_launch';
 import { ensureDesktopSessionsDir, shellQuote, spawnOptions } from './process_io';
-import { collectHostSessions, listLocalSessions, type SessionIndexRuntime } from './session_index';
+import { listLocalSessions, type SessionIndexRuntime } from './session_index';
 import * as sessionGroups from './session_groups';
 import * as daemonEndpoint from './daemon_endpoint';
 import { brokerEnvironment } from './broker';
@@ -129,6 +129,9 @@ export class Connection {
 
 interface Route { owner: string; hostId: string; connection: Connection }
 
+/** The last session list read from one remote host, with the host settings used to read it. */
+interface RemoteSessionList { target: string; piPath: string; daemonId: string; rows: SessionSummary[] }
+
 function routeKey(kind: string, id: string): string { return kind + '\u0000' + id; }
 function splitKey(key: string): [string, string] { const index = key.indexOf('\u0000'); return [key.slice(0, index), key.slice(index + 1)]; }
 
@@ -142,6 +145,9 @@ export class PeerRuntime {
   messages = new Map<string, Connection>();
   running = new Set<string>();
   errors = new Map<string, string>();
+  remoteSessions = new Map<string, RemoteSessionList>();
+  remoteListing = new Map<string, Promise<void>>();
+  remoteListingDirty = new Set<string>();
 }
 
 function executable(host: RemoteHost): string {
@@ -282,32 +288,62 @@ export async function localSessions(app: App): Promise<any[]> {
   return sessions.map(session => ({ ...serializeSession(session), daemonId: id, isRunning: active.has(session.id) }));
 }
 
-export async function allSummaries(app: App, index: SessionIndexRuntime): Promise<SessionSummary[]> {
+async function listRemoteHost(app: App, host: RemoteHost): Promise<RemoteSessionList> {
+  let connection: Connection; let value: any;
+  try {
+    connection = await connect(app, host.id);
+    value = await connection.invoke('list_sessions', {});
+    app.peers.errors.delete(host.id);
+  } catch (error: any) {
+    const message = error?.message ?? String(error);
+    if (app.peers.errors.get(host.id) !== message) { app.peers.errors.set(host.id, message); app.emit('pi://daemon-error', { hostId: host.id, line: message, _peer: true }); }
+    throw error;
+  }
+  if (!Array.isArray(value)) throw new Error('Invalid peer session list');
+  for (const key of [...app.peers.running]) if (key.startsWith(connection.daemonId + '\u0000')) app.peers.running.delete(key);
+  for (const row of value) if (row?.isRunning === true && typeof row.id === 'string') app.peers.running.add(connection.daemonId + '\u0000' + row.id);
+  const rows = value.map(parseSession);
+  for (const row of rows) { row.hostId = host.id; row.hostName = host.name; row.groupId = null; }
+  return { target: host.target, piPath: host.piPath, daemonId: connection.daemonId, rows };
+}
+
+/** Reads the session list of a remote host and reports a change with pi://sessions-changed. A request during a read starts one more read after it. */
+function refreshRemoteHost(app: App, host: RemoteHost): Promise<void> {
+  const state = app.peers;
+  const running = state.remoteListing.get(host.id);
+  if (running) { state.remoteListingDirty.add(host.id); return running; }
+  const listing = listRemoteHost(app, host).then(list => {
+    const previous = state.remoteSessions.get(host.id);
+    state.remoteSessions.set(host.id, list);
+    if (JSON.stringify(previous) !== JSON.stringify(list)) app.emit('pi://sessions-changed', { _peer: true });
+  }, () => {
+    if (state.remoteSessions.delete(host.id)) app.emit('pi://sessions-changed', { _peer: true });
+  }).finally(() => {
+    state.remoteListing.delete(host.id);
+    if (state.remoteListingDirty.delete(host.id)) void refreshRemoteHost(app, host);
+  });
+  state.remoteListing.set(host.id, listing);
+  return listing;
+}
+
+/** Lists local and remote sessions. Without waitForRemote, remote hosts give their last read list and are read again in the background. */
+export async function allSummaries(app: App, index: SessionIndexRuntime, waitForRemote = false): Promise<SessionSummary[]> {
   const settings = await loadAppSettings(app);
   const sessions = settings.localEnabled ? await listLocalSessions(index, ensureDesktopSessionsDir(homeDir())) : [];
-  const successful = new Map<string, string>();
-  const result = await collectHostSessions(sessions, settings.hosts, async host => {
-    let connection: Connection; let value: any;
-    try {
-      connection = await connect(app, host.id);
-      value = await connection.invoke('list_sessions', {});
-      app.peers.errors.delete(host.id);
-    } catch (error: any) {
-      const message = error?.message ?? String(error);
-      if (app.peers.errors.get(host.id) !== message) { app.peers.errors.set(host.id, message); app.emit('pi://daemon-error', { hostId: host.id, line: message, _peer: true }); }
-      throw error;
-    }
-    if (!Array.isArray(value)) throw new Error('Invalid peer session list');
-    for (const key of [...app.peers.running]) if (key.startsWith(connection.daemonId + '\u0000')) app.peers.running.delete(key);
-    for (const row of value) if (row?.isRunning === true && typeof row.id === 'string') app.peers.running.add(connection.daemonId + '\u0000' + row.id);
-    const rows = value.map(parseSession);
-    for (const row of rows) { row.hostId = host.id; row.hostName = host.name; row.groupId = null; }
-    successful.set(host.id, connection.daemonId);
-    return rows;
-  }, sessionGroups.attachAssignments);
+  const hosts = settings.hosts.filter(host => host.enabled);
+  const refreshes = hosts.map(host => refreshRemoteHost(app, host));
+  if (waitForRemote) await Promise.all(refreshes);
+  const lists = new Map<string, RemoteSessionList>();
+  for (const host of hosts) {
+    const list = app.peers.remoteSessions.get(host.id);
+    if (list && list.target === host.target && list.piPath === host.piPath) lists.set(host.id, list);
+  }
   const canonical = new Map<string, string>();
-  for (const host of settings.hosts) { const daemonId = successful.get(host.id); if (daemonId !== undefined && !canonical.has(daemonId)) canonical.set(daemonId, host.id); }
-  return result.filter(session => session.hostId === 'local' || (successful.has(session.hostId) && canonical.get(successful.get(session.hostId)!) === session.hostId));
+  for (const [hostId, list] of lists) if (!canonical.has(list.daemonId)) canonical.set(list.daemonId, hostId);
+  for (const [hostId, list] of lists) if (canonical.get(list.daemonId) === hostId) sessions.push(...list.rows.map(row => ({ ...row })));
+  await sessionGroups.attachAssignments(sessions);
+  sessions.sort((left, right) => right.modifiedAt - left.modifiedAt);
+  return sessions;
 }
 
 function register(state: PeerRuntime, kind: string, id: string, route: Route): void {
