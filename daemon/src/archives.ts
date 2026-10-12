@@ -1,21 +1,20 @@
 import { realpathSync, statSync } from 'node:fs';
 import { extname, join, sep } from 'node:path';
-import { MAX_PATH_LIST_BYTES, MAX_SESSION_INDEX_BATCH_BYTES, STORAGE_DIRECTORY } from './config';
-import { MAX_REMOTE_HOSTS } from './settings_types';
+import { STORAGE_DIRECTORY } from './config';
 import { homeDir, piExecutable } from './environment';
-import { sessionIdentity, ssh } from './pi_launch';
-import { desktopSessionsDir, runLimited, shellQuote, type CommandSpec } from './process_io';
-import { hostScript, runHostScript } from './host_script';
+import { sessionIdentity } from './pi_launch';
+import { desktopSessionsDir } from './process_io';
+import { DEFAULT_TIMEOUT, hostOperation, profileRoot, runHostOperation, STORAGE_TIMEOUT } from './host_operations';
 import { loadAppSettings } from './settings';
 import * as restoreRecovery from './restore_recovery';
 import * as storageTransactions from './storage_transactions';
-import { hostFor, type Host } from './host_connection';
+import { requireLocal } from './host_connection';
 import { restoreSessionTree } from './restore';
 import { MutationGuard } from './conversation_ownership';
 import * as sessionGroups from './session_groups';
 import * as terminalLookup from './terminal_lookup';
 import { stopTerminals } from './terminals';
-import type { AppSettings, RemoteHost } from './settings_types';
+import type { AppSettings } from './settings_types';
 import type { PiRuntime } from './pi_runtime';
 import type { TerminalRuntime } from './terminals';
 import type { App } from './app';
@@ -24,20 +23,19 @@ export interface HostStorage { hostId: string; hostName: string; categories: any
 
 type Inventory = { categories: any[]; archives: any[]; warnings: string[] };
 
-const storageInventory = hostScript<{ piPath: string }, Inventory>('storage-inventory', MAX_SESSION_INDEX_BATCH_BYTES, (value: any) => {
+const storageInventory = hostOperation<{ profile: string; piPath: string }, Inventory>('storage-inventory', 'general', STORAGE_TIMEOUT, (value: any) => {
   if (!Array.isArray(value?.categories)) throw new Error('missing field `categories`');
   if (!Array.isArray(value?.archives)) throw new Error('missing field `archives`');
   return { categories: value.categories.map(normalizeCategory), archives: value.archives.map(normalizeArchive), warnings: Array.isArray(value.warnings) ? value.warnings : [] };
 });
 
-export async function inspectStorage(host: RemoteHost | undefined): Promise<HostStorage> {
-  if (!host) await restoreRecovery.recover(join(homeDir(), STORAGE_DIRECTORY));
-  else await restoreRecovery.recoverRemote(host);
-  const label = host?.name ?? 'Local';
+/** Reads the storage report of this machine. Other machines report through their Piop daemon. */
+export async function inspectStorage(): Promise<HostStorage> {
+  await restoreRecovery.recover(profileRoot());
   let inventory: Inventory;
-  try { inventory = await runHostScript(host ? { kind: 'remote', host } : { kind: 'local' }, storageInventory, { piPath: host?.piPath ?? piExecutable() }); }
-  catch (error: any) { throw new Error(`Could not inspect storage on ${label}: ${error?.message ?? error}`); }
-  return { hostId: host?.id ?? 'local', hostName: label, ...inventory };
+  try { inventory = await runHostOperation(storageInventory, { profile: profileRoot(), piPath: piExecutable() }); }
+  catch (error: any) { throw new Error(`Could not inspect storage on Local: ${error?.message ?? error}`); }
+  return { hostId: 'local', hostName: 'Local', ...inventory };
 }
 
 function normalizeCategory(category: any): any {
@@ -52,22 +50,6 @@ function normalizeArchive(archive: any): any {
 
 export function failedStorage(hostId: string, hostName: string, error: string): HostStorage {
   return { hostId, hostName, categories: [], archives: [], warnings: [], error };
-}
-
-export async function storageReport(app: App): Promise<{ hosts: HostStorage[] }> {
-  const local = await inspectStorage(undefined).catch((error: any) => failedStorage('local', 'Local', error?.message ?? String(error)));
-  const remoteHosts = (await loadAppSettings(app)).hosts;
-  const queue = remoteHosts.filter(host => host.enabled);
-  const remote: HostStorage[] = [];
-  await Promise.all(Array.from({ length: Math.min(MAX_REMOTE_HOSTS, 4, queue.length) }, async () => {
-    for (;;) {
-      const host = queue.pop();
-      if (!host) return;
-      remote.push(await inspectStorage(host).catch((error: any) => failedStorage(host.id, host.name, error?.message ?? String(error))));
-    }
-  }));
-  remote.sort((left, right) => { const a = left.hostName.toLowerCase(); const b = right.hostName.toLowerCase(); return a < b ? -1 : a > b ? 1 : 0; });
-  return { hosts: [local, ...remote] };
 }
 
 function within(path: string, root: string): boolean { return path.startsWith(root.endsWith(sep) ? root : root + sep) || path === root; }
@@ -90,34 +72,24 @@ export function localArchivedSessionFileAt(home: string, sessionPath: string): s
   return source;
 }
 
-export async function desktopSessionFile(settings: AppSettings, hostId: string, path: string): Promise<string> {
-  return locateSessionFile(hostFor(settings, hostId), path, false);
+export async function desktopSessionFile(_settings: AppSettings, hostId: string, path: string): Promise<string> {
+  requireLocal(hostId);
+  return locateSessionFile(path, false);
 }
 
-export async function archivedSessionFile(settings: AppSettings, hostId: string, path: string): Promise<string> {
-  return locateSessionFile(hostFor(settings, hostId), path, true);
+export async function archivedSessionFile(_settings: AppSettings, hostId: string, path: string): Promise<string> {
+  requireLocal(hostId);
+  return locateSessionFile(path, true);
 }
 
-/** Returns the real path of a session file in the active or archived area of the Host. */
-export async function locateSessionFile(host: Host, path: string, archived: boolean): Promise<string> {
-  const locate = async () => host.kind === 'local'
-    ? (archived ? localArchivedSessionFileAt : localDesktopSessionFileAt)(homeDir(), path)
-    : remoteSessionFile(path, archived, script => ssh(host.host, script));
-  try { return await locate(); }
+/** Returns the real path of a session file in the active or archived area of this machine. */
+export async function locateSessionFile(path: string, archived: boolean): Promise<string> {
+  const locate = () => (archived ? localArchivedSessionFileAt : localDesktopSessionFileAt)(homeDir(), path);
+  try { return locate(); }
   catch {
-    await storageTransactions.recover(host, { busyIsOk: true });
+    await storageTransactions.recover({ busyIsOk: true });
     return locate();
   }
-}
-
-export async function remoteSessionFile(path: string, archived: boolean, command: (script: string) => CommandSpec): Promise<string> {
-  const [area, context, rejected] = archived
-    ? ['archived', 'Could not locate archived Piop conversation', 'Only archived conversation files in this Piop profile can be deleted']
-    : ['sessions', 'Could not locate Piop session', 'Only session files in this Piop profile can be opened'];
-  const script = `root=$(cd "$HOME/${STORAGE_DIRECTORY}/${area}" && pwd -P) && session=$(realpath -- ${shellQuote(path)}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac`;
-  const result = await runLimited(command(script), MAX_PATH_LIST_BYTES, context);
-  if (!result.status.success) throw new Error(rejected);
-  return result.stdout.toString('utf8');
 }
 
 async function retireArchivedSession(app: App, client: PiRuntime, hostId: string, sessionPath: string): Promise<void> {
@@ -135,9 +107,9 @@ async function archiveSessionPaths(app: App, client: PiRuntime, hostId: string, 
   mutations.push(await MutationGuard.acquire(app, hostId, sessionPath, clientId, false, 'archive'));
   await retireArchivedSession(app, client, hostId, sessionPath);
   const paths = [sessionPath];
-  const host = hostFor(await loadAppSettings(app), hostId);
+  requireLocal(hostId);
   for (;;) {
-    const descendants = (await sessionDescendants(host, sessionPath, false, false)).map(([path]) => path).filter(path => !paths.includes(path));
+    const descendants = (await sessionDescendants(sessionPath, false, false)).map(([path]) => path).filter(path => !paths.includes(path));
     if (!descendants.length) break;
     for (const path of descendants) {
       mutations.push(await MutationGuard.acquire(app, hostId, path, clientId, false, 'archive'));
@@ -161,7 +133,7 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
       terminalIds.push(...terminalLookup.sessionTerminals(runtime, hostId, sessionIds));
       await stopTerminals(runtime, terminalIds);
       const invalidate = app.sessionIndex.projects.invalidateAfter(hostId);
-      try { await storageTransactions.archive(hostFor(settings, hostId), paths); }
+      try { await storageTransactions.archive(paths); }
       finally { invalidate(); }
       const warnings: string[] = [];
       for (let index = 0; index < paths.length; index++) {
@@ -178,18 +150,18 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
   });
 }
 
-type DescendantsRequest = { path: string; root: string | null; archived: boolean; includeOtherArea: boolean };
+type DescendantsRequest = { path: string; root: string; archived: boolean; includeOtherArea: boolean };
 
-const descendantsScript = hostScript<DescendantsRequest, unknown[]>('session-descendants', MAX_SESSION_INDEX_BATCH_BYTES, value => {
+const descendantsOperation = hostOperation<DescendantsRequest, unknown[]>('session-descendants', 'general', STORAGE_TIMEOUT, value => {
   if (!Array.isArray(value)) throw new Error('expected a sequence');
   return value;
 });
 
 /** Returns the subagent sessions of the session at sessionPath. With includeOtherArea, each item also tells if it is archived. */
-export async function sessionDescendants(host: Host, sessionPath: string, archived: boolean, includeOtherArea: boolean): Promise<Array<[string, boolean]>> {
-  const root = host.kind === 'local' ? join(homeDir(), STORAGE_DIRECTORY, archived ? 'archived' : 'sessions') : null;
+export async function sessionDescendants(sessionPath: string, archived: boolean, includeOtherArea: boolean): Promise<Array<[string, boolean]>> {
+  const root = join(profileRoot(), archived ? 'archived' : 'sessions');
   let value: unknown[];
-  try { value = await runHostScript(host, descendantsScript, { path: sessionPath, root, archived, includeOtherArea }); }
+  try { value = await runHostOperation(descendantsOperation, { path: sessionPath, root, archived, includeOtherArea }); }
   catch (error: any) { throw new Error(`Could not find subagent conversations: ${error?.message ?? error}`); }
   if (includeOtherArea) return value.map((item: any) => {
     if (!Array.isArray(item) || typeof item[0] !== 'string' || typeof item[1] !== 'boolean') throw new Error('Invalid subagent conversation list: expected a tuple');
@@ -228,7 +200,7 @@ async function deleteStoredSessions(app: App, runtime: PiRuntime, sessionPaths: 
       const roots = [...paths];
       for (;;) {
         const children: Array<[string, boolean]> = [];
-        for (const [path, isArchived] of roots) children.push(...await sessionDescendants(hostFor(settings, hostId), path, isArchived, true));
+        for (const [path, isArchived] of roots) children.push(...await sessionDescendants(path, isArchived, true));
         let added = false;
         for (const [child, childArchived] of children) {
           if (paths.some(([path]) => path === child)) continue;
@@ -261,7 +233,8 @@ async function deleteSessionTargets(runtime: PiRuntime, targets: storageTransact
     throw new Error('Close the session before deleting it');
   }
   const activeSessionIds = agents.filter(agent => !agent.messageable && agent.hostId === hostId).map(agent => agent.sessionId).filter((id): id is string => id !== undefined);
-  await storageTransactions.deleteSessions(hostFor(settings, hostId), targets, activeSessionIds);
+  requireLocal(hostId);
+  await storageTransactions.deleteSessions(targets, activeSessionIds);
 }
 
 export function deleteSession(app: App, runtime: PiRuntime, sessionPath: string, hostId: string | undefined | null, clientId: string): Promise<string[]> {
@@ -275,8 +248,8 @@ export function deleteArchivedSession(app: App, runtime: PiRuntime, sessionPath:
 export async function restoreArchivedSession(app: App, sessionPath: string, hostIdOption: string | undefined | null, clientId: string): Promise<void> {
   const hostId = hostIdOption ?? 'local';
   await app.pi.lifecycle.run(async () => {
-    const settings = await loadAppSettings(app);
-    const result = await restoreSessionTree(hostFor(settings, hostId), sessionPath, path => MutationGuard.acquire(app, hostId, path, clientId, true, 'restore'));
+    requireLocal(hostId);
+    const result = await restoreSessionTree(sessionPath, path => MutationGuard.acquire(app, hostId, path, clientId, true, 'restore'));
     for (const session of result.sessions) app.emit('pi://session-restored', { hostId, sessionId: session.sessionId, sessionPath: session.sessionPath });
     app.emit('pi://sessions-changed', {});
   });
@@ -287,19 +260,19 @@ export async function relocateSession(app: App, sessionPath: string, cwd: string
     const hostId = hostIdOption ?? 'local';
     const mutation = await MutationGuard.acquire(app, hostId, sessionPath, clientId, false, 'relocate');
     try {
-      const settings = await loadAppSettings(app);
-      try { await runHostScript(hostFor(settings, hostId), relocateScript, { sessionPath, cwd }); }
+      requireLocal(hostId);
+      try { await runHostOperation(relocateOperation, { profile: profileRoot(), sessionPath, cwd }); }
       catch (error: any) { throw new Error(`Could not relocate conversation: ${error?.message ?? error}`); }
       await mutation.finish();
     } finally { await mutation.release(); }
   });
 }
 
-const relocateScript = hostScript<{ sessionPath: string; cwd: string }, null>('relocate-session', 64 * 1024, () => null);
+const relocateOperation = hostOperation<{ profile: string; sessionPath: string; cwd: string }, null>('relocate-session', 'general', DEFAULT_TIMEOUT, () => null);
 
 type Recovery = { cwd: string; recovery: unknown; warnings: string[] };
 
-const recoverScript = hostScript<{ action: 'empty'; sessionPath: string }, Recovery>('recover-missing-session', 64 * 1024, (value: any) => {
+const recoverOperation = hostOperation<{ action: 'empty'; profile: string; sessionPath: string }, Recovery>('recover-missing-session', 'general', DEFAULT_TIMEOUT, (value: any) => {
   if (typeof value?.cwd !== 'string' || !Array.isArray(value.warnings) || !value.warnings.every((item: unknown) => typeof item === 'string')) throw new Error('expected a recovery record');
   return value;
 });
@@ -313,7 +286,7 @@ export async function recoverMissingSession(app: App, sessionPath: string, hostI
     const mutation = await MutationGuard.acquire(app, hostId, path, clientId, false, 'relocate');
     try {
       let value: Recovery;
-      try { value = await runHostScript(hostFor(settings, hostId), recoverScript, { action: 'empty', sessionPath: path }); }
+      try { value = await runHostOperation(recoverOperation, { action: 'empty', profile: profileRoot(), sessionPath: path }); }
       catch (error: any) { throw new Error(`Could not recover the session directory: ${error?.message ?? error}`); }
       await mutation.finish();
       app.emit('pi://sessions-changed', null);

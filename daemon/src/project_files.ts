@@ -2,16 +2,15 @@ import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } fro
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
-import { loadAppSettings } from './settings';
-import { remoteHost } from './pi_launch';
-import { hostScript, runHostScript } from './host_script';
+import { requireLocal } from './host_connection';
 import type { App } from './app';
 
 const IMAGE_LIMIT = 10 * 1024 * 1024;
 const GOAL_IMAGE_PATH = /^(?:sessions|archived)\/(?:[^/]+\/)*attachments\/goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})\//;
 
-export async function readImage(app: App, cwd: string, path: string, hostId: string): Promise<string> {
-  const bytes = hostId === 'local' ? readLocalImage(cwd, path) : await readRemoteImage(app, cwd, path, hostId);
+export async function readImage(_app: App, cwd: string, path: string, hostId: string): Promise<string> {
+  requireLocal(hostId);
+  const bytes = readLocalImage(cwd, path);
   if (bytes.length > IMAGE_LIMIT) throw new Error('Image is larger than 10 MB');
   return `data:${imageMime(bytes)};base64,${bytes.toString('base64')}`;
 }
@@ -43,19 +42,6 @@ function readLocalImage(cwd: string, path: string): Buffer {
     }
     return buffer.subarray(0, length);
   } finally { closeSync(fd); }
-}
-
-const imageScript = hostScript<{ cwd: string; path: string }, Buffer>('read-image', 4 * Math.ceil(IMAGE_LIMIT / 3) + 1024, value => {
-  if (typeof value !== 'string' || value.length > 4 * Math.ceil(IMAGE_LIMIT / 3)) throw new Error('Invalid image data');
-  const bytes = Buffer.from(value, 'base64');
-  if (bytes.length > IMAGE_LIMIT || bytes.toString('base64') !== value) throw new Error('Invalid image data');
-  return bytes;
-});
-
-async function readRemoteImage(app: App, cwd: string, path: string, hostId: string): Promise<Buffer> {
-  const settings = await loadAppSettings(app);
-  const host = remoteHost(settings, hostId);
-  return runHostScript({ kind: 'remote', host }, imageScript, { cwd, path });
 }
 
 function imageMime(bytes: Buffer): string {

@@ -13,5 +13,5 @@
 **Storage transaction** - an archive, delete or restore of one or more sessions that fully happens or fully rolls back, also after a crash.  
 **Host** - a machine that stores sessions and runs agents: the local machine or a remote machine over SSH. "Machine" is the UI word for it.  
 **Anchor host** - the one Host that the mobile app connects to. The phone uses the anchor's added machines through it.  
-**Host script** - a piop script that runs on a Host to read or change its stored data.
+**Host operation** - work of the daemon that reads or changes the stored data of its own Host, run in a worker thread. Other Hosts run their host operations in their own daemon, which gets the request through the peer connection.
 **Restore receipt** - the saved result of a committed restore, used to answer a repeated restore of the same archived session tree.

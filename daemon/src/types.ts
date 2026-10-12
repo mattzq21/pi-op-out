@@ -1,5 +1,3 @@
-import type { RemoteHost } from './settings_types';
-
 export interface AgentAddress { hostId: string; sessionId?: string; sessionPath?: string; working: boolean; messageable: boolean }
 
 export interface SessionSummary {
@@ -45,4 +43,4 @@ export function parseSession(value: any): SessionSummary {
   };
 }
 
-export interface BlankSessionCleanup { path?: string; id?: string; host?: RemoteHost; submitted: boolean }
+export interface BlankSessionCleanup { path?: string; id?: string; submitted: boolean }

@@ -5,6 +5,7 @@ const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('./session-transactions.cjs');
+const { heldTransactionLock } = require('./session-broker/session-publication-io.cjs');
 const database = require('./session-database.cjs');
 
 const traceSchema = Type.Object({ source: Type.String(), destination: Type.String(), identity: Type.String({ pattern: '^\\d+:\\d+$' }) });
@@ -65,10 +66,10 @@ function assertLocked(root) {
   const lock = path.join(root, 'session-transactions.lock');
 
   if (!io.exists(lock)?.isFile() || fs.realpathSync(lock) !== lock) throw new Error('Restore receipt cleanup requires the session transaction lock');
-  const inherited = fs.fstatSync(3, { bigint: true });
+  const held = heldTransactionLock(lock);
 
-  if (`${inherited.dev}:${inherited.ino}` !== io.identity(lock)) throw new Error('Restore receipt cleanup requires the inherited session transaction lock');
-  if (!lockSync(3, false, true)) throw new Error('Restore receipt cleanup requires the session transaction lock');
+  if (held === undefined) throw new Error('Restore receipt cleanup requires the held session transaction lock');
+  if (!lockSync(held, false, true)) throw new Error('Restore receipt cleanup requires the session transaction lock');
 }
 
 function parse(body) {

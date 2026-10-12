@@ -1,5 +1,4 @@
 const fs = require('node:fs');
-const { hostScript } = require('./host-script.cjs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { reviewVisibility } = require('./session-broker/session-publication.cjs');
@@ -173,17 +172,21 @@ async function indexFile(path) {
   return index.summary(path);
 }
 
-hostScript(async request => {
+/** Returns the summary of each readable transcript in request.paths. Unreadable transcripts are reported in warnings. */
+async function indexSessions(request) {
   if (!Array.isArray(request.paths) || !request.paths.every(path => typeof path === 'string')) throw new Error('Invalid session summary request');
   const summaries = [];
+  const warnings = [];
 
   for (const path of request.paths) {
     try {
       const summary = await indexFile(path);
 
       if (summary) summaries.push(summary);
-    } catch (error) { console.error(`${path}: ${error.message}`); }
+    } catch (error) { warnings.push(`${path}: ${error.message}`); }
   }
 
-  return summaries;
-});
+  return { summaries, warnings };
+}
+
+module.exports = { indexSessions };

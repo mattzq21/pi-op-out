@@ -1,6 +1,6 @@
 import { lstatSync } from 'node:fs';
 import { join, normalize } from 'node:path';
-import { hostScript, runHostScript } from '../host_script';
+import { DEFAULT_TIMEOUT, hostOperation, runHostOperation } from '../host_operations';
 import { lockPath, type FileLock } from '../util/flock';
 
 export async function lock(root: string): Promise<FileLock> {
@@ -92,11 +92,11 @@ async function goalDependenciesOf(root: string, directory: string): Promise<Set<
   return found;
 }
 
-const goalText = hostScript<{ root: string; directory: string }, string[]>('goal-text', 1024 * 1024 * 1024, value => {
+const goalText = hostOperation<{ root: string; directory: string }, string[]>('goal-text', 'general', DEFAULT_TIMEOUT, value => {
   if (!Array.isArray(value) || !value.every(item => typeof item === 'string')) throw new Error('expected a list of texts');
   return value;
 });
 
 function goalTextContents(root: string, directory: string): Promise<string[]> {
-  return runHostScript({ kind: 'local' }, goalText, { root, directory });
+  return runHostOperation(goalText, { root, directory });
 }

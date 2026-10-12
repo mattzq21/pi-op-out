@@ -23,6 +23,9 @@ class Rejected extends Error {}
 
 let writes = 0;
 
+/** Starts the crash test count again for one storage transaction. */
+function resetCrashPoint() { writes = 0; }
+
 function point() {
   const limit = process.env.PIOP_STORAGE_TRANSACTION_CRASH_AFTER;
 
@@ -604,4 +607,4 @@ function stagedTranscripts(root) {
     .map(step => ({ id: row.id, kind: row.kind, state: row.state, root: row.journal.root, staging: row.journal.staging, file: step.staged, identity: step.identity.identity, sessionId: row.journal.targets.find(target => target.path === step.source)?.sessionId })));
 }
 
-module.exports = { archiveSessions, deleteSessions, restoreSessions, restoredResult, recover, recoverJournals, pending, stuck, temporaryCleanupPending, stagedTranscripts };
+module.exports = { archiveSessions, deleteSessions, restoreSessions, restoredResult, recover, recoverJournals, pending, stuck, temporaryCleanupPending, stagedTranscripts, resetCrashPoint };

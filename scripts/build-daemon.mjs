@@ -35,6 +35,15 @@ const rawText = {
   },
 };
 
+/** Resolves the agent definition loader of the piop-define-agents extension and the settings module it shares with the daemon. */
+const agentLoader = {
+  name: 'agent-loader',
+  setup(context) {
+    context.onResolve({ filter: /^piop-agent-loader$/ }, () => ({ path: join(root, 'extensions/piop-define-agents/daemon-loader.ts') }));
+    context.onResolve({ filter: /^\.\.\/app-settings\.cjs$/ }, args => args.importer.includes('/extensions/piop-define-agents/') ? { path: join(root, 'daemon/resources/session-broker/app-settings.cjs') } : undefined);
+  },
+};
+
 const source = join(root, 'target', debug ? 'debug' : 'release', 'piopd');
 mkdirSync(dirname(source), { recursive: true });
 const temporaryBuild = join(dirname(source), '.piopd-' + randomUUID() + '.mjs');
@@ -62,14 +71,15 @@ try {
     sourcemap: debug ? 'inline' : false,
     legalComments: 'none',
     logLevel: 'warning',
-    plugins: [rawText],
+    plugins: [rawText, agentLoader],
   });
   const bundle = readFileSync(temporaryBuild, 'utf8');
   if (!bundle.includes(buildIdPlaceholder)) throw new Error('Daemon build ID is missing from the bundle');
   const buildId = 'piop-build-' + createHash('sha256').update(bundle.replaceAll(buildIdPlaceholder, '')).digest('hex');
   if (buildId.length !== buildIdPlaceholder.length) throw new Error('Daemon build ID length changed');
   writeFileSync(temporaryBuild, bundle.replaceAll(buildIdPlaceholder, buildId));
-  if (!debug) run(process.execPath, ['build', '--compile', temporaryBuild, '--outfile', temporaryExecutable]);
+  // Agent definition loads import the installed Pi package in a worker thread. Without package.json reads, imports of its dependencies fail.
+  if (!debug) run(process.execPath, ['build', '--compile', '--compile-autoload-package-json', temporaryBuild, '--outfile', temporaryExecutable]);
   const output = debug ? temporaryBuild : temporaryExecutable;
   chmodSync(output, 0o755);
   if (!sameContent(output, source)) renameSync(output, source);

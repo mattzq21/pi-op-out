@@ -2,14 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { homeDir, isDirectory } from './environment';
 import { ensureDesktopSessionsDir } from './process_io';
-import { hostFor } from './host_connection';
 import { withExtension } from './settings_storage';
-import { loadAppSettings } from './settings';
 import * as Registry from './session_registry';
+import * as peers from './peers';
+import { profileRoot } from './host_operations';
 import { lockFile } from './util/flock';
 import { Mutex } from './util/sync';
 import { transaction, type Database } from './util/db';
-import type { AppSettings } from './settings_types';
 import type { SessionSummary } from './types';
 import type { App } from './app';
 
@@ -127,8 +126,14 @@ function write(path: string, groups: SessionGroups): void {
   } finally { connection.close(); }
 }
 
-async function discover(settings: AppSettings, hostId: string): Promise<string[]> {
-  try { return await Registry.idsOn(hostFor(settings, hostId)); }
+/** Returns the session IDs registered on the machine. Other machines answer through their Piop daemon. */
+async function discover(app: App, hostId: string): Promise<string[]> {
+  try {
+    if (hostId === 'local') return Registry.ids(profileRoot());
+    const value = await (await peers.connect(app, hostId)).invoke('session_ids', {});
+    if (!Array.isArray(value) || !value.every(id => typeof id === 'string' && id)) throw new Error('Invalid session ID list');
+    return value;
+  }
   catch (error: any) { throw new Error(`Could not read current session IDs: ${error?.message ?? error}`); }
 }
 
@@ -139,7 +144,7 @@ function hostOf(key: string): string | undefined { const index = key.lastIndexOf
  * so a slow machine does not block other group and session reads. Only assignments that existed before the
  * hosts were asked can be removed, so a session created during the check keeps its assignment.
  */
-async function refreshDeletionsAt(path: string, settings: AppSettings, seeds: SessionSeed[], key: string | undefined): Promise<void> {
+async function refreshDeletionsAt(path: string, app: App, seeds: SessionSeed[], key: string | undefined): Promise<void> {
   let snapshot: SessionGroups;
   const first = await lockStorage(path);
   try { snapshot = read(path) ?? emptyGroups(); } finally { first.release(); }
@@ -148,7 +153,7 @@ async function refreshDeletionsAt(path: string, settings: AppSettings, seeds: Se
   if (key !== undefined) { const host = hostOf(key); if (host !== undefined) hosts.add(host); }
   const live = new Map<string, Set<string>>();
   await Promise.all([...hosts].map(async host => {
-    try { live.set(host, new Set(await discover(settings, host))); }
+    try { live.set(host, new Set(await discover(app, host))); }
     catch (error: any) { console.error(`Session group cleanup for ${host} will retry: ${error.message ?? error}`); }
   }));
   const stale: string[] = [];
@@ -184,7 +189,7 @@ export async function attachAssignments(sessions: SessionSummary[]): Promise<voi
 
 export async function loadSessionGroups(app: App, seeds: SessionSeed[]): Promise<SessionGroups> {
   const path = storagePath();
-  await refreshDeletionsAt(path, await loadAppSettings(app), seeds, undefined);
+  await refreshDeletionsAt(path, app, seeds, undefined);
   return STORAGE_LOCK.run(() => loadAt(path, seeds));
 }
 
@@ -241,7 +246,7 @@ function restoreSuppressedProjects(state: SessionGroups, seeds: SessionSeed[]): 
 
 export async function changeSessionGroups(app: App, change: GroupChange): Promise<SessionGroups> {
   const path = storagePath();
-  await refreshDeletionsAt(path, await loadAppSettings(app), [], changeKey(change));
+  await refreshDeletionsAt(path, app, [], changeKey(change));
   return STORAGE_LOCK.run(async () => {
     const state = await changeAt(storagePath(), change);
     app.emit('pi://groups-changed', serializeGroups(state));
@@ -251,7 +256,7 @@ export async function changeSessionGroups(app: App, change: GroupChange): Promis
 
 export async function refreshDeletions(app: App, hostId: string): Promise<void> {
   const path = storagePath();
-  await refreshDeletionsAt(path, await loadAppSettings(app), [], `${hostId}:`);
+  await refreshDeletionsAt(path, app, [], `${hostId}:`);
   await STORAGE_LOCK.run(async () => {
     const state = read(path);
     if (state) app.emit('pi://groups-changed', serializeGroups(state));

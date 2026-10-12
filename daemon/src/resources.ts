@@ -1,4 +1,3 @@
-import { HOST_SCRIPT_BUNDLES } from '../resources/host-script-bundles';
 import fileLockSource from '../resources/file-lock.cjs?raw';
 import sessionDatabase from '../resources/session-database.cjs?raw';
 import appSettingsCjs from '../resources/session-broker/app-settings.cjs?raw';
@@ -149,9 +148,6 @@ export {
   excalidrawSkill,
   excalidrawCheatsheet,
 };
-
-export { HOST_SCRIPT_BUNDLES };
-export type HostScriptName = keyof typeof HOST_SCRIPT_BUNDLES;
 
 export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['goal-directory-recovery.cjs', brokerModule0],

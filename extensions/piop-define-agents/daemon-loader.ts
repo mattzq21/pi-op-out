@@ -10,8 +10,6 @@ import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
 import { modelValidator } from "./model-validation.ts";
 
-const settings = JSON.parse(process.argv[2] || "{}");
-
 function validateEffort(name: string, value: string | undefined) {
   const effort = value?.trim();
 
@@ -24,80 +22,84 @@ const sourceAgentSchema = Type.Object({
   systemPrompt: Type.Optional(Type.String()), agentsMd: Type.Optional(Type.String()), developerPrompt: Type.Optional(Type.String()),
 });
 
-const initialize = process.env.PIOP_AGENT_INITIAL_LOAD === "1";
+export interface AgentDefinitionsRequest { settings: any; initial: boolean }
 
-if (initialize) await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
+export interface AgentDefinitions { config: any; prompts: Record<string, string>; configPath: string }
 
-let stored;
+/**
+ * Reads and checks the agent definitions for the daemon. initial creates missing configuration files.
+ * The configuration paths come from the environment of the calling thread, which the daemon sets for each load.
+ */
+export async function loadAgentDefinitions({ settings, initial: initialize }: AgentDefinitionsRequest): Promise<AgentDefinitions> {
+  if (initialize) await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
 
-try {
-  stored = await readConfigDocument();
+  let stored;
 
-  if (!stored || !Array.isArray(stored.agents) || stored.agents.length === 0) throw new Error("Agent configuration must contain an agents array");
-  const names = new Set<string>();
+  try {
+    stored = await readConfigDocument();
 
-  for (const agent of stored.agents) {
-    if (!Check(sourceAgentSchema, agent)) throw new Error("Invalid agent definition: check names, prompts, tools, skills and options");
-    validateEffort(agent.name, agent.effort);
+    if (!stored || !Array.isArray(stored.agents) || stored.agents.length === 0) throw new Error("Agent configuration must contain an agents array");
+    const names = new Set<string>();
 
-    if (names.has(agent.name)) throw new Error(`Duplicate agent name: ${agent.name}`);
-    names.add(agent.name);
-  }
-} catch (error) {
-  if (process.env.PIOP_AGENT_INITIAL_LOAD !== "1" || !(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-}
+    for (const agent of stored.agents) {
+      if (!Check(sourceAgentSchema, agent)) throw new Error("Invalid agent definition: check names, prompts, tools, skills and options");
+      validateEffort(agent.name, agent.effort);
 
-const api = { events: { emit(_name: string, request: RuntimeSettingsRequest) { request.settings = settings; } } };
-
-const prompts: Record<string, string> = {};
-
-const readOnlyStorage = {
-  async writeConfig() {},
-  async ensurePromptFile(path: string, contents: string) {
-    const resolved = resolvePromptPath(path);
-
-    try { prompts[resolved] ??= await readPrompt(resolved); }
-    catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-      prompts[resolved] ??= contents;
+      if (names.has(agent.name)) throw new Error(`Duplicate agent name: ${agent.name}`);
+      names.add(agent.name);
     }
-  },
-};
-
-const config = await loadConfig(api, stored, initialize, initialize ? undefined : readOnlyStorage);
-
-if (!Check(Type.Array(agentSchema), config.agents)) throw new Error("Invalid agent definitions");
-
-if (!Check(Type.Array(Type.String()), settings.registeredTools)) throw new Error("Registered tool inventory is unavailable");
-
-const validateExtensions = config.agents.some(agent => agent.extensions?.length) ? await extensionValidator(settings.registeredTools) : undefined;
-
-const validateModel = await modelValidator();
-
-for (const agent of config.agents) {
-  validateEffort(agent.name, agent.effort);
-  let extensionTools: string[] = [];
-
-  await validateModel(agent, settings.defaultModel ?? "", async (registry, validate) => {
-    if (!validateExtensions) return validate();
-
-    try { extensionTools = await validateExtensions(extensionPaths(agent.extensions), dirname(configPath), registry, agent, validate); }
-    catch (error) { throw new Error(`Agent "${agent.name}" cannot load its extensions: ${error instanceof Error ? error.message : String(error)}`); }
-  });
-
-  const allowedTools = new Set([...settings.tools, ...extensionTools]);
-  const denied = agent.tools.filter(tool => !allowedTools.has(tool));
-
-  if (denied.length) throw new Error(`Agent "${agent.name}" cannot run because Pi does not allow its configured tools: ${denied.join(", ")}`);
-
-  for (const path of [agent.path_systemprompt, agent.path_agent_prompt].filter(Boolean)) {
-    const resolved = resolvePromptPath(path);
-    prompts[resolved] ??= await readPrompt(resolved);
+  } catch (error) {
+    if (!initialize || !(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
+
+  const api = { events: { emit(_name: string, request: RuntimeSettingsRequest) { request.settings = settings; } } };
+
+  const prompts: Record<string, string> = {};
+
+  const readOnlyStorage = {
+    async writeConfig() {},
+    async ensurePromptFile(path: string, contents: string) {
+      const resolved = resolvePromptPath(path);
+
+      try { prompts[resolved] ??= await readPrompt(resolved); }
+      catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+        prompts[resolved] ??= contents;
+      }
+    },
+  };
+
+  const config = await loadConfig(api, stored, initialize, initialize ? undefined : readOnlyStorage);
+
+  if (!Check(Type.Array(agentSchema), config.agents)) throw new Error("Invalid agent definitions");
+
+  if (!Check(Type.Array(Type.String()), settings.registeredTools)) throw new Error("Registered tool inventory is unavailable");
+
+  const validateExtensions = config.agents.some(agent => agent.extensions?.length) ? await extensionValidator(settings.registeredTools) : undefined;
+
+  const validateModel = await modelValidator();
+
+  for (const agent of config.agents) {
+    validateEffort(agent.name, agent.effort);
+    let extensionTools: string[] = [];
+
+    await validateModel(agent, settings.defaultModel ?? "", async (registry, validate) => {
+      if (!validateExtensions) return validate();
+
+      try { extensionTools = await validateExtensions(extensionPaths(agent.extensions), dirname(configPath), registry, agent, validate); }
+      catch (error) { throw new Error(`Agent "${agent.name}" cannot load its extensions: ${error instanceof Error ? error.message : String(error)}`); }
+    });
+
+    const allowedTools = new Set([...settings.tools, ...extensionTools]);
+    const denied = agent.tools.filter(tool => !allowedTools.has(tool));
+
+    if (denied.length) throw new Error(`Agent "${agent.name}" cannot run because Pi does not allow its configured tools: ${denied.join(", ")}`);
+
+    for (const path of [agent.path_systemprompt, agent.path_agent_prompt].filter(Boolean)) {
+      const resolved = resolvePromptPath(path);
+      prompts[resolved] ??= await readPrompt(resolved);
+    }
+  }
+
+  return { config, prompts, configPath };
 }
-
-const responseId = process.env.PIOP_AGENT_RESPONSE_ID;
-
-if (!responseId) throw new Error("Agent definitions response channel is unavailable");
-
-process.stdout.write(`\n${responseId}:${JSON.stringify({ config, prompts, configPath })}\n`);

@@ -4,14 +4,14 @@ import { join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir, nodeExecutable, pathWithNode, piExecutable } from './environment';
 import * as Ext from './extensions';
-import { ensureDesktopSessionsDir, runLimited, shellQuote, statusText, type CommandSpec } from './process_io';
+import { ensureDesktopSessionsDir, shellQuote } from './process_io';
 import * as Registry from './session_registry';
-import { validateRemoteHost, type AppSettings, type RemoteHost } from './settings_types';
+import { validateRemoteHost, type AppSettings } from './settings_types';
 import { transaction } from './util/db';
 import { sessionWorkerCommand } from './session_worker';
 import type { BrokerRuntime } from './broker';
 import { brokerEnvironment } from './broker';
-import { remoteHost, ssh } from './host_connection';
+import { requireLocal } from './host_connection';
 
 export { validateRemoteHost };
 export { remoteHost, remoteLoginCommand, ssh, sshBase, userSshConfig } from './host_connection';
@@ -43,10 +43,11 @@ export function enabledToolNames(settings: AppSettings): string[] {
   return settings.tools.filter(tool => tool?.enabled === true).map(tool => tool?.name).filter((name): name is string => typeof name === 'string');
 }
 
-export async function sessionIdentity(settings: AppSettings, hostId: string, path: string): Promise<string> {
-  const registered = hostId === 'local' ? localRegisteredIdentity(path) : await remoteRegisteredIdentity(remoteHost(settings, hostId), path);
+export async function sessionIdentity(_settings: AppSettings, hostId: string, path: string): Promise<string> {
+  requireLocal(hostId);
+  const registered = localRegisteredIdentity(path);
   if (registered) return registered;
-  return transcriptSessionIdentity(settings, hostId, path);
+  return transcriptSessionIdentity(path);
 }
 
 export function readFirstLine(path: string, limit = 64 * 1024, nonblocking = false): string {
@@ -66,9 +67,8 @@ export function readFirstLine(path: string, limit = 64 * 1024, nonblocking = fal
   } finally { closeSync(fd); }
 }
 
-async function transcriptSessionIdentity(settings: AppSettings, hostId: string, path: string): Promise<string> {
-  const header = hostId === 'local' ? readFirstLine(path) : await readRemoteSessionHeader(path, script => ssh(remoteHost(settings, hostId), script));
-  const id = JSON.parse(header)?.id;
+function transcriptSessionIdentity(path: string): string {
+  const id = JSON.parse(readFirstLine(path))?.id;
   if (typeof id !== 'string' || !id) throw new Error('Missing session identity');
   return id;
 }
@@ -109,20 +109,6 @@ function importExternalIdentity(path: string): string {
   if (header?.type !== 'session') throw new Error('Invalid session header');
   if (typeof header.id !== 'string' || !header.id) throw new Error('Missing session identity');
   return header.id;
-}
-
-async function remoteRegisteredIdentity(host: RemoteHost, path: string): Promise<string | undefined> {
-  try { return await Registry.identityOn({ kind: 'remote', host }, path); }
-  catch (error: any) { throw new Error(`Could not read registered session identity: ${error?.message ?? error}`); }
-}
-
-export async function readRemoteSessionHeader(path: string, command: (script: string) => CommandSpec): Promise<string> {
-  const output = await runLimited(command(`head -n 1 -- ${shellQuote(path)}`), 64 * 1024, 'Could not read session identity');
-  if (!output.status.success) {
-    const detail = output.stderr.toString('utf8').trim() || statusText(output.status);
-    throw new Error('Could not read session identity: ' + detail);
-  }
-  return output.stdout.toString('utf8');
 }
 
 export type PiLaunch =

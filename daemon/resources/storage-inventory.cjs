@@ -4,19 +4,13 @@ const { validSessionHeader } = require("./session-header.cjs");
 const fs = require("node:fs/promises");
 const { createReadStream } = require("node:fs");
 const path = require("node:path");
-const os = require("node:os");
 const readline = require("node:readline");
-const { hostScript } = require('./host-script.cjs');
 const { discoverRoots } = require('./storage-inventory-roots.cjs');
 const { createObservation, observeEntry, recordSession, resolveOwners, sessionKind } = require('./storage-inventory-owners.cjs');
 const { diskStorage } = require('./storage-inventory-disk.cjs');
 const { inventoryCategories, archiveCoverage } = require('./storage-inventory-report.cjs');
 const { reconcileGoalAssets } = require('./storage-inventory-goals.cjs');
 const { discoverGoalDiagnostics } = require('./storage-inventory-diagnostics.cjs');
-
-const configuredRoot = process.env.PIOP_STORAGE_DIRECTORY || '.piop';
-
-const piopRoot = path.join(os.homedir(), configuredRoot);
 
 function messageText(message) {
   if (Check(Type.String(), message?.content)) return message.content;
@@ -131,7 +125,7 @@ async function collectUnreadableArchive(file, archives) {
   });
 }
 
-async function collectSession(candidate, discovery, archives, read) {
+async function collectSession(piopRoot, candidate, discovery, archives, read) {
   try {
     const details = await inspectSession(candidate.file, candidate.archived, read);
     recordSession(discovery, details, candidate, piopRoot);
@@ -172,8 +166,11 @@ async function registeredSessions(root, warnings) {
   }
 }
 
-async function main(request) {
+/** Reports storage use and archived conversations of the profile at request.profile. */
+async function storageInventory(request) {
   if (request.piPath !== undefined && !Check(Type.String({ minLength: 1 }), request.piPath)) throw new Error('Invalid Pi executable path');
+  if (!Check(Type.String({ minLength: 1 }), request.profile) || !path.isAbsolute(request.profile)) throw new Error('Invalid profile directory');
+  const piopRoot = request.profile;
   const profile = await fs.realpath(piopRoot).catch(() => piopRoot);
   const discovery = await discoverRoots(profile, request.piPath);
   discovery.sessions = new Map();
@@ -196,7 +193,7 @@ async function main(request) {
   const archives = [];
 
   await require('./storage-transcript-cache.cjs').withCache(piopRoot, async read => {
-    for (const candidate of candidates.values()) await collectSession(candidate, discovery, archives, read);
+    for (const candidate of candidates.values()) await collectSession(piopRoot, candidate, discovery, archives, read);
   });
   resolveOwners(discovery);
   await discoverGoalDiagnostics(profile, discovery);
@@ -212,4 +209,4 @@ async function main(request) {
   };
 }
 
-hostScript(main);
+module.exports = { storageInventory };

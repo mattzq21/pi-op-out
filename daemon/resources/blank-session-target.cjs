@@ -1,11 +1,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const database = require('./session-database.cjs');
 const { validSessionHeader } = require('./session-header.cjs');
 
+/** Returns the blank session that target names in the sessions directory target.root, or undefined when nothing needs deletion. */
 function prepare(target) {
-  const directory = target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop', 'sessions');
+  const directory = target.root;
 
   if (!fs.existsSync(directory)) return;
   const root = fs.realpathSync(directory);
