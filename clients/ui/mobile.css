@@ -5,6 +5,7 @@ html[data-mobile] .mobile-sidebar-toggle { display: flex; }
 html[data-mobile] body { min-width: 0; }
 html[data-mobile] .app { padding-top: env(safe-area-inset-top); }
 html[data-mobile] .conversation-unowned .composer-interaction { opacity: 1; }
+html[data-mobile] .main-chat .composer textarea { max-height: clamp(31px, calc(var(--mobile-height, 100dvh) - 200px - env(safe-area-inset-top)), 130px); }
 .mobile-sidebar-backdrop { display: none; }
 .composer-settings, .composer-settings-panel, .composer-settings-row { display: contents; }
 .composer-bar .composer-settings-trigger, .composer-settings-row > span { display: none; }
