@@ -3,6 +3,7 @@ import * as daemonLog from './daemon_log';
 import { runSessionClaim } from './session_worker';
 import { installFailureHandlers, runDaemon } from './lifecycle';
 import { ALREADY_RUNNING_EXIT_CODE, DaemonAlreadyRunningError } from './daemon_endpoint';
+import { PROCESS_TAG } from './process_cleanup';
 import { errorText } from './util/sync';
 
 const ACCEPTED = new Set(['start', 'stop', '--serve', '--exit-on-disconnect', '--stdio-client', '--restart-coordinator', '--validate-plugins', '--restart-candidate', '--daemon-log-writer']);
@@ -14,6 +15,8 @@ function fail(prefix: string, error: unknown): never {
 
 async function main(): Promise<void> {
   const first = process.argv[2];
+  // A daemon started from an agent's shell inherits that agent's tag. Removing it keeps the processes this daemon starts from being stopped with that agent.
+  delete process.env[PROCESS_TAG];
   installFailureHandlers();
   if (first === '--daemon-log-sink' || first === '--daemon-log-writer') {
     try {

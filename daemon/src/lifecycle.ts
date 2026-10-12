@@ -11,6 +11,7 @@ import * as piRuntime from './pi_runtime';
 import * as terminals from './terminals';
 import * as daemon from './daemon';
 import { startSessionBroker } from './broker';
+import { stopOrphanedProcesses } from './process_cleanup';
 import { loadAppSettings } from './settings';
 import { prepareDefinedAgentsExtension } from './extensions';
 import { errorText } from './util/sync';
@@ -56,6 +57,8 @@ async function runBackend(): Promise<void> {
   const step = async (operation: () => Promise<unknown> | unknown) => { if (app.clients.closing()) throw stoppedEarly; await operation(); };
   try {
     let settings: Awaited<ReturnType<typeof loadAppSettings>> | undefined;
+    // Before the broker recovers message output, so files still held by workers of a dead daemon are free again.
+    await step(() => stopOrphanedProcesses());
     await step(() => startSessionBroker(app, app.broker));
     await step(async () => { settings = await loadAppSettings(app); });
     await step(() => prepareDefinedAgentsExtension());

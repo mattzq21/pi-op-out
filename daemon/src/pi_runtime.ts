@@ -125,8 +125,13 @@ export async function startPiForOwner(app: App, owner: string, runtime: PiRuntim
     return result;
   } catch (error) {
     settle.reject(error);
-    if (runtime.processes.get(options.runtimeId) === process) runtime.processes.delete(options.runtimeId);
-    if (reserved) await cleanupBlankSession(process.blankCleanup);
+    // A timeout leaves the attach running on the host. Detach cancels it there, so it cannot finish later with nobody to stop it.
+    if (runtime.processes.get(options.runtimeId) === process) {
+      try { await detachPiWith(runtime, options.runtimeId, false, false); }
+      catch (detachError: any) { console.error('Could not cancel the failed start of Pi runtime ' + options.runtimeId + ': ' + (detachError?.message ?? detachError)); }
+    }
+    // When the cancel failed on a live host, the runtime stays registered so a later stop can retry, and its blank session is kept for it.
+    if (reserved && runtime.processes.get(options.runtimeId) !== process) await cleanupBlankSession(process.blankCleanup);
     throw error;
   } finally { claim?.release(); }
 }

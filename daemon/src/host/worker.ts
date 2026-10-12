@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { ensurePrivateDir } from '../private_fs';
-import { descendantProcesses, killVerified, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../process_cleanup';
+import { descendantProcesses, killVerified, newProcessTag, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../process_cleanup';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
 
 export interface Request { command: any; requestType: string; snapshotState: any }
@@ -56,7 +56,7 @@ export class RuntimeWorker {
   static spawn(spec: LaunchSpec, identity: string, timeout: number, observer: WorkerObserver, home: string): RuntimeWorker {
     const command = launchCommand(spec, identity, home);
     // Pi starts tools in new process sessions, so they leave its process tree when Pi dies. The tag finds them after that.
-    const tag = randomUUID();
+    const tag = newProcessTag();
     const child = spawn(command.program, command.args, {
       cwd: spec.cwd ? spec.cwd : undefined,
       env: { ...process.env, ...spec.env, PIOP_BUN: process.execPath, [PROCESS_TAG]: tag },

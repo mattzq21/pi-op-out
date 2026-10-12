@@ -1,9 +1,25 @@
 import type { ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { sleep } from './util/sync';
 
-/** The environment variable that marks every process started by one Pi worker, also after they leave its process tree. */
+/**
+ * The environment variable that marks every process started by one worker, also after they leave its process tree.
+ * Its value is "<daemon pid>.<daemon start time>.<uuid>", so a later daemon can find the processes of a daemon that died.
+ */
 export const PROCESS_TAG = 'PIOP_PROCESS_TAG';
+
+let ownerPrefix: string | undefined;
+
+/** Returns a new tag for one worker of this daemon. */
+export function newProcessTag(): string {
+  if (ownerPrefix === undefined) {
+    const started = startTime(process.pid);
+    if (started === undefined) throw new Error('Could not read the start time of the Piop daemon from /proc');
+    ownerPrefix = process.pid + '.' + started + '.';
+  }
+  return ownerPrefix + randomUUID();
+}
 
 function exited(child: ChildProcess): boolean { return child.exitCode !== null || child.signalCode !== null; }
 
@@ -45,10 +61,11 @@ export function descendantProcesses(parent: number, group?: number, session?: nu
   return [...descendants].map(pid => ({ pid, started: processes.get(pid)!.started }));
 }
 
-/** Returns the processes whose environment contains PROCESS_TAG=tag. Processes of other users are skipped. */
-export function taggedProcesses(tag: string): Array<{ pid: number; started: string }> {
-  const needle = Buffer.from('\0' + PROCESS_TAG + '=' + tag + '\0');
-  const found: Array<{ pid: number; started: string }> = [];
+const TAG_PREFIX = Buffer.from('\0' + PROCESS_TAG + '=');
+
+/** Returns every process with a PROCESS_TAG in its environment. Processes of other users are skipped. */
+function tagged(): Array<{ pid: number; started: string; tag: string }> {
+  const found: Array<{ pid: number; started: string; tag: string }> = [];
   let entries: string[] = [];
   try { entries = readdirSync('/proc'); } catch (error: any) { console.error('Could not list processes: ' + error.message); return []; }
   for (const entry of entries) {
@@ -57,11 +74,38 @@ export function taggedProcesses(tag: string): Array<{ pid: number; started: stri
     if (pid === process.pid) continue;
     let environment: Buffer;
     try { environment = readFileSync(`/proc/${entry}/environ`); } catch { continue; }
-    if (Buffer.concat([Buffer.from('\0'), environment, Buffer.from('\0')]).indexOf(needle) < 0) continue;
+    const padded = Buffer.concat([Buffer.from('\0'), environment, Buffer.from('\0')]);
+    const at = padded.indexOf(TAG_PREFIX);
+    if (at < 0) continue;
+    const start = at + TAG_PREFIX.length;
+    const tag = padded.subarray(start, padded.indexOf(0, start)).toString('utf8');
     const started = startTime(pid);
-    if (started !== undefined) found.push({ pid, started });
+    if (started !== undefined) found.push({ pid, started, tag });
   }
   return found;
+}
+
+/** Returns the processes whose environment contains PROCESS_TAG=tag. */
+export function taggedProcesses(tag: string): Array<{ pid: number; started: string }> {
+  return tagged().filter(item => item.tag === tag).map(({ pid, started }) => ({ pid, started }));
+}
+
+/** Stops the tagged processes whose daemon is no longer running, for example after it crashed or was killed. */
+export async function stopOrphanedProcesses(): Promise<void> {
+  const orphans = tagged().filter(({ tag }) => {
+    const [pid, started] = tag.split('.');
+    const owner = Number(pid);
+    if (!Number.isInteger(owner) || owner <= 0 || !started) { console.error('Ignoring a process with an invalid ' + PROCESS_TAG + ': ' + tag); return false; }
+    return owner !== process.pid && startTime(owner) !== started;
+  });
+  if (!orphans.length) return;
+  console.error('Stopping processes left by a stopped Piop daemon: ' + orphans.map(({ pid }) => pid).join(', '));
+  killVerified(orphans);
+  const deadline = Date.now() + 2000;
+  const alive = () => orphans.filter(({ pid, started }) => startTime(pid) === started);
+  while (Date.now() < deadline && alive().length) await sleep(50);
+  const remaining = alive();
+  if (remaining.length) console.error('Processes left by a stopped Piop daemon did not exit after SIGKILL: ' + remaining.map(({ pid }) => pid).join(', '));
 }
 
 export function killVerified(processes: Array<{ pid: number; started: string }>, signal: NodeJS.Signals = 'SIGKILL'): void {
@@ -94,23 +138,25 @@ function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
   catch (error: any) { if (error.code !== 'ESRCH') console.error(`Could not send ${signal} to process ${child.pid}: ${error.message}`); }
 }
 
-export async function stopMessageWorker(child: ChildProcess): Promise<void> {
+/** Stops a worker, its process group, and the processes that carry its tag. */
+export async function stopMessageWorker(child: ChildProcess, tag: string): Promise<void> {
   const group = child.pid;
   if (group === undefined) return;
-  const descendants = descendantProcesses(group, group);
-  const signalled = signalProcessGroup(group, 'SIGTERM');
+  const scan = () => [...descendantProcesses(group, group), ...taggedProcesses(tag)];
+  const descendants = scan();
+  signalProcessGroup(group, 'SIGTERM');
   killVerified(descendants, 'SIGTERM');
   signalChild(child, 'SIGTERM');
   const deadline = Date.now() + 5000;
   if (!exited(child)) await waitForExit(child, 5000);
-  while (Date.now() < deadline && descendantProcesses(group, group).some(({ pid, started }) => startTime(pid) === started)) await sleep(50);
-  descendants.push(...descendantProcesses(group, group));
+  while (Date.now() < deadline && scan().some(({ pid, started }) => startTime(pid) === started)) await sleep(50);
+  descendants.push(...scan());
   signalProcessGroup(group, 'SIGKILL');
   killVerified(descendants);
   signalChild(child, 'SIGKILL');
   if (!await waitForExit(child, 5000)) console.error(`Process ${group} did not exit after SIGKILL`);
   if (descendants.length) await sleep(100);
-  const remaining = new Set([...descendants, ...descendantProcesses(group, group)].filter(({ pid, started }) => startTime(pid) === started).map(({ pid }) => pid));
+  const remaining = new Set([...descendants, ...scan()].filter(({ pid, started }) => startTime(pid) === started).map(({ pid }) => pid));
   if (remaining.size) console.error(`Processes in worker group ${group} did not exit after SIGKILL: ${[...remaining].join(', ')}`);
 }
 
