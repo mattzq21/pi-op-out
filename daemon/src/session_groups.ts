@@ -134,25 +134,37 @@ async function discover(settings: AppSettings, hostId: string): Promise<string[]
 
 function hostOf(key: string): string | undefined { const index = key.lastIndexOf(':'); return index >= 0 ? key.slice(0, index) : undefined; }
 
+/**
+ * Removes assignments of sessions that no longer exist. Hosts are asked in parallel and without any lock held,
+ * so a slow machine does not block other group and session reads. Only assignments that existed before the
+ * hosts were asked can be removed, so a session created during the check keeps its assignment.
+ */
 async function refreshDeletionsAt(path: string, settings: AppSettings, seeds: SessionSeed[], key: string | undefined): Promise<void> {
+  let snapshot: SessionGroups;
+  const first = await lockStorage(path);
+  try { snapshot = read(path) ?? emptyGroups(); } finally { first.release(); }
+  const hosts = new Set<string>(['local']);
+  for (const item of [...snapshot.assignments.keys(), ...seeds.map(seed => seed.sessionKey)]) { const host = hostOf(item); if (host !== undefined) hosts.add(host); }
+  if (key !== undefined) { const host = hostOf(key); if (host !== undefined) hosts.add(host); }
+  const live = new Map<string, Set<string>>();
+  await Promise.all([...hosts].map(async host => {
+    try { live.set(host, new Set(await discover(settings, host))); }
+    catch (error: any) { console.error(`Session group cleanup for ${host} will retry: ${error.message ?? error}`); }
+  }));
+  const stale: string[] = [];
+  for (const assignment of snapshot.assignments.keys()) {
+    const host = hostOf(assignment);
+    const ids = host === undefined ? undefined : live.get(host);
+    if (ids && !ids.has(assignment.slice(host!.length + 1))) stale.push(assignment);
+  }
+  if (stale.length === 0) return;
   const lock = await lockStorage(path);
   try {
-    const state = read(path) ?? emptyGroups();
-    const previous = state.assignments.size;
-    const hosts = new Set<string>();
-    for (const item of [...state.assignments.keys(), ...seeds.map(seed => seed.sessionKey)]) { const host = hostOf(item); if (host !== undefined) hosts.add(host); }
-    if (key !== undefined) { const host = hostOf(key); if (host !== undefined) hosts.add(host); }
-    hosts.add('local');
-    for (const host of hosts) {
-      try {
-        const live = new Set(await discover(settings, host));
-        const prefix = `${host}:`;
-        for (const assignment of [...state.assignments.keys()]) {
-          if (assignment.startsWith(prefix) && !live.has(assignment.slice(prefix.length))) state.assignments.delete(assignment);
-        }
-      } catch (error: any) { console.error(`Session group cleanup for ${host} will retry: ${error.message ?? error}`); }
-    }
-    if (previous !== state.assignments.size) write(path, state);
+    const state = read(path);
+    if (!state) return;
+    let removed = false;
+    for (const assignment of stale) removed = state.assignments.delete(assignment) || removed;
+    if (removed) write(path, state);
   } finally { lock.release(); }
 }
 
@@ -171,11 +183,9 @@ export async function attachAssignments(sessions: SessionSummary[]): Promise<voi
 }
 
 export async function loadSessionGroups(app: App, seeds: SessionSeed[]): Promise<SessionGroups> {
-  return STORAGE_LOCK.run(async () => {
-    const path = storagePath();
-    await refreshDeletionsAt(path, await loadAppSettings(app), seeds, undefined);
-    return loadAt(path, seeds);
-  });
+  const path = storagePath();
+  await refreshDeletionsAt(path, await loadAppSettings(app), seeds, undefined);
+  return STORAGE_LOCK.run(() => loadAt(path, seeds));
 }
 
 function updateSeedMetadata(state: SessionGroups, seed: SessionSeed): boolean {
@@ -240,9 +250,9 @@ export async function changeSessionGroups(app: App, change: GroupChange): Promis
 }
 
 export async function refreshDeletions(app: App, hostId: string): Promise<void> {
+  const path = storagePath();
+  await refreshDeletionsAt(path, await loadAppSettings(app), [], `${hostId}:`);
   await STORAGE_LOCK.run(async () => {
-    const path = storagePath();
-    await refreshDeletionsAt(path, await loadAppSettings(app), [], `${hostId}:`);
     const state = read(path);
     if (state) app.emit('pi://groups-changed', serializeGroups(state));
   });

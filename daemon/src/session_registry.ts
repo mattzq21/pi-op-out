@@ -53,7 +53,25 @@ export function record(state: any, cwd: string | undefined | null): void {
   const id = typeof state?.sessionId === 'string' ? state.sessionId : undefined;
   if (!id || typeof cwd !== 'string') return;
   const request: RegistryRequest = { action: 'record', root: join(homeDir(), STORAGE_DIRECTORY), sessionId: id, sessionPath: state.sessionFile ?? null, cwd, checkedAt: Date.now() };
-  runHostScript({ kind: 'local' }, recordScript, request).catch((error: any) => console.error(`Session registry: ${error?.message ?? error}`));
+  // Only the latest update per session is kept, and one worker writes them in order, so bursts of events start one process at a time.
+  pendingRecords.delete(id);
+  pendingRecords.set(id, request);
+  if (!recording) void writeRecords();
+}
+
+const pendingRecords = new Map<string, RegistryRequest>();
+let recording = false;
+
+async function writeRecords(): Promise<void> {
+  recording = true;
+  try {
+    for (let next = pendingRecords.entries().next(); !next.done; next = pendingRecords.entries().next()) {
+      const [id, request] = next.value;
+      pendingRecords.delete(id);
+      try { await runHostScript({ kind: 'local' }, recordScript, request); }
+      catch (error: any) { console.error(`Session registry: ${error?.message ?? error}`); }
+    }
+  } finally { recording = false; }
 }
 
 const ready = new Set<string>();
