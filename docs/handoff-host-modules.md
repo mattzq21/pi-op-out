@@ -1,6 +1,6 @@
 # Handoff: replace host scripts with daemon modules
 
-Status: decision recorded; code changes have not started. Implement [ADR 0003](adr/0003-host-operations-as-daemon-modules.md).
+Status: decision recorded; code changes have not started. Implement [ADR 0002](adr/0002-host-operations-as-daemon-modules.md).
 
 ## Current code
 

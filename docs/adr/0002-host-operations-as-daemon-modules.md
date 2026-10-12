@@ -1,6 +1,6 @@
 # Run host operations as daemon modules
 
-Accepted on 2026-10-12; implementation pending. Supersedes [ADR 0002](0002-host-scripts-copied-by-hash.md).
+Accepted on 2026-10-12; implementation pending.
 
 The daemons already have a connection for remote requests. Convert the host scripts into normal modules bundled with the daemon, and send remote requests through that existing connection to the daemon on the host that owns the data. Remove script copying, content-based script filenames, and script-copy cleanup.
 
