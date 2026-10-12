@@ -15,3 +15,15 @@
 **Anchor host** - the one Host that the mobile app connects to. The phone uses the anchor's added machines through it.  
 **Host script** - a piop script that runs on a Host to read or change its stored data.
 **Restore receipt** - the saved result of a committed restore, used to answer a repeated restore of the same archived session tree.
+
+**Fast-mode choice**:
+The session's saved on/off choice to request fast mode. An on choice does not prove that the model supports it or that the provider uses it.
+_Avoid_: Active fast mode
+
+**Fast-model support**:
+Whether a model supports fast mode for the applicable provider and account.
+_Avoid_: Fast-mode choice
+
+**Model scan**:
+An attempt to obtain current model information from its source. A refresh check can reuse saved information without starting a scan.
+_Avoid_: Refresh check
