@@ -187,8 +187,10 @@ async function prepareBrowserReturn(notice, login) {
   for (const host of hosts) {
     if (login.controller.signal.aborted) throw new Error('Login cancelled');
     const server = createServer((request, response) => {
-      const returned = new URL(request.url || '/', destination.origin);
-      const valid = request.method === 'GET' && returned.origin === destination.origin && returned.pathname === destination.pathname
+      let returned;
+
+      try { returned = new URL(request.url || '/', destination.origin); } catch { }
+      const valid = returned !== undefined && request.method === 'GET' && returned.origin === destination.origin && returned.pathname === destination.pathname
         && returned.searchParams.get('state') === expectedState
         && (returned.searchParams.has('code') || returned.searchParams.has('error'));
       response.writeHead(valid ? 200 : 400, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -361,12 +363,13 @@ async function handleProviderRequest(loaded, packet) {
   }
 
   if (packet.method === 'inspect') {
-    await loaded.runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
+    const refreshDiagnostics = await refreshProviders(loaded.runtime);
     const credentials = await loaded.runtime.listCredentials().catch(() => { throw new Error('Could not read saved provider status on this host.'); });
 
     const providers = loaded.runtime.getProviders();
+    const { models, modelDiagnostics } = providerModels(loaded, providers);
 
-    return { providers: providers.map((provider) => providerMetadata(loaded.runtime, provider)), ...providerModels(loaded, providers), credentials: credentials.map(({ providerId, type }) => ({ providerId, type })) };
+    return { providers: providers.map((provider) => providerMetadata(loaded.runtime, provider)), models, modelDiagnostics: [...refreshDiagnostics, ...modelDiagnostics], credentials: credentials.map(({ providerId, type }) => ({ providerId, type })) };
   }
 
   if (packet.method === 'logout') { await loaded.runtime.logout(packet.providerId);
@@ -380,6 +383,28 @@ async function handleProviderRequest(loaded, packet) {
   }
 
   throw new Error('Unknown provider SDK operation');
+}
+
+/** The SDK records configuration and provider errors during refresh and still resolves, so they are read back here. */
+async function refreshProviders(runtime) {
+  const result = await runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
+  const diagnostics = [];
+  const seen = new Set();
+  const add = (providerId, error) => {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (!message.trim() || seen.has(message)) return;
+    seen.add(message);
+    diagnostics.push(providerId === undefined ? { message } : { providerId, message });
+  };
+
+  for (const [providerId, error] of result?.errors ?? []) add(providerId, error);
+
+  const configuration = runtime.getError?.();
+
+  if (configuration) add(undefined, configuration);
+
+  return diagnostics;
 }
 
 const input = createInterface({ input: process.stdin });

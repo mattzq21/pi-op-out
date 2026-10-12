@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { BUILD_ID, MAX_AGENT_OUTPUT_BYTES, PEER_PROTOCOL_VERSION } from './config';
+import { BUILD_ID, MAX_AGENT_OUTPUT_BYTES, MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION } from './config';
 import { homeDir } from './environment';
 import { loadAppSettings } from './settings';
 import { remoteHost, remoteLoginCommand, sshBase } from './pi_launch';
@@ -17,6 +17,8 @@ import type { RemoteHost } from './settings_types';
 import type { App } from './app';
 
 const REQUEST_TIMEOUT = 660_000;
+/** Requests not yet taken by SSH. More than this means the remote side has stopped reading. */
+const MAX_UNSENT_BYTES = MAX_REQUEST_BYTES + 16 * 1024 * 1024;
 
 /** One SSH connection to the Piop daemon on another machine. */
 export class Connection {
@@ -29,12 +31,30 @@ export class Connection {
 
   invoke(command: string, args: any, timeout = REQUEST_TIMEOUT): Promise<any> {
     if (!this.alive) return Promise.reject(new Error('Remote daemon disconnected; reconnect before retrying'));
+    const body = JSON.stringify({ id: this.sequence, command, args: args ?? {} }) + '\n';
+    const input = this.child.stdin!;
+    if (input.writableLength + Buffer.byteLength(body) > MAX_UNSENT_BYTES) {
+      console.error('Closing SSH connection: the remote daemon stopped reading requests');
+      this.close();
+      return Promise.reject(new Error('Remote daemon stopped reading requests; reconnect before retrying'));
+    }
     const id = this.sequence++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Peer request timed out; it may have completed. Reconnect and refresh before retrying.')); }, timeout);
+      let sent = false;
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        if (!sent) {
+          // An unsent request would run whenever SSH resumes, after its caller has given up.
+          console.error('Closing SSH connection: a request was not sent before its timeout');
+          this.close();
+          reject(new Error('Remote daemon stopped reading requests; reconnect before retrying'));
+          return;
+        }
+        reject(new Error('Peer request timed out; it may have completed. Reconnect and refresh before retrying.'));
+      }, timeout);
       this.pending.set(id, { resolve: value => { clearTimeout(timer); resolve(value); }, reject: error => { clearTimeout(timer); reject(error); } });
-      this.child.stdin!.write(JSON.stringify({ id, command, args: args ?? {} }) + '\n', error => {
-        if (!error) return;
+      input.write(body, error => {
+        if (!error) { sent = true; return; }
         this.pending.delete(id); clearTimeout(timer); reject(error);
       });
     });
