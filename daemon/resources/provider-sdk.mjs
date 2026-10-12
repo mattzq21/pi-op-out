@@ -310,7 +310,7 @@ function answerLogin(packet) {
 function handlePluginLifecycle(packet) {
   if (packet.method === 'plugin_idle') return bundledPlugin?.idle() ?? true;
 
-  if (packet.method === 'plugin_checkpoint') return bundledPlugin?.checkpoint() ?? [];
+  if (packet.method === 'plugin_checkpoint') return bundledPlugin?.checkpoint() ?? { tickets: [], leases: [] };
 
   bundledPlugin?.restore(packet.tickets);
 

@@ -2,6 +2,9 @@ import type { ChildProcess } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { sleep } from './util/sync';
 
+/** The environment variable that marks every process started by one Pi worker, also after they leave its process tree. */
+export const PROCESS_TAG = 'PIOP_PROCESS_TAG';
+
 function exited(child: ChildProcess): boolean { return child.exitCode !== null || child.signalCode !== null; }
 
 function startTime(pid: number): string | undefined {
@@ -40,6 +43,25 @@ export function descendantProcesses(parent: number, group?: number, session?: nu
   }
   descendants.delete(parent);
   return [...descendants].map(pid => ({ pid, started: processes.get(pid)!.started }));
+}
+
+/** Returns the processes whose environment contains PROCESS_TAG=tag. Processes of other users are skipped. */
+export function taggedProcesses(tag: string): Array<{ pid: number; started: string }> {
+  const needle = Buffer.from('\0' + PROCESS_TAG + '=' + tag + '\0');
+  const found: Array<{ pid: number; started: string }> = [];
+  let entries: string[] = [];
+  try { entries = readdirSync('/proc'); } catch (error: any) { console.error('Could not list processes: ' + error.message); return []; }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    const pid = Number(entry);
+    if (pid === process.pid) continue;
+    let environment: Buffer;
+    try { environment = readFileSync(`/proc/${entry}/environ`); } catch { continue; }
+    if (Buffer.concat([Buffer.from('\0'), environment, Buffer.from('\0')]).indexOf(needle) < 0) continue;
+    const started = startTime(pid);
+    if (started !== undefined) found.push({ pid, started });
+  }
+  return found;
 }
 
 export function killVerified(processes: Array<{ pid: number; started: string }>, signal: NodeJS.Signals = 'SIGKILL'): void {

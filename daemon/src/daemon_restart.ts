@@ -128,7 +128,8 @@ async function makePlan(app: App, prepared: any): Promise<[Plan, artifacts.Backu
   const executable = replacementExecutable();
   const enabled = strings(prepared?.enabled);
   const previous = strings(prepared?.previous);
-  if (!Array.isArray(prepared?.tickets)) throw new Error('Invalid restart checkpoint tickets');
+  const tickets = prepared?.tickets;
+  if (!Array.isArray(tickets?.tickets) || !Array.isArray(tickets?.leases)) throw new Error('Invalid restart checkpoint tickets');
   const bind = restartBind(current.url);
   await validateRestartBind(bind);
   const backup = await artifacts.Backup.create(id, executable);

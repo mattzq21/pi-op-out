@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { ensurePrivateDir } from '../private_fs';
-import { descendantProcesses, killVerified, signalProcessGroup } from '../process_cleanup';
+import { descendantProcesses, killVerified, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../process_cleanup';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
 
 export interface Request { command: any; requestType: string; snapshotState: any }
@@ -21,8 +21,15 @@ export interface WorkerObserver {
 
 interface Pending extends Request { resolve(value: any): void; reject(error: Error): void }
 
-const running = new Set<ChildProcess>();
-process.on('exit', () => { for (const child of running) if (child.pid !== undefined) signalProcessGroup(child.pid, 'SIGKILL'); });
+const running = new Map<ChildProcess, string>();
+process.on('exit', () => {
+  for (const [child, tag] of running) {
+    const processes = child.pid === undefined ? [] : descendantProcesses(child.pid, child.pid);
+    processes.push(...taggedProcesses(tag));
+    if (child.pid !== undefined) signalProcessGroup(child.pid, 'SIGKILL');
+    killVerified(processes);
+  }
+});
 
 function launchCommand(spec: LaunchSpec, identity: string, home: string): { program: string; args: string[] } {
   const claims = spec.env.PIOP_REMOTE_SESSION_CLAIMS;
@@ -44,13 +51,15 @@ export class RuntimeWorker {
   private descendants: ReturnType<typeof descendantProcesses> = [];
   private exitStatus: string | null = null;
 
-  private constructor(private child: ChildProcess, private observer: WorkerObserver, private timeout: number) {}
+  private constructor(private child: ChildProcess, private tag: string, private observer: WorkerObserver, private timeout: number) {}
 
   static spawn(spec: LaunchSpec, identity: string, timeout: number, observer: WorkerObserver, home: string): RuntimeWorker {
     const command = launchCommand(spec, identity, home);
+    // Pi starts tools in new process sessions, so they leave its process tree when Pi dies. The tag finds them after that.
+    const tag = randomUUID();
     const child = spawn(command.program, command.args, {
       cwd: spec.cwd ? spec.cwd : undefined,
-      env: { ...process.env, ...spec.env, PIOP_BUN: process.execPath },
+      env: { ...process.env, ...spec.env, PIOP_BUN: process.execPath, [PROCESS_TAG]: tag },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
     });
@@ -58,8 +67,8 @@ export class RuntimeWorker {
       child.on('error', error => observer.diagnostic('Could not start ' + command.program + ': ' + error.message));
       throw new Error('Could not start ' + command.program);
     }
-    running.add(child);
-    const worker = new RuntimeWorker(child, observer, timeout);
+    running.set(child, tag);
+    const worker = new RuntimeWorker(child, tag, observer, timeout);
     child.on('error', error => observer.diagnostic(error.message));
     child.stdin!.on('error', error => observer.diagnostic(error.message));
     let open = 3;
@@ -114,14 +123,14 @@ export class RuntimeWorker {
     this.exited = true;
     if (this.child.pid === undefined) return;
     if (hard) {
-      this.descendants.push(...descendantProcesses(this.child.pid, this.child.pid));
+      this.descendants.push(...this.processes());
       signalProcessGroup(this.child.pid, 'SIGKILL');
       killVerified(this.descendants);
       this.descendants = [];
       return;
     }
     if (this.deadline || this.closedFlag) return;
-    this.descendants = descendantProcesses(this.child.pid, this.child.pid);
+    this.descendants = this.processes();
     signalProcessGroup(this.child.pid, 'SIGTERM');
     killVerified(this.descendants, 'SIGTERM');
     this.deadline = setTimeout(() => {
@@ -135,6 +144,11 @@ export class RuntimeWorker {
         this.close();
       }, 1000);
     }, 5000);
+  }
+
+  /** Pi's process tree, and the processes it started that have since left that tree. */
+  private processes(): ReturnType<typeof descendantProcesses> {
+    return [...descendantProcesses(this.child.pid!, this.child.pid!), ...taggedProcesses(this.tag)];
   }
 
   isClosed(): boolean { return this.exited; }

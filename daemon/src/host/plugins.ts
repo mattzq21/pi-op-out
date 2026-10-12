@@ -243,9 +243,10 @@ export class PluginService {
 }
 
 async function checkpoint(runtime: Runtime, disabling: boolean): Promise<any> {
-  if (!(await runtime.drain(disabling))) return [];
+  const empty = { tickets: [], leases: [] };
+  if (!(await runtime.drain(disabling))) return empty;
   const sdk = runtime.chatgpt;
-  if (!sdk) return [];
+  if (!sdk) return empty;
   try {
     const request = sdk.request({ method: 'plugin_checkpoint' });
     request.catch(() => {});
@@ -253,7 +254,7 @@ async function checkpoint(runtime: Runtime, disabling: boolean): Promise<any> {
     if (!result.done) throw new Error('ChatGPT checkpoint timed out');
     return result.value;
   } catch (error) {
-    if (disabling) { console.error('Disabling ChatGPT without an in-memory checkpoint: ' + errorText(error)); return []; }
+    if (disabling) { console.error('Disabling ChatGPT without an in-memory checkpoint: ' + errorText(error)); return empty; }
     throw error;
   }
 }
