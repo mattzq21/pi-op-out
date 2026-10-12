@@ -5,7 +5,7 @@ import { DatabaseSync as StorageDatabase } from "node:sqlite";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
 import { homedir as storageHome } from "node:os";
-import { createHash as storageHash } from "node:crypto";
+import { createHash as storageHash, randomUUID as storageRandomId } from "node:crypto";
 import { isDeepStrictEqual as sameStorageValue } from "node:util";
 import { pathToFileURL as storageFileUrl } from "node:url";
 
@@ -25,6 +25,7 @@ export async function installRuntimeStorage(directory) {
   const modules = ["core/auth-storage.js", "core/settings-manager.js", "core/trust-manager.js", "utils/paths.js"];
   const [auth, settings, trust, paths] = await Promise.all(modules.map(file => import(storageFileUrl(storagePath.join(directory, "dist", file)).href)));
   modelFileStorage = auth.FileAuthStorageBackend;
+  installAuthStorage(auth.FileAuthStorageBackend);
   installSettingsStorage(settings.FileSettingsStorage);
   installTrustStorage(trust.ProjectTrustStore, path => paths.canonicalizePath(paths.resolvePath(path)));
 }
@@ -423,6 +424,47 @@ export function saveStoredModelProvider(path, id, config, previous, parse) {
 
 function requireStorageMethods(prototype, names) {
   if (names.some(name => !(prototype[name] instanceof Function))) throw new Error("This Pi SDK does not support Piop's storage protection. Update Piop before using this SDK.");
+}
+
+/** Replaces the file in one step, so a crash or a full disk cannot leave credentials or provider settings empty or partial. */
+function publishAuthFile(path, body) {
+  const target = storageTarget(path);
+  const temporary = storagePath.join(storagePath.dirname(target), `.${storagePath.basename(target)}.${storageRandomId()}.tmp`);
+
+  storagePublish(target, temporary, body, false);
+}
+
+/** The SDK writes auth.json and models.json in place; this keeps its lock and changes only the write. */
+function installAuthStorage(FileAuthStorageBackend) {
+  if (installedStorageClasses.has(FileAuthStorageBackend)) return;
+  const prototype = FileAuthStorageBackend.prototype;
+  requireStorageMethods(prototype, ["withLock", "withLockAsync"]);
+  const withLock = prototype.withLock;
+  const withLockAsync = prototype.withLockAsync;
+
+  prototype.withLock = function (operation) {
+    return withLock.call(this, current => {
+      const { result, next } = operation(current);
+
+      if (next !== undefined) publishAuthFile(this.authPath, next);
+
+      return { result };
+    });
+  };
+
+  prototype.withLockAsync = function (operation, options) {
+    return withLockAsync.call(this, async current => {
+      const { result, next } = await operation(current);
+
+      options?.signal?.throwIfAborted();
+
+      if (next !== undefined) publishAuthFile(this.authPath, next);
+
+      return { result };
+    }, options);
+  };
+
+  installedStorageClasses.add(FileAuthStorageBackend);
 }
 
 export function installSettingsStorage(FileSettingsStorage) {

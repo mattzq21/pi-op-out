@@ -1,6 +1,6 @@
 import { array, canon, CancelScope, flag, jsonEqual, kind, messageText, text } from './json';
 import { Mutex, errorText } from '../util/sync';
-import type { QueueStorage } from './queue_storage';
+import { validateItem, type QueueStorage } from './queue_storage';
 
 export { clearSaved, QueueStorage } from './queue_storage';
 
@@ -747,6 +747,7 @@ export class SessionQueue {
     const id = this.nextItemId();
     const item: any = { id, message: command.message ?? null, behavior: 'followUp', deliveryStarted: true };
     if (command.images !== undefined) item.images = clone(command.images);
+    if (command.goalSubmissionId !== undefined) item.goalSubmissionId = command.goalSubmissionId;
     command.type = 'queue_prompt';
     command.queueId = id;
     command.streamingBehavior = 'followUp';
@@ -767,8 +768,22 @@ export class SessionQueue {
 
   private async saveRetained(retained: any[]): Promise<void> {
     if (retained.length > 100) throw new Error('Queue is full');
-    if (this.storage) await this.track(this.saves, this.storage.save(retained));
+    if (!this.storage) return;
+    const sequence = ++this.saveSequence;
+    try {
+      await this.track(this.saves, this.storage.save(retained));
+      if (sequence === this.saveSequence) this.lastSaveFailed = false;
+    } catch (error) {
+      if (sequence === this.saveSequence) this.lastSaveFailed = true;
+      throw error;
+    }
   }
+
+  private saveSequence = 0;
+  private lastSaveFailed = false;
+
+  /** True when storage holds the current queue. Storage is then the only copy, because another host can change it later. */
+  saved(): boolean { return this.storage !== null && !this.lastSaveFailed && this.saves.size === 0; }
 
   private async retainItem(item: any): Promise<void> {
     const retained = clone(this.s.retained);
@@ -899,6 +914,8 @@ export class SessionQueue {
     const question = prepared.questionResponse?.requestId;
     const id = this.nextItemId();
     const pending = submissionPayload(prepared, id, name);
+    // A bad item would stay queued and make every later save fail, so it is rejected before the queue changes.
+    validateItem(pending);
     if (await this.saveSubmission(id, pending)) {
       await this.reportStorageError(() => this.publish());
       return null;

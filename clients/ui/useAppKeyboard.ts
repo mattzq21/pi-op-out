@@ -24,6 +24,14 @@ type KeyboardContext = {
   setTerminalOpen: Setter<boolean>;
 };
 
+/** Keys that send control codes to the shell, plus terminal copy and paste. */
+function isTerminalKey(event: KeyboardEvent) {
+  if (!event.ctrlKey || event.altKey || event.metaKey) return false;
+  const key = event.key.toLowerCase();
+
+  return event.shiftKey ? key === "c" || key === "v" : /^[a-z@[\\\]^_]$/.test(key);
+}
+
 export function useAppKeyboard(context: KeyboardContext) {
   const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, settingsDirty, view, terminalOpen, setTerminalOpen } = context;
   createDependencyEffect(() => { const capturedSettings = settings(); const capturedActivePane = activePane(); const capturedSplitPane = splitPane();
@@ -35,6 +43,7 @@ export function useAppKeyboard(context: KeyboardContext) {
       const target = event.target instanceof HTMLElement ? event.target : undefined;
 
       if (target?.closest(".keybind-input")) return true;
+      if (target?.closest(".terminal-shell") && isTerminalKey(event)) return true;
 
       return target?.closest("input, textarea, select, [contenteditable='true'], .keybind-input") && !event.ctrlKey && !event.metaKey && !event.altKey;
     };

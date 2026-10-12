@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { watch } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { atomicWritePrivate, ensurePrivateDir } from './private_fs';
 import { serializeAppSettings, type AppSettings } from './settings_types';
 import { publish as publishSettings, read as readSettingsRecord, type Publication as SettingsPublication } from './settings_records';
 import { readRecord, writeRecord as writeStoredRecord } from './settings_sync_storage';
@@ -31,9 +34,31 @@ function currentDigest(path: string): string { return digest(readSettingsRecord(
 
 function journalPath(path: string): string { return withExtension(path, 'synchronization.json'); }
 
+function owner(): string { return digest(daemonEndpoint.directory()); }
+
 function progressPath(path: string): string {
-  const owner = digest(daemonEndpoint.directory());
-  return withExtension(path, `synchronization-${owner}.json`);
+  return withExtension(path, `synchronization-${owner()}.json`);
+}
+
+/** Daemons that share a storage directory share settings. Each one marks its saves here, so the others can apply them. */
+function changesDirectory(path: string): string { return join(dirname(path), 'settings-changes'); }
+
+function markChanged(path: string, revision: number): void {
+  const directory = changesDirectory(path);
+  ensurePrivateDir(directory);
+  atomicWritePrivate(join(directory, owner()), String(revision));
+}
+
+function watchOtherDaemons(path: string, changed: () => void): void {
+  const directory = changesDirectory(path);
+  ensurePrivateDir(directory);
+  const own = owner();
+  const watcher = watch(directory, (_event, file) => {
+    if (typeof file !== 'string' || file === own || file.startsWith('.')) return;
+    changed();
+  });
+  watcher.on('error', error => console.error('Settings changes from other daemons are no longer watched:', error));
+  watcher.unref();
 }
 
 function nextRevision(revision: number): number {
@@ -120,6 +145,8 @@ export class Save {
     this.journal.publish({ ...this.publication });
     try { writeRecord(journalPath(this.path), this.journal); }
     catch (error: any) { warnings.push(`Settings were saved; durable revision publication will retry automatically: ${error.message ?? error}`); }
+    try { markChanged(this.path, this.publication.revision); }
+    catch (error: any) { warnings.push(`Settings were saved, but other daemons were not told about the change: ${error.message ?? error}`); }
     return result;
   }
 
@@ -339,6 +366,9 @@ export function start(app: App): void {
   };
   app.listenAny('pi://settings-changed', requestPass);
   onSkillsChanged(requestPass);
+  void settingsPath().then(path => watchOtherDaemons(path, requestPass)).catch((error: any) => {
+    reportPhaseWarnings(app, [`Settings changes from other daemons are not watched: ${error?.message ?? error}`]);
+  });
   requestPass();
 }
 

@@ -322,7 +322,11 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
       const command: string = request.command;
       const args = request.args === undefined ? {} : request.args;
       if (app.clients.closing()) { send(JSON.stringify({ id, error: 'Piop daemon is shutting down' })); continue; }
-      const control = command === 'stop_pi' || (command === 'pi_command' && args?.command?.type === 'abort');
+      // Stop, abort and cleanup commands may use reserved slots, so a busy host still frees resources.
+      const control = command === 'stop_pi' || command === 'close_terminal'
+        || (command === 'pi_command' && args?.command?.type === 'abort')
+        || (command === 'shared_terminal' && args?.action === 'discard_drafts')
+        || (command === 'provider_auth' && args?.request?.action === 'cancel');
       const permit = shared.jobs.tryAcquire() ?? (control ? controls.tryAcquire() : undefined);
       if (!permit) { send(JSON.stringify({ id, error: 'Host is busy; try again' })); continue; }
       const job = (async () => {

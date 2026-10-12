@@ -4,7 +4,7 @@ import { agentStateSchema, sessionGroupsSchema, voidResultSchema, storageReportS
 import { z } from "zod";
 import { jsonResultSchema } from "./transportSchemas";
 import { commandSessionSchema, runtimeEventSchema, runtimeStderrSchema, type CommandSession } from "./rpcSchemas";
-import { forgetSession, retainSessionResource } from "./sessionMemory";
+import { discardSubmittedMessage, forgetSession, retainSessionResource } from "./sessionMemory";
 import { PromptControls } from "./promptControls";
 import { nativeCall as call } from "./nativeCall";
 import { NativeSettings } from "./nativeSettings";
@@ -505,7 +505,7 @@ export class NativeTransport {
   setDefaultFastMode(enabled: boolean) { this.draftRuntime.defaultFastMode = enabled; }
   async setFastMode(enabled: boolean) {
     if (this.draftOnly()) { this.draftRuntime.fastMode = enabled;
-      this.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: enabled ? "Fast mode on" : "" });
+      this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: enabled ? "Fast mode on" : "" });
 
       return; }
 
@@ -523,8 +523,11 @@ export class NativeTransport {
 
     return result;
   }
-  changePendingMessage(id: string, action: import("../types").PendingMessageAction): Promise<void> {
-    return this.executeCommand({ type: "change_pending", id, action }, voidResultSchema);
+  async changePendingMessage(id: string, action: import("../types").PendingMessageAction): Promise<void> {
+    const pending = z.array(z.object({ id: z.string(), goalSubmissionId: z.string().optional() })).parse(this.queueSnapshot.pendingMessages ?? []).find(item => item.id === id);
+    await this.executeCommand({ type: "change_pending", id, action }, voidResultSchema);
+
+    if (action === "remove" && pending?.goalSubmissionId) discardSubmittedMessage(this, pending.goalSubmissionId);
   }
   private executeCommand<S extends z.ZodType>(command: RpcCommand, schema: S): Promise<z.output<S>> {
     return this.settings.runCommand(() => this.executeCommandNow(command, schema));

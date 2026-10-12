@@ -29,11 +29,14 @@ export function MobileApp() {
   const configuredDebugAddress = createRef<string | undefined>(undefined);
   const debugAddressLoaded = createRef<Promise<void>>(Promise.resolve());
   const activeDebugAddress = createRef<string | undefined>(undefined);
+  /** The address of the last socket that the host accepted. A drop before the host address is saved reconnects to it. */
+  const acceptedAddress = createRef<string | undefined>(undefined);
   const connectRef = createRef<(address: string, label?: string) => Promise<void>>(async () => {});
+  const reconnectAddress = () => activeDebugAddress.current ?? acceptedAddress.current ?? cachedMobileHost();
 
   const scheduleReconnect = () => {
     clearTimeout(retry.current);
-    const last = activeDebugAddress.current ?? cachedMobileHost();
+    const last = reconnectAddress();
 
     if (forgetting() || intentionalDisconnect.current || !last) return;
     retry.current = setTimeout(() => { void connectRef.current(last); }, retryDelay.current);
@@ -77,6 +80,7 @@ export function MobileApp() {
       await remoteClient.connect({ url: host.url });
 
       if (attempt !== generation.current) return;
+      acceptedAddress.current = host.url;
       if (activeDebugAddress.current) useDevelopmentAnchor(host.url);
       else {
         const saving = saveMobileAnchor(host.url, host.name);
@@ -87,12 +91,14 @@ export function MobileApp() {
         setAnchor(stored); setAnchorReadFailed(false);
       }
 
+      // The socket can close while the address saves. The disconnect handler then shows the error and schedules the reconnect.
+      if (!remoteClient.isConnected()) return;
       setUrl(host.url); setName(host.name); setConnected(true); setWorkspaceOpen(true); retryDelay.current = 2000;
     } catch (reason) {
       if (attempt !== generation.current) return;
       remoteClient.close(); setError(reason instanceof Error ? reason.message : String(reason));
 
-      if (cleanUrl && (cleanUrl === activeDebugAddress.current || cleanUrl === cachedMobileHost())) scheduleReconnect();
+      if (cleanUrl && (cleanUrl === reconnectAddress() || cleanUrl === cachedMobileHost())) scheduleReconnect();
     } finally { if (attempt === generation.current) setConnecting(false); }
   };
 
@@ -115,7 +121,7 @@ export function MobileApp() {
     window.addEventListener("piop-daemon-restarting", restarting);
 
     const reconnectOnResume = () => {
-      const last = activeDebugAddress.current ?? cachedMobileHost();
+      const last = reconnectAddress();
 
       if (document.hidden || connected() || connecting() || forgetting() || intentionalDisconnect.current || !last) return;
       retryDelay.current = 2000;
@@ -166,6 +172,7 @@ export function MobileApp() {
   const forgetAnchor = async () => {
     if (forgetting()) return;
     setForgetting(true); intentionalDisconnect.current = true; generation.current++;
+    acceptedAddress.current = undefined;
     clearTimeout(retry.current); clearTimeout(restartGraceTimer.current); setRestartGrace(false);
     remoteClient.close(); setConnected(false); setConnecting(false);
 
@@ -183,7 +190,7 @@ export function MobileApp() {
   const renderConnectionNotice = () => showConnectionNotice() && <div class="mobile-reconnect-banner"><div role="status">{error() || "Reconnecting…"}<button disabled={connecting() || disconnecting()} onClick={() => { if (connected()) void disconnect(); else void connect(url()); }}>{connected() ? "Retry disconnect" : connecting() ? "Connecting…" : "Reconnect"}</button></div>{!connected() && <MobileTailscaleStatus />}</div>;
 
   return <>{workspaceOpen() ? (<><div style={{ display: "contents" }} inert={disconnecting()}><App suppressConnectionNotices={restartGrace()} /></div>{renderConnectionNotice()}<button class="mobile-host-button" aria-label="Disconnect from anchor host" disabled={disconnecting()} onClick={() => void disconnect()}>Host</button></>) : (<main class="mobile-connect dark"><form onSubmit={(event) => { event.preventDefault(); if (forgetting()) return; intentionalDisconnect.current = false; retryDelay.current = 2000; void connect(url(), name()); }}>
-    <label>Anchor host address<input type="url" required disabled={connecting() || forgetting()} placeholder="wss://your-host.your-tailnet.ts.net" autoCapitalize="none" autocorrect="off" spellcheck={false} value={url()} onInput={(event) => { generation.current++; clearTimeout(retry.current); intentionalDisconnect.current = true; setUrl(event.target.value); }} /></label>
+    <label>Anchor host address<input type="url" required disabled={connecting() || forgetting()} placeholder="wss://your-host.your-tailnet.ts.net" autoCapitalize="none" autocorrect="off" spellcheck={false} value={url()} onInput={(event) => { generation.current++; clearTimeout(retry.current); intentionalDisconnect.current = true; acceptedAddress.current = undefined; setUrl(event.target.value); }} /></label>
     <label>Host name<input required disabled={connecting() || forgetting()} value={name()} placeholder="My PC" onInput={(event) => setName(event.target.value)} /></label>
     <p class="mobile-connect-hint">Piop connects to this host. You can also use the machines that this host has added. Connect this device and the host to the same Tailscale account, then enter the host’s Tailscale Serve wss:// address.</p>
     <MobileTailscaleStatus />

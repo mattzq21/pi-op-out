@@ -34,12 +34,19 @@ export function createConversationDrafts(reportStorageError: (message: string) =
   let loaded = false;
   let disposed = false;
   let scheduled: ReturnType<typeof setTimeout> | undefined;
-  const changedBeforeLoad = new Set<string>();
   const submissionsChangedBeforeLoad = new Set<string>();
   let ready: Promise<void> | undefined;
   const initialize = (): Promise<void> => ready ??= persistence.read().then(saved => {
     batch(() => {
-      const next = new Map(saved.records.filter(record => !removedBeforeLoad.some(matches => matches(record.key, record.destination)) && !changedBeforeLoad.has(record.key)).map(record => [record.key, record]));
+      // Edits before the load were made on an empty composer, so the saved content merges with them. A draft moved before the load takes its saved content along.
+      const next = new Map<string, DraftRecord>();
+      for (const record of saved.records) {
+        if (removedBeforeLoad.some(matches => matches(record.key, record.destination))) continue;
+        const key = keyFor(record.key);
+        const moved = key === record.key ? record : { ...record, key, destination: destinations.get(key) ?? (record.destination ? { ...record.destination, key } : undefined) };
+        const earlier = next.get(key);
+        next.set(key, earlier ? { ...earlier, ...moved, text: mergeText(earlier.text, moved.text), uploads: mergeUploads(earlier.uploads, moved.uploads) } : moved);
+      }
       for (const [key, record] of records()) {
         const previous = next.get(key);
         next.set(key, previous ? { ...previous, ...record, text: mergeText(previous.text, record.text), uploads: mergeUploads(previous.uploads, record.uploads) } : record);
@@ -50,7 +57,6 @@ export function createConversationDrafts(reportStorageError: (message: string) =
       publishUploads();
       loaded = true;
       removedBeforeLoad.length = 0;
-      changedBeforeLoad.clear();
       submissionsChangedBeforeLoad.clear();
     });
   }).catch(reason => {
@@ -137,10 +143,9 @@ export function createConversationDrafts(reportStorageError: (message: string) =
 
   const publishUploads = () => setUploadsByTransport(new Map([...owners].map(([owner, key]) => [owner, recordFor(key).uploads])));
 
-  const publish = (record: DraftRecord, contentChanged = true) => {
+  const publish = (record: DraftRecord) => {
     if (!allows(record.key, record.destination)) return;
 
-    if (!loaded && contentChanged) changedBeforeLoad.add(record.key);
     if (record.destination) destinations.set(record.key, record.destination);
     setRecords(current => {
       const next = new Map(current);
@@ -153,11 +158,11 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     publishUploads();
   };
 
-  const update = (key: string, transform: (record: DraftRecord) => DraftRecord, contentChanged = true) => {
+  const update = (key: string, transform: (record: DraftRecord) => DraftRecord) => {
     const next = transform(recordFor(key));
 
     if (!allows(next.key, next.destination)) return recordFor(key);
-    publish(next, contentChanged);
+    publish(next);
 
     return next;
   };
@@ -279,7 +284,7 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     owners.set(owner, resolved);
     const destination = destinationFor(owner); const previous = recordFor(resolved);
 
-    if (JSON.stringify(previous.destination) !== JSON.stringify(destination)) update(resolved, record => ({ ...record, destination }), false);
+    if (JSON.stringify(previous.destination) !== JSON.stringify(destination)) update(resolved, record => ({ ...record, destination }));
     publishUploads();
     bindDraftStaging(owner, payload => stage(owner, payload));
 
@@ -312,7 +317,6 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     publish(next);
 
     if (!copy) {
-      if (!loaded) changedBeforeLoad.add(previousKey);
       destinations.delete(previousKey);
       for (const [key, target] of aliases) if (target === previousKey) aliases.set(key, nextKey);
       aliases.set(previousKey, nextKey);
@@ -369,7 +373,7 @@ export function createConversationDrafts(reportStorageError: (message: string) =
   const removeSessionDrafts = (hostId: string, sessionPath?: string, sessionId?: string) => removeMatchingDrafts((key, destination) =>
     (destination?.hostId ?? key.slice(0, key.lastIndexOf(":"))) === hostId && Boolean(sessionId && key === `${hostId}:${sessionId}` || sessionPath && destination?.sessionPath === sessionPath));
 
-  const setDraftTarget = (key: string, target: NativeConnectionTarget) => update(key, record => ({ ...record, destination: { key, hostId: target.hostId ?? "local", cwd: target.cwd, sessionPath: target.sessionPath, temporary: !target.cwd && !target.sessionPath } }), false);
+  const setDraftTarget = (key: string, target: NativeConnectionTarget) => update(key, record => ({ ...record, destination: { key, hostId: target.hostId ?? "local", cwd: target.cwd, sessionPath: target.sessionPath, temporary: !target.cwd && !target.sessionPath } }));
   const draftRecords = createMemo<Record<string, ConversationDraft>>(() => Object.fromEntries(visibleRecords().map(([key, record]) => [key, { text: record.text, uploads: record.uploads, updatedAt: record.updatedAt, target: record.destination ? { hostId: record.destination.hostId, cwd: record.destination.cwd, sessionPath: record.destination.sessionPath, sessionId: record.destination.sessionPath ? key.slice(record.destination.hostId.length + 1) : undefined, draftKey: record.destination.sessionPath ? undefined : key } : undefined }])));
 
   const setTransportDraft = (transport: NativeTransport, value: StateUpdate<string>) => {

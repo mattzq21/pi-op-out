@@ -6,6 +6,8 @@ import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import type { Host } from './host_connection';
 import { hostScript, runHostScript } from './host_script';
+import { claimPath } from './session_worker';
+import { tryLockFileSync } from './util/flock';
 import { openDatabase, type Database } from './util/db';
 
 type RegistryRequest =
@@ -38,6 +40,19 @@ export async function idsOn(host: Host): Promise<string[]> {
 export function reserve(root: string): string {
   const database = open(root);
   try { return SessionTables.reserveId(database); } finally { database.close(); }
+}
+
+/**
+ * Removes a reserved ID that never got a transcript. Nothing is removed while a Pi process holds the session claim,
+ * because that Pi can still create the transcript.
+ */
+export function releaseReservation(root: string, id: string): void {
+  const claim = tryLockFileSync(claimPath(id));
+  if (!claim) return;
+  try {
+    const database = open(root);
+    try { database.prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id); } finally { database.close(); }
+  } finally { claim.release(); }
 }
 
 export function pending(root: string, work: 'transaction' | 'recovery' | 'retention'): boolean {

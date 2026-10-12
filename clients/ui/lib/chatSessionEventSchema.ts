@@ -9,7 +9,7 @@ export const entrySchema = z.object({
 });
 
 export const pendingMessageSchema = z.object({
-  id: z.string(), message: z.string(), behavior: z.enum(["steer", "followUp"]),
+  id: z.string(), goalSubmissionId: z.string().optional(), message: z.string(), behavior: z.enum(["steer", "followUp"]),
   images: z.array(imageSchema.omit({ data: true })).optional(), retry: z.boolean().optional(), recovered: z.boolean().optional(),
 });
 

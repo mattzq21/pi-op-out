@@ -6,7 +6,7 @@ import { BROKER_BODY_BYTES, BROKER_HEADER_BYTES, BROKER_QUEUE_DEPTH, BROKER_WORK
 import { MessageOutput, recover as recoverOutput } from './broker_output';
 import { buildPiCommand, launchSpec, type LaunchCommand } from './pi_launch';
 import { ensureDesktopSessionsDir, shellQuote, spawnOptions } from './process_io';
-import { stopMessageWorker } from './process_cleanup';
+import { newProcessTag, PROCESS_TAG, stopMessageWorker } from './process_cleanup';
 import { homeDir } from './environment';
 import { loadAppSettings } from './settings';
 import { collectSessions, listLocalSessions } from './session_index';
@@ -36,7 +36,7 @@ export function agentIsActive(session: SessionSummary, agent: AgentAddress): boo
   return !agent.messageable && agent.hostId === session.hostId && (agent.sessionId === session.id || agent.sessionPath === session.path);
 }
 
-interface MessageJob { child: ChildProcess; output: MessageOutput }
+interface MessageJob { child: ChildProcess; output: MessageOutput; tag: string }
 
 /** A claim that marks an agent as busy until released. */
 export class BusyAgent {
@@ -66,7 +66,7 @@ export class BrokerRuntime {
     this.closing = true;
     const jobs = [...this.jobs.values()];
     this.jobs.clear();
-    await Promise.all(jobs.map(async job => { await stopMessageWorker(job.child); job.output.remove(); }));
+    await Promise.all(jobs.map(async job => { await stopMessageWorker(job.child, job.tag); job.output.remove(); }));
   }
 
   withUncancelledRequest<T>(id: string, register: () => T): T {
@@ -219,7 +219,7 @@ async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: str
     broker.cancelled.add(requestId);
     await peers.cancelMessage(app, requestId);
     const job = broker.jobs.get(requestId);
-    if (job) await stopMessageWorker(job.child);
+    if (job) await stopMessageWorker(job.child, job.tag);
     return { cancelled: true };
   }
   throw new Error('Unknown session broker endpoint');
@@ -259,16 +259,18 @@ async function startMessageJob(command: LaunchCommand, broker: BrokerRuntime, re
     if (broker.closing) { output.remove(); throw new Error('App is closing'); }
     if (broker.cancelled.delete(requestId)) { output.remove(); throw new Error('Agent message was cancelled'); }
     let child: ChildProcess;
+    // The tag lets this daemon find the worker's processes, and a later daemon stop them if this one dies.
+    const tag = newProcessTag();
     try {
-      child = spawn(command.program, command.args, spawnOptions(command, { stdio: output.stdio(), detached: true }));
+      child = spawn(command.program, command.args, spawnOptions({ ...command, env: { ...command.env, [PROCESS_TAG]: tag } }, { stdio: output.stdio(), detached: true }));
       await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
     } catch (error: any) { output.remove(); throw new Error(`Could not message agent: ${error.message ?? error}`); }
     output.closeOutputs();
     child.on('error', () => {});
     // A cancellation or shutdown during the spawn found no job to stop. The worker has no message yet, so stop it here.
     const stopped = broker.closing ? 'App is closing' : broker.cancelled.delete(requestId) ? 'Agent message was cancelled' : undefined;
-    if (stopped) { await stopMessageWorker(child); output.remove(); throw new Error(stopped); }
-    const job = { child, output };
+    if (stopped) { await stopMessageWorker(child, tag); output.remove(); throw new Error(stopped); }
+    const job = { child, output, tag };
     broker.jobs.set(requestId, job);
     return job;
   } finally { broker.starting.delete(requestId); }
@@ -297,7 +299,7 @@ async function waitMessage(broker: BrokerRuntime, requestId: string, job: Messag
     const finish = (value: string | undefined) => { clearInterval(timer); job.child.off('exit', onExit); resolve(value); };
     job.child.once('exit', onExit);
   });
-  if (reason !== undefined) { await stopMessageWorker(job.child); throw new Error(reason); }
+  if (reason !== undefined) { await stopMessageWorker(job.child, job.tag); throw new Error(reason); }
   return status();
 }
 
@@ -333,7 +335,7 @@ async function dispatchAgentMessage(app: App, broker: BrokerRuntime, session: Se
       const status = await waitMessage(broker, requestId, job, deadline);
       return messageResult(job.output, status);
     } finally {
-      await stopMessageWorker(job.child);
+      await stopMessageWorker(job.child, job.tag);
       if (broker.jobs.get(requestId) === job) broker.jobs.delete(requestId);
       broker.cancelled.delete(requestId);
       job.output.remove();

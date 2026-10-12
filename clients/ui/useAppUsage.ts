@@ -1,4 +1,4 @@
-import { createMemo, createSignal, type Accessor } from "solid-js";
+import { batch, createMemo, createSignal, untrack, type Accessor } from "solid-js";
 import { goUsageBadge, normalizeCodexUsage, normalizeOpencodeGoUsage, useUsageClock } from "./appSupport";
 import type { NativeTransport } from "./lib/nativeTransport";
 import { createDependencyEffect } from "./lib/solid";
@@ -8,6 +8,8 @@ export function useAppUsage(transport: Accessor<NativeTransport>) {
   const [codexUsage, setCodexUsage] = createSignal<CodexUsage>();
   const [opencodeGoUsage, setOpencodeGoUsage] = createSignal<OpencodeGoUsage>();
   const [usageClock, setUsageClock] = createSignal(0);
+  const [codexUsageError, setCodexUsageError] = createSignal<string>();
+  const [opencodeGoUsageError, setOpencodeGoUsageError] = createSignal<string>();
 
   const opencodeGoBadge = createMemo(() => { usageClock();
 
@@ -16,14 +18,20 @@ export function useAppUsage(transport: Accessor<NativeTransport>) {
   createDependencyEffect(() => {
     const capturedTransport = transport();
     let cancelled = false;
+    let request = 0;
 
     const load = () => {
+      const current = ++request;
       void capturedTransport.loadCodexUsage().then(usage => {
-        if (!cancelled) setCodexUsage(normalizeCodexUsage(usage));
-      }).catch(() => undefined);
+        if (!cancelled && current === request) batch(() => { setCodexUsage(normalizeCodexUsage(usage)); setCodexUsageError(undefined); });
+      }).catch(reason => {
+        if (!cancelled && current === request && (untrack(codexUsage) || untrack(codexUsageError))) batch(() => { setCodexUsage(undefined); setCodexUsageError(`Codex usage unavailable: ${reason instanceof Error ? reason.message : String(reason)}`); });
+      });
       void capturedTransport.loadOpencodeGoUsage().then(usage => {
-        if (!cancelled) setOpencodeGoUsage(normalizeOpencodeGoUsage(usage));
-      }).catch(() => undefined);
+        if (!cancelled && current === request) batch(() => { setOpencodeGoUsage(normalizeOpencodeGoUsage(usage)); setOpencodeGoUsageError(undefined); });
+      }).catch(reason => {
+        if (!cancelled && current === request && (untrack(opencodeGoUsage) || untrack(opencodeGoUsageError))) batch(() => { setOpencodeGoUsage(undefined); setOpencodeGoUsageError(`OpenCode Go usage unavailable: ${reason instanceof Error ? reason.message : String(reason)}`); });
+      });
     };
 
     load();
@@ -38,5 +46,5 @@ export function useAppUsage(transport: Accessor<NativeTransport>) {
   }, () => [transport()]);
   useUsageClock(() => (codexUsage()), () => (opencodeGoUsage()), () => (setUsageClock));
 
-  return { codexUsage, opencodeGoBadge, usageClock };
+  return { codexUsage, opencodeGoBadge, usageClock, codexUsageError, opencodeGoUsageError };
 }

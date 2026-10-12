@@ -427,8 +427,13 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const close = () => { terminalPanelRevision.current += 1; setTerminalOpen(false); };
 
   const syncDraft = (id: string, data: string) => {
-    draftRevisions.set(id, { data });
-    void nativeTerminals.write(id, data, "draft").catch(reason => addNotice({ title: "Could not sync terminal input", message: String(reason) }));
+    const revision = { data };
+    draftRevisions.set(id, revision);
+    void nativeTerminals.write(id, data, "draft").catch(reason => {
+      // The host kept its older draft. Send must expect that draft; the unsent text stays in the input.
+      if (draftRevisions.get(id) === revision) draftRevisions.delete(id);
+      addNotice({ title: "Could not sync terminal input", message: String(reason) });
+    });
   };
 
   const clearAcceptedDraft = (key: string, id: string, generation: string | undefined, revision: { data: string } | undefined) => {
@@ -446,7 +451,8 @@ export function createTerminalController({ transport, sessionTransport, conversa
     const revision = draftRevisions.get(id);
 
     try {
-      if (clearDraft) await nativeTerminals.writeAndClearDraft(id, data, revision?.data ?? state.activeTerminal.inputDraft ?? "");
+      if (clearDraft && data === "\u0003") await nativeTerminals.interrupt(id);
+      else if (clearDraft) await nativeTerminals.writeAndClearDraft(id, data, revision?.data ?? state.activeTerminal.inputDraft ?? "");
       else await transport().writeTerminal(id, data);
     }
     catch (reason) { addNotice({ title: "Terminal input failed", message: String(reason) }); void refreshShared();

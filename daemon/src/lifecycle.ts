@@ -11,6 +11,7 @@ import * as piRuntime from './pi_runtime';
 import * as terminals from './terminals';
 import * as daemon from './daemon';
 import { startSessionBroker } from './broker';
+import { stopOrphanedProcesses } from './process_cleanup';
 import { loadAppSettings } from './settings';
 import { prepareDefinedAgentsExtension } from './extensions';
 import { errorText } from './util/sync';
@@ -56,6 +57,8 @@ async function runBackend(): Promise<void> {
   const step = async (operation: () => Promise<unknown> | unknown) => { if (app.clients.closing()) throw stoppedEarly; await operation(); };
   try {
     let settings: Awaited<ReturnType<typeof loadAppSettings>> | undefined;
+    // Before the broker recovers message output, so files still held by workers of a dead daemon are free again.
+    await step(() => stopOrphanedProcesses());
     await step(() => startSessionBroker(app, app.broker));
     await step(async () => { settings = await loadAppSettings(app); });
     await step(() => prepareDefinedAgentsExtension());
@@ -67,19 +70,25 @@ async function runBackend(): Promise<void> {
   } catch (error) {
     if (error !== stoppedEarly) throw error;
   } finally {
-    signalled.release();
-    await shutdownBackend(app);
-    failureListener = undefined;
+    // The signal handlers stay installed during shutdown, so a repeated signal cannot end the process before cleanup finishes.
+    try { await shutdownBackend(app); }
+    finally {
+      signalled.release();
+      failureListener = undefined;
+    }
   }
 }
 
 const STOP_SIGNALS: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 
-/** Stops the daemon on a termination signal. The returned promise resolves on the first signal. */
+/** Stops the daemon on a termination signal. The returned promise resolves on the first signal; later signals are ignored until release. */
 function watchSignals(app: App): { stopped: Promise<void>; release(): void } {
   let resolveStopped!: () => void;
   const stopped = new Promise<void>(resolve => { resolveStopped = resolve; });
+  let received = false;
   const finish = (signal: NodeJS.Signals) => {
+    if (received) { console.error('Piop daemon received ' + signal + ' while shutting down; shutdown continues'); return; }
+    received = true;
     console.error('Piop daemon received ' + signal + '; shutting down');
     app.clients.stop();
     resolveStopped();

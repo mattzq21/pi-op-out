@@ -17,6 +17,7 @@ import { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import { SettingsPublication } from "./lib/settingsPublication";
 import { createDependencyEffect,createRef } from "./lib/solid";
 import { useChatSession } from "./lib/useChatSession";
+import { keybindingsError } from "./lib/keybindings";
 import type { AgentConfig,AppSettings,SettingsChange } from "./types";
 
 export function createAppSettings({ transport, runtimePool, chatSession, addNotice, preloadChat }: { transport: Accessor<NativeTransport>; runtimePool: Accessor<SessionRuntimePool>; chatSession: Accessor<ReturnType<typeof useChatSession>>; addNotice: (notice: { title: string; message: string }) => void; preloadChat: () => void }) {
@@ -163,6 +164,18 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
 
     let restoreAgents: (() => Promise<void>) | undefined;
     let savedChange: SettingsChange;
+
+    // Client preferences stay on this device, so they save without the host and also while it is unreachable.
+    if (scope === "client" && !nextConfig) {
+      const shortcutError = keybindingsError(next.keybindings);
+
+      if (shortcutError) throw new Error(shortcutError);
+
+      try { publishPreferences(editingBaseline, await saveClientSettings(next, editingBaseline)); }
+      catch (reason) { if (reason instanceof ClientPreferenceConflictError) publishConflict(reason); throw reason; }
+
+      return;
+    }
 
     try {
       if (nextConfig) restoreAgents = await saveAgentConfiguration(nextConfig, previousConfig, writeAgents);
