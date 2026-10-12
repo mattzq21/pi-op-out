@@ -50,7 +50,35 @@ const sessionSummarySchema = z.object({
 });
 const indexSessions = hostScript<{ paths: string[] }, z.infer<typeof sessionSummarySchema>[]>('index-sessions', MAX_SESSION_INDEX_BATCH_BYTES, value => z.array(sessionSummarySchema).parse(value));
 
-export async function readSessionSummaries(candidates: SessionCandidate[], host: RemoteHost | undefined): Promise<Map<string, CachedSession>> {
+/** Transcript bytes and files read by one index command, so each command ends well inside its time limit. */
+const INDEX_BATCH_BYTES = 128 * 1024 * 1024;
+const INDEX_BATCH_FILES = 500;
+
+function indexBatches(candidates: SessionCandidate[]): SessionCandidate[][] {
+  const batches: SessionCandidate[][] = [];
+  let batch: SessionCandidate[] = [];
+  let bytes = 0;
+  for (const candidate of candidates) {
+    if (batch.length && (batch.length >= INDEX_BATCH_FILES || bytes + candidate[3] > INDEX_BATCH_BYTES)) { batches.push(batch); batch = []; bytes = 0; }
+    batch.push(candidate);
+    bytes += candidate[3];
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
+
+/** Reads summaries in batches. onBatch receives each batch as it finishes, so a later failure keeps the earlier results. */
+export async function readSessionSummaries(candidates: SessionCandidate[], host: RemoteHost | undefined, onBatch?: (paths: string[], summaries: Map<string, CachedSession>) => void): Promise<Map<string, CachedSession>> {
+  const result = new Map<string, CachedSession>();
+  for (const batch of indexBatches(candidates)) {
+    const summaries = await readSummaryBatch(batch, host);
+    onBatch?.(batch.map(item => item[0]), summaries);
+    for (const [path, summary] of summaries) result.set(path, summary);
+  }
+  return result;
+}
+
+async function readSummaryBatch(candidates: SessionCandidate[], host: RemoteHost | undefined): Promise<Map<string, CachedSession>> {
   const result = new Map<string, CachedSession>();
   const items = new Map(candidates.map(item => [item[0], item]));
   const paths = [...items.keys()];
@@ -83,7 +111,12 @@ async function cachedLocalSessions(index: SessionIndexRuntime, root: string): Pr
     const cache = index.local;
     const storageRoot = dirname(root);
     let needsSave = sidebarStorage.prepare(index.sidebar, storageRoot, cache);
-    needsSave = (await refreshLocalCache(root, cache)) || needsSave;
+    try { needsSave = (await refreshLocalCache(root, cache)) || needsSave; }
+    catch (error) {
+      // Keep the batches that finished, so the next listing continues from them.
+      sidebarStorage.persist(index.sidebar, cache);
+      throw error;
+    }
     if (needsSave) sidebarStorage.persist(index.sidebar, cache);
     return [...cache.values()].map(cached => ({ ...cached.summary }));
   });
@@ -91,10 +124,11 @@ async function cachedLocalSessions(index: SessionIndexRuntime, root: string): Pr
 
 async function refreshLocalCache(root: string, cache: Map<string, CachedSession>): Promise<boolean> {
   const [seen, changed] = localSessionCandidates(root, cache);
-  const summaries = await readSessionSummaries(changed, undefined);
   const needsSave = changed.length > 0 || [...cache.keys()].some(path => !seen.has(path));
-  for (const [path] of changed) cache.delete(path);
-  for (const [path, summary] of summaries) cache.set(path, summary);
+  await readSessionSummaries(changed, undefined, (paths, summaries) => {
+    for (const path of paths) cache.delete(path);
+    for (const [path, summary] of summaries) cache.set(path, summary);
+  });
   for (const path of [...cache.keys()]) if (!seen.has(path)) cache.delete(path);
   return needsSave;
 }

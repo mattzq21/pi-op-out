@@ -5,6 +5,7 @@ import { dlopen, ptr } from 'bun:ffi';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, fstatSync, openSync, readSync, renameSync, unlinkSync, writeSync, fsyncSync, ftruncateSync } from 'node:fs';
 import { join } from 'node:path';
+import { formatWithOptions } from 'node:util';
 import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
 import * as endpoint from './daemon_endpoint';
 import { daemonScript } from './session_worker';
@@ -475,4 +476,8 @@ export async function initialize(): Promise<void> {
   const input = sink.child.stdin!;
   (input as any).unref?.();
   process.stderr.write = ((chunk: any, encoding?: any, callback?: any) => input.write(chunk, encoding, callback)) as any;
+  // Bun's console writes to file descriptor 2 directly and skips process.stderr.write, so route it through the sink too.
+  for (const method of ['error', 'warn'] as const) {
+    console[method] = (...values: unknown[]) => { process.stderr.write(formatWithOptions({ colors: false }, ...values) + '\n'); };
+  }
 }
