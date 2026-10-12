@@ -35,7 +35,7 @@ async function chatGptModels(identity) {
   const catalog = chatGptModelCatalogs.get(chatGptCatalogKey(identity));
 
   try {
-    const { models, diagnostics } = chatGptModelVersions(await (await chatGptHttp(identity, '/models')).json());
+    const { models, diagnostics } = chatGptModelVersions(await chatGptJson(identity, '/models'));
 
     if (diagnostics.length && catalog.models) {
       chatGptCatalogDiagnostics(identity, catalog, diagnostics.map(diagnostic => ({ ...diagnostic, usingLastUsableCatalog: true })));
@@ -130,14 +130,30 @@ async function chatGptHttp(identity, path, { body, headers, signal } = {}) {
       signal: AbortSignal.any([opening.signal, signal ?? AbortSignal.timeout(30000)]), redirect: 'error',
     });
   } catch (error) {
+    clearTimeout(timer);
+
     if (opening.signal.aborted) throw opening.signal.reason;
 
     if (signal?.aborted) throw signal.reason;
     throw chatGptConnectionError(error);
-  } finally { clearTimeout(timer); }
+  }
 
-  if (response.ok) return response;
-  throw await chatGptHttpError(response);
+  if (response.ok) { clearTimeout(timer); return response; }
+
+  try { throw await chatGptHttpError(response); } finally { clearTimeout(timer); }
+}
+
+/** Sends a ChatGPT request and reads its JSON body under one 60 second deadline, so a stalled body cannot block forever. */
+async function chatGptJson(identity, path, options = {}) {
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new Error('ChatGPT request timed out.')), 60000);
+  const signal = AbortSignal.any([options.signal ?? AbortSignal.timeout(30000), deadline.signal]);
+
+  try { return await (await chatGptHttp(identity, path, { ...options, signal })).json(); }
+  catch (error) {
+    if (deadline.signal.aborted && !options.signal?.aborted) throw deadline.signal.reason;
+    throw error;
+  } finally { clearTimeout(timer); }
 }
 
 function chatGptConnectionError(error) {
@@ -208,7 +224,7 @@ function chatGptAcceptSubmission(chat, id) {
 
 async function chatGptPrepare(identity, request) {
   if (typeof request.p !== 'string' || request.p.length > 20000) throw new Error('Invalid chat preparation.');
-  const requirements = await (await chatGptHttp(identity, '/sentinel/chat-requirements/prepare', { body: { p: request.p } })).json();
+  const requirements = await chatGptJson(identity, '/sentinel/chat-requirements/prepare', { body: { p: request.p } });
 
   if (requirements.force_login) throw new Error('ChatGPT requires you to sign in again.');
 
@@ -498,7 +514,7 @@ async function chatGptConsume(identity, active, response) {
   }
 
   if (topic) {
-    const { websocket_url: url } = await (await chatGptHttp(identity, '/celsius/ws/user', { signal: active.controller.signal })).json();
+    const { websocket_url: url } = await chatGptJson(identity, '/celsius/ws/user', { signal: active.controller.signal });
     await chatGptSocket(url, topic, active.controller.signal, receive);
 
     return;
@@ -523,7 +539,7 @@ function chatGptCheckpoint(identity, active) {
 
 async function chatGptPrepareConversation(identity, active, body) {
   try {
-    const prepared = await (await chatGptHttp(identity, '/f/conversation/prepare', { body: { ...body, client_prepare_state: 'sent' }, headers: active.headers, signal: active.controller.signal })).json();
+    const prepared = await chatGptJson(identity, '/f/conversation/prepare', { body: { ...body, client_prepare_state: 'sent' }, headers: active.headers, signal: active.controller.signal });
 
     if (prepared.conduit_token && prepared.conduit_token !== 'no-token') active.headers['x-conduit-token'] = prepared.conduit_token;
     body.client_prepare_state = 'success';
@@ -656,7 +672,7 @@ async function chatGptRecover(identity, request, chat) {
 async function chatGptRecoverOwned(identity, chat, lease) {
   if (!chat.conversationId) { chat.status = 'error'; chat.error = 'The host restarted before the conversation ID arrived. Check ChatGPT history before sending again.'; }
   else {
-    const history = await (await chatGptHttp(identity, `/conversation/${chatGptId(chat.conversationId)}`)).json();
+    const history = await chatGptJson(identity, `/conversation/${chatGptId(chat.conversationId)}`);
     const entries = chatGptHistory(history);
 
     if (!chatGptHistoryIncludesSubmission(chat, entries)) return chat;

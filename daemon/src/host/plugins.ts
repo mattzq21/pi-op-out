@@ -12,6 +12,7 @@ import type { Host } from './controller';
 export { preserveLeasesForRestart } from './markdown';
 
 const BUNDLED = ['chatgpt', 'markdown', 'diff'];
+const NAMES: Record<string, string> = { chatgpt: 'ChatGPT', markdown: 'Notes', diff: 'Diff' };
 const CHATGPT_SOURCE = chatgptStream + '\n' + chatgptStorage + '\n' + chatgptService +
   '\nconst bundledPlugin = { call: handleChatGpt, idle: chatGptIdle, checkpoint: chatGptTicketSnapshot, restore: chatGptRestore };';
 
@@ -27,17 +28,23 @@ function timeout<T>(promise: Promise<T>, ms: number): Promise<{ done: true; valu
 
 /** The set of plugins that runs now, with the ChatGPT worker when it is enabled. */
 class Runtime {
-  constructor(readonly enabled: string[], readonly chatgpt: Sdk | null) {}
+  /** configured lists every requested plugin; enabled lists only those that started. */
+  constructor(readonly configured: string[], readonly enabled: string[], readonly chatgpt: Sdk | null, readonly failures: string[]) {}
 
+  /** Starts each plugin on its own, so one failed plugin does not stop the others. */
   static async load(executable: string, enabled: string[], events: Events): Promise<Runtime> {
     validate(enabled);
+    const started: string[] = [];
+    const failures: string[] = [];
     let chatgpt: Sdk | null = null;
     for (const id of enabled) {
-      if (id === 'markdown') {
-        try { Markdown.initialize(); } catch (error) { if (chatgpt) await chatgpt.shutdown(); throw error; }
-      } else if (id === 'chatgpt') chatgpt = await startChatgpt(executable, events);
+      try {
+        if (id === 'markdown') Markdown.initialize();
+        else if (id === 'chatgpt') chatgpt = await startChatgpt(executable, events);
+        started.push(id);
+      } catch (error) { failures.push(NAMES[id] + ': ' + errorText(error)); }
     }
-    return new Runtime(enabled, chatgpt);
+    return new Runtime([...enabled], started, chatgpt, failures);
   }
 
   async drain(disabling: boolean): Promise<boolean> {
@@ -86,8 +93,15 @@ class Runtime {
 
   async restoreStartup(): Promise<void> {
     const tickets = DaemonRestart.startupTickets();
-    if (tickets !== null && tickets !== undefined && this.chatgpt) await this.chatgpt.request({ method: 'plugin_restore', tickets });
+    if (tickets === null || tickets === undefined) return;
+    if (this.chatgpt) await this.chatgpt.request({ method: 'plugin_restore', tickets });
+    else if (pendingTickets(tickets)) throw new Error('ChatGPT did not start, so its pending requests and edit locks from before the restart were lost.');
   }
+}
+
+function pendingTickets(snapshot: any): boolean {
+  if (Array.isArray(snapshot)) return snapshot.length > 0;
+  return Boolean(snapshot?.tickets?.length || snapshot?.leases?.length);
 }
 
 async function startChatgpt(executable: string, events: Events): Promise<Sdk> {
@@ -132,6 +146,7 @@ function configuration(): Configuration {
 export async function validateConfiguration(executable: string, enabled: string[]): Promise<void> {
   const runtime = await Runtime.load(executable, enabled, { event() {} });
   await runtime.shutdown();
+  if (runtime.failures.length) throw new Error(runtime.failures.join('; '));
 }
 
 interface State { runtime: Runtime; revision: string; error: string | null }
@@ -151,6 +166,14 @@ export class PluginService {
         if (packet?.event !== 'chatgpt_changed') return;
         this.host?.output({ type: 'chatgpt_changed', providerId: packet.providerId ?? null, scope: packet.scope ?? null });
       },
+      stopped: error => {
+        const state = this.state;
+        if (!state?.runtime.chatgpt) return;
+        const message = 'The ChatGPT worker stopped unexpectedly (' + errorText(error) + '). Replies in progress and edit locks were lost. ChatGPT starts again on the next request.';
+        console.error(message);
+        state.error = state.error ? state.error + '\n' + message : message;
+        this.host?.output({ type: 'plugins_changed' });
+      },
     };
   }
 
@@ -159,20 +182,19 @@ export class PluginService {
     const release = await this.lock.write();
     try {
       if (this.state) return;
-      let config: Configuration;
-      let error: string | null = null;
-      try { config = configuration(); } catch (reason) { config = { enabled: [], previous: [] }; error = errorText(reason); }
-      const events = this.events();
-      let runtime: Runtime;
-      try { runtime = await Runtime.load(this.executable, config.enabled, events); } catch (reason) {
-        error = 'Could not load the plugin setup: ' + errorText(reason) + '. Restored the previous setup.';
-        try { runtime = await Runtime.load(this.executable, config.previous, events); } catch (failure) {
-          error = 'Plugins could not start: ' + errorText(failure) + '. Plugins are disabled; your conversations remain available.';
-          runtime = new Runtime([], null);
+      const errors: string[] = [];
+      let enabled: string[] = [];
+      try {
+        const config = configuration();
+        try { validate(config.enabled); enabled = config.enabled; } catch (reason) {
+          errors.push('Could not load the plugin setup: ' + errorText(reason) + '. Restored the previous setup.');
+          try { validate(config.previous); enabled = config.previous; } catch (failure) { errors.push('The previous plugin setup is also invalid: ' + errorText(failure) + '. Plugins are disabled; your conversations remain available.'); }
         }
-      }
-      try { await runtime.restoreStartup(); } catch (reason) { error = errorText(reason); }
-      this.state = { runtime, revision: randomUUID(), error };
+      } catch (reason) { errors.push(errorText(reason)); }
+      const runtime = await Runtime.load(this.executable, enabled, this.events());
+      if (runtime.failures.length) errors.push('Some plugins could not start: ' + runtime.failures.map(failure => failure.replace(/\.$/, '')).join('; ') + '. Restart the plugins to try again.');
+      try { await runtime.restoreStartup(); } catch (reason) { errors.push(errorText(reason)); }
+      this.state = { runtime, revision: randomUUID(), error: errors.length ? errors.join('\n') : null };
     } finally { release(); }
   }
 
@@ -184,7 +206,7 @@ export class PluginService {
     try {
       const state = this.state;
       if (!state) throw new Error('Plugins are unavailable');
-      if (packet?.type === 'plugin_status') return { enabled: [...state.runtime.enabled], revision: state.revision, error: state.error };
+      if (packet?.type === 'plugin_status') return { enabled: [...state.runtime.enabled], configured: [...state.runtime.configured], revision: state.revision, error: state.error };
       runtime = state.runtime;
     } finally { release(); }
     return runtime.call(packet);
@@ -206,7 +228,7 @@ export class PluginService {
       if (!current) throw new Error('Plugins are unavailable');
       if (packet.revision !== current.revision) throw new Error('Plugin setup changed in another client. Reload the plugin setup before restarting.');
       const tickets = await checkpoint(current.runtime, !enabled.includes('chatgpt'));
-      return { enabled, previous: [...current.runtime.enabled], tickets };
+      return { enabled, previous: [...current.runtime.configured], tickets };
     } finally { release(); }
   }
 

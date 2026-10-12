@@ -3,16 +3,18 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { STORAGE_DIRECTORY } from '../config';
-import { homeDir } from '../environment';
+import { homeDir, nodeExecutable, pathWithNode } from '../environment';
 import * as DaemonRestart from '../daemon_restart';
 import { fastCapabilities, providerSdk, sdkStorageBundle } from '../resources';
 import { Mutex } from '../util/sync';
 
 const SOURCE_ARGUMENT_BYTES = 64 * 1024;
 const SOURCE_LOADER = "await import('data:text/javascript;base64,' + process.argv.splice(2).join(''));";
+const REQUEST_TIMEOUT_MS = 630_000;
+const PROBE_TIMEOUT_MS = 10_000;
 
-/** Receives event packets that the provider SDK process sends without a request. */
-export interface Events { event(packet: any): void }
+/** Receives event packets that the provider SDK process sends without a request, and its unexpected stops. */
+export interface Events { event(packet: any): void; stopped?(error: Error): void }
 
 const quiet: Events = { event() {} };
 
@@ -27,15 +29,27 @@ interface Pending { resolve(value: any): void; reject(error: Error): void }
 class Connection {
   pending = new Map<string, Pending>();
   closed = false;
-  constructor(readonly child: ChildProcess) {}
-  stop(error = new Error('Pi provider SDK stopped')): void {
+  probing = false;
+  constructor(readonly child: ChildProcess, private onClose: (error: Error) => void) {}
+
+  close(error: Error): void {
     if (this.closed) return;
     this.closed = true;
     for (const [, reply] of this.pending) reply.reject(error);
     this.pending.clear();
+    this.onClose(error);
+  }
+
+  stop(error = new Error('Pi provider SDK stopped')): void {
+    if (this.closed) return;
+    this.close(error);
     try {
       if (!this.child.kill('SIGKILL') && this.child.exitCode === null && this.child.signalCode === null) console.error('Could not stop Pi provider SDK process');
     } catch (failure) { console.error('Could not stop Pi provider SDK:', failure); }
+  }
+
+  send(message: any, failed: (error: Error) => void): void {
+    this.child.stdin!.write(JSON.stringify(message) + '\n', error => { if (error) failed(error); });
   }
 }
 
@@ -63,9 +77,9 @@ export class Sdk {
 
   static plugin(executable: string, events: Events, source: string): Sdk { return new Sdk(executable, events, source); }
 
-  private spawnProcess(encoded: string): ChildProcess {
-    const env = { ...process.env, PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY, PI_CODING_AGENT_DIR: join(homeDir(), STORAGE_DIRECTORY) };
-    const child = spawn('node', ['--input-type=module', '-e', SOURCE_LOADER, '--', this.executable, ...sourceArguments(encoded)], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  private spawnProcess(node: string, encoded: string): ChildProcess {
+    const env = { ...process.env, PATH: pathWithNode(node), PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY, PI_CODING_AGENT_DIR: join(homeDir(), STORAGE_DIRECTORY) };
+    const child = spawn(node, ['--input-type=module', '-e', SOURCE_LOADER, '--', this.executable, ...sourceArguments(encoded)], { env, stdio: ['pipe', 'pipe', 'inherit'] });
     return child;
   }
 
@@ -75,19 +89,27 @@ export class Sdk {
       if (this.connection && !this.connection.closed) return this.connection;
       const storage = "const { installRuntimeStorage, storedModelText, saveStoredModelProvider } = await import('data:text/javascript;base64," + Buffer.from(sdkStorageBundle).toString('base64') + "');";
       const source = [storage, fastCapabilities, this.plugin ?? 'const bundledPlugin = null;', providerSdk].join('\n');
-      const child = this.spawnProcess(Buffer.from(source).toString('base64'));
-      const connection = new Connection(child);
+      const node = nodeExecutable();
+      const child = this.spawnProcess(node, Buffer.from(source).toString('base64'));
+      const connection = new Connection(child, error => {
+        if (this.stopped) return;
+        try { this.events.stopped?.(error); } catch (failure) { console.error('Pi provider SDK stop handler failed:', failure); }
+      });
       const started = await new Promise<Error | undefined>(resolve => {
         child.once('spawn', () => resolve(undefined));
         child.once('error', error => resolve(error));
       });
-      if (started) throw new Error('Could not start Pi provider SDK: ' + started.message);
+      if (started) {
+        const missing = (started as NodeJS.ErrnoException).code === 'ENOENT';
+        throw new Error(missing ? 'Node.js was not found at ' + node + '. Install Node.js or add it to PATH, then try again.' : 'Could not start Pi provider SDK: ' + started.message);
+      }
+      child.on('error', error => console.error('Pi provider SDK process error:', error));
       child.stdin!.on('error', () => {});
       const lines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
       lines.on('line', line => {
         let packet: any;
-        try { packet = JSON.parse(line); } catch { return; }
-        if (typeof packet?.event === 'string') { try { this.events.event(packet); } catch {} return; }
+        try { packet = JSON.parse(line); } catch { console.error('Pi provider SDK wrote an invalid line: ' + line.slice(0, 200)); return; }
+        if (typeof packet?.event === 'string') { try { this.events.event(packet); } catch (error) { console.error('Pi provider SDK event handler failed:', error); } return; }
         if (typeof packet?.id !== 'string') return;
         const reply = connection.pending.get(packet.id);
         if (!reply) return;
@@ -97,17 +119,32 @@ export class Sdk {
       });
       let lineClosed = false;
       let exited = false;
+      let exit = '';
       const finish = () => {
-        if (!lineClosed || !exited || connection.closed) return;
-        connection.closed = true;
-        for (const [, reply] of connection.pending) reply.reject(new Error('Pi provider SDK disconnected'));
-        connection.pending.clear();
+        if (!lineClosed || !exited) return;
+        connection.close(new Error('Pi provider SDK disconnected' + exit));
       };
       lines.on('close', () => { lineClosed = true; finish(); });
-      child.on('exit', () => { exited = true; finish(); });
+      child.on('exit', (code, signal) => { exited = true; exit = signal ? ' (signal ' + signal + ')' : ' (exit code ' + code + ')'; finish(); });
       this.connection = connection;
       return connection;
     });
+  }
+
+  /** Checks that a worker still answers after a request timed out, and stops it when it does not. */
+  private async probe(connection: Connection): Promise<void> {
+    if (connection.closed || connection.probing) return;
+    connection.probing = true;
+    const id = randomUUID();
+    const alive = await new Promise<boolean>(resolve => {
+      const timer = setTimeout(() => resolve(false), PROBE_TIMEOUT_MS);
+      const done = (value: boolean) => { clearTimeout(timer); resolve(value); };
+      connection.pending.set(id, { resolve: () => done(true), reject: () => done(false) });
+      connection.send({ method: 'ping', id }, () => done(false));
+    });
+    connection.pending.delete(id);
+    connection.probing = false;
+    if (!alive) connection.stop(new Error('Pi provider SDK stopped responding and was stopped'));
   }
 
   async request(packet: any): Promise<any> {
@@ -119,10 +156,14 @@ export class Sdk {
       if (connection.closed) throw new Error('Pi provider SDK disconnected');
       if (this.plugin !== undefined && packet?.method === 'plugin_call' && (await DaemonRestart.blocking())) throw new Error('The daemon is restarting. Reconnect before retrying.');
       if (connection.closed) throw new Error('Pi provider SDK disconnected');
-      timer = setTimeout(() => connection.stop(new Error('Pi provider SDK request timed out; unresponsive worker stopped')), 630_000);
       return await new Promise<any>((resolve, reject) => {
+        timer = setTimeout(() => {
+          connection.pending.delete(id);
+          reject(new Error('Pi provider SDK request timed out'));
+          void this.probe(connection);
+        }, REQUEST_TIMEOUT_MS);
         connection.pending.set(id, { resolve, reject });
-        connection.child.stdin!.write(JSON.stringify(message) + '\n', error => { if (error) reject(error); });
+        connection.send(message, reject);
       });
     } finally {
       clearTimeout(timer);

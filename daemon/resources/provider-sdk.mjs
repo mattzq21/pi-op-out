@@ -318,6 +318,8 @@ function handlePluginLifecycle(packet) {
 }
 
 async function handle(packet) {
+  if (packet.method === 'ping') return true;
+
   if (['plugin_idle', 'plugin_checkpoint', 'plugin_restore'].includes(packet.method)) return handlePluginLifecycle(packet);
 
   if (packet.method === 'login') return login(packet);
@@ -385,13 +387,17 @@ const input = createInterface({ input: process.stdin });
 input.on('line', (line) => {
   let packet;
 
-  try { packet = JSON.parse(line); } catch { return; }
+  try { packet = JSON.parse(line); } catch { console.error('Pi provider SDK received an invalid request line'); return; }
+
+  const fail = (error) => emit({ id: packet.id, error: error instanceof Error ? error.message : String(error) });
 
   Promise.resolve().then(() => handle(packet)).then(
-    (data) => emit({ id: packet.id, data: data ?? null }),
-    (error) => emit({ id: packet.id, error: error instanceof Error ? error.message : String(error) }),
-  );
+    (data) => { try { emit({ id: packet.id, data: data ?? null }); } catch (error) { fail(new Error('Could not send the reply: ' + (error instanceof Error ? error.message : String(error)))); } },
+    fail,
+  ).catch((error) => console.error('Pi provider SDK could not reply:', error));
 });
+
+process.on('unhandledRejection', (error) => { console.error('Unhandled error in Pi provider SDK:', error); });
 
 input.on('close', () => { for (const login of logins.values()) login.controller.abort(); process.exit(0); });
 
