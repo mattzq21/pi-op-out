@@ -50,23 +50,19 @@ const snapshotSchema = Type.Union([
 
 const stateSchema = Type.Object({
   snapshot: Type.Optional(snapshotSchema), active: Type.Optional(Type.String()), locked: Type.Optional(Type.Boolean()),
-  modelOverride: Type.Optional(Type.String()), effortOverride: Type.Optional(Type.String()), fastModeOverride: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+  modelOverride: Type.Optional(Type.String()), effortOverride: Type.Optional(Type.String()),
 });
 
 const draftSchema = Type.Object({ session: Type.String(), identity: Type.Optional(Type.String()), state: stateSchema });
 
 const defaultsSchema = Type.Object({ session: Type.String(), model: Type.String(), effort: Type.String() });
 
-const fastModeSchema = Type.Object({ fastModeOverride: Type.Union([Type.Boolean(), Type.Null()]) });
-
-const legacyFastModeSchema = Type.Object({ enabled: Type.Optional(Type.Boolean()), manual: Type.Optional(Type.Boolean()) });
-
 type Branch = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
 
 export function persistedAgentIdentity(state: SessionAgentState) {
   const agent = state.snapshot?.definition;
 
-  return JSON.stringify([state.active, state.modelOverride || agent?.model, state.effortOverride || agent?.effort, state.fastModeOverride ?? agent?.fastMode ?? false]);
+  return JSON.stringify([state.active, state.modelOverride || agent?.model, state.effortOverride || agent?.effort]);
 }
 
 function draftAgentState(session: string, identity: string | undefined) {
@@ -89,16 +85,6 @@ export function sessionIsLocked(states: SessionAgentState[], branch: Branch) {
   return states.some(state => state.locked === true) || branch.some(entry => entry.type === "compaction" || (entry.type === "message" && ["user", "assistant"].includes(entry.message.role)));
 }
 
-function restoredFastMode(branch: Branch) {
-  for (const entry of [...branch].reverse()) {
-    if (entry.type !== "custom") continue;
-
-    if (entry.customType === STATE_ENTRY && Check(fastModeSchema, entry.data)) return entry.data.fastModeOverride ?? undefined;
-
-    if (entry.customType === "piop-fast-mode-state" && Check(legacyFastModeSchema, entry.data)) return entry.data.manual === false ? undefined : entry.data.enabled;
-  }
-}
-
 export function readAgentState(branch: Branch, session: string) {
   const states = branch.flatMap(entry => entry.type === "custom" && entry.customType === STATE_ENTRY && Check(stateSchema, entry.data) ? [normalizeState(entry.data)] : []);
   const persisted = states.at(-1);
@@ -106,7 +92,7 @@ export function readAgentState(branch: Branch, session: string) {
   const draft = draftAgentState(session, identity);
   const stored = draft ? normalizeState(draft) : persisted;
 
-  return { states, stored, identity, fastMode: stored?.fastModeOverride ?? restoredFastMode(branch) };
+  return { states, stored, identity };
 }
 
 function normalizeState(state: Static<typeof stateSchema>): SessionAgentState {

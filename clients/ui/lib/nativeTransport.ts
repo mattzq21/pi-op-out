@@ -11,7 +11,6 @@ import { NativeSettings } from "./nativeSettings";
 import { locateConversation } from "./conversationLookup";
 import { nativeTerminals } from "./nativeTerminals";
 import { ConversationCommands } from "./conversationCommands";
-import { commandListingSchema } from "./fastModeCommands";
 import { htmlPreviewSize, listen, type UnlistenFn } from "./platform";
 import { restoredSessionTarget, targetedWindowSession } from "./sessionResume";
 import { recoverSessionDirectory } from "./sessionRecovery";
@@ -203,11 +202,7 @@ export class NativeTransport {
   markTerminalActivity(cwd = this.cwd, hostId = this.hostId) {
     if (cwd && cwd === this.cwd && hostId === this.hostId) { this.terminalActivity = true; this.temporaryChatUsed = true; }
   }
-  private readonly fastMode = new ConversationCommands({
-    command: async command => { await this.command(command); },
-    send: async command => { await call("pi_command", { runtimeId: this.runtimeId, command }); },
-    emit: event => this.emit(event),
-  });
+  private readonly conversationCommands = new ConversationCommands();
   private readOnly: boolean;
   constructor(target: NativeConnectionTarget = {}) { this.draftTarget = Boolean(target.draftKey); this.sentMessage = Boolean(target.sessionId || target.sessionPath); this.readOnly = target.readOnly === true; this.fresh = !target.sessionPath && !target.sessionId; this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
   currentHostId() { return this.hostId; }
@@ -412,7 +407,6 @@ export class NativeTransport {
     if (version !== this.connectionVersion) return;
 
     if (!await this.ensureConnectionDirectory(version)) return;
-    this.fastMode.reset();
     this.clearConnectionListeners();
 
     const unlisten = await listen("pi://event", ({ payload }) => {
@@ -498,21 +492,14 @@ export class NativeTransport {
 
     return this.disposal;
   }
-  async toggleFastMode() {
-    if (this.draftOnly()) { await this.setFastMode(!this.draftRuntime.fastMode);
-
-      return; }
-
-    await this.fastMode.toggle();
-  }
   setDefaultFastMode(enabled: boolean) { this.draftRuntime.defaultFastMode = enabled; }
   async setFastMode(enabled: boolean) {
     if (this.draftOnly()) { this.draftRuntime.fastMode = enabled;
-      this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: enabled ? "Fast mode on" : "" });
+      this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: enabled ? "Fast mode on" : "Fast mode off" });
 
       return; }
 
-    await this.fastMode.set(enabled);
+    await this.command({ type: "set_fast_mode", enabled });
   }
   command<S extends z.ZodType>(command: RpcCommand, schema: S): Promise<z.output<S>>;
   command(command: RpcCommand): Promise<z.output<typeof jsonResultSchema>>;
@@ -537,15 +524,12 @@ export class NativeTransport {
   }
   private async executeCommandNow<S extends z.ZodType>(command: RpcCommand, schema: S) {
     if (this.draftOnly()) return schema.parse(await this.draftRuntime.command(command));
-    command = this.fastMode.normalize(command);
+    command = this.conversationCommands.normalize(command);
 
     try {
       const result = await call("pi_command", { runtimeId: this.runtimeId, command: { ...command, clientHtmlPreviewSize: htmlPreviewSize() } });
       this.retainCommandSession(command, commandSessionSchema.parse(result));
       this.resetChangedSession(command, z.object({ cancelled: z.boolean().optional() }).catch({}).parse(result));
-      const fastModeUpdate = this.fastMode.afterCommand(command, command.type === "get_commands" ? commandListingSchema.parse(result) : undefined);
-
-      if (fastModeUpdate) await fastModeUpdate;
 
       if (command.type === "extension_ui_response" && command.id !== undefined) this.retainedRequests.delete(command.id);
 

@@ -23,7 +23,7 @@ const MAX_MESSAGE = MAX_REQUEST_BYTES;
 const MAX_OUTGOING_BYTES = MAX_RESPONSE_BYTES;
 const MAX_OUTGOING_MESSAGES = 1024;
 const MAX_CONNECTIONS = 8;
-const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://groups-changed', 'pi://sessions-changed', 'pi://daemon-error', 'pi://daemon-log-status', 'pi://provider-auth-changed', 'pi://chatgpt-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://daemon-restarting'];
+const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://groups-changed', 'pi://sessions-changed', 'pi://daemon-error', 'pi://daemon-log-status', 'pi://provider-auth-changed', 'pi://chatgpt-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://fast-models-changed', 'pi://daemon-restarting'];
 
 /** A counter that limits how many items may run at once. */
 class Slots {

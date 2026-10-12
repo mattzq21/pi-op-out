@@ -2,69 +2,15 @@ import { z } from "zod";
 import { readText } from "../../../daemon/resources/session-broker/app-settings.cjs";
 import { join, resolve, sep } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import {
-  DEFAULT_SERVICE_TIER,
-  SUPPORTED_PROVIDERS,
-  type FastModeConfig,
-  type FastTarget,
-  type ResolvedConfigPath,
-} from "./types";
+import { type FastModeConfig, type ResolvedConfigPath } from "./types";
 
-export const DEFAULT_CONFIG: FastModeConfig = {
-  enabled: false,
-  targets: [],
-};
+export const DEFAULT_CONFIG: FastModeConfig = { enabled: false };
 
-const SUPPORTED_PROVIDER_SET = new Set<string>(SUPPORTED_PROVIDERS);
-
-function cloneTarget(target: FastTarget): FastTarget {
-  return {
-    provider: target.provider,
-    model: target.model,
-    serviceTier: target.serviceTier ?? DEFAULT_SERVICE_TIER,
-  };
+export function cloneConfig(config: FastModeConfig = DEFAULT_CONFIG): FastModeConfig {
+  return { enabled: config.enabled };
 }
 
-export function cloneConfig(
-  config: FastModeConfig = DEFAULT_CONFIG,
-): FastModeConfig {
-  return {
-    enabled: config.enabled,
-    targets: config.targets.map(cloneTarget),
-  };
-}
-
-export function syncSupportedTargets(config: FastModeConfig, targets: FastTarget[] = []): FastModeConfig {
-  return {
-    enabled: config.enabled,
-    targets: targets.map(cloneTarget),
-  };
-}
-
-const fastTargetSchema = z.object({
-  provider: z.string().trim().toLowerCase().refine(provider => SUPPORTED_PROVIDER_SET.has(provider), { message: `provider must be one of: ${SUPPORTED_PROVIDERS.join(", ")}` }),
-  model: z.string().trim().min(1),
-  serviceTier: z.string().trim().min(1).optional().transform(tier => tier ?? DEFAULT_SERVICE_TIER),
-});
-
-const targetsSchema = z.array(fastTargetSchema);
-
-const configSchema = z.object({ enabled: z.boolean().optional(), targets: targetsSchema.optional() });
-
-function uniqueTargets(targets: FastTarget[]): FastTarget[] {
-  const normalized: FastTarget[] = [];
-  const seen = new Set<string>();
-
-  for (const target of targets) {
-    const key = target.provider + "\u0000" + target.model;
-
-    if (seen.has(key)) continue;
-    seen.add(key);
-    normalized.push(target);
-  }
-
-  return normalized;
-}
+const configSchema = z.object({ enabled: z.boolean().optional() });
 
 export function normalizeConfig(raw: unknown, fallback: FastModeConfig = DEFAULT_CONFIG): FastModeConfig {
   const safeFallback = cloneConfig(fallback);
@@ -72,7 +18,7 @@ export function normalizeConfig(raw: unknown, fallback: FastModeConfig = DEFAULT
 
   if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
 
-  return { enabled: parsed.data.enabled ?? safeFallback.enabled, targets: parsed.data.targets ? uniqueTargets(parsed.data.targets) : safeFallback.targets };
+  return { enabled: parsed.data.enabled ?? safeFallback.enabled };
 }
 
 export function parseConfigJson(

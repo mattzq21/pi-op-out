@@ -16,6 +16,8 @@ const providerModelCatalogs = new WeakMap();
 
 let initializing;
 
+let fastModelDiscovery;
+
 async function resolveExecutable() {
   const executable = process.argv[1] || 'pi';
   const expanded = executable.startsWith('~/') ? join(homedir(), executable.slice(2)) : executable;
@@ -368,7 +370,11 @@ async function handleProviderRequest(loaded, packet) {
     return bundledPlugin.call(loaded, packet.request);
   }
 
-  if (packet.method === 'fast_capabilities') return { clientVersion: FAST_CATALOG_CLIENT_VERSION, models: await discoverFastCapabilities(loaded.runtime) };
+  if (packet.method === 'fast_model_scan') {
+    fastModelDiscovery ??= createFastModelDiscovery(loaded.runtime);
+
+    return fastModelDiscovery.scan(packet.provider ?? undefined);
+  }
 
   if (packet.method === 'draft_catalog') {
     await loaded.runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });

@@ -4,6 +4,7 @@ import type { SubagentLimitsRequest } from "../../../extensions/piop-define-agen
 import { Type } from "@earendil-works/pi-ai";
 import { Parse } from "typebox/value";
 import { resolveAgentProfile } from "./agent-profiles.ts";
+import { childFastModeEntry } from "./fast-mode.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { currentHost } from "./client.ts";
@@ -115,6 +116,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
 
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before delegating work");
   const profile = await resolveAgentProfile(pi, task.agent);
+  const fastMode = await childFastModeEntry(pi, profile, Boolean(task.agent));
   const sessionId = reserveSessionId();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
@@ -136,6 +138,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
     entry({ type: "session_info", name: `Subagent: ${task.name}` }),
     entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath, max_subagents: subagentLimits(pi, ctx).max_sub_subagents } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
+    ...fastMode ? [entry(fastMode)] : [],
   ], { dependencies: { workspace: { path: workspace.cwd, kind: "existing" } } }); }
   catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; chat assets are retained: ${String(error)}`, { cause: error }); }
 

@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { writeSessionFile, reserveSessionId } from "./session-file.ts";
 import { currentHost } from "./client.ts";
+import { childFastModeEntry } from "./fast-mode.ts";
 
 export async function resolveAgentProfile(pi: ExtensionAPI, agent?: string) {
   const profile: SubagentProfileRequest = { agent };
@@ -23,14 +24,17 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
 
   if (!header) throw new Error("Save this conversation before creating another chat");
   const state = await resolveAgentProfile(pi, agent);
+  const fastMode = await childFastModeEntry(pi, state, Boolean(agent));
   const sessionId = reserveSessionId();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   const nameId = randomUUID();
+  const stateId = randomUUID();
   await writeSessionFile(sessionPath, [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: ctx.cwd },
     { type: "session_info", id: nameId, parentId: null, timestamp, name: title },
-    { type: "custom", id: randomUUID(), parentId: nameId, timestamp, customType: "pi-define-agents-state", data: { ...state, locked: true } },
+    { type: "custom", id: stateId, parentId: nameId, timestamp, customType: "pi-define-agents-state", data: { ...state, locked: true } },
+    ...fastMode ? [{ ...fastMode, id: randomUUID(), parentId: stateId, timestamp }] : [],
   ], { dependencies: { workspace: { path: ctx.cwd, kind: "existing" } } });
 
   return { threadId: sessionId, hostId: currentHost(), sessionPath, agent: state.active };

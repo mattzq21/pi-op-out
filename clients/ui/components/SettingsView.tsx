@@ -3,6 +3,7 @@ import { RefreshSkills } from "./RefreshSkills";
 import { stableSnapshot, settingsSnapshot, agentEditsSnapshot, settingKeys } from "../lib/settingsSnapshots";
 import { applyClientPreferences, clientPreferenceKeys, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { required } from "../lib/required";
+import { hostFastModels, rejectsFastMode } from "../lib/fastModels";
 import { AgentTools } from "./AgentTools";
 import { agentProfileSchema } from "../lib/agentSchemas";
 import { McpSettings, type McpEditorDraft } from "./McpSettings";
@@ -129,7 +130,7 @@ export function SettingsView(props: SettingsViewProps) {
   const agentConfigSnapshot = createMemo(() => (agentEditsSnapshot(agentConfig())));
   const incomingAgentConfigRef = createRef(JSON.stringify([agentConfigSnapshot(), agentConfig()?.revision]));
   const [hasAgentConfigDraft, setHasAgentConfigDraft] = createSignal(agentConfig() !== undefined);
-  const currentAgentConfig = createMemo(() => (hasAgentConfigDraft() ? { revision: baselineAgentRevision(), agents: agentDrafts().map(item => item.extensions ? { ...item, extensions: item.extensions.map(path => path.trim()).filter(Boolean) } : item), fastModeModels: agentConfig()?.fastModeModels } : undefined));
+  const currentAgentConfig = createMemo(() => (hasAgentConfigDraft() ? { revision: baselineAgentRevision(), agents: agentDrafts().map(item => item.extensions ? { ...item, extensions: item.extensions.map(path => path.trim()).filter(Boolean) } : item) } : undefined));
   const currentSnapshot = createMemo(() => (settingsSnapshot(draft(), currentAgentConfig())));
   const currentSnapshotRef = createRef(currentSnapshot()); createComputed(() => { currentSnapshotRef.current = currentSnapshot(); });
   const agentConfigDirty = createMemo(() => (Boolean(mcpError()) || agentEditsSnapshot(currentAgentConfig()) !== baselineAgentConfig()));
@@ -282,7 +283,8 @@ export function SettingsView(props: SettingsViewProps) {
     return levels.filter((level) => model.thinkingLevelMap?.[level] !== null && (!(level === "xhigh" || level === "max") || model.thinkingLevelMap?.[level] !== undefined));
   };
 
-  const supportsFastMode = (model: string) => (agentConfig()?.fastModeModels ?? []).includes(model);
+  const hostFastModelSnapshot = createMemo(() => hostFastModels(settingsProps().providerHostId)());
+  const supportsFastMode = (model: string) => !rejectsFastMode(hostFastModelSnapshot(), model);
 
   const modelCatalog = createMemo(() => {
     const availableModelIds = new Set(settingsProps().models.map((model) => `${model.provider}/${model.id}`));

@@ -1,7 +1,5 @@
-import { STATUS_KEY, type FastModeConfig, type ModelRef } from "./types";
-import { findMatchingTarget } from "./payload";
-
-const DESKTOP_STATUS_KEY = "pi-desktop-fast-mode";
+import { STATUS_KEY, type ModelRef } from "./types";
+import { isSupportedProvider } from "./payload";
 
 export type StatusText = "fast" | undefined;
 
@@ -35,12 +33,10 @@ export type StatusContext = {
 };
 
 export function getStatusText(
-  config: FastModeConfig,
+  enabled: boolean,
   model: ModelRef | undefined,
 ): StatusText {
-  return config.enabled && findMatchingTarget(model, config.targets)
-    ? "fast"
-    : undefined;
+  return enabled && model && isSupportedProvider(model.provider) ? "fast" : undefined;
 }
 
 export function getRightAlignedStatusLine(text: string, width: number): string {
@@ -90,33 +86,14 @@ function setFastIndicator(ctx: StatusContext, text: StatusText): void {
 
 export function updateFastStatus(
   ctx: StatusContext,
-  config: FastModeConfig,
+  enabled: boolean,
   model: ModelRef | undefined,
 ): void {
-  if (ctx.mode === "rpc") {
-    if (ctx.hasUI) {
-      ctx.ui?.setStatus?.(
-        DESKTOP_STATUS_KEY,
-        findMatchingTarget(model, config.targets)
-          ? config.enabled ? "Fast mode on" : "Fast mode off"
-          : undefined,
-      );
-    }
-
-    return;
-  }
-
   if (!canSetTuiStatus(ctx)) return;
-  setFastIndicator(ctx, getStatusText(config, model));
+  setFastIndicator(ctx, getStatusText(enabled, model));
 }
 
 export function clearFastStatus(ctx: StatusContext): void {
-  if (ctx.mode === "rpc") {
-    if (ctx.hasUI) ctx.ui?.setStatus?.(DESKTOP_STATUS_KEY, undefined);
-
-    return;
-  }
-
   if (!canSetTuiStatus(ctx)) return;
   setFastIndicator(ctx, undefined);
 }

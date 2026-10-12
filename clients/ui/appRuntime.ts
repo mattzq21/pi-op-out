@@ -45,10 +45,10 @@ export function createComposerControls(transport: Accessor<NativeTransport>, con
 
       return transport().promptControls.state(inherited ? { ...state, model: inherited.model, thinkingLevel: inherited.thinking, contextUsage } : { ...state, contextUsage });
     },
-    statuses: (statuses: Record<string, string>) => {
+    statuses: (statuses: Record<string, string>, model: Model | null | undefined) => {
       const inherited = snapshot().controls;
 
-      return transport().promptControls.statuses(inherited?.fastMode === undefined ? statuses : { ...statuses, "pi-desktop-fast-mode": inherited.fastMode ? "Fast mode on" : "Fast mode off" }, fastModels());
+      return transport().promptControls.statuses(inherited?.fastMode === undefined ? statuses : { ...statuses, "pi-desktop-fast-mode": inherited.fastMode ? "Fast mode on" : "Fast mode off" }, fastModels(), model);
     },
     thinkingLevels: (levels: string[]) => {
       const thinking = snapshot().controls?.thinking;

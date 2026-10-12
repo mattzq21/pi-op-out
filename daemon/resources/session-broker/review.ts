@@ -10,6 +10,7 @@ import type { SessionAgentState, SubagentProfileRequest } from "../../../extensi
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { currentHost } from "./client.ts";
+import { childFastModeEntry } from "./fast-mode.ts";
 import { locateConversation } from "./conversation-location.ts";
 import { acknowledge, pendingReviews, release, type SessionPublication } from "./session-publication.cjs";
 import { read as readAppSettings } from "./app-settings.cjs";
@@ -52,7 +53,7 @@ async function requireSavedReviewParent(ctx: ExtensionContext) {
   } finally { await file.close(); }
 }
 
-async function createReview(ctx: ExtensionContext, agentState: SessionAgentState, signal?: AbortSignal) {
+async function createReview(pi: ExtensionAPI, ctx: ExtensionContext, agentState: SessionAgentState, signal?: AbortSignal) {
   signal?.throwIfAborted();
   const header = ctx.sessionManager.getHeader();
 
@@ -60,6 +61,8 @@ async function createReview(ctx: ExtensionContext, agentState: SessionAgentState
 
   if (!header || !parentSessionPath) throw new Error("Save the main conversation before starting a review");
   await requireSavedReviewParent(ctx);
+  signal?.throwIfAborted();
+  const fastMode = await childFastModeEntry(pi, agentState, true);
   signal?.throwIfAborted();
   const timestamp = new Date().toISOString();
   const sessionId = reserveSessionId();
@@ -70,7 +73,8 @@ async function createReview(ctx: ExtensionContext, agentState: SessionAgentState
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: ctx.cwd },
     { type: "custom", id: metadataId, parentId: null, timestamp, customType: "piop-review-parent", data: { parentSessionId: record.parentSessionId, sessionId, hostId: record.hostId, parentHostId: record.hostId, publicationId: record.publicationId } },
     { type: "custom", id: `${metadataId}-agent`, parentId: metadataId, timestamp, customType: "pi-define-agents-state", data: agentState },
-    { type: "session_info", id: randomUUID(), parentId: `${metadataId}-agent`, timestamp, name: "Code review" },
+    ...fastMode ? [{ ...fastMode, id: `${metadataId}-fast-mode`, parentId: `${metadataId}-agent`, timestamp }] : [],
+    { type: "session_info", id: randomUUID(), parentId: fastMode ? `${metadataId}-fast-mode` : `${metadataId}-agent`, timestamp, name: "Code review" },
   ], { review: { record, parentSessionPath }, beforeWrite: () => signal?.throwIfAborted() });
 
   return { record, publication };
@@ -220,7 +224,7 @@ Review scope supplied by the user:
 ${args.trim()}` : settings.prompt;
 
     const task = subagentReviewTask(profile, count, prompt);
-    const { record, publication } = await createReview(ctx, profile, signal);
+    const { record, publication } = await createReview(pi, ctx, profile, signal);
     await publishReview(pi, ctx, record, publication);
     signal?.throwIfAborted();
     await openReview(ctx, record, task, false, images);

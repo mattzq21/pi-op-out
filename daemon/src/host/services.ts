@@ -1,4 +1,5 @@
 import { kind, text } from './json';
+import type { FastModelSnapshot } from './fast_models';
 import { PluginService } from './plugins';
 import { ProviderService } from './providers';
 import type { Host } from './controller';
@@ -30,6 +31,8 @@ export class HostServices {
   }
 
   refreshProviders(): Promise<number> { return this.providers.refresh(); }
+
+  fastModels(): FastModelSnapshot { return this.providers.fastModelSnapshot(); }
 
   async shutdown(): Promise<void> {
     await this.plugins.shutdown();

@@ -69,7 +69,7 @@ export class Host implements SessionHost {
 
   static async create(home: string, storage: string, services: HostServices, sink: (packet: any) => void): Promise<Host> {
     const settings = Settings.readSettingsAt(join(home, storage, 'settings.json'));
-    const definitions = await Agents.load(home, storage, Extensions.runtimeSettings(settings), true);
+    const definitions = await Agents.load(home, storage, Extensions.runtimeSettings(settings), true, null);
     const host = new Host(home, storage, services, sink);
     host.agentDefinitions = definitions;
     host.ownershipValue = await ConversationOwnership.create(home, storage, { revoke: (id, intent) => host.releaseConversation(id, intent) });
@@ -280,7 +280,7 @@ export class Host implements SessionHost {
     let sessions: Session[];
     try {
       const changed = revision !== this.requestedAgentRevision;
-      const definitions = changed ? await Agents.load(this.home, this.storage, configuration.settings, false) : undefined;
+      const definitions = changed ? await Agents.load(this.home, this.storage, configuration.settings, false, this.services.fastModels()) : undefined;
       if (definitions !== undefined) { this.agentDefinitions = definitions; this.agentRevision += 1; }
       this.requestedAgentRevision = revision;
       const next = structuredClone(configuration);
@@ -302,7 +302,7 @@ export class Host implements SessionHost {
       const target = this.agentReloadTarget(runtime, sessionId);
       if (this.configurationValue === null) throw new Error('Daemon is not configured');
       const settings = structuredClone(this.configurationValue.settings ?? null);
-      const definitions = await Agents.load(this.home, this.storage, settings, false);
+      const definitions = await Agents.load(this.home, this.storage, settings, false, this.services.fastModels());
       if (target !== this.agentReloadTarget(runtime, sessionId)) throw new Error('The session changed while loading agent definitions. Reload from its current host.');
       this.agentRevision += 1;
       revision = this.agentRevision;

@@ -1,71 +1,68 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
-import { Type, type Static } from "typebox";
-import { Check, Parse } from "typebox/value";
+import { Type } from "typebox";
+import { Parse } from "typebox/value";
+import type { SessionAgentState } from "../../../extensions/piop-define-agents/contracts.ts";
+import type { FastModeSession, FastModeSessionRequest } from "../../../extensions/piop-openai-fast-mode/src/types.ts";
 
-const fastConfigSchema = Type.Object({ enabled: Type.Boolean(), targets: Type.Array(Type.Object({ provider: Type.String(), model: Type.String() })) });
+const statusKey = "pi-desktop-fast-mode";
 
-export function registerFastModeStatus(pi: ExtensionAPI) {
-  const packageName = "pi-openai-fast-mode";
-  const statusKey = "pi-desktop-fast-mode";
+/** The fast mode extension's saved choice entry. */
+const STATE_ENTRY = "piop-fast-mode-state";
 
-  type FastConfig = Static<typeof fastConfigSchema>;
+/** The fast mode extension's session interface, or undefined when the extension is not loaded. */
+export function fastModeSession(pi: ExtensionAPI): FastModeSession | undefined {
+  const request: FastModeSessionRequest = {};
+  pi.events.emit("piop:fast-mode:session", request);
 
-  let config: FastConfig | undefined;
-  let loaded = false;
-  let available = false;
-  let queue = Promise.resolve();
+  return request.session;
+}
 
-  const loadConfig = async (path: string) => {
-    try {
-      const value = JSON.parse(await readFile(path, "utf8"));
+/**
+ * The saved choice entry for a new child session. An explicitly selected profile uses its fast mode default when it has one;
+ * otherwise the child inherits this session's choice. Returns undefined when the fast mode extension is not loaded.
+ */
+export async function childFastModeEntry(pi: ExtensionAPI, profile: SessionAgentState, explicit: boolean) {
+  const session = fastModeSession(pi);
+  const declared = explicit ? profile.snapshot?.definition.fastMode : undefined;
 
-      if (Check(fastConfigSchema, value)) config = value;
-    } catch { }
-  };
+  if (!session) return undefined;
 
-  const publish = (ctx: ExtensionContext, model = ctx.model) => {
-    const supported = config?.targets.some((target) => target.provider === model?.provider && target.model === model?.id && ["openai", "openai-codex"].includes(target.provider));
-    const text = available && config && supported ? (config.enabled ? "Fast mode on" : "Fast mode off") : undefined;
-    ctx.ui.setStatus(statusKey, text);
-  };
+  return { type: "custom" as const, customType: STATE_ENTRY, data: { enabled: declared ?? await session.getEnabled() } };
+}
 
-  const refresh = async (ctx: ExtensionContext, reload: boolean) => {
+/** Publishes the session's fast mode choice to piop and applies client changes through the session interface. */
+export function registerFastModeControl(pi: ExtensionAPI) {
+  let stop: (() => void) | undefined;
+
+  const watch = (ctx: ExtensionContext) => {
+    stop?.();
+    stop = undefined;
+
     if (ctx.mode !== "rpc") return;
+    const session = fastModeSession(pi);
 
-    if (!loaded || reload) {
-      const command = pi.getCommands().find((command) => command.source === "extension" && /^fast(?::\d+)?$/.test(command.name) && (command.sourceInfo.source === `npm:${packageName}` || command.sourceInfo.path.split(/[\\/]/).includes(packageName)));
-      available = Boolean(command); config = undefined;
+    if (!session) { ctx.ui.setStatus(statusKey, undefined);
 
-      if (command) {
-        const projectDir = resolve(ctx.cwd, ".pi");
-        const extensionDir = resolve(dirname(command.sourceInfo.path));
-        const projectConfig = join(projectDir, packageName, "config.json");
-        const projectLocal = extensionDir === projectDir || extensionDir.startsWith(`${projectDir}${sep}`);
-        const path = existsSync(projectConfig) || projectLocal ? projectConfig : join(getAgentDir(), "extensions", packageName, "config.json");
-        await loadConfig(path);
-      }
+    return; }
 
-      loaded = true;
-    }
-
-    publish(ctx);
+    stop = session.subscribe(enabled => ctx.ui.setStatus(statusKey, enabled ? "Fast mode on" : "Fast mode off"), error => {
+      ctx.ui.setStatus(statusKey, "Fast mode status unavailable");
+      ctx.ui.notify("Fast mode status unavailable: " + error.message, "error");
+    });
   };
 
   pi.events.on("piop:rpc", request => {
-    if (request.command !== "fast_mode_status") return;
-    const ctx = request.ctx;
+    if (request.command !== "set_fast_mode") return;
     request.ready = (async () => {
-      const { reload } = Parse(Type.Object({ reload: Type.Boolean() }), request.payload);
-      const next = queue.then(() => refresh(ctx, reload));
-      queue = next.catch(() => undefined);
+      const { enabled } = Parse(Type.Object({ enabled: Type.Boolean() }), request.payload);
+      const session = fastModeSession(pi);
 
-      return next;
+      if (!session) throw new Error("Fast mode is unavailable in this conversation");
+      await session.setEnabled(enabled);
+
+      return null;
     })();
   });
-  pi.on("session_start", () => { loaded = false; config = undefined; available = false; });
-  pi.on("model_select", (event, ctx) => { if (ctx.mode === "rpc" && loaded) publish(ctx, event.model); });
+  pi.on("session_start", (_event, ctx) => watch(ctx));
+  pi.on("session_shutdown", () => { stop?.(); stop = undefined; });
 }
