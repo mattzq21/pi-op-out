@@ -1,15 +1,12 @@
 const fs = require('node:fs');
-const { homedir } = require('node:os');
 const { dirname, join } = require('node:path');
 const { randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
 const { acquireReferencePublicationLock } = require('./storage-lock.cjs');
 
-function profileRoot() { return join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop'); }
-
 /** Points the session header at another working directory. */
-function relocateSession(sessionPath, requestedReplacement) {
-  const release = acquireReferencePublicationLock(profileRoot(), true);
+function relocateSession(profile, sessionPath, requestedReplacement) {
+  const release = acquireReferencePublicationLock(profile, true);
 
   try {
     const replacement = fs.realpathSync(requestedReplacement);
@@ -46,12 +43,12 @@ function rewriteHeader(sessionPath, replacement) {
   }
 }
 
-/** Accepts only a session file inside the profile sessions directory and an existing project directory. */
+/** Accepts only a session file inside the sessions directory of request.profile and an existing project directory. */
 function checkedRelocation(request) {
-  if (typeof request.sessionPath !== 'string' || typeof request.cwd !== 'string') throw new Error('Invalid relocation request');
+  if (typeof request.profile !== 'string' || typeof request.sessionPath !== 'string' || typeof request.cwd !== 'string') throw new Error('Invalid relocation request');
   let root, source;
 
-  try { root = fs.realpathSync(join(profileRoot(), 'sessions')); } catch (error) { throw new Error(`Could not locate piop sessions: ${error.message}`); }
+  try { root = fs.realpathSync(join(request.profile, 'sessions')); } catch (error) { throw new Error(`Could not locate piop sessions: ${error.message}`); }
 
   try { source = fs.realpathSync(request.sessionPath); } catch (error) { throw new Error(`Could not locate session file: ${error.message}`); }
 
@@ -62,7 +59,9 @@ function checkedRelocation(request) {
   try { directory = fs.statSync(replacement).isDirectory(); } catch {}
 
   if (!directory) throw new Error(`Project directory does not exist: ${replacement}`);
-  relocateSession(source, replacement);
+  relocateSession(request.profile, source, replacement);
+
+  return null;
 }
 
 module.exports = { relocateSession, checkedRelocation };

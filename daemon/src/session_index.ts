@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
-import { MAX_SESSION_INDEX_BATCH_BYTES, STORAGE_DIRECTORY } from './config';
+import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
-import { hostScript, runHostScript } from './host_script';
-import type { Host } from './host_connection';
+import { DEFAULT_TIMEOUT, hostOperation, runHostOperation, STORAGE_TIMEOUT } from './host_operations';
+import { requireLocal } from './host_connection';
 import { localLaunchDirectory, remoteDirectoryPath, remoteHost, ssh } from './pi_launch';
 import { output, runLimited, shellQuote } from './process_io';
 import { inspectSessionProjectsWith } from './folder_inspection';
@@ -48,9 +48,10 @@ const sessionSummarySchema = z.object({
   explicitlyNamed: z.boolean(), hasUserMessage: z.boolean(), bytes: z.number().int().nonnegative(),
   subagentParentId: z.string().min(1).optional(),
 });
-const indexSessions = hostScript<{ paths: string[] }, z.infer<typeof sessionSummarySchema>[]>('index-sessions', MAX_SESSION_INDEX_BATCH_BYTES, value => z.array(sessionSummarySchema).parse(value));
+const indexSessions = hostOperation<{ paths: string[] }, { summaries: z.infer<typeof sessionSummarySchema>[]; warnings: string[] }>('index-sessions', 'general', STORAGE_TIMEOUT,
+  value => z.object({ summaries: z.array(sessionSummarySchema), warnings: z.array(z.string()) }).parse(value));
 
-/** Transcript bytes and files read by one index command, so each command ends well inside its time limit. */
+/** Transcript bytes and files read by one index operation, so each operation ends well inside its time limit. */
 const INDEX_BATCH_BYTES = 128 * 1024 * 1024;
 const INDEX_BATCH_FILES = 500;
 
@@ -68,31 +69,31 @@ function indexBatches(candidates: SessionCandidate[]): SessionCandidate[][] {
 }
 
 /** Reads summaries in batches. onBatch receives each batch as it finishes, so a later failure keeps the earlier results. */
-export async function readSessionSummaries(candidates: SessionCandidate[], host: RemoteHost | undefined, onBatch?: (paths: string[], summaries: Map<string, CachedSession>) => void): Promise<Map<string, CachedSession>> {
+export async function readSessionSummaries(candidates: SessionCandidate[], onBatch?: (paths: string[], summaries: Map<string, CachedSession>) => void): Promise<Map<string, CachedSession>> {
   const result = new Map<string, CachedSession>();
   for (const batch of indexBatches(candidates)) {
-    const summaries = await readSummaryBatch(batch, host);
+    const summaries = await readSummaryBatch(batch);
     onBatch?.(batch.map(item => item[0]), summaries);
     for (const [path, summary] of summaries) result.set(path, summary);
   }
   return result;
 }
 
-async function readSummaryBatch(candidates: SessionCandidate[], host: RemoteHost | undefined): Promise<Map<string, CachedSession>> {
+async function readSummaryBatch(candidates: SessionCandidate[]): Promise<Map<string, CachedSession>> {
   const result = new Map<string, CachedSession>();
   const items = new Map(candidates.map(item => [item[0], item]));
   const paths = [...items.keys()];
   if (!paths.length) return result;
-  const maxOutput = Math.max(MAX_SESSION_INDEX_BATCH_BYTES, paths.length * 512 * 1024);
-  const values = await runHostScript(host ? { kind: 'remote', host } : { kind: 'local' }, { ...indexSessions, maxOutput }, { paths });
-  for (const value of values) {
+  const { summaries, warnings } = await runHostOperation(indexSessions, { paths });
+  for (const warning of warnings) console.error(`Session index: ${warning}`);
+  for (const value of summaries) {
     const item = items.get(value.path);
     if (!item) throw new Error(`Unexpected session summary path: ${value.path}`);
     const summary: SessionSummary = {
       groupId: null, subagentParentId: value.subagentParentId,
       id: value.id, path: value.path, name: value.name, project: basename(value.cwd) || 'Workspace', cwd: value.cwd, cwdExists: true,
       modifiedAt: item[2], preview: value.preview, messageCount: value.messageCount, lastMessageAt: value.lastMessageAt, apiCost: value.apiCost,
-      hostId: host?.id ?? 'local', hostName: host?.name ?? 'Local',
+      hostId: 'local', hostName: 'Local',
     };
     result.set(value.path, { fingerprint: item[1], summary });
   }
@@ -125,7 +126,7 @@ async function cachedLocalSessions(index: SessionIndexRuntime, root: string): Pr
 async function refreshLocalCache(root: string, cache: Map<string, CachedSession>): Promise<boolean> {
   const [seen, changed] = localSessionCandidates(root, cache);
   const needsSave = changed.length > 0 || [...cache.keys()].some(path => !seen.has(path));
-  await readSessionSummaries(changed, undefined, (paths, summaries) => {
+  await readSessionSummaries(changed, (paths, summaries) => {
     for (const path of paths) cache.delete(path);
     for (const [path, summary] of summaries) cache.set(path, summary);
   });
@@ -194,22 +195,19 @@ export async function homeDirectory(app: App, hostId: string): Promise<string> {
   return path;
 }
 
-type TemporaryChatRequest = { action: 'create' | 'remove'; id: string; path?: string; root?: string };
+type TemporaryChatRequest = { action: 'create' | 'remove'; id: string; path?: string; root: string };
 
-const temporaryChatScript = hostScript<TemporaryChatRequest, string | null>('temporary-chat', 64 * 1024, value => {
+const temporaryChatOperation = hostOperation<TemporaryChatRequest, string | null>('temporary-chat', 'general', DEFAULT_TIMEOUT, value => {
   if (value !== null && typeof value !== 'string') throw new Error('expected a directory');
   return value;
 });
 
-async function createTemporaryChatOn(host: Host, request: TemporaryChatRequest): Promise<string> {
-  const directory = await runHostScript(host, temporaryChatScript, request);
-  if (!directory) throw new Error('Temporary chat directory was unavailable');
-  return directory;
-}
-
 export async function createLocalTemporaryChat(home: string, sessionId: string): Promise<string> {
-  try { return await createTemporaryChatOn({ kind: 'local' }, { action: 'create', id: sessionId, root: join(home, STORAGE_DIRECTORY) }); }
+  let directory: string | null;
+  try { directory = await runHostOperation(temporaryChatOperation, { action: 'create', id: sessionId, root: join(home, STORAGE_DIRECTORY) }); }
   catch (error: any) { throw new Error(`Could not create temporary chat directory: ${error?.message ?? error}`); }
+  if (!directory) throw new Error('Could not create temporary chat directory: it was unavailable');
+  return directory;
 }
 
 export function temporaryChatId(path: string): string | undefined {
@@ -221,18 +219,14 @@ export function temporaryChatId(path: string): string | undefined {
 }
 
 export async function removeTemporaryChat(app: App, path: string, hostId: string): Promise<void> {
-  if (hostId === 'local') return removeLocalTemporaryChat(homeDir(), path);
-  const settings = await loadAppSettings(app); const host = remoteHost(settings, hostId);
-  const id = temporaryChatId(path);
-  if (!id) throw new Error('Refusing to remove a directory not created as a temporary chat');
-  try { await runHostScript({ kind: 'remote', host }, temporaryChatScript, { action: 'remove', id, path }); }
-  catch (error: any) { throw new Error(`Could not remove temporary chat directory on ${host.name}: ${error.message}`); }
+  requireLocal(hostId);
+  return removeLocalTemporaryChat(homeDir(), path);
 }
 
 export async function removeLocalTemporaryChat(home: string, path: string): Promise<void> {
   const id = temporaryChatId(path);
   if (!id) throw new Error('Refusing to remove a directory not created as a temporary chat');
-  try { await runHostScript({ kind: 'local' }, temporaryChatScript, { action: 'remove', id, path, root: join(home, STORAGE_DIRECTORY) }); }
+  try { await runHostOperation(temporaryChatOperation, { action: 'remove', id, path, root: join(home, STORAGE_DIRECTORY) }); }
   catch (error: any) { throw new Error(`Could not remove temporary chat directory: ${error?.message ?? error}`); }
 }
 
@@ -287,16 +281,10 @@ export function validateLocalProjectDirectory(path: string): string {
 }
 
 export async function createTemporaryChat(app: App, hostId: string): Promise<TemporaryChat> {
+  requireLocal(hostId);
   const settings = await loadAppSettings(app);
   const sessionId = await reserveSessionId(settings, hostId);
-  let cwd: string;
-  if (hostId === 'local') cwd = await createLocalTemporaryChat(homeDir(), sessionId);
-  else {
-    const host = remoteHost(await loadAppSettings(app), hostId);
-    if (!canonicalUuid(sessionId)) throw new Error('Invalid temporary chat session ID');
-    try { cwd = await createTemporaryChatOn({ kind: 'remote', host }, { action: 'create', id: sessionId }); }
-    catch (error: any) { throw new Error(`Could not create temporary chat directory on ${host.name}: ${error.message}`); }
-  }
+  const cwd = await createLocalTemporaryChat(homeDir(), sessionId);
   return { cwd, sessionId };
 }
 

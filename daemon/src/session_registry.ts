@@ -4,37 +4,20 @@ import { join } from 'node:path';
 import * as SessionTables from '../resources/session-database.cjs';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
-import type { Host } from './host_connection';
-import { hostScript, runHostScript } from './host_script';
+import { DEFAULT_TIMEOUT, hostOperation, runHostOperation } from './host_operations';
 import { claimPath } from './session_worker';
 import { tryLockFileSync } from './util/flock';
 import { openDatabase, type Database } from './util/db';
 
-type RegistryRequest =
-  | { action: 'reserve' }
-  | { action: 'identity'; path: string }
-  | { action: 'ids' }
-  | { action: 'record'; root: string; sessionId: string; sessionPath: string | null; cwd: string; checkedAt: number };
+type RecordRequest = { root: string; sessionId: string; sessionPath: string | null; cwd: string; checkedAt: number };
 
-const sessionIdSchema = z.string().min(1);
-const reserveScript = hostScript<RegistryRequest, string>('session-registry', 16 * 1024 * 1024, value => sessionIdSchema.parse(value));
-const identityScript = hostScript<RegistryRequest, string | null>('session-registry', 16 * 1024 * 1024, value => sessionIdSchema.nullable().parse(value));
-const idsScript = hostScript<RegistryRequest, string[]>('session-registry', 16 * 1024 * 1024, value => z.array(sessionIdSchema).parse(value));
-const recordScript = hostScript<RegistryRequest, null>('session-registry', 16 * 1024 * 1024, value => z.null().parse(value));
+const recordOperation = hostOperation<RecordRequest, null>('record-session-directory', 'general', DEFAULT_TIMEOUT, value => z.null().parse(value));
 
-/** Reserves a new session ID in the registry of the host. */
-export async function reserveOn(host: Host): Promise<string> {
-  return runHostScript(host, reserveScript, { action: 'reserve' });
-}
-
-/** Returns the registered session ID of the transcript at path, or undefined. */
-export async function identityOn(host: Host, path: string): Promise<string | undefined> {
-  return (await runHostScript(host, identityScript, { action: 'identity', path })) ?? undefined;
-}
-
-/** Returns all session IDs in the registry of the host. */
-export async function idsOn(host: Host): Promise<string[]> {
-  return runHostScript(host, idsScript, { action: 'ids' });
+/** Returns all session IDs in the registry at root. */
+export function ids(root: string): string[] {
+  const database = open(root);
+  try { return (database.prepare('SELECT session_id FROM sessions').all() as Array<{ session_id: string }>).map(row => row.session_id); }
+  finally { database.close(); }
 }
 
 export function reserve(root: string): string {
@@ -67,14 +50,14 @@ export function requestCleanup(root: string, kind: 'goal'): void {
 export function record(state: any, cwd: string | undefined | null): void {
   const id = typeof state?.sessionId === 'string' ? state.sessionId : undefined;
   if (!id || typeof cwd !== 'string') return;
-  const request: RegistryRequest = { action: 'record', root: join(homeDir(), STORAGE_DIRECTORY), sessionId: id, sessionPath: state.sessionFile ?? null, cwd, checkedAt: Date.now() };
-  // Only the latest update per session is kept, and one worker writes them in order, so bursts of events start one process at a time.
+  const request: RecordRequest = { root: join(homeDir(), STORAGE_DIRECTORY), sessionId: id, sessionPath: state.sessionFile ?? null, cwd, checkedAt: Date.now() };
+  // Only the latest update per session is kept, and the updates are written one at a time, so a burst of events runs one operation at a time.
   pendingRecords.delete(id);
   pendingRecords.set(id, request);
   if (!recording) void writeRecords();
 }
 
-const pendingRecords = new Map<string, RegistryRequest>();
+const pendingRecords = new Map<string, RecordRequest>();
 let recording = false;
 
 async function writeRecords(): Promise<void> {
@@ -83,7 +66,7 @@ async function writeRecords(): Promise<void> {
     for (let next = pendingRecords.entries().next(); !next.done; next = pendingRecords.entries().next()) {
       const [id, request] = next.value;
       pendingRecords.delete(id);
-      try { await runHostScript({ kind: 'local' }, recordScript, request); }
+      try { await runHostOperation(recordOperation, request); }
       catch (error: any) { console.error(`Session registry: ${error?.message ?? error}`); }
     }
   } finally { recording = false; }

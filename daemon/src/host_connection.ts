@@ -3,10 +3,9 @@ import { homeDir, isFile } from './environment';
 import { shellQuote, type CommandSpec } from './process_io';
 import { validateRemoteHost, type AppSettings, type RemoteHost } from './settings_types';
 
-export type Host = { kind: 'local' } | { kind: 'remote'; host: RemoteHost };
-
-export function hostFor(settings: AppSettings, hostId: string): Host {
-  return hostId === 'local' ? { kind: 'local' } : { kind: 'remote', host: remoteHost(settings, hostId) };
+/** Stored data of another machine changes only through the Piop daemon of that machine. Requests for it go there through peers. */
+export function requireLocal(hostId: string): void {
+  if (hostId !== 'local') throw new Error('Requests for another machine must go through the Piop daemon of that machine');
 }
 
 export function remoteHost(settings: AppSettings, hostId: string): RemoteHost {

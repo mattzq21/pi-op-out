@@ -356,7 +356,7 @@ function register(state: PeerRuntime, kind: string, id: string, route: Route): v
 
 async function routeStorageReport(app: App): Promise<any> {
   let local: any;
-  try { local = await inspectStorage(undefined); } catch (error: any) { local = failedStorage('local', 'Local', error?.message ?? String(error)); }
+  try { local = await inspectStorage(); } catch (error: any) { local = failedStorage('local', 'Local', error?.message ?? String(error)); }
   const hosts: any[] = [local];
   const seen = new Set([daemonEndpoint.identity()]);
   for (const host of (await loadAppSettings(app)).hosts.filter(host => host.enabled)) {

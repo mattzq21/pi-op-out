@@ -15,6 +15,7 @@ import { stopOrphanedProcesses } from './process_cleanup';
 import { loadAppSettings } from './settings';
 import { prepareDefinedAgentsExtension } from './extensions';
 import { errorText } from './util/sync';
+import { shutdownHostOperations } from './host_operations';
 
 let failureListener: ((line: string) => void) | undefined;
 
@@ -120,4 +121,5 @@ async function shutdownBackend(app: App): Promise<void> {
   await ignore(() => app.broker.shutdown());
   await ignore(() => terminals.shutdown(app.terminals));
   await ignore(() => piRuntime.shutdown(app.pi));
+  await ignore(() => shutdownHostOperations());
 }

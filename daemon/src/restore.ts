@@ -1,5 +1,4 @@
 import { locateSessionFile, sessionDescendants } from './archives';
-import type { Host } from './host_connection';
 import * as storageTransactions from './storage_transactions';
 import { StorageTransactionError, type RestoreResult } from './storage_transactions';
 
@@ -11,23 +10,23 @@ export interface RestoreLease {
 }
 
 /**
- * Restores the archived session tree at sessionPath on the host.
+ * Restores the archived session tree at sessionPath on this machine.
  * When the run fails but a restore receipt shows that this tree is already restored, returns the saved result.
  * Throws the first error when there is no receipt, or a pending StorageTransactionError when an earlier restore must finish first.
  */
-export async function restoreSessionTree(host: Host, sessionPath: string, lease: (path: string) => Promise<RestoreLease>): Promise<RestoreResult> {
+export async function restoreSessionTree(sessionPath: string, lease: (path: string) => Promise<RestoreLease>): Promise<RestoreResult> {
   const leases: Array<[string, RestoreLease]> = [];
   let source = sessionPath;
   try {
     let result: RestoreResult, restored: string[];
     try {
-      source = await locateSessionFile(host, sessionPath, true);
+      source = await locateSessionFile(sessionPath, true);
       leases.push([source, await lease(source)]);
-      for (const [child] of await sessionDescendants(host, source, true, false)) leases.push([child, await lease(child)]);
-      result = await storageTransactions.restore(host, leases.map(([path]) => path));
+      for (const [child] of await sessionDescendants(source, true, false)) leases.push([child, await lease(child)]);
+      result = await storageTransactions.restore(leases.map(([path]) => path));
       restored = restoredPaths(result, leases.map(([path]) => path));
     } catch (error) {
-      result = await savedResult(host, source, error);
+      result = await savedResult(source, error);
       restored = restoredPaths(result, leases.map(([path]) => path));
     }
     for (const [index, [, held]] of leases.entries()) {
@@ -43,9 +42,9 @@ export async function restoreSessionTree(host: Host, sessionPath: string, lease:
   }
 }
 
-async function savedResult(host: Host, source: string, failure: unknown): Promise<RestoreResult> {
+async function savedResult(source: string, failure: unknown): Promise<RestoreResult> {
   let saved: RestoreResult | null;
-  try { saved = await storageTransactions.committedRestore(host, source); }
+  try { saved = await storageTransactions.committedRestore(source); }
   catch (error: any) {
     if (error instanceof StorageTransactionError && error.state === 'pending') throw error;
     console.error(`Could not read the restore receipt of ${source}: ${error?.message ?? error}`);

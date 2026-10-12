@@ -1,10 +1,7 @@
 const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const { hostScript } = require('./host-script.cjs');
 const { createRecoveryStorage, readSession } = require('./recovery-storage.cjs');
 const { relocateSession } = require('./relocate-session.cjs');
-const { registryAction } = require('./session-registry.cjs');
+const { recordDirectory } = require('./session-registry.cjs');
 
 function assertMissingDirectory(header) {
   try {
@@ -14,9 +11,11 @@ function assertMissingDirectory(header) {
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
 
+/** Gives the session at request.sessionPath a new empty directory in the profile at request.profile when its directory is missing. */
 function recoverMissingSession(request) {
   if (request.action !== 'empty') throw new Error('Unknown recovery action');
-  const profileRoot = path.join(os.homedir(), request.storage || process.env.PIOP_STORAGE_DIRECTORY || '.piop');
+  if (typeof request.profile !== 'string' || typeof request.sessionPath !== 'string') throw new Error('Invalid recovery request');
+  const profileRoot = request.profile;
   const storage = createRecoveryStorage(profileRoot);
   const header = readSession(profileRoot, request.sessionPath);
 
@@ -25,7 +24,7 @@ function recoverMissingSession(request) {
 
     if (record.recovered?.unmanagedTemporarySymlinks?.length) warnings.push(`Links to temporary files outside this recovery directory were retained; their external contents were not copied: ${record.recovered.unmanagedTemporarySymlinks.join(', ')}`);
 
-    try { registryAction({ action: 'record', root: profileRoot, sessionId: header.id, sessionPath: request.sessionPath, cwd: record.directory }); }
+    try { recordDirectory({ root: profileRoot, sessionId: header.id, sessionPath: request.sessionPath, cwd: record.directory }); }
     catch (error) { warnings.push(`The recovery directory is published, but the directory registry needs reindexing: ${error.message}`); }
 
     return { cwd: record.directory, recovery: record, warnings };
@@ -47,7 +46,7 @@ function recoverMissingSession(request) {
 
   if (latest.id !== header.id || latest.cwd !== header.cwd) throw new Error('The conversation changed during recovery. The durable recovery files have been retained; refresh before retrying.');
 
-  try { relocateSession(request.sessionPath, record.directory); }
+  try { relocateSession(profileRoot, request.sessionPath, record.directory); }
   catch (error) {
     if (readSession(profileRoot, request.sessionPath).cwd !== record.directory) throw error;
   }
@@ -57,4 +56,4 @@ function recoverMissingSession(request) {
   return report(record);
 }
 
-hostScript(recoverMissingSession);
+module.exports = { recoverMissingSession };

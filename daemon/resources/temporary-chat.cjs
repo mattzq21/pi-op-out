@@ -173,12 +173,13 @@ function remove(db, directory, id) {
   db.prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
 }
 
-/** Creates or removes one temporary chat directory. Returns the directory for create, or null for remove. */
-function main(request) {
+/** Creates or removes one temporary chat directory in the profile at request.root. Returns the directory for create, or null for remove. */
+function temporaryChat(request) {
   if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(request.id)) throw new Error('Invalid temporary chat session ID');
 
   if (!['create', 'remove'].includes(request.action)) throw new Error('Invalid temporary chat action');
-  const root = path.resolve(request.root ?? path.join(require('node:os').homedir(), process.env.PIOP_STORAGE_DIRECTORY ?? '.piop'));
+  if (typeof request.root !== 'string' || !path.isAbsolute(request.root)) throw new Error('Invalid temporary chat profile directory');
+  const root = path.resolve(request.root);
   const directory = path.join(root, 'tmp', request.id);
 
   if (request.action === 'remove' && request.path !== directory) throw new Error('Refusing to remove a directory outside the temporary chat root');
@@ -202,4 +203,4 @@ function main(request) {
   return request.action === 'create' ? directory : null;
 }
 
-module.exports = { main, cleanupDeleted };
+module.exports = { temporaryChat, cleanupDeleted };

@@ -10,6 +10,7 @@ import { validateSessionWorkingDirectory } from './session_index';
 import { loadAppSettings } from './settings';
 import * as storageTransactions from './storage_transactions';
 import * as Registry from './session_registry';
+import { requireLocal } from './host_connection';
 import { Mutex } from './util/sync';
 import type { AgentAddress, BlankSessionCleanup } from './types';
 import type { AppSettings } from './settings_types';
@@ -59,17 +60,17 @@ export class PiRuntime {
 }
 
 export async function reserveSessionId(settings: AppSettings, hostId: string): Promise<string> {
-  if (hostId === 'local') return Registry.reserve(join(homeDir(), STORAGE_DIRECTORY));
-  return Registry.reserveOn({ kind: 'remote', host: remoteHost(settings, hostId) });
+  requireLocal(hostId);
+  return Registry.reserve(join(homeDir(), STORAGE_DIRECTORY));
 }
 
 export async function cleanupBlankSession(target: BlankSessionCleanup): Promise<void> {
   if (target.submitted) return;
   try {
-    await storageTransactions.deleteBlank(target.host ? { kind: 'remote', host: target.host } : { kind: 'local' }, { path: target.path, id: target.id });
+    await storageTransactions.deleteBlank({ path: target.path, id: target.id });
   } catch (error: any) { console.error('Could not clean up blank session: ' + (error?.message ?? error)); }
   // A launch that failed before Pi wrote a transcript leaves only the reserved ID, which deleteBlank does not see.
-  if (target.host === undefined && target.id !== undefined) {
+  if (target.id !== undefined) {
     try { Registry.releaseReservation(join(homeDir(), STORAGE_DIRECTORY), target.id); }
     catch (error: any) { console.error('Could not release reserved session ID ' + target.id + ': ' + (error?.message ?? error)); }
   }
@@ -104,7 +105,7 @@ async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broke
   if (existing && existing.daemon.alive && existing.daemon.matchesConnection(settings, hostId)) return { existing: existing.attached };
   const reserved = options.sessionId == null && options.sessionPath == null;
   const sessionId = reserved ? await reserveSessionId(settings, hostId) : options.sessionId ?? undefined;
-  const blankCleanup: BlankSessionCleanup = { id: sessionId, host: hostId === 'local' ? undefined : remoteHost(settings, hostId), submitted: false };
+  const blankCleanup: BlankSessionCleanup = { id: sessionId, submitted: false };
   let claim: BusyAgent | undefined;
   try {
     const archived = readOnly && options.presence?.archived === true;

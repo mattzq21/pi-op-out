@@ -183,25 +183,45 @@ function claim(file, expected) {
   return null;
 }
 
-function inheritedLock(file) {
-  try {
-    const metadata = fs.fstatSync(3, { bigint: true });
+/** The session transaction lock that the storage operation running in this thread holds, as { file, descriptor }. */
+let heldLock;
 
-    return exists(file)?.isFile() && `${metadata.dev}:${metadata.ino}` === identity(file);
-  } catch (_error) { return false; }
+/** Lets nested storage code in this thread use descriptor, which already holds the session transaction lock of root. Returns the release function. */
+function holdTransactionLock(root, descriptor) {
+  const file = path.join(root, 'session-transactions.lock');
+  const metadata = fs.fstatSync(descriptor, { bigint: true });
+
+  if (`${metadata.dev}:${metadata.ino}` !== identity(file)) throw new Error('Held session storage lock does not match its file');
+
+  if (heldLock) throw new Error('This thread already holds a session storage lock');
+  heldLock = { file, descriptor };
+
+  return () => { heldLock = undefined; };
+}
+
+/** Returns the held descriptor for the session transaction lock file, or undefined. */
+function heldTransactionLock(file) {
+  if (heldLock?.file !== file) return;
+  const metadata = fs.fstatSync(heldLock.descriptor, { bigint: true });
+
+  if (!exists(file)?.isFile() || `${metadata.dev}:${metadata.ino}` !== identity(file)) throw new Error('Held session storage lock no longer matches its file');
+
+  return heldLock.descriptor;
 }
 
 function transactionLock(root) {
   canonicalRoot(root);
   const file = path.join(root, 'session-transactions.lock');
 
-  const borrowed = inheritedLock(file);
+  const held = heldTransactionLock(file);
 
-  const descriptor = borrowed ? 3 : claim(file);
+  const borrowed = held !== undefined;
+
+  const descriptor = borrowed ? held : claim(file);
 
   if (descriptor === null) return null;
 
-  if (borrowed && !lockDescriptor(descriptor)) throw new Error('Inherited session storage lock is unavailable');
+  if (borrowed && !lockDescriptor(descriptor)) throw new Error('Held session storage lock is unavailable');
 
   return { descriptor, borrowed };
 }
@@ -308,4 +328,4 @@ function unregistered(root, id, target) {
   } finally { database.close(); }
 }
 
-module.exports = { uuid, headerSchema, writerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, writer, writerDead, lockPath, journalPath, matches, verified, locate, unregistered };
+module.exports = { uuid, headerSchema, writerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, holdTransactionLock, heldTransactionLock, writer, writerDead, lockPath, journalPath, matches, verified, locate, unregistered };

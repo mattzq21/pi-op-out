@@ -1,12 +1,10 @@
 const fs = require("node:fs/promises");
-const { hostScript } = require("./host-script.cjs");
 const { Type } = require("typebox");
 const { Check } = require("typebox/value");
 
 const sessionIdSchema = Type.String();
 
 const path = require("node:path");
-const os = require("node:os");
 const io = require("./session-broker/session-publication-io.cjs");
 const childIndex = require("./session-broker/session-child-index.cjs");
 
@@ -65,9 +63,9 @@ function appendChildren(root, index, traversal, args) {
   }
 }
 
-async function main(args) {
-  const area = args.archived ? "archived" : "sessions";
-  const root = await fs.realpath(args.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", area));
+/** Returns the subagent sessions of args.path. args.root is the sessions or archived directory that contains args.path. */
+async function sessionDescendants(args) {
+  const root = await fs.realpath(args.root);
   const source = await fs.realpath(args.path);
   const parent = await validatedParent(root, source);
   const profile = path.dirname(root);
@@ -75,4 +73,4 @@ async function main(args) {
   return io.lockedAsync(profile, () => descendants(profile, parent.id, args));
 }
 
-hostScript(main);
+module.exports = { sessionDescendants };

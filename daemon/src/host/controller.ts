@@ -972,5 +972,5 @@ async function retentionPass(root: string, initialize: boolean): Promise<void> {
 }
 
 export function collectRetention(root: string, signal?: AbortSignal): Promise<void> {
-  return storageTransactions.recover({ kind: 'local' }, { root, signal, busyIsOk: true });
+  return storageTransactions.recover({ root, signal, busyIsOk: true });
 }

@@ -61,15 +61,6 @@ async function mcpBridge() {
 }
 
 async function backendScripts() {
-  const manifest = "daemon/resources/host-scripts.json";
-  const scripts = Object.entries(JSON.parse(await readFile(manifest, "utf8")));
-
-  await buildArtifact({ output: "daemon/resources/host-script-bundles.ts", inputs: [fileURLToPath(import.meta.url), manifest], key: "host-script-bundles" }, async () => {
-    const scripts = Object.entries(JSON.parse(await readFile(manifest, "utf8")));
-
-    return { content: scripts.map(([name], index) => `import script${index} from './${name}.bundle.mjs?raw';`).join("\n") + "\n\nexport const HOST_SCRIPT_BUNDLES = {\n" + scripts.map(([name], index) => `  '${name}': script${index},`).join("\n") + "\n};\n" };
-  });
-
   const commandInputs = await agentCommandInputs();
 
   await buildArtifact({
@@ -78,34 +69,11 @@ async function backendScripts() {
     key: "agent-command-inventory",
   }, async () => ({ content: `${JSON.stringify(await agentCommandInventory(commandInputs), null, 2)}\n` }));
 
-  await buildInParallel([
-    buildBundle({
-      entryPoints: ["daemon/resources/sdk-storage.mjs"],
-      bundle: true, platform: "node", format: "esm", target: "node22", minify: true,
-      plugins: [storageSchemaImports()],
-    }, "daemon/resources/sdk-storage.bundle.mjs", { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))] }),
-    ...scripts.map(async ([name, entry]) => {
-      await buildBundle({
-        entryPoints: [`daemon/resources/${entry}`],
-        bundle: true,
-        platform: "node",
-        format: name === "agent-definitions" ? "esm" : "iife",
-        target: "node22",
-        charset: "utf8",
-        minify: true,
-        plugins: [storageSchemaImports()],
-      }, `daemon/resources/${name}.bundle.mjs`, {
-        script: import.meta.url,
-        inputs: [manifest, "daemon/resources/host-script.cjs", "daemon/resources/agent-definitions-command.cjs", fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))],
-        async transform(content) {
-          if (name !== "agent-definitions") return content;
-          const agentWrapper = (await readFile("daemon/resources/host-script.cjs", "utf8")) + "\n" + (await readFile("daemon/resources/agent-definitions-command.cjs", "utf8")).replace("const { hostScript } = require('./host-script.cjs');", "");
-
-          return agentWrapper.replace("__PIOP_AGENT_LOADER__", JSON.stringify(gzipSync(content, { level: 9 }).toString("base64")));
-        },
-      });
-    }),
-  ]);
+  await buildBundle({
+    entryPoints: ["daemon/resources/sdk-storage.mjs"],
+    bundle: true, platform: "node", format: "esm", target: "node22", minify: true,
+    plugins: [storageSchemaImports()],
+  }, "daemon/resources/sdk-storage.bundle.mjs", { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))] });
 }
 
 const { values } = parseArgs({ options: { only: { type: "string" } } });

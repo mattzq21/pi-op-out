@@ -8,8 +8,6 @@ export const BROKER_QUEUE_DEPTH = 32;
 export const BROKER_HEADER_BYTES = 16 * 1024;
 export const BROKER_BODY_BYTES = 1024 * 1024;
 export const MAX_AGENT_OUTPUT_BYTES = 16 * 1024 * 1024;
-export const MAX_SESSION_INDEX_BATCH_BYTES = 64 * 1024 * 1024;
-export const MAX_PATH_LIST_BYTES = 1024 * 1024;
 
 export const PROTOCOL_VERSION = 1;
 export const PEER_PROTOCOL_VERSION = 1;

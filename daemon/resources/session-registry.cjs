@@ -1,7 +1,5 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
-const { createHash } = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const sessionTables = require('./session-database.cjs');
 
@@ -42,50 +40,10 @@ function record(session) {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-function externalHeaderIdentity(file) {
-  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-
-  try {
-    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Session transcript is not a regular file');
-    const buffer = Buffer.alloc(64 * 1024);
-    const length = fs.readSync(descriptor, buffer, 0, buffer.length, 0);
-    const header = JSON.parse(buffer.subarray(0, length).toString('utf8').split('\n')[0]);
-
-    if (header.type !== 'session' || !header.id || header.id !== String(header.id)) throw new Error('Missing session identity');
-
-    return header.id;
-  } finally { fs.closeSync(descriptor); }
-}
-
-function externalIdentity(file) {
-  const key = createHash('sha256').update(file).digest('hex');
-  db.exec('BEGIN IMMEDIATE');
-
-  try {
-    const row = db.prepare("SELECT json_extract(record_json, '$.sessionId') AS id FROM external_transcripts WHERE record_id=? AND json_extract(record_json, '$.path')=?").get(key, file);
-    const id = row ? row.id ?? externalHeaderIdentity(file) : null;
-
-    if (row && row.id === null) db.prepare("UPDATE external_transcripts SET record_json=json_set(record_json, '$.sessionId', ?) WHERE record_id=?").run(id, key);
-    db.exec('COMMIT');
-
-    return id;
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
-}
-
-function identity(root, request) {
-  const id = db.prepare(`SELECT session_id FROM sessions WHERE session_path=?`).get(request.path)?.session_id;
-
-  const roots = [path.resolve(root), fs.realpathSync(root)];
-  const managed = roots.some(directory => ['sessions', 'archived'].some(area => path.resolve(request.path).startsWith(path.join(directory, area) + path.sep)));
-
-  if (!id && managed) throw new Error('Session path is not registered');
-
-  return id ?? externalIdentity(request.path);
-}
-
-/** Runs one session registry request against the profile database and returns its result. */
-function registryAction(request) {
-  const root = request.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop');
+/** Records the working directory of a registered session in the registry at request.root. */
+function recordDirectory(request) {
+  if (typeof request.root !== 'string' || !path.isAbsolute(request.root)) throw new Error('Invalid session registry root');
+  const root = request.root;
 
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const database = path.join(root, 'sessions.sqlite');
@@ -94,16 +52,10 @@ function registryAction(request) {
   try {
     fs.chmodSync(database, 0o600);
     sessionTables.initialize(db);
+    record(request);
 
-    if (request.action === 'reserve') return sessionTables.reserve(root);
-
-    if (request.action === 'identity') return identity(root, request);
-
-    if (request.action === 'ids') return db.prepare('SELECT session_id FROM sessions').all().map(record => record.session_id);
-
-    if (request.action === 'record') return record(request);
-    throw new Error('Unknown session registry action');
+    return null;
   } finally { db.close(); db = undefined; }
 }
 
-module.exports = { registryAction };
+module.exports = { recordDirectory };

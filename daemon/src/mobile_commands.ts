@@ -9,6 +9,8 @@ import * as projectFiles from './project_files';
 import * as archives from './archives';
 import * as sessionIndex from './session_index';
 import * as sessionGroups from './session_groups';
+import * as Registry from './session_registry';
+import { profileRoot } from './host_operations';
 import { refreshSkills } from './skill_discovery';
 import { loadAppSettings, loadSettingsChange, saveAppSettings } from './settings';
 import { parseAppSettings, serializeAppSettings } from './settings_types';
@@ -80,7 +82,7 @@ async function dispatchPeerRequest(app: App, owner: string, command: string, arg
   if (typeof args?.hostId === 'string' && args.hostId !== 'local') throw new Error("Peer connections expose only this daemon's local machine");
   if (command === 'save_app_settings' || command === 'change_session_groups' || command === 'load_session_groups') throw new Error('Configure this machine through its own Piop settings');
   if (command === 'list_sessions') return peers.localSessions(app);
-  if (command === 'storage_report') return { hosts: [await archives.inspectStorage(undefined)] };
+  if (command === 'storage_report') return { hosts: [await archives.inspectStorage()] };
   return dispatchLocal(app, owner, command, args);
 }
 
@@ -150,7 +152,7 @@ const COMMANDS: Record<string, Handler> = {
   load_host_settings: (app, _owner, args) => loadSettings(app, args),
   load_host_settings_change: app => loadSettingsChange(app),
   save_host_settings: (app, _owner, args) => saveHostSettings(app, args),
-  host_storage_report: async () => ({ hosts: [await archives.inspectStorage(undefined)] }),
+  host_storage_report: async () => ({ hosts: [await archives.inspectStorage()] }),
   provider_auth: (app, owner, args) => providerAuth.forOwner(app, owner, argument(args, 'hostId', 'string?'), argument(args, 'request', 'any')),
   open_project_directory: async (app, _owner, args) => { await openProjectDirectory(app, argument(args, 'cwd', 'string'), argument(args, 'hostId', 'string?')); return null; },
   start_pi: async (app, owner, args) => {
@@ -184,7 +186,7 @@ const COMMANDS: Record<string, Handler> = {
   resize_terminal: (app, _owner, args) => { resizeTerminal(app.terminals, argument(args, 'terminalId', 'string'), argument(args, 'cols', 'number'), argument(args, 'rows', 'number')); return null; },
   close_terminal: async (app, _owner, args) => { await closeTerminal(app.terminals, argument(args, 'terminalId', 'string')); return null; },
   list_sessions: async app => (await sessionIndex.listSessions(app, app.sessionIndex)).map(serializeSession),
-  storage_report: app => archives.storageReport(app),
+  session_ids: () => Registry.ids(profileRoot()),
   load_session_groups: async (app, _owner, args) => {
     const seeds = argument(args, 'seeds', 'any');
     if (!Array.isArray(seeds)) throw new Error('Invalid seeds: invalid type: ' + describe(seeds) + ', expected a sequence');
