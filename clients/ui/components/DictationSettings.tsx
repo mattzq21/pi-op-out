@@ -186,8 +186,8 @@ export function DictationSettings(props: { settings: AppSettings; onChange: (pat
           <For each={models()}>{(model, index) => <Choice model={model} active={sameModel(model, current())} onUse={() => props.onChange(use(model))} onEdit={() => setEditing(index())} onRemove={() => remove(index())} />}</For>
         </ul>
       </Show>
-      <Show when={editing()} keyed fallback={<button type="button" class="dictation-link" onClick={() => setEditing("new")}><Plus size={14} />Add model</button>}>
-        {key => <ModelForm engine={type} initial={key === "new" ? undefined : models()[key]} onSubmit={submit} onCancel={() => setEditing(undefined)} />}
+      <Show when={editing() !== undefined ? { key: editing()! } : undefined} keyed fallback={<button type="button" class="dictation-link" onClick={() => setEditing("new")}><Plus size={14} />Add model</button>}>
+        {({ key }) => <ModelForm engine={type} initial={key === "new" ? undefined : models()[key]} onSubmit={submit} onCancel={() => setEditing(undefined)} />}
       </Show>
     </section>}</Show>
     <DictationStatus />

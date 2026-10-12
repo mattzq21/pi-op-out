@@ -11,11 +11,10 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
   const [tentative, setTentative] = createSignal("");
   let recording: DictationRecording | undefined;
   let generation = 0;
-  let transcriptionPending = false;
 
   const cancel = () => { generation++; recording?.cancel(); recording = undefined;
 
-  if (!transcriptionPending) setPhase("idle"); };
+  setPhase("idle"); setCommitted(""); setTentative(""); };
 
   onCleanup(cancel);
   createEffect(() => { if (props.disabled) cancel(); });
@@ -25,21 +24,20 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
     if (phase() !== "recording" || !recording) return;
     const current = generation;
     setPhase("transcribing");
-    transcriptionPending = true;
 
     try {
-      const capture = recording; recording = undefined;
+      const capture = recording;
       const result = await capture.finish();
 
-      if (current === generation && !props.disabled && result.text.trim()) props.onText(result.text.trim());
+      if (current === generation && !props.disabled && result?.text.trim()) props.onText(result.text.trim());
     } catch (reason) { if (current === generation) setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { transcriptionPending = false; setPhase("idle"); setCommitted(""); setTentative(""); }
+    finally { if (current === generation) { recording = undefined; setPhase("idle"); setCommitted(""); setTentative(""); } }
   };
 
   const start = async () => {
     if (!enabled() || props.disabled || phase() !== "idle") return;
     const current = ++generation;
-    const capture = new DictationRecording(); recording = capture;
+    const capture = new DictationRecording(message => setError(message)); recording = capture;
     setError(undefined); setCommitted(""); setTentative(""); setPhase("starting");
 
     try { await capture.start(() => void finish(), (text) => { if (current === generation) { setCommitted(text.committed); setTentative(text.tentative); } });
