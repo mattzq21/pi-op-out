@@ -4,6 +4,7 @@ import { array, flag, text, jsonEqual } from './json';
 import * as Catalogs from './catalogs';
 import { authText, authUrl } from './catalogs';
 import { Sdk } from './provider_sdk';
+import { FastModelStore, type FastModelScanResult, type FastModelSnapshot } from './fast_models';
 import type { Host } from './controller';
 
 /** One login attempt that a client started for a provider. */
@@ -53,28 +54,23 @@ export class ProviderService {
   private runtimeInfo: { builtinIds: Set<string> } | null = null;
   private runtimeGate = new Mutex();
   private catalogs = new Mutex();
-  private fastCapabilitiesValue: Promise<any> | undefined;
+  private fastModels: FastModelStore;
   private revision = 0;
 
   constructor(executable: string) {
     this.sdk = new Sdk(executable, { event: packet => this.receive(packet) });
+    this.fastModels = new FastModelStore(
+      { scan: provider => this.sdk.request({ method: 'fast_model_scan', provider: provider ?? null }) as Promise<FastModelScanResult[]> },
+      () => this.host?.output({ type: 'fast_models_changed' }),
+    );
   }
 
   bind(host: Host): void {
     this.host = host;
-    this.fastCapabilities().catch(() => {});
+    this.refreshCatalogs(true).catch(error => host.output({ type: 'diagnostic', line: 'Provider model scan failed at startup: ' + errorText(error) }));
   }
 
-  private fastCapabilities(): Promise<any> {
-    if (!this.fastCapabilitiesValue) {
-      this.fastCapabilitiesValue = this.sdk.request({ method: 'fast_capabilities' }).then(value => {
-        if (!array(value, 'models').length) throw new Error('Fast mode startup catalog unavailable');
-        return value;
-      }).catch(error => { this.fastCapabilitiesValue = undefined; throw error; });
-      this.fastCapabilitiesValue.catch(() => {});
-    }
-    return this.fastCapabilitiesValue;
-  }
+  fastModelSnapshot(): FastModelSnapshot { return this.fastModels.snapshot(); }
 
   private changed(): void { this.flowChanged(null); }
 
@@ -104,7 +100,7 @@ export class ProviderService {
   async handle(owner: string, request: any): Promise<any> {
     if (!owner) throw new Error('Login owner is missing');
     switch (request?.action) {
-      case 'fast_capabilities': return this.fastCapabilities();
+      case 'fast_models': return this.fastModels.snapshot();
       case 'draft_catalog': return this.sdk.request({ method: 'draft_catalog' });
       case 'list': return this.listing(flag(request, 'refreshModels'));
       case 'begin': return this.begin(owner, request);
@@ -141,7 +137,7 @@ export class ProviderService {
     const providers = array(snapshot, 'providers').map(provider => listedProvider(provider, credentials)).filter(provider => array(provider, 'methods').length > 0);
     providers.sort((left, right) => { const a = text(left, 'id'); const b = text(right, 'id'); return a < b ? -1 : a > b ? 1 : 0; });
     const result: any = { providers };
-    const warnings = [this.catalogWarning, providerModelWarning(snapshot)].filter((item): item is string => item !== null);
+    const warnings = [this.catalogWarning, providerModelWarning(snapshot), fastModelWarning(this.fastModels.snapshot())].filter((item): item is string => item !== null);
     if (warnings.length) result.warning = warnings.join('\n');
     return result;
   }
@@ -188,6 +184,7 @@ export class ProviderService {
         result = { ok: false, error: errorText(error) };
       } finally { clearTimeout(timer); }
       this.busy.delete(providerId);
+      if (result.ok && result.value?.status === 'complete') void this.fastModels.scan(providerId);
       const current = this.flows.get(id);
       if (current) {
         if (current.status === 'pending' || (current.status === 'cancelled' && result.ok && result.value?.status === 'complete')) {
@@ -245,6 +242,7 @@ export class ProviderService {
     try { await this.sdk.request({ method: 'logout', providerId: id }); } catch { failed = true; }
     this.busy.delete(id);
     this.changed();
+    void this.fastModels.scan(id);
     if (failed) throw new Error('Could not remove the saved provider login. Refresh and try again.');
     return this.listing(false);
   }
@@ -260,6 +258,7 @@ export class ProviderService {
     let confirmed = true;
     try { await this.loginCreatedProvider(id, key); } catch { confirmed = false; }
     this.changed();
+    await this.fastModels.scan(id);
     const result: any = { created: true };
     if (!confirmed) result.warning = 'Provider created, but its login could not be confirmed. Refresh and use Add account to save the key.';
     return result;
@@ -276,16 +275,21 @@ export class ProviderService {
     await this.catalogs.run(async () => {
       if (!force && this.nextCatalog !== null && Date.now() < this.nextCatalog) return;
       this.nextCatalog = Date.now() + 300_000;
-      const info = await this.runtime();
-      const snapshot = await this.sdk.request({ method: 'inspect' });
-      const data = await this.sdk.request({ method: 'model_config' });
-      const models = array(snapshot, 'models');
-      const providers = data?.providers && typeof data.providers === 'object' && !Array.isArray(data.providers) ? Object.entries<any>(data.providers) : [];
-      const catalogs = providers.filter(([id, config]) => !info.builtinIds.has(id) && authUrl(config?.baseUrl) !== null && Catalogs.supportedApi(config));
-      const results = await Promise.all(catalogs.map(async ([id, config]) => { try { await this.refreshCatalog(id, config, models); return null; } catch { return id; } }));
-      const failures = results.filter((id): id is string => id !== null);
-      this.catalogWarning = failures.length ? 'Could not refresh models for ' + failures.join(', ') + '. Keeping the last successful catalog.' : null;
+      await Promise.all([this.refreshCustomCatalogs(), this.fastModels.scan()]);
     });
+  }
+
+  /** Regular model scans cover custom providers only; fast model scans have their own provider filter. */
+  private async refreshCustomCatalogs(): Promise<void> {
+    const info = await this.runtime();
+    const snapshot = await this.sdk.request({ method: 'inspect' });
+    const data = await this.sdk.request({ method: 'model_config' });
+    const models = array(snapshot, 'models');
+    const providers = data?.providers && typeof data.providers === 'object' && !Array.isArray(data.providers) ? Object.entries<any>(data.providers) : [];
+    const catalogs = providers.filter(([id, config]) => !info.builtinIds.has(id) && authUrl(config?.baseUrl) !== null && Catalogs.supportedApi(config));
+    const results = await Promise.all(catalogs.map(async ([id, config]) => { try { await this.refreshCatalog(id, config, models); return null; } catch { return id; } }));
+    const failures = results.filter((id): id is string => id !== null);
+    this.catalogWarning = failures.length ? 'Could not refresh models for ' + failures.join(', ') + '. Keeping the last successful catalog.' : null;
   }
 
   private async refreshCatalog(id: string, config: any, models: any[]): Promise<void> {
@@ -322,6 +326,11 @@ export class ProviderService {
     }
     await this.sdk.shutdown();
   }
+}
+
+function fastModelWarning(snapshot: FastModelSnapshot): string | null {
+  const warnings = [snapshot.error, ...Object.values(snapshot.providers).map(provider => provider.error)].filter((item): item is string => item !== undefined);
+  return warnings.length ? warnings.join('\n') : null;
 }
 
 function providerModelWarning(snapshot: any): string | null {

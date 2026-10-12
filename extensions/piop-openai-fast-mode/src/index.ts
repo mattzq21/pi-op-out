@@ -1,22 +1,13 @@
 import { dirname } from "node:path";
-import { z } from "zod";
 import { fileURLToPath } from "node:url";
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
-  ExtensionFactory,
-} from "@earendil-works/pi-coding-agent";
+import { z } from "zod";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { getFastCommandCompletions, parseFastCommand } from "./commands";
-import { createFastModeDiscovery, type FastModeDiscovery } from "./discovery";
-import {
-  cloneConfig,
-  loadConfigForScope,
-  syncSupportedTargets,
-} from "./config";
+import { loadConfigForScope } from "./config";
 import { getFastModePayload, toModelRef } from "./payload";
+import { FastModeSessionState } from "./session";
 import { clearFastStatus, updateFastStatus } from "./status";
-import type { FastModeConfig, FastTarget, ModelRef } from "./types";
+import { STATE_ENTRY, type ModelRef } from "./types";
 
 export type FastModeExtensionOptions = {
   extensionDir?: string;
@@ -25,196 +16,88 @@ export type FastModeExtensionOptions = {
 
 const DEFAULT_EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
-type SessionContext = Pick<ExtensionContext, "sessionManager">;
+const savedStateSchema = z.object({ enabled: z.boolean() });
 
-const sessionValueSchema = z.object({
-  fastModeOverride: z.boolean().optional(), enabled: z.boolean().optional(),
-  snapshot: z.object({ definition: z.object({ fastMode: z.boolean().optional() }).optional() }).optional(),
-}).catch({});
-
-function savedSessionValue(ctx: SessionContext): boolean | undefined {
+/** Returns the latest saved choice on the current branch, or undefined when the session has none. */
+function savedChoice(ctx: Pick<ExtensionContext, "sessionManager">): boolean | undefined {
   for (const entry of [...ctx.sessionManager.getBranch()].reverse()) {
-    if (entry.type !== "custom") continue;
-    const data = sessionValueSchema.parse(entry.data);
+    if (entry.type !== "custom" || entry.customType !== STATE_ENTRY) continue;
+    const parsed = savedStateSchema.safeParse(entry.data);
 
-    if (entry.customType === "piop-fast-mode-state") return data.enabled;
+    if (!parsed.success) throw new Error("Invalid saved fast mode choice in this session");
 
-    if (entry.customType === "pi-define-agents-state") {
-      const enabled = data.fastModeOverride ?? data.snapshot?.definition?.fastMode;
-
-      if (enabled !== undefined) return enabled;
-    }
+    return parsed.data.enabled;
   }
 }
 
-function notifyError(
-  ctx: Pick<ExtensionContext, "hasUI" | "ui">,
-  cause: unknown,
-): void {
+function notifyError(ctx: Pick<ExtensionContext, "hasUI" | "ui">, cause: unknown): void {
   const message = cause instanceof Error ? cause.message : String(cause);
+
   if (ctx.hasUI) ctx.ui.notify(message, "error");
-  else console.error(`[fast-mode] ${message}`);
+  else console.error("[fast-mode] " + message);
 }
 
-export function createPiFastModeExtension(
-  options: FastModeExtensionOptions = {},
-): ExtensionFactory {
+export function createPiFastModeExtension(options: FastModeExtensionOptions = {}): ExtensionFactory {
   const extensionDir = options.extensionDir ?? DEFAULT_EXTENSION_DIR;
   const agentDir = options.agentDir;
 
   return function piFastModeExtension(pi: ExtensionAPI): void {
-    let config: FastModeConfig = cloneConfig();
-    let loadedSessionId: string | undefined;
-    let loadedCwd: string | undefined;
+    let statusContext: ExtensionContext | undefined;
     let currentModel: ModelRef | undefined;
-    let agentEnabled: boolean | undefined;
-    let configuredTargets: FastTarget[] = [];
-    let loading: Promise<void> | undefined;
-    let discoveryError: string | undefined;
-    const discover = createFastModeDiscovery();
-    const discoverTargets = async (ctx: ExtensionContext): Promise<FastTarget[]> => {
-      const result: FastModeDiscovery = await discover(ctx, configuredTargets, config.targets);
-      const error = result.errors.length ? result.errors.join("\n") : undefined;
+    const session = new FastModeSessionState(
+      enabled => pi.appendEntry(STATE_ENTRY, { enabled }),
+      enabled => { if (statusContext) updateFastStatus(statusContext, enabled, currentModel); },
+    );
 
-      if (error && error !== discoveryError) notifyError(ctx, error);
-      discoveryError = error;
+    pi.events.on("piop:fast-mode:session", request => { request.session = session; });
 
-      return result.targets;
-    };
-    const effectiveConfig = () => ({ ...config, enabled: agentEnabled ?? config.enabled });
-    pi.events.on("piop:fast-mode", request => {
-      request.models = config.targets.map((target) => `${target.provider}/${target.model}`);
+    /** A saved choice wins; a session without one starts from the --fast flag or the config file. */
+    async function load(ctx: ExtensionContext): Promise<void> {
+      session.reset();
+      statusContext = ctx;
+      currentModel = toModelRef(ctx.model);
 
-      const requestContext = request.ctx;
-
-      if (request.refresh && requestContext) request.ready = ensureLoaded(requestContext).then(async () => {
-        await refreshTargets(requestContext);
-        request.models = config.targets.map((target) => `${target.provider}/${target.model}`);
-      });
-
-      if (request.apply) {
-        agentEnabled = request.enabled;
-
-        if (request.ctx) updateFastStatus(request.ctx, effectiveConfig(), toModelRef(request.ctx.model) ?? currentModel);
-      }
-    });
-
-    async function loadForContext(
-      ctx: ExtensionContext,
-    ): Promise<void> {
-      const loaded = await loadConfigForScope({
-        cwd: ctx.cwd,
-        extensionDir,
-        agentDir,
-      });
-
-      configuredTargets = loaded.config.targets;
-      config = syncSupportedTargets(loaded.config, await discoverTargets(ctx));
-      config.enabled = savedSessionValue(ctx) ?? (pi.getFlag("fast") === true || config.enabled);
-      agentEnabled = undefined;
-      loadedCwd = ctx.cwd;
-      loadedSessionId = ctx.sessionManager.getSessionId();
-    }
-
-    async function ensureLoaded(
-      ctx: ExtensionContext,
-    ): Promise<void> {
-      if (loading) await loading;
-
-      if (loadedSessionId !== ctx.sessionManager.getSessionId() || loadedCwd !== ctx.cwd) {
-        loading = loadForContext(ctx);
-
-        try { await loading; } finally { loading = undefined; }
+      try {
+        const saved = savedChoice(ctx);
+        const initial = saved ?? (pi.getFlag("fast") === true || (await loadConfigForScope({ cwd: ctx.cwd, extensionDir, agentDir })).config.enabled);
+        session.load(initial);
+        updateFastStatus(ctx, initial, currentModel);
+      } catch (error) {
+        session.fail(error);
+        notifyError(ctx, error);
       }
     }
 
-    async function refreshTargets(ctx: ExtensionContext): Promise<void> {
-      const targets = await discoverTargets(ctx);
-      const changed = JSON.stringify(targets) !== JSON.stringify(config.targets);
-      config.targets = targets;
-
-      if (changed) pi.events.emit("piop:fast-mode-models-changed", { ctx });
-      updateFastStatus(ctx, effectiveConfig(), toModelRef(ctx.model) ?? currentModel);
-    }
-
-    function refreshCurrentModel(ctx: Pick<ExtensionContext, "model">): void {
-      currentModel = toModelRef(ctx.model) ?? currentModel;
-    }
-
-    pi.registerFlag("fast", {
-      description: "Start with Fast Mode enabled",
-      type: "boolean",
-      default: false,
-    });
+    pi.registerFlag("fast", { description: "Start with Fast Mode enabled", type: "boolean", default: false });
 
     pi.registerCommand("fast", {
       description: "Toggle Fast Mode. Usage: /fast [on|off|toggle]",
       getArgumentCompletions: getFastCommandCompletions,
-      handler: async (
-        args: string,
-        ctx: ExtensionCommandContext,
-      ): Promise<void> => {
+      handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         try {
-          await ensureLoaded(ctx);
-          await refreshTargets(ctx);
-          refreshCurrentModel(ctx);
-          const enabled = parseFastCommand(args, effectiveConfig().enabled);
-
-          if (enabled === effectiveConfig().enabled) {
-            updateFastStatus(ctx, effectiveConfig(), currentModel);
-
-            return;
-          }
-
-          const request: { enabled: boolean; ready?: Promise<void> } = { enabled };
-          pi.events.emit("piop:fast-mode-changed", request);
-
-          if (!request.ready) throw new Error("Fast mode save handler unavailable");
-          await request.ready;
-          config.enabled = enabled;
-          agentEnabled = undefined;
-          updateFastStatus(ctx, effectiveConfig(), currentModel);
+          await session.setEnabled(parseFastCommand(args, await session.getEnabled()));
         } catch (error) {
           notifyError(ctx, error);
         }
       },
     });
 
-    pi.on("session_start", async (_event, ctx) => {
-      try {
-        currentModel = toModelRef(ctx.model);
-        await ensureLoaded(ctx);
-
-        updateFastStatus(ctx, effectiveConfig(), currentModel);
-      } catch (error) {
-        notifyError(ctx, error);
-      }
-    });
-
-    pi.on("session_tree", async (_event, ctx) => {
-      try {
-        await loadForContext(ctx);
-        currentModel = toModelRef(ctx.model);
-        updateFastStatus(ctx, effectiveConfig(), currentModel);
-      } catch (error) {
-        notifyError(ctx, error);
-      }
-    });
+    pi.on("session_start", (_event, ctx) => load(ctx));
+    pi.on("session_tree", (_event, ctx) => load(ctx));
 
     pi.on("model_select", async (event, ctx) => {
       currentModel = toModelRef(event.model) ?? toModelRef(ctx.model);
-      await ensureLoaded(ctx);
-      await refreshTargets(ctx);
-      updateFastStatus(ctx, effectiveConfig(), currentModel);
+      try {
+        updateFastStatus(ctx, await session.getEnabled(), currentModel);
+      } catch (error) {
+        clearFastStatus(ctx);
+        notifyError(ctx, error);
+      }
     });
 
-    pi.on("before_provider_request", (event, ctx) => {
-      const model = toModelRef(ctx.model) ?? currentModel;
+    pi.on("before_provider_request", async (event, ctx) => getFastModePayload(await session.getEnabled(), toModelRef(ctx.model) ?? currentModel, event.payload));
 
-      return getFastModePayload(effectiveConfig(), model, event.payload);
-    });
-
-    pi.on("session_shutdown", (_event, ctx) => { clearFastStatus(ctx); });
+    pi.on("session_shutdown", (_event, ctx) => { statusContext = undefined; clearFastStatus(ctx); });
   };
 }
 

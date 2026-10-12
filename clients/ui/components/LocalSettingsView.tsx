@@ -32,9 +32,7 @@ interface Props {
 
 async function loadAgentConfiguration(reader: NativeTransport, target: string, discovered: () => AgentConfig | undefined) {
   if (target === "client") return discovered() ?? { agents: [] };
-  const config = await reader.command({ type: "get_agent_configuration" }, agentConfigSchema);
-
-  return { ...config, fastModeModels: discovered()?.fastModeModels };
+  return reader.command({ type: "get_agent_configuration" }, agentConfigSchema);
 }
 
 export function LocalSettingsView(props: Props) {

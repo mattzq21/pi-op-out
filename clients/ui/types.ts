@@ -58,7 +58,7 @@ export interface Model { provider: string; id: string; name?: string; reasoning?
 
 export interface AgentProfile { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers; }
 
-export interface AgentConfig { revision?: string; agents: AgentProfile[]; fastModeModels?: string[]; }
+export interface AgentConfig { revision?: string; agents: AgentProfile[]; }
 
 export interface DefinedAgentsCapability { version: number; active: string; locked?: boolean; saved?: boolean; unavailable?: boolean; config: AgentConfig; }
 

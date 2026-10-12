@@ -203,10 +203,10 @@ async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: str
     if (!connection) throw new Error('Agent definitions are unavailable');
     return connection.request({ type: 'agent_definitions' });
   }
-  if (method === 'POST' && path === '/fast-capabilities') {
-    const value = parseJson(body, 'Invalid Fast mode capability request');
+  if (method === 'POST' && path === '/fast-models') {
+    const value = parseJson(body, 'Invalid fast model request');
     if (typeof value?.hostId !== 'string') throw new Error('hostId is required');
-    return providerAuth.forOwner(app, 'fast-mode-discovery', value.hostId, { action: 'fast_capabilities' });
+    return providerAuth.forOwner(app, 'fast-models', value.hostId, { action: 'fast_models' });
   }
   if (method === 'POST' && path === '/terminals') return brokerTerminalLookup(app, body);
   if (method === 'GET' && path === '/agents') return brokerAgents(app, broker);

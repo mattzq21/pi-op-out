@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createMutable } from "solid-js/store";
 import { required } from "./lib/required";
+import { fastModelNames, hostFastModels } from "./lib/fastModels";
 import { batch,createComputed,createMemo,createSignal } from "solid-js";
 import { createConversationArchive } from "./appArchive";
 import { createConversationDrafts } from "./appDrafts";
@@ -304,7 +305,7 @@ export function createAppConversations(preloadChat: () => void) {
   };
 
   const projectControls = new WeakMap<NativeTransport, ProjectControls>();
-  const composerControls = createComposerControls(transport, connected, projectControls, () => definedAgents()?.config.fastModeModels);
+  const composerControls = createComposerControls(transport, connected, projectControls, () => fastModelNames(hostFastModels(activeHostId())()));
   const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current, projectControls, definedAgents);
   const reviewImages = new WeakMap<NativeTransport, ImageAttachment[]>();
   const resolveHomeDirectory = (hostId: string) => transport().homeDirectory(hostId);
@@ -493,7 +494,7 @@ export function createAppConversations(preloadChat: () => void) {
     try {
       const owner = createSessionTransport(projectCwd, hostId);
       nextTransport = owner;
-      inheritGroupControls(projectControls, owner, hostId === activeHostIdRef.current, composerControls.state(capturedSession.state), definedAgents(), composerControls.statuses(statuses()), settings());
+      inheritGroupControls(projectControls, owner, hostId === activeHostIdRef.current, composerControls.state(capturedSession.state), definedAgents(), composerControls.statuses(statuses(), composerControls.state(capturedSession.state).model), settings());
       const cwd = await prepareNewSession(owner, hostId, projectCwd);
 
       if (!isCurrent()) return;

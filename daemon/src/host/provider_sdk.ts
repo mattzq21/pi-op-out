@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline';
 import { STORAGE_DIRECTORY } from '../config';
 import { homeDir, nodeExecutable, pathWithNode } from '../environment';
 import * as DaemonRestart from '../daemon_restart';
-import { fastCapabilities, providerSdk, sdkStorageBundle } from '../resources';
+import { fastModelDiscovery, providerSdk, sdkStorageBundle } from '../resources';
 import { Mutex } from '../util/sync';
 
 const SOURCE_ARGUMENT_BYTES = 64 * 1024;
@@ -88,7 +88,7 @@ export class Sdk {
       if (this.stopped) throw new Error('Provider SDK stopped');
       if (this.connection && !this.connection.closed) return this.connection;
       const storage = "const { installRuntimeStorage, storedModelText, saveStoredModelProvider } = await import('data:text/javascript;base64," + Buffer.from(sdkStorageBundle).toString('base64') + "');";
-      const source = [storage, fastCapabilities, this.plugin ?? 'const bundledPlugin = null;', providerSdk].join('\n');
+      const source = [storage, fastModelDiscovery, this.plugin ?? 'const bundledPlugin = null;', providerSdk].join('\n');
       const node = nodeExecutable();
       const child = this.spawnProcess(node, Buffer.from(source).toString('base64'));
       const connection = new Connection(child, error => {

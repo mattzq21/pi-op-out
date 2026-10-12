@@ -13,15 +13,11 @@ export interface AgentRefreshRequest { ctx: ExtensionContext; ready?: Promise<vo
 
 export interface AgentReloadRequest { ctx: ExtensionCommandContext; ready?: Promise<void> }
 
-interface FastModeChange { enabled?: boolean; ready?: Promise<void> }
-
-interface FastModelsChange { ctx: ExtensionContext }
-
 export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
 
 export type AgentSnapshot = { version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
 
-export type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string; fastModeOverride?: boolean | null };
+export type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string };
 
 export interface SubagentProfileRequest { agent?: string; state?: SessionAgentState; error?: string; ready?: Promise<void> }
 
@@ -43,9 +39,5 @@ declare module "@earendil-works/pi-coding-agent" {
     emit(channel: "piop:agents:refresh", request: AgentRefreshRequest): void;
     on(channel: "piop:agents:reload", handler: (request: AgentReloadRequest) => void): () => void;
     emit(channel: "piop:agents:reload", request: AgentReloadRequest): void;
-    on(channel: "piop:fast-mode-changed", handler: (event: FastModeChange) => void): () => void;
-    emit(channel: "piop:fast-mode-changed", event: FastModeChange): void;
-    on(channel: "piop:fast-mode-models-changed", handler: (event: FastModelsChange) => void): () => void;
-    emit(channel: "piop:fast-mode-models-changed", event: FastModelsChange): void;
   }
 }

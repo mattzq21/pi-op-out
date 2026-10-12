@@ -53,20 +53,16 @@ export class PromptControls {
 
     return { ...state, model: model === undefined ? state.model : model, thinkingLevel: selected.thinkingLevel ?? state.thinkingLevel };
   }
-  statuses(statuses: Record<string, string>, fastModels?: string[]) {
-    const selected = this.selection[0]();
+  /** Shows the fast mode choice only for a model in the host's fast model list. The session status gives the saved choice. */
+  statuses(statuses: Record<string, string>, fastModels: string[] | undefined, model: Model | null | undefined) {
+    const { [fastKey]: status, ...rest } = statuses;
 
-    if (selected.model && fastModels) {
-      const id = `${selected.model.provider}/${selected.model.id}`;
+    if (!model || !fastModels?.includes(model.provider + "/" + model.id)) return rest;
+    const enabled = this.selection[0]().fastMode ?? (status === "Fast mode on" ? true : status === "Fast mode off" ? false : undefined);
 
-      if (!fastModels.includes(id)) return { ...statuses, [fastKey]: "Fast mode unavailable" };
-    }
-
-    const enabled = selected.fastMode ?? (selected.model && fastModels ? statuses[fastKey] === "Fast mode on" : undefined);
-
-    return enabled === undefined ? statuses : { ...statuses, [fastKey]: enabled ? "Fast mode on" : "Fast mode off" };
+    return enabled === undefined ? rest : { ...rest, [fastKey]: enabled ? "Fast mode on" : "Fast mode off" };
   }
-  toggle(statuses: Record<string, string>) { this.fast(this.statuses(statuses)[fastKey] !== "Fast mode on");
+  toggle(statuses: Record<string, string>) { this.fast(statuses[fastKey] !== "Fast mode on");
 
   return Promise.resolve(); }
   acknowledge(state: AgentState) {

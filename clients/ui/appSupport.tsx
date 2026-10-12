@@ -129,7 +129,7 @@ function useUsageClock(codexUsage: Accessor<CodexUsage | undefined>, opencodeGoU
   }, () => [codexUsage()?.resetAt, opencodeGoUsage()?.rolling.resetAt, opencodeGoUsage()?.weekly.resetAt, opencodeGoUsage()?.monthly.resetAt]);
 }
 
-function definedAgentSettings(capability?: DefinedAgentsCapability): AgentConfig | undefined { return capability ? { agents: capability.config.agents, fastModeModels: capability.config.fastModeModels } : undefined; }
+function definedAgentSettings(capability?: DefinedAgentsCapability): AgentConfig | undefined { return capability ? { agents: capability.config.agents } : undefined; }
 
 export { appendTerminalOutputs,AppLoading,REVIEW_REQUEST_TITLE,definedAgentSettings,dialogOwnerName,formatCodexReset,goUsageBadge,initialTerminals,LimitBadge,MAX_TERMINALS,MCP_STATUS_KEY,normalizeCodexUsage,normalizeOpencodeGoUsage,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
 

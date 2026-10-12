@@ -7,7 +7,7 @@ import sdkStorageRaw from '../resources/sdk-storage.mjs?raw';
 import agentCommands from '../resources/agent-commands.json?raw';
 import sdkStorageBundleRaw from '../resources/sdk-storage.bundle.mjs?raw';
 import providerSdk from '../resources/provider-sdk.mjs?raw';
-import fastCapabilities from '../resources/fast-capabilities.mjs?raw';
+import fastModelDiscovery from '../resources/fast-model-discovery.mjs?raw';
 import chatgptStream from '../resources/chatgpt-stream.mjs?raw';
 import chatgptStorageRaw from '../resources/chatgpt-storage.mjs?raw';
 import chatgptService from '../resources/chatgpt-service.mjs?raw';
@@ -34,6 +34,7 @@ import definedAgentsExtension from '../../extensions/piop-define-agents/index.ts
 import agentExtensionLoader from '../../extensions/piop-define-agents/extension-loader.ts?raw';
 import agentExcalidraw from '../../extensions/piop-define-agents/excalidraw.ts?raw';
 import agentDaemonDefinitions from '../../extensions/piop-define-agents/daemon-definitions.ts?raw';
+import agentFastModels from '../../extensions/piop-define-agents/fast-models.ts?raw';
 import contextWindowCapExtension from '../../extensions/piop-context-window-cap/index.ts?raw';
 import contextBarExtension from '../../extensions/piop-context-bar/index.ts?raw';
 import codexWebSearchExtension from '../../extensions/piop-codex-web-search/index.ts?raw';
@@ -116,7 +117,7 @@ export {
   agentCommands,
   sdkStorageBundle,
   providerSdk,
-  fastCapabilities,
+  fastModelDiscovery,
   chatgptStream,
   chatgptStorage,
   chatgptService,
@@ -143,6 +144,7 @@ export {
   agentExtensionLoader,
   agentExcalidraw,
   agentDaemonDefinitions,
+  agentFastModels,
   contextWindowCapExtension,
   contextBarExtension,
   codexWebSearchExtension,

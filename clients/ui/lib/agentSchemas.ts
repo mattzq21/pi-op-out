@@ -11,7 +11,7 @@ export const agentProfileSchema = z.object({
   mcpServers: mcpServersSchema,
 });
 
-export const agentConfigSchema = z.object({ revision: z.string().optional(), agents: z.array(agentProfileSchema), fastModeModels: z.array(z.string()).optional() });
+export const agentConfigSchema = z.object({ revision: z.string().optional(), agents: z.array(agentProfileSchema) });
 
 export const agentConfigChangeSchema = z.object({ revision: z.string(), warnings: z.array(z.string()).optional() });
 

@@ -1,33 +1,10 @@
-import { readText } from "../app-settings.cjs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
 import type { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { createFastModeDiscovery } from "../piop-openai-fast-mode/src/discovery.ts";
 import { piDirectory } from "./validation-runtime.ts";
 import { installRuntimeStorage } from "../../daemon/resources/sdk-storage.mjs";
 import type { Agent } from "./contracts.ts";
-
-async function configuredFastTargets(agentDir: string) {
-  const path = join(agentDir, "extensions", "piop-openai-fast-mode", "config.json");
-  const targets: Array<{ provider: string; model: string }> = [];
-
-  try {
-    const text = readText(path);
-
-    if (text === undefined) return targets;
-    const value = JSON.parse(text);
-
-    if (!Array.isArray(value.targets)) return targets;
-
-    for (const target of value.targets) {
-      if (Check(Type.Object({ provider: Type.String(), model: Type.String() }), target)) targets.push({ provider: target.provider.trim().toLowerCase(), model: target.model.trim() });
-    }
-  } catch { }
-
-  return targets;
-}
+import { fastModelProblem, type FastModelSnapshot } from "./fast-models.ts";
 
 function configuredModel(registry: ModelRegistry, agent: Agent, name: string) {
   const [provider, ...parts] = name.split("/");
@@ -38,15 +15,13 @@ function configuredModel(registry: ModelRegistry, agent: Agent, name: string) {
   return model;
 }
 
-export async function modelValidator() {
+/** fastModels holds the host's fast model results, or null before the host has scanned. */
+export async function modelValidator(fastModels: FastModelSnapshot | null) {
   const directory = await piDirectory();
   await installRuntimeStorage(directory);
   const { ModelRuntime: Runtime } = await import(pathToFileURL(join(directory, "dist/core/model-runtime.js")).href);
   const { ModelRegistry: Registry } = await import(pathToFileURL(join(directory, "dist/core/model-registry.js")).href);
-  const { getAgentDir } = await import(pathToFileURL(join(directory, "dist/config.js")).href);
   const createRuntime = (): Promise<ModelRuntime> => Runtime.create({ allowModelNetwork: false });
-  const discoverFast = createFastModeDiscovery();
-  const configured = await configuredFastTargets(getAgentDir());
 
   return async (agent: Agent, defaultModel: string, activate: (registry: ModelRegistry, validate: () => Promise<void>) => Promise<void>) => {
     const runtime = await createRuntime();
@@ -58,12 +33,9 @@ export async function modelValidator() {
       const model = configuredModel(registry, agent, name);
 
       if (!agent.fastMode) return;
-      const { targets, errors } = await discoverFast({ modelRegistry: registry, model }, configured, []);
+      const problem = fastModelProblem(fastModels, agent.name, `${model.provider}/${model.id}`);
 
-      // Without the model list, the session checks Fast mode when the agent starts.
-      if (errors.length) return;
-
-      if (!targets.some(target => target.provider === model.provider && target.model === model.id)) throw new Error(`Agent "${agent.name}" cannot enable Fast mode for model ${name}`);
+      if (problem) throw new Error(problem);
     });
   };
 }
