@@ -114,7 +114,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
       }}</Rerun></Show>);
 
       return (<div class={`chat-panes ${hasSidePane() || pluginPane.open() ? "split" : ""}`}>
-        <div style={{ display: "contents" }} inert={sessions().some(session => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId() && isArchiving(session))}>
+        <div class="main-chat" style={{ display: "contents" }} inert={sessions().some(session => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId() && isArchiving(session))}>
           {renderChatView()}
         </div>
         {renderSplitChatPane()}
@@ -158,7 +158,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
     {renderSidebar()}
     <TranscriptPluginsContext.Provider value={pluginPane.transcripts}><ConversationQuestionsContext.Provider value={questionContext}>{renderChatWorkspace()}</ConversationQuestionsContext.Provider></TranscriptPluginsContext.Provider>
     {renderSettingsView()}
-    <FindInPage selector=".chat-panes > .chat-shell" scopeKey={activeConversationKey()} onActivate={() => setActivePane("main")} active={activePane() === "main" || !hasSidePane()} enabled={view() === "chat"} />
+    <FindInPage selector=".chat-panes > .main-chat > .chat-shell" scopeKey={activeConversationKey()} onActivate={() => setActivePane("main")} active={activePane() === "main" || !hasSidePane()} enabled={view() === "chat"} />
     {renderSubagentFind()}
     {renderSplitFind()}
     {view() === "settings" && <FindInPage selector=".settings-shell" scopeKey="settings" />}

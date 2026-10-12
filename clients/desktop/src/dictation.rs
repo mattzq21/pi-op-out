@@ -15,6 +15,7 @@ const MAX_ERROR_BYTES: usize = 4096;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 const FINISH_TIMEOUT: Duration = Duration::from_secs(120);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 const UNCONFIGURED: &str = "No dictation model is configured";
 
 /// The dictation fields of the client preferences. Empty strings mean "not set".
@@ -203,12 +204,34 @@ fn find_engine(kind: &str, configured: &str) -> Result<(String, Vec<String>), St
         let check = interpreter(kind, &executable).and_then(|command| {
             let mut process = Command::new(&command[0]);
             process.args(&command[1..]).arg("-c").arg(format!("import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('{}') else 1)", engine_module(kind)));
-            let status = process.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not run {}: {error}", command[0]))?;
+            process.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+            let status = run_with_timeout(process, DISCOVERY_TIMEOUT).map_err(|error| format!("Could not run {}: {error}", command[0]))?;
             if status.success() { Ok(command) } else { Err(format!("{} does not have {} installed", command[0], engine_label(kind))) }
         });
         match check { Ok(command) => return Ok((executable, command)), Err(error) => failures.push(format!("{executable}: {error}")) }
     }
     Err(failures.join("\n"))
+}
+
+/// Runs a command and waits at most timeout for it to exit. Kills and reaps it when the time ends.
+fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<std::process::ExitStatus, String> {
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let pid = child.id();
+    let (sender, receiver) = mpsc::channel();
+    let waiter = thread::spawn(move || { let _ = sender.send(child.wait()); });
+    match receiver.recv_timeout(timeout) {
+        Ok(status) => status.map_err(|error| error.to_string()),
+        Err(_) => {
+            if unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) } != 0 { eprintln!("Could not stop {pid}: {}", std::io::Error::last_os_error()); }
+            if waiter.join().is_err() { eprintln!("Could not reap {pid}"); }
+            Err(format!("it did not answer within {} seconds", timeout.as_secs()))
+        }
+    }
+}
+
+/// Runs dictation work that can block on a thread for blocking work, so the async threads stay free.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work).await.map_err(|error| format!("Dictation task failed: {error}"))
 }
 
 /// Reads the engine arguments. The only argument is "--language <code>" (or "--language=<code>"); no language lets the model choose.
@@ -336,8 +359,12 @@ fn new_id() -> String { Uuid::new_v4().to_string() }
 
 /// Searches for each engine. paths maps an engine type to its set path ("" searches PATH).
 /// Returns, for each engine type, { "executable": path } or { "error": text }.
-#[tauri::command(async)]
-pub(crate) fn dictation_find_engines(paths: std::collections::HashMap<String, String>) -> Value {
+#[tauri::command]
+pub(crate) async fn dictation_find_engines(paths: std::collections::HashMap<String, String>) -> Result<Value, String> {
+    blocking(move || find_engines(&paths)).await
+}
+
+fn find_engines(paths: &std::collections::HashMap<String, String>) -> Value {
     let mut result = serde_json::Map::new();
     for kind in ["transcribe.cpp", "needle"] {
         let configured = paths.get(kind).map(String::as_str).unwrap_or_default();
@@ -350,8 +377,14 @@ pub(crate) fn dictation_find_engines(paths: std::collections::HashMap<String, St
 pub(crate) fn dictation_configuration(app: AppHandle) -> Value { configuration(&lock_state(&app)) }
 
 /// Starts a live dictation. Text changes arrive as pi://dictation-stream events with this id.
-#[tauri::command(async)]
-pub(crate) fn dictation_stream_start(app: AppHandle, window: tauri::WebviewWindow) -> Result<Value, String> {
+#[tauri::command]
+pub(crate) async fn dictation_stream_start(app: AppHandle, window: tauri::WebviewWindow) -> Result<Value, String> {
+    let label = window.label().to_owned();
+    blocking(move || stream_start(&app, label)).await?
+}
+
+fn stream_start(app: &AppHandle, label: String) -> Result<Value, String> {
+    let app = app.clone();
     let mut state = lock_state(&app);
     let engine = match (&state.engine, &state.error) {
         (Some(engine), _) => engine.clone(),
@@ -360,7 +393,6 @@ pub(crate) fn dictation_stream_start(app: AppHandle, window: tauri::WebviewWindo
     };
     close_stream(&app, &mut state, Some("Dictation stopped because a new dictation started"));
     let id = new_id();
-    let label = window.label().to_owned();
     let (done_sender, done) = mpsc::channel();
     let text_app = app.clone();
     let (text_id, text_window) = (id.clone(), label.clone());
@@ -386,29 +418,39 @@ fn owned<'a>(state: &'a mut State, window: &str, id: &str) -> Result<&'a mut Str
     state.stream.as_mut().filter(|stream| stream.id == id && stream.window == window).ok_or_else(|| "This dictation is no longer running".into())
 }
 
-#[tauri::command(async)]
-pub(crate) fn dictation_stream_feed(app: AppHandle, window: tauri::WebviewWindow, id: String, audio: String) -> Result<(), String> {
+#[tauri::command]
+pub(crate) async fn dictation_stream_feed(app: AppHandle, window: tauri::WebviewWindow, id: String, audio: String) -> Result<(), String> {
+    let label = window.label().to_owned();
+    blocking(move || stream_feed(&app, &label, &id, audio)).await?
+}
+
+fn stream_feed(app: &AppHandle, window: &str, id: &str, audio: String) -> Result<(), String> {
     if audio.len() > MAX_FEED_BYTES.div_ceil(3) * 4 { return Err("Invalid dictation audio".into()); }
     let bytes = base64::engine::general_purpose::STANDARD.decode(audio).map_err(|_| "Invalid dictation audio")?;
     if bytes.len() % 2 != 0 { return Err("Invalid dictation audio".into()); }
     let worker = {
-        let mut state = lock_state(&app);
-        let stream = owned(&mut state, window.label(), &id)?;
+        let mut state = lock_state(app);
+        let stream = owned(&mut state, window, id)?;
         if stream.finishing { return Err("This dictation is already finishing".into()); }
         if stream.bytes + bytes.len() > MAX_STREAM_BYTES { return Err("Dictation recording is too long".into()); }
         stream.bytes += bytes.len();
         let worker = stream.worker.clone();
-        arm_idle(&app, stream);
+        arm_idle(app, stream);
         worker
     };
     worker.write(&bytes)
 }
 
-#[tauri::command(async)]
-pub(crate) fn dictation_stream_finish(app: AppHandle, window: tauri::WebviewWindow, id: String) -> Result<Value, String> {
+#[tauri::command]
+pub(crate) async fn dictation_stream_finish(app: AppHandle, window: tauri::WebviewWindow, id: String) -> Result<Value, String> {
+    let label = window.label().to_owned();
+    blocking(move || stream_finish(&app, &label, &id)).await?
+}
+
+fn stream_finish(app: &AppHandle, window: &str, id: &str) -> Result<Value, String> {
     let (worker, done) = {
-        let mut state = lock_state(&app);
-        let stream = owned(&mut state, window.label(), &id)?;
+        let mut state = lock_state(app);
+        let stream = owned(&mut state, window, id)?;
         if stream.finishing { return Err("This dictation is already finishing".into()); }
         stream.finishing = true;
         if let Some(idle) = stream.idle.take() { idle.abort(); }
@@ -416,8 +458,8 @@ pub(crate) fn dictation_stream_finish(app: AppHandle, window: tauri::WebviewWind
     };
     worker.end();
     let result = wait(&worker, &done, FINISH_TIMEOUT, "The speech engine did not finish in time");
-    let mut state = lock_state(&app);
-    if state.stream.as_ref().is_some_and(|stream| stream.id == id) { close_stream(&app, &mut state, None); }
+    let mut state = lock_state(app);
+    if state.stream.as_ref().is_some_and(|stream| stream.id == id) { close_stream(app, &mut state, None); }
     result.map(|text| json!({ "text": text }))
 }
 

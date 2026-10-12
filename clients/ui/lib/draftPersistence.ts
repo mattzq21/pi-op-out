@@ -4,6 +4,28 @@ import { captureDaemonTransport } from "./platform";
 
 export interface DraftSnapshot { records: DraftRecord[]; submissions: DraftSubmission[]; }
 
+export function mergeDraftSnapshots(saved: DraftSnapshot, before: DraftSnapshot, after: DraftSnapshot): DraftSnapshot {
+  const merge = <T>(saved: T[], before: T[], after: T[], key: (item: T) => string, stamp: (item: T) => number) => {
+    const values = new Map(saved.map(item => [key(item), item]));
+    const old = new Map(before.map(item => [key(item), item]));
+    const next = new Map(after.map(item => [key(item), item]));
+    const same = (left: T | undefined, right: T | undefined) => left === right || JSON.stringify(left) === JSON.stringify(right);
+    for (const item of before) {
+      const current = values.get(key(item));
+      if (!next.has(key(item)) && same(current, item)) values.delete(key(item));
+    }
+    for (const item of after) {
+      if (same(old.get(key(item)), item)) continue;
+      const current = values.get(key(item));
+      if (current === undefined || stamp(item) >= stamp(current)) values.set(key(item), item);
+    }
+
+    return [...values.values()];
+  };
+
+  return { records: merge(saved.records, before.records, after.records, item => item.key, item => item.updatedAt), submissions: merge(saved.submissions, before.submissions, after.submissions, item => item.id, item => item.createdAt) };
+}
+
 const destinationSchema = z.object({ key: z.string(), hostId: z.string(), cwd: z.string().optional(), sessionPath: z.string().optional(), temporary: z.boolean() });
 const uploadsSchema = z.array(z.object({ id: z.string(), name: z.string(), kind: z.enum(["image", "text"]), byteSize: z.number(), text: z.string().optional(), image: z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string(), name: z.string().optional() }).optional() }));
 const snapshotSchema = z.object({
@@ -13,6 +35,7 @@ const snapshotSchema = z.object({
 
 export function createDraftPersistence() {
   const endpoint = captureDaemonTransport().identity;
+  const channel = new BroadcastChannel("piop-drafts");
   let database: Promise<IDBDatabase> | undefined;
   const open = () => database ??= new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("piop-drafts", 1);
@@ -38,27 +61,12 @@ export function createDraftPersistence() {
           result = request.result === undefined ? { records: [], submissions: [] } : snapshotSchema.parse(request.result);
 
           if (next) {
-            // Another window may have saved a newer copy since this window last read. A record is only removed or
-            // replaced when the saved copy is not newer than what this window last saw or now holds.
-            const merge = <T>(saved: T[], before: T[], after: T[], key: (item: T) => string, stamp: (item: T) => number) => {
-              const values = new Map(saved.map(item => [key(item), item]));
-              const old = new Map(before.map(item => [key(item), item]));
-              const newerElsewhere = (item: T) => { const current = values.get(key(item)); const seen = old.get(key(item)); return current !== undefined && seen !== undefined && stamp(current) > stamp(seen); };
-              for (const item of before) if (!after.some(value => key(value) === key(item)) && !newerElsewhere(item)) values.delete(key(item));
-              for (const item of after) {
-                if (old.get(key(item)) === item) continue;
-                const current = values.get(key(item));
-                if (current === undefined || stamp(item) >= stamp(current)) values.set(key(item), item);
-              }
-
-              return [...values.values()];
-            };
-            result = { records: merge(result.records, previous.records, next.records, item => item.key, item => item.updatedAt), submissions: merge(result.submissions, previous.submissions, next.submissions, item => item.id, item => item.createdAt) };
+            result = mergeDraftSnapshots(result, previous, next);
             store.put(result, endpoint);
           }
         } catch (reason) { transaction.abort(); reject(reason); }
       };
-      transaction.oncomplete = () => { previous = next ?? result; resolve(result); };
+      transaction.oncomplete = () => { previous = result; resolve(result); };
       transaction.onabort = () => reject(transaction.error ?? new Error("Could not save drafts"));
       transaction.onerror = () => reject(transaction.error ?? new Error("Could not access draft storage"));
     });
@@ -74,5 +82,25 @@ export function createDraftPersistence() {
     }
   };
 
-  return { read: () => access(), write: (value: DraftSnapshot) => access(value), close: async () => (await database)?.close() };
+  return {
+    read: async (value?: DraftSnapshot) => {
+      const before = previous;
+      const saved = await access();
+
+      return value ? mergeDraftSnapshots(saved, before, value) : saved;
+    },
+    write: async (value: DraftSnapshot) => {
+      const saved = await access(value);
+      channel.postMessage(endpoint);
+
+      return saved;
+    },
+    subscribe: (changed: () => void) => {
+      const listener = (event: MessageEvent) => { if (event.data === endpoint) changed(); };
+      channel.addEventListener("message", listener);
+
+      return () => channel.removeEventListener("message", listener);
+    },
+    close: async () => { channel.close(); (await database)?.close(); },
+  };
 }
