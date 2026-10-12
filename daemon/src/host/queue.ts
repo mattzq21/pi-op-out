@@ -649,7 +649,9 @@ export class SessionQueue {
     target.behavior = behavior === 'steer' ? 'steer' : 'followUp';
     const index = this.s.pending.findIndex(item => item.id === id);
     if (index >= 0) this.s.pending[index] = clone(target);
-    try { await this.persistState(); } catch (error) { this.markRetry([target]); throw error; }
+    // Mark the item as sending before the save yields, so a queue update that arrives meanwhile keeps it in pending.
+    this.s.sending.add(id);
+    try { await this.persistState(); } catch (error) { this.s.sending.delete(id); this.markRetry([target]); throw error; }
     let failure: unknown;
     try { await this.deliver(target, false); } catch (error) {
       failure = error;

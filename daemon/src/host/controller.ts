@@ -24,16 +24,24 @@ export interface ReadonlyView { id: string; path: string | null }
 const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
 function isUuid(value: string): boolean { return UUID.test(value.replace(/^urn:uuid:/, '').replace(/^\{(.*)\}$/, '$1')); }
 
-function gate(map: Map<string, Mutex>, key: string): Mutex {
+/** Locks the mutex for key and drops it from the map once no one holds or waits for it. */
+export async function lockGate(map: Map<string, Mutex>, key: string): Promise<() => void> {
   let found = map.get(key);
   if (!found) { found = new Mutex(); map.set(key, found); }
-  return found;
+  const mutex = found;
+  const release = await mutex.lock();
+  return () => {
+    release();
+    if (!mutex.isLocked && map.get(key) === mutex) map.delete(key);
+  };
 }
 
 export class Host implements SessionHost {
   sessions = new Map<string, Session>();
   subscriptions = new Map<string, Session>();
   attachments = new Map<string, any>();
+  /** The session epoch that each remembered attachment record belongs to. */
+  private attachmentEpochs = new WeakMap<object, string>();
   readonlyMap = new Map<string, ReadonlyView>();
   pending = new Map<string, any[]>();
   configurationValue: any | null = null;
@@ -93,7 +101,15 @@ export class Host implements SessionHost {
       const retained = session.queue.pending();
       if (retained.length) this.pending.set(session.key, retained);
       else this.pending.delete(session.key);
-      for (const [runtime, current] of this.subscriptions) if (current === session) this.subscriptions.delete(runtime);
+      for (const [runtime, current] of this.subscriptions) {
+        if (current !== session) continue;
+        this.subscriptions.delete(runtime);
+        // Owning views receive "disconnected" and the app forgets them, so no detach will come to remove their attachment.
+        // Read-only views stay registered in the app and keep their attachment for a later take-ownership.
+        // A view that reconnects meanwhile has a new record without this epoch, so it is kept.
+        const record = this.attachments.get(runtime);
+        if (!this.readonlyMap.has(runtime) && record && this.attachmentEpochs.get(record) === session.epoch) this.attachments.delete(runtime);
+      }
       if (!transient) {
         this.output({ type: 'session_closed', sessionKey: session.key, epoch, state: session.savedState(), submitted: session.submitted() });
       }
@@ -141,7 +157,7 @@ export class Host implements SessionHost {
   private async startSession(launch: SessionLaunch): Promise<Session> {
     this.assertRunning();
     const key = launch.key;
-    const release = await gate(this.spawnGates, key).lock();
+    const release = await lockGate(this.spawnGates, key);
     try {
       this.assertRunning();
       let existing = this.sessions.get(key) ?? this.findSession(key);
@@ -174,6 +190,7 @@ export class Host implements SessionHost {
     packet.sessionKey = session.identity;
     packet.cwd = session.cwd;
     this.attachments.set(runtime, packet);
+    this.attachmentEpochs.set(packet, session.epoch);
   }
 
   attachView(runtime: string, session: Session, presence: any): void {
@@ -230,7 +247,7 @@ export class Host implements SessionHost {
   }
 
   async releaseConversation(id: string, intent: string): Promise<void> {
-    const release = await gate(this.releaseGates, id).lock();
+    const release = await lockGate(this.releaseGates, id);
     try {
       const sessions = [...this.sessions.values()].filter(session => session.identity === id);
       for (const session of sessions) await this.releaseOwnedSession(id, intent, session);
@@ -390,7 +407,7 @@ export class Host implements SessionHost {
 
   private async answerDialog(session: Session, runtime: string, command: any, assertOwner: () => void): Promise<any> {
     const id = text(command, 'id');
-    const release = await gate(this.dialogGates, session.epoch + ':' + id).lock();
+    const release = await lockGate(this.dialogGates, session.epoch + ':' + id);
     try {
       assertOwner();
       const dialog = session.dialog(id);
@@ -632,7 +649,7 @@ export class Host implements SessionHost {
   }
 
   private async orchestrationRecoveryDetach(runtime: string, id: string): Promise<any> {
-    const release = await gate(this.sessionGates, id).lock();
+    const release = await lockGate(this.sessionGates, id);
     try {
       this.attachments.delete(runtime);
       const session = this.subscriptions.get(runtime);
@@ -813,6 +830,8 @@ class Attachment {
   readonly spec: LaunchSpec;
   readonly identity: string;
   readonly path: string | null;
+  /** The record this attachment keeps in host.attachments; remember() replaces the original packet with a copy. */
+  private stored: any;
 
   constructor(private host: Host, readonly packet: any) {
     this.runtime = text(packet, 'runtimeId');
@@ -821,12 +840,13 @@ class Attachment {
     this.identity = specIdentity(this.spec, key);
     if (isUuid(key) && this.identity !== key) throw new Error('The saved path belongs to another conversation; resolve its identity again');
     this.path = argument(this.spec, '--session') ?? null;
+    this.stored = packet;
     host.attachments.set(this.runtime, packet);
     this.assertCurrent();
   }
 
   private assertCurrent(): void {
-    if (this.host.attachments.get(this.runtime) !== this.packet) throw new Error('The conversation was closed while attaching');
+    if (this.host.attachments.get(this.runtime) !== this.stored) throw new Error('The conversation was closed while attaching');
   }
 
   readonly(): any {
@@ -847,7 +867,7 @@ class Attachment {
   async open(guard: Guard, opened: { session?: Session }): Promise<any> {
     this.assertCurrent();
     if (!guard.owned) return this.attachReadonly();
-    const release = await gate(this.host.sessionGates, this.identity).lock();
+    const release = await lockGate(this.host.sessionGates, this.identity);
     try {
       const session = await this.session(guard);
       opened.session = session;
@@ -858,6 +878,7 @@ class Attachment {
       this.host.readonlyMap.delete(this.runtime);
       this.host.attachView(this.runtime, session, structuredClone(this.packet.presence ?? null));
       this.host.remember(this.runtime, session);
+      this.stored = this.host.attachments.get(this.runtime);
       if (this.spec.env.PIOP_USAGE_RECOVERY !== '1') await session.activateUsageRecovery();
       this.host.reconcile(session);
       return { attached: session.views().length > 1 || session.submitted(), owned: true };
@@ -891,11 +912,11 @@ class Attachment {
 
   private stillAttached(opened: Session | undefined): boolean {
     const current = this.host.subscriptions.get(this.runtime);
-    return (current !== undefined && opened !== undefined && current === opened) || this.host.attachments.get(this.runtime) === this.packet;
+    return (current !== undefined && opened !== undefined && current === opened) || this.host.attachments.get(this.runtime) === this.stored;
   }
 
   async cleanup(opened: Session | undefined, owned: boolean, failed = false): Promise<void> {
-    if (failed && this.host.attachments.get(this.runtime) === this.packet) {
+    if (failed && this.host.attachments.get(this.runtime) === this.stored) {
       this.host.attachments.delete(this.runtime);
       this.host.readonlyMap.delete(this.runtime);
       if (opened && this.host.subscriptions.get(this.runtime) === opened) {
