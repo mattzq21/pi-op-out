@@ -100,8 +100,7 @@ class Runtime {
 }
 
 function pendingTickets(snapshot: any): boolean {
-  if (Array.isArray(snapshot)) return snapshot.length > 0;
-  return Boolean(snapshot?.tickets?.length || snapshot?.leases?.length);
+  return Boolean(snapshot.tickets.length || snapshot.leases.length || snapshot.unsaved.length);
 }
 
 async function startChatgpt(executable: string, events: Events): Promise<Sdk> {
@@ -242,18 +241,26 @@ export class PluginService {
   }
 }
 
+/** In-memory ChatGPT state that a restart carries to the new daemon: pending send tickets, edit leases and chats whose save failed. */
+function emptyCheckpoint(): any { return { tickets: [], leases: [], unsaved: [] }; }
+
+export function validCheckpoint(value: any): boolean {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && ['tickets', 'leases', 'unsaved'].every(key => Array.isArray(value[key]));
+}
+
 async function checkpoint(runtime: Runtime, disabling: boolean): Promise<any> {
-  if (!(await runtime.drain(disabling))) return [];
+  if (!(await runtime.drain(disabling))) return emptyCheckpoint();
   const sdk = runtime.chatgpt;
-  if (!sdk) return [];
+  if (!sdk) return emptyCheckpoint();
   try {
     const request = sdk.request({ method: 'plugin_checkpoint' });
     request.catch(() => {});
     const result = await timeout(request, 5_000);
     if (!result.done) throw new Error('ChatGPT checkpoint timed out');
+    if (!validCheckpoint(result.value)) throw new Error('ChatGPT returned an invalid checkpoint');
     return result.value;
   } catch (error) {
-    if (disabling) { console.error('Disabling ChatGPT without an in-memory checkpoint: ' + errorText(error)); return []; }
+    if (disabling) { console.error('Disabling ChatGPT without an in-memory checkpoint: ' + errorText(error)); return emptyCheckpoint(); }
     throw error;
   }
 }

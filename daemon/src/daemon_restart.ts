@@ -10,7 +10,7 @@ import * as records from './settings_records';
 import * as daemonLog from './daemon_log';
 import * as plugins from './plugins';
 import * as peers from './peers';
-import { preserveLeasesForRestart, validateConfiguration } from './host/index';
+import { preserveLeasesForRestart, validCheckpoint, validateConfiguration } from './host/index';
 import { piExecutable } from './environment';
 import { daemonScript } from './session_worker';
 import { RwLock, sleep } from './util/sync';
@@ -128,7 +128,7 @@ async function makePlan(app: App, prepared: any): Promise<[Plan, artifacts.Backu
   const executable = replacementExecutable();
   const enabled = strings(prepared?.enabled);
   const previous = strings(prepared?.previous);
-  if (!Array.isArray(prepared?.tickets)) throw new Error('Invalid restart checkpoint tickets');
+  if (!validCheckpoint(prepared?.tickets)) throw new Error('Invalid restart checkpoint tickets');
   const bind = restartBind(current.url);
   await validateRestartBind(bind);
   const backup = await artifacts.Backup.create(id, executable);

@@ -308,20 +308,34 @@ function answerLogin(packet) {
 }
 
 function handlePluginLifecycle(packet) {
-  if (packet.method === 'plugin_idle') return bundledPlugin?.idle() ?? true;
+  if (packet.method === 'plugin_idle') return pluginCalls === 0 && (bundledPlugin?.idle() ?? true);
 
-  if (packet.method === 'plugin_checkpoint') return bundledPlugin?.checkpoint() ?? [];
+  if (packet.method === 'plugin_checkpoint') return bundledPlugin?.checkpoint() ?? { tickets: [], leases: [], unsaved: [] };
 
   bundledPlugin?.restore(packet.tickets);
 
   return true;
 }
 
+/** Plugin calls that this worker accepted and has not answered yet. A restart must wait for them. */
+let pluginCalls = 0;
+
 async function handle(packet) {
   if (packet.method === 'ping') return true;
 
   if (['plugin_idle', 'plugin_checkpoint', 'plugin_restore'].includes(packet.method)) return handlePluginLifecycle(packet);
 
+  if (packet.method === 'plugin_call') {
+    pluginCalls++;
+
+    try { return await handleRequest(packet); }
+    finally { pluginCalls--; }
+  }
+
+  return handleRequest(packet);
+}
+
+async function handleRequest(packet) {
   if (packet.method === 'login') return login(packet);
 
   if (packet.method === 'cancel') return cancelLogin(packet);
