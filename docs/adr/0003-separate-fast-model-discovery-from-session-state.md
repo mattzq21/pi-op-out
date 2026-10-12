@@ -2,7 +2,7 @@
 status: accepted
 ---
 
-# Separate fast-model discovery from session state
+# Separate fast-model discovery from Pi fast mode extension
 
 Settings, drafts, and agent validation need fast-model support information without a running Pi session. A separate fast-model discovery module owns this information and exposes a public interface to the host's provider scanning code. The fast-mode Pi extension owns only the session's saved on/off choice and provider request changes, so discovery failures do not prevent it from restoring or changing that choice.
 
