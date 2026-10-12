@@ -169,6 +169,17 @@ class NativeTerminals {
     return this.enqueue("write_and_clear_draft", terminalId, { data, expectedDraft });
   }
 
+  /** Sends Ctrl+C at once, before queued input. The draft clears through the queue, so an older draft write cannot restore it. */
+  async interrupt(terminalId: string) {
+    const connection = captureDaemonTransport();
+    const clearing = this.write(terminalId, "", "draft");
+    await this.starts.get(terminalId);
+
+    if (!connection.active()) throw new Error("Terminal connection changed. Press Ctrl+C again.");
+    await this.command("write", terminalId, { data: "\u0003" });
+    await clearing;
+  }
+
   resize(terminalId: string, cols: number, rows: number) {
     return this.enqueue("resize", terminalId, { cols, rows });
   }

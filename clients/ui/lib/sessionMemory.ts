@@ -165,7 +165,7 @@ export class SessionMemory {
 
       for (const index of positions.get(id) ?? []) {
         const previous = messages[index];
-        const next = { ...previous, content: "", details: undefined, toolInput: undefined, nestedCalls: undefined, toolPayloadLoaded: false };
+        const next = { ...previous, content: "", details: undefined, toolInput: undefined, nestedCalls: undefined, toolPayloadLoaded: false, toolPayloadEvicted: true };
         size += bytes(next) - bytes(previous);
         messages[index] = next;
       }
@@ -284,7 +284,7 @@ export class SessionMemory {
     if (generation !== this.generation) return;
     this.reserved = 0;
     this.loaded.delete(id); this.loaded.add(id);
-    this.set("messages", (messages) => messages.map((message) => message.deferredToolPayload === id ? { ...message, ...output, toolPayloadLoaded: true, loadedToolPayloadVersion: version } : message));
+    this.set("messages", (messages) => messages.map((message) => message.deferredToolPayload === id ? { ...message, ...output, toolPayloadLoaded: true, toolPayloadEvicted: false, loadedToolPayloadVersion: version } : message));
 
     if (!this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded)) throw new Error("This tool payload could not fit in the client memory limit.");
   }

@@ -1,4 +1,5 @@
 import { sessionGroupsSchema } from "./responseSchemas";
+import { z } from "zod";
 import { type Accessor, createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef } from "./solid";
 
@@ -103,12 +104,19 @@ export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
   }, () => []);
   const seeds = sessionGroupSeeds(sessions);
   const seedsJson = createMemo(() => seeds().json);
-  createDependencyEffect(() => { const capturedSeedsJson = seedsJson();
+  const reload = (capturedSeedsJson: string) => {
     const seeds: SessionGroupSeed[] = JSON.parse(capturedSeedsJson);
     void enqueue(async () => { const revision = eventRevision; const state = await loadSessionGroups(seeds);
 
     if (revision === eventRevision) publish(state); }).catch((reason) => { if (mounted.current) setError(String(reason)); });
-  }, () => [seedsJson()]);
+  };
+  createDependencyEffect(() => { reload(seedsJson()); }, () => [seedsJson()]);
+  // Group events sent while the phone was offline are lost, so a restored connection loads the groups again.
+  createDependencyEffect(() => {
+    const stop = listen("pi://event", ({ payload }) => { if (payload.type === "connection_restored") reload(seedsJson()); }, z.object({ type: z.string().optional() }).catch({}));
+
+    return () => { void stop.then((unlisten) => unlisten()); };
+  }, () => []);
 
   const change = async (update: GroupChange) => {
     try {

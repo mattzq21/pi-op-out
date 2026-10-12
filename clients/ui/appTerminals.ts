@@ -451,7 +451,8 @@ export function createTerminalController({ transport, sessionTransport, conversa
     const revision = draftRevisions.get(id);
 
     try {
-      if (clearDraft) await nativeTerminals.writeAndClearDraft(id, data, revision?.data ?? state.activeTerminal.inputDraft ?? "");
+      if (clearDraft && data === "\u0003") await nativeTerminals.interrupt(id);
+      else if (clearDraft) await nativeTerminals.writeAndClearDraft(id, data, revision?.data ?? state.activeTerminal.inputDraft ?? "");
       else await transport().writeTerminal(id, data);
     }
     catch (reason) { addNotice({ title: "Terminal input failed", message: String(reason) }); void refreshShared();

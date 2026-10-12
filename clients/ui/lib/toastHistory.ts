@@ -22,6 +22,14 @@ const [toastHistory, setToastHistory] = createSignal(legacy);
 
 export { toastHistory };
 
+/** Why the last history save failed, until a save succeeds. */
+const [toastHistoryError, setToastHistoryError] = createSignal<string>();
+
+export { toastHistoryError };
+
+/** The history keeps the newest 10 notices, so unsaved notices are limited the same way. */
+const HISTORY_LIMIT = 10;
+
 const pending = new Map<string, ToastHistoryEntry>();
 
 const channel = "BroadcastChannel" in globalThis ? new BroadcastChannel("piop-notification-history") : undefined;
@@ -41,12 +49,16 @@ function refreshHistory() {
   void syncToastHistory(legacy, sent).then(saved => {
     sent.forEach(entry => pending.delete(entry.id));
     setToastHistory(mergeToastHistory(saved, [...pending.values()]));
+    setToastHistoryError(undefined);
     succeeded = true;
 
     try { if (localStorage.getItem(storageKey) === legacyBody) localStorage.removeItem(storageKey); } catch { }
 
     if (sent.length) channel?.postMessage(null);
-  }).catch(error => { console.error("Could not save notification history", error); }).finally(() => {
+  }).catch(error => {
+    console.error("Could not save notification history", error);
+    setToastHistoryError(error instanceof Error ? error.message : String(error));
+  }).finally(() => {
     saving = false;
 
     if (succeeded && (pending.size || refreshPending)) refreshHistory();
@@ -62,6 +74,11 @@ refreshHistory();
 function recordToast(source: string, notice: { title: string; message: string }) {
   const entry = { ...notice, source, id: crypto.randomUUID(), timestamp: Date.now() };
   pending.set(entry.id, entry);
+
+  for (const id of pending.keys()) {
+    if (pending.size <= HISTORY_LIMIT) break;
+    pending.delete(id);
+  }
   setToastHistory(mergeToastHistory(untrack(toastHistory), [entry]));
   refreshHistory();
 }
