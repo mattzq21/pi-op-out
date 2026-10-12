@@ -37,68 +37,38 @@ async function rewriteCommand(
   return result.stdout.trim() || null
 }
 
-type StatusContext = {
-  ui?: {
-    setStatus?: (key: string, text: string) => void
-  }
-}
+export default function (pi: ExtensionAPI) {
+  let enabled = false
 
-function registerRtkUnavailableNotice(pi: ExtensionAPI) {
-  let reason: string | undefined
-  let sessionContext: StatusContext | undefined
-
-  const applyStatus = () => {
-    if (!reason || !sessionContext) return
+  pi.on("session_start", async (_event, ctx) => {
+    enabled = false
 
     try {
-      sessionContext.ui?.setStatus?.("rtk", `RTK disabled: ${reason}`)
-    } catch {
+      const ver = await pi.exec("rtk", ["--version"], { timeout: REWRITE_TIMEOUT_MS })
+
+      if (ver.killed || ver.code !== 0) throw new Error("rtk version check failed; check that rtk is in PATH")
+      const parsed = parseSemver(ver.stdout.replace(/^rtk\s+/, ""))
+
+      if (!parsed) throw new Error("Could not read the rtk version")
+
+      if (parsed[0] === 0 && parsed[1] < MIN_SUPPORTED_RTK_MINOR) {
+        throw new Error(`rtk ${parsed.join(".")} is too old (need >= 0.23.0)`)
+      }
+
+      ctx.ui.setStatus("rtk", undefined)
+      enabled = true
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      console.warn(`[rtk] ${reason} — extension disabled`)
+      ctx.ui.setStatus("rtk", `RTK disabled: ${reason}`)
     }
-  }
+  })
 
-  try {
-    pi.on("session_start", (_event, ctx) => {
-      sessionContext = ctx
-      applyStatus()
-    })
-  } catch {
-    return (_reason: string) => {}
-  }
-
-  return (nextReason: string) => {
-    reason = nextReason
-    applyStatus()
-  }
-}
-
-export default async function (pi: ExtensionAPI) {
-  const reportRtkUnavailable = registerRtkUnavailableNotice(pi)
-
-  const ver = await pi.exec("rtk", ["--version"], { timeout: REWRITE_TIMEOUT_MS })
-
-  if (ver.code !== 0) {
-    reportRtkUnavailable("rtk binary not found in PATH")
-    console.warn("[rtk] rtk binary not found in PATH — extension disabled")
-
-    return
-  }
-
-  const parsed = parseSemver(ver.stdout.replace(/^rtk\s+/, ""))
-
-  if (parsed) {
-    const [major, minor] = parsed
-
-    if (major === 0 && minor < MIN_SUPPORTED_RTK_MINOR) {
-      reportRtkUnavailable(`rtk ${parsed.join(".")} is too old (need >= 0.23.0)`)
-      console.warn(`[rtk] rtk ${ver.stdout.trim()} is too old (need >= 0.23.0) — extension disabled`)
-
-      return
-    }
-  }
+  pi.on("session_shutdown", () => { enabled = false })
 
   pi.on("tool_call", async (event, ctx) => {
     try {
-      if (!isBashToolCallEvent(event)) return
+      if (!enabled || !isBashToolCallEvent(event)) return
 
       const cmd = event.input.command
 

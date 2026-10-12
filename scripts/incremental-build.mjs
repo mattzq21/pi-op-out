@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, version } from "esbuild";
@@ -46,6 +46,12 @@ async function isCurrent(cachePath, signature, fixedInputs, output) {
   return JSON.stringify(current) === JSON.stringify(cached.inputs) && outputContent !== undefined && hash(outputContent) === cached.outputHash;
 }
 
+async function cachedDependencies(cachePath) {
+  const saved = await readOptional(cachePath);
+
+  try { const cached = saved && JSON.parse(saved.toString()); return Array.isArray(cached?.dependencies) ? cached.dependencies : []; } catch { return []; }
+}
+
 export async function buildArtifact({ output, inputs, key }, generate) {
   const configuration = (await readdir(".")).filter(path => path === "package.json" || path === "bun.lock" || /^tsconfig.*\.json$/.test(path));
   const fixedInputs = [...inputs, helper, ...configuration];
@@ -58,27 +64,46 @@ export async function buildArtifact({ output, inputs, key }, generate) {
     return;
   }
 
-  const { content, dependencies = [] } = await generate();
-  const outputContent = Buffer.from(content);
-  const previous = await readOptional(output);
+  let knownDependencies = await cachedDependencies(cachePath);
+  await rm(cachePath, { force: true });
 
-  if (!previous?.equals(outputContent)) {
-    await mkdir(dirname(output), { recursive: true });
-    await writeFile(output, outputContent);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const before = new Map(await fingerprint([...fixedInputs, ...knownDependencies]));
+    const { content, dependencies = [] } = await generate();
+    const after = await fingerprint([...fixedInputs, ...dependencies]);
+
+    // A pass that discovers new dependencies cannot publish output; fingerprint them before retrying.
+    if (after.some(([path, digest]) => !before.has(path) || before.get(path) !== digest)) {
+      if (attempt === 3) throw new Error(`Inputs changed or new dependencies were found during 3 build attempts: ${output}`);
+
+      knownDependencies = dependencies;
+      console.warn(`Inputs changed or new dependencies were found; rebuilding: ${output}`);
+      continue;
+    }
+
+    const outputContent = Buffer.from(content);
+    const previous = await readOptional(output);
+
+    if (!previous?.equals(outputContent)) {
+      await mkdir(dirname(output), { recursive: true });
+      await writeFile(output, outputContent);
+    }
+
+    const record = { signature, dependencies, inputs: after, outputHash: hash(outputContent) };
+    await mkdir(cacheDirectory, { recursive: true });
+    const temporary = `${cachePath}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporary, JSON.stringify(record));
+    await rename(temporary, cachePath);
+    console.log(`Built: ${output}`);
+
+    return;
   }
-
-  const record = { signature, dependencies, inputs: await fingerprint([...fixedInputs, ...dependencies]), outputHash: hash(outputContent) };
-  await mkdir(cacheDirectory, { recursive: true });
-  const temporary = `${cachePath}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, JSON.stringify(record));
-  await rename(temporary, cachePath);
-  console.log(`Built: ${output}`);
 }
 
 export async function buildBundle(options, output, { script, inputs = [], transform = content => content }) {
   await buildArtifact({ output, inputs: [fileURLToPath(script), ...inputs], key: options }, async () => {
     const result = await build({ ...options, write: false, metafile: true });
 
-    return { content: transform(result.outputFiles[0].contents), dependencies: Object.keys(result.metafile.inputs) };
+    return { content: await transform(result.outputFiles[0].contents), dependencies: Object.keys(result.metafile.inputs) };
   });
 }

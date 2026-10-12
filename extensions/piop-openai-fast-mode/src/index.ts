@@ -51,9 +51,9 @@ function notifyError(
   ctx: Pick<ExtensionContext, "hasUI" | "ui">,
   cause: unknown,
 ): void {
-  if (!ctx.hasUI) return;
   const message = cause instanceof Error ? cause.message : String(cause);
-  ctx.ui.notify(message, "error");
+  if (ctx.hasUI) ctx.ui.notify(message, "error");
+  else console.error(`[fast-mode] ${message}`);
 }
 
 export function createPiFastModeExtension(
@@ -156,9 +156,13 @@ export function createPiFastModeExtension(
             return;
           }
 
+          const request: { enabled: boolean; ready?: Promise<void> } = { enabled };
+          pi.events.emit("piop:fast-mode-changed", request);
+
+          if (!request.ready) throw new Error("Fast mode save handler unavailable");
+          await request.ready;
           config.enabled = enabled;
           agentEnabled = undefined;
-          pi.events.emit("piop:fast-mode-changed", { enabled });
           updateFastStatus(ctx, effectiveConfig(), currentModel);
         } catch (error) {
           notifyError(ctx, error);

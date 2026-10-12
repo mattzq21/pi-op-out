@@ -758,6 +758,7 @@ export class SessionQueue {
       await this.reportStorageError(() => this.publish());
       throw error;
     } finally { this.s.sending.delete(id); }
+    if (result?.disposition === 'handled') await this.consumed(id);
     await this.publish();
     return result;
   }
@@ -793,7 +794,10 @@ export class SessionQueue {
 
   private async commitView(saved: Promise<void>): Promise<void> {
     const view = this.s.view(this.s.pending);
-    await saved;
+    try { await saved; } catch (error) {
+      this.journalError(errorText(error));
+      throw error;
+    }
     this.savedView = view;
   }
 
@@ -941,8 +945,12 @@ export class SessionQueue {
       sortHeld(this.s.held);
     } else this.s.sending.add(id);
     try { await this.persistState(); } catch (error) {
-      this.s.remove(id);
       this.s.sending.delete(id);
+      for (const item of [...this.s.pending, ...this.s.retained, ...this.s.heldItems()]) {
+        if (item.id === id) item.retry = true;
+      }
+      this.savedView = this.s.publish();
+      this.executor.publish(clone(this.savedView));
       throw error;
     }
     return held;

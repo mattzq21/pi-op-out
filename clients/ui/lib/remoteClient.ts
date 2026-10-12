@@ -63,6 +63,13 @@ export class RemoteClient {
 
         return; }
 
+        if (message.type === "error" && !ready) {
+          settleReject(new Error(message.error || "Host rejected the connection."));
+          socket.close();
+
+          return;
+        }
+
         if (message.type === "ready" && !ready) {
           if (message.protocol !== 1) {
             settleReject(new Error(`Incompatible Piop daemon protocol ${message.protocol ?? "unknown"} (build ${message.buildId || "unknown"}); this phone requires protocol 1. Update the app and daemon.`));

@@ -147,8 +147,8 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
         const raw = args.trim();
 
         if (/^clear$/i.test(raw)) {
-          limit = undefined;
           pi.appendEntry(LIMIT_ENTRY, { limit: null });
+          limit = undefined;
           publish(ctx);
           ctx.ui.notify("Session cost limit cleared.", "info");
 
@@ -156,8 +156,8 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
         }
 
         const amount = parseAmount(raw);
-        limit = amount;
         pi.appendEntry(LIMIT_ENTRY, { limit: amount });
+        limit = amount;
         publish(ctx);
         ctx.ui.notify(`Session cost limit set to ${formatCost(amount)} (API prices). Spent so far: ${formatCost(sessionCost(ctx))}.`, "info");
       } catch (error) {

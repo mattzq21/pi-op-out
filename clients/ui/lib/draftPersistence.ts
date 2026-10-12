@@ -13,7 +13,8 @@ const snapshotSchema = z.object({
 
 export function createDraftPersistence() {
   const endpoint = captureDaemonTransport().identity;
-  const database = new Promise<IDBDatabase>((resolve, reject) => {
+  let database: Promise<IDBDatabase> | undefined;
+  const open = () => database ??= new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("piop-drafts", 1);
     let failed = false;
     request.onupgradeneeded = () => request.result.createObjectStore("drafts");
@@ -23,7 +24,7 @@ export function createDraftPersistence() {
   });
   let previous: DraftSnapshot = { records: [], submissions: [] };
   const transact = async (next?: DraftSnapshot) => {
-    const db = await database;
+    const db = await open();
 
     if (!endpoint) throw new Error("Connect to a host before saving drafts");
 
@@ -37,15 +38,22 @@ export function createDraftPersistence() {
           result = request.result === undefined ? { records: [], submissions: [] } : snapshotSchema.parse(request.result);
 
           if (next) {
-            const merge = <T>(saved: T[], before: T[], after: T[], key: (item: T) => string) => {
+            // Another window may have saved a newer copy since this window last read. A record is only removed or
+            // replaced when the saved copy is not newer than what this window last saw or now holds.
+            const merge = <T>(saved: T[], before: T[], after: T[], key: (item: T) => string, stamp: (item: T) => number) => {
               const values = new Map(saved.map(item => [key(item), item]));
               const old = new Map(before.map(item => [key(item), item]));
-              for (const item of before) if (!after.some(value => key(value) === key(item))) values.delete(key(item));
-              for (const item of after) if (old.get(key(item)) !== item) values.set(key(item), item);
+              const newerElsewhere = (item: T) => { const current = values.get(key(item)); const seen = old.get(key(item)); return current !== undefined && seen !== undefined && stamp(current) > stamp(seen); };
+              for (const item of before) if (!after.some(value => key(value) === key(item)) && !newerElsewhere(item)) values.delete(key(item));
+              for (const item of after) {
+                if (old.get(key(item)) === item) continue;
+                const current = values.get(key(item));
+                if (current === undefined || stamp(item) >= stamp(current)) values.set(key(item), item);
+              }
 
               return [...values.values()];
             };
-            result = { records: merge(result.records, previous.records, next.records, item => item.key), submissions: merge(result.submissions, previous.submissions, next.submissions, item => item.id) };
+            result = { records: merge(result.records, previous.records, next.records, item => item.key, item => item.updatedAt), submissions: merge(result.submissions, previous.submissions, next.submissions, item => item.id, item => item.createdAt) };
             store.put(result, endpoint);
           }
         } catch (reason) { transaction.abort(); reject(reason); }
@@ -56,5 +64,15 @@ export function createDraftPersistence() {
     });
   };
 
-  return { read: () => transact(), write: (value: DraftSnapshot) => transact(value), close: async () => (await database).close() };
+  const access = async (next?: DraftSnapshot) => {
+    try { return await transact(next); }
+    catch (reason) {
+      const failed = database;
+      database = undefined;
+      await failed?.then(db => db.close(), () => undefined);
+      throw reason;
+    }
+  };
+
+  return { read: () => access(), write: (value: DraftSnapshot) => access(value), close: async () => (await database)?.close() };
 }

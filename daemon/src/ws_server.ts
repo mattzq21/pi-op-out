@@ -2,13 +2,15 @@ import { createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Channel } from './util/sync';
+import { MAX_RESPONSE_BYTES } from './config';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const MAX_AUTH_BYTES = 4096;
 const MAX_QUEUED_BYTES = 16 * 1024 * 1024;
 const MAX_QUEUED_MESSAGES = 256;
 const MAX_PENDING_PONGS = 32;
-const MAX_BUFFERED_BYTES = 64 * 1024 * 1024;
+/** Unsent output allowed on one socket: the largest response plus room for events queued behind it. */
+const MAX_BUFFERED_BYTES = MAX_RESPONSE_BYTES + 16 * 1024 * 1024;
 
 export type Incoming = { type: 'text'; data: string } | { type: 'binary'; data: Buffer };
 

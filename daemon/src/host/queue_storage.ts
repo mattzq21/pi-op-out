@@ -22,8 +22,8 @@ export function parseIdentity(id: string): string {
 export async function temporaryLock(root: string): Promise<FileLock> {
   ensurePrivateDir(root);
   const path = join(root, 'queued-input.lock');
-  const lock = await lockPath(path, { blocking: true, nofollow: true, regularFile: 'Invalid queued-input storage lock' });
-  if (!lock) throw new Error('Could not lock ' + path);
+  const lock = await lockPath(path, { blocking: true, timeoutMs: 10_000, nofollow: true, regularFile: 'Invalid queued-input storage lock' });
+  if (!lock) throw new Error('Queued-input storage is locked by another process; try again');
   return lock;
 }
 

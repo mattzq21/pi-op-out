@@ -123,13 +123,16 @@ function usesOpenAIResponses(model: ExtensionContext["model"]): boolean {
 
 export default function openAICacheFork(pi: ExtensionAPI): void {
   let cacheLineageId: string | undefined;
+  let restoreProvider: (() => void) | undefined;
 
   const wrapCodexProvider = (ctx: ExtensionContext): void => {
     const provider = ctx.modelRegistry.getProvider("openai-codex");
 
     if (!provider) return;
 
-    const currentStream = provider.streamSimple;
+    const previousNative = ctx.modelRegistry.getRegisteredNativeProvider("openai-codex");
+    const previousConfig = ctx.modelRegistry.getRegisteredProviderConfig("openai-codex");
+    const currentStream = previousConfig?.streamSimple ?? provider.streamSimple;
 
     if (Object.getOwnPropertyDescriptor(currentStream, WRAPPED_STREAM_PROPERTY)?.value === true) return;
 
@@ -144,6 +147,26 @@ export default function openAICacheFork(pi: ExtensionAPI): void {
       api: "openai-codex-responses",
       streamSimple: wrappedStream,
     });
+    restoreProvider = () => {
+      const current = ctx.modelRegistry.getRegisteredProviderConfig("openai-codex");
+
+      if (current?.streamSimple !== wrappedStream) return;
+      pi.unregisterProvider("openai-codex");
+
+      if (previousNative) pi.registerProvider(previousNative);
+      else {
+        const restored = { ...current };
+
+        if (previousConfig?.streamSimple) restored.streamSimple = previousConfig.streamSimple;
+        else delete restored.streamSimple;
+
+        if (previousConfig?.api) restored.api = previousConfig.api;
+        else delete restored.api;
+
+        if (Object.keys(restored).length) pi.registerProvider("openai-codex", restored);
+      }
+      pi.events.emit("piop:models-refreshed", { ctx });
+    };
     pi.events.emit("piop:models-refreshed", { ctx });
   };
 
@@ -185,6 +208,8 @@ export default function openAICacheFork(pi: ExtensionAPI): void {
     return payload === event.payload ? undefined : payload;
   });
   pi.on("session_shutdown", () => {
+    restoreProvider?.();
+    restoreProvider = undefined;
     if (runtimeState.activeId === cacheLineageId) runtimeState.activeId = undefined;
     cacheLineageId = undefined;
   });

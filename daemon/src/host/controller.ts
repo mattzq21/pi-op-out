@@ -67,7 +67,6 @@ export class Host implements SessionHost {
     host.recoverQueuedInput();
     services.bind(host);
     await services.initialize();
-    host.watchRemovals();
     host.watchRetention();
     return host;
   }
@@ -110,18 +109,12 @@ export class Host implements SessionHost {
   maintenance(key: string): void { this.maintain(key); }
   refreshProviders(): Promise<number> { return this.services.refreshProviders(); }
 
-  private watchRemovals(): void {
-    const timer = setInterval(() => {
-      const targets = new Map<string, string | null>();
-      for (const view of this.readonlyMap.values()) targets.set(view.id, view.path);
-      for (const [id, path] of targets) {
-        let removed = false;
-        try { removed = this.ownership().removed(id); } catch {}
-        if (removed) this.output({ type: 'session_removed', sessionId: id, sessionPath: path });
-      }
-    }, 2000);
-    timer.unref();
-    this.timers.push(timer);
+  /** Tells read-only viewers of a conversation that it was deleted or archived. */
+  private announceRemoved(id: string): void {
+    let path: string | null | undefined;
+    for (const view of this.readonlyMap.values()) if (view.id === id) { path = view.path; break; }
+    if (path === undefined) return;
+    this.output({ type: 'session_removed', sessionId: id, sessionPath: path });
   }
 
   findSession(identity: string): Session | undefined {
@@ -403,8 +396,8 @@ export class Host implements SessionHost {
       const dialog = session.dialog(id);
       if (!dialog || dialog.owner !== runtime) throw new Error('This question is no longer owned by this view. Reopen the conversation to refresh it.');
       if (typeof dialog.event?.asyncQuestion !== 'string') {
-        session.resolveDialog(id);
         await session.send(command);
+        session.resolveDialog(id);
         return null;
       }
       const response = dialog.queuedResponse ?? session.queue.questionResponse(text(dialog.event, 'asyncQuestion'))
@@ -449,7 +442,11 @@ export class Host implements SessionHost {
   async attach(packet: any): Promise<any> {
     const attachment = new Attachment(this, packet);
     if (flag(attachment.packet.presence, 'readOnly')) return attachment.readonly();
-    const guard = await attachment.ownership();
+    let guard: Guard;
+    try { guard = await attachment.ownership(); } catch (error) {
+      await attachment.cleanup(undefined, false, true);
+      throw error;
+    }
     const owned = guard.owned;
     const opened: { session?: Session } = {};
     let result: any;
@@ -457,7 +454,7 @@ export class Host implements SessionHost {
     try { result = await attachment.open(guard, opened); } catch (error) { failure = error ?? new Error('Attach failed'); }
     let releaseError: unknown;
     try { guard.release(this.ownership(), false); } catch (error) { releaseError = error; }
-    await attachment.cleanup(opened.session, owned);
+    await attachment.cleanup(opened.session, owned, failure !== undefined || releaseError !== undefined);
     if (releaseError !== undefined) throw releaseError;
     if (failure !== undefined) throw failure;
     return result;
@@ -491,7 +488,7 @@ export class Host implements SessionHost {
 
   private async restartRequest(packet: any): Promise<any> {
     const sessions = [...this.sessions.values()];
-    if (sessions.some(session => session.busy(null) || session.transient()) || this.deliveries.size || this.guards.size || this.pending.size) {
+    if (sessions.some(session => session.busy(null) || session.transient()) || this.deliveries.size || this.guards.size) {
       throw new Error('Wait for active agents to finish before restarting the daemon');
     }
     return this.services.handle(kind(packet) === 'check_daemon_idle' ? { type: 'plugin_idle' } : packet);
@@ -677,11 +674,13 @@ export class Host implements SessionHost {
       return null;
     }
     const deletedId = operation === 'delete' && flag(packet, 'success') && typeof guard.saved?.header?.id === 'string' ? guard.saved.header.id : undefined;
-    guard.release(this.ownership(), flag(packet, 'success') && (operation === 'delete' || operation === 'archive'));
+    const removed = flag(packet, 'success') && (operation === 'delete' || operation === 'archive');
+    guard.release(this.ownership(), removed);
     if (deletedId !== undefined) {
       await clearSaved(this.storageRoot(), deletedId);
       this.pending.delete(deletedId);
     }
+    if (removed) this.announceRemoved(guard.id);
     return null;
   }
 
@@ -817,12 +816,12 @@ class Attachment {
 
   constructor(private host: Host, readonly packet: any) {
     this.runtime = text(packet, 'runtimeId');
-    host.attachments.set(this.runtime, packet);
     this.spec = parseLaunchSpec(packet.spec);
     const key = text(packet, 'sessionKey');
     this.identity = specIdentity(this.spec, key);
     if (isUuid(key) && this.identity !== key) throw new Error('The saved path belongs to another conversation; resolve its identity again');
     this.path = argument(this.spec, '--session') ?? null;
+    host.attachments.set(this.runtime, packet);
     this.assertCurrent();
   }
 
@@ -895,7 +894,15 @@ class Attachment {
     return (current !== undefined && opened !== undefined && current === opened) || this.host.attachments.get(this.runtime) === this.packet;
   }
 
-  async cleanup(opened: Session | undefined, owned: boolean): Promise<void> {
+  async cleanup(opened: Session | undefined, owned: boolean, failed = false): Promise<void> {
+    if (failed && this.host.attachments.get(this.runtime) === this.packet) {
+      this.host.attachments.delete(this.runtime);
+      this.host.readonlyMap.delete(this.runtime);
+      if (opened && this.host.subscriptions.get(this.runtime) === opened) {
+        this.host.subscriptions.delete(this.runtime);
+        opened.detachView(this.runtime);
+      }
+    }
     if (this.stillAttached(opened)) return;
     if (opened) {
       if (!opened.views().length) {

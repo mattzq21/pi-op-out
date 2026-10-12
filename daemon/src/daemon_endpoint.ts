@@ -84,11 +84,20 @@ export function claim(): FileLock {
   return lock;
 }
 
-export function publish(address: string, port: number, token: string): void {
+function endpointRecord(address: string, port: number, token: string): string {
   let ip = address;
   if (ip === '0.0.0.0') ip = '127.0.0.1';
   if (ip === '::') ip = '::1';
   const host = ip.includes(':') ? '[' + ip + ']' : ip;
   const endpoint: Endpoint = { url: 'ws://' + host + ':' + port, token, protocol: PROTOCOL_VERSION };
-  records.publish(path(), JSON.stringify(endpoint));
+  return JSON.stringify(endpoint);
+}
+
+export function publish(address: string, port: number, token: string): void {
+  records.publish(path(), endpointRecord(address, port, token));
+}
+
+/** Removes this daemon's endpoint record so clients stop sending its token to whatever listens on the port next. */
+export function unpublish(address: string, port: number, token: string): void {
+  records.removeIfEqual(path(), endpointRecord(address, port, token));
 }

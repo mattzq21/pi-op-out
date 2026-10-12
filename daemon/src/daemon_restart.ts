@@ -277,11 +277,21 @@ function claimed(): boolean {
 }
 
 async function waitForHandoff(plan: Plan): Promise<void> {
-  const deadline = Date.now() + 45_000;
+  let deadline = Date.now() + 45_000;
+  const hardDeadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const value = status(plan.id);
     if (value.phase === 'failed') throw new Error('Restart was cancelled before shutdown');
-    if (value.phase === 'restarting' && claimed()) return;
+    if (value.phase === 'restarting') {
+      if (claimed()) return;
+      let alive = true;
+      try { process.kill(plan.owner, 0); }
+      catch (error: any) {
+        if (error?.code === 'ESRCH') alive = false;
+        else if (error?.code !== 'EPERM') throw error;
+      }
+      if (alive) deadline = Math.min(hardDeadline, Date.now() + 45_000);
+    }
     await sleep(100);
   }
   throw new Error('Daemon restart handoff timed out');

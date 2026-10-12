@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { dlopen, FFIType, ptr } from 'bun:ffi';
 import type { Duplex } from 'node:stream';
-import { BUILD_ID, DEVELOPMENT, MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
+import { BUILD_ID, DEVELOPMENT, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
 import * as endpoint from './daemon_endpoint';
 import * as daemonLog from './daemon_log';
 import * as daemonRestart from './daemon_restart';
@@ -20,6 +20,9 @@ import { errorText, withTimeout } from './util/sync';
 import type { App } from './app';
 
 const MAX_MESSAGE = MAX_REQUEST_BYTES;
+const MAX_OUTGOING_BYTES = MAX_RESPONSE_BYTES;
+const MAX_OUTGOING_MESSAGES = 1024;
+const MAX_CONNECTIONS = 8;
 const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://groups-changed', 'pi://sessions-changed', 'pi://daemon-error', 'pi://daemon-log-status', 'pi://provider-auth-changed', 'pi://chatgpt-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://daemon-restarting'];
 
 /** A counter that limits how many items may run at once. */
@@ -38,10 +41,11 @@ interface Broadcast { packet: any; text: string }
 type Subscriber = (event: Broadcast) => void;
 
 /** Values shared by all mobile listeners. */
-interface Shared { app: App; subscribers: Set<Subscriber>; connections: Slots; jobs: Slots }
+interface Shared { app: App; subscribers: Set<Subscriber>; handshakes: Slots; connections: Slots; jobs: Slots }
 
 const listeners = new WeakMap<App, Set<NetServer>>();
 const sockets = new WeakMap<App, Set<Socket>>();
+const published = new WeakMap<App, () => void>();
 
 function trackListener(app: App, server: NetServer): void {
   let active = listeners.get(app);
@@ -65,6 +69,13 @@ export function stopAccepting(app: App): void {
 
 export function closeConnections(app: App): void {
   for (const socket of sockets.get(app) ?? []) socket.destroy();
+}
+
+/** Removes the endpoint records this daemon published, if they still describe this daemon. */
+export function unpublish(app: App): void {
+  const remove = published.get(app);
+  published.delete(app);
+  if (remove) remove();
 }
 
 function splitBind(bind: string): [string, number] {
@@ -91,13 +102,14 @@ function listen(server: Server, bind: string): Promise<{ address: string; port: 
   });
 }
 
-/** An HTTP server that only answers WebSocket upgrades and limits open connections. */
+/** An HTTP server that only answers WebSocket upgrades and limits sockets that have not authenticated yet. */
 function upgradeServer(shared: Shared, onUpgrade: (request: IncomingMessage, socket: Duplex, head: Buffer) => void): Server {
   const server = createServer((_request, response) => { response.writeHead(426, { Connection: 'close' }); response.end(); });
   trackListener(shared.app, server);
   server.on('connection', (socket: Socket) => {
-    const release = shared.connections.tryAcquire();
-    if (!release) { socket.destroy(); return; }
+    const release = shared.handshakes.tryAcquire();
+    if (!release) { console.error('Rejected a connection from ' + socket.remoteAddress + ': too many connections are waiting to authenticate'); socket.destroy(); return; }
+    (socket as any).piopReleaseHandshake = release;
     socket.once('close', release);
     const timer = setTimeout(() => { if (!(socket as any).piopUpgraded) socket.destroy(); }, 10_000);
     timer.unref();
@@ -114,22 +126,28 @@ function upgradeServer(shared: Shared, onUpgrade: (request: IncomingMessage, soc
 export async function start(app: App): Promise<void> {
   daemonLog.listenStatus(failure => app.setLogStatus('local', failure));
   let token = process.env.PIOP_MOBILE_TOKEN;
-  if (token === undefined) {
-    try { token = endpoint.read().token; } catch { token = randomUUID() + randomUUID(); }
+  if (token === undefined && DEVELOPMENT) {
+    // Debug phones keep the token from debug-mobile.json between daemon restarts.
+    try { token = endpoint.read().token; }
+    catch (error) { if (errorText(error) !== 'Daemon connection is not available') console.error('Could not read the saved daemon endpoint; using a new token: ' + errorText(error)); }
   }
+  // Production clients read daemon.json before every connection, so each daemon gets its own token.
+  if (typeof token !== 'string') token = randomUUID() + randomUUID();
   if (token.length < 32) throw new Error('PIOP_MOBILE_TOKEN must contain at least 32 characters');
   const bind = process.env.PIOP_MOBILE_BIND ?? (DEVELOPMENT ? '127.0.0.1:0' : '127.0.0.1:9847');
-  const shared: Shared = { app, subscribers: new Set(), connections: new Slots(8), jobs: new Slots(16) };
+  const shared: Shared = { app, subscribers: new Set(), handshakes: new Slots(16), connections: new Slots(MAX_CONNECTIONS), jobs: new Slots(16) };
   const secret = token;
   const server = upgradeServer(shared, (request, socket, head) => {
     const ws = acceptUpgrade(request, socket, head, MAX_MESSAGE);
     if (!ws) return;
     const local = isLoopback(request.socket.remoteAddress);
-    connection(shared, ws, secret, local).catch(() => undefined).finally(() => ws.terminate());
+    connection(shared, ws, secret, local, socket).catch(error => console.error('Connection from ' + request.socket.remoteAddress + ' ended: ' + errorText(error))).finally(() => ws.terminate());
   });
   let address: { address: string; port: number };
   try { address = await listen(server, bind); } catch (error) { throw new Error('Mobile endpoint: ' + errorText(error)); }
   endpoint.publish(address.address, address.port, secret);
+  const removals: Array<() => void> = [() => endpoint.unpublish(address.address, address.port, secret)];
+  published.set(app, () => { for (const remove of removals) { try { remove(); } catch (error) { console.error('Could not remove the daemon endpoint record: ' + errorText(error)); } } });
   for (const name of EVENTS) {
     app.listenAny(name, payload => {
       const packet = { event: name, payload };
@@ -138,7 +156,7 @@ export async function start(app: App): Promise<void> {
     });
   }
   await startTailscale(shared);
-  if (DEVELOPMENT) await startDebug(shared, secret);
+  if (DEVELOPMENT) removals.push(await startDebug(shared, secret));
   process.stderr.write('Piop daemon listening on ' + bind + ' (TLS proxy required)\n');
 }
 
@@ -148,16 +166,19 @@ function isLoopback(address: string | undefined): boolean {
   return address === '::1' || address.startsWith('127.');
 }
 
-async function startDebug(shared: Shared, token: string): Promise<void> {
+async function startDebug(shared: Shared, token: string): Promise<() => void> {
   const server = upgradeServer(shared, (request, socket, head) => {
     if (request.headers.origin !== undefined && request.headers.origin !== 'https://localhost') { reject(socket, 403, 'Forbidden'); return; }
     const ws = acceptUpgrade(request, socket, head, MAX_MESSAGE);
     if (!ws) return;
-    connection(shared, ws, token, isLoopback(request.socket.remoteAddress)).catch(() => undefined).finally(() => ws.terminate());
+    connection(shared, ws, token, isLoopback(request.socket.remoteAddress), socket).catch(error => console.error('Debug connection from ' + request.socket.remoteAddress + ' ended: ' + errorText(error))).finally(() => ws.terminate());
   });
   const address = await listen(server, process.env.PIOP_DEBUG_MOBILE_BIND ?? '127.0.0.1:0');
   const host = address.address.includes(':') ? '[' + address.address + ']' : address.address;
-  records.publish(join(endpoint.directory(), 'debug-mobile.json'), JSON.stringify({ url: 'ws://' + host + ':' + address.port, token, protocol: 1 }));
+  const path = join(endpoint.directory(), 'debug-mobile.json');
+  const record = JSON.stringify({ url: 'ws://' + host + ':' + address.port, token, protocol: PROTOCOL_VERSION });
+  records.publish(path, record);
+  return () => records.removeIfEqual(path, record);
 }
 
 function authenticated(value: any, expected: string): boolean {
@@ -176,15 +197,24 @@ async function firstText(ws: WebSocketConnection, timeoutMessage: string, invali
   try { return JSON.parse(first.data); } catch (error) { throw new Error(invalid === 'control' ? errorText(error) : 'Invalid authentication'); }
 }
 
-async function connection(shared: Shared, ws: WebSocketConnection, token: string, local: boolean): Promise<void> {
+async function connection(shared: Shared, ws: WebSocketConnection, token: string, local: boolean, socket: Duplex): Promise<void> {
   const value = await firstText(ws, 'Authentication timeout', 'authentication');
-  if (!authenticated(value, token)) { await ws.close(); throw new Error('Unauthorized'); }
+  if (!authenticated(value, token)) { await sendError(ws, 'Unauthorized'); await ws.close(); throw new Error('Unauthorized'); }
   ws.markAuthenticated();
+  const release = shared.connections.tryAcquire();
+  if (!release) { await sendError(ws, 'Too many connections'); await ws.close(); throw new Error('Too many connections'); }
+  (socket as any).piopReleaseHandshake?.();
+  try {
   if (value.scope === 'control') {
-    if (!local) throw new Error('Daemon control requires a local connection');
+    if (!local) { await sendError(ws, 'Daemon control requires a local connection'); throw new Error('Daemon control requires a local connection'); }
     return controlConnection(shared.app, ws);
   }
   return serveConnection(shared, ws, value.scope === 'peer');
+  } finally { release(); }
+}
+
+async function sendError(ws: WebSocketConnection, error: string): Promise<void> {
+  try { await withTimeout(ws.sendText(JSON.stringify({ type: 'error', error })), 2000, 'Send timeout'); } catch { /* the client is already gone */ }
 }
 
 async function controlConnection(app: App, ws: WebSocketConnection): Promise<void> {
@@ -226,21 +256,39 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
   const pending = new Set<Promise<void>>();
   const owner = 'client:' + randomUUID();
   let queued = 0;
+  let queuedBytes = 0;
   let chain = Promise.resolve();
   let lastSeen = Date.now();
-  const send = (text: string, restartId?: string): void => {
-    if (ws.closed) return;
+  // A restart the client asked for goes ahead even when the reply cannot reach it; clients learn about it from the restarting event.
+  const commitRestart = async (restartId: string) => {
+    try { await daemonRestart.commit(app, restartId); }
+    catch (error) { console.error('Could not commit daemon restart ' + restartId + ': ' + errorText(error)); ws.terminate(); }
+  };
+  const send = (text: string, restartId?: string, id?: number): void => {
+    if (ws.closed) { if (restartId !== undefined) void commitRestart(restartId); return; }
+    let bytes = Buffer.byteLength(text, 'utf8');
+    if (bytes > MAX_RESPONSE_BYTES) {
+      // One oversized reply fails on its own instead of closing the connection and every other request on it.
+      if (id === undefined) { console.error('Dropped an event to ' + owner + ' of ' + bytes + ' bytes: it exceeds the response limit'); return; }
+      text = JSON.stringify({ id, error: 'Response of ' + bytes + ' bytes exceeds the ' + Math.floor(MAX_RESPONSE_BYTES / 1024 / 1024) + ' MiB limit' });
+      bytes = Buffer.byteLength(text, 'utf8');
+    }
+    if (queued >= MAX_OUTGOING_MESSAGES || bytes > MAX_OUTGOING_BYTES - queuedBytes) {
+      console.error('Disconnecting ' + owner + ': outgoing queue exceeds ' + MAX_OUTGOING_MESSAGES + ' messages or ' + Math.floor(MAX_OUTGOING_BYTES / 1024 / 1024) + ' MiB');
+      ws.terminate();
+      if (restartId !== undefined) void commitRestart(restartId);
+      return;
+    }
     queued += 1;
-    if (queued > 1024) { ws.terminate(); return; }
+    queuedBytes += bytes;
     chain = chain.then(async () => {
       queued -= 1;
-      if (ws.closed) return;
-      try { await withTimeout(ws.sendText(text), 10_000, 'Send timeout'); }
-      catch { ws.terminate(); return; }
-      if (restartId !== undefined) {
-        try { await daemonRestart.commit(app, restartId); }
-        catch (error) { console.error(error); ws.terminate(); }
-      }
+      try {
+        if (ws.closed) { if (restartId !== undefined) await commitRestart(restartId); return; }
+        try { await withTimeout(ws.sendText(text), 10_000, 'Send timeout'); }
+        catch (error) { console.error('Could not send to ' + owner + ':', error); ws.terminate(); if (restartId !== undefined) await commitRestart(restartId); return; }
+        if (restartId !== undefined) await commitRestart(restartId);
+      } finally { queuedBytes -= bytes; }
     });
   };
   const subscriber: Subscriber = event => {
@@ -264,12 +312,12 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
       if (!message) break;
       if (message.type !== 'text') continue;
       let request: any;
-      try { request = JSON.parse(message.data); } catch { break; }
+      try { request = JSON.parse(message.data); } catch (error) { send(JSON.stringify({ error: 'Invalid request: ' + errorText(error) })); console.error('Closing ' + owner + ': request is not valid JSON'); break; }
       if (request?.type === 'ping') {
         try { await withTimeout(ws.sendText(JSON.stringify({ type: 'pong' })), 10_000, 'Send timeout'); } catch { break; }
         continue;
       }
-      if (!validRequest(request)) break;
+      if (!validRequest(request)) { send(JSON.stringify({ error: 'Invalid request: expected {id, command, args}' })); console.error('Closing ' + owner + ': request has no valid id or command'); break; }
       const id: number = request.id;
       const command: string = request.command;
       const args = request.args === undefined ? {} : request.args;
@@ -285,7 +333,7 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
         } catch (error) { response = { id, error: responseErrorText(error) }; }
         finally { permit(); }
         const restartId = typeof response.result?.restartId === 'string' ? response.result.restartId : undefined;
-        send(JSON.stringify(response), restartId);
+        send(JSON.stringify(response), restartId, id);
       })();
       pending.add(job);
       job.finally(() => pending.delete(job));
@@ -411,7 +459,7 @@ async function startTailscale(shared: Shared): Promise<void> {
   });
   const server = createNetServer({ pauseOnConnect: true }, socket => {
     const release = shared.connections.tryAcquire();
-    if (!release) { socket.destroy(); return; }
+    if (!release) { process.stderr.write('Tailscale connection rejected: all ' + MAX_CONNECTIONS + ' connection slots are in use\n'); socket.destroy(); return; }
     socket.once('close', release);
     const timer = setTimeout(() => { if (!(socket as any).piopUpgraded) socket.destroy(); }, 10_000);
     timer.unref();

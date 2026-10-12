@@ -121,29 +121,33 @@ fn intended_preferences(path: &Path, baseline: &ClientSettings, intended: Client
     }
 }
 
-#[tauri::command(async)]
-pub(crate) fn load_client_settings() -> Result<Value, String> {
-    let path = storage_path()?;
-    let _guard = lock_settings(&path)?;
-    match records::read(&path)? {
-        Some(body) => {
-            let settings: ClientSettings = serde_json::from_slice(&body).map_err(|error| format!("Could not read client preferences: {error}"))?;
-            Ok(json!({"settings":settings,"revision":settings_revision(Some(&body))}))
+#[tauri::command]
+pub(crate) async fn load_client_settings() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = storage_path()?;
+        let _guard = lock_settings(&path)?;
+        match records::read(&path)? {
+            Some(body) => {
+                let settings: ClientSettings = serde_json::from_slice(&body).map_err(|error| format!("Could not read client preferences: {error}"))?;
+                Ok(json!({"settings":settings,"revision":settings_revision(Some(&body))}))
+            }
+            None => Ok(json!({"settings":null,"revision":settings_revision(None)})),
         }
-        None => Ok(json!({"settings":null,"revision":settings_revision(None)})),
-    }
+    }).await.map_err(|error| format!("Client settings task failed: {error}"))?
 }
 
-#[tauri::command(async)]
-pub(crate) fn save_client_settings(app: AppHandle, settings: ClientSettings, baseline: ClientSettings, initialize: Option<bool>) -> Result<Value, String> {
-    let path = storage_path()?;
-    let _guard = lock_settings(&path)?;
-    let settings = intended_preferences(&path, &baseline, settings, initialize.unwrap_or(false))?;
-    let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
-    let publication = records::publish(&path, &body)?;
-    crate::dictation::reload(&app, settings.dictation());
-    for window in app.webview_windows().values() { let _ = window.emit("pi://client-settings-changed", ()); }
-    Ok(json!({"settings":settings,"revision":settings_revision(Some(&body)),"publication":publication}))
+#[tauri::command]
+pub(crate) async fn save_client_settings(app: AppHandle, settings: ClientSettings, baseline: ClientSettings, initialize: Option<bool>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = storage_path()?;
+        let _guard = lock_settings(&path)?;
+        let settings = intended_preferences(&path, &baseline, settings, initialize.unwrap_or(false))?;
+        let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
+        let publication = records::publish(&path, &body)?;
+        crate::dictation::reload(&app, settings.dictation());
+        for window in app.webview_windows().values() { if let Err(error) = window.emit("pi://client-settings-changed", ()) { eprintln!("Could not report client settings change: {error}"); } }
+        Ok(json!({"settings":settings,"revision":settings_revision(Some(&body)),"publication":publication}))
+    }).await.map_err(|error| format!("Client settings task failed: {error}"))?
 }
 
 #[derive(Deserialize)]
@@ -178,13 +182,15 @@ fn update_prompt_history(entries: Vec<PromptHistoryEntry>, legacy: Vec<String>) 
     Ok((history, changed))
 }
 
-#[tauri::command(async)]
-pub(crate) fn sync_prompt_history(app: AppHandle, entries: Vec<PromptHistoryEntry>, legacy: Vec<String>) -> Result<Vec<String>, String> {
-    let (history, changed) = update_prompt_history(entries, legacy)?;
-    if changed {
-        for window in app.webview_windows().values() { let _ = window.emit("pi://prompt-history-changed", ()); }
-    }
-    Ok(history)
+#[tauri::command]
+pub(crate) async fn sync_prompt_history(app: AppHandle, entries: Vec<PromptHistoryEntry>, legacy: Vec<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (history, changed) = update_prompt_history(entries, legacy)?;
+        if changed {
+            for window in app.webview_windows().values() { if let Err(error) = window.emit("pi://prompt-history-changed", ()) { eprintln!("Could not report prompt history change: {error}"); } }
+        }
+        Ok(history)
+    }).await.map_err(|error| format!("Client settings task failed: {error}"))?
 }
 
 fn read_prompt_history(db: &rusqlite::Connection) -> Result<Vec<String>, String> {

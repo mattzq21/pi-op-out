@@ -95,7 +95,9 @@ export function createConversationArchive(context: ArchiveContext) {
           void capturedRuntimePool.release(nextTransport);
         } else batch(() => { setActiveCwd(cwd); activateConversationKey(conversationKey); activateTransport(nextTransport); });
 
-        void capturedRuntimePool.release(ownerTransport).finally(() => transportConversationKeys.current.delete(ownerTransport));
+        await capturedRuntimePool.release(ownerTransport)
+          .then(() => transportConversationKeys.current.delete(ownerTransport))
+          .catch(reason => addNotice({ title: "Could not close archived conversation", message: String(reason) }));
       } catch (reason) {
         transportConversationKeys.current.delete(nextTransport);
         void capturedRuntimePool.release(nextTransport);

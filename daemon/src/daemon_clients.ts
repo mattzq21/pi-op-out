@@ -67,14 +67,22 @@ export class DaemonClients {
 
   private unattended(): boolean { return this.automaticFlag && this.count === 0; }
 
-  private wait(ms: number): Promise<void> { const controller = new AbortController(); return Promise.race([this.stopped.notified(controller.signal), sleep(ms)]).finally(() => controller.abort()); }
+  private wait(ms?: number): Promise<void> {
+    if (ms === undefined) return this.stopped.notified();
+    const controller = new AbortController();
+    return Promise.race([this.stopped.notified(controller.signal), sleep(ms)]).finally(() => controller.abort());
+  }
 
+  /**
+   * Resolves when the daemon should stop. Wakes on stop() and on the last client leaving. A short retry timer runs only
+   * while an unattended automatic daemon still has work (a running terminal, agent or plugin) that keeps it from stopping.
+   */
   async waitForShutdown(app: App): Promise<void> {
     await this.wait(30_000);
     for (;;) {
       if (this.closingFlag) return;
       if (this.unattended() && await this.stopIfIdle(app)) return;
-      await this.wait(1000);
+      await this.wait(this.unattended() ? 1000 : undefined);
     }
   }
 

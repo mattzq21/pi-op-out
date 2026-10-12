@@ -14,8 +14,8 @@ function startTime(pid: number): string | undefined {
   } catch { return undefined; }
 }
 
-export function descendantProcesses(parent: number, group?: number): Array<{ pid: number; started: string }> {
-  const processes = new Map<number, { ppid: number; group: number; started: string }>();
+export function descendantProcesses(parent: number, group?: number, session?: number): Array<{ pid: number; started: string }> {
+  const processes = new Map<number, { ppid: number; group: number; session: number; started: string }>();
   let entries: string[] = [];
   try { entries = readdirSync('/proc'); } catch { return []; }
   for (const entry of entries) {
@@ -27,11 +27,12 @@ export function descendantProcesses(parent: number, group?: number): Array<{ pid
       const fields = stat.slice(index + 1).trim().split(/\s+/);
       const ppid = Number(fields[1]);
       const started = fields[19];
-      if (Number.isFinite(ppid) && started && fields[0] !== 'Z') processes.set(Number(entry), { ppid, group: Number(fields[2]), started });
+      if (Number.isFinite(ppid) && started && fields[0] !== 'Z') processes.set(Number(entry), { ppid, group: Number(fields[2]), session: Number(fields[3]), started });
     } catch {}
   }
   const descendants = new Set([parent]);
   if (group !== undefined) for (const [pid, entry] of processes) if (entry.group === group) descendants.add(pid);
+  if (session !== undefined) for (const [pid, entry] of processes) if (entry.session === session) descendants.add(pid);
   for (;;) {
     const previous = descendants.size;
     for (const [pid, { ppid }] of processes) if (descendants.has(ppid)) descendants.add(pid);

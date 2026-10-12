@@ -13,6 +13,23 @@ import * as daemon from './daemon';
 import { startSessionBroker } from './broker';
 import { loadAppSettings } from './settings';
 import { prepareDefinedAgentsExtension } from './extensions';
+import { errorText } from './util/sync';
+
+let failureListener: ((line: string) => void) | undefined;
+
+/**
+ * Keeps the daemon alive on a missed promise rejection or a stray exception. Bun exits on either by default, which
+ * would end every agent session and terminal for one missed catch. The failure is logged and sent to clients instead.
+ */
+export function installFailureHandlers(): void {
+  const report = (kind: string, error: unknown) => {
+    const line = kind + ' in the Piop daemon: ' + errorText(error) + (error instanceof Error && error.stack ? '\n' + error.stack : '');
+    console.error(line);
+    try { failureListener?.(line); } catch (reason) { console.error('Could not report the daemon failure to clients: ' + errorText(reason)); }
+  };
+  process.on('unhandledRejection', error => report('Unhandled promise rejection', error));
+  process.on('uncaughtException', error => report('Uncaught exception', error));
+}
 
 export async function runDaemon(): Promise<void> {
   const first = process.argv[2];
@@ -32,32 +49,43 @@ export async function runDaemon(): Promise<void> {
 
 async function runBackend(): Promise<void> {
   const app = new App();
-  await startSessionBroker(app, app.broker);
-  const settings = await loadAppSettings(app);
-  await prepareDefinedAgentsExtension();
-  await daemon.connect(app, app.pi, app.broker, settings, 'local');
-  await daemonRestart.initializeCandidate(app);
-  await mobile.start(app);
-  await daemonRestart.ready();
-  await waitForShutdown(app);
-  await shutdownBackend(app);
+  failureListener = line => app.emit('pi://daemon-error', { hostId: 'local', line });
+  // Signals are handled from the first step so a stop during a slow startup still runs the shutdown sequence.
+  const signalled = watchSignals(app);
+  const stoppedEarly = Symbol('stopped during startup');
+  const step = async (operation: () => Promise<unknown> | unknown) => { if (app.clients.closing()) throw stoppedEarly; await operation(); };
+  try {
+    let settings: Awaited<ReturnType<typeof loadAppSettings>> | undefined;
+    await step(() => startSessionBroker(app, app.broker));
+    await step(async () => { settings = await loadAppSettings(app); });
+    await step(() => prepareDefinedAgentsExtension());
+    await step(() => daemon.connect(app, app.pi, app.broker, settings!, 'local'));
+    await step(() => daemonRestart.initializeCandidate(app));
+    await step(() => mobile.start(app));
+    await step(() => daemonRestart.ready());
+    await Promise.race([signalled.stopped, app.clients.waitForShutdown(app).catch(error => console.error('Shutdown wait failed:', error))]);
+  } catch (error) {
+    if (error !== stoppedEarly) throw error;
+  } finally {
+    signalled.release();
+    await shutdownBackend(app);
+    failureListener = undefined;
+  }
 }
 
-function waitForShutdown(app: App): Promise<void> {
-  return new Promise(resolve => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      app.clients.stop();
-      done = true;
-      process.off('SIGINT', finish);
-      process.off('SIGTERM', finish);
-      resolve();
-    };
-    process.on('SIGINT', finish);
-    process.on('SIGTERM', finish);
-    app.clients.waitForShutdown(app).then(finish, finish);
-  });
+const STOP_SIGNALS: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
+/** Stops the daemon on a termination signal. The returned promise resolves on the first signal. */
+function watchSignals(app: App): { stopped: Promise<void>; release(): void } {
+  let resolveStopped!: () => void;
+  const stopped = new Promise<void>(resolve => { resolveStopped = resolve; });
+  const finish = (signal: NodeJS.Signals) => {
+    console.error('Piop daemon received ' + signal + '; shutting down');
+    app.clients.stop();
+    resolveStopped();
+  };
+  for (const signal of STOP_SIGNALS) process.on(signal, finish);
+  return { stopped, release: () => { for (const signal of STOP_SIGNALS) process.off(signal, finish); } };
 }
 
 async function ignore(operation: () => Promise<unknown> | unknown): Promise<void> {
@@ -78,6 +106,7 @@ async function shutdownBackend(app: App): Promise<void> {
   mobile.stopAccepting(app);
   await ignore(() => app.clients.drain(10_000));
   mobile.closeConnections(app);
+  await ignore(() => mobile.unpublish(app));
   await ignore(() => peers.shutdown(app));
   await ignore(() => app.broker.shutdown());
   await ignore(() => terminals.shutdown(app.terminals));

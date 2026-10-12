@@ -1,5 +1,7 @@
 import { createInterface } from 'node:readline';
+import type { ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
+import { PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
 import * as endpoint from './daemon_endpoint';
 import * as daemonLog from './daemon_log';
 import { daemonScript } from './session_worker';
@@ -8,7 +10,7 @@ import { sleep } from './util/sync';
 function validateEndpoint(protocol: number, token: string, address: string): void {
   let url: URL;
   try { url = new URL(address); } catch (error: any) { throw new Error(error.message); }
-  if (protocol !== 1 || typeof token !== 'string' || token.length < 32 || url.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '[::1]', '::1'].includes(url.hostname)) {
+  if (protocol !== PROTOCOL_VERSION || typeof token !== 'string' || token.length < 32 || url.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '[::1]', '::1'].includes(url.hostname)) {
     throw new Error('SSH must attach to a local Piop daemon endpoint');
   }
 }
@@ -50,6 +52,8 @@ class Socket {
   }
 
   send(text: string): void { this.socket.send(text); }
+  /** Bytes accepted by send but not yet handed to the network. */
+  bufferedAmount(): number { return this.socket.bufferedAmount; }
   close(): void { try { this.socket.close(); } catch {} }
 }
 
@@ -68,7 +72,8 @@ async function openSocket(scope: string): Promise<[Socket, any]> {
     const reply = await socket.next();
     if (reply === undefined) throw new Error('Daemon closed during authentication');
     const ready = JSON.parse(reply);
-    if (ready?.type !== 'ready' || ready.peerProtocol !== 1 || typeof ready.daemonId !== 'string') throw new Error('Upgrade the running Piop daemon to enable peer connections');
+    if (ready?.type === 'error') throw new Error('Piop daemon rejected the connection: ' + (typeof ready.error === 'string' ? ready.error : 'unknown error'));
+    if (ready?.type !== 'ready' || ready.peerProtocol !== PEER_PROTOCOL_VERSION || typeof ready.daemonId !== 'string') throw new Error('Upgrade the running Piop daemon to enable peer connections');
     return [socket, ready];
   })();
   let timer: NodeJS.Timeout | undefined;
@@ -82,12 +87,39 @@ async function tryOpen(scope: string): Promise<[Socket, any] | undefined> {
   try { return await openSocket(scope); } catch { return undefined; }
 }
 
-async function startDaemon(mode: string): Promise<string> {
+async function startDaemon(mode: string): Promise<[string, ChildProcess]> {
   const executable = daemonScript();
   const command: daemonLog.DaemonCommand = { program: executable, args: [mode], env: {} };
   const logPath = await daemonLog.configure(command, executable);
-  await daemonLog.spawnDaemon(command);
-  return logPath;
+  return [logPath, await daemonLog.spawnDaemon(command)];
+}
+
+/**
+ * Starts a daemon and opens a socket to it. When the new daemon exits because another daemon still holds
+ * the lock, waits for that daemon to release it and starts again once.
+ */
+async function startAndOpen(mode: string, scope: string): Promise<[Socket, any]> {
+  const deadline = Date.now() + endpoint.STARTUP_TIMEOUT;
+  let logPath: string;
+  let child: ChildProcess;
+  let exit: number | null | undefined;
+  const launch = async () => { [logPath, child] = await startDaemon(mode); exit = undefined; child.once('exit', code => { exit = code; }); };
+  await launch();
+  let relaunched = false;
+  let lastError = '';
+  while (Date.now() < deadline) {
+    try { return await openSocket(scope); } catch (error: any) { lastError = error?.message ?? String(error); }
+    if (exit !== undefined) {
+      if (exit !== endpoint.ALREADY_RUNNING_EXIT_CODE || relaunched) throw new Error('Piop daemon exited with code ' + exit + '. See ' + logPath!);
+      while (Date.now() < deadline && !claimed()) await sleep(100);
+      if (Date.now() >= deadline) break;
+      relaunched = true;
+      await launch();
+      continue;
+    }
+    await sleep(100);
+  }
+  throw new Error('Could not attach to Piop daemon: ' + lastError + '. See ' + logPath!);
 }
 
 async function connect(): Promise<[Socket, any]> {
@@ -98,14 +130,7 @@ async function connect(): Promise<[Socket, any]> {
     opened = await tryOpen('peer');
     if (opened) return opened;
   }
-  const logPath = await startDaemon('--exit-on-disconnect');
-  const deadline = Date.now() + endpoint.STARTUP_TIMEOUT;
-  let lastError = '';
-  while (Date.now() < deadline) {
-    try { return await openSocket('peer'); } catch (error: any) { lastError = error?.message ?? String(error); }
-    await sleep(100);
-  }
-  throw new Error('Could not attach to Piop daemon: ' + lastError + '. See ' + logPath);
+  return startAndOpen('--exit-on-disconnect', 'peer');
 }
 
 function claimed(): boolean {
@@ -121,8 +146,8 @@ async function controlSocket(action: string): Promise<Socket | undefined> {
     if (opened) return opened[0];
   }
   if (action === 'stop' && claimed()) return undefined;
-  if (action === 'start') await startDaemon('--serve');
-  const deadline = Date.now() + (action === 'start' ? endpoint.STARTUP_TIMEOUT : 15_000);
+  if (action === 'start') return (await startAndOpen('--serve', 'control'))[0];
+  const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     opened = await tryOpen('control');
     if (opened) return opened[0];
@@ -166,6 +191,10 @@ export async function control(action: string): Promise<void> {
   console.log('Piop daemon ' + (action === 'start' ? 'running in the background' : 'stopped') + '.');
 }
 
+const INPUT_HIGH_WATER_BYTES = 16 * 1024 * 1024;
+const INPUT_LOW_WATER_BYTES = 8 * 1024 * 1024;
+const INPUT_STALL_MS = 60_000;
+
 /** Runs --stdio-client: bridges stdin and stdout lines to the local daemon. */
 export async function run(): Promise<void> {
   const [socket, ready] = await connect();
@@ -175,6 +204,9 @@ export async function run(): Promise<void> {
     let queuedBytes = 0;
     let failed = false;
     let paused = false;
+    let inputPaused = false;
+    let inputDrainTimer: NodeJS.Timeout | undefined;
+    let inputStallTimer: NodeJS.Timeout | undefined;
     let stallTimer: NodeJS.Timeout | undefined;
     const heartbeat = setInterval(() => { try { socket.send(JSON.stringify({ type: 'ping' })); } catch {} }, 20_000);
     const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -183,9 +215,26 @@ export async function run(): Promise<void> {
       failed = true;
       reject(error);
       clearTimeout(stallTimer);
+      clearTimeout(inputDrainTimer);
+      clearTimeout(inputStallTimer);
       clearInterval(heartbeat);
       socket.close();
       input.close();
+    };
+    // The WebSocket API has no drain event, so while input is paused the send buffer is checked on a short timer.
+    const resumeInputWhenDrained = () => {
+      if (failed) return;
+      if (socket.bufferedAmount() > INPUT_LOW_WATER_BYTES) { inputDrainTimer = setTimeout(resumeInputWhenDrained, 50); return; }
+      clearTimeout(inputStallTimer);
+      inputPaused = false;
+      input.resume();
+    };
+    const pauseInputUntilDrained = () => {
+      if (inputPaused) return;
+      inputPaused = true;
+      input.pause();
+      inputStallTimer = setTimeout(() => fail(new Error('Daemon stopped reading input: the send buffer did not drain for 60 seconds')), INPUT_STALL_MS);
+      inputDrainTimer = setTimeout(resumeInputWhenDrained, 50);
     };
     const resetStallTimer = () => {
       clearTimeout(stallTimer);
@@ -209,9 +258,10 @@ export async function run(): Promise<void> {
       if (failed) return;
       if (Buffer.byteLength(line) > 32 * 1024 * 1024) { fail(new Error('Daemon request is too large')); return; }
       try { socket.send(line); } catch (error) { fail(error); }
+      if (socket.bufferedAmount() > INPUT_HIGH_WATER_BYTES) pauseInputUntilDrained();
     });
-    input.on('close', () => { clearInterval(heartbeat); socket.close(); output.then(() => resolve()); });
-    socket.onClose = () => { clearInterval(heartbeat); input.close(); output.then(() => resolve()); };
+    input.on('close', () => { clearInterval(heartbeat); clearTimeout(inputDrainTimer); clearTimeout(inputStallTimer); socket.close(); output.then(() => resolve()); });
+    socket.onClose = () => { clearInterval(heartbeat); clearTimeout(inputDrainTimer); clearTimeout(inputStallTimer); input.close(); output.then(() => resolve()); };
     enqueue(JSON.stringify(ready));
     socket.listen(enqueue);
   });

@@ -11,7 +11,12 @@ import * as terminalLookup from './terminal_lookup';
 import type { App } from './app';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
-const INPUT_QUEUE = 32;
+/** Input accepted since the PTY last reported it was drained or idle. */
+const INPUT_PENDING_BYTES = 4 * 1024 * 1024;
+const INPUT_IDLE_MS = 1000;
+/** Output chunks are merged for this long before one terminal_output event is sent. */
+const OUTPUT_FLUSH_MS = 16;
+const OUTPUT_FLUSH_BYTES = 256 * 1024;
 
 export interface TerminalProcess {
   generation: string;
@@ -21,9 +26,12 @@ export interface TerminalProcess {
   windowLabel: string;
   /** The shell process. It runs in a Bun pseudo-terminal (PTY), available as child.terminal. */
   child: Subprocess;
+  processSessionId: number;
   rows: number;
   cols: number;
-  queued: number;
+  /** Input bytes written since the last drain. Bun only reports a drain after a write it had to buffer. */
+  pendingInput: number;
+  lastInput: number;
   exited: boolean;
   stopping?: Promise<void>;
 }
@@ -82,8 +90,9 @@ function terminalAlreadyRunning(runtime: TerminalRuntime, terminalId: string, ow
   if (item && item.owner !== owner) throw new Error('Terminal belongs to another connection');
   const process = runtime.processes.get(terminalId);
   if (!process) return false;
-  if (process.windowLabel === owner) return true;
-  throw new Error('Terminal belongs to another connection');
+  if (process.windowLabel !== owner) throw new Error('Terminal belongs to another connection');
+  if (process.stopping || process.exited || process.child.exitCode !== null || process.child.signalCode !== null) throw new Error('Terminal is still closing; try again in a moment');
+  return true;
 }
 
 interface TerminalLaunch { terminalId: string; sessionKey: string; cwd: string; cols: number; rows: number; hostId: string; windowLabel: string }
@@ -95,10 +104,22 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
   const generation = randomUUID();
   const current = () => runtime.processes.get(terminalId)?.generation === generation;
   const decoder = new TextDecoder('utf-8');
-  const output = (data: string) => {
+  let pendingOutput = '';
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
+  const flush = () => {
+    clearTimeout(flushTimer);
+    flushTimer = undefined;
+    const data = pendingOutput;
+    pendingOutput = '';
     if (!data || !current()) return;
     terminalLookup.record(runtime.history, terminalId, data);
     emit(terminalLookup.event(runtime.history, terminalId, { type: 'terminal_output', terminalId, data }));
+  };
+  const output = (data: string) => {
+    if (!data) return;
+    pendingOutput += data;
+    if (pendingOutput.length >= OUTPUT_FLUSH_BYTES) { flush(); return; }
+    flushTimer ??= setTimeout(flush, OUTPUT_FLUSH_MS);
   };
   let terminal: TerminalProcess | undefined;
   let ptyEnded!: () => void;
@@ -111,12 +132,12 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
       terminal: {
         cols, rows, name: 'xterm-256color',
         data: (_pty, chunk) => output(decoder.decode(chunk, { stream: true })),
-        drain: () => { if (terminal) terminal.queued = 0; },
+        drain: () => { if (terminal) terminal.pendingInput = 0; },
         exit: () => ptyEnded(),
       },
     });
   } catch (error: any) { throw new Error('Could not start terminal shell: ' + (error?.message ?? error)); }
-  const started: TerminalProcess = { generation, sessionKey, cwd, hostId, windowLabel, child, rows, cols, queued: 0, exited: false };
+  const started: TerminalProcess = { generation, sessionKey, cwd, hostId, windowLabel, child, processSessionId: child.pid, rows, cols, pendingInput: 0, lastInput: 0, exited: false };
   terminal = started;
   terminalLookup.start(runtime, terminalId, sessionKey, cwd, hostId, windowLabel, generation);
   const size = '\u001b[8;' + rows + ';' + cols + 't';
@@ -125,10 +146,11 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
   void child.exited.then(async () => {
     // Let the PTY deliver the last output before the terminal closes.
     await Promise.race([ptyClosed, new Promise(resolve => setTimeout(resolve, 1000))]);
-    if (started.stopping) await started.stopping;
+    await stopTerminalProcess(started);
     try { child.terminal?.close(); } catch (error) { console.error('Could not close terminal PTY ' + terminalId + ':', error); }
     started.exited = true;
     output(decoder.decode());
+    flush();
     if (!current()) return;
     runtime.processes.delete(terminalId);
     const packet = terminalLookup.event(runtime.history, terminalId, { type: 'terminal_exit', terminalId });
@@ -139,10 +161,14 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
 }
 
 export function queueInput(process: TerminalProcess, data: string, busy: string): void {
-  if (process.queued >= INPUT_QUEUE) throw new Error(busy);
   const pty = process.child.terminal;
-  if (!pty || pty.closed) throw new Error('Terminal is not running');
-  process.queued += 1;
+  if (!pty || pty.closed || process.exited || process.stopping || process.child.exitCode !== null || process.child.signalCode !== null) throw new Error('Terminal is not running');
+  const now = Date.now();
+  if (now - process.lastInput > INPUT_IDLE_MS) process.pendingInput = 0;
+  const bytes = Buffer.byteLength(data);
+  if (process.pendingInput + bytes > INPUT_PENDING_BYTES) throw new Error(busy);
+  process.pendingInput += bytes;
+  process.lastInput = now;
   pty.write(data);
 }
 
@@ -176,9 +202,9 @@ export function stopTerminalProcess(process: TerminalProcess): Promise<void> {
 
 async function stopShell(process: TerminalProcess): Promise<void> {
   const child = process.child;
-  const descendants = descendantProcesses(child.pid, child.pid);
+  const descendants = descendantProcesses(child.pid, child.pid, process.processSessionId);
   const signal = (value: NodeJS.Signals) => {
-    descendants.push(...descendantProcesses(child.pid, child.pid));
+    descendants.push(...descendantProcesses(child.pid, child.pid, process.processSessionId));
     signalProcessGroup(child.pid, value);
     killVerified(descendants, value);
     if (child.exitCode === null && child.signalCode === null) {
@@ -195,7 +221,7 @@ async function stopShell(process: TerminalProcess): Promise<void> {
       return false;
     }
   };
-  const settled = () => (child.exitCode !== null || child.signalCode !== null) && !descendants.some(alive) && descendantProcesses(child.pid, child.pid).length === 0;
+  const settled = () => (child.exitCode !== null || child.signalCode !== null) && !descendants.some(alive) && descendantProcesses(child.pid, child.pid, process.processSessionId).length === 0;
   const settle = async (ms: number) => { const deadline = Date.now() + ms; while (Date.now() < deadline) { if (settled()) return true; await sleep(25); } return settled(); };
   signal('SIGHUP');
   if (!await settle(1000)) { signal('SIGTERM'); if (!await settle(500)) { signal('SIGKILL'); if (!await settle(2000)) console.error('Terminal shell ' + child.pid + ' did not exit after SIGKILL'); } }
@@ -205,7 +231,7 @@ async function stopShell(process: TerminalProcess): Promise<void> {
 }
 
 export async function stopTerminals(runtime: TerminalRuntime, terminalIds: string[]): Promise<void> {
-  for (const id of terminalIds) {
+  const results = await Promise.allSettled(terminalIds.map(async id => {
     const process = runtime.processes.get(id);
     if (process) {
       try { await stopTerminalProcess(process); }
@@ -213,7 +239,9 @@ export async function stopTerminals(runtime: TerminalRuntime, terminalIds: strin
     }
     if (runtime.processes.get(id) === process) { runtime.processes.delete(id); runtime.history.delete(id); }
     else if (!runtime.processes.has(id)) runtime.history.delete(id);
-  }
+  }));
+  const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+  if (errors.length) throw new AggregateError(errors, errors.map(error => error?.message ?? String(error)).join('; '));
 }
 
 export async function detachOwner(runtime: TerminalRuntime, owner: string): Promise<void> {

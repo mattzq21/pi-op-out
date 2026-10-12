@@ -16,7 +16,6 @@ import * as terminalLookup from './terminal_lookup';
 import * as providerAuth from './provider_auth';
 import * as daemonRestart from './daemon_restart';
 import * as daemon from './daemon';
-import { sleep } from './util/sync';
 import type { App } from './app';
 import type { AppSettings } from './settings_types';
 import type { AgentAddress, SessionSummary } from './types';
@@ -151,8 +150,7 @@ async function handleRequest(app: App, broker: BrokerRuntime, request: IncomingM
   } finally { broker.active -= 1; }
 }
 
-function registerDelivery(broker: BrokerRuntime, body: Buffer): (() => void) | undefined {
-  const value = parseJson(body, 'Invalid orchestration request');
+function registerDelivery(broker: BrokerRuntime, value: any): (() => void) | undefined {
   if (value?.action !== 'send') return undefined;
   if (typeof value.hostId !== 'string') throw new Error('hostId is required');
   if (typeof value.sessionId !== 'string') throw new Error('sessionId is required');
@@ -169,16 +167,22 @@ function registerDelivery(broker: BrokerRuntime, body: Buffer): (() => void) | u
 
 async function enqueueBrokerMessage(app: App, broker: BrokerRuntime, response: ServerResponse, body: Buffer, orchestration: boolean): Promise<void> {
   let delivery: (() => void) | undefined;
-  try { delivery = orchestration ? registerDelivery(broker, body) : undefined; }
+  let value: any;
+  try {
+    value = parseJson(body, orchestration ? 'Invalid orchestration request' : 'Invalid message request');
+    delivery = orchestration ? registerDelivery(broker, value) : undefined;
+  }
   catch (error: any) { respond(response, 400, { error: error.message }); return; }
-  if (broker.messageCount >= BROKER_WORKERS || broker.closing) { delivery?.(); respond(response, 503, { error: 'Session broker is busy' }); return; }
-  broker.messageCount += 1;
+  // Only turns that run an agent take a worker slot. Interrupt, read and locate must still get through when every worker is busy.
+  const worker = !orchestration || value?.action === 'send' || value?.action === 'recover_usage';
+  if ((worker && broker.messageCount >= BROKER_WORKERS) || broker.closing) { delivery?.(); respond(response, 503, { error: 'Session broker is busy' }); return; }
+  if (worker) broker.messageCount += 1;
   try {
     await finish(response, () => withBrokerAccess(app, async () => orchestration
-      ? brokerOrchestration(app, broker, parseJson(body, 'Invalid orchestration request'))
+      ? brokerOrchestration(app, broker, value)
       : processBrokerMessage(app, broker, body)));
   } finally {
-    broker.messageCount = Math.max(0, broker.messageCount - 1);
+    if (worker) broker.messageCount = Math.max(0, broker.messageCount - 1);
     delivery?.();
   }
 }
@@ -208,7 +212,8 @@ async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: str
     const value = parseJson(body, 'Invalid cancellation request');
     const requestId = value?.requestId;
     if (!isUuid(requestId)) throw new Error('requestId is required');
-    if (broker.cancelled.size >= BROKER_QUEUE_DEPTH * 2) broker.cancelled.clear();
+    // Cancellations for requests that never start a job would stay forever; drop the oldest instead of every entry.
+    while (broker.cancelled.size >= BROKER_QUEUE_DEPTH * 2) { const oldest = broker.cancelled.values().next().value; if (oldest === undefined) break; broker.cancelled.delete(oldest); }
     broker.cancelled.add(requestId);
     await peers.cancelMessage(app, requestId);
     const job = broker.jobs.get(requestId);
@@ -269,23 +274,35 @@ function messageLimitError(output: MessageOutput, deadline: number): string | un
   return undefined;
 }
 
-async function waitMessage(broker: BrokerRuntime, requestId: string, job: MessageJob, deadline: number): Promise<number | null> {
-  for (;;) {
-    if (broker.closing) throw new Error('App is closing');
-    if (broker.cancelled.has(requestId)) { await stopMessageWorker(job.child); throw new Error('Agent message was cancelled'); }
-    if (job.child.exitCode !== null || job.child.signalCode !== null) return job.child.exitCode;
-    const error = messageLimitError(job.output, deadline);
-    if (error) { await stopMessageWorker(job.child); throw new Error(error); }
-    await sleep(25);
-  }
+async function waitMessage(broker: BrokerRuntime, requestId: string, job: MessageJob, deadline: number): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  const exited = () => job.child.exitCode !== null || job.child.signalCode !== null;
+  const status = () => ({ code: job.child.exitCode, signal: job.child.signalCode });
+  if (exited()) return status();
+  // The exit event ends the wait. Cancellation, shutdown and the output limit have no event, so they are checked on a slow timer.
+  const reason = await new Promise<string | undefined>(resolve => {
+    const timer = setInterval(() => {
+      if (broker.closing) finish('App is closing');
+      else if (broker.cancelled.has(requestId)) finish('Agent message was cancelled');
+      else { const error = messageLimitError(job.output, deadline); if (error) finish(error); }
+    }, 250);
+    const onExit = () => finish(undefined);
+    const finish = (value: string | undefined) => { clearInterval(timer); job.child.off('exit', onExit); resolve(value); };
+    job.child.once('exit', onExit);
+  });
+  if (reason !== undefined) { await stopMessageWorker(job.child); throw new Error(reason); }
+  return status();
 }
 
-function messageResult(output: MessageOutput, code: number | null): string {
+function messageResult(output: MessageOutput, status: { code: number | null; signal: NodeJS.Signals | null }): string {
   if (fileSize(output.stdout) + fileSize(output.stderr) > MAX_AGENT_OUTPUT_BYTES) throw new Error('Agent output exceeded the 16 MiB limit');
   let stdout: Buffer; let stderr: Buffer;
   try { stdout = readFileSync(output.stdout); } catch (error: any) { throw new Error(`Could not read agent output: ${error.message}`); }
   try { stderr = readFileSync(output.stderr); } catch (error: any) { throw new Error(`Could not read agent errors: ${error.message}`); }
-  if (code !== 0) throw new Error(stderr.toString('utf8').trim());
+  if (status.code !== 0) {
+    const detail = stderr.toString('utf8').trim().split('\n').slice(-20).join('\n');
+    const exit = status.code !== null ? `exit status ${status.code}` : `signal ${status.signal}`;
+    throw new Error(detail ? `Agent failed (${exit}): ${detail}` : `Agent failed with ${exit} and no error output`);
+  }
   return stdout.toString('utf8').trim();
 }
 
@@ -305,8 +322,8 @@ async function dispatchAgentMessage(app: App, broker: BrokerRuntime, session: Se
     try {
       job.child.stdin?.on('error', () => {});
       job.child.stdin?.end(message);
-      const code = await waitMessage(broker, requestId, job, deadline);
-      return messageResult(job.output, code);
+      const status = await waitMessage(broker, requestId, job, deadline);
+      return messageResult(job.output, status);
     } finally {
       await stopMessageWorker(job.child);
       if (broker.jobs.get(requestId) === job) broker.jobs.delete(requestId);

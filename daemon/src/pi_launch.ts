@@ -4,7 +4,7 @@ import { join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir, piExecutable } from './environment';
 import * as Ext from './extensions';
-import { ensureDesktopSessionsDir, runLimited, shellQuote, type CommandSpec } from './process_io';
+import { ensureDesktopSessionsDir, runLimited, shellQuote, statusText, type CommandSpec } from './process_io';
 import * as Registry from './session_registry';
 import { validateRemoteHost, type AppSettings, type RemoteHost } from './settings_types';
 import { transaction } from './util/db';
@@ -118,7 +118,10 @@ async function remoteRegisteredIdentity(host: RemoteHost, path: string): Promise
 
 export async function readRemoteSessionHeader(path: string, command: (script: string) => CommandSpec): Promise<string> {
   const output = await runLimited(command(`head -n 1 -- ${shellQuote(path)}`), 64 * 1024, 'Could not read session identity');
-  if (!output.status.success) throw new Error('Could not read session identity');
+  if (!output.status.success) {
+    const detail = output.stderr.toString('utf8').trim() || statusText(output.status);
+    throw new Error('Could not read session identity: ' + detail);
+  }
   return output.stdout.toString('utf8');
 }
 

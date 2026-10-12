@@ -382,8 +382,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked, saved: !!snapshot, unavailable: !currentAgent(), config: { ...config, fastModeModels: fastModeModels() } })}`);
 
-  const saveState = (submit = false) => {
-    const state = { active, modelOverride, effortOverride, fastModeOverride: fastModeOverride ?? null, snapshot };
+  const saveState = (submit = false, nextFastModeOverride = fastModeOverride) => {
+    const state = { active, modelOverride, effortOverride, fastModeOverride: nextFastModeOverride ?? null, snapshot };
 
     if (!submit && !locked) {
       process.env[DRAFT_STATE_ENV] = JSON.stringify({ session: runtimeSession, identity: savedState, state });
@@ -608,11 +608,14 @@ export default async function defineAgents(pi: ExtensionAPI) {
     });
   });
 
-  const stopFastModeChanges = pi.events.on("piop:fast-mode-changed", ({ enabled }) => {
+  const stopFastModeChanges = pi.events.on("piop:fast-mode-changed", request => {
+    request.ready = Promise.resolve().then(() => {
+      const { enabled } = request;
 
-    if (enabled === undefined || enabled === fastModeOverride) return;
-    fastModeOverride = enabled;
-    saveState();
+      if (enabled === undefined || enabled === fastModeOverride) return;
+      saveState(false, enabled);
+      fastModeOverride = enabled;
+    });
   });
 
   const stopFastModelChanges = pi.events.on("piop:fast-mode-models-changed", ({ ctx }) => publish(ctx));

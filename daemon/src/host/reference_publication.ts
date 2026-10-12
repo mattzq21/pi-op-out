@@ -5,8 +5,8 @@ import { lockPath, type FileLock } from '../util/flock';
 
 export async function lock(root: string): Promise<FileLock> {
   const path = join(root, 'reference-publication.lock');
-  const result = await lockPath(path, { blocking: true, shared: true, nofollow: true, regularFile: 'Invalid reference publication lock' });
-  if (!result) throw new Error('Could not lock ' + path);
+  const result = await lockPath(path, { blocking: true, timeoutMs: 10_000, shared: true, nofollow: true, regularFile: 'Invalid reference publication lock' });
+  if (!result) throw new Error('Reference publication is locked by another process; try again');
   return result;
 }
 

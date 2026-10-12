@@ -163,25 +163,37 @@ export async function connect(app: App, hostId: string): Promise<Connection> {
     child.stdin!.on('error', error => console.error('SSH input failed for ' + host.name + ':', error));
     try {
       let diagnostics = '';
-      child.stderr!.on('data', (chunk: Buffer) => { if (diagnostics.length < 8192) diagnostics += chunk.toString('utf8'); });
+      const onStderr = (chunk: Buffer) => { if (diagnostics.length < 8192) diagnostics += chunk.toString('utf8'); };
+      child.stderr!.on('data', onStderr);
+      const detail = () => { const trimmed = diagnostics.trim(); return trimmed ? ' (' + trimmed + ')' : ''; };
       const lines = lineReader(child);
       let ready: any;
       try {
         const line = await withTimeout(Promise.race([lines.next(), cancelled]), daemonEndpoint.STARTUP_TIMEOUT + 30_000, 'SSH handshake timed out');
         ready = line === undefined ? undefined : JSON.parse(line);
-      } catch (error: any) { throw new Error('Could not attach to ' + host.name + ': ' + error.message); }
+      } catch (error: any) { throw new Error('Could not attach to ' + host.name + ': ' + error.message + detail()); }
       const current = await configuredHost(app, hostId);
       if (state.revision !== revision || current.target !== host.target || current.piPath !== host.piPath) throw changed();
-      if (child.exitCode !== null || child.signalCode !== null) throw new Error('SSH disconnected from ' + host.name);
+      if (child.exitCode !== null || child.signalCode !== null) throw new Error('SSH disconnected from ' + host.name + detail());
       if (ready?.peerProtocol !== PEER_PROTOCOL_VERSION || typeof ready?.daemonId !== 'string') {
         close();
-        throw new Error('Could not attach to ' + host.name + '. Install or upgrade piopd on that machine. ' + diagnostics.trim());
+        throw new Error('Could not attach to ' + host.name + '. Install or upgrade piopd on that machine.' + detail());
       }
       if (!BUILD_ID || ready.buildId !== BUILD_ID) {
         close();
         throw new Error('Piop daemon build mismatch on ' + host.name + ': local ' + (BUILD_ID || 'unknown') + ', remote ' + (ready.buildId || 'unknown') + '. Install the same piopd build on both machines and restart the remote daemon.');
       }
       if (ready.daemonId === daemonEndpoint.identity()) { close(); throw new Error('This SSH target is the current daemon; use Local'); }
+      child.stderr!.removeListener('data', onStderr);
+      let remainder = '';
+      child.stderr!.on('data', (chunk: Buffer) => {
+        remainder += chunk.toString('utf8');
+        const end = remainder.lastIndexOf('\n');
+        if (end < 0) { if (remainder.length > 65536) { console.error('SSH ' + host.name + ': ' + remainder); remainder = ''; } return; }
+        console.error('SSH ' + host.name + ': ' + remainder.slice(0, end));
+        remainder = remainder.slice(end + 1);
+      });
+      child.stderr!.on('close', () => { if (remainder.trim()) console.error('SSH ' + host.name + ': ' + remainder); });
       const connection = new Connection(ready.daemonId, child);
       const existing = [...state.connections.values()].map(([, other]) => other).find(other => other.daemonId === connection.daemonId && other.alive);
       if (existing) {
