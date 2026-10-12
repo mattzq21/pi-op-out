@@ -24,7 +24,10 @@ function retainedDraft(state: AgentState, previous: SessionSummary | undefined, 
   return prompt === undefined && (previous?.isDraft ?? state.messageCount === 0);
 }
 
-function retainedPreview(prompt: string | undefined, previous: SessionSummary | undefined) { return prompt ?? previous?.preview ?? ""; }
+const PREVIEW_LIMIT = 200;
+const DETACHED_LIMIT = 8;
+
+function retainedPreview(prompt: string | undefined, previous: SessionSummary | undefined) { return prompt?.slice(0, PREVIEW_LIMIT) ?? previous?.preview ?? ""; }
 
 export class SessionRuntimePool {
   private readonly transports = new Set<NativeTransport>();
@@ -45,6 +48,8 @@ export class SessionRuntimePool {
   private liveRevision = 0;
   liveSessionRevision() { return this.liveRevision; }
   private liveSessions = new Map<NativeTransport, SessionSummary>();
+  private readonly releasedSessions = new Map<string, SessionSummary>();
+  private readonly detachedTransports = new Set<NativeTransport>();
   private removedPaths = new Set<string>();
   isRemoved(session: SessionSummary) { return this.removedPaths.has(`${session.hostId ?? "local"}:${session.path}`); }
   restoreSummary(hostId: string, path: string) { this.removedPaths.delete(`${hostId}:${path}`); }
@@ -56,12 +61,15 @@ export class SessionRuntimePool {
       this.retainedTransports.delete(transport);
     }
 
+    for (const [key, session] of this.releasedSessions) if ((session.hostId ?? "local") === hostId && session.path === path) this.releasedSessions.delete(key);
+
     this.liveRevision += 1; this.notify();
   }
   private reviewTransports = new WeakSet<NativeTransport>();
-  liveSessionSummaries() { return [...this.liveSessions].flatMap(([transport, session]) => !this.reviewTransports.has(transport) ? [session] : []); }
+  liveSessionSummaries() { return [...this.releasedSessions.values(), ...[...this.liveSessions].flatMap(([transport, session]) => !this.reviewTransports.has(transport) ? [session] : [])]; }
   setLiveSession(transport: NativeTransport, session: SessionSummary) {
     if (this.isRemoved(session)) return;
+    this.releasedSessions.delete(sessionKey(session.hostId ?? "local", session.id));
     this.liveSessions.set(transport, session);
     this.liveRevision += 1; this.notify();
   }
@@ -97,6 +105,7 @@ export class SessionRuntimePool {
       const cwd = transport.currentCwd() || "";
       const previous = this.liveSessions.get(transport);
       const projectDetails = this.retainedProjectDetails(previous, cwd, transport.currentHostId());
+      this.releasedSessions.delete(sessionKey(transport.currentHostId(), state.sessionId));
       this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, path: state.sessionFile || "", name: retainedName(state, prompt, previous), project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, ...retainedActivity(state, previous, prompt, lastMessageAt), daemonId: transport.currentDaemonId(), hostId: transport.currentHostId() });
       this.liveRevision += 1; this.notify();
     }).catch((reason) => this.errorHandler?.(`Could not list the retained session: ${reason instanceof Error ? reason.message : String(reason)}`));
@@ -202,6 +211,7 @@ export class SessionRuntimePool {
   }
 
   activate(transport?: NativeTransport) { const previous = this.activeTransport; this.activeTransport = transport;
+  if (transport) this.detachedTransports.delete(transport);
   this.notify();
 
   if (previous && previous !== transport) previous.setVisible(this.interactiveTransports.has(previous));
@@ -221,11 +231,21 @@ export class SessionRuntimePool {
     return; }
 
     this.deferredDetaches.delete(transport);
-    const pending = transport.disconnect().then(() => undefined).catch(reason => this.reportError(`Could not detach conversation: ${String(reason)}`)).finally(() => this.detaching.delete(transport));
+    const pending = transport.disconnect().then(() => { this.detachedTransports.add(transport); }).catch(reason => this.reportError(`Could not detach conversation: ${String(reason)}`)).finally(() => { this.detaching.delete(transport); this.releaseOldDetached(); });
     this.detaching.set(transport, pending);
   }
+
+  private releaseOldDetached() {
+    for (const transport of this.detachedTransports) {
+      if (this.detachedTransports.size <= DETACHED_LIMIT) return;
+      this.detachedTransports.delete(transport);
+
+      if (this.isActive(transport) || this.isInteractive(transport) || this.isRunning(transport) || this.observers.has(transport) || this.queuedTransports.has(transport) || transport.hasTerminalActivity() || transport.hasPendingSettings() || transport.promptControls.hasPending()) continue;
+      void this.release(transport, true).catch(reason => this.reportError(`Could not release idle conversation: ${String(reason)}`));
+    }
+  }
   setInteractive(transport: NativeTransport, interactive: boolean) {
-    if (interactive) { this.interactiveTransports.add(transport); this.unseenTransports.delete(transport); } else this.interactiveTransports.delete(transport);
+    if (interactive) { this.interactiveTransports.add(transport); this.unseenTransports.delete(transport); this.detachedTransports.delete(transport); } else this.interactiveTransports.delete(transport);
     this.notify();
     transport.setVisible(interactive || transport === this.activeTransport); this.publishSessionStates();
   }
@@ -252,6 +272,8 @@ export class SessionRuntimePool {
   async remove(session: SessionSummary) {
     const key = sessionKey(session.daemonId ?? session.hostId ?? "local", session.id); const transport = this.sessions.get(key);
 
+    if (this.releasedSessions.delete(sessionKey(session.hostId ?? "local", session.id))) { this.liveRevision += 1; this.notify(); }
+
     if (transport) await this.release(transport);
 
     if (this.sessions.get(key) === transport) this.sessions.delete(key);
@@ -261,6 +283,7 @@ export class SessionRuntimePool {
   isActive(transport: NativeTransport) { return transport === this.activeTransport; }
 
   observe(transport: NativeTransport) {
+    this.detachedTransports.delete(transport);
     this.observers.set(transport, (this.observers.get(transport) ?? 0) + 1);
     let observing = true;
 
@@ -285,7 +308,7 @@ export class SessionRuntimePool {
     };
   }
 
-  async release(transport: NativeTransport) {
+  async release(transport: NativeTransport, keepSummary = false) {
     const pending = this.releasing.get(transport);
 
     if (pending) return pending;
@@ -299,11 +322,15 @@ export class SessionRuntimePool {
     const release = Promise.resolve().then(async () => {
       await this.detaching.get(transport);
       await transport.dispose();
-      this.deferredDetaches.delete(transport); this.queuedTransports.delete(transport);
+      this.deferredDetaches.delete(transport); this.queuedTransports.delete(transport); this.detachedTransports.delete(transport);
       forgetSession(transport);
 
       for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key);
       this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport);
+
+      const summary = this.liveSessions.get(transport);
+
+      if (summary && keepSummary && !this.reviewTransports.has(transport) && !this.isRemoved(summary)) this.releasedSessions.set(sessionKey(summary.hostId ?? "local", summary.id), summary);
 
       if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); }
 
