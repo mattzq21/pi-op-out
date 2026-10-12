@@ -168,17 +168,23 @@ export function activePlan(owner?: number): Promise<boolean> {
 
 function activePlanAt(root: string, plan: any): boolean {
   const id = identity(plan?.id);
-  if (!planPhaseActive(root, id)) return false;
+  const status = planStatus(root, id);
+  if (!activePhase(status)) return false;
   const lease = tryExclusive(root, id);
-  if (!lease) return true;
+  // A running replacement daemon holds the lease for its lifetime. Once the status expires, the coordinator is gone.
+  if (!lease) return !expired(status);
   lease.release();
   if (recordMatches(join(root, name(id)), id) === true) return false;
   return ownerAlive(plan);
 }
 
-function planPhaseActive(root: string, id: string): boolean {
+function planStatus(root: string, id: string): any {
   const status = restartStorage.read(join(root, 'restart-status.json'));
-  return activePhase(status?.restartId === id ? status : null);
+  return status?.restartId === id ? status : null;
+}
+
+function expired(status: any): boolean {
+  return status !== null && Number(status.expiresAt ?? 0) <= Math.floor(Date.now() / 1000);
 }
 
 function ownerAlive(plan: any): boolean {
