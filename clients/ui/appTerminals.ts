@@ -427,8 +427,13 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const close = () => { terminalPanelRevision.current += 1; setTerminalOpen(false); };
 
   const syncDraft = (id: string, data: string) => {
-    draftRevisions.set(id, { data });
-    void nativeTerminals.write(id, data, "draft").catch(reason => addNotice({ title: "Could not sync terminal input", message: String(reason) }));
+    const revision = { data };
+    draftRevisions.set(id, revision);
+    void nativeTerminals.write(id, data, "draft").catch(reason => {
+      // The host kept its older draft. Send must expect that draft; the unsent text stays in the input.
+      if (draftRevisions.get(id) === revision) draftRevisions.delete(id);
+      addNotice({ title: "Could not sync terminal input", message: String(reason) });
+    });
   };
 
   const clearAcceptedDraft = (key: string, id: string, generation: string | undefined, revision: { data: string } | undefined) => {

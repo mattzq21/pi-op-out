@@ -10,6 +10,9 @@ import { forgetSession } from "./sessionMemory";
 
 const sessionKey = (hostId: string, sessionId: string) => `${hostId}:${sessionId}`;
 
+/** The number of detached idle conversations that stay in memory for a fast return. Older ones are released. */
+const IDLE_LIMIT = 8;
+
 const startsUserMessage = (event: RpcEvent) => event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success;
 
 function retainedName(state: AgentState, prompt: string | undefined, previous: SessionSummary | undefined) {
@@ -39,6 +42,8 @@ export class SessionRuntimePool {
   private readonly observers = new Map<NativeTransport, number>();
   private readonly deferredReleases = new Set<NativeTransport>();
   private readonly retainedTransports = new Set<NativeTransport>();
+  /** Detached idle conversations, oldest first, with the check that they have no unsent work. */
+  private readonly idleTransports = new Map<NativeTransport, () => boolean>();
   private readonly listeners = new Set<() => void>();
   private runningSessionKeys: ReadonlySet<string> = new Set();
   private unseenSessionKeys: ReadonlySet<string> = new Set();
@@ -202,6 +207,7 @@ export class SessionRuntimePool {
   }
 
   activate(transport?: NativeTransport) { const previous = this.activeTransport; this.activeTransport = transport;
+  if (transport) this.idleTransports.delete(transport);
   this.notify();
 
   if (previous && previous !== transport) previous.setVisible(this.interactiveTransports.has(previous));
@@ -213,19 +219,37 @@ export class SessionRuntimePool {
   setErrorHandler(handler?: (message: string) => void) { this.errorHandler = handler; }
   reportError(message: string) { if (this.errorHandler) this.errorHandler(message); else console.error(message); }
 
+  private busy(transport: NativeTransport) {
+    return !this.transports.has(transport) || this.releasing.has(transport) || this.isActive(transport) || this.isInteractive(transport) || this.isRunning(transport) || this.queuedTransports.has(transport) || transport.hasTerminalActivity() || transport.hasPendingSettings() || transport.promptControls.hasPending();
+  }
+
   detachIdle(transport: NativeTransport, canDetach: () => boolean) {
-    if (!this.transports.has(transport) || this.releasing.has(transport) || this.detaching.has(transport) || this.isActive(transport) || this.isInteractive(transport) || this.isRunning(transport) || this.queuedTransports.has(transport) || transport.hasTerminalActivity() || transport.hasPendingSettings() || transport.promptControls.hasPending() || !canDetach()) return;
+    if (this.detaching.has(transport) || this.busy(transport) || !canDetach()) return;
 
     if (this.observers.has(transport)) { this.deferredDetaches.set(transport, canDetach);
 
     return; }
 
     this.deferredDetaches.delete(transport);
-    const pending = transport.disconnect().then(() => undefined).catch(reason => this.reportError(`Could not detach conversation: ${String(reason)}`)).finally(() => this.detaching.delete(transport));
+    const pending = transport.disconnect().then(() => { this.retainIdle(transport, canDetach); }).catch(reason => this.reportError(`Could not detach conversation: ${String(reason)}`)).finally(() => this.detaching.delete(transport));
     this.detaching.set(transport, pending);
   }
+
+  private retainIdle(transport: NativeTransport, canDetach: () => boolean) {
+    if (this.busy(transport)) return;
+    this.idleTransports.delete(transport); this.idleTransports.set(transport, canDetach);
+
+    for (const [candidate, idle] of this.idleTransports) {
+      if (this.idleTransports.size <= IDLE_LIMIT) return;
+
+      // A conversation with an unread result or a summary that only this client holds stays in memory.
+      if (this.busy(candidate) || this.observers.has(candidate) || this.unseenTransports.has(candidate) || this.liveSessions.has(candidate) || !idle()) continue;
+      this.idleTransports.delete(candidate);
+      void this.release(candidate).catch(reason => this.reportError(`Could not release idle conversation: ${String(reason)}`));
+    }
+  }
   setInteractive(transport: NativeTransport, interactive: boolean) {
-    if (interactive) { this.interactiveTransports.add(transport); this.unseenTransports.delete(transport); } else this.interactiveTransports.delete(transport);
+    if (interactive) { this.interactiveTransports.add(transport); this.unseenTransports.delete(transport); this.idleTransports.delete(transport); } else this.interactiveTransports.delete(transport);
     this.notify();
     transport.setVisible(interactive || transport === this.activeTransport); this.publishSessionStates();
   }
@@ -304,6 +328,7 @@ export class SessionRuntimePool {
 
       for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key);
       this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport);
+      this.idleTransports.delete(transport);
 
       if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); }
 

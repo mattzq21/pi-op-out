@@ -137,7 +137,7 @@ export function createTransportActivation(context: ActivationContext) {
     let stopDisposal: (() => void) | undefined;
     const stop = () => { stopped = true; unsubscribe(); stopDisposal?.(); inactiveCleanups.delete(owner); };
     inactiveCleanups.set(owner, stop);
-    stopDisposal = owner.onDispose(stop);
+    stopDisposal = owner.onDispose(() => { stop(); transportConversationKeys.current.delete(owner); });
     check();
   };
 
