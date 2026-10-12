@@ -69,7 +69,9 @@ public class DictationPlugin extends Plugin {
         boolean closed;
         /** Closes the stream when no audio arrives for IDLE_SECONDS. Guarded by lock. */
         ScheduledFuture<?> idle;
+        /** Audio that the engine did not take yet: the first pendingLength samples. It grows by doubling, so each sample is copied only a few times. */
         float[] pending = new float[0];
+        int pendingLength;
         String committed = "";
         String tentative = "";
         /** The first engine error of this stream. */
@@ -77,6 +79,20 @@ public class DictationPlugin extends Plugin {
 
         Stream(String id) {
             this.id = id;
+        }
+
+        void append(float[] samples) {
+            if (pendingLength + samples.length > pending.length) pending = Arrays.copyOf(pending, Math.max(pendingLength + samples.length, pending.length * 2));
+            System.arraycopy(samples, 0, pending, pendingLength, samples.length);
+            pendingLength += samples.length;
+        }
+
+        /** Removes and returns the pending audio. */
+        float[] takePending() {
+            float[] result = Arrays.copyOf(pending, pendingLength);
+            pending = new float[0];
+            pendingLength = 0;
+            return result;
         }
     }
 
@@ -335,12 +351,6 @@ public class DictationPlugin extends Plugin {
         return samples;
     }
 
-    private static float[] concat(float[] left, float[] right) {
-        float[] result = Arrays.copyOf(left, left.length + right.length);
-        System.arraycopy(right, 0, result, left.length, right.length);
-        return result;
-    }
-
     private static String join(String left, String right) {
         return !left.isEmpty() && !right.isEmpty() ? (left + " " + right).trim() : left.isEmpty() ? right : left;
     }
@@ -390,11 +400,17 @@ public class DictationPlugin extends Plugin {
     /** Runs on the engine thread. Needle takes about one second at a time; transcribe.cpp takes any amount. */
     private void process(Stream current, float[] samples) throws Exception {
         if (loaded.kind.equals("needle")) {
-            current.pending = concat(current.pending, samples);
-            while (current.pending.length >= SAMPLE_RATE) {
-                float[] chunk = Arrays.copyOf(current.pending, SAMPLE_RATE);
-                current.pending = Arrays.copyOfRange(current.pending, SAMPLE_RATE, current.pending.length);
-                needleStep(current, SpeechNative.needleProcess(chunk, loaded.language));
+            current.append(samples);
+            int start = 0;
+            try {
+                while (current.pendingLength - start >= SAMPLE_RATE) {
+                    float[] chunk = Arrays.copyOfRange(current.pending, start, start + SAMPLE_RATE);
+                    start += SAMPLE_RATE;
+                    needleStep(current, SpeechNative.needleProcess(chunk, loaded.language));
+                }
+            } finally {
+                System.arraycopy(current.pending, start, current.pending, 0, current.pendingLength - start);
+                current.pendingLength -= start;
             }
         } else if (loaded.streaming) {
             String update = SpeechNative.transcribeFeed(loaded.model, samples);
@@ -404,7 +420,7 @@ public class DictationPlugin extends Plugin {
             current.tentative = text.getString("tentative").trim();
             emitText(current);
         } else {
-            current.pending = concat(current.pending, samples);
+            current.append(samples);
         }
     }
 
@@ -438,8 +454,8 @@ public class DictationPlugin extends Plugin {
             try {
                 String text;
                 if (loaded.kind.equals("needle")) {
-                    if (current.pending.length > 0) needleStep(current, SpeechNative.needleProcess(current.pending, loaded.language));
-                    current.pending = new float[0];
+                    float[] rest = current.takePending();
+                    if (rest.length > 0) needleStep(current, SpeechNative.needleProcess(rest, loaded.language));
                     current.closed = true;
                     needleStep(current, SpeechNative.needleStop());
                     text = join(current.committed, current.tentative);
@@ -449,7 +465,8 @@ public class DictationPlugin extends Plugin {
                     text = (result.getString("committed") + result.getString("tentative")).trim();
                 } else {
                     current.closed = true;
-                    text = current.pending.length == 0 ? "" : SpeechNative.transcribeRun(loaded.model, current.pending, loaded.language).trim();
+                    float[] recording = current.takePending();
+                    text = recording.length == 0 ? "" : SpeechNative.transcribeRun(loaded.model, recording, loaded.language).trim();
                 }
                 JSObject result = new JSObject();
                 result.put("text", text);

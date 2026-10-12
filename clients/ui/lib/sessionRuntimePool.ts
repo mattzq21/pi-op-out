@@ -10,6 +10,9 @@ import { forgetSession } from "./sessionMemory";
 
 const sessionKey = (hostId: string, sessionId: string) => `${hostId}:${sessionId}`;
 
+/** The number of detached idle conversations that stay in memory for a fast return. Older ones are released. */
+const IDLE_LIMIT = 8;
+
 const startsUserMessage = (event: RpcEvent) => event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success;
 
 function retainedName(state: AgentState, prompt: string | undefined, previous: SessionSummary | undefined) {
@@ -25,7 +28,6 @@ function retainedDraft(state: AgentState, previous: SessionSummary | undefined, 
 }
 
 const PREVIEW_LIMIT = 200;
-const DETACHED_LIMIT = 8;
 
 function retainedPreview(prompt: string | undefined, previous: SessionSummary | undefined) { return prompt?.slice(0, PREVIEW_LIMIT) ?? previous?.preview ?? ""; }
 
@@ -42,6 +44,8 @@ export class SessionRuntimePool {
   private readonly observers = new Map<NativeTransport, number>();
   private readonly deferredReleases = new Set<NativeTransport>();
   private readonly retainedTransports = new Set<NativeTransport>();
+  /** Detached idle conversations, oldest first, with the check that they have no unsent work. */
+  private readonly idleTransports = new Map<NativeTransport, () => boolean>();
   private readonly listeners = new Set<() => void>();
   private runningSessionKeys: ReadonlySet<string> = new Set();
   private unseenSessionKeys: ReadonlySet<string> = new Set();
@@ -49,7 +53,6 @@ export class SessionRuntimePool {
   liveSessionRevision() { return this.liveRevision; }
   private liveSessions = new Map<NativeTransport, SessionSummary>();
   private readonly releasedSessions = new Map<string, SessionSummary>();
-  private readonly detachedTransports = new Set<NativeTransport>();
   private removedPaths = new Set<string>();
   isRemoved(session: SessionSummary) { return this.removedPaths.has(`${session.hostId ?? "local"}:${session.path}`); }
   restoreSummary(hostId: string, path: string) { this.removedPaths.delete(`${hostId}:${path}`); }
@@ -211,7 +214,7 @@ export class SessionRuntimePool {
   }
 
   activate(transport?: NativeTransport) { const previous = this.activeTransport; this.activeTransport = transport;
-  if (transport) this.detachedTransports.delete(transport);
+  if (transport) this.idleTransports.delete(transport);
   this.notify();
 
   if (previous && previous !== transport) previous.setVisible(this.interactiveTransports.has(previous));
@@ -223,29 +226,37 @@ export class SessionRuntimePool {
   setErrorHandler(handler?: (message: string) => void) { this.errorHandler = handler; }
   reportError(message: string) { if (this.errorHandler) this.errorHandler(message); else console.error(message); }
 
+  private busy(transport: NativeTransport) {
+    return !this.transports.has(transport) || this.releasing.has(transport) || this.isActive(transport) || this.isInteractive(transport) || this.isRunning(transport) || this.queuedTransports.has(transport) || transport.hasTerminalActivity() || transport.hasPendingSettings() || transport.promptControls.hasPending();
+  }
+
   detachIdle(transport: NativeTransport, canDetach: () => boolean) {
-    if (!this.transports.has(transport) || this.releasing.has(transport) || this.detaching.has(transport) || this.isActive(transport) || this.isInteractive(transport) || this.isRunning(transport) || this.queuedTransports.has(transport) || transport.hasTerminalActivity() || transport.hasPendingSettings() || transport.promptControls.hasPending() || !canDetach()) return;
+    if (this.detaching.has(transport) || this.busy(transport) || !canDetach()) return;
 
     if (this.observers.has(transport)) { this.deferredDetaches.set(transport, canDetach);
 
     return; }
 
     this.deferredDetaches.delete(transport);
-    const pending = transport.disconnect().then(() => { this.detachedTransports.add(transport); }).catch(reason => this.reportError(`Could not detach conversation: ${String(reason)}`)).finally(() => { this.detaching.delete(transport); this.releaseOldDetached(); });
+    const pending = transport.disconnect().then(() => { this.retainIdle(transport, canDetach); }).catch(reason => this.reportError(`Could not detach conversation: ${String(reason)}`)).finally(() => this.detaching.delete(transport));
     this.detaching.set(transport, pending);
   }
 
-  private releaseOldDetached() {
-    for (const transport of this.detachedTransports) {
-      if (this.detachedTransports.size <= DETACHED_LIMIT) return;
-      this.detachedTransports.delete(transport);
+  private retainIdle(transport: NativeTransport, canDetach: () => boolean) {
+    if (this.busy(transport)) return;
+    this.idleTransports.delete(transport); this.idleTransports.set(transport, canDetach);
 
-      if (this.isActive(transport) || this.isInteractive(transport) || this.isRunning(transport) || this.observers.has(transport) || this.queuedTransports.has(transport) || transport.hasTerminalActivity() || transport.hasPendingSettings() || transport.promptControls.hasPending()) continue;
-      void this.release(transport, true).catch(reason => this.reportError(`Could not release idle conversation: ${String(reason)}`));
+    for (const [candidate, idle] of this.idleTransports) {
+      if (this.idleTransports.size <= IDLE_LIMIT) return;
+
+      // A conversation with an unread result or unsent work stays in memory. A released one keeps its list summary.
+      if (this.busy(candidate) || this.observers.has(candidate) || this.unseenTransports.has(candidate) || !idle()) continue;
+      this.idleTransports.delete(candidate);
+      void this.release(candidate, true).catch(reason => this.reportError(`Could not release idle conversation: ${String(reason)}`));
     }
   }
   setInteractive(transport: NativeTransport, interactive: boolean) {
-    if (interactive) { this.interactiveTransports.add(transport); this.unseenTransports.delete(transport); this.detachedTransports.delete(transport); } else this.interactiveTransports.delete(transport);
+    if (interactive) { this.interactiveTransports.add(transport); this.unseenTransports.delete(transport); this.idleTransports.delete(transport); } else this.interactiveTransports.delete(transport);
     this.notify();
     transport.setVisible(interactive || transport === this.activeTransport); this.publishSessionStates();
   }
@@ -283,7 +294,7 @@ export class SessionRuntimePool {
   isActive(transport: NativeTransport) { return transport === this.activeTransport; }
 
   observe(transport: NativeTransport) {
-    this.detachedTransports.delete(transport);
+    this.idleTransports.delete(transport);
     this.observers.set(transport, (this.observers.get(transport) ?? 0) + 1);
     let observing = true;
 
@@ -322,11 +333,12 @@ export class SessionRuntimePool {
     const release = Promise.resolve().then(async () => {
       await this.detaching.get(transport);
       await transport.dispose();
-      this.deferredDetaches.delete(transport); this.queuedTransports.delete(transport); this.detachedTransports.delete(transport);
+      this.deferredDetaches.delete(transport); this.queuedTransports.delete(transport);
       forgetSession(transport);
 
       for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key);
       this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport);
+      this.idleTransports.delete(transport);
 
       const summary = this.liveSessions.get(transport);
 

@@ -146,6 +146,8 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
   const [retry, setRetry] = createSignal(0);
   let nextLoadAt = 0;
   let failed: { version?: number; retry: number } | undefined;
+  /** The retry count when the memory limit removed the payload. Only a later retry loads it again, so open outputs do not evict each other in a loop. */
+  let evictedAt: number | undefined;
   createDependencyEffect(() => {
     const retryAttempt = retry();
     if (failed && (failed.version !== componentProps.message.toolPayloadVersion || failed.retry !== retryAttempt)) failed = undefined;
@@ -163,6 +165,12 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
         setLoading(false); setError(undefined);
         return;
       }
+
+      if (message.toolPayloadEvicted) {
+        evictedAt ??= retryAttempt;
+
+        if (retryAttempt === evictedAt) { setLoading(false); return; }
+      } else evictedAt = undefined;
 
       if (!message.loadToolPayload || failed && failed.version === message.toolPayloadVersion) return;
       const delay = nextLoadAt - Date.now();
@@ -188,7 +196,7 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
     refresh();
 
     return () => { active = false; clearTimeout(timer); };
-  }, () => [open(), retry(), isSubagent(), componentProps.message.toolPayloadVersion, componentProps.message.loadedToolPayloadVersion, componentProps.message.toolPayloadLoaded, componentProps.message.loadToolPayload]);
+  }, () => [open(), retry(), isSubagent(), componentProps.message.toolPayloadVersion, componentProps.message.loadedToolPayloadVersion, componentProps.message.toolPayloadLoaded, componentProps.message.toolPayloadEvicted, componentProps.message.loadToolPayload]);
   const status = createMemo(() => (componentProps.status ?? componentProps.message.toolStatus ?? "done"));
   const label = createMemo(() => (<ToolLabel message={componentProps.message} toolCount={componentProps.toolCount ?? 1} status={status()} />));
 

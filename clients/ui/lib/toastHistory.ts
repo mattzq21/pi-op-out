@@ -7,18 +7,22 @@ const storageKey = "piop.toast-history";
 
 type Notice = { id: string; title: string; message: string };
 
+/** The history keeps the newest 10 notices, so unsaved notices are limited the same way. */
+const HISTORY_LIMIT = 10;
+
 let legacyBody: string | null = null;
 
 function readHistory(): ToastHistoryEntry[] {
   try { legacyBody = localStorage.getItem(storageKey);
 
-  return toastEntriesSchema.parse(JSON.parse(legacyBody ?? "[]")).slice(-10); }
+  return toastEntriesSchema.parse(JSON.parse(legacyBody ?? "[]")).slice(-HISTORY_LIMIT); }
   catch { return []; }
 }
 
 const legacy = readHistory();
 
 const [toastHistory, setToastHistory] = createSignal(legacy);
+/** Why the last history save failed, until a save succeeds. */
 const [toastHistoryError, setToastHistoryError] = createSignal<string>();
 
 export { toastHistory, toastHistoryError };
@@ -48,7 +52,10 @@ function refreshHistory() {
     try { if (localStorage.getItem(storageKey) === legacyBody) localStorage.removeItem(storageKey); } catch { }
 
     if (sent.length) channel?.postMessage(null);
-  }).catch(error => { setToastHistoryError(`Could not save notification history: ${error instanceof Error ? error.message : String(error)}. Recent notifications are only kept in memory. Saving will retry on the next notification or when this window gains focus.`); }).finally(() => {
+  }).catch(error => {
+    console.error("Could not save notification history", error);
+    setToastHistoryError(`Could not save notification history: ${error instanceof Error ? error.message : String(error)}. Recent notifications are only kept in memory. Saving will retry on the next notification or when this window gains focus.`);
+  }).finally(() => {
     saving = false;
 
     if (succeeded && (pending.size || refreshPending)) refreshHistory();
@@ -64,7 +71,10 @@ refreshHistory();
 function recordToast(source: string, notice: { title: string; message: string }) {
   const entry = { ...notice, source, id: crypto.randomUUID(), timestamp: Date.now() };
   pending.set(entry.id, entry);
-  for (const id of [...pending.keys()].slice(0, -10)) pending.delete(id);
+  for (const id of pending.keys()) {
+    if (pending.size <= HISTORY_LIMIT) break;
+    pending.delete(id);
+  }
   setToastHistory(mergeToastHistory(untrack(toastHistory), [entry]));
   refreshHistory();
 }
