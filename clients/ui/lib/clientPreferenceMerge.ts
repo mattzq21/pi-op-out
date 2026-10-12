@@ -22,8 +22,7 @@ export function clientPreferences(settings: AppSettings): ClientPreferences {
   return { keybindings: { ...settings.keybindings }, debugMode: settings.debugMode, dictationEngine: settings.dictationEngine, dictationModelPath: settings.dictationModelPath, dictationArgs: settings.dictationArgs, dictationEngines: settings.dictationEngines?.map(entry => ({ ...entry, models: entry.models.map(model => ({ ...model })) })) };
 }
 
-/** Merges the engines by engine type. An engine that this client changed takes this client's value. */
-function mergeEngines(latest?: DictationEngineSettings[], baseline?: DictationEngineSettings[], intended?: DictationEngineSettings[]) {
+function mergeEngines(conflicts: string[], latest?: DictationEngineSettings[], baseline?: DictationEngineSettings[], intended?: DictationEngineSettings[]) {
   if (latest === undefined && intended === undefined) return undefined;
   const find = (entries: DictationEngineSettings[] | undefined, engine: string) => entries?.find(entry => entry.engine === engine);
   const engines = [...new Set([...(latest ?? []), ...(intended ?? [])].map(entry => entry.engine))];
@@ -31,7 +30,11 @@ function mergeEngines(latest?: DictationEngineSettings[], baseline?: DictationEn
   return engines.flatMap(engine => {
     const before = find(baseline, engine);
     const after = find(intended, engine);
-    const chosen = JSON.stringify(before) === JSON.stringify(after) ? find(latest, engine) : after;
+    const current = find(latest, engine);
+    const changed = JSON.stringify(before) !== JSON.stringify(after);
+
+    if (changed && JSON.stringify(current) !== JSON.stringify(before) && JSON.stringify(current) !== JSON.stringify(after)) conflicts.push(`dictationEngines.${engine}`);
+    const chosen = changed ? after : current;
     return chosen ? [chosen] : [];
   });
 
@@ -65,7 +68,7 @@ export function mergeClientPreferences(latest: ClientPreferences, baseline: Clie
     dictationEngine: intended.dictationEngine === baseline.dictationEngine ? latest.dictationEngine : intended.dictationEngine,
     dictationModelPath: intended.dictationModelPath === baseline.dictationModelPath ? latest.dictationModelPath : intended.dictationModelPath,
     dictationArgs: intended.dictationArgs === baseline.dictationArgs ? latest.dictationArgs : intended.dictationArgs,
-    dictationEngines: mergeEngines(latest.dictationEngines, baseline.dictationEngines, intended.dictationEngines),
+    dictationEngines: mergeEngines(conflicts, latest.dictationEngines, baseline.dictationEngines, intended.dictationEngines),
   };
 
   return { preferences, conflicts };
