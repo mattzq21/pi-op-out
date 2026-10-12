@@ -77,7 +77,6 @@ interface Props {
   onThinking: (level: string) => void;
 }
 
-const COMPOSER_MAX_HEIGHT = 130;
 
 function commandMatches(commands: SlashCommand[], query: string) {
   const exact: SlashCommand[] = [];
@@ -292,17 +291,21 @@ export function Composer(props: Props) {
     if (!editor) return;
     editor.style.height = "auto";
     const contentHeight = Math.max(editor.scrollHeight, 31);
-    editor.style.height = `${Math.min(contentHeight, COMPOSER_MAX_HEIGHT)}px`;
-    editor.style.overflowY = contentHeight > COMPOSER_MAX_HEIGHT ? "auto" : "hidden";
+    const maxHeight = parseFloat(getComputedStyle(editor).maxHeight);
+    editor.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+    editor.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
   };
 
   createDependencyEffect(resizeEditor, () => [value()]);
 
   createDependencyEffect(() => {
-    const resize = () => resizeEditor();
+    // Measure after the mobile viewport height is updated.
+    let frame = 0;
+    const resize = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(resizeEditor); };
     window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
 
-    return () => window.removeEventListener("resize", resize);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener("resize", resize); window.visualViewport?.removeEventListener("resize", resize); };
   }, () => []);
   let handledFocusRequest: number | undefined;
   createDependencyEffect(() => {

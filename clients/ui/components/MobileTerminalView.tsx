@@ -135,6 +135,19 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     editCommand(historyIndex === history.length ? draft : history[historyIndex]);
   };
 
+  // Android keyboards send Enter during word composition as a new line in the text, with no Enter key event.
+  const acceptInput = (element: HTMLElement, composing: boolean) => {
+    const value = element.textContent ?? "";
+
+    if (!value.includes("\n")) { editCommand(value); return; }
+
+    if (composing) return;
+    const line = value.replace(/\n/g, "");
+    element.textContent = line;
+    editCommand(line);
+    send();
+  };
+
   let takingOwnership = false;
 
   const focusInput = async () => {
@@ -142,7 +155,10 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     takingOwnership = true;
 
     try {
-      if (componentProps.ownershipRequired) await componentProps.onTakeOwnership?.();
+      if (componentProps.ownershipRequired) {
+        await componentProps.onTakeOwnership?.();
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      }
 
       if (!disabled()) input.current?.focus();
     } finally { takingOwnership = false; }
@@ -169,7 +185,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
         if (element) followOutput = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
       }}><span><Key each={transcript().segments} by="id">{segment => <span style={segment().style}>{segment().text}</span>}</Key></span>{!componentProps.ownershipRequired &&
         <form class="terminal-command" onSubmit={event => { event.preventDefault(); send(); }}>
-          <span ref={element => { input.current = element; element.textContent = command(); }} role="textbox" aria-label="Terminal command" aria-multiline="true" aria-disabled={disabled()} tabIndex={disabled() ? -1 : 0} contentEditable={disabled() ? false : "plaintext-only"} autocapitalize="off" spellcheck={false} onInput={event => editCommand(event.currentTarget.textContent ?? "")} onKeyDown={event => {
+          <span ref={element => { input.current = element; element.textContent = command(); }} role="textbox" aria-label="Terminal command" aria-multiline="true" aria-disabled={disabled()} tabIndex={disabled() ? -1 : 0} contentEditable={disabled() ? false : "plaintext-only"} autocapitalize="off" spellcheck={false} onInput={event => acceptInput(event.currentTarget, event.isComposing)} onCompositionEnd={event => acceptInput(event.currentTarget, false)} onKeyDown={event => {
             if (event.isComposing) return;
 
             if (event.key === "Enter") { event.preventDefault(); send(); }

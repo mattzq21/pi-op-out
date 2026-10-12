@@ -301,8 +301,9 @@ function installGoalAcceptance(AgentSession) {
   };
 }
 
-async function dispatch(command, currentSession, output) {
+async function dispatch(command, currentSession, sessionReady, output) {
   try {
+    if (!currentSession()) await sessionReady;
     const session = currentSession();
     const work = () => afterReload(currentSession(), () => dispatchReady(command, currentSession(), output));
 
@@ -693,6 +694,8 @@ async function main() {
   installGoalPendingMessages(AgentSession);
 
   let session;
+  let markSessionReady;
+  const sessionReady = new Promise(resolve => { markSessionReady = resolve; });
   const bind = AgentSession.prototype.bindExtensions;
   AgentSession.prototype.bindExtensions = async function (...bindings) {
     installQueueProtocol(this, output);
@@ -705,12 +708,13 @@ async function main() {
     await bind.apply(this, bindings);
 
     session = this;
+    markSessionReady();
     const bridge = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"));
     if (!bridge) throw new Error("Piop runtime bridge is unavailable");
     bridge.value({ command: "session_ready", payload: null, ctx: this.extensionRunner.createCommandContext() });
   };
 
-  appInput(command => dispatch(command, () => session, output));
+  appInput(command => dispatch(command, () => session, sessionReady, output));
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
   await import(pathToFileURL(join(root, "dist/cli.js")).href);
 }

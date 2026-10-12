@@ -99,8 +99,11 @@ export function createAppConversations(preloadChat: () => void) {
   const [notices, setNotices] = createSignal<Array<{ id: string; title: string; message: string }>>([]);
 
   const addNotice = (notice: { title: string; message: string }) => {
-    let id = crypto.randomUUID();
+    let id: string = crypto.randomUUID();
     setNotices(current => {
+      const shown = current.find(item => item.title === notice.title && item.message === notice.message);
+
+      if (shown) { id = shown.id; return current; }
       while (current.some(item => item.id === id)) id = crypto.randomUUID();
       return [...current.filter((item, index) => item.id.startsWith("daemon-log:") || index >= current.length - 9), { ...notice, id }];
     });
@@ -206,18 +209,20 @@ export function createAppConversations(preloadChat: () => void) {
     rekeyConversationUi(previousKey, canonicalKey, capturedTransport);
   }, () => [activeHostId(), chatSession().state.sessionId, chatSession().state.sessionFile, chatSession().state.messageCount, connected(), transport()]);
 
+  const archiveCount = createRef(0);
   const syncSessionIndex = () => {
     if (sessionIndexRequest.current) { sessionIndexDirty.current = true;
 
       return sessionIndexRequest.current; }
 
     sessionIndexDirty.current = false;
+    const listedAfter = archiveCount.current;
 
     if (!sessionIndexRequest.current) sessionIndexRequest.current = transport().listSessions().then((nextSessions) => {
       for (const session of nextSessions) {
         if (archives.isPending(session)) continue;
         const hostId = session.hostId ?? "local";
-        archives.restored(hostId, session.id);
+        archives.restored(hostId, session.id, listedAfter);
 
         if (session.path) runtimePool().restoreSummary(hostId, session.path);
       }
@@ -645,7 +650,7 @@ export function createAppConversations(preloadChat: () => void) {
     transportConversationKeys, isSelectedSession, isSplitSession, conversationTerminalIds,
     removeConversationTerminals: terminals.removeConversationTerminals, removeDraft: drafts.removeDraft, removeSessionDrafts: drafts.removeSessionDrafts,
     setSessions, setActiveCwd, activateTransport, activateConversationKey, updateConnected,
-    closeSplitPane, syncSessionIndex, addNotice, reuseSessionDraft,
+    closeSplitPane, syncSessionIndex, addNotice, reuseSessionDraft, archiveCount,
   });
 
   const archiveSession = archives.archiveSession;

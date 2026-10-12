@@ -18,10 +18,15 @@ export function ArchivedSessionPanel() {
   const refresh = async () => {
     if (loading()) return;
     setLoading(true); setError(undefined);
+    let complete = false;
+    // Other machines can answer slowly, so show the archive of this machine first.
+    const local = loadStorageReport("local").then(next => {
+      if (!complete) setReport(current => ({ hosts: [...next.hosts, ...(current?.hosts.filter(host => host.hostId !== "local") ?? [])] }));
+    });
 
-    try { setReport(await loadStorageReport()); }
+    try { const next = await loadStorageReport(); complete = true; setReport(next); }
     catch (reason) { setError(String(reason)); }
-    finally { setLoading(false); }
+    finally { complete = true; await local.catch(() => undefined); setLoading(false); }
   };
 
   createDependencyEffect(() => { void refresh(); }, () => []);

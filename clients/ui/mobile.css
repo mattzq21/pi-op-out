@@ -5,6 +5,7 @@ html[data-mobile] .mobile-sidebar-toggle { display: flex; }
 html[data-mobile] body { min-width: 0; }
 html[data-mobile] .app { padding-top: env(safe-area-inset-top); }
 html[data-mobile] .conversation-unowned .composer-interaction { opacity: 1; }
+html[data-mobile] .main-chat .composer textarea { max-height: clamp(31px, calc(var(--mobile-height, 100dvh) - 200px - env(safe-area-inset-top)), 130px); }
 .mobile-sidebar-backdrop { display: none; }
 .composer-settings, .composer-settings-panel, .composer-settings-row { display: contents; }
 .composer-bar .composer-settings-trigger, .composer-settings-row > span { display: none; }
@@ -61,6 +62,7 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .settings-header { margin-top: 0; padding: 56px 16px 20px; min-height: 100px; }
   .settings-layout { display: flex; flex-direction: column; gap: 20px; padding: 20px 16px 50px; }
   .settings-nav { flex-direction: row; flex-wrap: wrap; }
+  .settings-nav.settings-machine-nav { padding-top: 56px; }
   .settings-nav button { width: auto; min-height: 44px; }
   .settings-nav .settings-search { width: 100%; }
   .section-title { flex-wrap: wrap; }

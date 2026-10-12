@@ -1,6 +1,7 @@
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { renderDiagram } from "../lib/diagrams";
 import "./diagram.css";
+import { copyText } from "../lib/clipboard";
 
 export function Diagram(props: { source: string; complete: boolean }) {
   const [svg, setSvg] = createSignal("");
@@ -48,7 +49,7 @@ export function Diagram(props: { source: string; complete: boolean }) {
   };
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(props.source); notify("Source copied"); }
+    try { await copyText(props.source); notify("Source copied"); }
     catch { notify("Could not copy source"); }
   };
 
