@@ -130,6 +130,9 @@ export class DictationRecording {
   private gain?: GainNode;
   private timer?: ReturnType<typeof setTimeout>;
   private stopped = false;
+  private cancelled = false;
+  private resolveCancelled!: (value: undefined) => void;
+  private cancellation = new Promise<undefined>(resolve => { this.resolveCancelled = resolve; });
   private vad?: DictationVad;
   private failure?: Error;
   private id?: string;
@@ -139,6 +142,8 @@ export class DictationRecording {
   private pending: number[] = [];
   private samples = 0;
   private sending: Promise<void> = Promise.resolve();
+
+  constructor(private onError: (message: string) => void) {}
 
   async start(onComplete: () => void, onText: (text: DictationText) => void) {
     if (recordingOwner) throw new Error("Dictation is already recording in another chat.");
@@ -162,11 +167,15 @@ export class DictationRecording {
         if (payload.error !== undefined) { if (!this.stopped) fail(new Error(payload.error)); }
         else onText({ committed: payload.committed ?? "", tentative: payload.tentative ?? "" });
       }, streamUpdateSchema);
+      if (this.stopped) { this.stopListening(); return; }
       const context = new AudioContext();
       this.context = context;
       await context.resume();
+      if (this.stopped) return;
       const { DictationVad } = await import("./dictationVad");
+      if (this.stopped) return;
       const vad = await DictationVad.create(context.sampleRate);
+      if (this.stopped) { vad.close(); return; }
       this.vad = vad;
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
@@ -200,11 +209,13 @@ export class DictationRecording {
       this.id = (await started).id;
       this.streamId = this.id;
 
-      if (this.stopped) { this.cancelStream(); return; }
+      if (this.stopped) { this.stopListening(); this.cancelStream(); return; }
       this.flush(fail);
     } catch (error) {
+      const cancelled = this.cancelled;
       this.cancel();
       if (started && !this.id) void started.then(({ id }) => { this.id = id; this.cancelStream(); }, () => undefined);
+      if (cancelled) return;
       throw error;
     }
   }
@@ -216,7 +227,7 @@ export class DictationRecording {
     if (!id || !this.pending.length) return;
     const audio = pcmBase64(this.pending);
     this.samples += this.pending.length; this.pending = [];
-    this.sending = this.sending.then(() => this.failure ? undefined : invoke("dictation_stream_feed", { id, audio }).then(() => undefined))
+    this.sending = this.sending.then(() => this.cancelled || this.failure ? undefined : invoke("dictation_stream_feed", { id, audio }).then(() => undefined))
       .catch((error) => fail(error instanceof Error ? error : new Error(String(error))));
   }
 
@@ -225,22 +236,24 @@ export class DictationRecording {
     this.release();
 
     try {
-      this.flush((error) => { this.failure ??= error; });
-      await this.sending;
+      return await Promise.race([this.cancellation, (async () => {
+        if (this.cancelled) return;
+        this.flush((error) => { this.failure ??= error; });
+        await this.sending;
+        if (this.cancelled) return;
 
-      if (!id) throw new Error("The microphone was not ready.");
+        if (!id) throw new Error("The microphone was not ready.");
 
-      if (this.failure) { this.cancelStream(); throw this.failure; }
+        if (this.failure) { this.cancelStream(); throw this.failure; }
 
-      if (!this.samples) { this.cancelStream(); throw new Error("No audio was recorded. Try again."); }
+        if (!this.samples) { this.cancelStream(); throw new Error("No audio was recorded. Try again."); }
 
-      this.id = undefined;
-
-      return await invoke("dictation_stream_finish", { id }, z.object({ text: z.string() }));
-    } finally { this.stopListening(); }
+        return await invoke("dictation_stream_finish", { id }, z.object({ text: z.string() }));
+      })()]);
+    } finally { this.id = undefined; this.stopListening(); }
   }
 
-  cancel() { this.release(); this.stopListening(); this.cancelStream(); }
+  cancel() { this.cancelled = true; this.resolveCancelled(undefined); this.release(); this.stopListening(); this.cancelStream(); }
 
   private stopListening() { this.streamId = undefined; this.unlisten?.(); this.unlisten = undefined; }
 
@@ -248,7 +261,7 @@ export class DictationRecording {
     const id = this.id;
     this.id = undefined;
 
-    if (id) void invoke("dictation_stream_cancel", { id }).catch((error) => console.error("Could not cancel dictation:", error));
+    if (id) void invoke("dictation_stream_cancel", { id }).catch((error) => this.onError(`Could not cancel dictation: ${error instanceof Error ? error.message : String(error)}`));
   }
 
   private release() {
@@ -262,6 +275,7 @@ export class DictationRecording {
     this.source?.disconnect(); this.gain?.disconnect();
     this.stream?.getTracks().forEach((track) => track.stop());
 
-    if (this.context && this.context.state !== "closed") void this.context.close().catch(() => undefined);
+    const context = this.context; this.context = undefined;
+    if (context && context.state !== "closed") void context.close().catch(error => this.onError(`Could not close the microphone: ${error instanceof Error ? error.message : String(error)}`));
   }
 }

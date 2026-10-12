@@ -15,6 +15,7 @@ import { commandListingSchema } from "./fastModeCommands";
 import { htmlPreviewSize, listen, type UnlistenFn } from "./platform";
 import { restoredSessionTarget, targetedWindowSession } from "./sessionResume";
 import { recoverSessionDirectory } from "./sessionRecovery";
+import { ConversationChangedError } from "./conversationChanged";
 import type { GroupChange, SessionGroupSeed } from "./sessionGroups";
 import type { AppSettings, RpcCommand, RpcEvent } from "../types";
 
@@ -363,16 +364,19 @@ export class NativeTransport {
 
     if (this.running) return;
 
-    if (this.connectPromise) return this.connectPromise;
-
-    if (this.draftOnly() && !forkPath) { await this.draftRuntime.load(); this.temporaryChat = this.cwd === undefined; this.owns = !this.readOnly; hostModelConnected(this.currentHostId());
+    if (!this.connectPromise && this.draftOnly() && !forkPath) { await this.draftRuntime.load(); this.temporaryChat = this.cwd === undefined; this.owns = !this.readOnly; hostModelConnected(this.currentHostId());
 
       return; }
 
     this.connectionAttempted = true;
-    const pending = this.establishConnection(forkPath); this.connectPromise = pending;
+    const pending = this.connectPromise ?? this.establishConnection(forkPath); this.connectPromise = pending;
+    const version = this.connectionVersion;
 
-    try { await pending; } finally { if (this.connectPromise === pending) this.connectPromise = undefined; }
+    try {
+      await pending;
+
+      if (this.disposed || version !== this.connectionVersion) throw new ConversationChangedError();
+    } finally { if (this.connectPromise === pending) this.connectPromise = undefined; }
   }
   private async resolveHomeDirectory(version: number) {
     if (this.cwd === "~" || this.cwd?.startsWith("~/")) {
@@ -461,7 +465,7 @@ export class NativeTransport {
     this.owns = !this.readOnly && attached?.owned !== false;
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
-  async disconnect(discardBlank = false) { const owned = this.hasConfirmedOwnership(); ++this.connectionVersion; this.running = false; this.owns = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
+  async disconnect(discardBlank = false) { const owned = this.hasConfirmedOwnership(); ++this.connectionVersion; this.connectPromise = undefined; this.running = false; this.owns = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
 
     if (owned) this.emit({ type: "ownership_lost" });
 

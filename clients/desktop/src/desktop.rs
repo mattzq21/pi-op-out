@@ -83,9 +83,13 @@ fn open_system_resource(target: &std::ffi::OsStr) -> Result<(), String> {
         Err(error) => Err(format!("Could not wait for xdg-open: {error}")),
     }
 }
-#[tauri::command(async)]
-fn read_dropped_file(path: String) -> Result<Value, String> {
-    let path = Path::new(&path);
+#[tauri::command]
+async fn read_dropped_file(path: String) -> Result<Value, String> {
+    tokio::task::spawn_blocking(move || read_attachment(&path)).await.map_err(|error| error.to_string())?
+}
+
+fn read_attachment(path: &str) -> Result<Value, String> {
+    let path = Path::new(path);
     if !fs::metadata(path).map_err(|error| error.to_string())?.is_file() { return Err("Drop regular files only".to_string()); }
     let mut options = fs::OpenOptions::new();
     options.read(true);
