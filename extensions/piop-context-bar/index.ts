@@ -21,6 +21,11 @@ const resumeSchema = Type.Object({ message: Type.String() });
 
 const responseUsageSchema = Type.Object({ response: Type.Object({ usage: Type.Object({ input_tokens: Type.Integer({ minimum: 1 }) }) }) });
 
+const savedContextSchema = Type.Object({
+  systemPrompt: Type.Optional(Type.String()), tools: Type.Optional(Type.Array(Type.Unknown())),
+  sameAsPrevious: Type.Optional(Type.Object({ systemPrompt: Type.Optional(Type.Boolean()), tools: Type.Optional(Type.Boolean()) })),
+});
+
 const STATUS_KEY = "pi-desktop-prompt-context";
 
 const ENTRY_TYPE = "piop-context";
@@ -148,6 +153,23 @@ function invocationWindow(branch: ReturnType<ExtensionContext["sessionManager"][
   return new Set(branch.slice(compacted + 1).flatMap(entry => entry.type === "message" && entry.message.role === "user" ? [entry.message.timestamp] : []));
 }
 
+/** Returns the system prompt and tools of the latest saved snapshot on the branch, following "same as previous" markers. */
+function savedPromptParts(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>) {
+  let systemPrompt: string | undefined;
+  let tools: string | undefined;
+
+  for (const entry of branch) {
+    if (entry.type !== "custom" || entry.customType !== ENTRY_TYPE || !Check(savedContextSchema, entry.data)) continue;
+    const data = entry.data;
+
+    if (!data.sameAsPrevious?.systemPrompt) systemPrompt = data.systemPrompt;
+
+    if (!data.sameAsPrevious?.tools) tools = data.tools === undefined ? undefined : JSON.stringify(data.tools);
+  }
+
+  return { systemPrompt, tools };
+}
+
 export default function contextBar(pi: ExtensionAPI) {
   let promptOptions: BuildSystemPromptOptions | undefined;
   let publishInputTokens: ((tokens: number, ctx: ExtensionContext) => void) | undefined;
@@ -193,7 +215,16 @@ export default function contextBar(pi: ExtensionAPI) {
       tokens: { system: estimate(instructionBlocks.reduce((prompt, block) => prompt.replace(block, ""), systemPrompt.replace(skillPrompt, ""))), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(JSON.stringify(tools)), skills: skillTokens.defined + skillTokens.invoked },
     };
 
-    pi.appendEntry(ENTRY_TYPE, snapshot);
+    const previous = savedPromptParts(branch);
+    const sameSystemPrompt = previous.systemPrompt === systemPrompt;
+    const sameTools = previous.tools === JSON.stringify(tools);
+    const { systemPrompt: _systemPrompt, tools: _tools, ...rest } = snapshot;
+    pi.appendEntry(ENTRY_TYPE, {
+      ...rest,
+      ...sameSystemPrompt ? {} : { systemPrompt },
+      ...sameTools ? {} : { tools },
+      ...sameSystemPrompt || sameTools ? { sameAsPrevious: { ...sameSystemPrompt ? { systemPrompt: true } : {}, ...sameTools ? { tools: true } : {} } } : {},
+    });
     ctx.ui.setStatus(STATUS_KEY, `json:${JSON.stringify(snapshot)}`);
     publishInputTokens = (inputTokens, context) => context.ui.setStatus(STATUS_KEY, `json:${JSON.stringify({ ...snapshot, inputTokens })}`);
   };

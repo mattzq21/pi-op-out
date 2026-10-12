@@ -158,7 +158,10 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
             capturedOptions.setDefinedAgents(capability);
 
             if (capability && !initializing) void capturedOptions.refreshSession().catch(() => undefined);
-          } catch { capturedOptions.setDefinedAgents(undefined); }
+          } catch (reason) {
+            capturedOptions.setDefinedAgents(undefined);
+            capturedOptions.addNotice({ title: "Could not read agent list", message: reason instanceof Error ? reason.message : String(reason) });
+          }
         };
 
         const setExtensionStatus = () => {

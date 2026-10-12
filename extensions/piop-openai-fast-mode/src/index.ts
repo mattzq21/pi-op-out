@@ -8,7 +8,7 @@ import type {
   ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import { getFastCommandCompletions, parseFastCommand } from "./commands";
-import { createFastModeDiscovery } from "./discovery";
+import { createFastModeDiscovery, type FastModeDiscovery } from "./discovery";
 import {
   cloneConfig,
   loadConfigForScope,
@@ -70,7 +70,17 @@ export function createPiFastModeExtension(
     let agentEnabled: boolean | undefined;
     let configuredTargets: FastTarget[] = [];
     let loading: Promise<void> | undefined;
+    let discoveryError: string | undefined;
     const discover = createFastModeDiscovery();
+    const discoverTargets = async (ctx: ExtensionContext): Promise<FastTarget[]> => {
+      const result: FastModeDiscovery = await discover(ctx, configuredTargets, config.targets);
+      const error = result.errors.length ? result.errors.join("\n") : undefined;
+
+      if (error && error !== discoveryError) notifyError(ctx, error);
+      discoveryError = error;
+
+      return result.targets;
+    };
     const effectiveConfig = () => ({ ...config, enabled: agentEnabled ?? config.enabled });
     pi.events.on("piop:fast-mode", request => {
       request.models = config.targets.map((target) => `${target.provider}/${target.model}`);
@@ -99,7 +109,7 @@ export function createPiFastModeExtension(
       });
 
       configuredTargets = loaded.config.targets;
-      config = syncSupportedTargets(loaded.config, await discover(ctx, configuredTargets));
+      config = syncSupportedTargets(loaded.config, await discoverTargets(ctx));
       config.enabled = savedSessionValue(ctx) ?? (pi.getFlag("fast") === true || config.enabled);
       agentEnabled = undefined;
       loadedCwd = ctx.cwd;
@@ -119,7 +129,7 @@ export function createPiFastModeExtension(
     }
 
     async function refreshTargets(ctx: ExtensionContext): Promise<void> {
-      const targets = await discover(ctx, configuredTargets);
+      const targets = await discoverTargets(ctx);
       const changed = JSON.stringify(targets) !== JSON.stringify(config.targets);
       config.targets = targets;
 

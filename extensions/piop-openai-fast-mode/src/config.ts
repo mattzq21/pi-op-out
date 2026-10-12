@@ -42,23 +42,20 @@ export function syncSupportedTargets(config: FastModeConfig, targets: FastTarget
 }
 
 const fastTargetSchema = z.object({
-  provider: z.string().trim().toLowerCase().refine(provider => SUPPORTED_PROVIDER_SET.has(provider)),
+  provider: z.string().trim().toLowerCase().refine(provider => SUPPORTED_PROVIDER_SET.has(provider), { message: `provider must be one of: ${SUPPORTED_PROVIDERS.join(", ")}` }),
   model: z.string().trim().min(1),
-  serviceTier: z.string().trim().min(1).catch(DEFAULT_SERVICE_TIER),
+  serviceTier: z.string().trim().min(1).optional().transform(tier => tier ?? DEFAULT_SERVICE_TIER),
 });
 
-const targetsSchema = z.array(fastTargetSchema.optional().catch(undefined)).transform(items => items.flatMap(item => item ? [item] : []));
+const targetsSchema = z.array(fastTargetSchema);
 
-const configSchema = z.object({ enabled: z.boolean().optional().catch(undefined), targets: targetsSchema.optional().catch(undefined) });
+const configSchema = z.object({ enabled: z.boolean().optional(), targets: targetsSchema.optional() });
 
-export function normalizeTargets(rawTargets: FastTarget[] | undefined): FastTarget[] | undefined {
-  const parsed = targetsSchema.safeParse(rawTargets);
-
-  if (!parsed.success) return undefined;
+function uniqueTargets(targets: FastTarget[]): FastTarget[] {
   const normalized: FastTarget[] = [];
   const seen = new Set<string>();
 
-  for (const target of parsed.data) {
+  for (const target of targets) {
     const key = target.provider + "\u0000" + target.model;
 
     if (seen.has(key)) continue;
@@ -69,23 +66,24 @@ export function normalizeTargets(rawTargets: FastTarget[] | undefined): FastTarg
   return normalized;
 }
 
-export function normalizeConfig(raw: Partial<FastModeConfig> | null | undefined, fallback: FastModeConfig = DEFAULT_CONFIG): FastModeConfig {
+export function normalizeConfig(raw: unknown, fallback: FastModeConfig = DEFAULT_CONFIG): FastModeConfig {
   const safeFallback = cloneConfig(fallback);
   const parsed = configSchema.safeParse(raw);
 
-  if (!parsed.success) return safeFallback;
+  if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
 
-  return { enabled: parsed.data.enabled ?? safeFallback.enabled, targets: normalizeTargets(parsed.data.targets) ?? safeFallback.targets };
+  return { enabled: parsed.data.enabled ?? safeFallback.enabled, targets: parsed.data.targets ? uniqueTargets(parsed.data.targets) : safeFallback.targets };
 }
 
 export function parseConfigJson(
   json: string,
+  path: string,
   fallback: FastModeConfig = DEFAULT_CONFIG,
 ): FastModeConfig {
   try {
     return normalizeConfig(JSON.parse(json), fallback);
-  } catch {
-    return cloneConfig(fallback);
+  } catch (error) {
+    throw new Error(`Invalid fast mode config ${path}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -154,7 +152,7 @@ export async function loadConfigFromPath(
 ): Promise<FastModeConfig> {
   const json = readConfigText(configPath);
 
-  return json === undefined ? cloneConfig(fallback) : parseConfigJson(json, fallback);
+  return json === undefined ? cloneConfig(fallback) : parseConfigJson(json, configPath, fallback);
 }
 
 function readConfigText(path: string): string | undefined {
