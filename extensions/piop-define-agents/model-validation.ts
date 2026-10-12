@@ -58,13 +58,12 @@ export async function modelValidator() {
       const model = configuredModel(registry, agent, name);
 
       if (!agent.fastMode) return;
-      let unknown = false;
+      const { targets, errors } = await discoverFast({ modelRegistry: registry, model }, configured, []);
 
-      const targets = await discoverFast({ modelRegistry: registry, model }, configured, candidate => {
-        if (candidate.provider === model.provider && candidate.id === model.id) unknown = true;
-      });
+      // Without the model list, the session checks Fast mode when the agent starts.
+      if (errors.length) return;
 
-      if (!unknown && !targets.some(target => target.provider === model.provider && target.model === model.id)) throw new Error(`Agent "${agent.name}" cannot enable Fast mode for model ${name}`);
+      if (!targets.some(target => target.provider === model.provider && target.model === model.id)) throw new Error(`Agent "${agent.name}" cannot enable Fast mode for model ${name}`);
     });
   };
 }

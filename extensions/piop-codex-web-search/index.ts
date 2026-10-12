@@ -62,12 +62,13 @@ function rankedModels(ctx: ExtensionContext) {
 
   const override = process.env.PIOP_WEB_SEARCH_MODEL?.trim();
   const models = ctx.modelRegistry.getAll().filter(isCodex);
+  const fastEnough = (model: NonNullable<ExtensionContext["model"]>) => !model.id.split("-").some((part) => part === "pro" || part === "ultra");
 
-  const candidates = models.filter((model) => !model.id.split("-").some((part) => part === "pro" || part === "ultra"))
+  const candidates = models.filter(fastEnough)
     .sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
 
   const ranked = override ? models.filter((model) => model.id === override) : [
-    ...ctx.model && isCodex(ctx.model) ? [ctx.model] : [],
+    ...ctx.model && isCodex(ctx.model) && fastEnough(ctx.model) ? [ctx.model] : [],
     ...candidates.filter((model) => model.id.includes("terra")),
     ...candidates.filter((model) => /^gpt-\d+(\.\d+)?$/.test(model.id)),
     ...candidates,
