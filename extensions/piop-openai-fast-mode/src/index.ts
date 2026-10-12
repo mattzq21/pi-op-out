@@ -87,7 +87,12 @@ export function createPiFastModeExtension(options: FastModeExtensionOptions = {}
 
     pi.on("model_select", async (event, ctx) => {
       currentModel = toModelRef(event.model) ?? toModelRef(ctx.model);
-      updateFastStatus(ctx, await session.getEnabled().catch(() => false), currentModel);
+      try {
+        updateFastStatus(ctx, await session.getEnabled(), currentModel);
+      } catch (error) {
+        clearFastStatus(ctx);
+        notifyError(ctx, error);
+      }
     });
 
     pi.on("before_provider_request", async (event, ctx) => getFastModePayload(await session.getEnabled(), toModelRef(ctx.model) ?? currentModel, event.payload));
