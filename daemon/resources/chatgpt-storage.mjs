@@ -252,7 +252,7 @@ function chatGptRecordSubmission(chat) {
 }
 
 function chatGptRecordFields(chat) {
-  const optionalStrings = ['thinkingEffort', 'versionId', 'contextSource', 'error', 'revision'];
+  const optionalStrings = ['thinkingEffort', 'versionId', 'contextSource', 'error', 'revision', 'unsentText'];
 
   if (!optionalStrings.every(field => chat[field] === undefined || chatGptRecordString(chat[field]))) return false;
 

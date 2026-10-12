@@ -19,6 +19,7 @@ export async function dispatch(app: App, operation: string, args: any): Promise<
 }
 
 const NOTE_MUTATIONS = new Set(['save', 'claim', 'takeover', 'release']);
+const NOTE_STATE_LIMIT = 1000;
 /** Last note state seen per host and session, so repeated reads of an unchanged, deleted or disabled note emit nothing. */
 const noteStates = new Map<string, string>();
 
@@ -30,7 +31,9 @@ function notifyNoteChange(app: App, args: any, result: any): void {
   const key = hostId + ':' + sessionId;
   const state = JSON.stringify([result?.version ?? null, result?.deleted === true, result?.disabled === true]);
   const changed = noteStates.get(key) !== state;
+  noteStates.delete(key);
   noteStates.set(key, state);
+  if (noteStates.size > NOTE_STATE_LIMIT) noteStates.delete(noteStates.keys().next().value!);
   if (!NOTE_MUTATIONS.has(args.request?.action) && !changed) return;
   app.emit('pi://event', { type: 'note_changed', hostId, sessionId });
 }
