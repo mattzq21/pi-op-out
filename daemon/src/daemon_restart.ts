@@ -374,10 +374,9 @@ async function runSpecial(mode: string): Promise<void> {
 
 export function startupTickets(): any {
   if (process.argv[2] !== '--restart-candidate') return undefined;
-  try {
-    const plan = readPlan();
-    return process.argv[3] === plan.id ? plan.tickets : undefined;
-  } catch { return undefined; }
+  let plan: Plan;
+  try { plan = readPlan(); } catch (error: any) { throw new Error('Could not read the restart plan, so in-memory ChatGPT state was not restored: ' + (error?.message ?? error)); }
+  return process.argv[3] === plan.id ? plan.tickets : undefined;
 }
 
 export async function initializeCandidate(app: App): Promise<void> {

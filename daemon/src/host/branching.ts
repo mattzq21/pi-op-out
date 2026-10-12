@@ -1,10 +1,9 @@
 import { basename, isAbsolute } from 'node:path';
 import * as Registry from '../session_registry';
-import { Mutex } from '../util/sync';
 import { kind, text } from './json';
 import { Guard, ownershipError } from './ownership';
 import { argument, expandHome, readHeaderLine, sessionSpec, specIdentity, type LaunchSpec } from './protocol';
-import type { Host } from './controller';
+import { lockGate, type Host } from './controller';
 import type { Session } from './session';
 
 const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
@@ -75,9 +74,7 @@ async function attachReadonly(host: Host, session: Session, runtime: string, tar
 }
 
 async function openDestination(host: Host, session: Session, runtime: string, target: Destination): Promise<any> {
-  let gate = host.sessionGates.get(target.key);
-  if (!gate) { gate = new Mutex(); host.sessionGates.set(target.key, gate); }
-  const release = await gate.lock();
+  const release = await lockGate(host.sessionGates, target.key);
   try {
     const found = host.findSession(target.key);
     if (found?.transient()) throw new Error('This conversation branch is still being prepared');

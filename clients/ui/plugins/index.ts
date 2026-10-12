@@ -9,7 +9,7 @@ export const plugins = [
   { id: "markdown", scope: "conversation", name: "Notes", description: "Shared conversation notes, with one client editing at a time.", load: (): Promise<PluginModule> => import("./markdown/plugin") },
 ];
 
-export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), revision: z.string(), error: z.string().nullable() });
+export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), configured: z.array(z.string()), revision: z.string(), error: z.string().nullable() });
 
 export type PluginStatus = z.infer<typeof pluginStatusSchema>;
 
@@ -65,7 +65,7 @@ export async function restartPlugins(host: string, enabled: string[], revision: 
   catch (reason) {
     if (result.phase !== "complete") throw new Error(`Client plugins could not load after daemon recovery: ${String(reason)}`);
 
-    return restorePlugins(host, previous.enabled, status.revision, String(reason));
+    return restorePlugins(host, previous.configured, status.revision, String(reason));
   }
 
   const error = result.error ?? status.error;

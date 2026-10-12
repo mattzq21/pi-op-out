@@ -44,7 +44,7 @@ const WORKER_SCRIPT = [
   'exec 9<>"$lock" || { echo "piop session: Could not open a session claim" >&2; exit 1; }',
   shellLock(9, true) + ' || { echo "piop session: This conversation is open in another window or daemon" >&2; exit 1; }',
   'if [ -n "$reserved" ]; then set -- "$@" --session-id "$reserved"; fi',
-  'if [ -n "$PIOP_RPC_ENTRY" ]; then exec node "$PIOP_RPC_ENTRY" "$@"; fi',
+  'if [ -n "$PIOP_RPC_ENTRY" ]; then exec "${PIOP_NODE:-node}" "$PIOP_RPC_ENTRY" "$@"; fi',
   'exec "$@"',
 ].join('\n');
 

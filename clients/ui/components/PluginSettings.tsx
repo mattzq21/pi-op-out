@@ -20,7 +20,7 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
 
     try { const current = await refreshPlugins(props.hostId);
 
-    if (!disposed) { setStatus(current); setEnabled(current.enabled); } }
+    if (!disposed) { setStatus(current); setEnabled(current.configured); } }
     catch (reason) { if (!disposed) setError(String(reason)); }
     finally { if (!disposed) setBusy(false); }
   };
@@ -63,7 +63,7 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
         return;
       }
 
-      setStatus(result); setEnabled(result.enabled);
+      setStatus(result); setEnabled(result.configured);
       setMessage(undefined);
 
       if (!result.error) {
