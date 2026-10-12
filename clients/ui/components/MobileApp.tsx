@@ -154,7 +154,7 @@ export function MobileApp() {
 
       return; }
 
-      window.dispatchEvent(new Event("piop-mobile-back"));
+      if (window.dispatchEvent(new Event("piop-mobile-back", { cancelable: true }))) void AndroidApp.minimizeApp().catch((reason) => setError(String(reason)));
     });
 
     const viewport = () => document.documentElement.style.setProperty("--mobile-height", `${window.visualViewport?.height ?? window.innerHeight}px`);

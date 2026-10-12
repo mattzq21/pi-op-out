@@ -45,6 +45,8 @@ export class RemoteClient {
       let lastHeartbeat = Date.now();
       let pongs = 0;
       let settled = false;
+      /** Why the connection ends, when the host or this client gave a reason. */
+      let closeReason: string | undefined;
       const settleReject = (error: Error) => { if (!settled) { settled = true; reject(error); } };
 
       const settleResolve = () => { if (!settled) { settled = true; resolve(); } };
@@ -56,7 +58,10 @@ export class RemoteClient {
         if (this.socket !== socket) return;
         let message: z.infer<typeof handshakePacketSchema>;
 
-        try { message = handshakePacketSchema.parse(JSON.parse(String(data))); } catch { socket.close();
+        try { message = handshakePacketSchema.parse(JSON.parse(String(data))); } catch (error) {
+          closeReason = `The host sent an invalid message: ${error instanceof Error ? error.message : String(error)}`;
+          settleReject(new Error(closeReason));
+          socket.close();
 
         return; }
 
@@ -67,6 +72,12 @@ export class RemoteClient {
         if (message.type === "error" && !ready) {
           settleReject(new Error(message.error || "Host rejected the connection."));
           socket.close();
+
+          return;
+        }
+
+        if (ready && message.event === undefined && message.id === undefined && message.error !== undefined) {
+          closeReason = `The host closed the connection: ${message.error}`;
 
           return;
         }
@@ -131,7 +142,7 @@ export class RemoteClient {
         if (this.socket !== socket) return;
         this.failPending();
 
-        if (ready) this.onDisconnect?.("Connection lost. Reconnect to reload saved conversations. A command sent just before disconnection may have completed on the host.");
+        if (ready) this.onDisconnect?.(`${closeReason ? closeReason + ". " : ""}Connection lost. Reconnect to reload saved conversations. A command sent just before disconnection may have completed on the host.`);
       };
     });
   }

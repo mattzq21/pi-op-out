@@ -341,6 +341,8 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
   } finally {
     clearInterval(heartbeat);
     shared.subscribers.delete(subscriber);
+    // Let queued replies, such as the error for an invalid request, reach the client before the close.
+    await withTimeout(chain, 2000, 'Send timeout').catch(() => undefined);
     await withTimeout(ws.close(), 2000, 'Close timeout').catch(() => undefined);
     ws.terminate();
     await detachOwner(app, owner, false);
