@@ -20,10 +20,15 @@ export interface StartPiOptions { runtimeId: string; cwd?: string | null; sessio
 /** attached settles when the start that registered this process finishes attaching. */
 interface PiProcess { daemon: daemon.Daemon; windowLabel: string; blankCleanup: BlankSessionCleanup; attached: Promise<void> }
 
+/** A start that has not registered its process yet. A stop in that time sets cancelled. */
+interface PendingStart { owner: string; cancelled: boolean }
+
 /** State for agent sessions that run through the host daemon. */
 export class PiRuntime {
   connections = new daemon.DaemonRegistry();
   processes = new Map<string, PiProcess>();
+  /** Starts per runtime that are still being prepared, so a stop can cancel them before they register. */
+  pendingStarts = new Map<string, Set<PendingStart>>();
   /** Serializes session start, switch, archive, and settings changes. */
   lifecycle = new Mutex();
   agentConfigRevision = 0;
@@ -36,6 +41,14 @@ export class PiRuntime {
     const ids = [...this.processes].filter(([, process]) => process.daemon === connection).map(([id]) => id);
     for (const id of ids) this.processes.delete(id);
     return ids;
+  }
+
+  /** Cancels the starts in preparation for runtimeId, or for every runtime of owner. */
+  cancelPendingStarts(match: { runtimeId?: string; owner?: string }): void {
+    for (const [id, starts] of this.pendingStarts) {
+      if (match.runtimeId !== undefined && id !== match.runtimeId) continue;
+      for (const start of starts) if (match.owner === undefined || start.owner === match.owner) start.cancelled = true;
+    }
   }
 
   disconnectProcess(id: string, connection: daemon.Daemon): boolean {
@@ -55,6 +68,11 @@ export async function cleanupBlankSession(target: BlankSessionCleanup): Promise<
   try {
     await storageTransactions.deleteBlank(target.host ? { kind: 'remote', host: target.host } : { kind: 'local' }, { path: target.path, id: target.id });
   } catch (error: any) { console.error('Could not clean up blank session: ' + (error?.message ?? error)); }
+  // A launch that failed before Pi wrote a transcript leaves only the reserved ID, which deleteBlank does not see.
+  if (target.host === undefined && target.id !== undefined) {
+    try { Registry.releaseReservation(join(homeDir(), STORAGE_DIRECTORY), target.id); }
+    catch (error: any) { console.error('Could not release reserved session ID ' + target.id + ': ' + (error?.message ?? error)); }
+  }
 }
 
 export function ensureRuntimeOwner(runtime: PiRuntime, runtimeId: string, owner: string): void {
@@ -72,11 +90,16 @@ async function sessionLaunchSettings(app: App, hostId: string, cwd: string | nul
 interface PreparedStart { connection: daemon.Daemon; process: PiProcess; settle: { resolve(): void; reject(error: unknown): void }; packet: any; claim: BusyAgent | undefined; hostId: string; sessionId: string | undefined; sessionPath: string | undefined; reserved: boolean }
 
 /** Checks, reserves and registers a Pi start under the lifecycle lock. Returns the existing attachment when the runtime is already registered. */
-async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broker: BrokerRuntime, options: StartPiOptions): Promise<PreparedStart | { existing: Promise<void> }> {
+async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broker: BrokerRuntime, options: StartPiOptions, pending: PendingStart): Promise<PreparedStart | { existing: Promise<void> }> {
+  const assertNotCancelled = () => { if (pending.cancelled) throw new Error('Pi start was cancelled'); };
+  assertNotCancelled();
   ensureRuntimeOwner(runtime, options.runtimeId, owner);
   const hostId = options.hostId ?? 'local';
+  // daemon.connect accepts only the local host; check before an ID is reserved on the remote machine.
+  if (hostId !== 'local') throw new Error('Remote workers must be managed through their Piop daemon');
   const readOnly = options.presence?.readOnly === true;
   const settings = await sessionLaunchSettings(app, hostId, options.cwd, readOnly);
+  assertNotCancelled();
   const existing = runtime.processes.get(options.runtimeId);
   if (existing && existing.daemon.alive && existing.daemon.matchesConnection(settings, hostId)) return { existing: existing.attached };
   const reserved = options.sessionId == null && options.sessionPath == null;
@@ -93,6 +116,7 @@ async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broke
       if (sessionPath === undefined || forkPath !== undefined) throw new Error('A read-only view requires a saved conversation');
     } else if (claimId !== undefined) claim = claimAgent(broker, hostId, claimId);
     const connection = await daemon.connect(app, runtime, broker, settings, hostId);
+    assertNotCancelled();
     const command = buildPiCommand(broker, settings, hostId, { kind: 'rpc', cwd: options.cwd, sessionPath, sessionId, forkPath }, connection.remotePort);
     blankCleanup.path = sessionPath;
     let settle!: PreparedStart['settle'];
@@ -113,9 +137,24 @@ export async function startPiForOwner(app: App, owner: string, runtime: PiRuntim
   if (typeof options?.runtimeId !== 'string' || typeof options?.clientId !== 'string') throw new Error('Invalid start options');
   // The lifecycle lock covers the checks and registration only. The attach request can take minutes when pi starts slowly,
   // and holding the lock for that long would block every other session start, switch, archive and settings change.
-  const prepared = await runtime.lifecycle.run(() => preparePiStart(app, owner, runtime, broker, options));
-  // A start that overlaps a pending one for the same runtime reports that start's outcome.
-  if ('existing' in prepared) { await prepared.existing; return { attached: true }; }
+  // The start counts as pending from now on, so a stop that arrives while it waits for the lock or prepares cancels it.
+  const pending: PendingStart = { owner, cancelled: false };
+  let starts = runtime.pendingStarts.get(options.runtimeId);
+  if (!starts) { starts = new Set(); runtime.pendingStarts.set(options.runtimeId, starts); }
+  starts.add(pending);
+  let prepared: Awaited<ReturnType<typeof preparePiStart>>;
+  try { prepared = await runtime.lifecycle.run(() => preparePiStart(app, owner, runtime, broker, options, pending)); }
+  finally {
+    starts.delete(pending);
+    if (!starts.size && runtime.pendingStarts.get(options.runtimeId) === starts) runtime.pendingStarts.delete(options.runtimeId);
+  }
+  // A start that overlaps a pending one for the same runtime reports that start's outcome, with the ownership as it is now.
+  if ('existing' in prepared) {
+    await prepared.existing;
+    const agent = runtime.activeAgents.get(options.runtimeId);
+    if (!agent) throw new Error('Pi runtime was detached while it started');
+    return { attached: true, owned: !agent.messageable };
+  }
   const { connection, process, settle, packet, claim, hostId, sessionId, sessionPath, reserved } = prepared;
   try {
     const result = await connection.request(packet);
@@ -143,7 +182,7 @@ export function detachPi(runtime: PiRuntime, runtimeId: string, discardBlank: bo
 export async function detachPiWith(runtime: PiRuntime, runtimeId: string, discardBlank: boolean, preserveRunning: boolean): Promise<boolean> {
   let stopped = false;
   const process = runtime.processes.get(runtimeId);
-  if (!process) { runtime.activeAgents.delete(runtimeId); return false; }
+  if (!process) { runtime.cancelPendingStarts({ runtimeId }); runtime.activeAgents.delete(runtimeId); return false; }
   let result: any;
   try { result = await process.daemon.request({ type: 'detach', runtimeId, discardBlank, preserveRunning }); }
   catch (error) {
@@ -254,6 +293,7 @@ export async function openProjectDirectory(app: App, cwd: string, hostId: string
 }
 
 export async function detachOwner(runtime: PiRuntime, owner: string, discardBlank: boolean): Promise<void> {
+  runtime.cancelPendingStarts({ owner });
   const ids = [...runtime.processes].filter(([, process]) => process.windowLabel === owner).map(([id]) => id);
   const results = await Promise.allSettled(ids.map(id => detachPiWith(runtime, id, discardBlank, !discardBlank)));
   results.forEach((result, index) => {

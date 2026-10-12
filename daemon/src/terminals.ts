@@ -11,9 +11,8 @@ import * as terminalLookup from './terminal_lookup';
 import type { App } from './app';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
-/** Input accepted since the PTY last reported it was drained or idle. */
+/** Input accepted since the PTY last reported it was drained. */
 const INPUT_PENDING_BYTES = 4 * 1024 * 1024;
-const INPUT_IDLE_MS = 1000;
 /** Output chunks are merged for this long before one terminal_output event is sent. */
 const OUTPUT_FLUSH_MS = 16;
 const OUTPUT_FLUSH_BYTES = 256 * 1024;
@@ -29,9 +28,8 @@ export interface TerminalProcess {
   processSessionId: number;
   rows: number;
   cols: number;
-  /** Input bytes written since the last drain. Bun only reports a drain after a write it had to buffer. */
+  /** Input bytes written since the last drain. Bun reports a drain each time its input queue is empty again, also after a write it did not buffer. */
   pendingInput: number;
-  lastInput: number;
   exited: boolean;
   stopping?: Promise<void>;
 }
@@ -142,7 +140,7 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
       },
     });
   } catch (error: any) { throw new Error('Could not start terminal shell: ' + (error?.message ?? error)); }
-  const started: TerminalProcess = { generation, sessionKey, cwd, hostId, windowLabel, child, processSessionId: child.pid, rows, cols, pendingInput: 0, lastInput: 0, exited: false };
+  const started: TerminalProcess = { generation, sessionKey, cwd, hostId, windowLabel, child, processSessionId: child.pid, rows, cols, pendingInput: 0, exited: false };
   terminal = started;
   terminalLookup.start(runtime, terminalId, sessionKey, cwd, hostId, windowLabel, generation);
   const size = '\u001b[8;' + rows + ';' + cols + 't';
@@ -168,12 +166,9 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
 export function queueInput(process: TerminalProcess, data: string, busy: string): void {
   const pty = process.child.terminal;
   if (!pty || pty.closed || process.exited || process.stopping || process.child.exitCode !== null || process.child.signalCode !== null) throw new Error('Terminal is not running');
-  const now = Date.now();
-  if (now - process.lastInput > INPUT_IDLE_MS) process.pendingInput = 0;
   const bytes = Buffer.byteLength(data);
   if (process.pendingInput + bytes > INPUT_PENDING_BYTES) throw new Error(busy);
   process.pendingInput += bytes;
-  process.lastInput = now;
   pty.write(data);
 }
 

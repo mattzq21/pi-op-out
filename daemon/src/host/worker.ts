@@ -10,7 +10,8 @@ import { kind, type LaunchSpec, wireCommand } from './protocol';
 export interface Request { command: any; requestType: string; snapshotState: any }
 
 export interface WorkerObserver {
-  event(event: any): void;
+  /** Settles when the event is handled. The worker stops reading Pi's output while too many events wait. */
+  event(event: any): Promise<void>;
   response(event: any, request: Request): any;
   stderr(line: string): void;
   diagnostic(line: string): void;
@@ -20,6 +21,10 @@ export interface WorkerObserver {
 }
 
 interface Pending extends Request { resolve(value: any): void; reject(error: Error): void }
+
+/** Events that may wait for the session before the worker stops reading Pi's output, by count and by size. */
+const BACKLOG_EVENTS = 1000;
+const BACKLOG_BYTES = 16 * 1024 * 1024;
 
 const running = new Map<ChildProcess, string>();
 process.on('exit', () => {
@@ -50,6 +55,10 @@ export class RuntimeWorker {
   private deadline: NodeJS.Timeout | undefined;
   private descendants: ReturnType<typeof descendantProcesses> = [];
   private exitStatus: string | null = null;
+  private lines: ReturnType<typeof createInterface> | undefined;
+  private backlog = 0;
+  private backlogBytes = 0;
+  private paused = false;
 
   private constructor(private child: ChildProcess, private tag: string, private observer: WorkerObserver, private timeout: number) {}
 
@@ -74,10 +83,11 @@ export class RuntimeWorker {
     let open = 3;
     const done = () => { if (--open === 0) worker.close(); };
     const lines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+    worker.lines = lines;
     lines.on('line', line => {
       let event: any;
       try { event = JSON.parse(line); } catch (error: any) { observer.diagnostic(error.message); return; }
-      worker.receive(event);
+      worker.receive(event, line.length);
     });
     lines.on('close', done);
     const errors = createInterface({ input: child.stderr!, crlfDelay: Infinity });
@@ -103,19 +113,37 @@ export class RuntimeWorker {
     for (const waiter of this.closedWaiters.splice(0)) waiter();
   }
 
-  private receive(event: any): void {
+  private receive(event: any, size: number): void {
     if (kind(event) === 'extension_ui_request' && event.method === 'setStatus' && event.statusKey === 'pi-desktop-pause-state') {
       const statusText = event.statusText;
       if (typeof statusText !== 'string' || !statusText.startsWith('json:')) return;
       try { event = JSON.parse(statusText.slice(5)); } catch (error: any) { this.observer.diagnostic(error.message); return; }
     }
-    if (kind(event) !== 'response') { this.observer.event(event); return; }
+    if (kind(event) !== 'response') { this.track(this.observer.event(event), size); return; }
     const id = event?.id;
     if (typeof id !== 'string') return;
     const request = this.pending.get(id);
     if (!request) return;
     this.pending.delete(id);
     try { request.resolve(this.observer.response(event, request)); } catch (error: any) { request.reject(error instanceof Error ? error : new Error(String(error))); }
+  }
+
+  /** Pauses reading Pi's output while the backlog is over its limit, and resumes at half of it. */
+  private track(handled: Promise<void>, size: number): void {
+    this.backlog += 1;
+    this.backlogBytes += size;
+    if (!this.paused && (this.backlog > BACKLOG_EVENTS || this.backlogBytes > BACKLOG_BYTES)) {
+      this.paused = true;
+      this.lines?.pause();
+    }
+    handled.catch(() => {}).finally(() => {
+      this.backlog -= 1;
+      this.backlogBytes -= size;
+      if (this.paused && this.backlog <= BACKLOG_EVENTS / 2 && this.backlogBytes <= BACKLOG_BYTES / 2) {
+        this.paused = false;
+        this.lines?.resume();
+      }
+    });
   }
 
   /** Sends SIGKILL when hard is true; otherwise SIGTERM, then SIGKILL after five seconds. */
@@ -166,11 +194,14 @@ export class RuntimeWorker {
     const wire = wireCommand(command, id);
     const abort = kind(command) === 'abort';
     const timeout = abort ? 5000 : this.timeout;
+    // After a timed-out queued prompt, Pi may still accept it. A retry with the same queue ID would then add it twice,
+    // so Pi stops; the next start reconciles the queue with the saved transcript.
+    const stopOnTimeout = abort || requestType === 'queue_prompt';
     let entry!: Pending;
     const reply = new Promise<any>((resolve, reject) => { entry = { command, requestType, snapshotState, resolve, reject }; });
     reply.catch(() => {});
     this.pending.set(id, entry);
-    try { return await this.withDeadline(written => this.write(wire).then(() => { written(); return reply; }), timeout, abort); }
+    try { return await this.withDeadline(written => this.write(wire).then(() => { written(); return reply; }), timeout, stopOnTimeout); }
     finally { this.pending.delete(id); }
   }
 
@@ -178,7 +209,7 @@ export class RuntimeWorker {
     return this.withDeadline(() => this.write(packet), this.timeout);
   }
 
-  private async withDeadline<T>(operation: (written: () => void) => Promise<T>, timeout: number, abort = false): Promise<T> {
+  private async withDeadline<T>(operation: (written: () => void) => Promise<T>, timeout: number, stopOnTimeout = false): Promise<T> {
     let timer: NodeJS.Timeout | undefined;
     let written = false;
     const expired = new Promise<never>((_, reject) => {
@@ -189,7 +220,7 @@ export class RuntimeWorker {
           reject(new Error('Pi stopped reading its input'));
           return;
         }
-        if (abort) this.signal(false);
+        if (stopOnTimeout) { this.observer.diagnostic('Pi did not answer in time; stopping it'); this.signal(false); }
         reject(new Error('Pi command timed out'));
       }, timeout);
     });

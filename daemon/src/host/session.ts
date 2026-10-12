@@ -140,7 +140,8 @@ export class Session {
 
   private observer(): WorkerObserver {
     return {
-      event: event => { void this.inOrder(() => this.receive(event)); },
+      // inOrder already reports a failed event; the returned promise only tells the worker when the event is done.
+      event: event => this.inOrder(() => this.receive(event)).then(() => {}, () => {}),
       response: (event, request) => this.inOrder(() => this.response(event, request)),
       stderr: line => {
         if (this.stderrTail.push(line) > 20) this.stderrTail.shift();
