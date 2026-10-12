@@ -585,7 +585,7 @@ def wait_for_workspace(client, children, broker_errors, deadline, log):
                 raise RuntimeError(f"Incomplete UI observation: {observation}")
             visible = set(labels(json.loads(observation["stdout"])))
             last_observation = json.dumps(sorted(visible))
-            if {"Conversation workspace ready", "Send message"}.issubset(visible) and not visible.intersection({"Conversation workspace connecting", "Connect to workspace", "Connecting…", "Reconnect", "Retry disconnect", "piop could not connect", "Retry"}):
+            if {"Conversation workspace ready", "Send message"}.issubset(visible) and not visible.intersection({"Conversation workspace connecting", "Connect to workspace", "Connecting…", "Reconnect", "Retry disconnect", "piop could not connect"}):
                 return
         except TimeoutError as error:
             last_observation = str(error)
