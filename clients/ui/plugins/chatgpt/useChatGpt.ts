@@ -164,6 +164,18 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
   };
 
   const preserveStopping = (value: RegularChat): RegularChat => stopOperation && chat()?.id === value.id ? { ...value, status: "stopping" } : value;
+  /** Unsent messages already put back in the message box, so a cleared box is not filled again. */
+  const restoredUnsent = new Set<string>();
+
+  const restoreUnsent = (value: RegularChat) => {
+    if (!value.unsentText) return;
+    const key = JSON.stringify([value.id, value.updatedAt]);
+
+    if (restoredUnsent.has(key)) return;
+    restoredUnsent.add(key);
+
+    if (!drafts.prompt(value.id)) drafts.setPrompt(value.id, value.unsentText);
+  };
   const currentSelection = (current: number, selected: number) => generation === current && selection === selected;
   const releaseSuperseded = (id: string) => { if (desiredChat !== id && !busy() && !responding()) release(id); };
 
@@ -172,6 +184,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
     const wasOwned = hasLease(previous);
 
     if (previous && value.updatedAt < previous.updatedAt) return;
+    restoreUnsent(value);
 
     if (!wasOwned || value.updatedAt !== previous?.updatedAt) modelSelection.restore(value);
 
@@ -202,7 +215,7 @@ export function useChatGpt(request: Accessor<QuickChatRequest | undefined>, open
       if (!currentSelection(current, version)) return;
       const value = await selectCall("read", regularChatSchema, { chatId: id });
 
-      if (currentSelection(current, version)) { drafts.chatId = value.id; setChat(value); modelSelection.restore(value); }
+      if (currentSelection(current, version)) { drafts.chatId = value.id; restoreUnsent(value); setChat(value); modelSelection.restore(value); }
     } catch (reason) { if (currentSelection(current, version)) {
       release(id); desiredChat = chat()?.id;
       setError(reason instanceof Error ? reason.message : String(reason));

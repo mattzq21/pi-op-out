@@ -434,7 +434,7 @@ async function chatGptSendTurn(identity, request, lease) {
     active.chat = chat;
     const body = chatGptRequest(chat, request);
     chatGptAcceptSubmission(chat, request.submissionId);
-    chat.status = 'streaming'; delete chat.error; delete chat.interrupted; chat.updatedAt = Date.now();
+    chat.status = 'streaming'; delete chat.error; delete chat.interrupted; delete chat.unsentText; chat.updatedAt = Date.now();
     await chatGptSave(identity, chat, lease);
     active.done = chatGptRun(identity, key, active, body);
 
@@ -682,8 +682,11 @@ async function chatGptRecoverOwned(identity, chat, lease) {
       delete chat.error; delete chat.interrupted;
     } else if (Date.now() - chat.updatedAt < CHAT_GPT_UNSENT_GRACE_MS) return chat;
     else {
+      const unsent = chat.messages.findLastIndex(message => message.role === 'user');
+
+      if (unsent >= 0) { chat.unsentText = chat.messages[unsent].text; chat.messages.splice(unsent); }
       chat.status = 'error'; chat.interrupted = false;
-      chat.error = 'Your last message did not reach ChatGPT before the host restarted. Send it again.';
+      chat.error = 'Your last message did not reach ChatGPT before the host restarted. It is back in the message box; send it again.';
     }
   }
 
