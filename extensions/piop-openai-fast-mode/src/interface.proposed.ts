@@ -8,21 +8,41 @@ export type FastModeModel = Readonly<{
 export type FastModeState = Readonly<{
   /** The session's saved choice, including when its model is unsupported. */
   enabled: boolean;
-  /** enabled && supportedModels contains Pi's current model. */
+  /** Whether Pi's current model supports fast mode; false if no model is selected. */
+  supported: boolean;
+  /** enabled && supported. */
   active: boolean;
-  /** Unique by the pair (provider, id). */
-  supportedModels: readonly FastModeModel[];
 }>;
 
 /**
+ * Available without a session. Bound to a host and its applicable provider,
+ * account, and config context; never a single global list across hosts.
+ * Models are unique by (provider, id). Returned lists are immutable snapshots.
+ * Discovery and refresh failures reject with an Error, not an empty success.
+ * Subscribe receives the initial list once ready, then changed lists only.
+ * Subscription failures go to onError; they do not publish an empty list.
+ * Updates follow relevant source changes; refresh supports an explicit retry.
+ * Unsubscribe prevents further callbacks. Callbacks must not throw.
+ */
+export interface FastModeModels {
+  getModels(): Promise<readonly FastModeModel[]>;
+  refresh(): Promise<readonly FastModeModel[]>;
+  subscribe(
+    listener: (models: readonly FastModeModel[]) => void,
+    onError: (error: Error) => void,
+  ): () => void;
+}
+
+/**
  * Bound to one session. Pi owns the current model.
- * Fast mode owns saving and restoring enabled, model discovery, and request changes.
+ * Owns saving and restoring enabled and changing provider requests.
+ * Uses FastModeModels for model support and Pi for the current model.
  * Returned state is an immutable snapshot. Callers cannot change internal state.
  * Reads and writes wait for session initialization and run in call order.
  * A failed operation rejects with an Error; it does not report success.
  * When the session ends, operations reject and subscriptions are removed.
  */
-export interface FastMode {
+export interface FastModeSession {
   /** Return the latest state after earlier writes finish. */
   getState(): Promise<FastModeState>;
 
@@ -38,7 +58,10 @@ export interface FastMode {
    * Receive the initial state once ready, then each changed state in order.
    * Changes include Pi model changes and supported-model changes.
    * No callback runs after unsubscribe returns. Listeners must not throw.
-   * Background failures are reported through Pi's error display or log.
+   * Initialization and background failures go to onError.
    */
-  subscribe(listener: (state: FastModeState) => void): () => void;
+  subscribe(
+    listener: (state: FastModeState) => void,
+    onError: (error: Error) => void,
+  ): () => void;
 }
