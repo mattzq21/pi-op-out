@@ -37,8 +37,9 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const [saveError, setSaveError] = createSignal("");
   const [recoveryError, setRecoveryError] = createSignal("");
   const [recoveryReadError, setRecoveryReadError] = createSignal("");
+  const [releaseError, setReleaseError] = createSignal("");
   const [storagePending, setStoragePending] = createSignal(0);
-  const error = () => subscriptionError() || readError() || saveError() || recoveryError() || recoveryReadError();
+  const error = () => subscriptionError() || readError() || saveError() || recoveryError() || recoveryReadError() || releaseError();
   const leaseId = crypto.randomUUID();
   const recovery = createNoteRecovery(transport.identity, target.hostId, target.sessionId, leaseId);
   const [recoveredSource, setRecoveredSource] = createSignal<NoteRecovery>();
@@ -54,6 +55,8 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   let acquisition: Promise<void> | undefined;
   let operations = Promise.resolve();
   let checking = false;
+  /** Lease token of a release that failed. It is sent again when the connection returns or on Retry. */
+  let pendingRelease: string | undefined;
   const [syncPending, setSyncPending] = createSignal(false);
   const [subscriptionError, setSubscriptionError] = createSignal("");
   const dirty = () => !!local();
@@ -72,10 +75,25 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     return storageOperations;
   };
 
-  const persist = (value: NoteRecovery) => store(async () => {
-    await recovery.save(value);
-    setStoredRevision(value.revision);
-  });
+  /** The newest copy that waits for its write to start. Older waiting copies are replaced, so at most one write waits. */
+  let persistQueued: NoteRecovery | undefined;
+  let persistPending: Promise<void> | undefined;
+
+  const persist = (value: NoteRecovery) => {
+    const waiting = persistQueued !== undefined;
+    persistQueued = value;
+
+    if (waiting) return required(persistPending);
+
+    persistPending = store(async () => {
+      const next = required(persistQueued);
+      persistQueued = undefined; persistPending = undefined;
+      await recovery.save(next);
+      setStoredRevision(next.revision);
+    });
+
+    return persistPending;
+  };
 
   const removeRecovery = (value: NoteRecovery) => {
     pendingRemovals.set(value.revision, value);
@@ -118,6 +136,8 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     const next = recovery.create(value.content, value.baseVersion);
     setLocal(next); setContent(next.content);
     void persist(next);
+
+    if (!loading()) void save();
   };
 
   const loadRecovery = async () => {
@@ -193,7 +213,11 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
       await recoveryReady;
       const next = await request(action);
 
-      if (!disposed && current === generation) receiveUpdate(next);
+      if (!disposed && current === generation) {
+        receiveUpdate(next);
+
+        if (dirty()) void save();
+      }
     } catch (reason) { if (!disposed && current === generation) setReadError(reason instanceof Error ? reason.message : String(reason)); }
     finally { if (!disposed && current === generation) setLoading(false); }
   };
@@ -340,6 +364,28 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     if (!disposed && current === generation && !visible() && durable()) relinquish();
   };
 
+  const releaseFailed = (leaseToken: string, reason: unknown) => {
+    const message = `Could not give up editing control of this note. Other clients can edit it after the lock expires. ${reason instanceof Error ? reason.message : String(reason)}`;
+    console.error(message);
+
+    if (disposed) return;
+    pendingRelease = leaseToken; setReleaseError(message);
+  };
+
+  const retryRelease = async () => {
+    const leaseToken = pendingRelease;
+
+    if (!leaseToken || disposed || visible()) return;
+
+    try {
+      await call("release", { leaseToken });
+
+      if (pendingRelease === leaseToken) { pendingRelease = undefined; setReleaseError(""); }
+    } catch (reason) { if (pendingRelease === leaseToken) releaseFailed(leaseToken, reason); }
+  };
+
+  const forgetPendingRelease = () => { pendingRelease = undefined; setReleaseError(""); };
+
   const releaseOwned = async () => {
     await save();
     await storageOperations;
@@ -358,7 +404,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
       const next = await call("release", { leaseToken });
 
       if (!disposed && current === generation) { relinquish(); receiveUpdate(next); }
-    } catch { relinquishHidden(current); }
+    } catch (reason) { releaseFailed(leaseToken, reason); relinquishHidden(current); }
   };
 
   const release = (): Promise<void> => {
@@ -374,6 +420,10 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const takeControl = async () => { await inFlight; await load("takeover"); };
 
   const retry = async () => {
+    if (!stopUpdates || !stopRemovals) await subscribe();
+
+    await retryRelease();
+
     if (local()) await persist(required(local()));
 
     for (const value of [...pendingRemovals.values()]) await removeRecovery(value);
@@ -400,7 +450,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     await save();
     await settleOwnership();
 
-    if (current === visibilityRevision && visible() && !disposed && !document()?.deleted) await load("claim");
+    if (current === visibilityRevision && visible() && !disposed && !document()?.deleted) { forgetPendingRelease(); await load("claim"); }
   };
 
   createDependencyEffect(() => {
@@ -421,21 +471,41 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
 
   let stopUpdates: UnlistenFn | undefined;
   let stopRemovals: UnlistenFn | undefined;
-  onMount(() => {
-    void (async () => {
-      try {
+  let subscribing: Promise<void> | undefined;
+
+  const installListeners = async () => {
+    try {
+      if (!stopUpdates) {
         const stop = await listen("pi://event", ({ payload }) => {
           if (!transport.active() || disposed) return;
+          if (payload.type === "connection_restored") void retryRelease();
           if (payload.type === "connection_restored" || payload.type === "note_changed" && payload.hostId === target.hostId && payload.sessionId === target.sessionId) void sync();
         }, z.object({ type: z.string().optional(), hostId: z.string().optional(), sessionId: z.string().optional() }));
         if (disposed) { stop(); return; }
         stopUpdates = stop;
-        const stopRemoved = await listen("pi://session-removed", ({ payload }) => {
+      }
+
+      if (!stopRemovals) {
+        const stop = await listen("pi://session-removed", ({ payload }) => {
           if (transport.active() && !disposed && payload.hostId === target.hostId && payload.sessionId === target.sessionId) void sync();
         }, z.object({ hostId: z.string(), sessionId: z.string().nullable() }));
-        if (disposed) { stopRemoved(); return; }
-        stopRemovals = stopRemoved;
-      } catch (reason) { setSubscriptionError("Could not listen for note changes. " + String(reason)); }
+        if (disposed) { stop(); return; }
+        stopRemovals = stop;
+      }
+
+      setSubscriptionError("");
+    } catch (reason) { setSubscriptionError("Could not listen for note changes. " + String(reason)); }
+  };
+
+  const subscribe = () => {
+    subscribing ??= installListeners().finally(() => { subscribing = undefined; });
+
+    return subscribing;
+  };
+
+  onMount(() => {
+    void (async () => {
+      await subscribe();
       if (!disposed) await load(visible() ? "claim" : "read");
     })();
   });
