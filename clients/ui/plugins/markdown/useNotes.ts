@@ -165,7 +165,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   const reconcileLocal = (next: NoteDocument) => {
     const edit = local();
 
-    if (edit && edit.content === next.content && !next.deleted) forgetLocal(false);
+    if (edit && edit.content === next.content && !next.deleted) forgetLocal();
     else if (edit && unconfirmed() === next.content && !next.deleted) {
       const rebased = recovery.create(edit.content, next.version);
       setLocal(rebased); setUnconfirmed(undefined);
@@ -420,6 +420,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   }, () => [syncPending(), loading(), releasing(), saving(), document()]);
 
   let stopUpdates: UnlistenFn | undefined;
+  let stopRemovals: UnlistenFn | undefined;
   onMount(() => {
     void (async () => {
       try {
@@ -429,6 +430,11 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
         }, z.object({ type: z.string().optional(), hostId: z.string().optional(), sessionId: z.string().optional() }));
         if (disposed) { stop(); return; }
         stopUpdates = stop;
+        const stopRemoved = await listen("pi://session-removed", ({ payload }) => {
+          if (transport.active() && !disposed && payload.hostId === target.hostId && payload.sessionId === target.sessionId) void sync();
+        }, z.object({ hostId: z.string(), sessionId: z.string().nullable() }));
+        if (disposed) { stopRemoved(); return; }
+        stopRemovals = stopRemoved;
       } catch (reason) { setSubscriptionError("Could not listen for note changes. " + String(reason)); }
       if (!disposed) await load(visible() ? "claim" : "read");
     })();
@@ -436,7 +442,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
   window.addEventListener("focus", resume);
   window.document.addEventListener("visibilitychange", resume);
   window.addEventListener("beforeunload", beforeUnload);
-  onCleanup(() => { disposed = true; clearTimeout(leaseTimer); stopUpdates?.(); window.removeEventListener("focus", resume); window.document.removeEventListener("visibilitychange", resume); window.removeEventListener("beforeunload", beforeUnload); void release(); });
+  onCleanup(() => { disposed = true; clearTimeout(leaseTimer); stopUpdates?.(); stopRemovals?.(); window.removeEventListener("focus", resume); window.document.removeEventListener("visibilitychange", resume); window.removeEventListener("beforeunload", beforeUnload); void release(); });
 
   const ready = () => !!document() && !document()?.deleted && !document()?.disabled;
   const pending = () => loading() || saving() || releasing() || dirty() || !durable() || storagePending() > 0 || !!recoveryError() || ownership().owned;

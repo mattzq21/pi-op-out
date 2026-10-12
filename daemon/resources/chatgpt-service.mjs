@@ -675,11 +675,16 @@ async function chatGptRecoverOwned(identity, chat, lease) {
     const history = await chatGptJson(identity, `/conversation/${chatGptId(chat.conversationId)}`);
     const entries = chatGptHistory(history);
 
-    if (!chatGptHistoryIncludesSubmission(chat, entries)) return chat;
-    chat.messages = entries.filter(chatGptVisible).map(message => ({ id: message.id, role: message.author.role, text: chatGptText(message) }));
-    chat.parentMessageId = history.current_node || chat.parentMessageId;
-    chat.status = chatGptRecoveredStatus(entries);
-    delete chat.error; delete chat.interrupted;
+    if (chatGptHistoryIncludesSubmission(chat, entries)) {
+      chat.messages = entries.filter(chatGptVisible).map(message => ({ id: message.id, role: message.author.role, text: chatGptText(message) }));
+      chat.parentMessageId = history.current_node || chat.parentMessageId;
+      chat.status = chatGptRecoveredStatus(entries);
+      delete chat.error; delete chat.interrupted;
+    } else if (Date.now() - chat.updatedAt < CHAT_GPT_UNSENT_GRACE_MS) return chat;
+    else {
+      chat.status = 'error'; chat.interrupted = false;
+      chat.error = 'Your last message did not reach ChatGPT before the host restarted. Send it again.';
+    }
   }
 
   chat.updatedAt = Date.now();
@@ -689,6 +694,9 @@ async function chatGptRecoverOwned(identity, chat, lease) {
 }
 
 function chatGptNeedsRecovery(chat) { return chat.status === 'streaming' || chat.status === 'error' && chat.interrupted === true && Boolean(chat.conversationId); }
+
+/** How long a saved message may stay missing from ChatGPT history before recovery reports it as not sent. */
+const CHAT_GPT_UNSENT_GRACE_MS = 60000;
 
 function chatGptHistoryIncludesSubmission(chat, entries) {
   const latest = chat.messages.findLast(message => message.role === 'user');
@@ -721,11 +729,14 @@ function chatGptHistory(history) {
 export async function handleChatGpt(loaded, request) {
   if (request.action === 'account') {
     await loaded.runtime.refresh({ allowNetwork: false });
+    const configured = loaded.runtime.getProviderAuthStatus('openai-codex').configured;
 
-    return { configured: loaded.runtime.getProviderAuthStatus('openai-codex').configured };
+    return { configured, account: configured ? (await chatGptIdentity(loaded, request.providerId)).key : null };
   }
 
   const identity = await chatGptIdentity(loaded, request.providerId);
+
+  if (request.account !== undefined && request.account !== identity.key) throw new Error('The ChatGPT account changed. Reloading the chats for the current account.');
 
   if (['claim', 'ownership', 'release'].includes(request.action)) return chatGptOwnership(identity, request, request.action);
 
