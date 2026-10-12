@@ -1,5 +1,7 @@
 # Host scripts are copied to each host by hash
 
+Superseded by [ADR 0003](0003-host-operations-as-daemon-modules.md). The replacement is accepted but not yet implemented.
+
 The daemon copies each Host script once into the profile storage folder of the host, in a file named by the hash of the script, and sends the request as JSON on stdin. Before, the script and its request went on the command line. On a remote host the whole command is one argument to `bash -lc`, and Linux limits one argument to 128 KiB. The storage inventory script was already 87 KB, and a storage transaction with many session paths could go past the limit.
 
 Each run updates the copy’s modification time. After a copy succeeds, cleanup removes other script versions only if they were unused for more than one day. Cleanup failures are logged and do not fail the run. Storage lock restarts keep an open script file, so cleanup cannot break a waiting run.
