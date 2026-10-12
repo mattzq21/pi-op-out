@@ -137,8 +137,11 @@ function localSessionCandidates(root: string, cache: Map<string, CachedSession>)
   const seen = new Set<string>(); const changed: SessionCandidate[] = [];
   const database = Registry.open(dirname(root));
   try {
+    // Pi records paths under the configured root, while archive and restore record resolved paths. Both name the same folder when it contains a symbolic link.
     const prefix = root.replace(/\/+$/, '') + sep;
-    const rows = database.prepare('SELECT s.session_path AS path, m.modified_ns AS modified, m.size AS size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?1))=?1').all(prefix) as any[];
+    let resolved = prefix;
+    try { resolved = realpathSync(root) + sep; } catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
+    const rows = database.prepare('SELECT s.session_path AS path, m.modified_ns AS modified, m.size AS size FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?1))=?1 OR substr(s.session_path, 1, length(?2))=?2').all(prefix, resolved) as any[];
     for (const row of rows) {
       const path: string = row.path;
       const saved = row.modified !== null && row.modified !== undefined && row.size !== null && row.size !== undefined ? [String(row.modified), Number(row.size)] as const : undefined;

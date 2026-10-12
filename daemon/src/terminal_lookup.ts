@@ -4,6 +4,8 @@ import { launchTerminalForOwner, queueInput, resizeProcess, stopTerminalProcess,
 import type { App } from './app';
 
 const RETAINED_BYTES = 4 * 1024 * 1024;
+/** Small appends are merged into blocks of this size, so many tiny outputs do not each keep a separate Buffer. */
+const BLOCK_BYTES = 64 * 1024;
 const EXITED_LIMIT = 64;
 const MAX_INPUT_BYTES = 1024 * 1024;
 
@@ -21,12 +23,28 @@ export class Transcript {
   textEnd = 0;
   updated = Date.now();
   running = true;
+  /** The block that small appends are copied into, and the view of it that is the last chunk. */
+  private block: Buffer | undefined;
+  private blockView: Buffer | undefined;
+  private blockUsed = 0;
 
   constructor(public sessionId: string, public hostId: string, public owner: string, public cwd: string, public generation: string, public creationOrder: number) {}
 
   append(data: string): void {
     const bytes = Buffer.from(data, 'utf8');
-    this.chunks.push(bytes);
+    if (bytes.length > BLOCK_BYTES / 4) this.chunks.push(bytes);
+    else {
+      // A trim or bytes() replaces the last chunk; then a new block starts.
+      if (!this.block || this.chunks.at(-1) !== this.blockView || this.blockUsed + bytes.length > BLOCK_BYTES) {
+        this.block = Buffer.allocUnsafe(BLOCK_BYTES);
+        this.blockUsed = 0;
+        this.chunks.push(this.block.subarray(0, 0));
+      }
+      bytes.copy(this.block, this.blockUsed);
+      this.blockUsed += bytes.length;
+      this.blockView = this.block.subarray(0, this.blockUsed);
+      this.chunks[this.chunks.length - 1] = this.blockView;
+    }
     this.length += bytes.length;
     this.end += bytes.length;
     this.textEnd += data.length;

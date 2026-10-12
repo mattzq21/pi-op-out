@@ -128,7 +128,8 @@ async function makePlan(app: App, prepared: any): Promise<[Plan, artifacts.Backu
   const executable = replacementExecutable();
   const enabled = strings(prepared?.enabled);
   const previous = strings(prepared?.previous);
-  if (!Array.isArray(prepared?.tickets)) throw new Error('Invalid restart checkpoint tickets');
+  const tickets = prepared?.tickets;
+  if (!Array.isArray(tickets?.tickets) || !Array.isArray(tickets?.leases)) throw new Error('Invalid restart checkpoint tickets');
   const bind = restartBind(current.url);
   await validateRestartBind(bind);
   const backup = await artifacts.Backup.create(id, executable);
@@ -221,7 +222,19 @@ async function arm(plan: Plan): Promise<void> {
   try { await waitArmed(plan, coordinator); }
   catch (error) { coordinator.kill('SIGKILL'); throw error; }
   coordinator.unref();
+  coordinators.set(plan.id, coordinator);
+  // Only the coordinator starts the replacement daemon. When it dies before the restart, the restart cannot go on.
+  coordinator.once('exit', () => {
+    coordinators.delete(plan.id);
+    const armed = () => { try { return readPlan().id === plan.id && status(plan.id).phase === 'armed'; } catch { return false; } };
+    publish(plan, 'failed', COORDINATOR_STOPPED, undefined, armed).catch(error => console.error('Could not record the failed daemon restart: ' + (error?.message ?? error)));
+  });
 }
+
+const COORDINATOR_STOPPED = 'The restart coordinator stopped before the restart; the previous daemon is still running';
+
+/** The coordinator of each restart that this daemon armed. */
+const coordinators = new Map<string, ChildProcess>();
 
 async function waitArmed(plan: Plan, coordinator: ChildProcess): Promise<void> {
   const deadline = Date.now() + 40_000;
@@ -241,9 +254,20 @@ export async function commit(app: App, id: string): Promise<void> {
     const plan = readPlan();
     if (plan.id !== id || plan.owner !== process.pid) return;
     if (status(id).phase !== 'armed') return;
+    const coordinator = coordinators.get(id);
+    if (!coordinator || exited(coordinator)) {
+      restartStorage.write(path('restart-status.json'), statusRecord(plan, 'failed', COORDINATOR_STOPPED));
+      throw new Error(COORDINATOR_STOPPED);
+    }
     restartStorage.write(path('restart-status.json'), statusRecord(plan, 'restarting'));
     app.emit('pi://daemon-restarting', { hostId: 'local', restartId: id });
-    setTimeout(() => app.clients.stop(), 300);
+    setTimeout(() => {
+      // Check again just before the stop, because nothing would start a replacement after it.
+      if (!exited(coordinator)) { app.clients.stop(); return; }
+      console.error(COORDINATOR_STOPPED);
+      publish(plan, 'failed', COORDINATOR_STOPPED, undefined, () => { try { return status(id).phase === 'restarting'; } catch { return false; } })
+        .catch(error => console.error('Could not record the failed daemon restart: ' + (error?.message ?? error)));
+    }, 300);
   } finally { lock.release(); }
 }
 
