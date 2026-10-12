@@ -52,7 +52,7 @@ export class FastModeCommands {
     try {
       await this.connection.send({ type: "fast_mode_status", reload });
     } catch {
-      this.connection.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: "Fast mode status unavailable" });
+      this.connection.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: "Fast mode status unavailable" });
     }
   }
 

@@ -265,9 +265,25 @@ fn probe(engine: &Engine) -> Result<Languages, String> {
     let (ready_sender, ready) = mpsc::channel();
     let (done_sender, done) = mpsc::channel();
     let worker = spawn_worker(engine, Box::new(|_, _| {}), Box::new(move |languages| { let _ = ready_sender.send(languages); }), Box::new(move |result| { let _ = done_sender.send(result); }))?;
-    worker.write(&vec![0; BYTES_PER_SECOND])?;
-    worker.end();
-    wait(&worker, &done, PROBE_TIMEOUT, "The speech engine did not start in time")?;
+    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    let worker = Arc::new(worker);
+    let writer = worker.clone();
+    let (written_sender, written) = mpsc::channel();
+    thread::spawn(move || {
+        let result = writer.write(&vec![0; BYTES_PER_SECOND]);
+        writer.end();
+        let _ = written_sender.send(result);
+    });
+    let message = "The speech engine did not start in time";
+    let result = written.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+        .map_err(|_| message.to_string()).and_then(|result| result)
+        .and_then(|_| wait(&worker, &done, deadline.saturating_duration_since(std::time::Instant::now()), message));
+    if let Err(mut error) = result {
+        let mut child = worker.child.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Err(failure) = child.kill() { error.push_str(&format!("; could not stop the speech engine: {failure}")); }
+        if let Err(failure) = child.wait() { error.push_str(&format!("; could not reap the speech engine: {failure}")); }
+        return Err(error);
+    }
     ready.try_recv().map_err(|_| "The speech engine did not report its languages".to_string())
 }
 
@@ -288,7 +304,7 @@ impl Worker {
     fn kill(&self) { if let Ok(mut child) = self.child.lock() { let _ = child.kill(); } }
 }
 
-fn last_line(text: &str) -> Option<&str> { text.lines().map(str::trim).filter(|line| !line.is_empty()).last() }
+fn last_line(text: &str) -> Option<&str> { text.lines().map(str::trim).rfind(|line| !line.is_empty()) }
 
 type TextHandler = Box<dyn Fn(String, String) + Send>;
 type ReadyHandler = Box<dyn FnOnce(Languages) + Send>;

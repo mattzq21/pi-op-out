@@ -19,8 +19,9 @@ function readHistory(): ToastHistoryEntry[] {
 const legacy = readHistory();
 
 const [toastHistory, setToastHistory] = createSignal(legacy);
+const [toastHistoryError, setToastHistoryError] = createSignal<string>();
 
-export { toastHistory };
+export { toastHistory, toastHistoryError };
 
 const pending = new Map<string, ToastHistoryEntry>();
 
@@ -42,11 +43,12 @@ function refreshHistory() {
     sent.forEach(entry => pending.delete(entry.id));
     setToastHistory(mergeToastHistory(saved, [...pending.values()]));
     succeeded = true;
+    setToastHistoryError(undefined);
 
     try { if (localStorage.getItem(storageKey) === legacyBody) localStorage.removeItem(storageKey); } catch { }
 
     if (sent.length) channel?.postMessage(null);
-  }).catch(error => { console.error("Could not save notification history", error); }).finally(() => {
+  }).catch(error => { setToastHistoryError(`Could not save notification history: ${error instanceof Error ? error.message : String(error)}. Recent notifications are only kept in memory. Saving will retry on the next notification or when this window gains focus.`); }).finally(() => {
     saving = false;
 
     if (succeeded && (pending.size || refreshPending)) refreshHistory();
@@ -62,6 +64,7 @@ refreshHistory();
 function recordToast(source: string, notice: { title: string; message: string }) {
   const entry = { ...notice, source, id: crypto.randomUUID(), timestamp: Date.now() };
   pending.set(entry.id, entry);
+  for (const id of [...pending.keys()].slice(0, -10)) pending.delete(id);
   setToastHistory(mergeToastHistory(untrack(toastHistory), [entry]));
   refreshHistory();
 }
