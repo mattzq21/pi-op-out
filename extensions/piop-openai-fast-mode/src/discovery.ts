@@ -10,7 +10,11 @@ type DiscoveryContext = Pick<ExtensionContext, "modelRegistry" | "model">;
 
 type Catalog = Map<string, boolean>;
 
-type CachedCatalog = { expires: number; pending: Promise<Catalog> };
+type CatalogResult = { catalog: Catalog; error?: string };
+
+type CachedCatalog = { expires: number; pending: Promise<CatalogResult> };
+
+export type FastModeDiscovery = { targets: FastTarget[]; errors: string[] };
 
 const FAST_CATALOG_CLIENT_VERSION = "0.159.3";
 
@@ -122,15 +126,16 @@ export function createFastModeDiscovery() {
     return new Map(entries.filter(entry => entry.provider === model.provider).map(entry => [entry.model, entry.supported]));
   }
 
-  async function catalog(ctx: DiscoveryContext, model: Model): Promise<Catalog> {
+  async function catalog(ctx: DiscoveryContext, model: Model): Promise<CatalogResult> {
     const startup = await startupCatalog(model);
 
-    if (startup?.size) return startup;
+    if (startup?.size) return { catalog: startup };
+    const failure = (cause: unknown): CatalogResult => ({ catalog: new Map(), error: `Fast mode could not load the ${model.provider} model list: ${cause instanceof Error ? cause.message : String(cause)}` });
 
     try {
       const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 
-      if (!auth.ok) return new Map();
+      if (!auth.ok) return failure(auth.error);
       const url = catalogUrl(model, auth.baseUrl ?? model.baseUrl);
       const headers = requestHeaders(model, auth.apiKey, auth.headers);
       const identity = createHash("sha256").update(JSON.stringify([...headers.entries()])).digest("hex");
@@ -145,21 +150,21 @@ export function createFastModeDiscovery() {
         expires: process.env.PI_DESKTOP_BROKER_URL ? Infinity : Date.now() + 300_000,
         pending: fetch(url, { headers, signal: AbortSignal.timeout(5_000), redirect: "error" })
           .then(async response => {
-            if (!response.ok) throw new Error("Model catalog unavailable");
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-            return parseCatalog(catalogSchema.parse(await response.json()));
-          }).catch(() => { entry.expires = Date.now() + 30_000;
+            return { catalog: parseCatalog(catalogSchema.parse(await response.json())) };
+          }).catch((cause: unknown) => { entry.expires = Date.now() + 30_000;
 
-          return new Map<string, boolean>(); }),
+          return failure(cause); }),
       };
 
       cache.set(key, entry);
 
       return entry.pending;
-    } catch { return new Map(); }
+    } catch (cause) { return failure(cause); }
   }
 
-  return async (ctx: DiscoveryContext, configured: FastTarget[], onUnknown?: (model: Model) => void): Promise<FastTarget[]> => {
+  return async (ctx: DiscoveryContext, configured: FastTarget[], previous: FastTarget[]): Promise<FastModeDiscovery> => {
     const models = ctx.modelRegistry.getAvailable().filter(model => isSupportedProvider(model.provider));
 
     const currentModel = ctx.model;
@@ -172,21 +177,23 @@ export function createFastModeDiscovery() {
       groups.set(key, [...groups.get(key) ?? [], model]);
     }
 
+    const errors: string[] = [];
     const targets = await Promise.all([...groups.values()].map(async group => {
-      const remote = await catalog(ctx, group[0]);
+      const { catalog: remote, error } = await catalog(ctx, group[0]);
+
+      if (error) errors.push(error);
 
       return group.flatMap(model => {
         const supported = remote.get(model.id) ?? fastCapability(capabilitySchema.parse(model));
         const explicit = configured.find(target => target.provider === model.provider && target.model === model.id);
+        const known = error && previous.some(target => target.provider === model.provider && target.model === model.id) ? true : undefined;
 
-        if (supported === undefined && (model.api === "openai-codex-responses" || !explicit)) onUnknown?.(model);
-
-        if (!(supported ?? (model.api !== "openai-codex-responses" && !!explicit))) return [];
+        if (!(supported ?? known ?? (model.api !== "openai-codex-responses" && !!explicit))) return [];
 
         return [{ provider: model.provider, model: model.id, serviceTier: DEFAULT_SERVICE_TIER }];
       });
     }));
 
-    return targets.flat();
+    return { targets: targets.flat(), errors };
   };
 }

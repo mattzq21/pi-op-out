@@ -63,7 +63,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
     capModel(ctx.model);
 
     if (cap === undefined || event.text.startsWith("/")) return;
-    const budgets = SettingsManager.create(ctx.cwd, undefined, { projectTrusted: ctx.isProjectTrusted() }).getCompactionSettings();
+    const budgets = SettingsManager.inMemory(pi.getSettings()).getCompactionSettings(ctx.model);
     const minimum = budgets.reserveTokens + budgets.keepRecentTokens + 1;
 
     if (cap >= minimum) return;

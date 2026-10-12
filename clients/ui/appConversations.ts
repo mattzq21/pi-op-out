@@ -77,7 +77,7 @@ export function createAppConversations(preloadChat: () => void) {
   const sessionRuntime = useChatSession(() => (transport()));
   const chatSession = createMemo(() => (sessionRuntime));
   const { modelVisibility, settings, settingsSaving, debugModeSaving, settingsDirty, setSettingsDirty, loadSettings, saveSettings, toggleDebugMode } = createAppSettings({ transport, runtimePool, chatSession, addNotice: notice => addNotice(notice), preloadChat });
-  const { definedAgents, setDefinedAgents, dialogs, setDialogs, mainDialogOwnerRef, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, statuses, setStatuses, widgets, setWidgets, extensionOwner, setExtensionOwner } = createAppExtensions({ transport, chatSession });
+  const { definedAgents, setDefinedAgents, dialogs, setDialogs, mainDialogOwnerRef, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, cancelTransportDialogs, statuses, setStatuses, widgets, setWidgets, extensionOwner, setExtensionOwner } = createAppExtensions({ transport, chatSession });
   const [sessions, setSessions] = createCachedSessionList();
   const settingsDirtyRef = createRef(settingsDirty()); createComputed(() => { settingsDirtyRef.current = settingsDirty(); });
   const sessionIndexRequest = createRef<Promise<void> | undefined>(undefined);
@@ -117,7 +117,7 @@ export function createAppConversations(preloadChat: () => void) {
   const releaseSplitTransport = async (ownerTransport: NativeTransport) => { const capturedRuntimePool = runtimePool();
 
     if (activeTransportRef.current === ownerTransport || capturedRuntimePool.isInteractive(ownerTransport)) return;
-    await closeTransportDialogs(ownerTransport);
+    await cancelTransportDialogs(ownerTransport).catch((reason) => addNotice({ title: "Could not cancel extension dialog", message: reason instanceof Error ? reason.message : String(reason) }));
 
     if (hasRetainedDraft(ownerTransport)) return;
 

@@ -22,6 +22,7 @@ import type { HostServices } from './services';
 export interface ReadonlyView { id: string; path: string | null }
 
 const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
+const CANCELLED_DELIVERY_TTL_MS = 10 * 60_000;
 function isUuid(value: string): boolean { return UUID.test(value.replace(/^urn:uuid:/, '').replace(/^\{(.*)\}$/, '$1')); }
 
 function gate(map: Map<string, Mutex>, key: string): Mutex {
@@ -50,7 +51,7 @@ export class Host implements SessionHost {
   private starts = new Set<Promise<Session>>();
   private finishes = new Map<Session, Promise<void>>();
   deliveries = new Map<string, Set<string>>();
-  cancelledDeliveries = new Set<string>();
+  private cancelledDeliveries = new Map<string, number>();
   private configurationGate = new Mutex();
   private ownershipValue: ConversationOwnership | undefined;
   readonly toolPayloads = new ToolPayloadCache();
@@ -514,10 +515,17 @@ export class Host implements SessionHost {
   }
 
   private cancelDeliveries(id: string, delivery: string | undefined): boolean {
-    if (delivery !== undefined) this.cancelledDeliveries.add(delivery);
+    const now = Date.now();
+    for (const [item, cancelledAt] of this.cancelledDeliveries) if (now - cancelledAt >= CANCELLED_DELIVERY_TTL_MS) this.cancelledDeliveries.delete(item);
+    if (delivery !== undefined) this.cancelledDeliveries.set(delivery, now);
     const pending = [...(this.deliveries.get(id) ?? [])];
-    for (const item of pending) this.cancelledDeliveries.add(item);
+    for (const item of pending) this.cancelledDeliveries.set(item, now);
     return pending.length > 0;
+  }
+
+  private deliveryCancelled(delivery: string): boolean {
+    const cancelledAt = this.cancelledDeliveries.get(delivery);
+    return cancelledAt !== undefined && Date.now() - cancelledAt < CANCELLED_DELIVERY_TTL_MS;
   }
 
   private async orchestrationCancel(id: string): Promise<any> {
@@ -550,7 +558,7 @@ export class Host implements SessionHost {
 
   private reserveDelivery(id: string, delivery: string): void {
     if (!isUuid(delivery)) throw new Error('A valid deliveryId is required');
-    if (this.cancelledDeliveries.has(delivery)) throw new Error('Agent delivery was cancelled');
+    if (this.deliveryCancelled(delivery)) throw new Error('Agent delivery was cancelled');
     let set = this.deliveries.get(id);
     if (!set) { set = new Set(); this.deliveries.set(id, set); }
     if (set.has(delivery)) throw new Error('Agent delivery is already pending');
@@ -606,7 +614,7 @@ export class Host implements SessionHost {
     await session.reconcile(false);
     const error = session.configurationError();
     if (error !== null) throw new Error(error);
-    if (this.cancelledDeliveries.has(text(packet, 'deliveryId'))) throw new Error('Agent delivery was cancelled');
+    if (this.deliveryCancelled(text(packet, 'deliveryId'))) throw new Error('Agent delivery was cancelled');
     if (flag(packet, 'wake')) await session.activateUsageRecovery();
     return queueCommand(session, { type: 'orchestration_message', deliveryId: packet.deliveryId ?? null, sourceSessionId: packet.sourceSessionId ?? null,
       sourceHostId: packet.sourceHostId ?? null, message: packet.message ?? null, wake: packet.wake ?? null });

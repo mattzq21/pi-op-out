@@ -208,7 +208,7 @@ export function SplitChatPane(componentProps: Props) {
           setStatus: () => {
             if (request.statusKey === DEFINED_AGENTS_STATUS_KEY) {
               try { setDefinedAgents(request.statusText?.startsWith("json:") ? definedAgentsCapabilitySchema.parse(decodeAgentValue(request.statusText.slice(5))) : undefined); }
-              catch { setDefinedAgents(undefined); }
+              catch (reason) { setDefinedAgents(undefined); reportControlError(new Error(`Could not read agent list: ${reason instanceof Error ? reason.message : String(reason)}`)); }
 
               if (!reconnecting) void capturedSession.refresh().catch(reportControlError);
             } else if (request.statusKey && !["pi-desktop-prompt-context", "pi-desktop-mcp-status"].includes(request.statusKey)) {

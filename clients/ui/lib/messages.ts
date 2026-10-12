@@ -117,11 +117,27 @@ function entryBranch(entries: PiEntry[], leafId: string | null): PiEntry[] {
   return branch.reverse();
 }
 
-function appendPromptContext(messages: ChatMessage[], entry: PiEntry) {
+type SavedPromptParts = { systemPrompt?: unknown; tools?: unknown };
+
+const savedPromptContextSchema = z.looseObject({
+  systemPrompt: z.unknown().optional(), tools: z.unknown().optional(),
+  sameAsPrevious: z.object({ systemPrompt: z.boolean().optional(), tools: z.boolean().optional() }).optional(),
+});
+
+/** Saved snapshots omit the system prompt and tools when they match the previous snapshot on the branch. */
+function appendPromptContext(messages: ChatMessage[], entry: PiEntry, previous: SavedPromptParts) {
+  const saved = savedPromptContextSchema.safeParse(entry.data);
+
+  if (!saved.success) return;
+  const { sameAsPrevious, ...data } = saved.data;
+
+  if (sameAsPrevious?.systemPrompt) data.systemPrompt = previous.systemPrompt; else previous.systemPrompt = data.systemPrompt;
+
+  if (sameAsPrevious?.tools) data.tools = previous.tools; else previous.tools = data.tools;
   const userIndex = latestUser(messages);
 
   if (userIndex < 0 || messages[userIndex].promptContext) return;
-  const context = promptContextSchema.safeParse(entry.data);
+  const context = promptContextSchema.safeParse(data);
 
   if (context.success) messages[userIndex] = { ...messages[userIndex], promptContext: context.data };
 }
@@ -137,7 +153,7 @@ export function appendQueuedProjectContext(messages: ChatMessage[], entry: PiEnt
   return result;
 }
 
-function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers: Set<string>) {
+function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers: Set<string>, promptParts: SavedPromptParts) {
   if (entry.customType === "piop-queued-project-context") return appendQueuedProjectContext(messages, entry, true);
 
   const marker = resumeMarker(entry);
@@ -152,7 +168,7 @@ function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers
     if (state.success && state.data.isPaused) return checkpointLatestUser(messages, true);
   }
 
-  if (["piop-context", "pi-desktop-prompt-context"].includes(entry.customType ?? "")) appendPromptContext(messages, entry);
+  if (["piop-context", "pi-desktop-prompt-context"].includes(entry.customType ?? "")) appendPromptContext(messages, entry, promptParts);
 
   return messages;
 }
@@ -181,10 +197,10 @@ function visibleEntryMessage(entry: PiEntry, resumeMarkers: Set<string>): ChatMe
 }
 
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
-  let messages: ChatMessage[] = []; const resumeMarkers = new Set<string>();
+  let messages: ChatMessage[] = []; const resumeMarkers = new Set<string>(); const promptParts: SavedPromptParts = {};
 
   for (const entry of entryBranch(entries, leafId)) {
-    if (entry.type === "custom") { messages = applyCustomEntry(messages, entry, resumeMarkers); continue; }
+    if (entry.type === "custom") { messages = applyCustomEntry(messages, entry, resumeMarkers, promptParts); continue; }
 
     const message = visibleEntryMessage(entry, resumeMarkers);
 

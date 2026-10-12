@@ -29,7 +29,15 @@ import { Type as Schema, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-const ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
+const DEFAULT_BASE_URL = "https://chatgpt.com/backend-api";
+
+function codexEndpoint(baseUrl: string | undefined): string {
+  const normalized = (baseUrl?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, "");
+
+  if (normalized.endsWith("/codex/responses")) return normalized;
+
+  return normalized.endsWith("/codex") ? `${normalized}/responses` : `${normalized}/codex/responses`;
+}
 
 const TIMEOUT_MS = 60_000;
 
@@ -289,7 +297,7 @@ export default function codexWebSearch(pi: ExtensionAPI) {
       const searchTool = domains.length ? { type: "web_search", filters: { allowed_domains: domains } } : { type: "web_search" };
 
       try {
-        const response = await fetch(ENDPOINT, {
+        const response = await fetch(codexEndpoint(model.baseUrl), {
           method: "POST", headers,
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
           body: JSON.stringify({

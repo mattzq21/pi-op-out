@@ -44,6 +44,7 @@ type Group = {
   mcpServers: Map<string, Parameters<ExtensionAPI["registerMcpServer"]>[1] | undefined>;
   virtualModels: Map<string, [string, string]>;
   listeners: Array<{ name: string; handler: BusHandler; removed?: boolean; unsubscribe?: () => void }>;
+  markdownTransformers: Set<SDK.MarkdownTransformer>;
   stops: Array<() => void>;
   ready: boolean;
   session?: string;
@@ -102,6 +103,10 @@ async function importExtension(entry: string, importer: ExtensionImporter): Prom
 
 export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importer: ExtensionImporter = path => import(path)) {
   let current: Group | undefined;
+  let markdownDispatcher = false;
+  const transformMarkdown: SDK.MarkdownTransformer = (markdown, context) => current?.ready
+    ? [...current.markdownTransformers].reduce((text, transformer) => transformer(text, context), markdown)
+    : markdown;
   const handlerExtensions = new WeakMap<object, string>();
   let registry: ExtensionContext["modelRegistry"] | undefined;
   const registeredProvider = (name: string): ProviderConfig | Provider | undefined => registry?.getRegisteredNativeProvider?.(name) ?? registry?.getRegisteredProviderConfig?.(name);
@@ -297,7 +302,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     const cached = prepared.get(key);
 
     if (cached) return cached;
-    const group: Group = { key, paths: [...paths], registrations: new Map(), providers: new Map(), mcpServers: new Map(), virtualModels: new Map(), listeners: [], stops: [], ready: false };
+    const group: Group = { key, paths: [...paths], registrations: new Map(), providers: new Map(), mcpServers: new Map(), virtualModels: new Map(), listeners: [], markdownTransformers: new Set(), stops: [], ready: false };
     const loaded = new Set<string>();
     const visiting: string[] = [];
     let failed = false;
@@ -335,10 +340,14 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
 
         return pi.getFlag(...args);
       },
-      registerMarkdownTransformer: (...args) => {
+      registerMarkdownTransformer: (transformer) => {
         ensureActive("registerMarkdownTransformer");
+        group.markdownTransformers.add(transformer);
 
-        return pi.registerMarkdownTransformer(...args);
+        if (!markdownDispatcher) {
+          pi.registerMarkdownTransformer(transformMarkdown);
+          markdownDispatcher = true;
+        }
       },
       sendMessage: (...args) => {
         ensureActive("sendMessage");

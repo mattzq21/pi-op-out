@@ -397,8 +397,8 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
       try {
         await ctx.modelRegistry.refresh({ allowNetwork: false });
         pi.events.emit("piop:models-refreshed", { ctx });
-      } catch {
-        throw new Error("Could not refresh provider models. Reopen the conversation to retry.");
+      } catch (error) {
+        throw new Error(`Could not refresh provider models: ${error instanceof Error ? error.message : String(error)}. Reopen the conversation to retry.`, { cause: error });
       }
     })();
   });
