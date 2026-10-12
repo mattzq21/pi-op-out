@@ -49,8 +49,9 @@ export function MobileApp() {
     if (!window.dispatchEvent(new CustomEvent("piop-mobile-before-disconnect", { cancelable: true, detail: { waitUntil: (task: Promise<unknown>) => tasks.push(task) } }))) return;
     setDisconnecting(true);
 
-    try { await Promise.all(tasks); }
-    catch (reason) { setError(String(reason)); setDisconnecting(false);
+    const failed = (await Promise.allSettled(tasks)).find(result => result.status === "rejected");
+
+    if (failed?.status === "rejected" && connected()) { setError(String(failed.reason)); setDisconnecting(false);
 
     return; }
 
@@ -113,6 +114,16 @@ export function MobileApp() {
 
     window.addEventListener("piop-daemon-restarting", restarting);
 
+    const reconnectOnResume = () => {
+      const last = activeDebugAddress.current ?? cachedMobileHost();
+
+      if (document.hidden || connected() || connecting() || forgetting() || intentionalDisconnect.current || !last) return;
+      retryDelay.current = 2000;
+      void connectRef.current(last);
+    };
+
+    document.addEventListener("visibilitychange", reconnectOnResume);
+
     const startupGeneration = generation.current;
     const debugConnection = loadMobileDebugConnection().then((debugUrl) => {
       configuredDebugAddress.current = debugUrl ? validateHost({ url: debugUrl.trim() }) : undefined;
@@ -143,13 +154,13 @@ export function MobileApp() {
 
       return; }
 
-      window.dispatchEvent(new Event("piop-mobile-back"));
+      if (window.dispatchEvent(new Event("piop-mobile-back", { cancelable: true }))) void AndroidApp.minimizeApp().catch((reason) => setError(String(reason)));
     });
 
     const viewport = () => document.documentElement.style.setProperty("--mobile-height", `${window.visualViewport?.height ?? window.innerHeight}px`);
     viewport(); window.visualViewport?.addEventListener("resize", viewport);
 
-    return () => { disposed = true; generation.current++; clearTimeout(retry.current); clearTimeout(restartGraceTimer.current); remoteClient.close(); window.removeEventListener("piop-mobile-disconnect", disconnect); window.removeEventListener("piop-daemon-restarting", restarting); void restartListener.then(stop => stop()); remoteClient.onDisconnect = undefined; void back.then((handle) => handle.remove()); window.visualViewport?.removeEventListener("resize", viewport); };
+    return () => { disposed = true; generation.current++; clearTimeout(retry.current); clearTimeout(restartGraceTimer.current); remoteClient.close(); window.removeEventListener("piop-mobile-disconnect", disconnect); window.removeEventListener("piop-daemon-restarting", restarting); document.removeEventListener("visibilitychange", reconnectOnResume); void restartListener.then(stop => stop()); remoteClient.onDisconnect = undefined; void back.then((handle) => handle.remove()); window.visualViewport?.removeEventListener("resize", viewport); };
   }, () => [disconnect, scheduleReconnect]);
 
   const forgetAnchor = async () => {

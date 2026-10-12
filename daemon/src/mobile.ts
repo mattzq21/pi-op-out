@@ -207,9 +207,9 @@ async function connection(shared: Shared, ws: WebSocketConnection, token: string
   try {
   if (value.scope === 'control') {
     if (!local) { await sendError(ws, 'Daemon control requires a local connection'); throw new Error('Daemon control requires a local connection'); }
-    return controlConnection(shared.app, ws);
+    return await controlConnection(shared.app, ws);
   }
-  return serveConnection(shared, ws, value.scope === 'peer');
+  return await serveConnection(shared, ws, value.scope === 'peer');
   } finally { release(); }
 }
 
@@ -341,6 +341,8 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
   } finally {
     clearInterval(heartbeat);
     shared.subscribers.delete(subscriber);
+    // Let queued replies, such as the error for an invalid request, reach the client before the close.
+    await withTimeout(chain, 2000, 'Send timeout').catch(() => undefined);
     await withTimeout(ws.close(), 2000, 'Close timeout').catch(() => undefined);
     ws.terminate();
     await detachOwner(app, owner, false);

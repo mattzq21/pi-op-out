@@ -11,6 +11,7 @@ type KeyboardContext = {
   splitPane: Accessor<SplitPaneState | undefined>;
   canLeaveSettings: () => boolean;
   setView: Setter<"chat" | "settings">;
+  panelOpen: Accessor<boolean>;
   setPanelOpen: Setter<boolean>;
   newSession: () => Promise<void>;
   toggleTerminal: () => void;
@@ -24,7 +25,7 @@ type KeyboardContext = {
 };
 
 export function useAppKeyboard(context: KeyboardContext) {
-  const { settings, activePane, splitPane, canLeaveSettings, setView, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, settingsDirty, view, terminalOpen, setTerminalOpen } = context;
+  const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, settingsDirty, view, terminalOpen, setTerminalOpen } = context;
   createDependencyEffect(() => { const capturedSettings = settings(); const capturedActivePane = activePane(); const capturedSplitPane = splitPane();
 
     if (!capturedSettings) return;
@@ -79,7 +80,14 @@ export function useAppKeyboard(context: KeyboardContext) {
   createDependencyEffect(() => { const capturedView = view(); const capturedTerminalOpen = terminalOpen();
 
     if (!isMobile) return;
-    const back = () => { if (capturedView === "settings") { if (canLeaveSettings()) setView("chat"); } else if (capturedTerminalOpen) setTerminalOpen(false); else setPanelOpen((value) => !value); };
+    // A handled back press cancels the event. An unhandled one lets the app go to the background.
+    const back = (event: Event) => {
+      if (capturedView === "settings") { if (canLeaveSettings()) setView("chat"); }
+      else if (capturedTerminalOpen) setTerminalOpen(false);
+      else if (panelOpen()) setPanelOpen(false);
+      else return;
+      event.preventDefault();
+    };
 
     window.addEventListener("piop-mobile-back", back);
 

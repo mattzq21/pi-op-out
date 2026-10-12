@@ -32,8 +32,8 @@ public class DictationPlugin extends Plugin {
     private static final int MAX_FEED_SAMPLES = SAMPLE_RATE * 5;
     private static final List<String> NEEDLE_LANGUAGES = Arrays.asList("en", "de", "fr", "es", "it", "nl", "pl");
 
-    /** Runs every native engine call, one after another. */
-    private final ExecutorService engine = Executors.newSingleThreadExecutor();
+    /** Runs every native engine call, one after another. It is shared by the whole process: Needle keeps one process-wide model, and a recreated activity makes a new plugin while jobs of the old one still run. */
+    private static final ExecutorService engine = Executors.newSingleThreadExecutor();
     /** Runs the idle timers of streams. */
     private final ScheduledExecutorService timers = Executors.newSingleThreadScheduledExecutor();
     private static final int IDLE_SECONDS = 15;
@@ -72,6 +72,8 @@ public class DictationPlugin extends Plugin {
         float[] pending = new float[0];
         String committed = "";
         String tentative = "";
+        /** The first engine error of this stream. */
+        String error;
 
         Stream(String id) {
             this.id = id;
@@ -87,11 +89,10 @@ public class DictationPlugin extends Plugin {
     protected void handleOnDestroy() {
         synchronized (lock) {
             generation++;
-            stream = null;
+            closeStream(null);
         }
         timers.shutdownNow();
         engine.execute(this::unload);
-        engine.shutdown();
     }
 
     private static JSObject state(boolean loading, String error) {
@@ -317,8 +318,9 @@ public class DictationPlugin extends Plugin {
         call.resolve(result);
     }
 
-    /** Runs on the engine thread. Ends a stream after an engine error. */
+    /** Runs on the engine thread. Ends a stream after an engine error, and keeps the error for finish. */
     private void fail(Stream failed, String error) {
+        if (failed.error == null) failed.error = error;
         synchronized (lock) {
             if (stream == failed) closeStream(error);
         }
@@ -367,7 +369,7 @@ public class DictationPlugin extends Plugin {
             armIdle(current);
         }
         engine.execute(() -> {
-            if (current.closed || loaded == null) return;
+            if (current.closed || current.error != null || loaded == null) return;
             try {
                 process(current, samples);
             } catch (Throwable error) {
@@ -431,6 +433,7 @@ public class DictationPlugin extends Plugin {
             if (current.idle != null) current.idle.cancel(false);
         }
         engine.execute(() -> {
+            if (current.error != null) { reset(current); call.reject(current.error); return; }
             if (current.closed || loaded == null) { call.reject("This dictation is no longer running"); return; }
             try {
                 String text;
