@@ -46,6 +46,11 @@ export class TerminalRuntime {
     const process = this.processes.get(id);
     if (process && process.windowLabel !== owner) throw new Error('Terminal belongs to another connection');
   }
+  /** True when no other connection runs this terminal. Shared session terminals of this connection count as its own. */
+  ownedByConnection(id: string, owner: string): boolean {
+    const label = this.processes.get(id)?.windowLabel;
+    return label === undefined || label === owner || label.startsWith('shared:' + owner + ':');
+  }
   containsProcess(id: string): boolean { return this.processes.has(id); }
   workingDirectories(hostId: string): string[] { return [...this.processes.values()].filter(terminal => terminal.hostId === hostId).map(terminal => terminal.cwd); }
 }

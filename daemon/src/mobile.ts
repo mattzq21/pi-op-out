@@ -207,9 +207,9 @@ async function connection(shared: Shared, ws: WebSocketConnection, token: string
   try {
   if (value.scope === 'control') {
     if (!local) { await sendError(ws, 'Daemon control requires a local connection'); throw new Error('Daemon control requires a local connection'); }
-    return controlConnection(shared.app, ws);
+    return await controlConnection(shared.app, ws);
   }
-  return serveConnection(shared, ws, value.scope === 'peer');
+  return await serveConnection(shared, ws, value.scope === 'peer');
   } finally { release(); }
 }
 

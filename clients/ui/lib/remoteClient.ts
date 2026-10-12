@@ -43,6 +43,7 @@ export class RemoteClient {
     await new Promise<void>((resolve, reject) => {
       let ready = false;
       let lastHeartbeat = Date.now();
+      let pongs = 0;
       let settled = false;
       const settleReject = (error: Error) => { if (!settled) { settled = true; reject(error); } };
 
@@ -59,7 +60,7 @@ export class RemoteClient {
 
         return; }
 
-        if (message.type === "pong") { lastHeartbeat = Date.now();
+        if (message.type === "pong") { lastHeartbeat = Date.now(); pongs++;
 
         return; }
 
@@ -87,22 +88,29 @@ export class RemoteClient {
           ready = true; this.ready = true; clearTimeout(timer);
           lastHeartbeat = Date.now();
           let lastTick = lastHeartbeat;
+          let resumeCheck: ReturnType<typeof setTimeout> | undefined;
+          const drop = () => {
+            this.socket = undefined; this.failPending(); socket.close();
+            this.onDisconnect?.("Connection stopped responding. Reconnecting…");
+          };
+          // Android can end the socket while the app is in the background without a close event. After a resume, a missing pong shows this fast.
           const resumeHeartbeat = () => {
             if (document.hidden || this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
+            const answered = pongs;
             lastTick = lastHeartbeat = Date.now();
             socket.send(JSON.stringify({ type: "ping" }));
+            clearTimeout(resumeCheck);
+            resumeCheck = setTimeout(() => { if (this.socket === socket && pongs === answered) drop(); }, 10000);
           };
           document.addEventListener("visibilitychange", resumeHeartbeat);
-          this.heartbeatCleanup = () => document.removeEventListener("visibilitychange", resumeHeartbeat);
+          this.heartbeatCleanup = () => { document.removeEventListener("visibilitychange", resumeHeartbeat); clearTimeout(resumeCheck); };
           this.heartbeat = setInterval(() => {
             if (this.socket !== socket) return;
             const now = Date.now();
             if (now - lastTick > 40000) lastHeartbeat = now;
             lastTick = now;
-            if (now - lastHeartbeat > 65000) {
-              this.socket = undefined; this.failPending(); socket.close();
-              this.onDisconnect?.("Connection stopped responding. Reconnecting…");
-            } else if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
+            if (now - lastHeartbeat > 65000) drop();
+            else if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
           }, 20000);
           settleResolve();
           this.receive({ event: "pi://event", payload: { type: "connection_restored" } });

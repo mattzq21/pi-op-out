@@ -5,7 +5,9 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <exception>
 #include <mutex>
+#include <new>
 #include <string>
 #include <vector>
 #include "needle.h"
@@ -16,6 +18,7 @@ namespace {
 constexpr int OUTPUT_CAPACITY = 1 << 20;
 
 void fail(JNIEnv * env, const std::string & message) {
+    if (env->ExceptionCheck()) return;
     env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), message.c_str());
 }
 
@@ -60,6 +63,21 @@ std::string status(const char * action, transcribe_status code) {
     return std::string(action) + ": " + transcribe_status_string(code);
 }
 
+/** Runs one JNI entry. A C++ exception must not cross into Java: it ends the process. */
+template <typename Result, typename Body>
+Result guarded(JNIEnv * env, Result fallback, Body body) {
+    try { return body(); }
+    catch (const std::bad_alloc &) { fail(env, "Not enough memory for the speech engine"); }
+    catch (const std::exception & error) { fail(env, error.what()); }
+    catch (...) { fail(env, "The speech engine failed"); }
+    return fallback;
+}
+
+template <typename Body>
+void guardedVoid(JNIEnv * env, Body body) {
+    guarded(env, 0, [&] { body(); return 0; });
+}
+
 /** One loaded transcribe.cpp model and its single session. */
 struct Transcriber {
     transcribe_model * model = nullptr;
@@ -81,79 +99,105 @@ std::string streamText(JNIEnv * env, transcribe_session * session) {
 extern "C" {
 
 JNIEXPORT void JNICALL Java_dev_pi_mobile_SpeechNative_needleLoad(JNIEnv * env, jclass, jstring path) {
-    std::ifstream file(text(env, path), std::ios::binary);
-    if (!file) { fail(env, "Could not read the model file"); return; }
-    std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (needle_load(bytes.data(), bytes.size()) < 0) { fail(env, needleError("Could not load the Needle model")); return; }
-    if (!(needle_models() & NEEDLE_SPEECH)) fail(env, "This file is not a Needle speech model");
+    guardedVoid(env, [&] {
+        std::ifstream file(text(env, path), std::ios::binary | std::ios::ate);
+        if (!file) { fail(env, "Could not read the model file"); return; }
+        const std::streamoff size = file.tellg();
+        if (size <= 0) { fail(env, "The model file is empty"); return; }
+        std::vector<unsigned char> bytes(static_cast<size_t>(size));
+        file.seekg(0);
+        if (!file.read(reinterpret_cast<char *>(bytes.data()), size)) { fail(env, "Could not read the model file"); return; }
+        // needle_load keeps the model of the other kind, so the kind of this file shows only in what changed.
+        const int before = needle_models();
+        if (needle_load(bytes.data(), bytes.size()) < 0) { fail(env, needleError("Could not load the Needle model")); return; }
+        const int after = needle_models();
+        const bool textAdded = !(before & NEEDLE_TEXT) && (after & NEEDLE_TEXT);
+        const bool speechAdded = !(before & NEEDLE_SPEECH) && (after & NEEDLE_SPEECH);
+        if (textAdded || !(after & NEEDLE_SPEECH)) { fail(env, "This file is not a Needle speech model"); return; }
+        if (!speechAdded && (before & NEEDLE_TEXT)) fail(env, "Piop cannot tell if this file is a Needle speech model because a text model is also loaded. Restart Piop to load it.");
+    });
 }
 
 JNIEXPORT jstring JNICALL Java_dev_pi_mobile_SpeechNative_needleProcess(JNIEnv * env, jclass, jfloatArray pcm, jstring language) {
-    std::vector<float> audio = samples(env, pcm);
-    const std::string code = text(env, language);
-    std::string out(OUTPUT_CAPACITY, '\0');
-    if (needle_stream_transcribe_process(audio.data(), static_cast<int>(audio.size()), code.empty() ? nullptr : code.c_str(), nullptr, out.data(), OUTPUT_CAPACITY) < 0) {
-        fail(env, needleError("Needle could not transcribe the audio"));
-        return nullptr;
-    }
-    return java(env, out.c_str());
+    return guarded<jstring>(env, nullptr, [&]() -> jstring {
+        std::vector<float> audio = samples(env, pcm);
+        const std::string code = text(env, language);
+        std::string out(OUTPUT_CAPACITY, '\0');
+        if (needle_stream_transcribe_process(audio.data(), static_cast<int>(audio.size()), code.empty() ? nullptr : code.c_str(), nullptr, out.data(), OUTPUT_CAPACITY) < 0) {
+            fail(env, needleError("Needle could not transcribe the audio"));
+            return nullptr;
+        }
+        return java(env, out.c_str());
+    });
 }
 
 JNIEXPORT jstring JNICALL Java_dev_pi_mobile_SpeechNative_needleStop(JNIEnv * env, jclass) {
-    std::string out(OUTPUT_CAPACITY, '\0');
-    if (needle_stream_transcribe_stop(out.data(), OUTPUT_CAPACITY) < 0) { fail(env, needleError("Needle could not finish the transcription")); return nullptr; }
-    return java(env, out.c_str());
+    return guarded<jstring>(env, nullptr, [&]() -> jstring {
+        std::string out(OUTPUT_CAPACITY, '\0');
+        if (needle_stream_transcribe_stop(out.data(), OUTPUT_CAPACITY) < 0) { fail(env, needleError("Needle could not finish the transcription")); return nullptr; }
+        return java(env, out.c_str());
+    });
 }
 
 JNIEXPORT jlong JNICALL Java_dev_pi_mobile_SpeechNative_transcribeLoad(JNIEnv * env, jclass, jstring path) {
-    static std::once_flag backends;
-    std::call_once(backends, [] { transcribe_init_backends_default(); });
-    auto * loaded = new Transcriber();
-    transcribe_status code = transcribe_model_load_file(text(env, path).c_str(), nullptr, &loaded->model);
-    if (code != TRANSCRIBE_OK) { delete loaded; fail(env, status("Could not load the transcribe.cpp model", code)); return 0; }
-    code = transcribe_session_init(loaded->model, nullptr, &loaded->session);
-    if (code != TRANSCRIBE_OK) { transcribe_model_free(loaded->model); delete loaded; fail(env, status("Could not start transcribe.cpp", code)); return 0; }
-    return reinterpret_cast<jlong>(loaded);
+    return guarded<jlong>(env, 0, [&]() -> jlong {
+        static std::once_flag backends;
+        std::call_once(backends, [] { transcribe_init_backends_default(); });
+        auto * loaded = new Transcriber();
+        transcribe_status code = transcribe_model_load_file(text(env, path).c_str(), nullptr, &loaded->model);
+        if (code != TRANSCRIBE_OK) { delete loaded; fail(env, status("Could not load the transcribe.cpp model", code)); return 0; }
+        code = transcribe_session_init(loaded->model, nullptr, &loaded->session);
+        if (code != TRANSCRIBE_OK) { transcribe_model_free(loaded->model); delete loaded; fail(env, status("Could not start transcribe.cpp", code)); return 0; }
+        return reinterpret_cast<jlong>(loaded);
+    });
 }
 
 JNIEXPORT jstring JNICALL Java_dev_pi_mobile_SpeechNative_transcribeCapabilities(JNIEnv * env, jclass, jlong handle) {
-    transcribe_capabilities capabilities;
-    transcribe_capabilities_init(&capabilities);
-    const transcribe_status code = transcribe_model_get_capabilities(transcriber(handle)->model, &capabilities);
-    if (code != TRANSCRIBE_OK) { fail(env, status("Could not read the model capabilities", code)); return nullptr; }
-    std::string languages = "[";
-    for (int index = 0; index < capabilities.n_languages; index++) languages += (index ? "," : "") + json(capabilities.languages[index]);
-    return java(env, "{\"languages\":" + languages + "],\"detect\":" + (capabilities.supports_language_detect ? "true" : "false") + ",\"streaming\":" + (capabilities.supports_streaming ? "true" : "false") + "}");
+    return guarded<jstring>(env, nullptr, [&]() -> jstring {
+        transcribe_capabilities capabilities;
+        transcribe_capabilities_init(&capabilities);
+        const transcribe_status code = transcribe_model_get_capabilities(transcriber(handle)->model, &capabilities);
+        if (code != TRANSCRIBE_OK) { fail(env, status("Could not read the model capabilities", code)); return nullptr; }
+        std::string languages = "[";
+        for (int index = 0; index < capabilities.n_languages; index++) languages += (index ? "," : "") + json(capabilities.languages[index]);
+        return java(env, "{\"languages\":" + languages + "],\"detect\":" + (capabilities.supports_language_detect ? "true" : "false") + ",\"streaming\":" + (capabilities.supports_streaming ? "true" : "false") + "}");
+    });
 }
 
 JNIEXPORT void JNICALL Java_dev_pi_mobile_SpeechNative_transcribeBegin(JNIEnv * env, jclass, jlong handle, jstring language) {
-    const std::string code = text(env, language);
-    transcribe_run_params params;
-    transcribe_run_params_init(&params);
-    params.language = code.empty() ? nullptr : code.c_str();
-    const transcribe_status result = transcribe_stream_begin(transcriber(handle)->session, &params, nullptr);
-    if (result != TRANSCRIBE_OK) fail(env, status("Could not start live transcription", result));
+    guardedVoid(env, [&] {
+        const std::string code = text(env, language);
+        transcribe_run_params params;
+        transcribe_run_params_init(&params);
+        params.language = code.empty() ? nullptr : code.c_str();
+        const transcribe_status result = transcribe_stream_begin(transcriber(handle)->session, &params, nullptr);
+        if (result != TRANSCRIBE_OK) fail(env, status("Could not start live transcription", result));
+    });
 }
 
 JNIEXPORT jstring JNICALL Java_dev_pi_mobile_SpeechNative_transcribeFeed(JNIEnv * env, jclass, jlong handle, jfloatArray pcm) {
-    std::vector<float> audio = samples(env, pcm);
-    if (audio.empty()) return nullptr;
-    transcribe_stream_update update;
-    transcribe_stream_update_init(&update);
-    transcribe_session * session = transcriber(handle)->session;
-    const transcribe_status code = transcribe_stream_feed(session, audio.data(), static_cast<int>(audio.size()), &update);
-    if (code != TRANSCRIBE_OK) { fail(env, status("transcribe.cpp could not transcribe the audio", code)); return nullptr; }
-    if (!update.committed_changed && !update.tentative_changed) return nullptr;
-    const std::string result = streamText(env, session);
-    return env->ExceptionCheck() ? nullptr : java(env, result);
+    return guarded<jstring>(env, nullptr, [&]() -> jstring {
+        std::vector<float> audio = samples(env, pcm);
+        if (audio.empty()) return nullptr;
+        transcribe_stream_update update;
+        transcribe_stream_update_init(&update);
+        transcribe_session * session = transcriber(handle)->session;
+        const transcribe_status code = transcribe_stream_feed(session, audio.data(), static_cast<int>(audio.size()), &update);
+        if (code != TRANSCRIBE_OK) { fail(env, status("transcribe.cpp could not transcribe the audio", code)); return nullptr; }
+        if (!update.committed_changed && !update.tentative_changed) return nullptr;
+        const std::string result = streamText(env, session);
+        return env->ExceptionCheck() ? nullptr : java(env, result);
+    });
 }
 
 JNIEXPORT jstring JNICALL Java_dev_pi_mobile_SpeechNative_transcribeFinish(JNIEnv * env, jclass, jlong handle) {
-    transcribe_session * session = transcriber(handle)->session;
-    const transcribe_status code = transcribe_stream_finalize(session, nullptr);
-    if (code != TRANSCRIBE_OK) { fail(env, status("transcribe.cpp could not finish the transcription", code)); return nullptr; }
-    const std::string result = streamText(env, session);
-    return env->ExceptionCheck() ? nullptr : java(env, result);
+    return guarded<jstring>(env, nullptr, [&]() -> jstring {
+        transcribe_session * session = transcriber(handle)->session;
+        const transcribe_status code = transcribe_stream_finalize(session, nullptr);
+        if (code != TRANSCRIBE_OK) { fail(env, status("transcribe.cpp could not finish the transcription", code)); return nullptr; }
+        const std::string result = streamText(env, session);
+        return env->ExceptionCheck() ? nullptr : java(env, result);
+    });
 }
 
 JNIEXPORT void JNICALL Java_dev_pi_mobile_SpeechNative_transcribeReset(JNIEnv *, jclass, jlong handle) {
@@ -161,15 +205,17 @@ JNIEXPORT void JNICALL Java_dev_pi_mobile_SpeechNative_transcribeReset(JNIEnv *,
 }
 
 JNIEXPORT jstring JNICALL Java_dev_pi_mobile_SpeechNative_transcribeRun(JNIEnv * env, jclass, jlong handle, jfloatArray pcm, jstring language) {
-    std::vector<float> audio = samples(env, pcm);
-    const std::string code = text(env, language);
-    transcribe_run_params params;
-    transcribe_run_params_init(&params);
-    params.language = code.empty() ? nullptr : code.c_str();
-    transcribe_session * session = transcriber(handle)->session;
-    const transcribe_status result = transcribe_run(session, audio.data(), static_cast<int>(audio.size()), &params);
-    if (result != TRANSCRIBE_OK) { fail(env, status("transcribe.cpp could not transcribe the audio", result)); return nullptr; }
-    return java(env, transcribe_full_text(session));
+    return guarded<jstring>(env, nullptr, [&]() -> jstring {
+        std::vector<float> audio = samples(env, pcm);
+        const std::string code = text(env, language);
+        transcribe_run_params params;
+        transcribe_run_params_init(&params);
+        params.language = code.empty() ? nullptr : code.c_str();
+        transcribe_session * session = transcriber(handle)->session;
+        const transcribe_status result = transcribe_run(session, audio.data(), static_cast<int>(audio.size()), &params);
+        if (result != TRANSCRIBE_OK) { fail(env, status("transcribe.cpp could not transcribe the audio", result)); return nullptr; }
+        return java(env, transcribe_full_text(session));
+    });
 }
 
 JNIEXPORT void JNICALL Java_dev_pi_mobile_SpeechNative_transcribeFree(JNIEnv *, jclass, jlong handle) {

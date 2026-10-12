@@ -197,8 +197,10 @@ const COMMANDS: Record<string, Handler> = {
   validate_project_directory: (app, _owner, args) => sessionIndex.validateProjectDirectory(app, argument(args, 'path', 'string'), hostId(args), argument(args, 'allowStorage', 'boolean?')),
   list_directories: (app, _owner, args) => sessionIndex.listDirectories(app, hostId(args), argument(args, 'path', 'string?')),
   read_image_file: (app, _owner, args) => projectFiles.readImage(app, argument(args, 'cwd', 'string'), argument(args, 'path', 'string'), argument(args, 'hostId', 'string')),
-  archive_session: async (app, _owner, args) => {
-    await archives.archiveSession(app, app.terminals, argument(args, 'sessionPath', 'string'), argument(args, 'hostId', 'string?'), [...argument(args, 'terminalIds', 'strings')], argument(args, 'clientId', 'string'));
+  archive_session: async (app, owner, args) => {
+    // Terminals of the archived sessions stop in any case. Other terminals stop only when this connection owns them.
+    const terminalIds = (argument(args, 'terminalIds', 'strings') as string[]).filter(id => app.terminals.ownedByConnection(id, owner));
+    await archives.archiveSession(app, app.terminals, argument(args, 'sessionPath', 'string'), argument(args, 'hostId', 'string?'), terminalIds, argument(args, 'clientId', 'string'));
     return null;
   },
   delete_session: (app, _owner, args) => archives.deleteSession(app, app.pi, argument(args, 'sessionPath', 'string'), argument(args, 'hostId', 'string?'), argument(args, 'clientId', 'string')),
