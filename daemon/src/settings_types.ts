@@ -25,10 +25,13 @@ export interface AppSettings {
   autoRetry: boolean;
   debugMode: boolean;
   keybindings: Record<string, string>;
-  tools: any[];
-  skills: any[];
+  tools: ToolConfig[];
+  skills: SkillConfig[];
   hosts: RemoteHost[];
 }
+
+export interface ToolConfig { name: string; description: string; enabled: boolean; builtin?: boolean }
+export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean }
 
 export const MAX_REMOTE_HOSTS = 16;
 
@@ -63,6 +66,23 @@ function stringArray(value: any, field: string): string[] {
 function arrayField(value: any, field: string): any[] {
   if (value === undefined) throw new Error(`missing field \`${field}\``);
   if (!Array.isArray(value)) fail(field, 'a sequence');
+  return value;
+}
+
+function entryFields(value: any, field: string, strings: string[], booleans: string[], optionalBooleans: string[]): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(field, 'a sequence of maps');
+  for (const key of strings) if (typeof value[key] !== 'string') fail(`${field}.${key}`, 'a string');
+  for (const key of booleans) if (typeof value[key] !== 'boolean') fail(`${field}.${key}`, 'a boolean');
+  for (const key of optionalBooleans) if (value[key] !== undefined && typeof value[key] !== 'boolean') fail(`${field}.${key}`, 'a boolean');
+}
+
+function toolConfig(value: any): ToolConfig {
+  entryFields(value, 'tools', ['name', 'description'], ['enabled'], ['builtin']);
+  return value;
+}
+
+function skillConfig(value: any): SkillConfig {
+  entryFields(value, 'skills', ['name', 'path', 'description'], ['enabled'], ['userInvokedOnly']);
   return value;
 }
 
@@ -107,8 +127,8 @@ export function parseAppSettings(value: any): AppSettings {
     autoRetry: boolField(value.autoRetry, 'autoRetry', true),
     debugMode: boolField(value.debugMode, 'debugMode', false),
     keybindings,
-    tools: arrayField(value.tools, 'tools'),
-    skills: arrayField(value.skills, 'skills'),
+    tools: arrayField(value.tools, 'tools').map(toolConfig),
+    skills: arrayField(value.skills, 'skills').map(skillConfig),
     hosts: value.hosts === undefined ? [] : arrayField(value.hosts, 'hosts').map(parseRemoteHost),
   };
   return settings;

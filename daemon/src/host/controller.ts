@@ -99,7 +99,7 @@ export class Host implements SessionHost {
     const finished = (async () => {
       await session.drain();
       if (this.sessions.get(session.key) !== session) return;
-      const retained = session.queue.pending();
+      const retained = session.queue.saved() ? [] : session.queue.pending();
       if (retained.length) this.pending.set(session.key, retained);
       else this.pending.delete(session.key);
       for (const [runtime, current] of this.subscriptions) {
@@ -658,17 +658,19 @@ export class Host implements SessionHost {
 
   private async orchestrationRecoveryDetach(runtime: string, id: string): Promise<any> {
     const release = await lockGate(this.sessionGates, id);
+    let session: Session | undefined;
     try {
       this.attachments.delete(runtime);
-      const session = this.subscriptions.get(runtime);
+      session = this.subscriptions.get(runtime);
       this.subscriptions.delete(runtime);
       if (session) {
         session.detachView(runtime);
         try { await session.retire(); } catch {}
-        await this.releaseUnused(session);
       }
-      return null;
     } finally { release(); }
+    // Attach takes the ownership lock before the session lock, so ownership is released only after the session lock is free.
+    if (session) await this.releaseUnused(session);
+    return null;
   }
 
   private async orchestrationDetach(runtime: string): Promise<any> {

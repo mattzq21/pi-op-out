@@ -159,7 +159,7 @@ function validateItems(items: any[]): void {
   for (const item of items) validateItem(item);
 }
 
-function validateItem(item: any): void {
+export function validateItem(item: any): void {
   itemId(item);
   if (typeof item.message !== 'string' || (item.behavior !== 'steer' && item.behavior !== 'followUp')) throw new Error('Invalid queued-input journal item');
   if (item.images !== undefined) {
