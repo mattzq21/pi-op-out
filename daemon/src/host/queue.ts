@@ -747,6 +747,7 @@ export class SessionQueue {
     const id = this.nextItemId();
     const item: any = { id, message: command.message ?? null, behavior: 'followUp', deliveryStarted: true };
     if (command.images !== undefined) item.images = clone(command.images);
+    if (command.goalSubmissionId !== undefined) item.goalSubmissionId = command.goalSubmissionId;
     command.type = 'queue_prompt';
     command.queueId = id;
     command.streamingBehavior = 'followUp';

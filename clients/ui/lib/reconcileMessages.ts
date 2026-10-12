@@ -8,7 +8,23 @@ export function sameUserContent(submitted: ChatMessage, message: ChatMessage): b
   return JSON.stringify(images(submitted.content)) === JSON.stringify(images(message.content));
 }
 
-export const matchesSubmittedMessage = (submitted: ChatMessage, message: ChatMessage) => Boolean(submitted.submissionId) && sameUserContent(submitted, message);
+export const matchesSubmittedMessage = (submitted: ChatMessage, message: ChatMessage) => Boolean(submitted.submissionId) && message.role === "user" && (submitted.submissionId === message.piopSubmissionId || Boolean(submitted.piopQueueId && submitted.piopQueueId === message.piopQueueId));
+
+export function reconcilePendingMessages(messages: ChatMessage[], pending: { id: string; goalSubmissionId?: string }[] | undefined): ChatMessage[] {
+  if (!pending) return messages;
+  const queued = new Map(pending.map(item => [item.id, item]));
+  const submissions = new Map(pending.filter(item => item.goalSubmissionId).map(item => [item.goalSubmissionId, item.id]));
+  const next = messages.flatMap(message => {
+    if (!message.submissionId) return [message];
+    const queueId = submissions.get(message.submissionId) ?? message.piopQueueId;
+
+    if (queueId && !queued.has(queueId)) return [];
+
+    return [queueId && queueId !== message.piopQueueId ? { ...message, piopQueueId: queueId } : message];
+  });
+
+  return next.length === messages.length && next.every((message, index) => message === messages[index]) ? messages : next;
+}
 
 function reuseAssistantContent(previous: ChatMessage["content"], incoming: ChatMessage["content"]): ChatMessage["content"] {
   if (!Array.isArray(previous) || !Array.isArray(incoming)) return incoming;
@@ -20,7 +36,12 @@ function reuseAssistantContent(previous: ChatMessage["content"], incoming: ChatM
 export function upsertLiveMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
   const index = messages.findIndex(item => item.id === message.id);
 
-  if (index === -1) return [...messages, message];
+  if (index === -1 || messages[index].submissionId) {
+    const delivered = messages.filter(item => !item.submissionId);
+    const pending = messages.filter(item => item.submissionId && item.id !== message.id);
+
+    return [...delivered, message, ...pending];
+  }
   const previous = messages[index];
   const next = { ...message, entryId: message.entryId ?? previous.entryId, toolInput: message.toolInput ?? previous.toolInput, details: message.details ?? previous.details, promptContext: previous.promptContext };
 
@@ -31,7 +52,7 @@ export function upsertLiveMessage(messages: ChatMessage[], message: ChatMessage)
   return messages.map((item, position) => position === index ? next : item);
 }
 
-export function reconcileMessages(previous: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+export function reconcileMessages(previous: ChatMessage[], incoming: ChatMessage[], pending?: { id: string; goalSubmissionId?: string }[]): ChatMessage[] {
   const saved = new Map(previous.map(message => [message.entryId ?? message.id, message]));
   const liveUsers = previous.filter(message => message.role === "user" && !message.entryId && message.timestamp !== undefined);
   const submitted = previous.filter(message => message.submissionId);
@@ -64,7 +85,7 @@ export function reconcileMessages(previous: ChatMessage[], incoming: ChatMessage
     return { ...message, id: pending.id };
   });
 
-  messages.push(...submitted);
+  messages.push(...reconcilePendingMessages(submitted, pending));
 
   return messages.length === previous.length && messages.every((message, index) => message === previous[index]) ? previous : messages;
 }
