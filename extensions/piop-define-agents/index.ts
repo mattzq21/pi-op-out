@@ -582,9 +582,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   const useAgent = async (name: string, ctx: ExtensionContext, persistSnapshot = true, applyFastMode: boolean | "restore" = true) => {
-    restore(ctx);
-    const agent = currentAgent();
-    activeToolError = agent ? await activate(agent, ctx, persistSnapshot, applyFastMode) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
+    try {
+      restore(ctx);
+      const agent = currentAgent();
+      activeToolError = agent ? await activate(agent, ctx, persistSnapshot, applyFastMode) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
+    } catch (error) {
+      activeToolError = await unloadExtensions(`Agent "${name}" could not start: ${error instanceof Error ? error.message : String(error)}`, ctx);
+    }
 
     if (activeToolError) pi.setActiveTools([]);
     publish(ctx);
