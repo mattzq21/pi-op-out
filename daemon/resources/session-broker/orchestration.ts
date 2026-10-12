@@ -196,11 +196,13 @@ function readItem(entry: Static<typeof entrySchema>, includeOutputs: boolean, ca
     stopReason: message.stopReason, error: message.errorMessage };
 }
 
-async function waitSnapshot(targets: Target[], signal?: AbortSignal) {
-  const settled = await Promise.allSettled(targets.map(target => poll(target, signal)));
+async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, stop: AbortSignal) {
+  const round = signal ? AbortSignal.any([signal, stop]) : stop;
+  const settled = await Promise.allSettled(targets.map(target => poll(target, round)));
   signal?.throwIfAborted();
   const polls = settled.flatMap(item => item.status === "fulfilled" ? [item.value] : []);
-  const errors = settled.flatMap((item, index) => item.status === "rejected" ? [{ ...targets[index], error: String(item.reason) }] : []);
+  const stopped = (reason: unknown) => stop.aborted && reason === stop.reason;
+  const errors = settled.flatMap((item, index) => item.status === "rejected" && !stopped(item.reason) ? [{ ...targets[index], error: String(item.reason) }] : []);
 
   return { polls, errors, wake: polls.find(item => item.thread.status !== "running" && item.changed)?.thread };
 }
@@ -254,7 +256,7 @@ function registerDelivery(pi: ExtensionAPI) {
   };
 
   const unsubscribeCancellation = pi.events.on("piop:cancel-preparation", cancel);
-  const reset = () => { cancel(); runSignal = undefined; runAborted = false; };
+  const reset = () => { cancel(); suspended = false; runSignal = undefined; runAborted = false; };
 
   pi.on("session_start", async (_event, ctx) => { reset(); await recover(ctx, true); });
   pi.on("session_shutdown", () => { reset(); unsubscribeCancellation(); });
@@ -352,8 +354,10 @@ export function registerOrchestration(pi: ExtensionAPI) {
   registerDelivery(pi);
   registerAgentProfiles(pi);
   let inputRevision = 0;
-  pi.on("input", event => { if (event.source !== "extension") inputRevision++; });
-  const unsubscribeMail = pi.events.on("piop:agent-mail", () => { inputRevision++; });
+  const inputListeners = new Set<() => void>();
+  const newInput = () => { inputRevision++; for (const listener of inputListeners) listener(); };
+  pi.on("input", event => { if (event.source !== "extension") newInput(); });
+  const unsubscribeMail = pi.events.on("piop:agent-mail", newInput);
   pi.on("session_shutdown", unsubscribeMail);
   pi.registerTool({
     name: "create_thread", label: "Create chat",
@@ -431,15 +435,38 @@ export function registerOrchestration(pi: ExtensionAPI) {
       validateTargets(params.targets, ctx);
       const deadline = Date.now() + (params.timeoutMs ?? 120_000);
       const revision = inputRevision;
+      const stop = new AbortController();
+      const timer = params.timeoutMs === 0 ? undefined : setTimeout(() => stop.abort(new Error("Wait timed out")), deadline - Date.now());
+      const onInput = () => stop.abort(new Error("Wait interrupted by new input"));
+      inputListeners.add(onInput);
 
-      while (true) {
-        signal?.throwIfAborted();
-        const snapshot = await waitSnapshot(params.targets, signal);
+      const finish = (snapshot: Awaited<ReturnType<typeof waitSnapshot>>) => {
         const interrupted = inputRevision !== revision || ctx.hasPendingMessages();
         const actionable = Boolean(snapshot.wake || snapshot.errors.length || interrupted);
 
-        if (actionable || Date.now() >= deadline) return result({ timedOut: !actionable && params.timeoutMs !== 0, interrupted, ...snapshot });
-        await delay(Math.min(1000, Math.max(0, deadline - Date.now())), undefined, { signal });
+        return actionable || stop.signal.aborted || Date.now() >= deadline ? result({ timedOut: !actionable && params.timeoutMs !== 0, interrupted, ...snapshot }) : undefined;
+      };
+
+      try {
+        while (true) {
+          signal?.throwIfAborted();
+          const snapshot = await waitSnapshot(params.targets, signal, stop.signal);
+          const done = finish(snapshot);
+
+          if (done) return done;
+
+          try { await delay(Math.min(1000, Math.max(0, deadline - Date.now())), undefined, { signal: signal ? AbortSignal.any([signal, stop.signal]) : stop.signal }); }
+          catch (error) {
+            signal?.throwIfAborted();
+
+            if (!stop.signal.aborted) throw error;
+
+            return finish(snapshot)!;
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+        inputListeners.delete(onInput);
       }
     },
   });
