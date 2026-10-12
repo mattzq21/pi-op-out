@@ -17,7 +17,8 @@ import type { App } from './app';
 
 export interface StartPiOptions { runtimeId: string; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null; hostId?: string | null; presence?: any; clientId: string }
 
-interface PiProcess { daemon: daemon.Daemon; windowLabel: string; blankCleanup: BlankSessionCleanup }
+/** attached settles when the start that registered this process finishes attaching. */
+interface PiProcess { daemon: daemon.Daemon; windowLabel: string; blankCleanup: BlankSessionCleanup; attached: Promise<void> }
 
 /** State for agent sessions that run through the host daemon. */
 export class PiRuntime {
@@ -68,16 +69,16 @@ async function sessionLaunchSettings(app: App, hostId: string, cwd: string | nul
   return settings;
 }
 
-interface PreparedStart { connection: daemon.Daemon; process: PiProcess; packet: any; claim: BusyAgent | undefined; hostId: string; sessionId: string | undefined; sessionPath: string | undefined; reserved: boolean }
+interface PreparedStart { connection: daemon.Daemon; process: PiProcess; settle: { resolve(): void; reject(error: unknown): void }; packet: any; claim: BusyAgent | undefined; hostId: string; sessionId: string | undefined; sessionPath: string | undefined; reserved: boolean }
 
-/** Checks, reserves and registers a Pi start under the lifecycle lock. Returns undefined when the runtime is already attached. */
-async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broker: BrokerRuntime, options: StartPiOptions): Promise<PreparedStart | undefined> {
+/** Checks, reserves and registers a Pi start under the lifecycle lock. Returns the existing attachment when the runtime is already registered. */
+async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broker: BrokerRuntime, options: StartPiOptions): Promise<PreparedStart | { existing: Promise<void> }> {
   ensureRuntimeOwner(runtime, options.runtimeId, owner);
   const hostId = options.hostId ?? 'local';
   const readOnly = options.presence?.readOnly === true;
   const settings = await sessionLaunchSettings(app, hostId, options.cwd, readOnly);
   const existing = runtime.processes.get(options.runtimeId);
-  if (existing && existing.daemon.alive && existing.daemon.matchesConnection(settings, hostId)) return undefined;
+  if (existing && existing.daemon.alive && existing.daemon.matchesConnection(settings, hostId)) return { existing: existing.attached };
   const reserved = options.sessionId == null && options.sessionPath == null;
   const sessionId = reserved ? await reserveSessionId(settings, hostId) : options.sessionId ?? undefined;
   const blankCleanup: BlankSessionCleanup = { id: sessionId, host: hostId === 'local' ? undefined : remoteHost(settings, hostId), submitted: false };
@@ -94,10 +95,13 @@ async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broke
     const connection = await daemon.connect(app, runtime, broker, settings, hostId);
     const command = buildPiCommand(broker, settings, hostId, { kind: 'rpc', cwd: options.cwd, sessionPath, sessionId, forkPath }, connection.remotePort);
     blankCleanup.path = sessionPath;
-    const process: PiProcess = { daemon: connection, windowLabel: owner, blankCleanup };
+    let settle!: PreparedStart['settle'];
+    const attached = new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
+    attached.catch(() => {});
+    const process: PiProcess = { daemon: connection, windowLabel: owner, blankCleanup, attached };
     runtime.processes.set(options.runtimeId, process);
     const packet = { type: 'attach', clientId: options.clientId, runtimeId: options.runtimeId, sessionKey: claimId ?? options.runtimeId, spec: daemon.spec(command), timeout: 630_000, cwd: options.cwd ?? null, presence: options.presence ?? {} };
-    return { connection, process, packet, claim, hostId, sessionId, sessionPath, reserved };
+    return { connection, process, settle, packet, claim, hostId, sessionId, sessionPath, reserved };
   } catch (error) {
     claim?.release();
     if (reserved) await cleanupBlankSession(blankCleanup);
@@ -110,14 +114,17 @@ export async function startPiForOwner(app: App, owner: string, runtime: PiRuntim
   // The lifecycle lock covers the checks and registration only. The attach request can take minutes when pi starts slowly,
   // and holding the lock for that long would block every other session start, switch, archive and settings change.
   const prepared = await runtime.lifecycle.run(() => preparePiStart(app, owner, runtime, broker, options));
-  if (!prepared) return { attached: true };
-  const { connection, process, packet, claim, hostId, sessionId, sessionPath, reserved } = prepared;
+  // A start that overlaps a pending one for the same runtime reports that start's outcome.
+  if ('existing' in prepared) { await prepared.existing; return { attached: true }; }
+  const { connection, process, settle, packet, claim, hostId, sessionId, sessionPath, reserved } = prepared;
   try {
     const result = await connection.request(packet);
     if (runtime.processes.get(options.runtimeId) !== process) throw new Error('Pi runtime was detached while it started');
     runtime.activeAgents.set(options.runtimeId, { hostId, sessionId, sessionPath, working: false, messageable: result?.owned === false });
+    settle.resolve();
     return result;
   } catch (error) {
+    settle.reject(error);
     if (runtime.processes.get(options.runtimeId) === process) runtime.processes.delete(options.runtimeId);
     if (reserved) await cleanupBlankSession(process.blankCleanup);
     throw error;

@@ -75,7 +75,7 @@ function runCommand(host: Host, script: HostScript<unknown, unknown>): CommandSp
   return hostCommand(host, `${prepare} IFS= read -r q || exit 1; exec 4<&0; printf '%s' ${shellQuote(STARTED)} >&2; ${environment} setsid ${start} <<PIOP_REQUEST &
 $q
 PIOP_REQUEST
-p=$!; { cat <&4 >/dev/null; kill -- -"$p" 2>/dev/null || kill "$p" 2>/dev/null; } & w=$!; wait "$p"; s=$?; kill "$w" 2>/dev/null; exit "$s"`);
+p=$!; { cat <&4 >/dev/null 2>&1 & c=$!; trap 'kill "$c" 2>/dev/null; exit 0' TERM; wait "$c"; kill -- -"$p" 2>/dev/null || kill "$p" 2>/dev/null; } >/dev/null 2>&1 & w=$!; wait "$p"; s=$?; kill "$w" 2>/dev/null; exit "$s"`);
 }
 
 /** Copies the script with a temporary file and a rename, then removes unused copies older than one day. */

@@ -53,11 +53,13 @@ export class BrokerRuntime {
   token = randomUUID();
   busy = new Set<string>();
   jobs = new Map<string, MessageJob>();
+  /** Request IDs whose message job is between its checks and its registration in jobs. */
+  starting = new Set<string>();
   cancelled = new Set<string>();
   active = 0;
 
   ensureIdle(): void {
-    if (this.messageCount > 0 || this.jobs.size > 0 || this.deliveries.size > 0) throw new Error('Wait for active broker requests to finish before restarting the daemon');
+    if (this.messageCount > 0 || this.jobs.size > 0 || this.starting.size > 0 || this.deliveries.size > 0) throw new Error('Wait for active broker requests to finish before restarting the daemon');
   }
 
   async shutdown(): Promise<void> {
@@ -248,22 +250,28 @@ function messageCommand(broker: BrokerRuntime, settings: AppSettings, session: S
 
 async function startMessageJob(command: LaunchCommand, broker: BrokerRuntime, requestId: string, deadline: number): Promise<MessageJob> {
   if (broker.closing) throw new Error('App is closing');
-  if (broker.jobs.has(requestId)) throw new Error('Agent message request is already running');
+  if (broker.jobs.has(requestId) || broker.starting.has(requestId)) throw new Error('Agent message request is already running');
   if (Date.now() >= deadline) throw new Error('Agent message expired');
   if (broker.cancelled.delete(requestId)) throw new Error('Agent message was cancelled');
-  const output = await MessageOutput.prepare();
-  if (broker.closing) { output.remove(); throw new Error('App is closing'); }
-  if (broker.jobs.has(requestId)) { output.remove(); throw new Error('Agent message request is already running'); }
-  let child: ChildProcess;
+  broker.starting.add(requestId);
   try {
-    child = spawn(command.program, command.args, spawnOptions(command, { stdio: output.stdio(), detached: true }));
-    await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
-  } catch (error: any) { output.remove(); throw new Error(`Could not message agent: ${error.message ?? error}`); }
-  output.closeOutputs();
-  child.on('error', () => {});
-  const job = { child, output };
-  broker.jobs.set(requestId, job);
-  return job;
+    const output = await MessageOutput.prepare();
+    if (broker.closing) { output.remove(); throw new Error('App is closing'); }
+    if (broker.cancelled.delete(requestId)) { output.remove(); throw new Error('Agent message was cancelled'); }
+    let child: ChildProcess;
+    try {
+      child = spawn(command.program, command.args, spawnOptions(command, { stdio: output.stdio(), detached: true }));
+      await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+    } catch (error: any) { output.remove(); throw new Error(`Could not message agent: ${error.message ?? error}`); }
+    output.closeOutputs();
+    child.on('error', () => {});
+    // A cancellation or shutdown during the spawn found no job to stop. The worker has no message yet, so stop it here.
+    const stopped = broker.closing ? 'App is closing' : broker.cancelled.delete(requestId) ? 'Agent message was cancelled' : undefined;
+    if (stopped) { await stopMessageWorker(child); output.remove(); throw new Error(stopped); }
+    const job = { child, output };
+    broker.jobs.set(requestId, job);
+    return job;
+  } finally { broker.starting.delete(requestId); }
 }
 
 function fileSize(path: string): number { try { return statSync(path).size; } catch { return 0; } }

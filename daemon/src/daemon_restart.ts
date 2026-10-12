@@ -305,7 +305,20 @@ async function startCandidate(plan: Plan, fallback: boolean): Promise<number> {
   } finally { lock.release(); }
   const child = watch(await launch(plan, fallback ? plan.fallback : plan.executable, '--restart-candidate'));
   try { return await waitReady(plan, child); }
-  catch (error) { child.kill('SIGKILL'); throw error; }
+  catch (error: any) {
+    // The fallback claims the daemon lock without waiting, so the failed candidate must have exited and released it.
+    try { await killAndWait(child); }
+    catch (failure: any) { throw new Error((error?.message ?? String(error)) + '. ' + (failure?.message ?? String(failure))); }
+    throw error;
+  }
+}
+
+async function killAndWait(child: ChildProcess): Promise<void> {
+  if (exited(child)) return;
+  const stopped = new Promise<void>(resolve => child.once('exit', () => resolve()));
+  child.kill('SIGKILL');
+  await Promise.race([stopped, sleep(10_000)]);
+  if (!exited(child)) throw new Error('The replacement daemon ' + child.pid + ' did not stop within 10 seconds of SIGKILL');
 }
 
 async function waitReady(plan: Plan, child: ChildProcess): Promise<number> {
@@ -325,10 +338,17 @@ async function coordinate(plan: Plan): Promise<void> {
   await publish(plan, 'armed');
   await waitForHandoff(plan);
   let pid: number;
-  try { pid = await startCandidate(plan, false); }
+  try {
+    // Each start attempt renews the status so it stays unexpired while this coordinator runs.
+    await publish(plan, 'restarting');
+    pid = await startCandidate(plan, false);
+  }
   catch (error: any) {
     const message = error?.message ?? String(error);
-    try { pid = await startCandidate(plan, true); }
+    try {
+      await publish(plan, 'restarting');
+      pid = await startCandidate(plan, true);
+    }
     catch (rollback: any) { throw new Error(message + '. The previous daemon also failed to start: ' + (rollback?.message ?? rollback) + '. See daemon.log for details.'); }
     await publish(plan, 'rolled_back', message + '. Restored the previous daemon and plugins.', pid);
     return;
