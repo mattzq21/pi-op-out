@@ -734,11 +734,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const previousModel = modelOverride;
     const previousEffort = effortOverride;
     const previousSkills = currentSkillPaths();
+    const previousTools = pi.getActiveTools();
     active = name; snapshot = undefined; modelOverride = undefined; effortOverride = undefined;
     const skillsChanged = JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths());
     const activationError = await useAgent(active, ctx, false, true);
 
-    if (activationError) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; await useAgent(active, ctx, false); throw new Error(activationError); }
+    if (activationError) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; pi.setActiveTools(previousTools); await useAgent(active, ctx, false); throw new Error(activationError); }
 
     saveState();
 
