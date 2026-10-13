@@ -1,4 +1,4 @@
-import { MAX_REMOTE_HOSTS, codexWebSearchTool, defaultAgent, defaultSettings, parseAppSettings, serializeAppSettings, sessionOperationTools, validateRemoteHost, type AppSettings } from './settings_types';
+import { MAX_REMOTE_HOSTS, codexWebSearchTool, defaultAgent, defaultSettings, parseAppSettings, serializeAppSettings, sessionOperationTools, validateContextCaps, validateRemoteHost, type AppSettings } from './settings_types';
 import { mergeDiscoveredSkills } from './skill_discovery';
 import { migrateKeybindings, validateKeybindings } from './keybindings';
 import { lockSettings, settingsPath, settingsRevision, storageLock } from './settings_storage';
@@ -88,7 +88,7 @@ function validateHostIds(settings: AppSettings): void {
 }
 
 export function validateSettingsForSave(settings: AppSettings): void {
-  if (settings.contextWindowCap < 1000) throw new Error('Context window cap must be a whole number of at least 1000');
+  validateContextCaps(settings);
   validateKeybindings(settings);
   validateHostIds(settings);
   if (settings.hosts.length > MAX_REMOTE_HOSTS) throw new Error(`At most ${MAX_REMOTE_HOSTS} remote machines can be configured`);

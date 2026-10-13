@@ -35,6 +35,7 @@ import agentExcalidraw from '../../extensions/piop-define-agents/excalidraw.ts?r
 import agentDaemonDefinitions from '../../extensions/piop-define-agents/daemon-definitions.ts?raw';
 import agentFastModels from '../../extensions/piop-define-agents/fast-models.ts?raw';
 import contextWindowCapExtension from '../../extensions/piop-context-window-cap/index.ts?raw';
+import contextWindowCapInterface from '../../extensions/piop-context-window-cap/interface.ts?raw';
 import contextBarExtension from '../../extensions/piop-context-bar/index.ts?raw';
 import codexWebSearchExtension from '../../extensions/piop-codex-web-search/index.ts?raw';
 import excalidrawSkill from '../../extensions/piop-excalidraw/SKILL.md?raw';
@@ -47,6 +48,7 @@ import brokerModule4 from '../resources/session-broker/client.ts?raw';
 import brokerModule5 from '../resources/session-broker/conversation-location.ts?raw';
 import brokerModule6 from '../resources/session-broker/pause.ts?raw';
 import brokerModule7 from '../resources/session-broker/fast-mode.ts?raw';
+import brokerModuleContextCap from '../resources/session-broker/context-cap.ts?raw';
 import brokerModule8 from '../resources/session-broker/session-file.ts?raw';
 import brokerModule9 from '../resources/session-broker/session-child-index.cjs?raw';
 import brokerModule10 from '../resources/session-broker/session-child-index.d.cts?raw';
@@ -145,6 +147,7 @@ export {
   agentDaemonDefinitions,
   agentFastModels,
   contextWindowCapExtension,
+  contextWindowCapInterface,
   contextBarExtension,
   codexWebSearchExtension,
   excalidrawSkill,
@@ -160,6 +163,7 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['conversation-location.ts', brokerModule5],
   ['pause.ts', brokerModule6],
   ['fast-mode.ts', brokerModule7],
+  ['context-cap.ts', brokerModuleContextCap],
   ['session-file.ts', brokerModule8],
   ['session-child-index.cjs', brokerModule9],
   ['session-child-index.d.cts', brokerModule10],

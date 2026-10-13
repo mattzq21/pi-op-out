@@ -3,6 +3,7 @@ import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Agent, SessionAgentState } from "./contracts.ts";
 import { nativeMcpSchema, legacyMcpSchema, mcpServers } from "./mcp-config.ts";
+import { MAX_CAP, MIN_CAP } from "../piop-context-window-cap/interface.ts";
 
 export const STATE_ENTRY = "pi-define-agents-state";
 
@@ -16,7 +17,8 @@ export const agentThinkingLevels: Array<Parameters<ExtensionAPI["setThinkingLeve
 
 export const agentSchema = Type.Object({
   max_subagents: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })), max_sub_subagents: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
-  name: Type.String(), model: Type.String(), effort: Type.String(), fastMode: Type.Optional(Type.Boolean()), codemode: Type.Optional(Type.Boolean()), extensions: Type.Optional(Type.Array(Type.String())),
+  name: Type.String(), model: Type.String(), effort: Type.String(), fastMode: Type.Optional(Type.Boolean()),
+  contextWindowCap: Type.Optional(Type.Union([Type.Null(), Type.Integer({ minimum: MIN_CAP, maximum: MAX_CAP })])), codemode: Type.Optional(Type.Boolean()), extensions: Type.Optional(Type.Array(Type.String())),
   path_systemprompt: Type.String(), path_agent_prompt: Type.String(), tools: Type.Array(Type.String()), skills: Type.Array(Type.String()), mcpServers: nativeMcpSchema,
 });
 

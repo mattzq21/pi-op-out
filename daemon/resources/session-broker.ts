@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerRequestUserInput } from "./ask-user.ts";
 import { registerPauseControl } from "./session-broker/pause.ts";
 import { registerFastModeControl } from "./session-broker/fast-mode.ts";
+import { registerContextCapDefaults } from "./session-broker/context-cap.ts";
 import { registerForkAndForget } from "./session-broker/operations.ts";
 import { registerSubagents } from "./session-broker/subagents.ts";
 import { registerSubagentMailbox } from "./session-broker/subagent-mailbox.ts";
@@ -33,6 +34,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerConversationClient(pi);
   registerPauseControl(pi);
   registerFastModeControl(pi);
+  registerContextCapDefaults(pi);
   registerForkAndForget(pi);
   const mailbox = registerSubagentMailbox(pi);
   registerOrchestration(pi);

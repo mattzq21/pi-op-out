@@ -1,45 +1,24 @@
 # Pi context-window cap extension
 
-Makes Pi treat every model whose advertised context window exceeds a configured
-limit as if its context window were that limit. Pi's normal auto-compaction then
-uses the capped value.
+Limits the context window that Pi uses for a session. Pi's auto-compaction then
+uses the limited value. A cap larger than the model window uses the model window.
 
-Set the limit in `config.json`, which is read when Pi loads the extension:
+The cap of a session comes from, in this order:
 
-```json
-{
-  "enabled": true,
-   "contextWindowCap": 300000
-}
-```
+1. A cap set in the session with `/cap`.
+2. The agent cap (Settings → Agents → Context cap).
+3. The model cap (Settings → General, next to each model).
+4. The general cap (Settings → General → Context window cap).
 
-The value must be a positive integer. Restart Pi or run `/reload` after changing
-it. Set `enabled` to `false` to use the model’s full context window; omitting it keeps the cap enabled.
+A cap is a token count from 100k to 50m, for example `300000`, `300k` or
+`0.3m`. `model_default` uses the full model window.
 
-Run the extension directly:
+Commands:
 
-```bash
-pi --extension ./extensions/piop-context-window-cap/index.ts
-```
+- `/cap` shows the current cap.
+- `/cap <value>` sets a cap for this session.
+- `/cap model_default` uses the full model window for this session.
+- `/cap reset` removes the session cap.
 
-To install it as an automatically discovered user extension:
-
-```bash
-mkdir -p ~/.pi/agent/extensions/piop-context-window-cap
-cp extensions/piop-context-window-cap/{index.ts,config.json} \
-  ~/.pi/agent/extensions/piop-context-window-cap/
-```
-
-Once installed globally, start Pi normally. Edit the installed `config.json` to
-change the limit.
-
-piop stages its own copy of this extension and generates its `config.json`
-from **Settings → General → Context window cap** for local and remote sessions.
-The toggle enables or disables the cap while preserving the configured limit.
-Saving settings applies the change to reconnected sessions.
-
-The extension also saves one prompt-context snapshot when the initial user
-message first reaches the model. Later tool steps and pause/resume reuse that
-snapshot, including after reopening the conversation. Debug mode displays one
-bar above the response, using the initial snapshot throughout. A new user
-message starts a new snapshot.
+While the agent works, a change is kept and applied when the agent stops.
+The session log records only changes to the applied cap.

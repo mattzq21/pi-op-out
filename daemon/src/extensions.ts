@@ -30,6 +30,7 @@ export function runtimeSettings(settings: AppSettings): any {
     explicitOnlySkills: enabledSkills.filter(skill => skill.userInvokedOnly === true).map(skill => skill.path).filter((path): path is string => typeof path === 'string'),
     contextWindowCap: settings.contextWindowCap,
     contextWindowCapEnabled: settings.contextWindowCapEnabled,
+    modelContextWindowCaps: settings.modelContextWindowCaps,
   };
 }
 
@@ -128,13 +129,12 @@ export function prepareContextBarExtension(): string {
   return path;
 }
 
-export function prepareContextWindowCapExtension(settings: AppSettings): string {
+export function prepareContextWindowCapExtension(): string {
   const dir = join(generatedExtensionRoot(), 'piop-context-window-cap');
   ensurePrivateDir(dir);
   const extensionPath = join(dir, 'index.ts');
+  atomicWritePrivate(join(dir, 'interface.ts'), R.contextWindowCapInterface);
   atomicWritePrivate(extensionPath, R.contextWindowCapExtension);
-  atomicWritePrivate(join(dir, 'app-settings.cjs'), R.appSettingsCjs);
-  publish(join(dir, 'config.json'), JSON.stringify({ contextWindowCap: settings.contextWindowCap, enabled: settings.contextWindowCapEnabled }));
   return extensionPath;
 }
 
@@ -170,6 +170,7 @@ export function prepareDefinedAgentsExtension(): string {
     ['excalidraw.ts', R.agentExcalidraw],
     ['fast-models.ts', R.agentFastModels],
     ['../piop-diagrams.ts', R.diagramsExtension],
+    ['../piop-context-window-cap/interface.ts', R.contextWindowCapInterface],
     ['index.ts', R.definedAgentsExtension],
   ] as const) atomicWritePrivate(join(dir, name), source);
   return path;
