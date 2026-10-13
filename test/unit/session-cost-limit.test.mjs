@@ -73,7 +73,7 @@ test('invalid amounts leave the saved limit unchanged', async () => {
     assert.equal(f.entries.length, 1, value);
     assert.equal(f.notices.at(-1)[1], 'error', value);
   }
-  for (const value of ['0.01', '$100,000']) {
+  for (const value of ['0.01', '.50', '$1,234.56', '$100,000']) {
     await f.set(value);
     assert.equal(f.notices.at(-1)[1], 'info');
   }
@@ -116,4 +116,38 @@ test('completed compaction publishes its charge immediately', async () => {
   f.entries.push({ type: 'compaction', usage: { cost: { total: 0.25 } } });
   f.handlers.session_compact?.({}, f.ctx);
   assert.equal(f.statuses.get('piop-session-cost'), 'Session cost limit reached ($1.00 / $1.00)');
+});
+
+test('malformed currency amounts cannot silently change the limit', async () => {
+  const f = await fixture();
+  await f.set('1');
+  for (const value of ['1,5', '1,,000', ',10', '10,', '0x10', '0b10']) {
+    await f.set(value);
+    assert.equal(f.entries.length, 1, value);
+    assert.equal(f.notices.at(-1)[1], 'error', value);
+  }
+});
+
+for (const [costs, limit] of [[Array(10).fill(0.1), 1], [[0.1, 0.7], 0.8], [Array(200).fill(0.005), 1]]) test(`decimal charges stop work at the exact limit (${costs.length} charges, $${limit})`, async () => {
+  const f = await fixture(costs.map(cost => charge(cost)));
+  await f.set(String(limit));
+  assert.deepEqual(f.handlers.input({ text: 'go' }, f.ctx), { action: 'handled' });
+  assert.equal(f.handlers.tool_call({}, f.ctx).terminate, true);
+  assert.equal(f.statuses.get('piop-session-cost'), `Session cost limit reached ($${limit.toFixed(2)} / $${limit.toFixed(2)})`);
+});
+
+test('a real remainder below one cent still permits work', async () => {
+  const f = await fixture([charge(0.999999)]);
+  await f.set('1');
+  assert.equal(f.handlers.input({ text: 'go' }, f.ctx), undefined);
+  assert.equal(f.handlers.tool_call({}, f.ctx), undefined);
+  f.handlers.turn_start({}, f.ctx);
+  assert.equal(f.aborts, 0);
+});
+
+test('cache warming can use the exact decimal remainder', async () => {
+  const f = await fixture([charge(0.1)]);
+  await f.set('0.3');
+  assert.equal(f.handlers.cache_warming_decision({ warmCost: 0.2 }, f.ctx), undefined);
+  assert.deepEqual(f.handlers.cache_warming_decision({ warmCost: 0.200001 }, f.ctx), { action: 'stop' });
 });
