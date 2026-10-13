@@ -3,8 +3,8 @@ import { Check, Parse } from "typebox/value";
 import { readFile as readSettings } from "./app-settings.cjs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext, InputEvent, InputEventResult, ToolResultEvent, ToolResultEventResult } from "@earendil-works/pi-coding-agent";
-import { createReadToolDefinition, formatDimensionNote, formatSkillsForPrompt, resizeImage } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { formatSkillsForPrompt } from "@earendil-works/pi-coding-agent";
 
 type Settings = {
   tools: string[];
@@ -83,110 +83,7 @@ function validate(value: Settings): Settings {
   return structuredClone(value);
 }
 
-async function resizeLargeImage(image: NonNullable<InputEvent["images"]>[number], model: NonNullable<ExtensionContext["model"]>) {
-  const resized = await resizeImage(Buffer.from(image.data, "base64"), image.mimeType, {
-    ...model.inputLimits?.images?.resize, maxWidth: 2000, maxHeight: 2000,
-  });
-
-  if (!resized || (resized.originalWidth <= 2560 && resized.originalHeight <= 2560)) return;
-
-  return { image: { ...image, data: resized.data, mimeType: resized.mimeType }, note: formatDimensionNote(resized) };
-}
-
-async function resizeLargeAttachments(event: InputEvent, ctx: ExtensionContext): Promise<InputEventResult | undefined> {
-  if (!event.images || !ctx.model) return;
-
-  if (!ctx.model.input.includes("image")) return;
-  const images: NonNullable<InputEvent["images"]> = [];
-  const notes: string[] = [];
-
-  for (const image of event.images) {
-    const resized = await resizeLargeImage(image, ctx.model);
-    images.push(resized?.image ?? image);
-
-    if (resized?.note) notes.push(resized.note);
-  }
-
-  if (!notes.length) return;
-
-  return { action: "transform", text: [event.text, ...notes].filter(Boolean).join("\n\n"), images };
-}
-
-async function resizeLargeToolImages(event: ToolResultEvent, ctx: ExtensionContext): Promise<ToolResultEventResult | undefined> {
-  if (!ctx.model?.input.includes("image")) return;
-  const content: ToolResultEvent["content"] = [];
-  let changed = false;
-
-  for (const block of event.content) {
-    const resized = block.type === "image" ? await resizeLargeImage(block, ctx.model) : undefined;
-    content.push(resized?.image ?? block);
-
-    if (resized) {
-      changed = true;
-
-      if (resized.note) content.push({ type: "text", text: resized.note });
-    }
-  }
-
-  if (!changed) return;
-  const image = content.find(block => block.type === "image");
-  const structuredContent = event.toolName === "read" && image
-    ? { ...image, note: content.flatMap(block => block.type === "text" ? [block.text] : []).join("\n") }
-    : undefined;
-
-  return { content, structuredContent };
-}
-
-function configureImageLimits(pi: ExtensionAPI) {
-  type Model = NonNullable<ExtensionContext["model"]>;
-
-  pi.registerTool(createReadToolDefinition(process.cwd(), { autoResizeImages: false }));
-  pi.on("tool_result", (event, ctx) => {
-    if (pi.getSettings().images?.autoResize === false) return;
-
-    return resizeLargeToolImages(event, ctx);
-  });
-
-  const originals = new WeakMap<Model, Model["inputLimits"]>();
-
-  const applyModel = (model: Model | undefined) => {
-    if (!model?.input.includes("image")) return;
-
-    if (!originals.has(model)) originals.set(model, model.inputLimits);
-    const limits = model.inputLimits;
-    model.inputLimits = { ...limits, images: { ...limits?.images, resize: { ...limits?.images?.resize, maxWidth: 2560, maxHeight: 2560 } } };
-  };
-
-  const apply = (ctx: ExtensionContext) => {
-    for (const model of ctx.modelRegistry.getAll()) applyModel(model);
-    applyModel(ctx.model);
-  };
-
-  pi.on("session_start", (_event, ctx) => { apply(ctx); });
-  pi.on("model_select", (event, ctx) => { apply(ctx); applyModel(event.model); });
-  pi.on("input", async (event, ctx) => {
-    apply(ctx);
-
-    if (pi.getSettings().images?.autoResize === false) return;
-
-    return resizeLargeAttachments(event, ctx);
-  });
-  pi.on("before_agent_start", (_event, ctx) => { apply(ctx); });
-  const unsubscribe = pi.events.on("piop:models-refreshed", ({ ctx }) => { apply(ctx); });
-
-  pi.on("session_shutdown", (_event, ctx) => {
-    unsubscribe();
-
-    for (const model of new Set([...ctx.modelRegistry.getAll(), ctx.model])) {
-      if (!model || !originals.has(model)) continue;
-      model.inputLimits = originals.get(model);
-      originals.delete(model);
-    }
-  });
-}
-
 export default async function runtimeSettings(pi: ExtensionAPI) {
-  configureImageLimits(pi);
   setGlobal(Symbol.for("piop.runtime-bridge"), (request: AppRequest) => pi.events.emit("piop:rpc", request));
 
   if (!storedSettings()) setGlobal(key, validate(readSettings(process.env.PIOP_RUNTIME_SETTINGS_PATH || join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"))));
