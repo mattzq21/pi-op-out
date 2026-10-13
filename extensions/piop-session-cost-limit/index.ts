@@ -29,10 +29,10 @@ function validAmount(value: unknown): value is number {
 }
 
 function parseAmount(raw: string): number {
-  const normalized = raw.trim().replace(/^\$/, "").replaceAll(",", "");
-  const amount = Number(normalized);
+  const normalized = raw.trim().replace(/^\$/, "");
+  const amount = Number(normalized.replaceAll(",", ""));
 
-  if (normalized === "" || !validAmount(amount)) {
+  if (!/^(?:(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d*)?|\.\d+)$/.test(normalized) || !validAmount(amount)) {
     throw new Error(`Invalid amount "${raw.trim()}". ${USAGE} (between $0.01 and $100,000)`);
   }
 
@@ -47,15 +47,25 @@ function entryCost(entry: ReturnType<CostContext["sessionManager"]["getBranch"]>
 
 function sessionCost(ctx: CostContext): number {
   let total = 0;
+  let correction = 0;
 
   for (const entry of ctx.sessionManager.getBranch()) {
-    total += entryCost(entry);
+    const cost = entryCost(entry) - correction;
+    const next = total + cost;
+    correction = (next - total) - cost;
+    total = next;
   }
 
   return total;
 }
 
 const formatCost = (value: number) => `$${value.toFixed(2)}`;
+
+function compareCost(cost: number, limit: number): number {
+  if (Math.abs(cost - limit) <= Number.EPSILON * Math.max(cost, limit) * 4) return 0;
+
+  return cost < limit ? -1 : 1;
+}
 
 export default async function sessionCostLimit(pi: ExtensionAPI) {
   let limit: number | undefined;
@@ -73,7 +83,7 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     }
   };
 
-  const overLimit = (ctx: CostContext) => limit !== undefined && sessionCost(ctx) >= limit ? limit : undefined;
+  const overLimit = (ctx: CostContext) => limit !== undefined && compareCost(sessionCost(ctx), limit) >= 0 ? limit : undefined;
 
   const publish = (ctx: CostContext, pendingCost = 0) => {
     if (limit === undefined) {
@@ -83,7 +93,7 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     }
 
     const cost = sessionCost(ctx) + pendingCost;
-    ctx.ui.setStatus(STATUS_KEY, cost >= limit
+    ctx.ui.setStatus(STATUS_KEY, compareCost(cost, limit) >= 0
       ? `Session cost limit reached (${formatCost(cost)} / ${formatCost(limit)})`
       : `Session ${formatCost(cost)} / ${formatCost(limit)}`);
   };
@@ -126,7 +136,7 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     publish(ctx);
     const cost = sessionCost(ctx);
 
-    if (cost >= limit || !Number.isFinite(event.warmCost) || cost + Math.max(0, event.warmCost) > limit) return { action: "stop" };
+    if (compareCost(cost, limit) >= 0 || !Number.isFinite(event.warmCost) || compareCost(cost + Math.max(0, event.warmCost), limit) > 0) return { action: "stop" };
   });
 
   pi.on("input", (event, ctx) => {
