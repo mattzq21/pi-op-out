@@ -13,7 +13,9 @@ function hostExecutable(): Promise<string> {
     await build({
       stdin: { contents: `
 import { start } from './daemon/src/host/index';
+import { isHostOperationWorker, runHostOperationWorker } from './daemon/src/host_operation_worker';
 import { createInterface } from 'node:readline';
+if (isHostOperationWorker()) { runHostOperationWorker(); } else {
 const output = packet => process.stdout.write(JSON.stringify(packet) + '\\n');
 const host = await start(process.env.HOME, '.piop', process.argv[2], output);
 const input = createInterface({ input: process.stdin });
@@ -23,12 +25,15 @@ process.on('SIGTERM', () => host.input({ type: 'shutdown' }));
 output({ type: 'fixture_ready' });
 await host.finished;
 process.exit(0);
+}
 `, resolveDir: root, sourcefile: 'host-fixture-entry.ts', loader: 'ts' },
       outfile, bundle: true, platform: 'node', format: 'esm', target: 'esnext', external: ['bun', 'bun:*'],
       banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
       define: { __PIOP_BUILD_ID__: '"host-fixture"', __PIOP_DEVELOPMENT__: 'false', __PIOP_PROJECT_DIR__: '""' },
       keepNames: true, legalComments: 'none', logLevel: 'error',
       plugins: [{ name: 'raw-text', setup(context) {
+        context.onResolve({ filter: /^piop-agent-loader$/ }, () => ({ path: join(root, 'extensions/piop-define-agents/daemon-loader.ts') }));
+        context.onResolve({ filter: /^\.\.\/app-settings\.cjs$/ }, args => args.importer.includes('/extensions/piop-define-agents/') ? { path: join(root, 'daemon/resources/session-broker/app-settings.cjs') } : undefined);
         context.onResolve({ filter: /\?raw$/ }, args => ({ path: resolve(args.resolveDir, args.path.slice(0, -4)), namespace: 'raw-text' }));
         context.onLoad({ filter: /.*/, namespace: 'raw-text' }, args => ({ contents: readFileSync(args.path, 'utf8'), loader: 'text' }));
       } }],
