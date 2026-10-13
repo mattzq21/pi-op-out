@@ -1,4 +1,4 @@
-import reviewPrompt from '../resources/session-broker/review-prompt.txt?raw';
+import reviewPrompt from '../resources/piop-reviews/review-prompt.txt?raw';
 import { defaultKeybindings } from './keybindings';
 import { capRangeError } from '../../extensions/piop-context-window-cap/interface';
 

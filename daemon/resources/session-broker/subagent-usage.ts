@@ -4,7 +4,7 @@ import { read as readUsageChannel } from "./subagent-usage-storage.cjs";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { goalTokens } from "./goal-state.ts";
+import { goalTokens } from "../piop-goals/interface.ts";
 import { claimUsageChannel } from "./subagent-usage-channel.ts";
 import { subagentParent } from "./subagent-state.ts";
 import { syncSubagentTranscript } from "./subagent-results.ts";

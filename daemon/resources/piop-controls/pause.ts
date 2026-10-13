@@ -1,7 +1,9 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { Check, Parse } from "typebox/value";
+import { Check } from "typebox/value";
 import type { ContextEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { goalSession } from "../piop-goals/interface.ts";
+import type { PauseState } from "./interface.ts";
 
 type StoppedAssistantMessage = AssistantMessage & { piopCompletedBlocks?: true };
 
@@ -12,19 +14,6 @@ const completedBlocksSchema = Type.Object({ piopCompletedBlocks: Type.Literal(tr
 const pauseSchema = Type.Object({ isPaused: Type.Literal(true) });
 
 const resumeSchema = Type.Object({ message: Type.String() });
-
-const controlSchema = Type.Object({ action: Type.String() });
-
-interface PauseProbe { controller?: PauseController }
-
-interface GoalResumeRequest { action: "resume"; ctx: ExtensionContext; ready?: Promise<void> }
-
-declare module "@earendil-works/pi-coding-agent" {
-  interface EventBus {
-    on(channel: "pi-desktop:pause-controller", handler: (probe: PauseProbe) => void): () => void;
-    emit(channel: "pi-desktop:pause-controller", probe: PauseProbe): void;
-  }
-}
 
 function replayableThinking(signatureText: string | undefined) {
   try {
@@ -63,21 +52,27 @@ export function desktopPauseContext(messages: ContextEvent["messages"], resumeMe
 }
 
 export interface PauseController {
-  state(): { isPaused: boolean; isPausing: boolean };
+  state(): PauseState;
   pause(ctx: ExtensionContext): Promise<void>;
   resume(ctx: ExtensionContext): Promise<string | undefined>;
   stop(ctx: ExtensionContext): Promise<void>;
+  cancelPreparation(): void;
 }
 
 function wasAborted(message: AssistantMessage) {
   return message.stopReason === "aborted" || (message.stopReason === "error" && message.errorMessage === "This operation was aborted");
 }
 
-export function registerPauseControl(pi: ExtensionAPI): PauseController {
-  const probe: PauseProbe = {};
-  pi.events.emit("pi-desktop:pause-controller", probe);
+/** Pauses an active goal. Goal failures are reported and do not stop the session pause. */
+function pauseGoal(pi: ExtensionAPI, ctx: ExtensionContext) {
+  void goalSession(pi)?.pauseWithSession(ctx).catch(error => ctx.ui.notify(String(error), "error"));
+}
 
-  if (probe.controller) return probe.controller;
+/**
+ * Pause, resume and stop for the current session run. Restores the pause from the session history and keeps
+ * completed content of stopped responses. Calls publish with the session context after each pause state change.
+ */
+export function registerPauseControl(pi: ExtensionAPI, publish: (ctx: ExtensionContext, state: PauseState) => void): PauseController {
   const pauseEntry = "pi-desktop-pause-state";
   const resumeEntry = "pi-desktop-resume";
   let isPaused = false;
@@ -90,7 +85,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
   let generation = 0;
 
   const publishPause = () => {
-    controlContext?.ui.setStatus(pauseEntry, `json:${JSON.stringify({ type: "pause_state", isPaused, isPausing })}`);
+    if (controlContext) publish(controlContext, { isPaused, isPausing });
   };
 
   const persistPause = (paused: boolean) => { isPaused = paused; pi.appendEntry(pauseEntry, { isPaused: paused }); };
@@ -160,13 +155,13 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     state: () => ({ isPaused, isPausing }),
     pause(ctx) {
       controlContext = ctx;
-      pi.events.emit("piop:goal-control", { action: "pause", ctx });
+      pauseGoal(pi, ctx);
 
       if (!pauseOperation && !isPaused) {
         const version = generation;
         pauseStopped = false; isPausing = true; persistPause(true); isPaused = false; publishPause();
         pauseOperation = (async () => {
-          try { pi.events.emit("piop:cancel-preparation", {}); ctx.abort(); await waitForIdle(ctx, version); }
+          try { controller.cancelPreparation(); ctx.abort(); await waitForIdle(ctx, version); }
           finally { if (version === generation) { isPaused = !pauseStopped; isPausing = false; pauseOperation = undefined; publishPause(); } }
         })();
       }
@@ -180,9 +175,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
 
       if (!isPaused) return undefined;
       const version = generation;
-      const goalControl: GoalResumeRequest = { action: "resume", ctx };
-      pi.events.emit("piop:goal-control", goalControl);
-      await goalControl.ready;
+      await goalSession(pi)?.resumeWithSession(ctx);
 
       if (version !== generation || !isPaused || !ctx.isIdle()) return;
       const message = `/pi-desktop-resume-turn ${crypto.randomUUID()}`;
@@ -191,37 +184,17 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
       return message;
     },
     async stop(ctx) {
-      pi.events.emit("piop:goal-control", { action: "pause", ctx });
-      pi.events.emit("piop:cancel-preparation", {});
+      pauseGoal(pi, ctx);
+      controller.cancelPreparation();
       controlContext = ctx; pauseStopped = true;
 
       if (isPaused || isPausing) persistPause(false);
       publishPause(); ctx.abort(); await pauseOperation; await waitForIdle(ctx, generation);
     },
+    cancelPreparation() { pi.events.emit("piop:cancel-preparation", {}); },
   };
 
-  const unsubscribe = pi.events.on("pi-desktop:pause-controller", (value) => { value.controller = controller; });
-  pi.on("session_shutdown", () => { generation += 1; unsubscribe(); pauseOperation = undefined; });
-
-  const applyControl = async (action: string, ctx: ExtensionContext) => {
-    if (action === "pause") await controller.pause(ctx);
-    else if (action === "resume") return controller.resume(ctx);
-    else if (action === "stop") await controller.stop(ctx);
-    else if (action === "cancel-preparation") pi.events.emit("piop:cancel-preparation", {});
-    else if (action !== "state") throw new Error(`Unknown desktop control: ${action}`);
-  };
-
-  pi.events.on("piop:rpc", request => {
-    if (request.command !== "control") return;
-    const ctx = request.ctx;
-    request.ready = (async () => {
-      controlContext = ctx;
-      const control = Parse(controlSchema, request.payload);
-      const resumeMessage = await applyControl(control.action, ctx);
-
-      return resumeMessage ? { isPaused, isPausing, resumeMessage } : { isPaused, isPausing };
-    })();
-  });
+  pi.on("session_shutdown", () => { generation += 1; pauseOperation = undefined; });
 
   return controller;
 }

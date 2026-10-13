@@ -121,11 +121,14 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
     ['piop-user-questions/index.ts', 'extensions/piop-user-questions/index.ts'],
     ['piop-user-questions/questions.ts', 'extensions/piop-user-questions/questions.ts'],
     ['piop-user-questions/interface.ts', 'extensions/piop-user-questions/interface.ts'],
+    ['piop-controls/index.ts', 'daemon/resources/piop-controls/index.ts'],
+    ['piop-goals/index.ts', 'daemon/resources/piop-goals/index.ts'],
+    ['piop-reviews/index.ts', 'daemon/resources/piop-reviews/index.ts'],
     ['piop-openai-cache-fork.ts', 'extensions/piop-openai-cache-fork/index.ts'],
     ['piop-codex-web-search.ts', 'extensions/piop-codex-web-search/index.ts'],
   ];
   const extensions = extensionPaths(await launchPublicPi(daemon));
-  for (const name of ['session-broker.ts', 'piop-user-questions/index.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
+  for (const name of ['piop-controls/index.ts', 'session-broker.ts', 'piop-user-questions/index.ts', 'piop-goals/index.ts', 'piop-reviews/index.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
   for (const [name, relative] of bundles) {
     expect(readFileSync(join(generated, name), 'utf8')).toBe(source(relative));
     expect(mode(join(generated, name))).toBe(0o600);
