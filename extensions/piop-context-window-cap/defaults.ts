@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ContextCapSessionRequest } from "../../../extensions/piop-context-window-cap/channel.ts";
-import type { ContextCapDefaults } from "../../../extensions/piop-context-window-cap/interface.ts";
-import type { AgentContextCapRequest, AgentSelectedEvent } from "../../../extensions/piop-define-agents/contracts.ts";
+import type { ContextCapDefaults } from "./interface.ts";
+import type { AgentContextCapRequest, AgentSelectedEvent } from "../piop-define-agents/contracts.ts";
 
 type Model = NonNullable<ExtensionContext["model"]>;
 
@@ -44,17 +43,12 @@ export function contextCapDefaults(pi: ExtensionAPI, model: Model | undefined): 
  * Sends complete context cap defaults to the context cap extension after the agent is restored,
  * and again after agent, model, or runtime settings changes.
  */
-export function registerContextCapDefaults(pi: ExtensionAPI) {
+export function registerContextCapDefaults(pi: ExtensionAPI, updateDefaults: (defaults: ContextCapDefaults) => Promise<unknown>) {
   let agentsReady = false;
   let closed = false;
 
   const update = (ctx: ExtensionContext, model = ctx.model) => {
-    const request: ContextCapSessionRequest = {};
-    pi.events.emit("piop:context-cap:session", request);
-
-    if (!request.session) return Promise.reject(new Error("The context cap extension is not loaded"));
-
-    try { return request.session.updateDefaults(contextCapDefaults(pi, model)); } catch (error) { return Promise.reject(error); }
+    try { return updateDefaults(contextCapDefaults(pi, model)); } catch (error) { return Promise.reject(error); }
   };
 
   /** Reports a failure to the user and rejects, so that a settings request does not succeed with the old cap. */

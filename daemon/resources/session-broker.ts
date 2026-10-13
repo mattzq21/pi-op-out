@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerContextCapDefaults } from "./session-broker/context-cap.ts";
 import { registerSubagents } from "./session-broker/subagents.ts";
 import { registerSubagentMailbox } from "./session-broker/subagent-mailbox.ts";
 import { registerConversationClient } from "./session-broker/client.ts";
@@ -18,7 +17,6 @@ export default function sessionBroker(pi: ExtensionAPI) {
     if (file) await initialize(file, ctx.sessionManager.getSessionId(), !existsSync(file));
   });
   registerConversationClient(pi);
-  registerContextCapDefaults(pi);
   const mailbox = registerSubagentMailbox(pi);
   registerOrchestration(pi);
   registerSubagents(pi, mailbox);

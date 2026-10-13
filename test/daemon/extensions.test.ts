@@ -118,6 +118,7 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
   const generated = join(daemon.home, '.piop');
   const bundles: [string, string][] = [
     ['session-broker.ts', 'daemon/resources/session-broker.ts'],
+    ['piop-context-window-cap/defaults.ts', 'extensions/piop-context-window-cap/defaults.ts'],
     ['piop-user-questions/index.ts', 'extensions/piop-user-questions/index.ts'],
     ['piop-user-questions/questions.ts', 'extensions/piop-user-questions/questions.ts'],
     ['piop-user-questions/interface.ts', 'extensions/piop-user-questions/interface.ts'],

@@ -6,14 +6,14 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
   SettingsManager: { inMemory: () => ({ getCompactionSettings: () => ({ enabled: true, ...budgets }) }) },
 }));
 
-const { default: contextWindowCap } = await import("../../../extensions/piop-context-window-cap/index.ts");
-const { registerContextCapDefaults } = await import("./context-cap.ts");
+const { default: contextWindowCap } = await import("./index.ts");
 
-/** One fake Pi shared by the context cap extension and the broker. */
+/** A Pi host for the context cap extension. */
 function host() {
   const handlers = new Map<string, Array<(event: any, ctx: any) => any>>();
   const bus = new Map<string, Set<(value: any) => void>>();
   const notes: Array<[string, string]> = [];
+  let settingsAvailable = true;
   const settings = { contextWindowCap: 300_000, contextWindowCapEnabled: true, modelContextWindowCaps: {} as Record<string, number | null> };
   const ctx = {
     model: { provider: "test", id: "large", contextWindow: 1_000_000 },
@@ -37,14 +37,14 @@ function host() {
       emit,
     },
   };
-  // Production loads the broker before the cap extension, so the broker's model_select handler runs first.
-  registerContextCapDefaults(pi as any);
   contextWindowCap(pi as any);
-  pi.events.on("piop:runtime-settings", (request: any) => { request.settings = settings; });
+  pi.events.on("piop:runtime-settings", (request: any) => { if (settingsAvailable) request.settings = settings; });
   pi.events.on("piop:agents:context-cap", () => undefined);
 
   return {
     ctx, notes, settings, emit,
+    hideSettings: () => { settingsAvailable = false; },
+    listenerCount: (name: string) => bus.get(name)?.size ?? 0,
     fire: async (name: string, event: any = {}) => { for (const handler of handlers.get(name) ?? []) await handler({ type: name, ...event }, ctx); },
     state: () => { const request: any = {}; emit("piop:context-cap:session", request); return request.session.getState(); },
   };
@@ -96,4 +96,30 @@ describe("context cap defaults", () => {
     expect(await pi.state()).toEqual({ cap: 500_000, source: "config", appliedWindow: 500_000 });
     expect(pi.notes.filter(([type]) => type === "error")).toEqual([]);
   });
+});
+
+
+test("defaults received before session start apply when the session loads", async () => {
+  const pi = host();
+  pi.emit("piop:agents:ready", { ctx: pi.ctx });
+  await pi.fire("session_start", { reason: "startup" });
+  expect(await pi.state()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
+});
+
+test("missing settings reject the change and report a visible error", async () => {
+  const pi = await started();
+  pi.hideSettings();
+  const event: any = { ctx: pi.ctx };
+  pi.emit("piop:runtime-settings:changed", event);
+  await expect(event.ready).rejects.toThrow("Runtime settings are unavailable");
+  expect(pi.notes.some(([type, message]) => type === "error" && message.includes("Runtime settings are unavailable"))).toBe(true);
+  expect((await pi.state()).cap).toBe(300_000);
+});
+
+test("shutdown removes the defaults change listeners", async () => {
+  const pi = await started();
+  await pi.fire("session_shutdown");
+  for (const channel of ["piop:agents:ready", "piop:agents:selected", "piop:runtime-settings:changed"]) {
+    expect(pi.listenerCount(channel)).toBe(0);
+  }
 });

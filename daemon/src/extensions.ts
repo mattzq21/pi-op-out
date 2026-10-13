@@ -141,6 +141,7 @@ export function prepareContextWindowCapExtension(): string {
   ensurePrivateDir(dir);
   const extensionPath = join(dir, 'index.ts');
   atomicWritePrivate(join(dir, 'interface.ts'), R.contextWindowCapInterface);
+  atomicWritePrivate(join(dir, 'defaults.ts'), R.contextWindowCapDefaults);
   atomicWritePrivate(extensionPath, R.contextWindowCapExtension);
   return extensionPath;
 }

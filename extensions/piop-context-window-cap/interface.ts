@@ -32,7 +32,7 @@ export interface ContextCapSession {
   resetManualCap(): Promise<ContextCapState>;
 
   /**
-   * Replace defaults supplied by the session broker after settings, agent, or model changes.
+   * Replace defaults after settings, agent, or model changes.
    * A manual choice keeps priority. A resolved default above the model window is clamped.
    */
   updateDefaults(defaults: ContextCapDefaults): Promise<ContextCapState>;
