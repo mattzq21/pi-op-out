@@ -75,14 +75,14 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
 
   const overLimit = (ctx: CostContext) => limit !== undefined && sessionCost(ctx) >= limit ? limit : undefined;
 
-  const publish = (ctx: CostContext) => {
+  const publish = (ctx: CostContext, pendingCost = 0) => {
     if (limit === undefined) {
       ctx.ui.setStatus(STATUS_KEY, undefined);
 
       return;
     }
 
-    const cost = sessionCost(ctx);
+    const cost = sessionCost(ctx) + pendingCost;
     ctx.ui.setStatus(STATUS_KEY, cost >= limit
       ? `Session cost limit reached (${formatCost(cost)} / ${formatCost(limit)})`
       : `Session ${formatCost(cost)} / ${formatCost(limit)}`);
@@ -96,11 +96,29 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     restoreLimit(ctx);
     publish(ctx);
   });
-  pi.on("message_end", (_event, ctx) => {
-    publish(ctx);
+  pi.on("message_end", (event, ctx) => {
+    publish(ctx, Check(messageCostSchema, event) ? event.message.usage.cost.total : 0);
   });
   pi.on("agent_end", (_event, ctx) => {
     publish(ctx);
+  });
+  pi.on("session_compact", (_event, ctx) => {
+    publish(ctx);
+  });
+
+  const cancelSummary = (ctx: CostContext) => {
+    const reached = overLimit(ctx);
+
+    if (reached === undefined) return;
+    publish(ctx);
+    ctx.ui.notify(`Session cost limit of ${formatCost(reached)} reached (API prices). Summary cancelled. Raise it with /cost <amount> or remove it with /cost clear.`, "warning");
+
+    return { cancel: true };
+  };
+
+  pi.on("session_before_compact", (_event, ctx) => cancelSummary(ctx));
+  pi.on("session_before_tree", (event, ctx) => {
+    if (event.preparation.userWantsSummary) return cancelSummary(ctx);
   });
 
   pi.on("cache_warming_decision", (event, ctx) => {
