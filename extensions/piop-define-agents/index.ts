@@ -302,6 +302,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let applyingAgentModel: string | undefined;
   let applyingAgentEffort: string | undefined;
   let activeToolError: string | undefined;
+  let mcpRegistrationError: string | undefined = "MCP setup has not completed. Reload the conversation before sending a message.";
   let activeSystemPrompt = "";
   let activeAgentPrompt = "";
   let modelOverride: string | undefined;
@@ -506,12 +507,14 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   const registerAgentMcp = async (agent: Agent, ctx: ExtensionContext, tools: Set<string>) => {
-    const selection: McpSelection = { codemode: agent.codemode, servers: mcpServers(agent.mcpServers), sessionId: ctx.sessionManager.getSessionId() };
-    pi.events.emit("piop:mcp:select", selection);
+    try {
+      const selection: McpSelection = { codemode: agent.codemode, servers: mcpServers(agent.mcpServers), sessionId: ctx.sessionManager.getSessionId() };
+      pi.events.emit("piop:mcp:select", selection);
 
-    if (!selection.registered && Object.keys(selection.servers).length > 0) return `Agent "${agent.name}" cannot run because the MCP registration adapter is unavailable`;
+      if (!selection.registered && Object.keys(selection.servers).length > 0) return `Agent "${agent.name}" cannot run because the MCP registration adapter is unavailable`;
 
-    try { for (const tool of await (selection.registered ?? Promise.resolve([]))) tools.add(tool); }
+      for (const tool of await (selection.registered ?? Promise.resolve([]))) tools.add(tool);
+    }
     catch (error) { pi.setActiveTools([]);
 
     return `Agent "${agent.name}" could not register its MCP servers:\n${error instanceof Error ? error.message : String(error)}`; }
@@ -536,7 +539,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     return error;
   };
 
-  const activate = async (agent: Agent, ctx: ExtensionContext, persistSnapshot: boolean, applyFastMode: boolean) => {
+  const activate = async (agent: Agent, ctx: ExtensionContext, persistSnapshot: boolean, applyFastMode: boolean, updateMcp: boolean) => {
     const promptError = await prepareAgentPrompts(agent, persistSnapshot);
 
     if (promptError) return promptError;
@@ -562,9 +565,9 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
     return unloadExtensions(fastModeFailure, ctx); }
     const tools = new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools()]);
-    const mcpError = await registerAgentMcp(agent, ctx, tools);
+    if (updateMcp) mcpRegistrationError = await registerAgentMcp(agent, ctx, tools);
 
-    if (mcpError) return unloadExtensions(mcpError, ctx);
+    if (mcpRegistrationError) return unloadExtensions(mcpRegistrationError, ctx);
 
     const required: RequiredToolsRequest = { ctx, tools: [], availableTools: [...tools] }; pi.events.emit("piop:required-tools", required);
 
@@ -574,11 +577,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
     return undefined;
   };
 
-  const useAgent = async (name: string, ctx: ExtensionContext, persistSnapshot = true, applyFastMode = false) => {
+  const useAgent = async (name: string, ctx: ExtensionContext, persistSnapshot = true, applyFastMode = false, updateMcp = true) => {
+    if (updateMcp) mcpRegistrationError = "MCP setup has not completed. Reload the conversation before sending a message.";
+
     try {
       restore(ctx);
       const agent = currentAgent();
-      activeToolError = agent ? await activate(agent, ctx, persistSnapshot, applyFastMode) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
+      activeToolError = agent ? await activate(agent, ctx, persistSnapshot, applyFastMode, updateMcp) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
     } catch (error) {
       activeToolError = await unloadExtensions(`Agent "${name}" could not start: ${error instanceof Error ? error.message : String(error)}`, ctx);
     }
@@ -640,7 +645,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {
-    const error = await useAgent(active, ctx, true);
+    const error = await useAgent(active, ctx, true, false, false);
 
     if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error");
 
