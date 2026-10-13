@@ -10,7 +10,7 @@ import fastModelDiscovery from '../resources/fast-model-discovery.mjs?raw';
 import chatgptStream from '../resources/chatgpt-stream.mjs?raw';
 import chatgptStorageRaw from '../resources/chatgpt-storage.mjs?raw';
 import chatgptService from '../resources/chatgpt-service.mjs?raw';
-import reviewPrompt from '../resources/session-broker/review-prompt.txt?raw';
+import reviewPrompt from '../resources/piop-reviews/review-prompt.txt?raw';
 import sessionBroker from '../resources/session-broker.ts?raw';
 import sdkSessionList from '../resources/sdk-session-list.mjs?raw';
 import runtimeConfiguration from '../resources/runtime-configuration.cjs?raw';
@@ -41,10 +41,8 @@ import excalidrawCheatsheet from '../../extensions/piop-excalidraw/references/ch
 import brokerModule0 from '../resources/session-broker/goal-directory-recovery.cjs?raw';
 import brokerModule1 from '../resources/session-broker/subagent-usage-storage.cjs?raw';
 import brokerModule2 from '../resources/session-broker/app-settings.cjs?raw';
-import brokerModule3 from '../resources/session-broker/review-prompt.txt?raw';
 import brokerModule4 from '../resources/session-broker/client.ts?raw';
 import brokerModule5 from '../resources/session-broker/conversation-location.ts?raw';
-import brokerModule6 from '../resources/session-broker/pause.ts?raw';
 import brokerModule7 from '../resources/session-broker/fast-mode.ts?raw';
 import brokerModuleContextCap from '../resources/session-broker/context-cap.ts?raw';
 import brokerModule8 from '../resources/session-broker/session-file.ts?raw';
@@ -55,7 +53,6 @@ import brokerModule12Raw from '../resources/session-broker/session-publication-i
 import brokerModule13 from '../resources/session-broker/session-publication-dependencies.cjs?raw';
 import brokerModule14 from '../resources/session-broker/review-publication.cjs?raw';
 import brokerModule15 from '../resources/session-broker/session-publication.d.cts?raw';
-import brokerModule16 from '../resources/session-broker/fork.ts?raw';
 import brokerModule17 from '../resources/session-broker/subagents.ts?raw';
 import brokerModule18 from '../resources/session-broker/subagent-state.ts?raw';
 import brokerModule19 from '../resources/session-broker/subagent-reconciliation.ts?raw';
@@ -69,23 +66,35 @@ import brokerModule26 from '../resources/session-broker/subagent-mailbox.ts?raw'
 import brokerModule27 from '../resources/session-broker/subagent-results.ts?raw';
 import brokerModule28 from '../resources/session-broker/subagent-recovery.ts?raw';
 import brokerModule29 from '../resources/session-broker/subagent-identity.ts?raw';
-import brokerModule30 from '../resources/session-broker/operations.ts?raw';
 import brokerModule31 from '../resources/session-broker/tools.ts?raw';
 import brokerModule32 from '../resources/session-broker/html-preview.ts?raw';
-import brokerModule33 from '../resources/session-broker/goals.ts?raw';
-import brokerModule34 from '../resources/session-broker/review.ts?raw';
-import brokerModule35 from '../resources/session-broker/goal-state.ts?raw';
 import brokerModule36 from '../resources/session-broker/goal-storage.cjs?raw';
-import brokerModule37 from '../resources/session-broker/goal-controls.ts?raw';
-import brokerModule38 from '../resources/session-broker/goal-coordination.ts?raw';
 import brokerModule39Raw from '../resources/session-broker/reference-publication-lock.cjs?raw';
-import brokerModule40Raw from '../resources/session-broker/goal-files.ts?raw';
 import brokerModule41 from '../resources/session-broker/goal-dependencies.cjs?raw';
 import brokerModule42 from '../resources/session-broker/goal-prepared-files.cjs?raw';
 import brokerModule43 from '../resources/session-broker/goal-preparations.cjs?raw';
 import brokerModule44 from '../resources/session-broker/goal-ownership.cjs?raw';
 import brokerModule45Raw from '../resources/session-broker/goal-assets.cjs?raw';
-import brokerModule46 from '../resources/session-broker/goal-prompts.ts?raw';
+import controlsIndex from '../resources/piop-controls/index.ts?raw';
+import controlsInterface from '../resources/piop-controls/interface.ts?raw';
+import controlsPause from '../resources/piop-controls/pause.ts?raw';
+import controlsFork from '../resources/piop-controls/fork.ts?raw';
+import controlsCommands from '../resources/piop-controls/commands.ts?raw';
+import controlsFastMode from '../resources/piop-controls/fast-mode.ts?raw';
+import goalsIndex from '../resources/piop-goals/index.ts?raw';
+import goalsInterface from '../resources/piop-goals/interface.ts?raw';
+import goalsGoals from '../resources/piop-goals/goals.ts?raw';
+import goalsState from '../resources/piop-goals/state.ts?raw';
+import goalsPreparation from '../resources/piop-goals/preparation.ts?raw';
+import goalsFilesRaw from '../resources/piop-goals/files.ts?raw';
+import goalsPrompts from '../resources/piop-goals/prompts.ts?raw';
+import goalsCoordination from '../resources/piop-goals/coordination.ts?raw';
+import goalsTools from '../resources/piop-goals/tools.ts?raw';
+import goalsCommands from '../resources/piop-goals/commands.ts?raw';
+import reviewsIndex from '../resources/piop-reviews/index.ts?raw';
+import reviewsInterface from '../resources/piop-reviews/interface.ts?raw';
+import reviewsReviews from '../resources/piop-reviews/reviews.ts?raw';
+import reviewsCommands from '../resources/piop-reviews/commands.ts?raw';
 
 
 const bunEnvironment = 'process.env.PIOP_BUN = ' + JSON.stringify(process.execPath) + ';\n';
@@ -105,8 +114,8 @@ const agentPrompts = embedFileLock(agentPromptsRaw);
 const brokerModule12 = embedFileLock(brokerModule12Raw);
 const brokerModule25 = embedFileLock(brokerModule25Raw);
 const brokerModule39 = embedFileLock(brokerModule39Raw);
-const brokerModule40 = embedFileLock(brokerModule40Raw);
 const brokerModule45 = embedFileLock(brokerModule45Raw);
+const goalsFiles = embedFileLock(goalsFilesRaw);
 
 export {
   sessionDatabase,
@@ -154,10 +163,8 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['goal-directory-recovery.cjs', brokerModule0],
   ['subagent-usage-storage.cjs', brokerModule1],
   ['app-settings.cjs', brokerModule2],
-  ['review-prompt.txt', brokerModule3],
   ['client.ts', brokerModule4],
   ['conversation-location.ts', brokerModule5],
-  ['pause.ts', brokerModule6],
   ['fast-mode.ts', brokerModule7],
   ['context-cap.ts', brokerModuleContextCap],
   ['session-file.ts', brokerModule8],
@@ -168,7 +175,6 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['session-publication-dependencies.cjs', brokerModule13],
   ['review-publication.cjs', brokerModule14],
   ['session-publication.d.cts', brokerModule15],
-  ['fork.ts', brokerModule16],
   ['subagents.ts', brokerModule17],
   ['subagent-state.ts', brokerModule18],
   ['subagent-reconciliation.ts', brokerModule19],
@@ -182,26 +188,35 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['subagent-results.ts', brokerModule27],
   ['subagent-recovery.ts', brokerModule28],
   ['subagent-identity.ts', brokerModule29],
-  ['operations.ts', brokerModule30],
   ['tools.ts', brokerModule31],
   ['html-preview.ts', brokerModule32],
-  ['goals.ts', brokerModule33],
-  ['review.ts', brokerModule34],
-  ['goal-state.ts', brokerModule35],
   ['goal-storage.cjs', brokerModule36],
-  ['goal-controls.ts', brokerModule37],
-  ['goal-coordination.ts', brokerModule38],
   ['reference-publication-lock.cjs', brokerModule39],
-  ['goal-files.ts', brokerModule40],
   ['goal-dependencies.cjs', brokerModule41],
   ['goal-prepared-files.cjs', brokerModule42],
   ['goal-preparations.cjs', brokerModule43],
   ['goal-ownership.cjs', brokerModule44],
   ['goal-assets.cjs', brokerModule45],
-  ['goal-prompts.ts', brokerModule46],
 ];
 
 export const EXCALIDRAW_ASSETS: Array<[string, string]> = [
   ['SKILL.md', excalidrawSkill],
   ['references/cheatsheet.md', excalidrawCheatsheet],
+];
+
+/** Session extensions installed next to session-broker. Each directory holds one extension with index.ts as its entry. */
+export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
+  ['piop-controls', [
+    ['interface.ts', controlsInterface], ['pause.ts', controlsPause], ['fork.ts', controlsFork],
+    ['commands.ts', controlsCommands], ['fast-mode.ts', controlsFastMode], ['index.ts', controlsIndex],
+  ]],
+  ['piop-goals', [
+    ['interface.ts', goalsInterface], ['state.ts', goalsState], ['prompts.ts', goalsPrompts], ['coordination.ts', goalsCoordination],
+    ['files.ts', goalsFiles], ['preparation.ts', goalsPreparation], ['goals.ts', goalsGoals], ['tools.ts', goalsTools],
+    ['commands.ts', goalsCommands], ['index.ts', goalsIndex],
+  ]],
+  ['piop-reviews', [
+    ['interface.ts', reviewsInterface], ['review-prompt.txt', reviewPrompt], ['reviews.ts', reviewsReviews],
+    ['commands.ts', reviewsCommands], ['index.ts', reviewsIndex],
+  ]],
 ];

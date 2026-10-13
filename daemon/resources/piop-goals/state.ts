@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { read, write } from "./goal-storage.cjs";
+import { read, write } from "../session-broker/goal-storage.cjs";
 import { storageRoot } from "../session-database.cjs";
+import type { GoalReport } from "./interface.ts";
 
 const GOAL_STATUS_KEY = "piop-goal";
 
@@ -43,11 +44,7 @@ function saveSubagentReceipt(goal: Goal, sourceId: string, total: number) {
   goal.subagentUsage = { ...receipts, [sourceId]: total };
 }
 
-type Usage = { input?: number; output?: number; cacheWrite?: number };
-
 const amount = (value: number | undefined) => value !== undefined && Number.isFinite(value) && value > 0 ? value : 0;
-
-export const goalTokens = (usage?: Usage) => Math.ceil(amount(usage?.input) + amount(usage?.cacheWrite) + amount(usage?.output));
 
 export function validateObjective(value: string) {
   const objective = value.trim();
@@ -243,7 +240,7 @@ export class GoalState {
     return this.goal;
   }
 
-  response(completed = false) {
+  response(completed = false): GoalReport {
     this.flushClock();
     const goal = this.goal && { ...this.goal, timeUsedSeconds: Math.floor(this.goal.elapsedMs / 1000) };
     const completionBudgetReport = completed && goal?.status === "complete" && (goal.tokenBudget !== null || goal.timeUsedSeconds > 0) ? "Goal achieved. Report final usage from this tool result's structured goal fields. If goal.tokenBudget is present, include goal.tokensUsed and goal.tokenBudget. If goal.timeUsedSeconds is greater than 0, summarize elapsed time in a concise, human-friendly form appropriate to the response language." : null;

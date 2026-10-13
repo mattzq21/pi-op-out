@@ -28,12 +28,12 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
   const user = { type: 'message', id: 'user', parentId: null, message: { role: 'user', content: 'Start' } };
   await writeFile(source, JSON.stringify(header) + '\n' + JSON.stringify(user) + '\n');
   const outfile = join(buildDirectory, 'operations.mjs');
-  await build({ entryPoints: ['daemon/resources/session-broker/operations.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
+  await build({ entryPoints: ['daemon/resources/piop-controls/index.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   });
-  const { registerForkAndForget } = await import(pathToFileURL(outfile));
+  const { default: controls } = await import(pathToFileURL(outfile));
   const listeners = [];
-  registerForkAndForget({ events: { on(name, handler) { if (name === 'piop:rpc') listeners.push(handler); } }, appendEntry() { throw new Error('Unexpected history append'); } });
+  controls({ on() {}, events: { on(name, handler) { if (name === 'piop:rpc') listeners.push(handler); }, emit() {} }, appendEntry() { throw new Error('Unexpected history append'); } });
   const request = { command: 'prepare_fork', payload: { mode: 'fork', entryId: 'user' }, ctx: {
     cwd: cwd ?? home,
     sessionManager: { getEntry: () => user, getBranch: () => [user], getHeader: () => header, getSessionFile: () => source, getSessionId: () => id, getSessionDir: () => sessions },

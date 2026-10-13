@@ -54,16 +54,21 @@ function saveRuntimeSettings(dir: string, settings: AppSettings): void {
 export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
 export const EXCALIDRAW_ASSETS = R.EXCALIDRAW_ASSETS;
 
-export function prepareSessionBroker(): string {
+/** Installs session-broker and the session extensions that share its modules. Returns the entries in load order. */
+export function prepareSessionExtensions(): { controls: string; broker: string; goals: string; reviews: string } {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   prepareBrokerStorage(dir);
   const modules = join(dir, 'session-broker');
   ensurePrivateDir(modules);
   for (const [name, content] of SESSION_BROKER_MODULES) atomicWritePrivate(join(modules, name), content);
-  const path = join(dir, 'session-broker.ts');
-  atomicWritePrivate(path, R.sessionBroker);
-  return path;
+  for (const [extension, files] of R.SESSION_EXTENSIONS) {
+    ensurePrivateDir(join(dir, extension));
+    for (const [name, content] of files) atomicWritePrivate(join(dir, extension, name), content);
+  }
+  const broker = join(dir, 'session-broker.ts');
+  atomicWritePrivate(broker, R.sessionBroker);
+  return { controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts'), reviews: join(dir, 'piop-reviews/index.ts') };
 }
 
 function prepareSdkStorage(dir: string): void {
