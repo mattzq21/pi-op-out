@@ -1355,6 +1355,48 @@ test('MCP tools remain usable when switching agents and submitting input', async
   assert.deepEqual(await f.tools.get('mcp_remote_read').execute(), { content: [{ type: 'text', text: 'Remote content' }] });
 });
 
+test('MCP settings apply on session load and agent selection, not on input', async t => {
+  const f = await agentFixture(t, { config: null });
+  const bridge = await installAgentMcp({ dir: f.dir, pi: f.pi, tools: f.tools, deferToolsUntilStart: true, servers: {
+    remote: [{ name: 'mcp_remote_read', parameters: {} }],
+  } });
+  const selections = [];
+  f.pi.events.on('piop:mcp:select', selection => selections.push(structuredClone({ servers: selection.servers, sessionId: selection.sessionId })));
+  await f.load();
+  await f.configure(configured([profile(), profile('reviewer', { mcpServers: { remote: remoteMcp } })]));
+  await f.start();
+  assert.equal(selections.length, 1);
+  await f.select('reviewer');
+  assert.equal(selections.length, 2);
+  assert.equal(bridge.registered.has('remote'), true);
+  assert.deepEqual(await f.input('first'), { action: 'continue' });
+  assert.deepEqual(await f.input('second'), { action: 'continue' });
+  assert.equal(selections.length, 2);
+  assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']);
+  await f.start();
+  assert.equal(selections.length, 3);
+  assert.deepEqual(await f.input('after load'), { action: 'continue' });
+  assert.equal(selections.length, 3);
+});
+
+test('input preserves an MCP registration failure without reapplying settings', async t => {
+  const f = await agentFixture(t, { config: null });
+  let attempts = 0;
+  await installAgentMcp({ dir: f.dir, pi: f.pi, tools: f.tools, registrationError: () => {
+    attempts++;
+    return new Error('registration failed');
+  } });
+  await f.load();
+  await f.configure(configured([profile('general', { mcpServers: { remote: remoteMcp } })]));
+  await f.start();
+  assert.equal(attempts, 1);
+  assert.deepEqual(await f.input('first'), { action: 'handled' });
+  assert.deepEqual(await f.input('second'), { action: 'handled' });
+  assert.equal(attempts, 1);
+  assert.match(f.notices.at(-1).message, /registration failed/);
+  assert.deepEqual(f.pi.getActiveTools(), []);
+});
+
 
 test("failed agent selection without skill changes preserves usable MCP tools", async t => {
   const f = await agentFixture(t, { config: null });

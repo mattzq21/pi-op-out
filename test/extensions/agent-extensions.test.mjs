@@ -385,16 +385,16 @@ test('legacy conversations retain their fixed agent when global definitions chan
   assert.equal(f.capability().active, 'reviewer');
 });
 
-test('a missing restored agent blocks input until a replacement is selected', async t => {
+test('a missing restored agent blocks input and cannot be replaced in a locked session', async t => {
   const f = await sessionAgentFixture(t);
   f.entries.push({ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'removed', locked: true } });
   await f.emit('session_start');
   assert.equal(f.capability().active, 'removed');
   assert.equal(f.capability().unavailable, true);
   assert.deepEqual(await f.emit('input', { text: 'Blocked' }), { action: 'handled' });
-  assert.match(JSON.parse(f.statuses.get('piop-input-rejected')).error, /Agent unavailable: "removed"/);
-  await f.select('general');
-  assert.deepEqual(await f.emit('input', { text: 'Continue' }), { action: 'continue' });
+  assert.match(JSON.parse(f.statuses.get('piop-input-rejected')).error, /Agent "removed" is unavailable/);
+  await assert.rejects(f.select('general'), /agent is fixed/);
+  assert.deepEqual(await f.emit('input', { text: 'Continue' }), { action: 'handled' });
 });
 
 
