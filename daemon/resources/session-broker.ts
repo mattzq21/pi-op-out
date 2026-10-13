@@ -9,7 +9,6 @@ import { registerSubagentMailbox } from "./session-broker/subagent-mailbox.ts";
 import { registerBrokerTools } from "./session-broker/tools.ts";
 import { registerGoals } from "./session-broker/goals.ts";
 import { registerReview } from "./session-broker/review.ts";
-import { registerHtmlPreview } from "./session-broker/html-preview.ts";
 import { registerConversationClient } from "./session-broker/client.ts";
 import { registerOrchestration } from "./session-broker/orchestration.ts";
 import { existsSync } from "node:fs";
@@ -43,5 +42,4 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerBrokerTools(pi);
   registerGoals(pi);
   registerReview(pi);
-  registerHtmlPreview(pi);
 }

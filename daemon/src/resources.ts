@@ -35,6 +35,9 @@ import agentFastModels from '../../extensions/piop-define-agents/fast-models.ts?
 import contextWindowCapExtension from '../../extensions/piop-context-window-cap/index.ts?raw';
 import contextWindowCapInterface from '../../extensions/piop-context-window-cap/interface.ts?raw';
 import contextBarExtension from '../../extensions/piop-context-bar/index.ts?raw';
+import htmlPreviewExtension from '../../extensions/piop-html-preview/index.ts?raw';
+import htmlPreviewInterface from '../../extensions/piop-html-preview/interface.ts?raw';
+import htmlPreviewFeature from '../../extensions/piop-html-preview/preview.ts?raw';
 import codexWebSearchExtension from '../../extensions/piop-codex-web-search/index.ts?raw';
 import excalidrawSkill from '../../extensions/piop-excalidraw/SKILL.md?raw';
 import excalidrawCheatsheet from '../../extensions/piop-excalidraw/references/cheatsheet.md?raw';
@@ -71,7 +74,6 @@ import brokerModule28 from '../resources/session-broker/subagent-recovery.ts?raw
 import brokerModule29 from '../resources/session-broker/subagent-identity.ts?raw';
 import brokerModule30 from '../resources/session-broker/operations.ts?raw';
 import brokerModule31 from '../resources/session-broker/tools.ts?raw';
-import brokerModule32 from '../resources/session-broker/html-preview.ts?raw';
 import brokerModule33 from '../resources/session-broker/goals.ts?raw';
 import brokerModule34 from '../resources/session-broker/review.ts?raw';
 import brokerModule35 from '../resources/session-broker/goal-state.ts?raw';
@@ -145,6 +147,9 @@ export {
   contextWindowCapExtension,
   contextWindowCapInterface,
   contextBarExtension,
+  htmlPreviewExtension,
+  htmlPreviewInterface,
+  htmlPreviewFeature,
   codexWebSearchExtension,
   excalidrawSkill,
   excalidrawCheatsheet,
@@ -184,7 +189,6 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['subagent-identity.ts', brokerModule29],
   ['operations.ts', brokerModule30],
   ['tools.ts', brokerModule31],
-  ['html-preview.ts', brokerModule32],
   ['goals.ts', brokerModule33],
   ['review.ts', brokerModule34],
   ['goal-state.ts', brokerModule35],

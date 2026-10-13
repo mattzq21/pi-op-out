@@ -10,6 +10,7 @@ import { flag, kind, text, jsonEqual } from './json';
 import * as Agents from './agents';
 import { ConversationOwnership, Guard, ownershipError } from './ownership';
 import { clientPayload, savedToolPayload } from './payload';
+import { HTML_PREVIEW_VIEWPORT_COMMAND } from '../../../extensions/piop-html-preview/interface';
 import { argument, expandHome, parseLaunchSpec, serializeSpec, sessionSpec, specIdentity, type LaunchSpec, type SessionLaunch } from './protocol';
 import { clearSaved } from './queue';
 import { drainSaves } from './queue_storage';
@@ -402,7 +403,7 @@ export class Host implements SessionHost {
       if (error !== null) throw new Error(error);
     }
     if (['fork', 'fork_after', 'clone', 'new_session', 'switch_session'].includes(kind(command))) return Branching.switchSession(this, session, runtime, command);
-    if (typeof command?.clientHtmlPreviewSize === 'number') await session.raw({ type: 'html_preview_viewport', size: command.clientHtmlPreviewSize });
+    if (typeof command?.clientHtmlPreviewSize === 'number') await session.raw({ type: HTML_PREVIEW_VIEWPORT_COMMAND, size: command.clientHtmlPreviewSize });
     return queueCommand(session, command, kind(command).startsWith('get_') ? undefined : assertOwner);
   }
 
@@ -746,7 +747,7 @@ export class Host implements SessionHost {
       session.presence(runtime, structuredClone(packet.presence ?? null));
       const presence = packet.presence;
       if (flag(presence, 'visible') && flag(presence, 'focused') && typeof presence?.htmlPreviewSize === 'number') {
-        await session.raw({ type: 'html_preview_viewport', size: presence.htmlPreviewSize });
+        await session.raw({ type: HTML_PREVIEW_VIEWPORT_COMMAND, size: presence.htmlPreviewSize });
       }
       return null;
     }
@@ -883,7 +884,7 @@ class Attachment {
       opened.session = session;
       await session.setClientId(text(this.packet, 'clientId'));
       await session.execute({ type: 'get_state' });
-      if (typeof this.packet.presence?.htmlPreviewSize === 'number') await session.raw({ type: 'html_preview_viewport', size: this.packet.presence.htmlPreviewSize });
+      if (typeof this.packet.presence?.htmlPreviewSize === 'number') await session.raw({ type: HTML_PREVIEW_VIEWPORT_COMMAND, size: this.packet.presence.htmlPreviewSize });
       this.assertCurrent();
       this.host.readonlyMap.delete(this.runtime);
       this.host.attachView(this.runtime, session, structuredClone(this.packet.presence ?? null));
