@@ -126,14 +126,27 @@ test('explicit agent selection applies fast-mode defaults while input leaves man
   assert.equal(await f.emit('before_provider_request', { payload: { input: 'hello' } }), undefined);
 });
 
-test('session-tree changes restore the selected branch profile and its prompt', async t => {
+test('session-tree changes keep the selected agent, prompt and lock', async t => {
   const f = await agentFixture(t, { config: null }); await f.load();
   await f.configure(configured([profile(), profile('reviewer')]));
   await f.start();
+  await f.input('hello');
   f.entries.splice(0, f.entries.length, { type: 'custom', customType: 'pi-define-agents-state', data: { active: 'reviewer', snapshot: { version: 1, definition: profile('reviewer', { tools: ['bash'] }), systemPrompt: 'Branch prompt', agentPrompt: '' } } });
   await f.emit('session_tree');
-  assert.equal(f.capability().active, 'reviewer'); assert.deepEqual(f.pi.getActiveTools(), ['bash']);
-  assert.equal((await f.prompt()).customPrompt, 'Branch prompt');
+  assert.equal(f.capability().active, 'general'); assert.deepEqual(f.pi.getActiveTools(), ['read']);
+  assert.equal((await f.prompt()).customPrompt, 'System instructions');
+  assert.equal(f.capability().locked, true);
+  await assert.rejects(f.select('reviewer'), /agent is fixed/);
+  f.entries.splice(0);
+  await f.emit('session_tree');
+  assert.equal(f.capability().locked, true);
+  await assert.rejects(f.select('reviewer'), /agent is fixed/);
+  f.ctx.sessionManager.getSessionFile = () => join(f.dir, 'new-session');
+  f.ctx.sessionManager.getSessionId = () => 'new-session';
+  await f.start();
+  assert.equal(f.capability().locked, false);
+  await f.select('reviewer');
+  assert.equal(f.capability().active, 'reviewer');
 });
 
 test('input before session startup preserves the selected prompt across reload', async t => {

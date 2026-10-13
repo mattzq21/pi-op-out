@@ -626,7 +626,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", (_event, ctx) => restoreSession(ctx));
-  pi.on("session_tree", (_event, ctx) => restoreSession(ctx));
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE;
 
   if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
