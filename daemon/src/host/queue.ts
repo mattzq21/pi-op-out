@@ -1,6 +1,7 @@
 import { array, canon, CancelScope, flag, jsonEqual, kind, messageText, text } from './json';
 import { Mutex, errorText } from '../util/sync';
 import { validateItem, type QueueStorage } from './queue_storage';
+import { ANSWER_QUESTION_COMMAND, questionQueueId } from '../../../extensions/piop-user-questions/interface';
 
 export { clearSaved, QueueStorage } from './queue_storage';
 
@@ -329,8 +330,8 @@ function submissionPayload(command: any, id: string, name: string): any {
 function validAnswer(item: any): boolean {
   const response = item?.questionResponse;
   return typeof item?.message === 'string' && item.behavior === 'followUp' && flag(item, 'retry') && flag(item, 'recovered')
-    && response?.type === 'answer_question' && typeof response?.value === 'string'
-    && typeof response?.requestId === 'string' && item.id === 'question:' + response.requestId;
+    && response?.type === ANSWER_QUESTION_COMMAND && typeof response?.value === 'string'
+    && typeof response?.requestId === 'string' && item.id === questionQueueId(response.requestId);
 }
 
 export class SessionQueue {

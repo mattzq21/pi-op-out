@@ -17,6 +17,7 @@ import { recoverMissingTranscripts, type Recovery } from './queue_recovery';
 import { Session, type SessionHost } from './session';
 import { ToolPayload, ToolPayloadCache } from './tool_payload';
 import * as Branching from './branching';
+import { ANSWER_QUESTION_COMMAND } from '../../../extensions/piop-user-questions/interface';
 import type { HostServices } from './services';
 
 export interface ReadonlyView { id: string; path: string | null }
@@ -419,7 +420,7 @@ export class Host implements SessionHost {
         return null;
       }
       const response = dialog.queuedResponse ?? session.queue.questionResponse(text(dialog.event, 'asyncQuestion'))
-        ?? { type: 'answer_question', requestId: dialog.event.asyncQuestion, value: command.value ?? null, cancelled: flag(command, 'cancelled') };
+        ?? { type: ANSWER_QUESTION_COMMAND, requestId: dialog.event.asyncQuestion, value: command.value ?? null, cancelled: flag(command, 'cancelled') };
       session.changeDialog(id, item => { item.answering = true; });
       try {
         const prepare = structuredClone(response);

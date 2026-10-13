@@ -77,7 +77,16 @@ function prepareBrokerStorage(dir: string): void {
   atomicWritePrivate(join(dir, 'transcript-references.cjs'), R.transcriptReferences);
   atomicWritePrivate(join(dir, 'session-database.cjs'), R.sessionDatabase);
   atomicWritePrivate(join(dir, 'sdk-storage.mjs'), R.sdkStorage);
-  atomicWritePrivate(join(dir, 'ask-user.ts'), R.askUser);
+}
+
+export function prepareUserQuestionsExtension(): string {
+  const dir = join(generatedExtensionRoot(), 'piop-user-questions');
+  ensurePrivateDir(dir);
+  atomicWritePrivate(join(dir, 'interface.ts'), R.userQuestionsInterface);
+  atomicWritePrivate(join(dir, 'questions.ts'), R.userQuestionsLogic);
+  const path = join(dir, 'index.ts');
+  atomicWritePrivate(path, R.userQuestionsExtension);
+  return path;
 }
 
 export function prepareOpenaiCacheForkExtension(): string {
