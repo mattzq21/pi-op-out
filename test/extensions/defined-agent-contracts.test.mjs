@@ -9,6 +9,16 @@ import { installAgentMcp } from '../mcp-agent-fixture.mjs';
 
 const remoteMcp = { command: 'mcp-server', args: [], enabled: true };
 
+test('agent startup reads local definitions even when a broker is configured', async t => {
+  const f = await agentFixture(t, {
+    config: configured([profile()]),
+    env: { PI_DESKTOP_BROKER_URL: 'http://127.0.0.1:1', PI_DESKTOP_BROKER_TOKEN: '' },
+  });
+  await f.load(); await f.start();
+  assert.deepEqual(f.pi.getActiveTools(), ['read']);
+  assert.deepEqual(await f.input('Start'), { action: 'continue' });
+});
+
 test('restoring general preserves explicitly enabled question tools', async t => {
   const f = await agentFixture(t, { tools: ['read', 'request_user_input'], config: null });
   await f.load(); await f.start();
@@ -1266,7 +1276,8 @@ test('started agent keeps tool lists across catalog changes and resume', async t
   runtime.enabledTools = [];
   await f.configure(configured([profile('general', { tools: [] })]));
   const request = { command: 'refresh_agent_definitions', payload: {}, ctx: f.ctx };
-  f.pi.events.emit('piop:rpc', request); await request.ready;
+  f.pi.events.emit('piop:rpc', request);
+  assert.equal(request.ready, undefined);
   assert.deepEqual(f.pi.getActiveTools(), ['read']);
   await f.reloadExtensions();
   assert.deepEqual(f.pi.getActiveTools(), ['read']);

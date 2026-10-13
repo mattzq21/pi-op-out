@@ -198,11 +198,6 @@ async function brokerTerminalLookup(app: App, body: Buffer): Promise<any> {
 }
 
 async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: string, path: string, body: Buffer): Promise<any> {
-  if (method === 'GET' && path === '/agent-definitions') {
-    const connection = app.pi.connections.get('local');
-    if (!connection) throw new Error('Agent definitions are unavailable');
-    return connection.request({ type: 'agent_definitions' });
-  }
   if (method === 'POST' && path === '/fast-models') {
     const value = parseJson(body, 'Invalid fast model request');
     if (typeof value?.hostId !== 'string') throw new Error('hostId is required');

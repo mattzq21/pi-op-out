@@ -179,7 +179,6 @@ export function prepareDefinedAgentsExtension(): string {
     ['extension-loader.ts', R.agentExtensionLoader],
     ['state.ts', R.agentState],
     ['resources.ts', R.agentResources],
-    ['daemon-definitions.ts', R.agentDaemonDefinitions],
     ['prompts.ts', R.agentPrompts],
     ['profiles.ts', R.agentProfiles],
     ['excalidraw.ts', R.agentExcalidraw],

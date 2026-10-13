@@ -104,12 +104,7 @@ export async function agentFixture(t, options = {}) {
   };
 
   const define = (await import(pathToFileURL(join(dir, 'index.mjs')))).default;
-  const defineLocal = async () => {
-    const broker = process.env.PI_DESKTOP_BROKER_URL;
-    delete process.env.PI_DESKTOP_BROKER_URL;
-    try { return await define(pi); }
-    finally { if (broker !== undefined) process.env.PI_DESKTOP_BROKER_URL = broker; }
-  };
+  const defineLocal = () => define(pi);
 
   let registerFastMode;
   const load = async () => {

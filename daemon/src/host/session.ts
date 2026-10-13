@@ -104,7 +104,6 @@ export class Session {
   configuring = false;
   autoCompaction: boolean | null = null;
   autoRetry: boolean | null = null;
-  agentRevision: number;
   providerRevision = 0;
 
   private constructor(launch: SessionLaunch, identity: string, pending: any[], storage: QueueStorage | null, private host: SessionHost, private toolPayloads: ToolPayloadCache) {
@@ -115,8 +114,6 @@ export class Session {
     this.timeout = launch.timeout;
     this.key = launch.key;
     this.isTransient = launch.transient;
-    const revision = host.configuration()?.agentRevision;
-    this.agentRevision = typeof revision === 'number' && Number.isInteger(revision) && revision >= 0 ? revision : 0;
     const executor: Execution = {
       execute: command => this.execute(command),
       publish: event => this.publish(event, null),
@@ -480,10 +477,8 @@ export class Session {
         const configuration = clone(this.host.configuration());
         if (configuration === null || configuration === undefined) return;
         const revision = typeof configuration.agentRevision === 'number' ? configuration.agentRevision : 0;
-        if (this.agentRevision < revision) await this.executeWorker({ type: 'refresh_agent_definitions' });
         await this.executeWorker({ type: 'context_cap_settings', settings: configuration.contextCapSettings });
         await this.applyAutomaticOptions(configuration);
-        this.agentRevision = revision;
         this.appliedConfiguration = configuration;
         this.publish({ type: 'settings_applied', agentRevision: revision }, null);
       }
@@ -716,7 +711,7 @@ export class Session {
     const result = await this.raw(clone(command));
     this.rememberWorkerResult(command);
     if (kind(command) === 'resume' && typeof result?.resumeMessage === 'string' && result.resumeMessage) await this.raw({ type: 'prompt', message: result.resumeMessage });
-    if (['set_model', 'set_thinking_level', 'set_session_name', 'fork_and_forget', 'refresh_agent_definitions'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
+    if (['set_model', 'set_thinking_level', 'set_session_name', 'fork_and_forget'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
     return result;
   }
 

@@ -32,7 +32,6 @@ import agentMcpConfig from '../../extensions/piop-define-agents/mcp-config.ts?ra
 import definedAgentsExtension from '../../extensions/piop-define-agents/index.ts?raw';
 import agentExtensionLoader from '../../extensions/piop-define-agents/extension-loader.ts?raw';
 import agentExcalidraw from '../../extensions/piop-define-agents/excalidraw.ts?raw';
-import agentDaemonDefinitions from '../../extensions/piop-define-agents/daemon-definitions.ts?raw';
 import agentFastModels from '../../extensions/piop-define-agents/fast-models.ts?raw';
 import contextWindowCapExtension from '../../extensions/piop-context-window-cap/index.ts?raw';
 import contextWindowCapInterface from '../../extensions/piop-context-window-cap/interface.ts?raw';
@@ -144,7 +143,6 @@ export {
   definedAgentsExtension,
   agentExtensionLoader,
   agentExcalidraw,
-  agentDaemonDefinitions,
   agentFastModels,
   contextWindowCapExtension,
   contextWindowCapInterface,

@@ -4,7 +4,6 @@ import { Type } from "typebox";
 import { Check, Errors, Parse } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
-import { readDaemonDefinitions } from "./daemon-definitions.ts";
 import { fallbackConfig, migrateQuestionSnapshot, selectedProfileState } from "./profiles.ts";
 import { migrateExcalidrawAgent } from "./excalidraw.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
@@ -309,8 +308,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const extensions = agentExtensions(pi, dirname(configPath));
   const initialResources = readAgentResources();
   const configRuntime = { enabledTools: initialResources.tools.enabledTools };
-  let daemonDefinitions = await readDaemonDefinitions();
-  let config = daemonDefinitions ? daemonDefinitions.config : await loadConfig(configRuntime);
+  let config = await loadConfig(configRuntime);
   let active = "general";
   let snapshot: AgentSnapshot | undefined;
   let savedState: string | undefined;
@@ -375,7 +373,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       return;
     }
 
-    request.ready = selectedProfileState(agent, initialResources, path => readAgentPrompt(path, true))
+    request.ready = selectedProfileState(agent, initialResources, readPrompt)
       .then(state => { request.state = state; })
       .catch(error => { request.error = `Cannot load agent profile ${agent.name}: ${String(error)}`; });
   });
@@ -442,11 +440,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const snapshotDefinition = (agent: Agent) => structuredClone({ ...agent, model: agent.model.trim() || runtimeDefaults?.model || "", effort: agent.effort.trim() || runtimeDefaults?.effort || "" });
 
   const persistAgentSnapshot = async (agent: Agent, persist: boolean) => {
-    if (daemonDefinitions && !snapshot) snapshot = { version: 1, definition: snapshotDefinition(agent), systemPrompt: activeSystemPrompt, agentPrompt: activeAgentPrompt };
+    const savedResources = resources();
+    if (snapshot?.version !== 2) snapshot = await snapshotPrompts(snapshotDefinition(agent), activeSystemPrompt, activeAgentPrompt);
 
-    if (!daemonDefinitions && snapshot?.version !== 2) snapshot = await snapshotPrompts(snapshotDefinition(agent), activeSystemPrompt, activeAgentPrompt);
-
-    if (snapshot && !snapshot.resources) snapshot.resources = structuredClone(initialResources);
+    if (!snapshot.resources) snapshot.resources = structuredClone(savedResources);
 
     if (persist) saveState();
   };
@@ -462,7 +459,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     } else {
       const path = resolvePromptPath(agent.path_systemprompt);
 
-      try { activeSystemPrompt = await readAgentPrompt(path); }
+      try { activeSystemPrompt = await readPrompt(path); }
       catch (error) { pi.setActiveTools([]);
 
       return `Agent "${agent.name}" cannot read system prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
@@ -470,7 +467,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       if (agentPromptPath) {
         const path = resolvePromptPath(agentPromptPath);
 
-        try { activeAgentPrompt = await readAgentPrompt(path); }
+        try { activeAgentPrompt = await readPrompt(path); }
         catch (error) { pi.setActiveTools([]);
 
         return `Agent "${agent.name}" cannot read agent prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
@@ -480,15 +477,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     await persistAgentSnapshot(agent, persistSnapshot);
 
   };
-
-  async function readAgentPrompt(path: string, fromCatalog = false) {
-    if (!daemonDefinitions || snapshot && !fromCatalog) return readPrompt(path);
-    const prompt = daemonDefinitions?.prompts[path];
-
-    if (prompt === undefined) throw new Error(`Prompt is missing from daemon definitions: ${path}`);
-
-    return prompt;
-  }
 
   const selectAgentModel = async (agent: Agent, ctx: ExtensionContext, modelName: string) => {
     const [provider, ...parts] = modelName.split("/"); const model = ctx.modelRegistry.find(provider, parts.join("/"));
@@ -733,15 +721,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   pi.events.on("piop:rpc", request => {
-    if (request.command === "refresh_agent_definitions") {
-      request.ready = (async () => {
-        const definitions = await readDaemonDefinitions();
-        if (definitions) { daemonDefinitions = definitions; config = definitions.config; }
-        else config = await loadConfig(configRuntime);
-        publish(request.ctx);
-      })();
-      return;
-    }
     if (request.command === "get_agent_configuration") { request.ready = loadConfig(configRuntime);
 
     return; }
@@ -760,7 +739,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
       const saved = await writeConfig(next);
 
-      if (!daemonDefinitions) config = next;
+      config = next;
 
       try { publish(ctx); } catch (error) { saved?.warnings.push(`Agent definitions were saved, but their status could not be updated: ${String(error)}`); }
 

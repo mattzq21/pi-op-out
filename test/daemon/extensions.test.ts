@@ -35,7 +35,7 @@ const sessionId = sessionFile ? JSON.parse(fs.readFileSync(sessionFile, 'utf8').
 const state = { sessionFile, sessionId, isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
-  if (request.type === 'piop_request' && ['context_cap_settings', 'refresh_agent_definitions'].includes(request.command)) {
+  if (request.type === 'piop_request' && ['context_cap_settings'].includes(request.command)) {
     process.stdout.write(JSON.stringify({ type: 'fixture_settings', command: request.command, settings: request.payload.settings }) + '\\n');
   }
   process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : null }) + '\\n');
