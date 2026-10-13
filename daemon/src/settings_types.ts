@@ -1,5 +1,6 @@
 import reviewPrompt from '../resources/session-broker/review-prompt.txt?raw';
 import { defaultKeybindings } from './keybindings';
+import { capRangeError } from '../../extensions/piop-context-window-cap/interface';
 
 export interface RemoteHost {
   enabled: boolean;
@@ -22,6 +23,8 @@ export interface AppSettings {
   defaultFastMode: boolean;
   contextWindowCap: number;
   contextWindowCapEnabled: boolean;
+  /** Context caps by provider/model. A missing model inherits; null selects the model default. */
+  modelContextWindowCaps: Record<string, number | null>;
   autoRetry: boolean;
   debugMode: boolean;
   keybindings: Record<string, string>;
@@ -97,6 +100,28 @@ export function parseRemoteHost(value: any): RemoteHost {
   };
 }
 
+function modelCaps(value: any): Record<string, number | null> {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('modelContextWindowCaps', 'a map');
+  const caps: Record<string, number | null> = {};
+  for (const [model, cap] of Object.entries(value)) {
+    if (cap !== null && (typeof cap !== 'number' || !Number.isSafeInteger(cap))) fail('modelContextWindowCaps', 'whole numbers or null');
+    caps[model] = cap as number | null;
+  }
+  return caps;
+}
+
+/** Throws when a saved context cap is outside the accepted range. */
+export function validateContextCaps(settings: AppSettings): void {
+  const error = capRangeError(settings.contextWindowCap, 'General context cap');
+  if (error) throw new Error(error);
+  for (const [model, cap] of Object.entries(settings.modelContextWindowCaps)) {
+    if (!model.includes('/')) throw new Error(`Context cap model "${model}" must be written as provider/model`);
+    const capError = cap === null ? undefined : capRangeError(cap, `Context cap for ${model}`);
+    if (capError) throw new Error(capError);
+  }
+}
+
 /** Parses settings with the same defaults and required fields as the saved settings format. */
 export function parseAppSettings(value: any): AppSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid type: expected struct AppSettings');
@@ -124,6 +149,7 @@ export function parseAppSettings(value: any): AppSettings {
     defaultFastMode: boolField(value.defaultFastMode, 'defaultFastMode', false),
     contextWindowCap,
     contextWindowCapEnabled: boolField(value.contextWindowCapEnabled, 'contextWindowCapEnabled', true),
+    modelContextWindowCaps: modelCaps(value.modelContextWindowCaps),
     autoRetry: boolField(value.autoRetry, 'autoRetry', true),
     debugMode: boolField(value.debugMode, 'debugMode', false),
     keybindings,
@@ -149,6 +175,7 @@ export function serializeAppSettings(settings: AppSettings): Record<string, unkn
   result.defaultFastMode = settings.defaultFastMode;
   result.contextWindowCap = settings.contextWindowCap;
   result.contextWindowCapEnabled = settings.contextWindowCapEnabled;
+  result.modelContextWindowCaps = settings.modelContextWindowCaps;
   result.autoRetry = settings.autoRetry;
   result.debugMode = settings.debugMode;
   result.keybindings = settings.keybindings;
@@ -174,6 +201,7 @@ export function defaultSettings(): AppSettings {
     defaultThinking: 'medium',
     contextWindowCap: 300_000,
     contextWindowCapEnabled: true,
+    modelContextWindowCaps: {},
     autoRetry: true,
     debugMode: false,
     keybindings: defaultKeybindings(),

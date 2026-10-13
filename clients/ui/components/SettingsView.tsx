@@ -7,6 +7,8 @@ import { hostFastModels, rejectsFastMode } from "../lib/fastModels";
 import { AgentTools } from "./AgentTools";
 import { agentProfileSchema } from "../lib/agentSchemas";
 import { McpSettings, type McpEditorDraft } from "./McpSettings";
+import { CapInput } from "./CapInput";
+import { capRangeError } from "../../../extensions/piop-context-window-cap/interface";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
@@ -220,6 +222,20 @@ export function SettingsView(props: SettingsViewProps) {
     applyIncomingAgents(capturedAgentConfig);
   }, () => [agentConfigDirty(), agentConfig(), agentConfigSnapshot(), saving()]);
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
+  const [capErrors, setCapErrors] = createSignal<Record<string, string>>({});
+
+  const capError = (key: string) => (error: string | undefined) => setCapErrors(current => {
+    if (current[key] === error) return current;
+    const { [key]: _removed, ...rest } = current;
+
+    return error === undefined ? rest : { ...rest, [key]: error };
+  });
+
+  const setModelCap = (model: string, cap: number | null | undefined) => setDraft(current => {
+    const { [model]: _removed, ...rest } = current.modelContextWindowCaps;
+
+    return { ...current, modelContextWindowCaps: cap === undefined ? rest : { ...rest, [model]: cap } };
+  });
 
   const save = async () => {
     if (conflict()) return;
@@ -335,7 +351,7 @@ export function SettingsView(props: SettingsViewProps) {
   const shortcutValidation = createMemo(() => (validateShortcuts()));
 
   const validateSettingsNames = () => {
-    const contextWindowValid = Number.isInteger(draft().contextWindowCap) && draft().contextWindowCap >= 1000 && draft().contextWindowCap <= 10000000 && Number.isSafeInteger(draft().contextWindowCap);
+    const contextWindowValid = capRangeError(draft().contextWindowCap) === undefined;
 
     const duplicateNames = <T extends { name: string }>(items: T[]) => { const counts = new Map<string, number>(); items.forEach((item) => { const name = item.name.trim().toLowerCase();
 
@@ -359,7 +375,8 @@ export function SettingsView(props: SettingsViewProps) {
   const validationError = createMemo(() => (firstValidationError([
     () => mcpError(),
     () => !agentValidation().defaultAgentAvailable ? `Default agent is unavailable: ${draft().defaultAgent}` : undefined,
-    () => !nameValidation().contextWindowValid ? "Context window cap must be a whole number from 1000 to 10000000" : undefined,
+    () => nameValidation().contextWindowValid ? undefined : capRangeError(draft().contextWindowCap, "General context cap"),
+    () => Object.entries(capErrors()).map(([label, error]) => label + ": " + error)[0],
     () => draft().hosts.length > 16 ? "At most 16 remote machines can be configured" : undefined,
     () => nameValidation().reservedLocalHostName ? "The machine name “Local” is reserved for this machine" : undefined,
     () => nameValidation().duplicateHostNames.size ? `Machine name “${[...nameValidation().duplicateHostNames][0]}” is used more than once` : undefined,
@@ -414,7 +431,7 @@ export function SettingsView(props: SettingsViewProps) {
       const renderDictation = () => (formValidation().visibleSection === "dictation" && <SettingsSection title="Dictation" description="Choose the speech engine and model that this device uses."><DictationSettings settings={draft()} onChange={patch} /></SettingsSection>);
 
       const renderGeneral = () => (formValidation().visibleSection === "general" && <SettingsSection title="General" description="Agent behavior.">
-        <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Applies to new conversations. Each conversation keeps its initial cap, including whether it is enabled."><div class="setting-cap-controls"><input class="setting-number" aria-label="Context window cap" aria-invalid={!nameValidation().contextWindowValid} disabled={!draft().contextWindowCapEnabled} type="number" min={1000} max={10000000} step={1000} value={draft().contextWindowCap} onInput={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft().contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
+        <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Used when no /cap choice, agent cap, or model cap applies. Off uses each model's full window. Open conversations update when idle."><div class="setting-cap-controls"><input class="setting-number" aria-label="Context window cap" aria-invalid={!nameValidation().contextWindowValid} disabled={!draft().contextWindowCapEnabled} type="number" min={100000} max={50000000} step={1000} value={draft().contextWindowCap} onInput={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft().contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
         <SettingRow icon={<ShieldCheck />} title="Automatic retry" description="Retry transient provider and network errors."><Toggle label="Automatic retry" checked={draft().autoRetry} onChange={(autoRetry) => patch({ autoRetry })} /></SettingRow>
         <div class="general-agent-default">
           <label class="field"><span>Default agent</span><select aria-label="Default agent" disabled={!agentConfig()} value={draft().defaultAgent ?? "general"} onChange={(event) => patch({ defaultAgent: event.target.value })}>{!agentValidation().defaultAgentAvailable && <option value={draft().defaultAgent} disabled>Unavailable: {draft().defaultAgent}</option>}{!agentConfig() && <option value={draft().defaultAgent ?? "general"}>{draft().defaultAgent ?? "general"}</option>}{<Key each={agentDrafts()} by={(item) => item.name}>{(item, _index) => <option  value={item().name}>{item().name}</option>}</Key>}</select></label>
@@ -427,7 +444,7 @@ export function SettingsView(props: SettingsViewProps) {
           <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => !agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: [...new Set([...draft().hiddenModels, ...agentValidation().modelChoices.map(model => model.id)])] })}>Disable all models</button>
         </div>
         {settingsProps().loadingModels.length > 0 && <p class="empty-small" role="status">Loading models from {settingsProps().loadingModels.join(", ")}…</p>}
-        <div class="config-list">{<Key each={filteredModelChoices()} by={(model) => model.id}>{(model, _index) => <div class="config-row model-row" ><span class="config-icon"><Cpu size={16} /></span><span><strong>{model().name}</strong><small>{model().id}{!agentValidation().availableModelIds.has(model().id) ? " · Currently unavailable" : ""}</small></span><Toggle label={`Show ${model().id}`} checked={!agentValidation().hiddenModels.has(model().id)} onChange={(visible) => setDraft((current) => ({ ...current, hiddenModels: visible ? current.hiddenModels.filter((id) => id !== model().id) : [...current.hiddenModels, model().id] }))} /></div>}</Key>}</div>
+        <div class="config-list">{<Key each={filteredModelChoices()} by={(model) => model.id}>{(model, _index) => <div class="config-row model-row" ><span class="config-icon"><Cpu size={16} /></span><span><strong>{model().name}</strong><small>{model().id}{!agentValidation().availableModelIds.has(model().id) ? " · Currently unavailable" : ""}</small></span><CapInput label={`Context cap for ${model().id}`} placeholder="Inherit cap" value={draft().modelContextWindowCaps[model().id]} onChange={cap => setModelCap(model().id, cap)} onError={capError(`Context cap for ${model().id}`)} /><Toggle label={`Show ${model().id}`} checked={!agentValidation().hiddenModels.has(model().id)} onChange={(visible) => setDraft((current) => ({ ...current, hiddenModels: visible ? current.hiddenModels.filter((id) => id !== model().id) : [...current.hiddenModels, model().id] }))} /></div>}</Key>}</div>
         {!filteredModelChoices().length && (agentValidation().modelChoices.length > 0 || settingsProps().loadingModels.length === 0) && <div class="empty-small">{agentValidation().modelChoices.length ? "No models match your search." : "No models available. Sign in to a provider to see its models."}</div>}
       </SettingsSection>);
 
@@ -441,7 +458,9 @@ export function SettingsView(props: SettingsViewProps) {
               const renderAgentFastMode = () => (<div class="field general-fast-mode" data-tooltip={agent().fastMode === undefined ? "Using the fallback fast mode setting" : "Fast mode default for this agent"}><span>Fast mode</span><div><button type="button" class={`fast-mode-indicator${agentFastModeEnabled() ? " active" : ""}`} aria-label="Agent fast mode" aria-description={agent().fastMode === undefined ? "Using fallback setting" : agentFastModeEnabled() ? "Fast mode on" : "Fast mode off"} aria-pressed={agentFastModeEnabled()} aria-invalid={agent().fastMode === true && !supportsFastMode(agent().model || draft().defaultModel)} onClick={() => updateAgent({ fastMode: !agentFastModeEnabled() })}><Zap size={22} strokeWidth={1.5} fill={agentFastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button></div></div>);
               const renderAgentEffort = () => (<label class="field"><span>Default effort</span><select aria-label="Agent default effort" aria-invalid={Boolean(!agentValidation().thinkingDiscoveryUnavailable && agent().effort && !agentLevels(agent()).includes(agent().effort))} value={agent().effort} onChange={(event) => updateAgent({ effort: event.target.value })}><option value="">Use fallback ({draft().defaultThinking})</option>{agent().effort && !agentLevels(agent()).includes(agent().effort) && <option value={agent().effort} disabled>Unavailable: {agent().effort}</option>}{<Key each={agentLevels(agent())} by={(level) => level}>{(level, _index) => <option  value={level()}>{level().charAt(0).toUpperCase() + level().slice(1)}</option>}</Key>}</select></label>);
 
-              return (<div class="agent-defaults">{renderAgentModel()}{renderAgentFastMode()}{renderAgentEffort()}</div>);
+              const renderAgentContextCap = () => (<label class="field"><span>Context cap</span><CapInput label="Agent context cap" placeholder="Inherit" value={agent().contextWindowCap} onChange={contextWindowCap => updateAgent({ contextWindowCap })} onError={capError("Agent context cap")} /></label>);
+
+              return (<div class="agent-defaults">{renderAgentModel()}{renderAgentFastMode()}{renderAgentEffort()}{renderAgentContextCap()}</div>);
             };
 
             const renderAgentPromptFiles = () => (<label class="field"><span>System prompt file</span><input aria-label="System prompt file" aria-invalid={!agent().path_systemprompt?.trim()} placeholder="Path relative to agent config.json, or absolute path" value={agent().path_systemprompt ?? ""} onInput={(event) => updateAgent({ path_systemprompt: event.target.value })} /></label>);

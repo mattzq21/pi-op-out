@@ -10,6 +10,7 @@ import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.
 import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
 import { fastModeSession, fastModelProblem, hostFastModels } from "./fast-models.ts";
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
+import { capRangeError } from "../piop-context-window-cap/interface.ts";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -104,11 +105,16 @@ function promptPath(agent: StoredAgent): string {
 }
 
 function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAgent[] }, pi: ConfigRuntime): Config {
-  for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.fastMode !== undefined && !Check(Type.Boolean(), agent.fastMode)) throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
+  for (const agent of Array.isArray(value.agents) ? value.agents : []) {
+    if (agent && agent.fastMode !== undefined && !Check(Type.Boolean(), agent.fastMode)) throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
+    const capError = agent?.contextWindowCap === undefined || agent.contextWindowCap === null ? undefined : typeof agent.contextWindowCap === "number" ? capRangeError(agent.contextWindowCap, `Agent "${agent.name}" context cap`) : `Agent "${agent.name}" context cap must be a number or null`;
+
+    if (capError) throw new Error(capError);
+  }
 
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)).map((agent) => ({
     name: agent.name, model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
-    fastMode: agent.fastMode, codemode: agent.codemode, extensions: extensionPaths(agent.extensions),
+    fastMode: agent.fastMode, contextWindowCap: agent.contextWindowCap, codemode: agent.codemode, extensions: extensionPaths(agent.extensions),
     max_subagents: subagentLimit(agent.max_subagents, agent.name, "max_subagents"), max_sub_subagents: subagentLimit(agent.max_sub_subagents, agent.name, "max_sub_subagents"),
     path_systemprompt: promptPath(agent), path_agent_prompt: Check(Type.String(), agent.path_agent_prompt) ? agent.path_agent_prompt.trim() : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)).flatMap(item => item === "goal" ? ["get_goal", "create_goal", "update_goal"] : [item]) : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
@@ -376,6 +382,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
     request.profiles = config.agents.map(agent => ({ name: agent.name, model: agent.model, effort: agent.effort, fastMode: agent.fastMode, max_subagents: agent.max_subagents ?? 8, max_sub_subagents: agent.max_sub_subagents ?? 8, tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers), path_systemprompt: agent.path_systemprompt, path_agent_prompt: agent.path_agent_prompt }));
   });
 
+  /** Agent edits apply to existing sessions, so the saved definition wins over the session snapshot. */
+  const stopContextCap = pi.events.on("piop:agents:context-cap", request => {
+    const agent = currentAgent();
+    request.cap = (agent && findAgent(agent.name) || agent)?.contextWindowCap;
+  });
+
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
 
   const currentSkillPaths = () => {
@@ -623,7 +635,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     });
   });
 
-  pi.on("session_shutdown", async (event, ctx) => { stopSubagentProfiles(); stopProfileCatalog(); stopRefresh(); stopReload(); await extensions.deactivate(ctx, event); });
+  pi.on("session_shutdown", async (event, ctx) => { stopSubagentProfiles(); stopProfileCatalog(); stopContextCap(); stopRefresh(); stopReload(); await extensions.deactivate(ctx, event); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`;
 
   if (applyingAgentModel === model) { applyingAgentModel = undefined;
@@ -731,6 +743,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     saveState();
 
     if (skillsChanged) return reload(ctx);
+    pi.events.emit("piop:agents:selected", { ctx });
   };
 
   pi.events.on("piop:rpc", request => {

@@ -104,6 +104,9 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     : markdown;
   const handlerExtensions = new WeakMap<object, string>();
   let registry: ExtensionContext["modelRegistry"] | undefined;
+  let latest: ExtensionContext | undefined;
+  /** Pi replaces the session model object after provider changes without an event; tell model listeners, such as the context cap. */
+  const modelsChanged = () => { if (latest) pi.events.emit("piop:models-refreshed", { ctx: latest }); };
   const registeredProvider = (name: string): ProviderConfig | Provider | undefined => registry?.getRegisteredNativeProvider?.(name) ?? registry?.getRegisteredProviderConfig?.(name);
 
   /**
@@ -274,11 +277,14 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
 
     for (const name of group?.mcpServers.keys() ?? []) cleanup(() => restoreMcpServer(group!, name));
     for (const [provider, id] of group?.virtualModels.values() ?? []) cleanup(() => pi.unregisterVirtualModel(provider, id));
+    const changed = Boolean(group?.virtualModels.size || group?.providers.size);
     group?.virtualModels.clear();
 
     for (const [name, override] of group?.providers ?? []) {
       cleanup(() => { restoreProvider(name, override); group!.providers.delete(name); });
     }
+
+    if (changed) cleanup(modelsChanged);
 
     for (const unsubscribe of group?.stops.splice(0) ?? []) cleanup(unsubscribe);
   };
@@ -436,6 +442,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
         }
 
         group.providers.set(name, override);
+        modelsChanged();
       },
       unregisterProvider: (...args) => {
         ensureActive("unregisterProvider");
@@ -443,6 +450,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
 
         if (override) restoreProvider(args[0], override);
         else pi.unregisterProvider(...args);
+        modelsChanged();
       },
       registerMcpServer: (...args) => {
         ensureActive("registerMcpServer");
@@ -468,6 +476,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
         if (!group.virtualModels.has(key) && registry?.find(provider, id)) throw new Error(`piop extension virtual model conflicts with an existing model: ${provider}/${id}`);
         pi.registerVirtualModel(...args);
         group.virtualModels.set(key, [provider, id]);
+        modelsChanged();
       },
       unregisterVirtualModel: (...args) => {
         ensureActive("unregisterVirtualModel");
@@ -476,6 +485,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
         if (!group.virtualModels.has(key)) throw new Error(`piop extension does not own virtual model: ${args.join("/")}`);
         pi.unregisterVirtualModel(...args);
         group.virtualModels.delete(key);
+        modelsChanged();
       },
     };
 
@@ -673,6 +683,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     const active = current;
     current = group;
     registry = ctx.modelRegistry;
+    latest = ctx;
 
     const errors: unknown[] = [];
 
@@ -692,6 +703,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
   async function activate(group: Group, ctx: ExtensionContext) {
     const session = ctx.sessionManager.getSessionId();
     registry = ctx.modelRegistry;
+    latest = ctx;
 
     if (group === current && group.session === session) return;
 

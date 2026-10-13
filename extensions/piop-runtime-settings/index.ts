@@ -12,9 +12,14 @@ type Settings = {
   explicitOnlySkills?: string[];
   contextWindowCap: number;
   contextWindowCapEnabled: boolean;
+  /** Context caps by provider/model. A missing model inherits; null selects the model default. */
+  modelContextWindowCaps: Record<string, number | null>;
 };
 
 type Update = { ctx: ExtensionCommandContext; ready?: Promise<void> };
+
+/** Emitted after runtime settings change without a reload. Handlers may set ready; the settings request waits for it. */
+type SettingsChanged = { ctx: ExtensionContext; ready?: Promise<void> };
 
 interface AppRequest { command: string; payload: unknown; ctx: ExtensionCommandContext; ready?: Promise<unknown> }
 
@@ -22,6 +27,8 @@ declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
     on(channel: "piop:rpc", handler: (request: AppRequest) => void): () => void;
     emit(channel: "piop:rpc", request: AppRequest): void;
+    on(channel: "piop:runtime-settings:changed", handler: (event: SettingsChanged) => void): () => void;
+    emit(channel: "piop:runtime-settings:changed", event: SettingsChanged): void;
   }
 }
 
@@ -33,7 +40,8 @@ const stringListSchema = Type.Array(Type.String());
 
 const settingsSchema = Type.Object({
   tools: stringListSchema, skills: stringListSchema, explicitOnlySkills: Type.Optional(stringListSchema),
-  contextWindowCap: Type.Integer({ minimum: 1000, maximum: Number.MAX_SAFE_INTEGER }), contextWindowCapEnabled: Type.Boolean(),
+  contextWindowCap: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }), contextWindowCapEnabled: Type.Boolean(),
+  modelContextWindowCaps: Type.Record(Type.String(), Type.Union([Type.Null(), Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })])),
 });
 
 const requestSchema = Type.Object({ settings: Type.Optional(Type.Unknown()), reloadAgents: Type.Optional(Type.Boolean()) });
@@ -367,6 +375,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     request.ready = (async () => {
       const settingsRequest = Parse(requestSchema, request.payload);
       const previous = current();
+      let applied = false;
 
       try {
         if (ctx.mode !== "rpc" || !ctx.isIdle()) throw new Error("Runtime settings require an idle RPC session");
@@ -380,12 +389,26 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
           if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:reload", ctx);
           else await ctx.reload();
         } else {
+          applied = true;
           applyTools(ctx);
 
           if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:refresh", ctx);
+          const changed: SettingsChanged = { ctx };
+          pi.events.emit("piop:runtime-settings:changed", changed);
+          await changed.ready;
         }
       } catch (error) {
         setGlobal(key, previous);
+
+        if (applied) {
+          try {
+            applyTools(ctx);
+
+            if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:refresh", ctx);
+          } catch (restoreError) {
+            throw new Error(`${error instanceof Error ? error.message : String(error)}. Restoring the previous settings also failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`, { cause: error });
+          }
+        }
         throw error;
       }
     })();

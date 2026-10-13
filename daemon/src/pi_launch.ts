@@ -166,7 +166,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   command.env.PIOP_RUNTIME_SETTINGS_PATH = join(root, 'runtime-settings.json');
   command.env.PIOP_GENERATED_EXTENSION_ROOT = root;
   const mcpExtension = Ext.prepareMcpBridge();
-  const contextWindowCapExtension = Ext.prepareContextWindowCapExtension(settings);
+  const contextWindowCapExtension = Ext.prepareContextWindowCapExtension();
   const contextBarExtension = Ext.prepareContextBarExtension();
   const sessionCostLimitExtension = Ext.prepareSessionCostLimitExtension(settings);
   const openaiCacheForkExtension = Ext.prepareOpenaiCacheForkExtension();

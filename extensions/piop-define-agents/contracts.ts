@@ -13,7 +13,8 @@ export interface AgentRefreshRequest { ctx: ExtensionContext; ready?: Promise<vo
 
 export interface AgentReloadRequest { ctx: ExtensionCommandContext; ready?: Promise<void> }
 
-export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; codemode?: boolean; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
+/** contextWindowCap: undefined inherits; null selects the model default. */
+export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: boolean; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
 
 export type AgentSnapshot = { version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
 
@@ -27,8 +28,17 @@ export interface SubagentLimitsRequest { max_subagents?: number; max_sub_subagen
 
 export interface AgentProfilesRequest { active?: string; profiles?: AgentProfileSummary[] }
 
+/** The current agent's context cap default. cap stays undefined when the agent inherits. */
+export interface AgentContextCapRequest { cap?: number | null }
+
+export interface AgentSelectedEvent { ctx: ExtensionContext }
+
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
+    on(channel: "piop:agents:context-cap", handler: (request: AgentContextCapRequest) => void): () => void;
+    emit(channel: "piop:agents:context-cap", request: AgentContextCapRequest): void;
+    on(channel: "piop:agents:selected", handler: (event: AgentSelectedEvent) => void): () => void;
+    emit(channel: "piop:agents:selected", event: AgentSelectedEvent): void;
     on(channel: "piop:agents:subagent-limits", handler: (request: SubagentLimitsRequest) => void): () => void;
     emit(channel: "piop:agents:subagent-limits", request: SubagentLimitsRequest): void;
     on(channel: "piop:agents:profiles", handler: (request: AgentProfilesRequest) => void): () => void;
