@@ -13,6 +13,14 @@ const load = () => daemon.invoke('load_app_settings');
 const save = (settings: any, agentHostId?: string) => daemon.invoke('save_app_settings', { settings, agentHostId });
 const remote = (host: Record<string, unknown> = {}) => ({ enabled: false, id: 'remote', name: 'Server', target: 'user@host', piPath: 'pi', ...host });
 
+test('retired default model is dropped when settings are saved', async () => {
+  const settings = await load();
+  expect(settings).not.toHaveProperty('defaultModel');
+  const change = await save({ ...settings, defaultModel: 'retired/model' });
+  expect(change.settings).not.toHaveProperty('defaultModel');
+  expect(await load()).not.toHaveProperty('defaultModel');
+});
+
 test('invalid settings are rejected and the saved settings stay unchanged', async () => {
   const before = await load();
   const cases: Array<[string, (settings: any) => void, string]> = [
