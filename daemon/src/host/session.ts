@@ -483,6 +483,7 @@ export class Session {
         const revision = typeof configuration.agentRevision === 'number' ? configuration.agentRevision : 0;
         const reload = this.agentRevision < revision;
         await this.executeWorker({ type: 'runtime_settings', settings: configuration.settings ?? null, agentRevision: revision, reloadAgents: reload });
+        await this.executeWorker({ type: 'context_cap_settings', settings: configuration.contextCapSettings });
         await this.applyAutomaticOptions(configuration);
         this.agentRevision = revision;
         this.appliedConfiguration = configuration;

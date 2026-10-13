@@ -1074,6 +1074,19 @@ test('editing a profile leaves the running agent tools and prompt unchanged', as
   assert.equal((await f.prompt()).customPrompt, 'System instructions');
 });
 
+test('context cap requests use the selected agent definition until another selection', async t => {
+  const f = await agentFixture(t, { config: null });
+  await f.load();
+  await f.configure(configured([profile('general', { contextWindowCap: 300000 })]));
+  await f.start();
+  const cap = () => { const request = {}; f.pi.events.emit('piop:agents:context-cap', request); return request.cap; };
+  assert.equal(cap(), 300000);
+  await f.configure({ agents: [profile('general', { contextWindowCap: null })] });
+  assert.equal(cap(), 300000);
+  await f.select('general');
+  assert.equal(cap(), null);
+});
+
 test('saved profile edits remain selectable after extension reload', async t => {
   const f = await agentFixture(t, { config: null, files: { 'new.md': 'New instructions' } });
   await f.load();

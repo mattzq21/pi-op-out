@@ -81,7 +81,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     expect(runtime.tools.filter((name: string) => !name.endsWith('_goal'))).toEqual(['read']);
     expect([...runtime.skills].sort()).toEqual([join(root, 'explicit'), join(root, 'plain')]);
     expect(runtime.explicitOnlySkills).toEqual([join(root, 'explicit')]);
-    expect(runtime).toMatchObject({ defaultModel: saved.defaultModel, contextWindowCap: 123456, contextWindowCapEnabled: false });
+    expect(runtime).toMatchObject({ defaultModel: saved.defaultModel });
+    expect(runtime).not.toHaveProperty("contextWindowCap");
     // Building the runtime settings does not change the saved settings.
     expect(await daemon.invoke('load_app_settings')).toEqual(saved);
     await daemon.invoke('stop_pi', { runtimeId: 'runtime-settings' });

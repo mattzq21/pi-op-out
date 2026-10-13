@@ -3,9 +3,10 @@ import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { ContextCapSessionRequest } from "./channel.ts";
+import type { AgentContextCapRequest } from "../piop-define-agents/contracts.ts";
 import {
   CAP_ENTRY, CONTEXT_CAP_STATUS_KEY, capRangeError, formatTokens, parseCapCommand,
-  type ContextCapDefaults, type ContextCapEntry, type ContextCapSession, type ContextCapSource, type ContextCapState,
+  type ContextCapSettings, type ContextCapEntry, type ContextCapSession, type ContextCapSource, type ContextCapState,
 } from "./interface.ts";
 
 declare module "@earendil-works/pi-coding-agent" {
@@ -14,6 +15,8 @@ declare module "@earendil-works/pi-coding-agent" {
     emit(channel: "piop:models-refreshed", event: { ctx: ExtensionContext }): void;
   }
 }
+
+type ContextCapDefaults = { agentDefinition: number | null | undefined; modelConfig: number | null | undefined; generalConfig: number | null };
 
 type Model = NonNullable<ExtensionContext["model"]>;
 
@@ -29,7 +32,7 @@ type Choice = { cap: number | null; source: ContextCapSource };
 /** The latest choice entry on the branch and the clamped window recorded after it, if any. */
 type Logged = { choice?: Choice; clamp?: number };
 
-type Operation = { kind: "manual"; cap: number | null } | { kind: "reset" } | { kind: "defaults"; defaults: ContextCapDefaults };
+type Operation = { kind: "manual"; cap: number | null } | { kind: "reset" } | { kind: "settings"; settings: ContextCapSettings } | { kind: "refresh" };
 
 type Pending = { operation: Operation; resolve: (state: ContextCapState) => void; reject: (error: Error) => void };
 
@@ -83,10 +86,12 @@ export function resolveDefaults(defaults: ContextCapDefaults): Choice {
   return { cap: defaults.generalConfig ?? null, source: "config" };
 }
 
-function validateDefaults(defaults: ContextCapDefaults) {
-  for (const [value, label] of [[defaults.agentDefinition, "Agent definition context cap"], [defaults.modelConfig, "Model context cap setting"], [defaults.generalConfig, "General context cap setting"]] as const) {
-    const error = typeof value === "number" ? capRangeError(value, label) : undefined;
-
+function validateSettings(settings: ContextCapSettings) {
+  if (!settings || typeof settings.contextWindowCapEnabled !== "boolean" || !settings.modelContextWindowCaps || typeof settings.modelContextWindowCaps !== "object" || Array.isArray(settings.modelContextWindowCaps)) throw new Error("Invalid context cap settings");
+  const generalError = capRangeError(settings.contextWindowCap, "General context cap setting");
+  if (generalError) throw new Error(generalError);
+  for (const value of Object.values(settings.modelContextWindowCaps)) {
+    const error = value === null ? undefined : capRangeError(value, "Model context cap setting");
     if (error) throw new Error(error);
   }
 }
@@ -111,6 +116,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   let context: ExtensionContext | undefined;
   let model: Model | undefined;
   let choice: Choice | undefined;
+  let settings: ContextCapSettings | undefined;
   let defaults: ContextCapDefaults | undefined;
   /** The provider/model key of the model when the current defaults were accepted. Its model cap belongs to that model. */
   let defaultsModel: string | undefined;
@@ -285,6 +291,20 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     if (changed && resolved.cap !== null) requireFit(resolved.cap, sourceLabel(resolved.source));
   };
 
+  const receivedDefaults = (next: ContextCapSettings): ContextCapDefaults => {
+    const agent: AgentContextCapRequest = {};
+    pi.events.emit("piop:agents:context-cap", agent);
+    const error = agent.cap === undefined || agent.cap === null ? undefined : capRangeError(agent.cap, "Agent definition context cap");
+    if (error) throw new Error(error);
+    const key = model && keyOf(model);
+
+    return {
+      agentDefinition: agent.cap,
+      modelConfig: key !== undefined && Object.hasOwn(next.modelContextWindowCaps, key) ? next.modelContextWindowCaps[key] : undefined,
+      generalConfig: next.contextWindowCapEnabled ? next.contextWindowCap : null,
+    };
+  };
+
   const run = (operation: Operation) => {
     if (operation.kind === "manual") {
       validateManual(operation.cap);
@@ -302,14 +322,18 @@ export default function contextWindowCap(pi: ExtensionAPI) {
       return;
     }
 
-    const next = choice?.source === "manual" ? choice : resolveDefaults(operation.defaults);
-    validateNewDefaults(operation.defaults);
+    const received = operation.kind === "settings" ? operation.settings : settings;
+    if (!received) return;
+    const nextDefaults = receivedDefaults(received);
+    const next = choice?.source === "manual" ? choice : resolveDefaults(nextDefaults);
+    validateNewDefaults(nextDefaults);
 
     if (choice && !sameChoice(choice, next)) requireBudgets(next);
     const first = !choice;
-    defaults = operation.defaults;
-    defaultsModel = model && keyOf(model);
     commit(next);
+    settings = received;
+    defaults = nextDefaults;
+    defaultsModel = model && keyOf(model);
 
     if (!first) return;
     const window = appliedFor(next, model);
@@ -365,7 +389,10 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     },
     setManualCap: cap => enqueue({ kind: "manual", cap }, () => validateManual(cap)),
     resetManualCap: () => enqueue({ kind: "reset" }, () => undefined),
-    updateDefaults: next => enqueue({ kind: "defaults", defaults: { ...next } }, () => { validateDefaults(next); validateNewDefaults(next); }),
+    updateSettings: next => {
+      try { validateSettings(next); } catch (error) { return Promise.reject(asError(error)); }
+      return enqueue({ kind: "settings", settings: structuredClone(next) }, () => undefined);
+    },
     subscribe(listener, onError) {
       const subscriber: Subscriber = { listener, onError, delivered: false };
       subscribers.add(subscriber);
@@ -408,6 +435,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   };
 
   const modelChanged = (next: Model | undefined) => {
+    const previousKey = model && keyOf(model);
     track(next);
 
     if (!restored || !choice) { apply();
@@ -421,6 +449,11 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     const error = model && window !== null ? budgetError(window, model) : undefined;
 
     if (error) report(new Error(error));
+    if (settings && previousKey !== (model && keyOf(model))) refresh();
+  };
+
+  const refresh = () => {
+    if (settings) enqueue({ kind: "refresh" }, () => undefined).catch(error => report(asError(error)));
   };
 
   /** Pi replaces the session model object after provider changes without an event. Apply to the new object before Pi reads its window. */
@@ -429,6 +462,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   }
 
   const stopSession = pi.events.on("piop:context-cap:session", (request: ContextCapSessionRequest) => { request.session = session; });
+  const stopAgent = pi.events.on("piop:agents:selected", () => refresh());
   const stopModels = pi.events.on("piop:models-refreshed", ({ ctx }) => { if (!closed) modelChanged(ctx.model); });
 
   pi.registerCommand("cap", {
@@ -488,6 +522,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     subscribers.clear();
     stopSession();
     stopModels();
+    stopAgent();
 
     for (const target of objects) restoreNative(target);
     objects.clear();

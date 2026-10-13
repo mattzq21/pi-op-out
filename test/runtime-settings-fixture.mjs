@@ -6,7 +6,7 @@ import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
 const storagePath = fileURLToPath(new URL('../daemon/resources/session-broker/app-settings.cjs', import.meta.url));
 
 export async function installRuntimeSettings({ dir, pi, ctx, settings, settingsPath }) {
-  const initial = { contextWindowCap: 100000, contextWindowCapEnabled: false, explicitOnlySkills: [], ...settings };
+  const initial = { explicitOnlySkills: [], ...settings };
   if (!settingsPath) throw new Error('A daemon-created runtime settings path is required');
   process.env.PIOP_RUNTIME_SETTINGS_PATH = settingsPath;
   const outfile = join(dir, 'real-runtime-settings.mjs');
